@@ -1,764 +1,1857 @@
-import { getModels, getProviders } from "@mariozechner/pi-ai";
 import {
-  cpSync,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
-import { tmpdir } from "node:os";
-import * as ts from "typescript";
-import { z } from "zod";
-import { getProviderEnvVar, resolveAuthState } from "../auth-store";
-import { loadRunnableWorkflowEntryAtPath, loadRunnableWorkflowRegistry } from "./workflow-registry";
+import ts from "typescript";
+import {
+  BUILTIN_EXTENSIONS,
+  resolveActorExtensionState,
+  type ExtensionUsageState,
+} from "../../shared/extensions";
+import type { AgentSettingsStore } from "../agent-settings-store";
+import type { ExtensionEnvSecretStore } from "../extension-env-secret-store";
+import {
+  resolveExtensionRecord,
+  runSvvyxExtensionsCommand,
+  type SvvyxExtensionsCliProbe,
+  validateExtensionBuildInput,
+} from "../svvyx-extensions-command";
+import {
+  effectiveExtensionsGeneratedPackagePath,
+  generatedExtensionExportIds,
+  writeGeneratedExtensionsPackage,
+} from "../generated-extensions-package";
+export { getExtensionsGeneratedPackagePath } from "../generated-extensions-package";
+import type { ReasoningEffort } from "../../shared/agent-settings";
 import type {
-  WorkspaceSavedWorkflowLibraryDiagnostic,
-  WorkspaceSavedWorkflowLibraryItem,
-  WorkspaceSavedWorkflowLibraryItemKind,
-  WorkspaceSavedWorkflowLibraryReadModel,
+  WorkspaceWorkflowsGeneratedExport,
+  WorkspaceWorkflowsGeneratedKind,
+  WorkspaceWorkflowsGeneratedNamespace,
+  WorkspaceWorkflowsGeneratedReadModel,
 } from "../../shared/workspace-contract";
+import type { SvvyxWorkflowsModelChoice } from "../svvyx-workflows-command";
 
-export type WorkflowAssetKind = "definition" | "prompt" | "component";
-export type WorkflowAssetScope = "saved" | "artifact";
+const WORKFLOW_NAMESPACE_BY_DIR = {
+  agents: { kind: "agent", namespace: "Agents" },
+  components: { kind: "component", namespace: "Components" },
+  prompts: { kind: "prompt", namespace: "Prompts" },
+  workflows: { kind: "workflow", namespace: "Workflows" },
+} satisfies Record<
+  string,
+  { kind: WorkspaceWorkflowsGeneratedKind; namespace: WorkspaceWorkflowsGeneratedNamespace }
+>;
 
-export type WorkflowAssetMetadata = {
-  id: string;
-  kind: WorkflowAssetKind;
-  title: string;
-  summary: string;
-  path: string;
-  scope: WorkflowAssetScope;
-};
+export function getWorkflowsSourceRoot(): string {
+  return join(homedir(), ".config", "svvy", "workflows");
+}
 
-export type WorkflowAssetFilter = {
-  kind?: WorkflowAssetKind;
-  pathPrefix?: string;
-  scope?: WorkflowAssetScope | "both";
-};
+export function getWorkflowsGeneratedPackagePath(): string {
+  return join(getWorkflowsSourceRoot(), "generated", "package");
+}
 
-export type WorkflowModelInfo = {
-  providerId: string;
-  modelId: string;
-  authAvailable: boolean;
-  authSource: string;
-  capabilityFlags: string[];
-};
-
-export type WorkflowValidationDiagnostic = {
-  severity: "error" | "warning";
+export type WorkflowsBuildDiagnostic = {
+  code: string;
   message: string;
   path?: string;
-  line?: number;
-  column?: number;
-  code?: string;
+  exportName?: string;
 };
 
-export type WorkflowWriteValidationResult = {
-  checked: boolean;
+export type WorkflowsBuildResult = {
   ok: boolean;
-  path: string;
-  diagnostics: WorkflowValidationDiagnostic[];
+  generatedPackagePath: string;
+  linkedWorkspaces: string[];
+  diagnostics: WorkflowsBuildDiagnostic[];
+  items: WorkspaceWorkflowsGeneratedExport[];
 };
 
-export type WorkflowLibrary = {
-  listAssets(input?: WorkflowAssetFilter): WorkflowAssetMetadata[];
-  listModels(): WorkflowModelInfo[];
-  readSavedWorkflowLibrary(): Promise<WorkspaceSavedWorkflowLibraryReadModel>;
-  deleteSavedWorkflowLibraryItem(path: string): Promise<WorkspaceSavedWorkflowLibraryReadModel>;
-  validateSavedWorkflowWrite(path: string): Promise<WorkflowWriteValidationResult | null>;
+type WorkflowSourceItem = {
+  kind: WorkspaceWorkflowsGeneratedKind;
+  exportName: string;
+  sourcePath: string;
+  generatedPath: string;
+  sourceCode: string;
+  agentParameters?: Record<string, unknown>;
 };
 
-type WorkflowLibraryDependencies = {
-  getProviders?: typeof getProviders;
-  getModels?: typeof getModels;
-  resolveAuthState?: typeof resolveAuthState;
-  getProviderEnvVar?: typeof getProviderEnvVar;
+type WorkflowGeneratedManifest = {
+  items: Array<{
+    generatedPath: string;
+    sourcePath: string;
+  }>;
 };
 
-type ValidationWorkspace = {
-  root: string;
-  cleanup: () => void;
-};
+const GENERATED_MANIFEST_FILE = ".svvy-workflows-manifest.json";
 
-const PI_TOOL_CALLING_APIS = new Set([
-  "anthropic-messages",
-  "azure-openai-responses",
-  "bedrock-converse-stream",
-  "google-generative-ai",
-  "google-vertex",
-  "mistral-conversations",
-  "openai-codex-responses",
-  "openai-completions",
-  "openai-responses",
-]);
+const SOURCE_DIR_BY_KIND = {
+  agent: "agents",
+  component: "components",
+  prompt: "prompts",
+  workflow: "workflows",
+} satisfies Record<WorkspaceWorkflowsGeneratedKind, string>;
 
-function walkFiles(root: string): string[] {
-  if (!existsSync(root)) {
-    return [];
+export async function buildWorkflowsGeneratedPackage(options: {
+  agentSettingsStore?: AgentSettingsStore;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  envSecretStore?: ExtensionEnvSecretStore;
+  extensionsBuildRoot?: string;
+  extensionsCliProbe?: SvvyxExtensionsCliProbe;
+  extensionsRoot?: string;
+  extensionsGeneratedPackagePath?: string;
+  generatedPackagePath?: string;
+  modelCatalog?: readonly SvvyxWorkflowsModelChoice[];
+  sourceRoot?: string;
+  workspaceCwds?: readonly string[];
+}): Promise<WorkflowsBuildResult> {
+  const sourceRoot = options.sourceRoot ?? getWorkflowsSourceRoot();
+  const generatedPackagePath = options.generatedPackagePath ?? getWorkflowsGeneratedPackagePath();
+  const extensionsGeneratedPackagePath = effectiveExtensionsGeneratedPackagePath(options);
+  const diagnostics: WorkflowsBuildDiagnostic[] = [];
+  validateUserExtensionSourcesForWorkflowBuild(options.extensionsRoot, diagnostics);
+  if (diagnostics.length > 0) {
+    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+  }
+  await buildUserExtensionsForWorkflowBuild(options, diagnostics);
+  if (diagnostics.length > 0) {
+    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+  }
+  validateUserExtensionsForWorkflowBuild(options.extensionsRoot, diagnostics);
+  if (diagnostics.length > 0) {
+    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
   }
 
-  const pending = [root];
-  const files: string[] = [];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (!current) {
-      continue;
-    }
-
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const entryPath = join(current, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(entryPath);
-        continue;
-      }
-      files.push(entryPath);
-    }
-  }
-
-  return files.toSorted();
-}
-
-function relativeWorkspacePath(workspaceRoot: string, path: string): string {
-  return relative(workspaceRoot, path).replace(/\\/g, "/");
-}
-
-function readTsJsdocTag(header: string, tag: string): string | undefined {
-  const match = header.match(new RegExp(`@${tag}\\s+([^\\n*]+)`));
-  return match?.[1]?.trim();
-}
-
-function parseFrontmatter(text: string): Record<string, string | string[]> {
-  if (!text.startsWith("---\n")) {
-    return {};
-  }
-
-  const end = text.indexOf("\n---\n", 4);
-  if (end === -1) {
-    return {};
-  }
-
-  const result: Record<string, string | string[]> = {};
-  let currentListKey: string | null = null;
-  for (const line of text.slice(4, end).split("\n")) {
-    if (line.startsWith("  - ") && currentListKey) {
-      const current = result[currentListKey];
-      const values = Array.isArray(current) ? current : [];
-      values.push(line.slice(4).trim());
-      result[currentListKey] = values;
-      continue;
-    }
-
-    currentListKey = null;
-    const separator = line.indexOf(":");
-    if (separator === -1) {
-      continue;
-    }
-    const key = line.slice(0, separator).trim();
-    const rawValue = line.slice(separator + 1).trim();
-    if (!rawValue) {
-      result[key] = [];
-      currentListKey = key;
-      continue;
-    }
-    result[key] = rawValue;
-  }
-
-  return result;
-}
-
-function parseAssetMetadata(
-  workspaceRoot: string,
-  path: string,
-  scope: WorkflowAssetScope,
-): WorkflowAssetMetadata {
-  const text = readFileSync(path, "utf8");
-  if (extname(path) === ".mdx") {
-    const frontmatter = parseFrontmatter(text);
-    return {
-      id: String(frontmatter.svvyId ?? relativeWorkspacePath(workspaceRoot, path)),
-      kind: "prompt",
-      title: String(frontmatter.title ?? relativeWorkspacePath(workspaceRoot, path)),
-      summary: String(frontmatter.summary ?? ""),
-      path: relativeWorkspacePath(workspaceRoot, path),
-      scope,
-    };
-  }
-
-  const header = text.match(/\/\*\*[\s\S]*?\*\//)?.[0] ?? "";
-  return {
-    id: readTsJsdocTag(header, "svvyId") ?? relativeWorkspacePath(workspaceRoot, path),
-    kind: (readTsJsdocTag(header, "svvyAssetKind") as WorkflowAssetKind | undefined) ?? "component",
-    title: readTsJsdocTag(header, "svvyTitle") ?? relativeWorkspacePath(workspaceRoot, path),
-    summary: readTsJsdocTag(header, "svvySummary") ?? "",
-    path: relativeWorkspacePath(workspaceRoot, path),
-    scope,
-  };
-}
-
-function listAssetFiles(workspaceRoot: string, scope: WorkflowAssetScope): string[] {
-  const root =
-    scope === "saved"
-      ? join(workspaceRoot, ".svvy", "workflows")
-      : join(workspaceRoot, ".svvy", "artifacts", "workflows");
-  return walkFiles(root).filter((path) =>
-    ["/definitions/", "/prompts/", "/components/"].some((segment) => path.includes(segment)),
-  );
-}
-
-function listSavedEntryFiles(workspaceRoot: string): string[] {
-  return walkFiles(join(workspaceRoot, ".svvy", "workflows", "entries"))
-    .filter((path) => [".ts", ".tsx"].includes(extname(path)))
-    .map((path) => relativeWorkspacePath(workspaceRoot, path))
-    .toSorted();
-}
-
-function readSourcePreview(workspaceRoot: string, path: string): string | null {
-  const absolutePath = join(workspaceRoot, path);
-  if (!existsSync(absolutePath)) {
-    return null;
-  }
-  const source = readFileSync(absolutePath, "utf8");
-  const maxLength = 12_000;
-  return source.length > maxLength ? `${source.slice(0, maxLength)}\n...` : source;
-}
-
-export function listWorkflowAssets(
-  workspaceRoot: string,
-  input: WorkflowAssetFilter = {},
-): WorkflowAssetMetadata[] {
-  const scopes =
-    input.scope === "artifact"
-      ? (["artifact"] as const)
-      : input.scope === "both"
-        ? (["saved", "artifact"] as const)
-        : (["saved"] as const);
-
-  return scopes
-    .flatMap((scope) =>
-      listAssetFiles(workspaceRoot, scope)
-        .filter((path) => [".ts", ".tsx", ".mdx"].includes(extname(path)))
-        .map((path) => parseAssetMetadata(workspaceRoot, path, scope)),
-    )
-    .filter((asset) => (input.kind ? asset.kind === input.kind : true))
-    .filter((asset) => (input.pathPrefix ? asset.path.startsWith(input.pathPrefix) : true))
-    .toSorted((left, right) => left.path.localeCompare(right.path));
-}
-
-function readCapabilityFlags(model: {
-  reasoning: boolean;
-  input: string[];
-  api: string;
-}): string[] {
-  return [
-    model.reasoning ? "reasoning" : null,
-    model.input.includes("image") ? "vision" : null,
-    PI_TOOL_CALLING_APIS.has(model.api) ? "tool-calling" : null,
-  ].filter((flag): flag is string => Boolean(flag));
-}
-
-export function listWorkflowModels(
-  dependencies: WorkflowLibraryDependencies = {},
-): WorkflowModelInfo[] {
-  const resolveProviders = dependencies.getProviders ?? getProviders;
-  const resolveModels = dependencies.getModels ?? getModels;
-  const resolveAuth = dependencies.resolveAuthState ?? resolveAuthState;
-  const resolveEnvVar = dependencies.getProviderEnvVar ?? getProviderEnvVar;
-
-  return resolveProviders()
-    .flatMap((providerId) =>
-      resolveModels(providerId).map((model) => {
-        const authState = resolveAuth(providerId);
-        const authSource =
-          authState.keyType === "none"
-            ? `missing:${resolveEnvVar(providerId) ?? providerId}`
-            : authState.keyType;
-        return {
-          providerId,
-          modelId: model.id,
-          authAvailable: authState.connected,
-          authSource,
-          capabilityFlags: readCapabilityFlags(model),
-        };
-      }),
-    )
-    .toSorted(
-      (left, right) =>
-        left.providerId.localeCompare(right.providerId) ||
-        left.modelId.localeCompare(right.modelId),
-    );
-}
-
-function createValidationWorkspace(workspaceRoot: string): ValidationWorkspace {
-  const root = mkdtempSync(join(tmpdir(), "svvy-workflow-validation-"));
-  for (const entry of readdirSync(workspaceRoot, { withFileTypes: true })) {
-    if (entry.name === ".svvy") {
-      continue;
-    }
-    symlinkSync(join(workspaceRoot, entry.name), join(root, entry.name));
-  }
-
-  mkdirSync(join(root, ".svvy"), { recursive: true });
-  const savedLibraryRoot = join(workspaceRoot, ".svvy", "workflows");
-  if (existsSync(savedLibraryRoot)) {
-    cpSync(savedLibraryRoot, join(root, ".svvy", "workflows"), { recursive: true });
-  } else {
-    mkdirSync(join(root, ".svvy", "workflows"), { recursive: true });
-  }
-
-  return {
-    root,
-    cleanup: () => {
-      rmSync(root, { force: true, recursive: true });
-    },
-  };
-}
-
-function validatePromptAsset(workspaceRoot: string, path: string): WorkflowValidationDiagnostic[] {
-  const text = readFileSync(join(workspaceRoot, path), "utf8");
-  const frontmatter = parseFrontmatter(text);
-  const diagnostics: WorkflowValidationDiagnostic[] = [];
-  if (frontmatter.svvyAssetKind !== "prompt") {
-    diagnostics.push({
-      severity: "error",
-      path,
-      line: 1,
-      message: "Prompt assets must declare `svvyAssetKind: prompt` in frontmatter.",
-    });
-  }
-  for (const field of ["svvyId", "title", "summary"] as const) {
-    if (typeof frontmatter[field] !== "string" || frontmatter[field].trim().length === 0) {
-      diagnostics.push({
-        severity: "error",
-        path,
-        line: 1,
-        message: `Prompt assets must declare a non-empty \`${field}\` frontmatter field.`,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-function validateSourceAssetHeader(
-  workspaceRoot: string,
-  path: string,
-  expectedKind: WorkflowAssetKind,
-): WorkflowValidationDiagnostic[] {
-  const text = readFileSync(join(workspaceRoot, path), "utf8");
-  const header = text.match(/\/\*\*[\s\S]*?\*\//)?.[0] ?? "";
-  const diagnostics: WorkflowValidationDiagnostic[] = [];
-  const actualKind = readTsJsdocTag(header, "svvyAssetKind");
-  if (actualKind !== expectedKind) {
-    diagnostics.push({
-      severity: "error",
-      path,
-      line: 1,
-      message: `Expected @svvyAssetKind ${expectedKind} in the leading JSDoc header.`,
-    });
-  }
-  for (const tag of ["svvyId", "svvyTitle", "svvySummary"] as const) {
-    if (!readTsJsdocTag(header, tag)) {
-      diagnostics.push({
-        severity: "error",
-        path,
-        line: 1,
-        message: `Expected @${tag} in the leading JSDoc header.`,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-function mapTypecheckDiagnostic(
-  diagnostic: ts.Diagnostic,
-  validationRoot: string,
-): WorkflowValidationDiagnostic {
-  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
-  const severity = diagnostic.category === ts.DiagnosticCategory.Warning ? "warning" : "error";
-  const fileName = diagnostic.file?.fileName;
-  let path: string | undefined;
-  let line: number | undefined;
-  let column: number | undefined;
-  if (fileName) {
-    const relativeToValidation = relative(validationRoot, fileName).replace(/\\/g, "/");
-    path = relativeToValidation.startsWith("..") ? basename(fileName) : relativeToValidation;
-  }
-  if (diagnostic.file && diagnostic.start !== undefined) {
-    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-    line = position.line + 1;
-    column = position.character + 1;
-  }
-  return {
-    severity,
-    path,
-    line,
-    column,
-    code: diagnostic.code ? String(diagnostic.code) : undefined,
-    message,
-  };
-}
-
-function typecheckTypescriptAssets(
-  validationRoot: string,
-  assetPaths: string[],
-): WorkflowValidationDiagnostic[] {
-  if (assetPaths.length === 0) {
-    return [];
-  }
-
-  const configPath = ts.findConfigFile(validationRoot, ts.sys.fileExists, "tsconfig.json");
-  let options: ts.CompilerOptions = {
-    noEmit: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    jsx: ts.JsxEmit.ReactJSX,
-    skipLibCheck: true,
-  };
-  let projectReferences: readonly ts.ProjectReference[] | undefined;
-  if (configPath) {
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-    const parsed = ts.parseJsonConfigFileContent(
-      configFile.config,
-      ts.sys,
-      dirname(configPath),
-      { noEmit: true },
-      configPath,
-    );
-    options = {
-      ...parsed.options,
-      noEmit: true,
-    };
-    projectReferences = parsed.projectReferences;
-  }
-
-  const program = ts.createProgram({
-    rootNames: assetPaths.map((path) => join(validationRoot, path)),
-    options,
-    projectReferences,
+  const sourceItems = readWorkflowSourceItems(sourceRoot, generatedPackagePath, diagnostics);
+  const extensionExportIds = generatedExtensionExportIds({
+    extensionsRoot: options.extensionsRoot,
   });
-  return ts
-    .getPreEmitDiagnostics(program)
-    .map((diagnostic) => mapTypecheckDiagnostic(diagnostic, validationRoot))
-    .filter((diagnostic) => diagnostic.severity === "error");
+  validateWorkflowSourceItems(
+    sourceItems,
+    options.modelCatalog ?? [],
+    extensionExportIds,
+    diagnostics,
+  );
+
+  if (diagnostics.length > 0) {
+    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+  }
+
+  const backupPath = nextGeneratedPackageBackupPath(generatedPackagePath);
+  const extensionsBackupPath = nextGeneratedPackageBackupPath(extensionsGeneratedPackagePath);
+  const hadPreviousPackage = existsSync(generatedPackagePath);
+  const hadPreviousExtensionsPackage = existsSync(extensionsGeneratedPackagePath);
+  try {
+    if (hadPreviousPackage) {
+      renameSync(generatedPackagePath, backupPath);
+    } else {
+      rmSync(generatedPackagePath, { force: true, recursive: true });
+    }
+    if (hadPreviousExtensionsPackage) {
+      renameSync(extensionsGeneratedPackagePath, extensionsBackupPath);
+    } else {
+      rmSync(extensionsGeneratedPackagePath, { force: true, recursive: true });
+    }
+    writeGeneratedExtensionsPackage(extensionsGeneratedPackagePath, extensionExportIds);
+    writeGeneratedPackage(generatedPackagePath, sourceItems);
+    const linkedWorkspaces = linkGeneratedWorkflowsPackageIntoWorkspaces(
+      options.workspaceCwds ?? [],
+      generatedPackagePath,
+      extensionsGeneratedPackagePath,
+    );
+    const readModel = await readWorkflowsGeneratedReadModel(generatedPackagePath, { sourceRoot });
+    if (hadPreviousPackage) {
+      rmSync(backupPath, { force: true, recursive: true });
+    }
+    if (hadPreviousExtensionsPackage) {
+      rmSync(extensionsBackupPath, { force: true, recursive: true });
+    }
+    return {
+      ok: true,
+      generatedPackagePath,
+      linkedWorkspaces,
+      diagnostics: [],
+      items: readModel.items,
+    };
+  } catch (error) {
+    rmSync(generatedPackagePath, { force: true, recursive: true });
+    rmSync(extensionsGeneratedPackagePath, { force: true, recursive: true });
+    if (hadPreviousPackage && existsSync(backupPath)) {
+      renameSync(backupPath, generatedPackagePath);
+    }
+    if (hadPreviousExtensionsPackage && existsSync(extensionsBackupPath)) {
+      renameSync(extensionsBackupPath, extensionsGeneratedPackagePath);
+    }
+    throw error;
+  }
 }
 
-async function validateSavedEntries(
-  validationRoot: string,
-  entryPaths: string[],
-): Promise<WorkflowValidationDiagnostic[]> {
-  const diagnostics: WorkflowValidationDiagnostic[] = [];
+function validateUserExtensionSourcesForWorkflowBuild(
+  extensionsRoot: string | undefined,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): void {
+  for (const extensionId of readUserExtensionSourceIds(extensionsRoot)) {
+    const extension = resolveUserExtensionForWorkflowBuild(
+      extensionId,
+      extensionsRoot,
+      diagnostics,
+    );
+    if (!extension) {
+      continue;
+    }
+    const validationError = validateExtensionBuildInput(extension, extensionsRoot);
+    if (validationError) {
+      diagnostics.push({
+        code: "invalid_extension_source",
+        message: String(validationError.error.message),
+        path: stringDiagnosticPath(validationError.error.path) ?? extension.sourceRoot,
+        exportName: extension.id,
+      });
+    }
+  }
+}
 
-  for (const entryPath of entryPaths) {
+async function buildUserExtensionsForWorkflowBuild(
+  options: {
+    agentSettingsStore?: AgentSettingsStore;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    envSecretStore?: ExtensionEnvSecretStore;
+    extensionsBuildRoot?: string;
+    extensionsCliProbe?: SvvyxExtensionsCliProbe;
+    extensionsRoot?: string;
+  },
+  diagnostics: WorkflowsBuildDiagnostic[],
+): Promise<void> {
+  const extensionsRoot = options.extensionsRoot;
+  for (const extensionId of readUserExtensionSourceIds(extensionsRoot)) {
+    const extension = resolveUserExtensionForWorkflowBuild(extensionId, extensionsRoot);
+    if (!extension) {
+      continue;
+    }
+    if (
+      extension.interface !== "svvyx" ||
+      !extension.typescriptApiEnabled ||
+      !extensionBuildIsRequired(extension, extensionsRoot)
+    ) {
+      continue;
+    }
+
     try {
-      const entry = await loadRunnableWorkflowEntryAtPath(validationRoot, entryPath);
-      if (!entry.assetPaths.every((path) => path.startsWith(".svvy/workflows/"))) {
+      const result = await runSvvyxExtensionsCommand({
+        agentSettingsStore: options.agentSettingsStore,
+        buildRoot: options.extensionsBuildRoot,
+        cliProbe: options.extensionsCliProbe,
+        command: `svvyx extensions build ${quoteCommandWord(extension.id)} --json`,
+        cwd: options.cwd,
+        env: options.env,
+        envSecretStore: options.envSecretStore,
+        extensionsRoot,
+      });
+      const buildOutput = result.output;
+      if (!extensionBuildOutputSucceeded(buildOutput)) {
         diagnostics.push({
-          severity: "error",
-          path: entryPath,
-          message:
-            "Saved runnable entries may only declare grouped asset refs under `.svvy/workflows/...`.",
+          code: "extension_build_failed",
+          message: extensionBuildOutputMessage(
+            buildOutput,
+            `Extension ${extension.id} could not be built before Workflows build.`,
+          ),
+          path: extension.sourceRoot,
+          exportName: extension.id,
         });
       }
     } catch (error) {
       diagnostics.push({
-        severity: "error",
-        path: entryPath,
-        message: error instanceof Error ? error.message : "Saved runnable entry validation failed.",
+        code: "extension_build_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : `Extension ${extension.id} could not be built before Workflows build.`,
+        path: extension.sourceRoot,
+        exportName: extension.id,
       });
     }
   }
-
-  return diagnostics;
 }
 
-function dedupeDiagnostics(
-  diagnostics: WorkflowValidationDiagnostic[],
-): WorkflowValidationDiagnostic[] {
-  const seen = new Set<string>();
-  return diagnostics.filter((diagnostic) => {
-    const key = JSON.stringify(diagnostic);
-    if (seen.has(key)) {
-      return false;
+function validateUserExtensionsForWorkflowBuild(
+  extensionsRoot: string | undefined,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): void {
+  for (const extensionId of readUserExtensionSourceIds(extensionsRoot)) {
+    const extension = resolveUserExtensionForWorkflowBuild(
+      extensionId,
+      extensionsRoot,
+      diagnostics,
+    );
+    if (!extension) {
+      continue;
     }
-    seen.add(key);
+
+    const validationError = validateExtensionBuildInput(extension, extensionsRoot);
+    if (validationError) {
+      diagnostics.push({
+        code: "invalid_extension_source",
+        message: String(validationError.error.message),
+        path: stringDiagnosticPath(validationError.error.path) ?? extension.sourceRoot,
+        exportName: extension.id,
+      });
+      continue;
+    }
+
+    if (
+      extension.interface === "svvyx" &&
+      extension.typescriptApiEnabled &&
+      extensionBuildIsRequired(extension, extensionsRoot)
+    ) {
+      diagnostics.push({
+        code: "extension_build_required",
+        message: `Extension ${extension.id} must have a current successful build before Workflows build can validate workflow-agent extension references.`,
+        path: extension.sourceRoot,
+        exportName: extension.id,
+      });
+    }
+  }
+}
+
+function resolveUserExtensionForWorkflowBuild(
+  extensionId: string,
+  extensionsRoot: string | undefined,
+  diagnostics?: WorkflowsBuildDiagnostic[],
+): ReturnType<typeof resolveExtensionRecord> {
+  try {
+    const extension = resolveExtensionRecord(extensionId, extensionsRoot);
+    if (!extension) {
+      diagnostics?.push({
+        code: "invalid_extension_source",
+        message: `Extension ${extensionId} source cannot be resolved.`,
+        path: userExtensionSourcePath(extensionsRoot, extensionId),
+        exportName: extensionId,
+      });
+    }
+    return extension;
+  } catch (error) {
+    diagnostics?.push({
+      code: "invalid_extension_source",
+      message:
+        error instanceof Error ? error.message : `Extension ${extensionId} source cannot be read.`,
+      path: userExtensionSourcePath(extensionsRoot, extensionId),
+      exportName: extensionId,
+    });
+    return null;
+  }
+}
+
+function readUserExtensionSourceIds(extensionsRoot: string | undefined): string[] {
+  const sourceRoot = join(extensionsRoot ?? defaultExtensionsRoot(), "sources", "user");
+  if (!existsSync(sourceRoot) || !statSync(sourceRoot).isDirectory()) {
+    return [];
+  }
+  return readdirSync(sourceRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .toSorted();
+}
+
+function userExtensionSourcePath(extensionsRoot: string | undefined, extensionId: string): string {
+  return join(extensionsRoot ?? defaultExtensionsRoot(), "sources", "user", extensionId);
+}
+
+function extensionBuildIsRequired(
+  extension: NonNullable<ReturnType<typeof resolveExtensionRecord>>,
+  extensionsRoot: string | undefined,
+): boolean {
+  const sourceFingerprint = extension.extensionBuildFingerprint;
+  if (!sourceFingerprint) {
+    return false;
+  }
+  const manifestPath = join(
+    extensionsRoot ?? defaultExtensionsRoot(),
+    "builds",
+    "extensions",
+    extension.id,
+    "current",
+    "manifest.json",
+  );
+  if (!existsSync(manifestPath)) {
     return true;
+  }
+  const manifest = readJsonObjectOrNull(manifestPath);
+  return (
+    !manifest ||
+    manifest.schemaVersion !== 1 ||
+    manifest.extensionId !== extension.id ||
+    manifest.interface !== extension.interface ||
+    manifest.sourceFingerprint !== sourceFingerprint
+  );
+}
+
+function extensionBuildOutputSucceeded(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isRecord(value.build) &&
+    value.build.status === "success"
+  );
+}
+
+function extensionBuildOutputMessage(value: unknown, fallback: string): string {
+  if (isRecord(value)) {
+    const error = value.error;
+    if (isRecord(error) && typeof error.message === "string") {
+      return error.message;
+    }
+  }
+  return fallback;
+}
+
+function quoteCommandWord(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function readJsonObjectOrNull(path: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function stringDiagnosticPath(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function defaultExtensionsRoot(): string {
+  return join(homedir(), ".config", "svvy", "extensions");
+}
+
+function nextGeneratedPackageBackupPath(generatedPackagePath: string): string {
+  const parent = dirname(generatedPackagePath);
+  const name = basename(generatedPackagePath);
+  for (let index = 0; index < 100; index += 1) {
+    const backupPath = join(parent, `.${name}.previous-${Date.now()}-${index}`);
+    if (!existsSync(backupPath)) return backupPath;
+  }
+  throw workflowLibraryError(
+    "build_failed",
+    `Unable to allocate Workflows generated package backup path for ${generatedPackagePath}`,
+    generatedPackagePath,
+  );
+}
+
+export function ensureWorkflowsPackageLink(input: {
+  extensionsGeneratedPackagePath?: string;
+  generatedPackagePath?: string;
+  workspaceCwd: string;
+}): boolean {
+  return ensureGeneratedPackageLink({
+    generatedPackagePath: input.generatedPackagePath ?? getWorkflowsGeneratedPackagePath(),
+    packageName: "workflows",
+    workspaceCwd: input.workspaceCwd,
   });
 }
 
-async function validateSavedWorkflowLibrary(
-  workspaceRoot: string,
-  changedPath: string,
-): Promise<WorkflowWriteValidationResult | null> {
-  const normalizedPath = relativeWorkspacePath(workspaceRoot, join(workspaceRoot, changedPath));
-  if (!normalizedPath.startsWith(".svvy/workflows/")) {
-    return null;
-  }
-
-  const diagnostics: WorkflowValidationDiagnostic[] = [];
-  const promptPaths = listWorkflowAssets(workspaceRoot, { kind: "prompt", scope: "saved" }).map(
-    (asset) => asset.path,
-  );
-  const definitionPaths = listWorkflowAssets(workspaceRoot, {
-    kind: "definition",
-    scope: "saved",
-  }).map((asset) => asset.path);
-  const componentPaths = listWorkflowAssets(workspaceRoot, {
-    kind: "component",
-    scope: "saved",
-  }).map((asset) => asset.path);
-  const entryPaths = listSavedEntryFiles(workspaceRoot);
-
-  for (const path of promptPaths) {
-    diagnostics.push(...validatePromptAsset(workspaceRoot, path));
-  }
-  for (const path of definitionPaths) {
-    diagnostics.push(...validateSourceAssetHeader(workspaceRoot, path, "definition"));
-  }
-  for (const path of componentPaths) {
-    diagnostics.push(...validateSourceAssetHeader(workspaceRoot, path, "component"));
-  }
-
-  const validationWorkspace = createValidationWorkspace(workspaceRoot);
-  try {
-    diagnostics.push(
-      ...typecheckTypescriptAssets(validationWorkspace.root, [
-        ...definitionPaths,
-        ...componentPaths,
-        ...entryPaths,
-      ]),
-    );
-    diagnostics.push(...(await validateSavedEntries(validationWorkspace.root, entryPaths)));
-  } finally {
-    validationWorkspace.cleanup();
-  }
-
-  const dedupedDiagnostics = dedupeDiagnostics(diagnostics);
-  return {
-    checked: true,
-    ok: !dedupedDiagnostics.some((diagnostic) => diagnostic.severity === "error"),
-    path: normalizedPath,
-    diagnostics: dedupedDiagnostics,
-  };
+export function ensureExtensionsPackageLink(input: {
+  extensionsGeneratedPackagePath?: string;
+  generatedPackagePath?: string;
+  workspaceCwd: string;
+}): boolean {
+  return ensureGeneratedPackageLink({
+    generatedPackagePath: effectiveExtensionsGeneratedPackagePath(input),
+    packageName: "extensions",
+    workspaceCwd: input.workspaceCwd,
+  });
 }
 
-function mapDiagnostic(
-  diagnostic: WorkflowValidationDiagnostic,
-): WorkspaceSavedWorkflowLibraryDiagnostic {
-  return {
-    severity: diagnostic.severity,
-    message: diagnostic.message,
-    path: diagnostic.path,
-    line: diagnostic.line,
-    column: diagnostic.column,
-    code: diagnostic.code,
-  };
+export function ensureWorkflowsPackageLinks(input: {
+  extensionsGeneratedPackagePath?: string;
+  generatedPackagePath?: string;
+  workspaceCwd: string;
+}): boolean {
+  const workflowsLinked = ensureWorkflowsPackageLink(input);
+  const extensionsLinked = ensureExtensionsPackageLink(input);
+  return workflowsLinked || extensionsLinked;
 }
 
-function validationStatus(
-  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[],
-): WorkspaceSavedWorkflowLibraryItem["validationStatus"] {
-  if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
-    return "error";
+function ensureGeneratedPackageLink(input: {
+  generatedPackagePath: string;
+  packageName: "extensions" | "workflows";
+  workspaceCwd: string;
+}): boolean {
+  const smithersRoot = join(input.workspaceCwd, ".smithers");
+  if (!existsSync(smithersRoot) || !statSync(smithersRoot).isDirectory()) {
+    return false;
   }
-  if (diagnostics.some((diagnostic) => diagnostic.severity === "warning")) {
-    return "warning";
+  if (
+    !existsSync(input.generatedPackagePath) ||
+    !statSync(input.generatedPackagePath).isDirectory()
+  ) {
+    return false;
   }
-  return "valid";
-}
-
-function diagnosticsForPath(
-  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[],
-  path: string,
-): WorkspaceSavedWorkflowLibraryDiagnostic[] {
-  return diagnostics.filter((diagnostic) => diagnostic.path === path);
-}
-
-function schemaPreview(schema: z.ZodTypeAny | undefined): string | undefined {
-  if (!schema) {
-    return undefined;
-  }
-  return JSON.stringify(z.toJSONSchema(schema as any, { io: "input" }), null, 2);
-}
-
-async function readSavedWorkflowLibrary(
-  workspaceRoot: string,
-  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
-): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
-  const savedValidation = await validateSavedWorkflowLibrary(workspaceRoot, ".svvy/workflows");
-  const diagnostics = (savedValidation?.diagnostics ?? []).map(mapDiagnostic);
-  const items: WorkspaceSavedWorkflowLibraryItem[] = [];
-
-  for (const asset of listWorkflowAssets(workspaceRoot, { scope: "saved" })) {
-    const itemDiagnostics = diagnosticsForPath(diagnostics, asset.path);
-    items.push({
-      id: `asset:${asset.path}`,
-      kind: asset.kind,
-      scope: "saved",
-      title: asset.title,
-      summary: asset.summary,
-      path: asset.path,
-      sourcePath: asset.path,
-      sourcePreview: readSourcePreview(workspaceRoot, asset.path),
-      validationStatus: validationStatus(itemDiagnostics),
-      diagnostics: itemDiagnostics,
-    });
-  }
-
-  try {
-    const entries = await loadRunnableWorkflowRegistry(workspaceRoot);
-    for (const entry of entries) {
-      const itemDiagnostics = diagnosticsForPath(diagnostics, entry.entryPath);
-      items.push({
-        id: `entry:${entry.entryPath}`,
-        kind: "entry",
-        scope: entry.sourceScope,
-        title: entry.label,
-        label: entry.label,
-        summary: entry.summary,
-        path: entry.entryPath,
-        sourcePath: entry.entryPath,
-        sourcePreview: readSourcePreview(workspaceRoot, entry.entryPath),
-        validationStatus:
-          entry.sourceScope === "saved" ? validationStatus(itemDiagnostics) : "unknown",
-        diagnostics: entry.sourceScope === "saved" ? itemDiagnostics : [],
-        workflowId: entry.workflowId,
-        productKind: entry.productKind,
-        launchSchema: schemaPreview(entry.launchSchema),
-        resultSchema: schemaPreview(entry.resultSchema),
-        groupedAssetRefs: {
-          definitions: entry.definitionPaths,
-          prompts: entry.promptPaths,
-          components: entry.componentPaths,
-        },
-        assetPaths: entry.assetPaths,
-      });
+  const scopeRoot = join(smithersRoot, "node_modules", "@svvy");
+  const linkPath = join(scopeRoot, input.packageName);
+  mkdirSync(scopeRoot, { recursive: true });
+  if (existsSync(linkPath)) {
+    const existing = lstatSync(linkPath);
+    if (existing.isSymbolicLink()) {
+      unlinkSync(linkPath);
+    } else {
+      throw workflowLibraryError(
+        "link_failed",
+        `Cannot replace non-symlink ${input.packageName} package path: ${linkPath}`,
+        linkPath,
+      );
     }
-  } catch (error) {
-    diagnostics.push({
-      severity: "error",
-      message:
-        error instanceof Error ? error.message : "Unable to load runnable workflow registry.",
-    });
   }
+  symlinkSync(input.generatedPackagePath, linkPath, "dir");
+  return true;
+}
 
-  const artifactRoot = join(workspaceRoot, ".svvy", "artifacts", "workflows");
-  for (const artifactPath of existsSync(artifactRoot)
-    ? readdirSync(artifactRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => join(artifactRoot, entry.name))
-        .toSorted()
-    : []) {
-    const path = relativeWorkspacePath(workspaceRoot, artifactPath);
-    const artifactWorkflowId = basename(artifactPath);
-    const files = walkFiles(artifactPath).filter((file) =>
-      [".ts", ".tsx", ".mdx", ".json"].includes(extname(file)),
+function linkGeneratedWorkflowsPackageIntoWorkspaces(
+  workspaceCwds: readonly string[],
+  generatedPackagePath: string,
+  extensionsGeneratedPackagePath: string,
+): string[] {
+  const linked: string[] = [];
+  for (const workspaceCwd of new Set(workspaceCwds)) {
+    if (
+      ensureWorkflowsPackageLinks({
+        extensionsGeneratedPackagePath,
+        generatedPackagePath,
+        workspaceCwd,
+      })
+    ) {
+      linked.push(workspaceCwd);
+    }
+  }
+  return linked;
+}
+
+export function writeWorkflowSourceItem(input: {
+  exportName: string;
+  kind: WorkspaceWorkflowsGeneratedKind;
+  overwrite?: boolean;
+  sourceCode: string;
+  sourceRoot?: string;
+  sourceExtension?: string;
+}): { sourcePath: string } {
+  assertValidExportName(input.exportName);
+  const sourceRoot = input.sourceRoot ?? getWorkflowsSourceRoot();
+  const sourcePath = workflowSourcePath({
+    exportName: input.exportName,
+    kind: input.kind,
+    sourceExtension: input.sourceExtension,
+    sourceRoot,
+  });
+  if (existsSync(sourcePath) && !input.overwrite) {
+    throw workflowLibraryError(
+      "target_exists",
+      `Workflows source target already exists: ${sourcePath}`,
+      sourcePath,
+      input.exportName,
     );
-    const entryCount = files.filter((file) => file.includes("/entries/")).length;
-    const assetCount = files.filter((file) =>
-      ["/definitions/", "/prompts/", "/components/"].some((segment) => file.includes(segment)),
-    ).length;
-    items.push({
-      id: `artifact-workflow:${artifactWorkflowId}`,
-      kind: "artifact-workflow",
-      scope: "artifact",
-      title: artifactWorkflowId,
-      summary: `${entryCount} entries, ${assetCount} assets`,
-      path,
-      sourcePath: path,
-      sourcePreview: readSourcePreview(workspaceRoot, `${path}/metadata.json`),
-      validationStatus: "unknown",
-      diagnostics: [],
-      artifactWorkflowId,
-      entryCount,
-      assetCount,
-    });
+  }
+  mkdirSync(dirname(sourcePath), { recursive: true });
+  writeFileSync(sourcePath, input.sourceCode);
+  return { sourcePath };
+}
+
+export function getWorkflowSourcePath(input: {
+  exportName: string;
+  kind: WorkspaceWorkflowsGeneratedKind;
+  sourceExtension?: string;
+  sourceRoot?: string;
+}): string {
+  assertValidExportName(input.exportName);
+  return workflowSourcePath({
+    exportName: input.exportName,
+    kind: input.kind,
+    sourceExtension: input.sourceExtension,
+    sourceRoot: input.sourceRoot ?? getWorkflowsSourceRoot(),
+  });
+}
+
+export function copyWorkflowSourceItem(input: {
+  exportName: string;
+  fromPath: string;
+  kind: Exclude<WorkspaceWorkflowsGeneratedKind, "agent">;
+  overwrite?: boolean;
+  sourceRoot?: string;
+}): { sourcePath: string } {
+  assertValidExportName(input.exportName);
+  const extension = extname(input.fromPath);
+  validateSourceExtension(input.kind, extension, input.fromPath);
+  const sourceRoot = input.sourceRoot ?? getWorkflowsSourceRoot();
+  const sourcePath = workflowSourcePath({
+    exportName: input.exportName,
+    kind: input.kind,
+    sourceExtension: extension,
+    sourceRoot,
+  });
+  if (existsSync(sourcePath) && !input.overwrite) {
+    throw workflowLibraryError(
+      "target_exists",
+      `Workflows source target already exists: ${sourcePath}`,
+      sourcePath,
+      input.exportName,
+    );
+  }
+  mkdirSync(dirname(sourcePath), { recursive: true });
+  copyFileSync(input.fromPath, sourcePath);
+  return { sourcePath };
+}
+
+export function extractWorkflowSourceExportItem(input: {
+  exportName: string;
+  fromPath: string;
+  kind: "component" | "workflow";
+  overwrite?: boolean;
+  sourceExportName: string;
+  sourceRoot?: string;
+}): { sourcePath: string } {
+  assertValidExportName(input.exportName);
+  assertValidExportName(input.sourceExportName);
+  const extension = extname(input.fromPath);
+  validateSourceExtension(input.kind, extension, input.fromPath);
+  const sourceRoot = input.sourceRoot ?? getWorkflowsSourceRoot();
+  const sourcePath = workflowSourcePath({
+    exportName: input.exportName,
+    kind: input.kind,
+    sourceExtension: extension,
+    sourceRoot,
+  });
+  if (existsSync(sourcePath) && !input.overwrite) {
+    throw workflowLibraryError(
+      "target_exists",
+      `Workflows source target already exists: ${sourcePath}`,
+      sourcePath,
+      input.exportName,
+    );
+  }
+  const sourceCode = extractNamedWorkflowSourceExport({
+    exportName: input.exportName,
+    fromPath: input.fromPath,
+    sourceExportName: input.sourceExportName,
+  });
+  mkdirSync(dirname(sourcePath), { recursive: true });
+  writeFileSync(sourcePath, sourceCode);
+  return { sourcePath };
+}
+
+export function extractWorkflowAgentParametersFromSource(input: {
+  exportName?: string;
+  path: string;
+  sourceRoot?: string;
+}): { exportName: string; parameters: Record<string, unknown> } {
+  const source = readFileSync(input.path, "utf8");
+  const sourceFile = ts.createSourceFile(input.path, source, ts.ScriptTarget.Latest, true);
+  const staticContext: WorkflowAgentStaticContext = {
+    defineTaskAgentNames: readImportedDefineTaskAgentNames(sourceFile),
+    sourceFile,
+    sourceRoot: input.sourceRoot ?? getWorkflowsSourceRoot(),
+  };
+  const matches: Array<{ exportName: string; parameters: Record<string, unknown> }> = [];
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement) || !hasExportModifier(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+      if (input.exportName && declaration.name.text !== input.exportName) continue;
+      const initializer = unwrapLiteralExpression(declaration.initializer);
+      if (
+        !ts.isCallExpression(initializer) ||
+        !isDefineTaskAgentCall(initializer.expression, staticContext)
+      ) {
+        continue;
+      }
+      const argument = initializer.arguments[0];
+      if (!argument) {
+        throw workflowLibraryError(
+          "invalid_agent_source",
+          `Workflow agent export ${declaration.name.text} must pass a literal object to defineTaskAgent.`,
+          input.path,
+          declaration.name.text,
+        );
+      }
+      const literal = unwrapLiteralExpression(argument);
+      if (!ts.isObjectLiteralExpression(literal)) {
+        throw workflowLibraryError(
+          "invalid_agent_source",
+          `Workflow agent export ${declaration.name.text} must pass a literal object to defineTaskAgent.`,
+          input.path,
+          declaration.name.text,
+        );
+      }
+      const parameters = literalExpressionToStaticValue(literal, staticContext);
+      if (!isRecord(parameters)) {
+        throw workflowLibraryError(
+          "invalid_agent_source",
+          `Workflow agent export ${declaration.name.text} must resolve to an object.`,
+          input.path,
+          declaration.name.text,
+        );
+      }
+      matches.push({ exportName: declaration.name.text, parameters });
+    }
   }
 
+  if (input.exportName && matches.length === 0) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      `No static defineTaskAgent export named ${input.exportName} found.`,
+      input.path,
+      input.exportName,
+    );
+  }
+  if (matches.length !== 1) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      matches.length === 0
+        ? "No static defineTaskAgent export found."
+        : "Multiple static defineTaskAgent exports found; pass --export.",
+      input.path,
+    );
+  }
+  return matches[0]!;
+}
+
+export async function readWorkflowsGeneratedReadModel(
+  generatedPackagePath = getWorkflowsGeneratedPackagePath(),
+  options: { sourceRoot?: string } = {},
+): Promise<WorkspaceWorkflowsGeneratedReadModel> {
+  const sourceRoot = options.sourceRoot ?? getWorkflowsSourceRoot();
+  const items = readGeneratedExports(generatedPackagePath, sourceRoot);
   const counts = {
-    definition: 0,
-    prompt: 0,
+    agent: 0,
     component: 0,
-    entry: 0,
-    "artifact-workflow": 0,
-  } satisfies Record<WorkspaceSavedWorkflowLibraryItemKind, number>;
+    prompt: 0,
+    workflow: 0,
+  } satisfies Record<WorkspaceWorkflowsGeneratedKind, number>;
   for (const item of items) {
     counts[item.kind] += 1;
   }
-
   return {
-    rootPath: ".svvy/workflows",
-    artifactRootPath: ".svvy/artifacts/workflows",
-    items: items.toSorted(
-      (left, right) =>
-        left.kind.localeCompare(right.kind) ||
-        left.scope.localeCompare(right.scope) ||
-        left.path.localeCompare(right.path),
-    ),
+    generatedPackagePath,
+    items,
     counts,
-    diagnostics,
-    preferredExternalEditor: settings.preferredExternalEditor as never,
-    customExternalEditorCommand: settings.customExternalEditorCommand,
-    updatedAt: new Date().toISOString(),
+    updatedAt: readGeneratedUpdatedAt(generatedPackagePath),
   };
 }
 
-function assertSavedWorkflowDeletionPath(workspaceRoot: string, path: string): string {
-  const normalizedPath = relativeWorkspacePath(workspaceRoot, join(workspaceRoot, path));
-  if (
-    !normalizedPath.startsWith(".svvy/workflows/definitions/") &&
-    !normalizedPath.startsWith(".svvy/workflows/prompts/") &&
-    !normalizedPath.startsWith(".svvy/workflows/components/") &&
-    !normalizedPath.startsWith(".svvy/workflows/entries/")
-  ) {
-    throw new Error(
-      "Only saved workflow definitions, prompts, components, and entries can be deleted.",
+function readGeneratedExports(
+  generatedPackagePath: string,
+  sourceRoot: string,
+): WorkspaceWorkflowsGeneratedExport[] {
+  if (!existsSync(generatedPackagePath)) {
+    return [];
+  }
+  const manifest = readGeneratedManifest(generatedPackagePath);
+  return Object.entries(WORKFLOW_NAMESPACE_BY_DIR).flatMap(([dirName, meta]) => {
+    const namespaceRoot = join(generatedPackagePath, dirName);
+    if (!existsSync(namespaceRoot)) {
+      return [];
+    }
+    return walkFiles(namespaceRoot)
+      .filter((path) => /\.(ts|tsx|js|jsx|mdx|json)$/.test(path))
+      .filter((path) => basename(path, extname(path)) !== "index")
+      .flatMap((path) => readExportRows(generatedPackagePath, sourceRoot, path, meta, manifest));
+  });
+}
+
+function readExportRows(
+  generatedPackagePath: string,
+  sourceRoot: string,
+  generatedPath: string,
+  meta: { kind: WorkspaceWorkflowsGeneratedKind; namespace: WorkspaceWorkflowsGeneratedNamespace },
+  manifest: Map<string, string>,
+): WorkspaceWorkflowsGeneratedExport[] {
+  const generatedCode = readFileSync(generatedPath, "utf8");
+  const exportNames = extractExportNames(generatedCode);
+  return exportNames.map((exportName) => ({
+    id: `${meta.namespace}.${exportName}`,
+    kind: meta.kind,
+    namespace: meta.namespace,
+    exportName,
+    qualifiedName: `${meta.namespace}.${exportName}`,
+    sourcePath:
+      manifest.get(generatedPath) ??
+      inferSourcePath(generatedPackagePath, sourceRoot, generatedPath, meta.kind),
+    generatedPath,
+    generatedCode,
+    agentParameters: meta.kind === "agent" ? readAgentParameters(generatedCode, exportName) : null,
+    agentProfileId: meta.kind === "agent" ? exportName : null,
+  }));
+}
+
+function extractExportNames(source: string): string[] {
+  const names = new Set<string>();
+  for (const match of source.matchAll(
+    /\bexport\s+(?:const|let|var|(?:async\s+)?function|class)\s+([A-Za-z_$][\w$]*)/g,
+  )) {
+    names.add(match[1]!);
+  }
+  for (const match of source.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
+    for (const raw of match[1]!.split(",")) {
+      const [left, right] = raw.split(/\s+as\s+/).map((part) => part.trim());
+      const name = right || left;
+      if (name && !name.startsWith("type ")) {
+        names.add(name);
+      }
+    }
+  }
+  return [...names].toSorted();
+}
+
+function inferSourcePath(
+  generatedPackagePath: string,
+  sourceRoot: string,
+  generatedPath: string,
+  kind: WorkspaceWorkflowsGeneratedKind,
+): string {
+  const relativeGenerated = relative(generatedPackagePath, generatedPath).replace(/\\/g, "/");
+  const withoutNamespace = relativeGenerated.split("/").slice(1).join("/");
+  const sourceDir = sourceDirForKind(kind);
+  const sourceRelative =
+    kind === "agent" ? agentSourceRelativePath(withoutNamespace) : withoutNamespace;
+  return join(sourceRoot, sourceDir, sourceRelative).replace(/\\/g, "/");
+}
+
+function sourceDirForKind(kind: WorkspaceWorkflowsGeneratedKind): string {
+  if (kind === "agent") return "agents";
+  if (kind === "component") return "components";
+  if (kind === "prompt") return "prompts";
+  return "workflows";
+}
+
+function agentSourceRelativePath(generatedRelativePath: string): string {
+  const extension = extname(generatedRelativePath);
+  const base = basename(generatedRelativePath, extension);
+  const parent = generatedRelativePath.slice(
+    0,
+    generatedRelativePath.length - basename(generatedRelativePath).length,
+  );
+  return `${parent}${base}.agent.json`;
+}
+
+function readAgentParameters(source: string, exportName: string): Record<string, unknown> | null {
+  const sourceFile = ts.createSourceFile(
+    "generated-agent.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== exportName) continue;
+      if (!declaration.initializer) return null;
+      const initializer = unwrapLiteralExpression(declaration.initializer);
+      if (!ts.isObjectLiteralExpression(initializer)) return null;
+      const value = literalExpressionToValue(initializer, sourceFile);
+      return isRecord(value) ? value : null;
+    }
+  }
+  return null;
+}
+
+function extractNamedWorkflowSourceExport(input: {
+  exportName: string;
+  fromPath: string;
+  sourceExportName: string;
+}): string {
+  const source = readFileSync(input.fromPath, "utf8");
+  const sourceFile = ts.createSourceFile(input.fromPath, source, ts.ScriptTarget.Latest, true);
+  const retainedStatements: string[] = [];
+  const skippedExportNames: string[] = [];
+  let selectedStatement: string | null = null;
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      rejectRelativeWorkflowSourceImport(statement, input.fromPath, input.sourceExportName);
+      retainedStatements.push(statement.getText(sourceFile));
+      continue;
+    }
+    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+      retainedStatements.push(stripExportModifier(statement.getText(sourceFile)));
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      const selectedDeclaration = statement.declarationList.declarations.find(
+        (declaration) =>
+          ts.isIdentifier(declaration.name) && declaration.name.text === input.sourceExportName,
+      );
+      if (selectedDeclaration && hasExportModifier(statement)) {
+        if (statement.declarationList.declarations.length !== 1) {
+          throw workflowLibraryError(
+            "invalid_source_export",
+            `Workflow source export ${input.sourceExportName} must be the only declaration in its statement.`,
+            input.fromPath,
+            input.sourceExportName,
+          );
+        }
+        selectedStatement = renderSelectedVariableExport({
+          declaration: selectedDeclaration,
+          declarationList: statement.declarationList,
+          exportName: input.exportName,
+          sourceExportName: input.sourceExportName,
+          sourceFile,
+        });
+        continue;
+      }
+      throw ambiguousWorkflowSourceExport(input.fromPath, input.sourceExportName, statement);
+    }
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      if (statement.name?.text === input.sourceExportName && hasExportModifier(statement)) {
+        if (hasDefaultModifier(statement)) {
+          throw workflowLibraryError(
+            "invalid_source_export",
+            `Workflow source export ${input.sourceExportName} must be a named export, not a default export.`,
+            input.fromPath,
+            input.sourceExportName,
+          );
+        }
+        selectedStatement = renameSelectedNamedExport({
+          exportName: input.exportName,
+          sourceExportName: input.sourceExportName,
+          sourceFile,
+          statement,
+        });
+        continue;
+      }
+      if (statement.name && hasExportModifier(statement)) {
+        skippedExportNames.push(statement.name.text);
+        continue;
+      }
+      throw ambiguousWorkflowSourceExport(input.fromPath, input.sourceExportName, statement);
+    }
+    if (ts.isEmptyStatement(statement)) continue;
+    throw ambiguousWorkflowSourceExport(input.fromPath, input.sourceExportName, statement);
+  }
+
+  if (!selectedStatement) {
+    throw workflowLibraryError(
+      "invalid_source_export",
+      `No extractable source export named ${input.sourceExportName} found.`,
+      input.fromPath,
+      input.sourceExportName,
     );
   }
-  return normalizedPath;
+  for (const skippedName of skippedExportNames) {
+    if (new RegExp(`\\b${skippedName}\\b`).test(selectedStatement)) {
+      throw workflowLibraryError(
+        "invalid_source_export",
+        `Workflow source export ${input.sourceExportName} references skipped export ${skippedName}.`,
+        input.fromPath,
+        input.sourceExportName,
+      );
+    }
+  }
+
+  return [...retainedStatements, selectedStatement, ""].join("\n\n");
 }
 
-export function createWorkflowLibrary(
-  workspaceRoot: string,
-  dependencies: WorkflowLibraryDependencies = {},
-): WorkflowLibrary {
-  return {
-    listAssets: (input) => listWorkflowAssets(workspaceRoot, input),
-    listModels: () => listWorkflowModels(dependencies),
-    readSavedWorkflowLibrary: async () =>
-      await readSavedWorkflowLibrary(workspaceRoot, {
-        preferredExternalEditor: "system",
-        customExternalEditorCommand: "",
-      }),
-    deleteSavedWorkflowLibraryItem: async (path) => {
-      const normalizedPath = assertSavedWorkflowDeletionPath(workspaceRoot, path);
-      rmSync(join(workspaceRoot, normalizedPath), { force: true, recursive: true });
-      return await readSavedWorkflowLibrary(workspaceRoot, {
-        preferredExternalEditor: "system",
-        customExternalEditorCommand: "",
+function renderSelectedVariableExport(input: {
+  declaration: ts.VariableDeclaration;
+  declarationList: ts.VariableDeclarationList;
+  exportName: string;
+  sourceExportName: string;
+  sourceFile: ts.SourceFile;
+}): string {
+  if (!ts.isIdentifier(input.declaration.name) || !input.declaration.initializer) {
+    throw workflowLibraryError(
+      "invalid_source_export",
+      "Workflow source variable exports must use named initialized declarations.",
+      input.sourceFile.fileName,
+    );
+  }
+  const declarationKind =
+    input.declarationList.flags & ts.NodeFlags.Const
+      ? "const"
+      : input.declarationList.flags & ts.NodeFlags.Let
+        ? "let"
+        : "var";
+  const typeText = input.declaration.type
+    ? `: ${input.declaration.type.getText(input.sourceFile)}`
+    : "";
+  if (
+    input.exportName !== input.sourceExportName &&
+    identifierAppearsInNode(input.declaration.initializer, input.sourceExportName)
+  ) {
+    throw workflowLibraryError(
+      "invalid_source_export",
+      `Workflow source export ${input.sourceExportName} references itself and cannot be renamed safely.`,
+      input.sourceFile.fileName,
+      input.sourceExportName,
+    );
+  }
+  return [
+    `export ${declarationKind} ${input.exportName}${typeText} = ${input.declaration.initializer.getText(
+      input.sourceFile,
+    )};`,
+  ].join("\n");
+}
+
+function renameSelectedNamedExport(input: {
+  exportName: string;
+  sourceExportName: string;
+  sourceFile: ts.SourceFile;
+  statement: ts.ClassDeclaration | ts.FunctionDeclaration;
+}): string {
+  const bodyNodes = ts.isFunctionDeclaration(input.statement)
+    ? input.statement.body
+      ? [input.statement.body]
+      : []
+    : Array.from(input.statement.members);
+  if (
+    input.exportName !== input.sourceExportName &&
+    bodyNodes.some((node) => identifierAppearsInNode(node, input.sourceExportName))
+  ) {
+    throw workflowLibraryError(
+      "invalid_source_export",
+      `Workflow source export ${input.sourceExportName} references itself and cannot be renamed safely.`,
+      input.sourceFile.fileName,
+      input.sourceExportName,
+    );
+  }
+  const text = input.statement.getText(input.sourceFile);
+  const declarationKeyword =
+    input.statement.kind === ts.SyntaxKind.ClassDeclaration ? "class" : "function";
+  return text.replace(
+    new RegExp(`\\b${declarationKeyword}\\s+${input.sourceExportName}\\b`),
+    `${declarationKeyword} ${input.exportName}`,
+  );
+}
+
+function stripExportModifier(text: string): string {
+  return text.replace(/^export\s+/, "");
+}
+
+function rejectRelativeWorkflowSourceImport(
+  statement: ts.ImportDeclaration,
+  path: string,
+  exportName: string,
+): void {
+  if (!ts.isStringLiteral(statement.moduleSpecifier)) return;
+  if (!statement.moduleSpecifier.text.startsWith(".")) return;
+  throw workflowLibraryError(
+    "invalid_source_export",
+    `Workflow source export ${exportName} cannot be extracted safely because relative imports change meaning after relocation.`,
+    path,
+    exportName,
+  );
+}
+
+function identifierAppearsInNode(node: ts.Node, identifierName: string): boolean {
+  let found = false;
+  const visit = (child: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(child) && child.text === identifierName) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return found;
+}
+
+function ambiguousWorkflowSourceExport(
+  path: string,
+  exportName: string,
+  statement: ts.Statement,
+): WorkflowLibraryError {
+  return workflowLibraryError(
+    "invalid_source_export",
+    `Workflow source export ${exportName} cannot be extracted safely because the source contains another runtime top-level statement: ${statement.getText().slice(0, 80)}`,
+    path,
+    exportName,
+  );
+}
+
+function unwrapLiteralExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function literalExpressionToValue(expression: ts.Expression, sourceFile: ts.SourceFile): unknown {
+  const current = unwrapLiteralExpression(expression);
+  if (ts.isStringLiteralLike(current)) return current.text;
+  if (ts.isNumericLiteral(current)) return Number(current.text);
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (current.kind === ts.SyntaxKind.NullKeyword) return null;
+  if (ts.isArrayLiteralExpression(current)) {
+    return current.elements.map((element) => literalExpressionToValue(element, sourceFile));
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    const record: Record<string, unknown> = {};
+    for (const property of current.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const name = propertyNameToString(property.name);
+      if (!name) continue;
+      record[name] = literalExpressionToValue(property.initializer, sourceFile);
+    }
+    return record;
+  }
+  const extensionId = extensionReferenceToId(current);
+  if (extensionId) return extensionId;
+  if (ts.isIdentifier(current) || ts.isPropertyAccessExpression(current)) {
+    return current.getText(sourceFile);
+  }
+  return current.getText(sourceFile);
+}
+
+type WorkflowAgentStaticContext = {
+  defineTaskAgentNames: ReadonlySet<string>;
+  sourceFile: ts.SourceFile;
+  sourceRoot: string;
+};
+
+function literalExpressionToStaticValue(
+  expression: ts.Expression,
+  context: WorkflowAgentStaticContext,
+): unknown {
+  const current = unwrapLiteralExpression(expression);
+  if (ts.isStringLiteralLike(current)) return current.text;
+  if (ts.isNumericLiteral(current)) return Number(current.text);
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (current.kind === ts.SyntaxKind.NullKeyword) return null;
+  if (ts.isArrayLiteralExpression(current)) {
+    return current.elements.map((element) => literalExpressionToStaticValue(element, context));
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    const record: Record<string, unknown> = {};
+    for (const property of current.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        Object.assign(record, resolveWorkflowAgentSpread(property.expression, context));
+        continue;
+      }
+      if (!ts.isPropertyAssignment(property)) {
+        throw workflowLibraryError(
+          "invalid_agent_source",
+          "Workflow agent source must use static property assignments.",
+        );
+      }
+      const name = propertyNameToString(property.name);
+      if (!name) {
+        throw workflowLibraryError(
+          "invalid_agent_source",
+          "Workflow agent source must use static property names.",
+        );
+      }
+      record[name] = literalExpressionToStaticValue(property.initializer, context);
+    }
+    return record;
+  }
+  const extensionId = extensionReferenceToId(current);
+  if (extensionId) return extensionId;
+  throw workflowLibraryError(
+    "invalid_agent_source",
+    `Workflow agent source contains dynamic expression: ${current.getText(context.sourceFile)}`,
+  );
+}
+
+function extensionReferenceToId(expression: ts.Expression): string | null {
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "Extensions"
+  ) {
+    return expression.name.text;
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "Extensions" &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    return expression.argumentExpression.text;
+  }
+  return null;
+}
+
+function resolveWorkflowAgentSpread(
+  expression: ts.Expression,
+  context: WorkflowAgentStaticContext,
+): Record<string, unknown> {
+  const current = unwrapLiteralExpression(expression);
+  if (
+    !ts.isPropertyAccessExpression(current) ||
+    !ts.isIdentifier(current.expression) ||
+    current.expression.text !== "Agents"
+  ) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      `Workflow agent source contains unresolved spread: ${current.getText(context.sourceFile)}`,
+    );
+  }
+
+  const sourcePath = getWorkflowSourcePath({
+    exportName: current.name.text,
+    kind: "agent",
+    sourceExtension: ".agent.json",
+    sourceRoot: context.sourceRoot,
+  });
+  if (!existsSync(sourcePath)) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      `Workflow agent source references unknown saved agent ${current.getText(context.sourceFile)}.`,
+      sourcePath,
+      current.name.text,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(sourcePath, "utf8")) as unknown;
+  } catch (error) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      error instanceof Error
+        ? error.message
+        : "Workflow agent saved agent source is not valid JSON.",
+      sourcePath,
+      current.name.text,
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw workflowLibraryError(
+      "invalid_agent_source",
+      `Workflow agent source references invalid saved agent ${current.getText(context.sourceFile)}.`,
+      sourcePath,
+      current.name.text,
+    );
+  }
+  return parsed;
+}
+
+function hasExportModifier(statement: ts.Statement): boolean {
+  return (
+    ts.canHaveModifiers(statement) &&
+    ts
+      .getModifiers(statement)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+  );
+}
+
+function hasDefaultModifier(statement: ts.Statement): boolean {
+  return (
+    ts.canHaveModifiers(statement) &&
+    ts
+      .getModifiers(statement)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword) === true
+  );
+}
+
+function isDefineTaskAgentCall(
+  expression: ts.Expression,
+  context: WorkflowAgentStaticContext,
+): boolean {
+  if (ts.isIdentifier(expression)) {
+    return context.defineTaskAgentNames.has(expression.text);
+  }
+  if (ts.isPropertyAccessExpression(expression)) {
+    return (
+      expression.name.text === "defineTaskAgent" &&
+      ts.isIdentifier(expression.expression) &&
+      expression.expression.text === "Agents"
+    );
+  }
+  return false;
+}
+
+function readImportedDefineTaskAgentNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const specifier = statement.moduleSpecifier;
+    if (!ts.isStringLiteralLike(specifier) || specifier.text !== "@svvy/workflows") continue;
+    const namedBindings = statement.importClause?.namedBindings;
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) continue;
+    for (const element of namedBindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (importedName === "defineTaskAgent") {
+        names.add(element.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+function propertyNameToString(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readGeneratedUpdatedAt(generatedPackagePath: string): string {
+  if (!existsSync(generatedPackagePath)) {
+    return new Date(0).toISOString();
+  }
+  return new Date(statSync(generatedPackagePath).mtimeMs).toISOString();
+}
+
+function readWorkflowSourceItems(
+  sourceRoot: string,
+  generatedPackagePath: string,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): WorkflowSourceItem[] {
+  const items: WorkflowSourceItem[] = [];
+  for (const [kind, dirName] of Object.entries(SOURCE_DIR_BY_KIND) as Array<
+    [WorkspaceWorkflowsGeneratedKind, string]
+  >) {
+    const root = join(sourceRoot, dirName);
+    if (!existsSync(root)) continue;
+    for (const sourcePath of walkFiles(root)) {
+      const extension = extname(sourcePath);
+      if (!sourceExtensionMatchesKind(kind, extension, sourcePath)) continue;
+      const exportName =
+        kind === "agent" ? basename(sourcePath, ".agent.json") : basename(sourcePath, extension);
+      if (!isValidExportName(exportName)) {
+        diagnostics.push({
+          code: "invalid_export_name",
+          message: `Invalid Workflows export name: ${exportName}`,
+          path: sourcePath,
+          exportName,
+        });
+        continue;
+      }
+      if (kind === "agent") {
+        const agentParameters = readAgentSourceRecord(sourcePath, diagnostics);
+        if (!agentParameters) continue;
+        if (stringProperty(agentParameters, "id") !== exportName) {
+          diagnostics.push({
+            code: "invalid_agent_parameters",
+            message: `Workflow agent ${exportName} id must match its source filename.`,
+            path: sourcePath,
+            exportName,
+          });
+          continue;
+        }
+        items.push({
+          kind,
+          exportName,
+          sourcePath,
+          generatedPath: join(generatedPackagePath, "agents", `${exportName}.ts`),
+          sourceCode: "",
+          agentParameters,
+        });
+        continue;
+      }
+      items.push({
+        kind,
+        exportName,
+        sourcePath,
+        generatedPath: join(
+          generatedPackagePath,
+          dirName,
+          `${exportName}${generatedExtensionForSource(kind, extension)}`,
+        ),
+        sourceCode: readFileSync(sourcePath, "utf8"),
       });
-    },
-    validateSavedWorkflowWrite: async (path) =>
-      await validateSavedWorkflowLibrary(workspaceRoot, path),
+    }
+  }
+  return items.toSorted((left, right) => left.generatedPath.localeCompare(right.generatedPath));
+}
+
+function readAgentSourceRecord(
+  sourcePath: string,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(sourcePath, "utf8")) as unknown;
+    if (!isRecord(parsed)) {
+      diagnostics.push({
+        code: "invalid_agent_source",
+        message: "Workflow agent source must be a JSON object.",
+        path: sourcePath,
+      });
+      return null;
+    }
+    return normalizeAgentSourceRecord(parsed);
+  } catch (error) {
+    diagnostics.push({
+      code: "invalid_agent_source",
+      message: error instanceof Error ? error.message : "Workflow agent source is not valid JSON.",
+      path: sourcePath,
+    });
+    return null;
+  }
+}
+
+function normalizeAgentSourceRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const extensionUsage = recordProperty(record, "extensionUsage");
+  if (!extensionUsage) {
+    return record;
+  }
+  return {
+    ...record,
+    extensions: workflowTaskLoadedExtensionIds(extensionUsage),
   };
 }
 
-export async function readSavedWorkflowLibraryReadModel(
-  workspaceRoot: string,
-  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
-): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
-  return await readSavedWorkflowLibrary(workspaceRoot, settings);
+function recordProperty(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, ExtensionUsageState> | null {
+  const value = record[key];
+  if (!isRecord(value)) {
+    return null;
+  }
+  const usage: Record<string, ExtensionUsageState> = {};
+  for (const [rawId, rawState] of Object.entries(value)) {
+    const id = rawId.trim();
+    if (
+      id &&
+      (rawState === "default_loaded" || rawState === "available" || rawState === "unavailable")
+    ) {
+      usage[id] = rawState;
+    }
+  }
+  return usage;
 }
 
-export async function deleteSavedWorkflowLibraryPath(
-  workspaceRoot: string,
+function workflowTaskLoadedExtensionIds(
+  extensionUsage: Record<string, ExtensionUsageState>,
+): string[] {
+  const loaded = new Set<string>();
+  for (const [rawId, state] of Object.entries(extensionUsage)) {
+    const id = rawId.trim();
+    if (!id || state !== "default_loaded") {
+      continue;
+    }
+    if (!isBuiltinExtensionId(id)) {
+      loaded.add(id);
+      continue;
+    }
+    const builtinState = resolveActorExtensionState({
+      actor: "workflow-task",
+      profileExtensionUsage: { [id]: "default_loaded" },
+    });
+    if (builtinState.loadedExtensionIds.includes(id)) {
+      loaded.add(id);
+    }
+  }
+  return [...loaded].toSorted();
+}
+
+function validateWorkflowSourceItems(
+  items: WorkflowSourceItem[],
+  modelCatalog: readonly SvvyxWorkflowsModelChoice[],
+  extensionExportIds: ReadonlySet<string>,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): void {
+  const seen = new Set<string>();
+  const modelsByProvider = new Map<string, Map<string, SvvyxWorkflowsModelChoice>>();
+  for (const model of modelCatalog) {
+    const providerModels = modelsByProvider.get(model.providerId) ?? new Map();
+    providerModels.set(model.modelId, model);
+    modelsByProvider.set(model.providerId, providerModels);
+  }
+
+  for (const item of items) {
+    const id = `${item.kind}:${item.exportName}`;
+    if (seen.has(id)) {
+      diagnostics.push({
+        code: "duplicate_export",
+        message: `Duplicate Workflows export: ${item.exportName}`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+      continue;
+    }
+    seen.add(id);
+
+    if (item.kind !== "agent") continue;
+    const parameters = item.agentParameters ?? {};
+    const provider = stringProperty(parameters, "provider");
+    const model = stringProperty(parameters, "model");
+    const reasoningEffort = stringProperty(parameters, "reasoningEffort") as ReasoningEffort | null;
+    const instructions = stringProperty(parameters, "instructions");
+    const extensions = stringArrayProperty(parameters, "extensions");
+
+    for (const [field, value] of [
+      ["id", stringProperty(parameters, "id")],
+      ["label", stringProperty(parameters, "label")],
+      ["provider", provider],
+      ["model", model],
+      ["reasoningEffort", reasoningEffort],
+      ["instructions", instructions],
+    ]) {
+      if (!value) {
+        diagnostics.push({
+          code: "invalid_agent_parameters",
+          message: `Workflow agent ${item.exportName} is missing string field ${field}.`,
+          path: item.sourcePath,
+          exportName: item.exportName,
+        });
+      }
+    }
+    if (!extensions) {
+      diagnostics.push({
+        code: "invalid_agent_parameters",
+        message: `Workflow agent ${item.exportName} extensions must be a string array.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    }
+    if (!provider || !model || !reasoningEffort) continue;
+    const modelChoice = modelsByProvider.get(provider)?.get(model);
+    if (!modelChoice) {
+      diagnostics.push({
+        code: "invalid_agent_model",
+        message: `Workflow agent ${item.exportName} references unavailable model ${provider}/${model}.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    } else if (!modelChoice.supportedReasoning.includes(reasoningEffort)) {
+      diagnostics.push({
+        code: "invalid_agent_reasoning",
+        message: `Workflow agent ${item.exportName} references unsupported reasoning level ${reasoningEffort} for ${provider}/${model}.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    } else if (!modelChoice.providerAuthenticated) {
+      diagnostics.push({
+        code: "invalid_agent_provider_auth",
+        message: `Workflow agent ${item.exportName} references unauthenticated provider ${provider}.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    }
+    const builtinWorkflowTaskExtensions = resolveActorExtensionState({
+      actor: "workflow-task",
+      profileLoadedExtensionIds: (extensions ?? []).filter((extensionId) =>
+        isBuiltinExtensionId(extensionId),
+      ),
+    });
+    const availableBuiltinExtensions = new Set<string>([
+      ...builtinWorkflowTaskExtensions.loadedExtensionIds,
+      ...builtinWorkflowTaskExtensions.availableExtensionIds,
+    ]);
+    const workflowTaskBaseline = resolveActorExtensionState({
+      actor: "workflow-task",
+    });
+    const workflowTaskBaselineIds = new Set<string>([
+      ...workflowTaskBaseline.loadedExtensionIds,
+      ...workflowTaskBaseline.availableExtensionIds,
+    ]);
+    const userGeneratedExtensions = new Set(
+      [...extensionExportIds].filter((extensionId) => !isBuiltinExtensionId(extensionId)),
+    );
+    for (const extensionId of extensions ?? []) {
+      const builtinAllowed =
+        isBuiltinExtensionId(extensionId) &&
+        availableBuiltinExtensions.has(extensionId) &&
+        workflowTaskBaselineIds.has(extensionId);
+      const userAllowed = userGeneratedExtensions.has(extensionId);
+      if (!extensionExportIds.has(extensionId) || (!builtinAllowed && !userAllowed)) {
+        diagnostics.push({
+          code: "invalid_agent_extension",
+          message: `Workflow agent ${item.exportName} references unavailable extension ${extensionId}.`,
+          path: item.sourcePath,
+          exportName: item.exportName,
+        });
+      }
+    }
+  }
+}
+
+function writeGeneratedPackage(generatedPackagePath: string, items: readonly WorkflowSourceItem[]) {
+  mkdirSync(generatedPackagePath, { recursive: true });
+  writeGeneratedManifest(generatedPackagePath, items);
+  writeFileSync(
+    join(generatedPackagePath, "package.json"),
+    JSON.stringify(
+      {
+        name: "@svvy/workflows",
+        type: "module",
+        exports: {
+          ".": "./index.ts",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(generatedPackagePath, "index.ts"),
+    [
+      'export * as Agents from "./agents";',
+      'export * as Components from "./components";',
+      'export * as Prompts from "./prompts";',
+      'export * as Workflows from "./workflows";',
+      "",
+    ].join("\n"),
+  );
+  writeAgentsIndex(
+    generatedPackagePath,
+    items.filter((item) => item.kind === "agent"),
+  );
+  writeNamespaceFiles(generatedPackagePath, "components", items);
+  writeNamespaceFiles(generatedPackagePath, "prompts", items);
+  writeNamespaceFiles(generatedPackagePath, "workflows", items);
+}
+
+function isBuiltinExtensionId(extensionId: string): boolean {
+  return BUILTIN_EXTENSIONS.some((extension) => extension.id === extensionId);
+}
+
+function writeGeneratedManifest(
+  generatedPackagePath: string,
+  items: readonly WorkflowSourceItem[],
+): void {
+  const manifest: WorkflowGeneratedManifest = {
+    items: items.map((item) => ({
+      generatedPath: item.generatedPath,
+      sourcePath: item.sourcePath,
+    })),
+  };
+  writeFileSync(
+    join(generatedPackagePath, GENERATED_MANIFEST_FILE),
+    JSON.stringify(manifest, null, 2),
+  );
+}
+
+function readGeneratedManifest(generatedPackagePath: string): Map<string, string> {
+  try {
+    const path = join(generatedPackagePath, GENERATED_MANIFEST_FILE);
+    if (!existsSync(path)) return new Map();
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as WorkflowGeneratedManifest;
+    if (!Array.isArray(parsed.items)) return new Map();
+    return new Map(
+      parsed.items
+        .filter(
+          (item) => typeof item.generatedPath === "string" && typeof item.sourcePath === "string",
+        )
+        .map((item) => [item.generatedPath, item.sourcePath]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function writeAgentsIndex(
+  generatedPackagePath: string,
+  agents: readonly WorkflowSourceItem[],
+): void {
+  const agentsRoot = join(generatedPackagePath, "agents");
+  mkdirSync(agentsRoot, { recursive: true });
+  writeFileSync(
+    join(agentsRoot, "index.ts"),
+    [
+      'import type { ThinkingLevel } from "@mariozechner/pi-agent-core";',
+      'import type { ExtensionId } from "@svvy/extensions";',
+      "",
+      "export type ReasoningEffort = ThinkingLevel;",
+      "export type TaskAgentExtensionId = ExtensionId;",
+      "export interface TaskAgentParameters {",
+      "  id: string;",
+      "  label: string;",
+      "  provider: string;",
+      "  model: string;",
+      "  reasoningEffort: ReasoningEffort;",
+      "  instructions: string;",
+      "  extensions: readonly TaskAgentExtensionId[];",
+      "}",
+      "export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): T {",
+      "  return parameters;",
+      "}",
+      ...agents.map((item) => `export { ${item.exportName} } from "./${item.exportName}";`),
+      "",
+    ].join("\n"),
+  );
+  for (const agent of agents) {
+    mkdirSync(dirname(agent.generatedPath), { recursive: true });
+    writeFileSync(
+      agent.generatedPath,
+      [
+        'import type { TaskAgentParameters } from "./index";',
+        'import { Extensions } from "@svvy/extensions";',
+        "",
+        `export const ${agent.exportName} = ${serializeAgentParameters(agent.agentParameters ?? {})} satisfies TaskAgentParameters;`,
+        "",
+      ].join("\n"),
+    );
+  }
+}
+
+function serializeAgentParameters(parameters: Record<string, unknown>): string {
+  const { extensions, extensionUsage: _extensionUsage, ...rest } = parameters;
+  const extensionIds = Array.isArray(extensions)
+    ? extensions.filter((extension): extension is string => typeof extension === "string")
+    : [];
+  const prefix = JSON.stringify(rest, null, 2).replace(/\n}$/, "");
+  const separator = prefix === "{" ? "" : ",";
+  return [
+    prefix,
+    `${separator}\n  "extensions": [${extensionIds.map((id) => `Extensions[${JSON.stringify(id)}]`).join(", ")}]`,
+    "}",
+  ].join("");
+}
+
+function writeNamespaceFiles(
+  generatedPackagePath: string,
+  namespaceDir: "components" | "prompts" | "workflows",
+  items: readonly WorkflowSourceItem[],
+): void {
+  const root = join(generatedPackagePath, namespaceDir);
+  const kind = WORKFLOW_NAMESPACE_BY_DIR[namespaceDir].kind;
+  const namespaceItems = items.filter((item) => item.kind === kind);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(
+    join(root, "index.ts"),
+    [...namespaceItems.map((item) => `export * from "./${item.exportName}";`), ""].join("\n"),
+  );
+  for (const item of namespaceItems) {
+    mkdirSync(dirname(item.generatedPath), { recursive: true });
+    if (item.kind === "prompt") {
+      writeFileSync(
+        item.generatedPath,
+        [`export const ${item.exportName} = ${JSON.stringify(item.sourceCode)};`, ""].join("\n"),
+      );
+    } else {
+      writeFileSync(item.generatedPath, item.sourceCode);
+    }
+  }
+}
+
+function workflowSourcePath(input: {
+  exportName: string;
+  kind: WorkspaceWorkflowsGeneratedKind;
+  sourceExtension?: string;
+  sourceRoot: string;
+}): string {
+  const dirName = SOURCE_DIR_BY_KIND[input.kind];
+  const extension =
+    input.kind === "agent"
+      ? ".agent.json"
+      : (input.sourceExtension ?? defaultSourceExtension(input.kind));
+  return join(input.sourceRoot, dirName, `${input.exportName}${extension}`);
+}
+
+function defaultSourceExtension(kind: WorkspaceWorkflowsGeneratedKind): string {
+  if (kind === "prompt") return ".mdx";
+  if (kind === "workflow") return ".tsx";
+  if (kind === "component") return ".ts";
+  return ".agent.json";
+}
+
+function generatedExtensionForSource(
+  kind: WorkspaceWorkflowsGeneratedKind,
+  sourceExtension: string,
+): string {
+  if (kind === "prompt") return ".ts";
+  if (kind === "workflow") return ".tsx";
+  if (kind === "component") return sourceExtension === ".tsx" ? ".tsx" : ".ts";
+  return ".ts";
+}
+
+function validateSourceExtension(
+  kind: Exclude<WorkspaceWorkflowsGeneratedKind, "agent">,
+  extension: string,
   path: string,
-  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
-): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
-  const normalizedPath = assertSavedWorkflowDeletionPath(workspaceRoot, path);
-  rmSync(join(workspaceRoot, normalizedPath), { force: true, recursive: true });
-  return await readSavedWorkflowLibrary(workspaceRoot, settings);
+): void {
+  if (!sourceExtensionMatchesKind(kind, extension, path)) {
+    throw workflowLibraryError(
+      "invalid_source",
+      `Unsupported ${kind} source extension: ${extension}`,
+      path,
+    );
+  }
+}
+
+function sourceExtensionMatchesKind(
+  kind: WorkspaceWorkflowsGeneratedKind,
+  extension: string,
+  path: string,
+): boolean {
+  if (kind === "agent") return path.endsWith(".agent.json");
+  if (kind === "prompt") return extension === ".mdx";
+  if (kind === "workflow") return extension === ".tsx";
+  return extension === ".ts" || extension === ".tsx";
+}
+
+function assertValidExportName(exportName: string): void {
+  if (!isValidExportName(exportName)) {
+    throw workflowLibraryError("invalid_argument", `Invalid Workflows export name: ${exportName}`);
+  }
+}
+
+function isValidExportName(exportName: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(exportName);
+}
+
+function stringProperty(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringArrayProperty(record: Record<string, unknown>, key: string): string[] | null {
+  const value = record[key];
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
+}
+
+export class WorkflowLibraryError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly path?: string,
+    readonly exportName?: string,
+  ) {
+    super(message);
+    this.name = "WorkflowLibraryError";
+  }
+}
+
+function workflowLibraryError(
+  code: string,
+  message: string,
+  path?: string,
+  exportName?: string,
+): WorkflowLibraryError {
+  return new WorkflowLibraryError(code, message, path, exportName);
+}
+
+function walkFiles(root: string): string[] {
+  const pending = [root];
+  const files: string[] = [];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(path);
+      } else {
+        files.push(path);
+      }
+    }
+  }
+  return files.toSorted();
 }

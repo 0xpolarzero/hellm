@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -54,11 +63,13 @@ describe("structured session state SQLite persistence", () => {
     tempDirs.push(root);
     const databasePath = options.databasePath ?? join(root, "structured-session-state.sqlite");
     const workspaceCwd = root;
+    const artifactDir = join(root, "artifact-store");
     const store = createStructuredSessionStateStore({
       workspace: {
         id: workspaceCwd,
         label: "svvy",
         cwd: workspaceCwd,
+        artifactDir,
       },
       databasePath,
       now: createDeterministicClock(options.nowStart ?? "2026-04-18T12:00:00.000Z"),
@@ -74,6 +85,28 @@ describe("structured session state SQLite persistence", () => {
     }
     store.close();
   }
+
+  it("defaults artifact storage to the app-global config directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-structured-default-artifacts-"));
+    tempDirs.push(root);
+    const store = createStructuredSessionStateStore({
+      workspace: {
+        id: root,
+        label: "svvy",
+        cwd: root,
+      },
+      databasePath: join(root, "structured-session-state.sqlite"),
+    });
+    openStores.push(store);
+    seedSession(store, {
+      sessionId: "session-default-artifact-root",
+      title: "Default Artifact Root",
+    });
+
+    expect(store.getSessionState("session-default-artifact-root").workspace.artifactDir).toBe(
+      join(homedir(), ".config", "svvy", "artifacts"),
+    );
+  });
 
   it("persists session navigation metadata and sidebar collapse state across restart", () => {
     const first = createSqliteStore();
@@ -147,11 +180,14 @@ describe("structured session state SQLite persistence", () => {
     const firstCommand = first.store.createCommand({
       turnId: handlerTurn.id,
       threadId: handlerThread.id,
-      toolName: "workflow_start",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
       title: "Start workflow",
       summary: "Start the first workflow run.",
+      arguments: {
+        cmd: "svvyx workflows build persist-alpha",
+      },
     });
     const runOne = first.store.recordWorkflow({
       threadId: handlerThread.id,
@@ -167,11 +203,14 @@ describe("structured session state SQLite persistence", () => {
     const secondCommand = first.store.createCommand({
       turnId: handlerTurn.id,
       threadId: handlerThread.id,
-      toolName: "workflow_resume",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
       title: "Resume workflow",
       summary: "Resume with a repaired workflow run.",
+      arguments: {
+        cmd: "svvyx workflows build persist-beta",
+      },
     });
     const runTwo = first.store.recordWorkflow({
       threadId: handlerThread.id,
@@ -183,25 +222,6 @@ describe("structured session state SQLite persistence", () => {
       savedEntryId: "persist_beta",
       status: "completed",
       summary: "The repaired workflow run completed.",
-    });
-    const projectCi = first.store.recordProjectCiResult({
-      workflowRunId: runTwo.id,
-      workflowId: "persist_project_ci",
-      entryPath: ".svvy/workflows/entries/persist-project-ci.tsx",
-      status: "passed",
-      summary: "Project CI passed on the second run.",
-      checks: [
-        {
-          checkId: "unit_tests",
-          label: "Unit tests",
-          kind: "test",
-          status: "passed",
-          required: true,
-          command: ["bun", "test"],
-          exitCode: 0,
-          summary: "Unit tests passed.",
-        },
-      ],
     });
     const artifact = first.store.createArtifact({
       workflowRunId: runTwo.id,
@@ -243,6 +263,10 @@ describe("structured session state SQLite persistence", () => {
       runOne.id,
       runTwo.id,
     ]);
+    expect(afterReload.commands.map((command) => [command.id, command.arguments])).toEqual([
+      [firstCommand.id, { cmd: "svvyx workflows build persist-alpha" }],
+      [secondCommand.id, { cmd: "svvyx workflows build persist-beta" }],
+    ]);
     expect(afterReload.threadContexts).toEqual([
       expect.objectContaining({
         id: context.id,
@@ -250,23 +274,8 @@ describe("structured session state SQLite persistence", () => {
         contextKey: "ci",
       }),
     ]);
-    expect(afterReload.ciRuns).toEqual([
-      expect.objectContaining({
-        id: projectCi.ciRun.id,
-        workflowRunId: runTwo.id,
-        workflowId: "persist_project_ci",
-        status: "passed",
-      }),
-    ]);
-    expect(afterReload.ciCheckResults).toEqual([
-      expect.objectContaining({
-        id: projectCi.checkResults[0]?.id,
-        ciRunId: projectCi.ciRun.id,
-        workflowRunId: runTwo.id,
-        checkId: "unit_tests",
-        status: "passed",
-      }),
-    ]);
+    expect("ciRuns" in afterReload).toBe(false);
+    expect("ciCheckResults" in afterReload).toBe(false);
     expect(afterReload.artifacts).toEqual([
       expect.objectContaining({
         id: artifact.id,
@@ -331,7 +340,7 @@ describe("structured session state SQLite persistence", () => {
     });
 
     const snapshot = store.getSessionState("session-artifact-files");
-    const expectedArtifactRoot = join(workspaceCwd, ".svvy", "artifacts");
+    const expectedArtifactRoot = join(workspaceCwd, "artifact-store");
     const expectedArtifactDir = join(expectedArtifactRoot, "session-artifact-files");
 
     expect(snapshot.workspace).toEqual(
@@ -339,17 +348,321 @@ describe("structured session state SQLite persistence", () => {
         artifactDir: expectedArtifactRoot,
       }),
     );
-    expect(artifact.path).toBe(join(expectedArtifactDir, `${artifact.id}-snippet.ts`));
-    expect(snapshot.artifacts).toEqual([
-      expect.objectContaining({
-        id: artifact.id,
-        threadId: thread.id,
-        sourceCommandId: command.id,
-        path: artifact.path,
-      }),
-    ]);
+    expect(artifact.path).toBe(join(expectedArtifactDir, "snippet.ts"));
+    expect(snapshot.artifacts).toHaveLength(1);
+    expect(snapshot.artifacts[0]).toMatchObject({
+      id: artifact.id,
+      threadId: thread.id,
+      sourceCommandId: command.id,
+      path: artifact.path,
+      name: "snippet.ts",
+      mimeType: "text/typescript",
+      bytes: 36,
+      sha256: "fff7ebfcc62ad265ef9e7102b89c95249ebaeb6105b3e2faaf7e4715b338aea7",
+      immutable: false,
+      deletedAt: null,
+    });
     expect(existsSync(artifact.path!)).toBe(true);
     expect(readFileSync(artifact.path!, "utf8")).toBe('console.log("hello from artifact");\n');
+  });
+
+  it("stores immutable artifacts under the session immutable directory", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-immutable-artifact",
+      title: "Immutable Artifact",
+    });
+
+    const artifact = store.createArtifact({
+      sessionId: "session-immutable-artifact",
+      kind: "text",
+      name: "evidence.log",
+      content: "passed\n",
+      immutable: true,
+      mimeType: "text/plain; charset=utf-8",
+    });
+
+    expect(artifact.name).toBe("evidence.log");
+    expect(artifact.immutable).toBe(true);
+    expect(artifact.mimeType).toBe("text/plain");
+    expect(artifact.bytes).toBe(7);
+    expect(artifact.sha256).toBe(
+      "2700165975f68815c97d605c56eca8e90d497ade1264b6282401d13fee99ac27",
+    );
+    expect(artifact.deletedAt).toBeNull();
+    expect(artifact.path).toBe(
+      join(
+        workspaceCwd,
+        "artifact-store",
+        "session-immutable-artifact",
+        "immutable",
+        "evidence.log",
+      ),
+    );
+    expect(readFileSync(artifact.path!, "utf8")).toBe("passed\n");
+  });
+
+  it("copies source files into artifact storage instead of recording the source path", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-copy-artifact",
+      title: "Copy Artifact",
+    });
+    const sourcePath = join(workspaceCwd, "source-report.json");
+    writeFileSync(sourcePath, '{"ok":true}\n');
+
+    const artifact = store.createArtifact({
+      sessionId: "session-copy-artifact",
+      kind: "json",
+      path: sourcePath,
+    });
+
+    expect(artifact.name).toBe("source-report.json");
+    expect(artifact.path).toBe(
+      join(workspaceCwd, "artifact-store", "session-copy-artifact", "source-report.json"),
+    );
+    expect(artifact.mimeType).toBe("application/json");
+    expect(artifact.bytes).toBe(12);
+    expect(artifact.sha256).toBe(
+      "e5f1eb4d806641698a35efe20e098efd20d7d57a9b90ee69079d5bb650920726",
+    );
+    expect(artifact.path).not.toBe(sourcePath);
+    expect(readFileSync(artifact.path!, "utf8")).toBe('{"ok":true}\n');
+  });
+
+  it("rejects invalid artifact names and active duplicate names", () => {
+    const { store } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-artifact-validation",
+      title: "Artifact Validation",
+    });
+
+    for (const invalidName of ["plan", ".env", "plan.", "../plan.md", "nested/plan.md"]) {
+      expect(() =>
+        store.createArtifact({
+          sessionId: "session-artifact-validation",
+          kind: "text",
+          name: invalidName,
+          content: "",
+        }),
+      ).toThrow("INVALID_ARGUMENT");
+    }
+
+    store.createArtifact({
+      sessionId: "session-artifact-validation",
+      kind: "text",
+      name: "plan.md",
+      content: "",
+    });
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-artifact-validation",
+        kind: "text",
+        name: "plan.md",
+        content: "",
+      }),
+    ).toThrow("ARTIFACT_EXISTS");
+  });
+
+  it("allows active mutable and immutable artifacts to share a filename in separate scopes", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-artifact-scopes",
+      title: "Artifact Scopes",
+    });
+
+    const mutable = store.createArtifact({
+      sessionId: "session-artifact-scopes",
+      kind: "text",
+      name: "report.md",
+      content: "mutable\n",
+    });
+    const immutable = store.createArtifact({
+      sessionId: "session-artifact-scopes",
+      kind: "text",
+      name: "report.md",
+      content: "immutable\n",
+      immutable: true,
+    });
+
+    expect(mutable.path).toBe(
+      join(workspaceCwd, "artifact-store", "session-artifact-scopes", "report.md"),
+    );
+    expect(immutable.path).toBe(
+      join(workspaceCwd, "artifact-store", "session-artifact-scopes", "immutable", "report.md"),
+    );
+  });
+
+  it("rejects disk-only artifact path collisions", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-disk-collision",
+      title: "Disk Collision",
+    });
+    const targetDir = join(workspaceCwd, "artifact-store", "session-disk-collision");
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(targetDir, "collision.md"), "existing\n");
+
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-disk-collision",
+        kind: "text",
+        name: "collision.md",
+        content: "",
+      }),
+    ).toThrow("ARTIFACT_EXISTS");
+  });
+
+  it("tombstones artifacts, removes files, and permits filename reuse afterward", () => {
+    const { store } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-artifact-delete",
+      title: "Artifact Delete",
+    });
+    const first = store.createArtifact({
+      sessionId: "session-artifact-delete",
+      kind: "text",
+      name: "plan.md",
+      content: "# first\n",
+    });
+
+    const deleted = store.deleteArtifact({
+      sessionId: "session-artifact-delete",
+      artifactId: first.id,
+    });
+    expect(deleted.deletedAt).toBe("2026-04-18T12:00:01.000Z");
+    expect(existsSync(first.path!)).toBe(false);
+
+    const second = store.createArtifact({
+      sessionId: "session-artifact-delete",
+      kind: "text",
+      name: "plan.md",
+      content: "# second\n",
+    });
+    expect(second.id).not.toBe(first.id);
+    expect(second.path).toBe(first.path);
+    expect(readFileSync(second.path!, "utf8")).toBe("# second\n");
+  });
+
+  it("copies sources with exact rename and rejects invalid MIME or unreadable source shapes", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-source-validation",
+      title: "Source Validation",
+    });
+    const sourcePath = join(workspaceCwd, "source.tmp");
+    writeFileSync(sourcePath, "source bytes\n");
+
+    const renamed = store.createArtifact({
+      sessionId: "session-source-validation",
+      kind: "file",
+      path: sourcePath,
+      name: "renamed.md",
+      immutable: true,
+      mimeType: "text/markdown; charset=utf-8",
+    });
+    expect(renamed.name).toBe("renamed.md");
+    expect(renamed.path).toBe(
+      join(workspaceCwd, "artifact-store", "session-source-validation", "immutable", "renamed.md"),
+    );
+    expect(renamed.mimeType).toBe("text/markdown");
+    expect(readFileSync(renamed.path!, "utf8")).toBe("source bytes\n");
+
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-source-validation",
+        kind: "file",
+        name: "bad.md",
+        content: "",
+        mimeType: "not-a-mime",
+      }),
+    ).toThrow("INVALID_ARGUMENT");
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-source-validation",
+        kind: "file",
+        path: join(workspaceCwd, "missing.md"),
+      }),
+    ).toThrow("SOURCE_NOT_FOUND");
+
+    const sourceDir = join(workspaceCwd, "source-dir.md");
+    mkdirSync(sourceDir);
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-source-validation",
+        kind: "file",
+        path: sourceDir,
+      }),
+    ).toThrow("SOURCE_IS_DIRECTORY");
+  });
+
+  it("maps artifact materialization failures to COPY_FAILED", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    const artifactDir = join(workspaceCwd, "artifact-store");
+    rmSync(artifactDir, { force: true, recursive: true });
+    writeFileSync(artifactDir, "not a directory\n");
+    seedSession(store, {
+      sessionId: "session-copy-failed",
+      title: "Copy Failed",
+    });
+
+    expect(() =>
+      store.createArtifact({
+        sessionId: "session-copy-failed",
+        kind: "text",
+        name: "blocked.md",
+        content: "",
+      }),
+    ).toThrow("COPY_FAILED");
+  });
+
+  it("maps artifact file deletion failures to DELETE_FAILED without tombstoning", () => {
+    const { store } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-delete-failed",
+      title: "Delete Failed",
+    });
+    const artifact = store.createArtifact({
+      sessionId: "session-delete-failed",
+      kind: "text",
+      name: "blocked.md",
+      content: "blocked\n",
+    });
+    rmSync(artifact.path!);
+    mkdirSync(artifact.path!);
+
+    expect(() =>
+      store.deleteArtifact({
+        sessionId: "session-delete-failed",
+        artifactId: artifact.id,
+      }),
+    ).toThrow("DELETE_FAILED");
+    expect(
+      store.inspectArtifact({ sessionId: "session-delete-failed", artifactId: artifact.id }),
+    ).toMatchObject({
+      deletedAt: null,
+    });
+  });
+
+  it("copies symlink source target bytes", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-symlink-artifact",
+      title: "Symlink Artifact",
+    });
+    const sourcePath = join(workspaceCwd, "target.txt");
+    const linkPath = join(workspaceCwd, "linked.txt");
+    writeFileSync(sourcePath, "target bytes\n");
+    symlinkSync(sourcePath, linkPath);
+
+    const artifact = store.createArtifact({
+      sessionId: "session-symlink-artifact",
+      kind: "file",
+      path: linkPath,
+    });
+
+    expect(artifact.name).toBe("linked.txt");
+    expect(readFileSync(artifact.path!, "utf8")).toBe("target bytes\n");
   });
 
   it("persists thread-owned session wait and clears it when the thread resumes", () => {
@@ -481,8 +794,8 @@ describe("structured session state SQLite persistence", () => {
     const betaCommand = store.createCommand({
       turnId: betaHandlerTurn.id,
       threadId: betaThread.id,
-      toolName: "workflow_start",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
       title: "Start beta workflow",
       summary: "Start beta workflow.",

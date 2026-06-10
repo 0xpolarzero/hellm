@@ -1,194 +1,319 @@
+import { readFileSync } from "node:fs";
+import { basename, isAbsolute } from "node:path";
 import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
+import {
+  SMITHERS_CORE_INSTRUCTIONS,
+  SMITHERS_MEMORY_INSTRUCTIONS,
+} from "../../generated/smithers-instructions.generated";
 import type { SvvyActorKind } from "./actor-capabilities";
+import { buildCxPromptContext } from "./cx-runtime/prompt-context";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import {
-  buildAlwaysLoadedPromptContext,
   buildLoadedOptionalPromptContextPrompt,
   buildOptionalPromptContextRegistryPrompt,
   buildOrchestratorContextRoutingPrompt,
   validateOptionalPromptContextKeys,
 } from "./prompt-contexts";
-import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
-import type { WebProvider } from "./web-runtime/contracts";
+import {
+  HANDLER_WORKFLOW_AUTHORING_APPENDIX,
+  SMITHERS_SVVY_BOUNDARY_APPENDIX,
+} from "./smithers-runtime/workflow-authoring-guide";
 import { buildWebPromptContext } from "./web-runtime/prompt-context";
+import {
+  getExtensionRecord,
+  resolveActorExtensionState,
+  type ExtensionRecord,
+} from "../shared/extensions";
+import type { RequestUserInputSettings } from "../shared/agent-settings";
 import type {
-  PromptLibraryActorRecipe,
-  PromptLibraryContextPack,
-  PromptLibraryGeneratedEntry,
-  PromptLibraryGeneratedSectionId,
-  PromptLibraryInstructionBlock,
-  PromptLibraryState,
-} from "../shared/prompt-library";
+  GeneratedAgentContextActorRecipe,
+  GeneratedAgentContextContextPack,
+  GeneratedAgentContextEntry,
+  GeneratedAgentContextSectionId,
+  GeneratedAgentContextInstructionBlock,
+  GeneratedAgentContextExternalSource,
+  GeneratedAgentContextState,
+} from "../shared/generated-agent-context";
+
+export function buildExecuteTypescriptBasePromptSection(actor: SvvyActorKind): string {
+  const compositionUses =
+    actor === "handler"
+      ? "batching, looping, filtering, aggregation, bash-backed inspection, or artifact evidence"
+      : "batching, looping, filtering, aggregation, bash-backed inspection, or artifact evidence";
+  return [
+    "Loaded native extension: Execute TypeScript.",
+    "",
+    `Use execute_typescript only when a small TypeScript program is genuinely useful for ${compositionUses}.`,
+    "When you call execute_typescript, write plain TypeScript against actor-local generated `extensions` clients and `console`.",
+    "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
+    "Do not use or assume a broad `api` helper, global `svvy`, prompt-only extension clients, Smithers clients, or Workflows runner clients.",
+    "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call Shell, Apply Patch, or other direct tools instead.",
+  ].join("\n");
+}
+
+export const EXECUTE_TYPESCRIPT_INCUR_CLIENT_PROMPT_SECTION = [
+  "Loaded Execute TypeScript guidance: Incur generated clients.",
+  "",
+  'Use generated extension clients through `extensions["<extensionId>"].run(commandId, input)`.',
+  "Dot access is valid only for identifier-safe extension ids, such as `extensions.artifacts.run(...)`.",
+  "Import public Incur types from `incur/client` when needed; do not invent internal client APIs.",
+].join("\n");
 
 export function buildExecuteTypescriptPromptSection(
   actor: SvvyActorKind,
-  webProvider?: WebProvider,
+  options: {
+    extensionsRoot?: string;
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+  } = {},
 ): string {
-  const compositionUses =
-    actor === "handler"
-      ? "batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence"
-      : "batching, looping, filtering, aggregation, bash-backed inspection, or artifact evidence";
-  const duplicatedTools =
-    actor === "handler"
-      ? "read, grep, find, ls, bash, artifact_* tools, web_search and web_fetch when a keyed web provider is ready, the read-only cx_* subset, and workflow_* discovery"
-      : "read, grep, find, ls, bash, artifact_* tools, web_search and web_fetch when a keyed web provider is ready, and the read-only cx_* subset";
   return [
-    `Use execute_typescript only when a small TypeScript program is genuinely useful for ${compositionUses}.`,
-    "When you call execute_typescript, write plain TypeScript against the injected `api` object and `console`.",
-    "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
-    `The injected \`api\` duplicates only selected actor-local direct tools: ${duplicatedTools}.`,
-    "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call the direct tools instead.",
+    buildExecuteTypescriptBasePromptSection(actor),
+    EXECUTE_TYPESCRIPT_INCUR_CLIENT_PROMPT_SECTION,
     "The execute_typescript contract follows and is the source of truth for the snippet environment:",
     "```ts",
-    buildExecuteTypescriptApiDeclaration(actor, webProvider),
+    buildExecuteTypescriptApiDeclaration(actor, {
+      extensionsRoot: options.extensionsRoot,
+      loadedExtensionIds: options.loadedExtensionIds,
+      loadedExtensionRecords: options.loadedExtensionRecords,
+    }),
     "```",
   ].join("\n");
 }
 
 const WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION = [
-  "The handler workflow-authoring TypeScript contract follows and is the source of truth for runnable entries and workflow task agents:",
+  "The handler workflow-authoring TypeScript contract follows and is the source of truth for reusable app-global Workflows agent parameter records:",
   "```ts",
   WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
   "```",
 ].join("\n\n");
 
-const COMMON_INSTRUCTION_BODY = [
+export const BASE_COMMON_INSTRUCTIONS = [
   "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
   "Everything you do is a tool call inside one shared execution model.",
-  "Threads, commands, Project CI, workflows, wait state, and handoff episodes come from real tool execution rather than assistant prose.",
+  "Threads, commands, waits, and episodes come from real tool execution and structured state rather than assistant prose.",
   "Inspect repository facts before making structural assumptions, and prefer existing project patterns over new abstractions.",
   "Keep edits narrowly scoped to the requested behavior. Avoid unrelated refactors, renames, formatting churn, or metadata changes unless they are required to finish safely.",
   "Treat the worktree as shared user state. Do not revert, overwrite, rename, clean up, or otherwise erase changes you did not make unless the user explicitly asks.",
   "Validate proportionally to risk: use focused checks for touched behavior when practical, broaden checks for shared contracts or user-facing flows, and say plainly when validation is skipped or blocked.",
   "When asked for review, use a code-review stance: lead with concrete, actionable bugs or regressions, include tight file and line evidence, and avoid filling the review with style preferences.",
-  "Use the available direct tools for ordinary repository work. Use cx_* for semantic code navigation before reading whole files when cx can cover the language; use cx_lang_list and cx_lang_add when a relevant grammar may be available but is not installed.",
+  "Use the available direct tools for ordinary repository work. Use the `cx` CLI through Shell for semantic code navigation before reading whole files when cx can cover the language.",
   "When multiple tool calls are independent, issue them together in the same assistant message so pi can run them in parallel; use sequential calls only when a later call depends on an earlier result.",
-  "Use edit for targeted changes to existing files and write only for new files or intentional full rewrites.",
-  "Prefer read, grep, find, and ls over bash for file exploration; use bash when the work actually requires a shell command.",
-  "Use read for visual inspection of local image files as well as text files; image reads return image attachments to the model.",
-  "Use list_tools when you need to inspect the exact callable tool surface for the current actor.",
-  "Use thread_list when delegated thread state matters, and use thread_handoffs when reconciling or checking durable handoff episodes.",
-  "Do not expect runtime, thread, handoff, or workflow state to be repeated in user messages.",
-  "Create artifacts only for durable byproducts or evidence that should remain inspectable but should not normally be placed in the repository; use write/edit for requested workspace files and prose for small answers.",
+  "Use Shell for repository inspection and command execution, Apply Patch for targeted source edits, and Execute TypeScript only when typed composition is genuinely useful.",
+  "For file exploration through Shell, prefer `rg` for text search and `rg --files` for filename search before falling back to ordinary commands such as `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.",
+  "Use list_extensions when you need to inspect the loaded and available extension records for the current actor.",
+  "Use the actor-local thread tools when delegated thread state matters.",
+  "Do not expect runtime, thread, episode, queue, or workflow state to be repeated in user messages.",
+  "Create artifacts only for durable byproducts or evidence that should remain inspectable but should not normally be placed in the repository; use Apply Patch for requested workspace source files and prose for small answers.",
 ].join("\n\n");
 
-const ORCHESTRATOR_INSTRUCTION_BODY = [
-  "This surface is the orchestrator. Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use execute_typescript for typed composition, delegate with thread_start, resume a completed handler with thread_resume, or enter wait.",
-  "The orchestrator delegates objectives into handler threads. It does not directly supervise Smithers workflow runs.",
-  "Handler threads can supervise workflows through smithers_* tools, but those tool declarations are not callable from this surface.",
-  "Use thread_list and thread_handoffs before thread_resume when an existing completed handler thread may already have the right context for follow-up work.",
+export const BASE_ORCHESTRATOR_INSTRUCTIONS = [
+  "This surface is the orchestrator. Choose one top-level route per turn: reply directly, ask for clarification with request_user_input, use direct tools, use execute_typescript for typed composition, delegate with thread_start, send thread_followup, request a report, or reconcile thread_report notifications.",
+  "The orchestrator delegates objectives into handler threads. Smithers execution, inspection, approval, and resume behavior happens only through official Smithers CLI commands in handler Shell tool calls.",
+  "No Smithers wrapper tool declarations are callable from this surface.",
+  "When delegating with thread_start, normally omit history so it defaults to isolated and write a compact objective with durable paths and accepted decisions.",
+  "Call thread_start with one threads[] item for ordinary delegation. Use multiple threads[] items only for separate user-visible handler conversations where the user is invested in each workstream, each objective may need direct follow-up, or the workstreams are clearly independent conversations.",
+  'Use history: "forked" only when the user explicitly asks to fork/continue/share current conversation context, unresolved design nuance would be materially lossy to restate, several approaches need the exact same conversational starting point, or a compact objective would lose critical user intent.',
+  'Do not use history: "forked" for ordinary implementation, source-driven research, test fixing, code review, security review, independent critique, verification, durable-file-specified tasks, or stale/speculative transcript contexts.',
+  "Use thread_list and thread_episodes before thread_followup({ activate: true }) when an existing concluded handler thread may already have the right context for follow-up work.",
   "If a delegated objective needs workflow authoring or saving reusable workflow assets, delegate that work to a handler thread instead of trying to do it from the orchestrator surface.",
   buildOrchestratorContextRoutingPrompt(),
 ].join("\n\n");
 
-const HANDLER_INSTRUCTION_BODY = [
-  "This surface is a delegated handler thread. Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use execute_typescript for typed composition, supervise workflows through smithers_* tools, enter wait, or return control with thread_handoff.",
-  "Ordinary replies inside a handler thread do not close it or emit handoff episodes.",
-  "Use thread_handoff only when the current objective span is ready to hand control back to the orchestrator with durable state.",
-  "Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread_handoff while a supervised workflow on this thread is still running or waiting; resolve it, wait for the needed input, or cancel it first.",
+export const BASE_HANDLER_INSTRUCTIONS = [
+  "This surface is a delegated handler thread. Choose one top-level route per turn: reply directly, ask for clarification with request_user_input, use direct tools, use execute_typescript for typed composition, use Smithers CLI commands through Shell, enter local wait state, or emit an update/conclusion with thread_report.",
+  "Ordinary replies inside a handler thread do not close it or emit episodes.",
+  "Use thread_report with outcome only when the current objective is ready to conclude with durable state.",
+  "Workflow waits, approvals, and resumes stay inside this handler thread until the handler decides to report an update or conclusion.",
   "Do not call thread_start from this surface in the adopted supervision model.",
-  "Use thread_current when the current objective, wait state, active workflow ownership, loaded prompt context, or prior handoff state matters.",
-  "Do not infer current workflow details from prompt context; call Smithers tools using active workflow run ids from thread_current.",
-  "When workflow help is justified, use this decision order: direct tool work, then saved runnable entries, then artifact-workflow authoring, and save reusable pieces only on explicit request through normal workspace writes into `.svvy/workflows/...`.",
-  "When authoring Smithers workflow tasks, inspect `.svvy/workflows/components/agents.ts` and reuse its `explorer`, `implementer`, or `reviewer` exports when one matches the task. If none fit, define a task-specific agent in the artifact workflow. Add or revise saved workflow agent components only when the user explicitly wants reusable workspace infrastructure.",
+  "Use thread_current when the current objective, wait state, loaded prompt context, or prior thread report state matters.",
+  "Do not infer current workflow details from prompt context; inspect Smithers state with official Smithers CLI commands when workflow state matters.",
   buildOptionalPromptContextRegistryPrompt(),
 ].join("\n\n");
 
-const WORKFLOW_TASK_INSTRUCTION_BODY = [
+export const BASE_WORKFLOW_TASK_INSTRUCTIONS = [
   "You are a task-scoped coding agent running inside one Smithers workflow task attempt.",
   "Use the available task-local tools to complete the task described by the workflow.",
   "Work only within the task root or worktree provided by the workflow runtime.",
 ].join("\n");
 
-const CX_CONTEXT_BODY = [
-  "Loaded always-on prompt context: cx semantic code navigation.",
+const CX_CONTEXT_BODY = buildCxPromptContext();
+
+export const SHELL_BASE_CONTEXT_BODY = [
+  "Loaded native extension: Shell.",
   "",
-  "cx is the semantic code-navigation layer for repository inspection. Prefer cx for structural exploration before reading full files when cx can cover the language.",
-  "",
-  "Use this escalation order for code navigation:",
-  "- `cx_overview` for a directory or file table of contents.",
-  "- `cx_symbols` to search project symbols by kind, name glob, or file.",
-  "- `cx_definition` to inspect a symbol body without reading the full file.",
-  "- `cx_references` to find callers and usage sites.",
-  "- `cx_lang_list` when you need to check whether a grammar is available or installed.",
-  "- `cx_lang_add` when a relevant grammar is available but missing and semantic navigation would materially help the task.",
-  "- `read`, `grep`, `find`, or `ls` when semantic navigation is insufficient, when raw text is required, or when cx cannot cover the target language.",
-  "",
-  "cx command behavior:",
-  "- `cx_overview` accepts a path and can include full per-file detail for directories.",
-  "- `cx_symbols` supports `kind`, `name`, `file`, pagination, and JSON output through the native tool result.",
-  "- `cx_definition` supports `name`, `kind`, `from`, pagination, and `maxLines` for large bodies.",
-  "- `cx_references` supports `name`, `file`, `unique`, pagination, and JSON output through the native tool result.",
-  "- `cx_lang_list`, `cx_lang_add`, `cx_lang_remove`, `cx_cache_path`, and `cx_cache_clean` manage grammars and cache state.",
-  "",
-  "Use top-level `cx_*` tools for ordinary semantic navigation. Inside `execute_typescript`, use only the read-only `api.cx_*` subset when TypeScript control flow is needed for batching or aggregation.",
+  "Use exec_command to run shell commands. Use write_stdin only to continue an exec_command session that returned a session_id.",
+  "For repository inspection, prefer rg for text search and rg --files for filename search. Set workdir on exec_command instead of relying on cd.",
 ].join("\n");
+
+export const SHELL_INCUR_CLI_CONTEXT_BODY = [
+  "Loaded Shell guidance: Incur CLI Usage.",
+  "",
+  "Loaded svvyx extensions are ordinary shell commands. Run them with exec_command as svvyx <extension-id> <command> ... .",
+  "Use --help for human-readable command help and --llms or --llms --format json for agent-readable command documentation.",
+  "Use the specific loaded extension instructions for domain command names and examples.",
+].join("\n");
+
+const APPLY_PATCH_CONTEXT_BODY = [
+  "Loaded native extension: Apply Patch.",
+  "",
+  "Use apply_patch for targeted source edits. It is not a shell and cannot run commands or continue processes.",
+].join("\n");
+
+const GIT_CONTEXT_BODY = [
+  "Loaded prompt-only extension: Git.",
+  "",
+  "Use git through ordinary Shell commands for repository status, diffs, branches, staging, commits, and history. There are no native git_* tools, no svvyx git commands, and no generated Git TypeScript clients.",
+].join("\n");
+
+const GITHUB_CONTEXT_BODY = [
+  "Loaded prompt-only extension: GitHub.",
+  "",
+  "Use gh through ordinary Shell commands for GitHub issues, pull requests, reviews, Actions, publishing, and wrap-up. There are no native github_* tools, no svvyx github commands, and no generated GitHub TypeScript clients.",
+].join("\n");
+
+const EXTENSION_LOADING_CONTEXT_BODY = [
+  "Loaded native extension: Extension Loading.",
+  "",
+  "Use list_extensions to inspect the current actor's loaded and available extensions. Use load_extension only to load an available ready extension into this actor session.",
+].join("\n");
+
+const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
+  "Loaded native extension: Request User Input.",
+  "",
+  "Use `request_user_input` only for user decisions that could materially steer the work and where you can choose a conservative default now.",
+  "Ask one to three short questions. For each question, provide a concise `title` for the side panel. Use either exactly two or three options with exactly one `recommended: true`, or a freeform `defaultAnswer`.",
+  "Continue with the returned answer. If a later `request_user_input.answer` message arrives, treat it as a normal queued answer follow-up and reassess only if it materially changes the work.",
+].join("\n");
+
+const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY = [
+  "Loaded native extension: Request User Input.",
+  "",
+  "Use `request_user_input` only when the answer is required before proceeding safely.",
+  "Ask one to three short questions. For each question, provide a concise `title` for the side panel. Use either exactly two or three options with exactly one `recommended: true`, or a freeform `defaultAnswer`, because the configured timeout may fall back to that default.",
+  'When the tool returns, continue with the returned answer. If the answer is marked `answeredBy: "timeout_default"`, treat it as a fallback, not confirmed user preference.',
+].join("\n");
+
+const THREAD_ORCHESTRATION_CONTEXT_BODY = [
+  "Loaded native extension: Thread Orchestration.",
+  "",
+  "Use thread_start for delegated handler objectives, thread_followup for exact thread or group follow-up, thread_request_report for one-handler updates, and thread_list/thread_episodes when handler state matters.",
+].join("\n");
+
+const THREAD_HANDLING_CONTEXT_BODY = [
+  "Loaded native extension: Thread Handling.",
+  "",
+  "Use thread_current and thread_group to inspect this handler context, thread_episodes for durable report history, and thread_report for intermediate updates or conclusions.",
+].join("\n");
+
+const ARTIFACTS_COMMAND_CONTRACTS = [
+  {
+    id: "create",
+    shell:
+      "svvyx artifacts create --name <filename-with-extension> [--immutable] [--mime-type <mime>] --json",
+    summary: "creates an empty artifact file with the exact stored filename",
+    typescript:
+      'await extensions.artifacts.run("create", { options: { name, immutable, mimeType } });',
+  },
+  {
+    id: "create",
+    shell:
+      "svvyx artifacts create --path <file> [--name <filename-with-extension>] [--immutable] [--mime-type <mime>] --json",
+    summary: "copies one existing file into artifact storage",
+    typescript:
+      'await extensions.artifacts.run("create", { options: { path, name, immutable, mimeType } });',
+  },
+  {
+    id: "inspect",
+    shell: "svvyx artifacts inspect --id <artifact_id> --json",
+    summary: "returns artifact metadata and path without file contents",
+    typescript: 'await extensions.artifacts.run("inspect", { options: { id } });',
+  },
+  {
+    id: "list",
+    shell: "svvyx artifacts list [--thread-id <thread_id>] [--limit <n>] --json",
+    summary: "lists active artifacts for the current session or handler thread",
+    typescript: 'await extensions.artifacts.run("list", { options: { threadId, limit } });',
+  },
+  {
+    id: "open",
+    shell: "svvyx artifacts open --id <artifact_id> --json",
+    summary: "opens or focuses the product artifact inspector",
+    typescript: 'await extensions.artifacts.run("open", { options: { id } });',
+  },
+  {
+    id: "delete",
+    shell: "svvyx artifacts delete --id <artifact_id> --json",
+    summary: "tombstones the artifact record and removes the file when present",
+    typescript: 'await extensions.artifacts.run("delete", { options: { id } });',
+  },
+] as const;
+
+const ARTIFACTS_CONTEXT_BODY = buildArtifactsContextBody();
+
+function buildArtifactsContextBody(): string {
+  return [
+    "Loaded extension: Artifacts.",
+    "",
+    "Use artifacts only for durable session files such as screenshots, logs, traces, reports, generated previews, and handoff notes. Do not use artifacts for ordinary repository files the user asked you to create or edit.",
+    "Run Artifacts through exec_command with JSON output:",
+    ...ARTIFACTS_COMMAND_CONTRACTS.map((command) => `- \`${command.shell}\` ${command.summary}.`),
+    "When writing TypeScript inside execute_typescript, prefer the generated client:",
+    "```ts",
+    ...ARTIFACTS_COMMAND_CONTRACTS.map((command) => command.typescript),
+    "```",
+    "Artifacts create does not support `--kind`, inline content, implicit extension defaults, path-like names, or compatibility aliases such as artifact_write_text.",
+  ].join("\n");
+}
 
 const SMITHERS_ORCHESTRATOR_CONTEXT_BODY = [
   "Loaded always-on prompt context: Smithers workflow routing.",
   "",
-  "Handler threads supervise Smithers workflow runs. The orchestrator knows this capability exists, but it does not receive `smithers_*` tool declarations.",
+  "Handler threads use official Smithers CLI commands through Shell for workflow work. The orchestrator knows this capability exists, but it does not receive `smithers_*` tool declarations or product workflow wrappers.",
   "",
-  "When work requires workflow execution, workflow authoring, workflow inspection, or Project CI workflow operation, delegate a bounded objective to a handler thread with `thread_start`, or use `thread_resume` when a completed handler thread already has the right delegated context for follow-up work.",
+  "When work requires workflow execution, workflow authoring, or workflow inspection, delegate a bounded objective to a handler thread with `thread_start`. Use `thread_followup({ activate: true })` when a concluded handler thread already has the right delegated context for follow-up work.",
 ].join("\n");
 
 const SMITHERS_HANDLER_CONTEXT_BODY = [
-  "Loaded always-on prompt context: Smithers workflow supervision.",
+  "Loaded prompt-only extension: Smithers CLI workflow authoring.",
   "",
-  "Handler threads supervise Smithers workflow runs through native `smithers_*` tools. Use direct tools for simple repository work, then saved runnable entries, then artifact workflow authoring when a workflow graph is the right unit of work.",
+  "Handler threads use official Smithers CLI commands through Shell against workspace `.smithers/` source. Smithers adds no native tools, no generated TypeScript clients, and no product workflow wrapper tools.",
   "",
-  "Use `smithers_list_workflows` to discover runnable saved and artifact entries. Use `smithers_run_workflow({ workflowId, input })` for a fresh launch. Use `smithers_run_workflow({ workflowId, input, runId })` only when you intend to resume that exact run. Omitting `runId` never silently resumes; if this handler already owns a nonterminal run with the same `workflowId`, the call is rejected. Different `workflowId` values can run concurrently under the same handler thread.",
+  "Use `smithers init`, `smithers workflow run`, `smithers ps`, and `smithers inspect` as ordinary shell commands when Smithers work is the right unit.",
   "",
-  "Use Smithers inspection and control tools for supervision: `smithers_get_run`, `smithers_watch_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, `smithers_get_chat_transcript`, `smithers_get_run_events`, `smithers_runs_cancel`, `smithers_signals_send`, `smithers_frames_list`, `smithers_get_devtools_snapshot`, and `smithers_stream_devtools`.",
-  "",
-  "Workflow waits, approvals, retries, repairs, and resumptions stay inside the supervising handler thread. Call `thread_handoff` only after the current objective span is no longer running or waiting on an owned workflow run.",
+  "When the delegated objective has an important update, call `thread_report`. Include `outcome` only when the current handler objective is concluded.",
 ].join("\n");
 
 const SMITHERS_WORKFLOW_TASK_CONTEXT_BODY = [
   "Loaded always-on prompt context: Smithers task-agent boundary.",
   "",
-  "Smithers owns this task attempt's lifecycle, retries, validation, approval gates, and workflow state.",
+  "Smithers owns task lifecycle, retries, validation, approval gates, and workflow state whenever an official Smithers workflow invokes a task agent.",
 ].join("\n");
 
-const CI_CONTEXT_BODY = buildLoadedOptionalPromptContextPrompt(["ci"]) ?? "";
-
-function buildActorInstructions(actor: SvvyActorKind): string[] {
-  const common = buildCommonInstructions(actor);
-
-  switch (actor) {
-    case "orchestrator":
-      return [...common, ...ORCHESTRATOR_INSTRUCTION_BODY.split("\n\n")];
-    case "handler":
-      return [...common, ...HANDLER_INSTRUCTION_BODY.split("\n\n")];
-    case "workflow-task":
-      return [...common, ...WORKFLOW_TASK_INSTRUCTION_BODY.split("\n\n")];
-  }
-}
-
 function buildCommonInstructions(actor: SvvyActorKind): string[] {
-  const common = COMMON_INSTRUCTION_BODY.split("\n\n");
+  const common = BASE_COMMON_INSTRUCTIONS.split("\n\n");
   if (actor !== "workflow-task") {
     return common;
   }
   return common.filter(
     (instruction) =>
-      !instruction.includes("handoff episodes") &&
+      !instruction.includes("thread report episodes") &&
       !instruction.includes("thread_list") &&
-      !instruction.includes("runtime, thread, handoff, or workflow state"),
+      !instruction.includes("runtime, thread, report, or workflow state"),
   );
 }
 
-export function createDefaultPromptLibraryState(
+export function createDefaultGeneratedAgentContextState(
   now = new Date().toISOString(),
   revision = 1,
-): PromptLibraryState {
+): GeneratedAgentContextState {
   const globalScope = { appGlobal: true, workspaceKeys: [] };
-  const instructionBlocks: Record<string, PromptLibraryInstructionBlock> = {
+  const instructionBlocks: Record<string, GeneratedAgentContextInstructionBlock> = {
     common: {
       id: "common",
       title: "Common svvy Instructions",
       summary: "Shared behavior for all svvy prompt actors.",
-      body: COMMON_INSTRUCTION_BODY,
+      body: BASE_COMMON_INSTRUCTIONS,
       enabled: true,
       scope: globalScope,
       actor: "common",
@@ -198,7 +323,7 @@ export function createDefaultPromptLibraryState(
       id: "orchestrator",
       title: "Orchestrator Instructions",
       summary: "Main strategic surface behavior and delegation routing.",
-      body: ORCHESTRATOR_INSTRUCTION_BODY,
+      body: BASE_ORCHESTRATOR_INSTRUCTIONS,
       enabled: true,
       scope: globalScope,
       actor: "orchestrator",
@@ -208,7 +333,7 @@ export function createDefaultPromptLibraryState(
       id: "handler",
       title: "Handler Thread Instructions",
       summary: "Delegated handler-thread behavior and workflow supervision rules.",
-      body: HANDLER_INSTRUCTION_BODY,
+      body: BASE_HANDLER_INSTRUCTIONS,
       enabled: true,
       scope: globalScope,
       actor: "handler",
@@ -218,7 +343,7 @@ export function createDefaultPromptLibraryState(
       id: "workflow-task",
       title: "Workflow Task-Agent Instructions",
       summary: "Task-local workflow agent boundaries.",
-      body: WORKFLOW_TASK_INSTRUCTION_BODY,
+      body: BASE_WORKFLOW_TASK_INSTRUCTIONS,
       enabled: true,
       scope: globalScope,
       actor: "workflow-task",
@@ -226,7 +351,7 @@ export function createDefaultPromptLibraryState(
     },
   };
 
-  const contextPacks: Record<string, PromptLibraryContextPack> = {
+  const contextPacks: Record<string, GeneratedAgentContextContextPack> = {
     cx: {
       id: "cx",
       title: "cx Semantic Code Navigation",
@@ -267,17 +392,6 @@ export function createDefaultPromptLibraryState(
       allowedActors: ["workflow-task"],
       default: true,
     },
-    ci: {
-      id: "ci",
-      title: "Project CI",
-      summary: "Optional Project CI authoring guidance.",
-      body: CI_CONTEXT_BODY,
-      enabled: true,
-      scope: globalScope,
-      allowedActors: ["handler"],
-      default: true,
-      optionalContextKey: "ci",
-    },
   };
 
   return {
@@ -299,6 +413,9 @@ export function createDefaultPromptLibraryState(
         contextPackIds: ["cx", "smithers-handler"],
         generatedSectionIds: [
           "web-context",
+          "smithers-core",
+          "smithers-memory",
+          "smithers-svvy-boundary",
           "workflow-authoring-contract",
           "handler-workflow-authoring-appendix",
           "loaded-optional-context",
@@ -315,25 +432,25 @@ export function createDefaultPromptLibraryState(
   };
 }
 
-function getFallbackRecipe(actor: SvvyActorKind): PromptLibraryActorRecipe {
-  return createDefaultPromptLibraryState().actorRecipes[actor];
+function getFallbackRecipe(actor: SvvyActorKind): GeneratedAgentContextActorRecipe {
+  return createDefaultGeneratedAgentContextState().actorRecipes[actor];
 }
 
 function getEnabledInstructionBlock(
-  state: PromptLibraryState,
+  state: GeneratedAgentContextState,
   id: string,
   workspaceKey?: string,
-): PromptLibraryInstructionBlock | null {
+): GeneratedAgentContextInstructionBlock | null {
   const block = state.instructionBlocks[id];
   return block?.enabled && isPromptBlockActive(block.scope, workspaceKey) ? block : null;
 }
 
 function getEnabledContextPack(
-  state: PromptLibraryState,
+  state: GeneratedAgentContextState,
   actor: SvvyActorKind,
   id: string,
   workspaceKey?: string,
-): PromptLibraryContextPack | null {
+): GeneratedAgentContextContextPack | null {
   const pack = state.contextPacks[id];
   if (
     !pack?.enabled ||
@@ -353,7 +470,7 @@ function isPromptBlockActive(
 }
 
 function buildLoadedOptionalPromptContextFromLibrary(
-  state: PromptLibraryState,
+  state: GeneratedAgentContextState,
   keys: readonly string[],
 ): string | undefined {
   const validKeys = validateOptionalPromptContextKeys(keys);
@@ -367,7 +484,7 @@ function buildLoadedOptionalPromptContextFromLibrary(
         (pack) => pack.enabled && pack.optionalContextKey === key,
       ),
     )
-    .filter((pack): pack is PromptLibraryContextPack => Boolean(pack))
+    .filter((pack): pack is GeneratedAgentContextContextPack => Boolean(pack))
     .map((pack) => pack.body.trim())
     .filter(Boolean);
   return sections.length > 0 ? sections.join("\n\n") : undefined;
@@ -375,79 +492,99 @@ function buildLoadedOptionalPromptContextFromLibrary(
 
 export function buildSystemPromptFromLibrary(
   actor: SvvyActorKind,
-  state: PromptLibraryState,
+  state: GeneratedAgentContextState,
   options: {
     loadedContextKeys?: readonly string[];
-    webProvider?: WebProvider;
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    availableExtensionIds?: readonly string[];
+    availableExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
+    externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    networkAccess?: boolean;
     workspaceKey?: string;
+    requestUserInputSettings?: RequestUserInputSettings;
   } = {},
 ): string {
-  const recipe = state.actorRecipes[actor] ?? getFallbackRecipe(actor);
-  const sections: string[] = [];
-  for (const id of recipe.instructionBlockIds) {
-    const block = getEnabledInstructionBlock(state, id, options.workspaceKey);
-    if (block?.body.trim()) {
-      sections.push(block.body.trim());
-    }
-  }
-  for (const id of recipe.contextPackIds) {
-    const pack = getEnabledContextPack(state, actor, id, options.workspaceKey);
-    if (pack?.body.trim()) {
-      sections.push(pack.body.trim());
-    }
-  }
-  for (const generatedId of recipe.generatedSectionIds) {
-    if (generatedId === "web-context") {
-      sections.push(buildWebPromptContext(actor, options.webProvider));
-    } else if (generatedId === "workflow-authoring-contract" && actor === "handler") {
-      sections.push(WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION);
-    } else if (generatedId === "handler-workflow-authoring-appendix" && actor === "handler") {
-      sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
-    } else if (generatedId === "loaded-optional-context" && actor === "handler") {
-      const loadedContextPrompt = buildLoadedOptionalPromptContextFromLibrary(
-        state,
-        options.loadedContextKeys ?? [],
-      );
-      if (loadedContextPrompt) {
-        sections.push(loadedContextPrompt);
-      }
-    } else if (generatedId === "execute-typescript") {
-      sections.push(buildExecuteTypescriptPromptSection(actor, options.webProvider));
-    }
-  }
-  return sections.join("\n\n");
+  return buildSystemPromptFromExtensionState(actor, {
+    ...options,
+    generatedAgentContextState: state,
+    workspaceKey: options.workspaceKey,
+  });
 }
 
-export function buildPromptLibraryGeneratedEntries(
+export function buildGeneratedAgentContextEntries(
   actor: SvvyActorKind,
-  state: PromptLibraryState,
+  state: GeneratedAgentContextState,
   options: {
     loadedContextKeys?: readonly string[];
-    webProvider?: WebProvider;
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    availableExtensionIds?: readonly string[];
+    availableExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
+    networkAccess?: boolean;
   } = {},
-): PromptLibraryGeneratedEntry[] {
+): GeneratedAgentContextEntry[] {
+  if (
+    options.loadedExtensionIds ||
+    options.availableExtensionIds ||
+    options.networkAccess === false
+  ) {
+    return buildGeneratedEntriesFromExtensionState(actor, options);
+  }
+
   const recipe = state.actorRecipes[actor] ?? getFallbackRecipe(actor);
   return recipe.generatedSectionIds
-    .map((id) => buildPromptLibraryGeneratedEntry(actor, state, id, options))
-    .filter((entry): entry is PromptLibraryGeneratedEntry => Boolean(entry));
+    .map((id) => buildGeneratedAgentContextEntry(actor, state, id, options))
+    .filter((entry): entry is GeneratedAgentContextEntry => Boolean(entry));
 }
 
-function buildPromptLibraryGeneratedEntry(
+function buildGeneratedAgentContextEntry(
   actor: SvvyActorKind,
-  state: PromptLibraryState,
-  id: PromptLibraryGeneratedSectionId,
+  state: GeneratedAgentContextState,
+  id: GeneratedAgentContextSectionId,
   options: {
     loadedContextKeys?: readonly string[];
-    webProvider?: WebProvider;
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
   },
-): PromptLibraryGeneratedEntry | null {
+): GeneratedAgentContextEntry | null {
   if (id === "web-context") {
     return {
       id,
       title: "Web Context",
-      source: "src/bun/web-runtime/prompt-context.ts",
-      sourcePath: "src/bun/web-runtime/prompt-context.ts",
-      content: buildWebPromptContext(actor, options.webProvider),
+      source: "generated/instructions/full/010-tinyfish-cli.generated.md",
+      sourcePath: "generated/instructions/full/010-tinyfish-cli.generated.md",
+      content: buildWebPromptContext(actor),
+    };
+  }
+  if (id === "smithers-core" && actor === "handler") {
+    return {
+      id,
+      title: "Smithers Core Instructions",
+      source: "generated/smithers-instructions.generated.ts",
+      sourcePath: "generated/smithers-instructions.generated.ts",
+      content: SMITHERS_CORE_INSTRUCTIONS,
+    };
+  }
+  if (id === "smithers-memory" && actor === "handler") {
+    return {
+      id,
+      title: "Smithers Memory Instructions",
+      source: "generated/smithers-instructions.generated.ts",
+      sourcePath: "generated/smithers-instructions.generated.ts",
+      content: SMITHERS_MEMORY_INSTRUCTIONS,
+    };
+  }
+  if (id === "smithers-svvy-boundary" && actor === "handler") {
+    return {
+      id,
+      title: "Smithers svvy Boundary",
+      source: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      content: SMITHERS_SVVY_BOUNDARY_APPENDIX,
     };
   }
   if (id === "workflow-authoring-contract" && actor === "handler") {
@@ -490,7 +627,11 @@ function buildPromptLibraryGeneratedEntry(
       title: "Execute Typescript",
       source: "generated/execute-typescript-api.generated.ts",
       sourcePath: "generated/execute-typescript-api.generated.ts",
-      content: buildExecuteTypescriptPromptSection(actor, options.webProvider),
+      content: buildExecuteTypescriptPromptSection(actor, {
+        extensionsRoot: options.extensionsRoot,
+        loadedExtensionIds: options.loadedExtensionIds,
+        loadedExtensionRecords: options.loadedExtensionRecords,
+      }),
     };
   }
   return null;
@@ -500,28 +641,395 @@ export function buildSystemPrompt(
   actor: SvvyActorKind,
   options: {
     loadedContextKeys?: readonly string[];
-    promptLibraryState?: PromptLibraryState;
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    availableExtensionIds?: readonly string[];
+    availableExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
+    externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    networkAccess?: boolean;
+    generatedAgentContextState?: GeneratedAgentContextState;
     workspaceKey?: string;
-    webProvider?: WebProvider;
+    requestUserInputSettings?: RequestUserInputSettings;
   } = {},
 ): string {
-  if (options.promptLibraryState) {
-    return buildSystemPromptFromLibrary(actor, options.promptLibraryState, options);
+  if (options.generatedAgentContextState) {
+    return buildSystemPromptFromLibrary(actor, options.generatedAgentContextState, options);
   }
-  const sections = [...buildActorInstructions(actor)];
-  sections.push(buildAlwaysLoadedPromptContext(actor, { webProvider: options.webProvider }));
-  if (actor === "handler") {
+  return buildSystemPromptFromExtensionState(actor, options);
+}
+
+function buildSystemPromptFromExtensionState(
+  actor: SvvyActorKind,
+  options: {
+    loadedContextKeys?: readonly string[];
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    availableExtensionIds?: readonly string[];
+    availableExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
+    externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    networkAccess?: boolean;
+    generatedAgentContextState?: GeneratedAgentContextState;
+    workspaceKey?: string;
+    requestUserInputSettings?: RequestUserInputSettings;
+  } = {},
+): string {
+  const extensionState = resolvePromptExtensionState(actor, options);
+  const loaded = new Set(extensionState.loadedExtensionIds);
+  const loadedInstructionSections = buildLoadedInstructionSections(
+    extensionState.loadedExtensionIds,
+    options.loadedExtensionRecords ?? [],
+  );
+  const sections: string[] = [];
+  const pushLoadedInstructionSection = (id: string): boolean => {
+    const section = loadedInstructionSections.get(id);
+    if (!section) return false;
+    sections.push(section);
+    loadedInstructionSections.delete(id);
+    return true;
+  };
+
+  if (loaded.has("base-common")) {
+    if (!pushLoadedInstructionSection("base-common")) {
+      const body = getLibraryInstructionBody(options, "common");
+      sections.push(...(body ? body.split("\n\n") : buildCommonInstructions(actor)));
+    }
+  }
+  if (loaded.has("base-orchestrator") && actor === "orchestrator") {
+    if (!pushLoadedInstructionSection("base-orchestrator")) {
+      sections.push(...getActorInstructionBody(options, actor, BASE_ORCHESTRATOR_INSTRUCTIONS));
+    }
+  }
+  if (loaded.has("base-handler") && actor === "handler") {
+    if (!pushLoadedInstructionSection("base-handler")) {
+      sections.push(...getActorInstructionBody(options, actor, BASE_HANDLER_INSTRUCTIONS));
+    }
+  }
+  if (loaded.has("base-workflow-task") && actor === "workflow-task") {
+    if (!pushLoadedInstructionSection("base-workflow-task")) {
+      sections.push(...getActorInstructionBody(options, actor, BASE_WORKFLOW_TASK_INSTRUCTIONS));
+    }
+  }
+  const externalInstructions = buildExternalInstructionSections(
+    actor,
+    options.externalInstructionSources ?? [],
+  );
+  if (externalInstructions) {
+    sections.push(externalInstructions);
+  }
+  if (loaded.has("cx")) {
+    sections.push(getLibraryContextPackBody(options, actor, "cx") ?? CX_CONTEXT_BODY);
+  }
+  if (loaded.has("shell")) {
+    sections.push(SHELL_BASE_CONTEXT_BODY);
+    sections.push(SHELL_INCUR_CLI_CONTEXT_BODY);
+  }
+  if (loaded.has("apply-patch")) {
+    sections.push(APPLY_PATCH_CONTEXT_BODY);
+  }
+  if (loaded.has("git")) {
+    sections.push(GIT_CONTEXT_BODY);
+  }
+  if (loaded.has("github")) {
+    sections.push(GITHUB_CONTEXT_BODY);
+  }
+  if (loaded.has("extension-loading")) {
+    sections.push(EXTENSION_LOADING_CONTEXT_BODY);
+  }
+  if (loaded.has("request-user-input")) {
+    sections.push(buildRequestUserInputContextBody(options.requestUserInputSettings));
+  }
+  if (loaded.has("thread-orchestration")) {
+    sections.push(THREAD_ORCHESTRATION_CONTEXT_BODY);
+  }
+  if (loaded.has("thread-handling")) {
+    sections.push(THREAD_HANDLING_CONTEXT_BODY);
+  }
+  if (loaded.has("artifacts")) {
+    sections.push(ARTIFACTS_CONTEXT_BODY);
+  }
+  if (loaded.has("smithers")) {
+    if (actor === "handler") {
+      sections.push(
+        getLibraryContextPackBody(options, actor, "smithers-handler") ??
+          SMITHERS_HANDLER_CONTEXT_BODY,
+      );
+      sections.push(SMITHERS_CORE_INSTRUCTIONS);
+      sections.push(SMITHERS_SVVY_BOUNDARY_APPENDIX);
+    } else if (actor === "workflow-task") {
+      sections.push(
+        getLibraryContextPackBody(options, actor, "smithers-workflow-task") ??
+          SMITHERS_WORKFLOW_TASK_CONTEXT_BODY,
+      );
+    } else {
+      sections.push(
+        getLibraryContextPackBody(options, actor, "smithers-orchestrator") ??
+          SMITHERS_ORCHESTRATOR_CONTEXT_BODY,
+      );
+    }
+  }
+  if (loaded.has("web")) {
+    sections.push(buildWebPromptContext(actor));
+  }
+  if (loaded.has("workflows") && actor === "handler") {
     sections.push(WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION);
     sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
-    const loadedContextPrompt = buildLoadedOptionalPromptContextPrompt(
-      options.loadedContextKeys ?? [],
-    );
+  }
+  for (const id of extensionState.loadedExtensionIds) {
+    pushLoadedInstructionSection(id);
+  }
+  const availablePrompt = buildAvailableExtensionHints(
+    extensionState.availableExtensionIds,
+    options.availableExtensionRecords ?? [],
+  );
+  if (availablePrompt) {
+    sections.push(availablePrompt);
+  }
+  if (actor === "handler") {
+    const loadedContextPrompt = options.generatedAgentContextState
+      ? buildLoadedOptionalPromptContextFromLibrary(
+          options.generatedAgentContextState,
+          options.loadedContextKeys ?? [],
+        )
+      : buildLoadedOptionalPromptContextPrompt(options.loadedContextKeys ?? []);
     if (loadedContextPrompt) {
       sections.push(loadedContextPrompt);
     }
   }
-  sections.push(buildExecuteTypescriptPromptSection(actor, options.webProvider));
+  if (loaded.has("execute-typescript")) {
+    sections.push(
+      buildExecuteTypescriptPromptSection(actor, {
+        extensionsRoot: options.extensionsRoot,
+        loadedExtensionIds: extensionState.loadedExtensionIds,
+        loadedExtensionRecords: options.loadedExtensionRecords,
+      }),
+    );
+  }
+
   return sections.join("\n\n");
+}
+
+function buildRequestUserInputContextBody(settings?: RequestUserInputSettings): string {
+  return settings?.mode === "blocking"
+    ? REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY
+    : REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY;
+}
+
+function getActorInstructionBody(
+  options: { generatedAgentContextState?: GeneratedAgentContextState; workspaceKey?: string },
+  actor: SvvyActorKind,
+  fallback: string,
+): string[] {
+  return (getLibraryInstructionBody(options, actor) ?? fallback).split("\n\n");
+}
+
+function buildExternalInstructionSections(
+  actor: SvvyActorKind,
+  sources: readonly GeneratedAgentContextExternalSource[],
+): string | null {
+  const sections = sources
+    .filter(
+      (source) =>
+        source.enabled && source.readStatus.status === "readable" && source.actors.includes(actor),
+    )
+    .map((source) => {
+      const content = source.content.trim();
+      if (!content) return null;
+      return [`External instruction: ${source.path}`, "", content].join("\n");
+    })
+    .filter((section): section is string => Boolean(section));
+  if (sections.length === 0) {
+    return null;
+  }
+  return ["Loaded external_instruction records:", ...sections].join("\n\n");
+}
+
+function buildLoadedInstructionSections(
+  loadedExtensionIds: readonly string[],
+  loadedExtensionRecords: readonly ExtensionRecord[],
+): Map<string, string> {
+  const recordsById = new Map(loadedExtensionRecords.map((record) => [record.id, record]));
+  const sections = new Map<string, string>();
+  for (const id of loadedExtensionIds) {
+    const record = recordsById.get(id);
+    if (!record) continue;
+    const bypassedFiles = new Set(
+      (record.instructionFiles ?? []).filter((file) => file.bypassed).map((file) => file.file),
+    );
+    const fileSections = record.instructionSourceFiles
+      .filter((file) => isAbsolute(file))
+      .filter((file) => !bypassedFiles.has(file) && !bypassedFiles.has(basename(file)))
+      .map((file) => {
+        const content = readFileSync(file, "utf8").trim();
+        if (!content) return null;
+        return [`Instruction file: ${basename(file)}`, "", content].join("\n");
+      })
+      .filter((section): section is string => Boolean(section));
+    if (fileSections.length === 0) continue;
+    sections.set(record.id, [`Loaded extension: ${record.title}.`, ...fileSections].join("\n\n"));
+  }
+  return sections;
+}
+
+function getLibraryInstructionBody(
+  options: { generatedAgentContextState?: GeneratedAgentContextState; workspaceKey?: string },
+  id: string,
+): string | null {
+  if (!options.generatedAgentContextState) {
+    return null;
+  }
+  return (
+    getEnabledInstructionBlock(options.generatedAgentContextState, id, options.workspaceKey)
+      ?.body ?? null
+  );
+}
+
+function getLibraryContextPackBody(
+  options: { generatedAgentContextState?: GeneratedAgentContextState; workspaceKey?: string },
+  actor: SvvyActorKind,
+  id: string,
+): string | null {
+  if (!options.generatedAgentContextState) {
+    return null;
+  }
+  return (
+    getEnabledContextPack(options.generatedAgentContextState, actor, id, options.workspaceKey)
+      ?.body ?? null
+  );
+}
+
+function buildGeneratedEntriesFromExtensionState(
+  actor: SvvyActorKind,
+  options: {
+    loadedContextKeys?: readonly string[];
+    loadedExtensionIds?: readonly string[];
+    loadedExtensionRecords?: readonly ExtensionRecord[];
+    availableExtensionIds?: readonly string[];
+    availableExtensionRecords?: readonly ExtensionRecord[];
+    extensionsRoot?: string;
+    networkAccess?: boolean;
+  } = {},
+): GeneratedAgentContextEntry[] {
+  const extensionState = resolvePromptExtensionState(actor, options);
+  const loaded = new Set(extensionState.loadedExtensionIds);
+  const entries: GeneratedAgentContextEntry[] = [];
+  if (loaded.has("web")) {
+    entries.push({
+      id: "web-context",
+      title: "Web Context",
+      source: "generated/instructions/full/010-tinyfish-cli.generated.md",
+      sourcePath: "generated/instructions/full/010-tinyfish-cli.generated.md",
+      content: buildWebPromptContext(actor),
+    });
+  }
+  if (loaded.has("smithers") && actor === "handler") {
+    entries.push({
+      id: "smithers-core",
+      title: "Smithers Core Instructions",
+      source: "generated/smithers-instructions.generated.ts",
+      sourcePath: "generated/smithers-instructions.generated.ts",
+      content: SMITHERS_CORE_INSTRUCTIONS,
+    });
+    entries.push({
+      id: "smithers-memory",
+      title: "Smithers Memory Instructions",
+      source: "generated/smithers-instructions.generated.ts",
+      sourcePath: "generated/smithers-instructions.generated.ts",
+      content: SMITHERS_MEMORY_INSTRUCTIONS,
+    });
+    entries.push({
+      id: "smithers-svvy-boundary",
+      title: "Smithers svvy Boundary",
+      source: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      content: SMITHERS_SVVY_BOUNDARY_APPENDIX,
+    });
+  }
+  if (loaded.has("workflows") && actor === "handler") {
+    entries.push({
+      id: "workflow-authoring-contract",
+      title: "Workflow Authoring Contract",
+      source: "generated/workflow-authoring-contract.generated.ts",
+      sourcePath: "generated/workflow-authoring-contract.generated.ts",
+      content: WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION,
+    });
+    entries.push({
+      id: "handler-workflow-authoring-appendix",
+      title: "Handler Workflow Authoring Appendix",
+      source: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
+      content: HANDLER_WORKFLOW_AUTHORING_APPENDIX,
+    });
+  }
+  if (actor === "handler") {
+    const content = buildLoadedOptionalPromptContextPrompt(options.loadedContextKeys ?? []);
+    if (content) {
+      entries.push({
+        id: "loaded-optional-context",
+        title: "Loaded Optional Context",
+        source: "src/bun/default-system-prompt.ts",
+        sourcePath: "src/bun/default-system-prompt.ts",
+        content,
+      });
+    }
+  }
+  if (loaded.has("execute-typescript")) {
+    entries.push({
+      id: "execute-typescript",
+      title: "Execute Typescript",
+      source: "generated/execute-typescript-api.generated.ts",
+      sourcePath: "generated/execute-typescript-api.generated.ts",
+      content: buildExecuteTypescriptPromptSection(actor, {
+        extensionsRoot: options.extensionsRoot,
+        loadedExtensionIds: extensionState.loadedExtensionIds,
+        loadedExtensionRecords: options.loadedExtensionRecords,
+      }),
+    });
+  }
+  return entries;
+}
+
+function resolvePromptExtensionState(
+  actor: SvvyActorKind,
+  options: {
+    loadedExtensionIds?: readonly string[];
+    availableExtensionIds?: readonly string[];
+    networkAccess?: boolean;
+  },
+): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
+  if (options.loadedExtensionIds || options.availableExtensionIds) {
+    const filterUnavailable = (ids: readonly string[]): string[] =>
+      ids.filter((id) => !(id === "web" && options.networkAccess === false)).toSorted();
+    return {
+      loadedExtensionIds: filterUnavailable(options.loadedExtensionIds ?? []),
+      availableExtensionIds: filterUnavailable(options.availableExtensionIds ?? []),
+    };
+  }
+  return resolveActorExtensionState({
+    actor,
+    networkAccess: options.networkAccess,
+  });
+}
+
+function buildAvailableExtensionHints(
+  availableExtensionIds: readonly string[],
+  availableExtensionRecords: readonly ExtensionRecord[] = [],
+): string | null {
+  const recordsById = new Map(availableExtensionRecords.map((record) => [record.id, record]));
+  const available = availableExtensionIds
+    .map((id) => recordsById.get(id) ?? getExtensionRecord(id))
+    .filter((record): record is ExtensionRecord => Boolean(record))
+    .filter((record) => record.minimalLoadingHint.trim().length > 0)
+    .map((record) => `- ${record.id}: ${record.minimalLoadingHint}`);
+  if (available.length === 0) {
+    return null;
+  }
+  return [
+    "Available extensions:",
+    ...available,
+    "Use load_extension only when one of these ready extensions is needed for the current actor session.",
+  ].join("\n");
 }
 
 export const DEFAULT_SYSTEM_PROMPT = buildSystemPrompt("orchestrator");

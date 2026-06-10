@@ -4,6 +4,7 @@
 	import ClockIcon from "@lucide/svelte/icons/clock";
 	import CopyIcon from "@lucide/svelte/icons/copy";
 	import FileIcon from "@lucide/svelte/icons/file";
+	import FileTextIcon from "@lucide/svelte/icons/file-text";
 	import FolderIcon from "@lucide/svelte/icons/folder";
 	import GitForkIcon from "@lucide/svelte/icons/git-fork";
 	import ImageIcon from "@lucide/svelte/icons/image";
@@ -11,7 +12,6 @@
 	import { createVirtualizer } from "@tanstack/svelte-virtual";
 	import { onDestroy, onMount, tick } from "svelte";
 	import { get } from "svelte/store";
-	import { parseArtifactsParams } from "./artifacts";
 	import { formatCost, formatTimestamp } from "./chat-format";
 	import { buildContextBudgetFromUsage, type ContextBudget } from "./context-budget";
 	import { parseTranscriptMentionLinks } from "./composer-mentions";
@@ -31,28 +31,30 @@
 	import FailedCard from "./transcript-cards/FailedCard.svelte";
 	import type { TranscriptStatus } from "./transcript-cards/StatusBadge.svelte";
 	import ThreadCard, { type TranscriptThread } from "./transcript-cards/ThreadCard.svelte";
-	import ToolCallCard from "./transcript-cards/ToolCallCard.svelte";
+	import ToolCallCard, { type TranscriptToolCall } from "./transcript-cards/ToolCallCard.svelte";
 	import WaitingCard from "./transcript-cards/WaitingCard.svelte";
-	import WorkflowCard, { type TranscriptWorkflow } from "./transcript-cards/WorkflowCard.svelte";
+	import type { TranscriptWorkflow } from "./transcript-cards/WorkflowCard.svelte";
 	import {
 		parseComposerAttachmentTextSignature,
 		type ComposerAttachment,
 		type ConversationTurnTiming,
 		type PromptTarget,
+		type SvvyUserMessage,
 		type WorkspaceHandlerThreadSummary,
 	} from "../shared/workspace-contract";
+	import type { SentSnippetProvenance } from "../shared/snippets";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { formatTurnDuration, formatTurnDurationTooltip } from "./working-timer";
 
 	const DEFAULT_TRANSCRIPT_ROW_GAP = 16;
+	type TranscriptArtifactOpenTarget = string | { id: string; name: string };
 
 	type Props = {
 		conversation: ConversationProjection;
 		target?: PromptTarget | null;
 		sessionId?: string;
-		systemPrompt?: string;
 		streamMessage?: AssistantMessage;
 		currentModel?: Model<any> | null;
 		pendingToolCalls: ReadonlySet<string>;
@@ -60,7 +62,7 @@
 		turnTimings: ConversationTurnTiming[];
 		workspaceMentionPaths?: ReadonlySet<string>;
 		semanticBlocks?: TranscriptSemanticBlock[];
-		onOpenArtifact: (filename: string) => void;
+		onOpenArtifact: (target: TranscriptArtifactOpenTarget) => void;
 		onOpenWorkspacePath: (path: string) => void;
 		onInspectCommand?: (commandId: string) => void;
 		onOpenHandlerThread?: (threadId: string) => void;
@@ -79,7 +81,6 @@
 		conversation,
 		target = null,
 		sessionId,
-		systemPrompt,
 		streamMessage,
 		currentModel = null,
 		pendingToolCalls,
@@ -113,7 +114,6 @@
 	let restoredInitialScrollForSession: string | undefined = undefined;
 	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
-	const resolvedSystemPrompt = $derived(systemPrompt?.trim() || null);
 	const streamingAssistant = $derived(streamMessage ?? null);
 	const turnTimingByAssistantTimestamp = $derived.by(() => {
 		const timings = new Map<string, ConversationTurnTiming>();
@@ -131,15 +131,11 @@
 	}
 
 	type TranscriptRow =
-		| { kind: "system"; key: string; systemPrompt: string }
 		| { kind: "semantic"; key: string; block: TranscriptSemanticBlock }
 		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage }
 		| { kind: "streaming"; key: string; message: AssistantMessage };
 	const transcriptRows = $derived.by<TranscriptRow[]>(() => {
 		const rows: TranscriptRow[] = [];
-		if (resolvedSystemPrompt) {
-			rows.push({ kind: "system", key: "system-prompt", systemPrompt: resolvedSystemPrompt });
-		}
 		for (const block of semanticBlocks) {
 			rows.push({ kind: "semantic", key: `semantic:${block.key}`, block });
 		}
@@ -184,7 +180,6 @@
 
 	function estimateTranscriptRowSize(row: TranscriptRow | undefined): number {
 		if (!row) return 132;
-		if (row.kind === "system") return 92;
 		if (row.kind === "semantic") return 156;
 		if (row.kind === "streaming") return 172;
 		if (row.message.role === "user") return 96;
@@ -227,6 +222,10 @@
 		return message.content.flatMap((block) =>
 			block.type === "text" ? parseComposerAttachmentTextSignature(block.textSignature) : [],
 		);
+	}
+
+	function userSnippetProvenance(message: UserMessage): SentSnippetProvenance[] {
+		return (message as SvvyUserMessage).svvyMetadata?.snippetProvenance ?? [];
 	}
 
 	function userImageAttachments(message: UserMessage): Array<{ attachment: ComposerAttachment; imageData: string | null }> {
@@ -392,7 +391,7 @@
 	}
 
 	function resultDetailsText(message: ToolResultMessage): string {
-		return conversation.artifactResultTextById.get(message.toolCallId) || toolResultText(message);
+		return toolResultText(message);
 	}
 
 	function commandStatusLabel(status: string): string {
@@ -427,25 +426,60 @@
 		};
 	}
 
-	function commandRollupTranscript(command: TranscriptSemanticBlock & { kind: "command-rollup" }): TranscriptWorkflow {
-		const status = commandTranscriptStatus(command.command.status);
-		const stepsTotal = Math.max(
-			1,
-			command.command.summaryChildCount + command.command.traceChildCount,
-		);
+	function commandRollupTranscript(command: TranscriptSemanticBlock & { kind: "command-rollup" }): TranscriptToolCall {
+		const input = command.command.arguments ? JSON.stringify(command.command.arguments, null, 2) : "";
+		const patchPreview = command.command.patchSnapshots
+			?.flatMap((snapshot) =>
+				snapshot.files.map((file) => `${file.changeType}: ${file.path} (+${file.additions} / -${file.deletions})`)
+			)
+			.join("\n")
+			.trim();
+		const output = command.command.outputEvents
+			?.map((event) => `[${event.stream}] ${event.text}`)
+			.join("\n")
+			.trim();
+		const progress = command.command.progressEvents
+			?.map((event) =>
+				[
+					event.phase ? `[${event.phase}]` : "[progress]",
+					event.message || [event.family, event.command].filter(Boolean).join(" · "),
+				]
+					.filter(Boolean)
+					.join(" ")
+			)
+			.join("\n")
+			.trim();
+		const diagnostics = command.command.diagnostics
+			?.flatMap((snapshot) =>
+				snapshot.diagnostics.map((diagnostic) =>
+					`${diagnostic.severity ?? "diagnostic"}: ${diagnostic.message}${
+						diagnostic.file ? ` (${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""})` : ""
+					}`
+				)
+			)
+			.join("\n")
+			.trim();
+		const artifacts = command.command.artifacts
+			?.map((artifact) => `artifact: ${artifact.name}${artifact.path ? ` (${artifact.path})` : ""}`)
+			.join("\n")
+			.trim();
+		const facts = command.command.facts ? JSON.stringify(command.command.facts, null, 2) : "";
+		const detail = [diagnostics, patchPreview, progress, output, artifacts, facts].filter(Boolean).join("\n\n");
 		return {
 			id: command.command.commandId,
 			name: command.command.title,
-			status,
-			elapsed: formatTimestamp(command.command.updatedAt),
-			stepsDone: status === "done" ? stepsTotal : command.command.summaryChildCount,
-			stepsTotal,
-			currentStep: command.command.summary,
-			runId: command.command.toolName,
+			status: commandTranscriptStatus(command.command.status),
+			params: {
+				command: command.command.title,
+				filename: command.command.toolName,
+			},
+			body: input || null,
+			result: detail || command.command.error || command.command.summary,
+			isError: command.command.status === "failed",
 		};
 	}
 
-	function episodeTranscript(block: TranscriptSemanticBlock & { kind: "handoff-episode" }): TranscriptEpisode {
+	function episodeTranscript(block: TranscriptSemanticBlock & { kind: "thread-episode" }): TranscriptEpisode {
 		return {
 			id: block.episode.episodeId,
 			title: block.episode.title,
@@ -692,20 +726,7 @@
 			>
 				{#each virtualRows as virtualRow (virtualRow.key)}
 					{@const row = transcriptRows[virtualRow.index]}
-					{#if row?.kind === "system"}
-						<article
-							data-index={virtualRow.index}
-							use:measureTranscriptRow
-							class="message-row virtual-row system-row"
-						>
-						<div class="message-bubble assistant-bubble system-bubble">
-							<details class="thinking-block system-prompt-block">
-								<summary>{target?.surface === "thread" ? "Handler system prompt" : "Surface system prompt metadata"}</summary>
-								<pre>{row.systemPrompt}</pre>
-							</details>
-						</div>
-						</article>
-					{:else if row?.kind === "semantic"}
+					{#if row?.kind === "semantic"}
 						<section
 							data-index={virtualRow.index}
 							use:measureTranscriptRow
@@ -728,10 +749,10 @@
 							/>
 						{:else if row.block.kind === "command-rollup"}
 							<div class="reference-command-block">
-								<WorkflowCard
-									workflow={commandRollupTranscript(row.block)}
-									onclick={() => row.block.kind === "command-rollup" && onInspectCommand?.(row.block.command.commandId)}
+								<ToolCallCard
+									toolCall={commandRollupTranscript(row.block)}
 								/>
+								<p class="reference-command-summary">{row.block.command.summary}</p>
 								{#if row.block.command.summaryChildren.length > 0}
 									<div class="reference-command-children" aria-label="Summary command details">
 										{#each row.block.command.summaryChildren as child (child.commandId)}
@@ -748,10 +769,16 @@
 									</Button>
 								{/if}
 							</div>
-						{:else if row.block.kind === "handoff-episode"}
+						{:else if row.block.kind === "product-event"}
+							<div class="product-event-block">
+								<strong>{row.block.event.title}</strong>
+								<span>{row.block.event.summary}</span>
+								<time datetime={row.block.event.at}>{formatTimestamp(row.block.event.at)}</time>
+							</div>
+						{:else if row.block.kind === "thread-episode"}
 							<EpisodeCard
 								episode={episodeTranscript(row.block)}
-								onartifactopen={(artifact) => onOpenArtifact(artifact.name)}
+								onartifactopen={(artifact) => onOpenArtifact(artifact)}
 							/>
 						{:else if row.block.kind === "thread"}
 							<ThreadCard
@@ -827,6 +854,28 @@
 								{/each}
 							</p>
 						{/each}
+						{#if userSnippetProvenance(message).length > 0}
+							<div class="user-snippet-list" aria-label="Snippets used">
+								{#each userSnippetProvenance(message) as snippet (`${message.timestamp}:snippet:${snippet.mentionId}`)}
+									<details class="user-snippet-chip">
+										<summary>
+											<FileTextIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+											<strong>{snippet.title}</strong>
+											<span>{snippet.source}</span>
+										</summary>
+										<div class="user-snippet-detail">
+											{#if snippet.path}
+												<p>{snippet.path}</p>
+											{/if}
+											{#if snippet.arguments.length > 0}
+												<p>Arguments: {snippet.arguments.join(" ")}</p>
+											{/if}
+											<pre>{snippet.resolvedText}</pre>
+										</div>
+									</details>
+								{/each}
+							</div>
+						{/if}
 						{#if userAttachments(message).length > 0}
 							<div class="user-attachments" aria-label="Attached files">
 								{#if userImageAttachments(message).length > 0}
@@ -902,7 +951,6 @@
 								</details>
 							{:else if block.type === "toolCall"}
 								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
-								{@const params = projectedToolCall?.artifactParams ?? parseArtifactsParams(block.arguments)}
 								{@const resultMessage = conversation.toolResultsById.get(block.id)}
 								{@const toolArguments = projectedToolCall?.argumentsValue ?? block.arguments}
 								{@const toolBody = toolInputBody(block.name, toolArguments)}
@@ -912,7 +960,6 @@
 										id: block.id,
 										name: block.name,
 										status: status === "done" ? "done" : status === "error" ? "failed" : "running",
-										params,
 										body: toolBody,
 										result: toolResultPreview(resultMessage),
 										isError: status === "error" || resultMessage?.isError,
@@ -1009,14 +1056,12 @@
 										</div>
 									</details>
 								{:else if block.type === "toolCall"}
-									{@const params = parseArtifactsParams(block.arguments)}
 									{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
 									<ToolCallCard
 										toolCall={{
 											id: `streaming-${blockIndex}`,
 											name: block.name,
 											status: "running",
-											params,
 											body: toolBody,
 										}}
 										onopen={onOpenArtifact}
@@ -1103,10 +1148,6 @@
 
 	.assistant-row,
 	.tool-row,
-	.system-row {
-		justify-content: flex-start;
-	}
-
 	.message-bubble,
 	.tool-result {
 		position: relative;
@@ -1161,12 +1202,6 @@
 		border-style: dashed;
 	}
 
-	.system-bubble {
-		padding: 0.55rem 0.65rem;
-		border: 1px solid var(--ui-border-soft);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
-	}
-
 	.transcript-semantic-stack {
 		display: flex;
 		flex-direction: column;
@@ -1178,6 +1213,14 @@
 		display: grid;
 		gap: 0.4rem;
 		justify-items: start;
+	}
+
+	.reference-command-summary {
+		margin: 0;
+		padding-inline: 0.2rem;
+		color: var(--ui-text-secondary);
+		font-size: var(--text-sm);
+		line-height: 1.45;
 	}
 
 	.reference-command-children {
@@ -1201,6 +1244,30 @@
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		font-weight: 600;
+	}
+
+	.product-event-block {
+		display: grid;
+		gap: 0.18rem;
+		width: 100%;
+		padding: 0.72rem 0.85rem;
+		border: 1px solid var(--ui-border-soft);
+		border-left: 3px solid var(--ui-accent);
+		border-radius: 8px;
+		background: var(--ui-surface-subtle);
+		color: var(--ui-text-secondary);
+		font-size: var(--text-sm);
+		line-height: 1.4;
+	}
+
+	.product-event-block strong {
+		color: var(--ui-text);
+		font-size: var(--text-sm);
+	}
+
+	.product-event-block time {
+		color: var(--ui-text-tertiary);
+		font-size: var(--text-xs);
 	}
 
 	.message-bubble header {
@@ -1281,6 +1348,73 @@
 
 	.message-text + .message-text {
 		margin-top: 0.72rem;
+	}
+
+	.user-snippet-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.42rem;
+		margin-top: 0.72rem;
+	}
+
+	.user-snippet-chip {
+		max-width: min(100%, 24rem);
+		border: 1px solid color-mix(in oklab, var(--ui-border-accent) 48%, var(--ui-border-soft));
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-accent-soft) 26%, var(--ui-code));
+		color: var(--ui-text-secondary);
+		font-size: var(--text-xs);
+	}
+
+	.user-snippet-chip summary {
+		display: flex;
+		align-items: center;
+		gap: 0.34rem;
+		min-width: 0;
+		padding: 0.28rem 0.46rem;
+		cursor: pointer;
+	}
+
+	.user-snippet-chip strong {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--ui-text-primary);
+		font-weight: 650;
+	}
+
+	.user-snippet-chip summary span {
+		flex: 0 0 auto;
+		padding: 0.03rem 0.24rem;
+		border-radius: var(--ui-radius-xs);
+		background: color-mix(in oklab, var(--ui-surface-raised) 80%, transparent);
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+	}
+
+	.user-snippet-detail {
+		display: grid;
+		gap: 0.34rem;
+		padding: 0 0.46rem 0.46rem;
+	}
+
+	.user-snippet-detail p {
+		margin: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		color: var(--ui-text-tertiary);
+	}
+
+	.user-snippet-detail pre {
+		max-height: 10rem;
+		margin: 0;
+		overflow: auto;
+		white-space: pre-wrap;
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
 	}
 
 	.user-attachments {
@@ -1490,12 +1624,6 @@
 
 	.thinking-block[open] {
 		margin-bottom: 0.72rem;
-	}
-
-	.system-prompt-block {
-		margin-top: 0;
-		padding-top: 0;
-		border-top: none;
 	}
 
 	.thinking-block summary {

@@ -335,7 +335,7 @@ Existing keybindings remain:
 | Toggle Sidebar | `Cmd+B` | `Ctrl+B` |
 | Logs | `Cmd+Shift+1` | `Ctrl+Shift+1` |
 | Agents | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Context | `Cmd+Shift+3` | `Ctrl+Shift+3` |
+| Extensions | `Cmd+Shift+3` | `Ctrl+Shift+3` |
 | Workflows | `Cmd+Shift+4` | `Ctrl+Shift+4` |
 
 The open-workspace shortcuts are shell actions and should fire while text inputs are focused, matching command palette and session creation behavior.

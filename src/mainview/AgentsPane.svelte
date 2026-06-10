@@ -1,55 +1,53 @@
 <script lang="ts">
-  import CheckIcon from "@lucide/svelte/icons/check";
-  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
-  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
-  import LockIcon from "@lucide/svelte/icons/lock";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import { getModel, type Model } from "@mariozechner/pi-ai";
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
   import type {
     AgentProfileId,
     AgentProfileSettings,
     AgentSettingsState,
-    ReasoningEffort,
+    WorkflowAgentKey,
+    WorkflowAgentSettings,
   } from "../shared/agent-settings";
-  import { getSupportedThinkingLevels } from "./model-thinking";
-  import {
-    getModelComboboxValue,
-    listModelComboboxOptions,
-    type ModelComboboxOption,
-  } from "./model-options";
+  import type {
+    AgentContextPreviewRequest,
+    AgentContextPreviewResponse,
+    AgentModelChoice,
+  } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import { rpc } from "./rpc";
   import Button from "./ui/Button.svelte";
-  import Checkbox from "./ui/Checkbox.svelte";
-  import CompactCombobox from "./ui/CompactCombobox.svelte";
-  import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
-  import Input from "./ui/Input.svelte";
-  import Tooltip from "./ui/Tooltip.svelte";
-  import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
+  import AgentProfileRowForm from "./AgentProfileRowForm.svelte";
+  import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
 
   type Props = {
     runtime: ChatRuntime;
     panelId: string;
+    targetAgentProfileId?: string | null;
+    targetView?: "profiles" | "generated-context-preview";
     onSettingsChanged?: (settings: AgentSettingsState) => void;
   };
 
-  let { runtime, panelId, onSettingsChanged }: Props = $props();
+  let {
+    runtime,
+    panelId,
+    targetAgentProfileId = null,
+    targetView = "profiles",
+    onSettingsChanged,
+  }: Props = $props();
 
   let settings = $state<AgentSettingsState | null>(null);
   let loading = $state(true);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
+  let savingWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
   let deletingProfileId = $state<string | null>(null);
   let confirmingDeleteProfileId = $state<string | null>(null);
   let expandedProfileIds = $state<Set<string>>(new Set());
-  let modelOptionsByProfileId = $state<Record<string, ModelComboboxOption[]>>({});
-  let configuredProviders = $state<string[]>([]);
+  let modelChoices = $state<AgentModelChoice[]>([]);
+  let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
+  let loadingContextPreviewKey = $state<string | null>(null);
   let orchestratorRowsElement = $state<HTMLElement | null>(null);
   let profileDrag = $state<{
     profileId: string;
@@ -69,18 +67,23 @@
     reorderQueuedMessageItems(orchestrators, draggedProfileId, dropBeforeProfileId),
   );
   const threadHandler = $derived(settings?.agents.special.threadHandler ?? null);
+  const workflowAgents = $derived(
+    Object.values(settings?.workflowAgents ?? {}).toSorted((left, right) =>
+      left.label.localeCompare(right.label) || left.id.localeCompare(right.id),
+    ),
+  );
 
   async function loadSettings() {
     loading = true;
     errorMessage = null;
     try {
-      const [nextSettings, nextConfiguredProviders] = await Promise.all([
+      const [nextSettings, nextModelChoices] = await Promise.all([
         runtime.getAgentSettings(),
-        runtime.listConfiguredProviders().catch(() => []),
+        runtime.getAgentModelChoices(),
       ]);
       settings = nextSettings;
       onSettingsChanged?.(nextSettings);
-      configuredProviders = nextConfiguredProviders;
+      modelChoices = nextModelChoices.items;
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to load agent profiles.";
     } finally {
@@ -88,52 +91,49 @@
     }
   }
 
-  function profileModel(profile: AgentProfileSettings): Model<any> {
+  type AgentContextActor = NonNullable<AgentContextPreviewRequest["actor"]>;
+
+  function contextPreviewKey(actor: AgentContextActor, profileId: string): string {
+    return `${actor}:${profileId}`;
+  }
+
+  function actorForProfileId(profileId: string): AgentContextActor {
+    if (settings?.agents.special.threadHandler.id === profileId) return "handler";
+    if (settings?.workflowAgents[profileId as WorkflowAgentKey]) return "workflow-task";
+    return "orchestrator";
+  }
+
+  async function loadAgentContextPreview(
+    profileId: AgentProfileId | WorkflowAgentKey,
+    actor: AgentContextActor,
+  ) {
+    const key = contextPreviewKey(actor, profileId);
+    if (contextPreviewByProfileId[key]) return;
+    loadingContextPreviewKey = key;
+    errorMessage = null;
     try {
-      return getModel(
-        profile.provider as Parameters<typeof getModel>[0],
-        profile.model as Parameters<typeof getModel>[1],
-      );
-    } catch {
-      return {
-        id: profile.model,
-        name: profile.model,
-        provider: profile.provider,
-        reasoning: false,
-      } as Model<any>;
+      const preview = await runtime.getAgentContextPreview({ profileId, actor });
+      contextPreviewByProfileId = {
+        ...contextPreviewByProfileId,
+        [key]: preview,
+      };
+    } catch (error) {
+      errorMessage =
+        error instanceof Error ? error.message : "Unable to load generated context preview.";
+    } finally {
+      loadingContextPreviewKey =
+        loadingContextPreviewKey === key ? null : loadingContextPreviewKey;
     }
-  }
-
-  function modelValue(profile: AgentProfileSettings): string {
-    return getModelComboboxValue(profileModel(profile));
-  }
-
-  function reasoningOptions(profile: AgentProfileSettings): CompactSelectOption[] {
-    return getSupportedThinkingLevels(profileModel(profile)).map((level) => ({
-      value: level,
-      label: level,
-    }));
-  }
-
-  async function loadModelOptions(profile: AgentProfileSettings) {
-    modelOptionsByProfileId = {
-      ...modelOptionsByProfileId,
-      [profile.id]: await listModelComboboxOptions(
-        profileModel(profile),
-        runtime.storage,
-        configuredProviders,
-      ),
-    };
   }
 
   function mutateProfile(profile: AgentProfileSettings): AgentProfileSettings {
     return {
       ...profile,
-      extensions: [...profile.extensions],
+      extensionUsage: { ...profile.extensionUsage },
     };
   }
 
-  async function saveProfile(profile: AgentProfileSettings) {
+  async function saveProfile(profile: AgentProfileSettings): Promise<AgentProfileSettings> {
     savingProfileId = profile.id;
     errorMessage = null;
     try {
@@ -142,10 +142,36 @@
         profile: mutateProfile(profile),
       });
       onSettingsChanged?.(settings);
+      return (
+        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
+        (settings.agents.special.threadHandler.id === profile.id
+          ? settings.agents.special.threadHandler
+          : mutateProfile(profile))
+      );
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save agent profile.";
+      throw error;
     } finally {
       savingProfileId = null;
+    }
+  }
+
+  async function saveWorkflowAgent(agent: WorkflowAgentSettings): Promise<WorkflowAgentSettings> {
+    savingWorkflowAgentKey = agent.id;
+    errorMessage = null;
+    try {
+      settings = await runtime.updateWorkflowAgent(agent.id, {
+        ...agent,
+        extensions: [...agent.extensions],
+        extensionUsage: { ...agent.extensionUsage },
+      });
+      onSettingsChanged?.(settings);
+      return settings.workflowAgents[agent.id] ?? agent;
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to save workflow agent.";
+      throw error;
+    } finally {
+      savingWorkflowAgentKey = null;
     }
   }
 
@@ -379,52 +405,55 @@
     }
   }
 
-  function toggleExpanded(profileId: string) {
+  function toggleExpanded(profileId: string, actor: AgentContextActor) {
     if (expandedProfileIds.has(profileId)) {
       expandedProfileIds.delete(profileId);
     } else {
       expandedProfileIds.add(profileId);
+      void loadAgentContextPreview(profileId, actor);
     }
     expandedProfileIds = new Set(expandedProfileIds);
   }
 
-  async function updateName(profile: AgentProfileSettings, name: string) {
-    const nextName = name.trim();
-    if (!nextName || nextName === profile.name) return;
-    await saveProfile({ ...profile, name: nextName });
+  function profileUsageSummary(profile: AgentProfileSettings): string {
+    const entries = Object.entries(profile.extensionUsage);
+    if (entries.length === 0) return "Default usage";
+    return `${entries.length} override${entries.length === 1 ? "" : "s"}`;
   }
 
-  async function updateModel(profile: AgentProfileSettings, value: string) {
-    const option = modelOptionsByProfileId[profile.id]?.find((candidate) => candidate.value === value);
-    const [provider, model] = value.split(":");
-    const nextModel = option?.model ?? profileModel({ ...profile, provider, model });
-    const supported = getSupportedThinkingLevels(nextModel);
-    const reasoningEffort = supported.includes(profile.reasoningEffort)
-      ? profile.reasoningEffort
-      : ((supported.includes("medium") ? "medium" : (supported[0] ?? "off")) as ReasoningEffort);
-    await saveProfile({
-      ...profile,
-      provider: nextModel.provider,
-      model: nextModel.id,
-      reasoningEffort,
-    });
+  function workflowUsageSummary(agent: WorkflowAgentSettings): string {
+    const entries = Object.entries(agent.extensionUsage);
+    if (entries.length === 0) return "Default usage";
+    return `${entries.length} override${entries.length === 1 ? "" : "s"}`;
   }
 
-  async function updateReasoning(profile: AgentProfileSettings, value: string) {
-    await saveProfile({ ...profile, reasoningEffort: value as ReasoningEffort });
-  }
-
-  async function updateExtensions(profile: AgentProfileSettings, extensions: string[]) {
-    await saveProfile({ ...profile, extensions });
-  }
-
-  async function updateComposerSync(profile: AgentProfileSettings, updateFromComposer: boolean) {
-    await saveProfile({ ...profile, updateFromComposer });
+  function focusTargetAgentProfile() {
+    if (!targetAgentProfileId || loading) return;
+    const escapedTarget = CSS.escape(targetAgentProfileId);
+    const targetElement = document.querySelector<HTMLElement>(
+      `[data-workflow-agent-id="${escapedTarget}"], [data-profile-id="${escapedTarget}"]`,
+    );
+    targetElement?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
   $effect(() => {
     void panelId;
     void loadSettings();
+  });
+
+  $effect(() => {
+    void settings;
+    void targetAgentProfileId;
+    void targetView;
+    if (settings && targetView === "generated-context-preview") {
+      const targetProfileId = targetAgentProfileId ?? settings.agents.orchestrators[0]?.id ?? null;
+      if (targetProfileId) {
+        expandedProfileIds.add(targetProfileId);
+        expandedProfileIds = new Set(expandedProfileIds);
+        void loadAgentContextPreview(targetProfileId, actorForProfileId(targetProfileId));
+      }
+    }
+    queueMicrotask(focusTargetAgentProfile);
   });
 </script>
 
@@ -465,6 +494,7 @@
             class={`agent-profile-row ${expanded ? "expanded" : ""} ${profile.id === draggedProfileId ? "dragging" : ""}`.trim()}
             data-profile-id={profile.id}
             data-reorderable={profile.locked ? "false" : "true"}
+            data-targeted={targetAgentProfileId === profile.id ? "true" : undefined}
             animate:flip={{ duration: 170 }}
           >
             {@render profileRowContent(profile, "orchestrator", expanded)}
@@ -485,182 +515,113 @@
             class={`agent-profile-row ${expanded ? "expanded" : ""}`.trim()}
             data-profile-id={threadHandler.id}
             data-reorderable="false"
+            data-targeted={targetAgentProfileId === threadHandler.id ? "true" : undefined}
           >
             {@render profileRowContent(threadHandler, "special", expanded)}
           </article>
         {/if}
       </div>
-      <p class="category-todo">TODO: default workflow agents.</p>
+    </div>
+
+    <div class="agent-category">
+      <div class="agent-category-heading">
+        <span>Workflow Agents</span>
+        <small>{workflowAgents.length}</small>
+      </div>
+      <div class="agent-rows">
+        {#each workflowAgents as agent (agent.id)}
+          {@const expanded = expandedProfileIds.has(agent.id)}
+          <article
+            class={`agent-profile-row workflow-agent-row ${expanded ? "expanded" : ""}`.trim()}
+            data-workflow-agent-id={agent.id}
+            data-targeted={targetAgentProfileId === agent.id ? "true" : undefined}
+          >
+            {@render workflowAgentRowContent(agent, expanded)}
+          </article>
+        {/each}
+      </div>
     </div>
   {:else}
     <p class="agents-error">Agent settings are unavailable.</p>
   {/if}
 </section>
 
+{#snippet workflowAgentRowContent(agent: WorkflowAgentSettings, expanded: boolean)}
+  <WorkflowAgentRowForm
+    {agent}
+    {expanded}
+    {modelChoices}
+    saving={savingWorkflowAgentKey === agent.id}
+    usageSummary={workflowUsageSummary(agent)}
+    onSave={saveWorkflowAgent}
+    onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
+  />
+  <div class="workflow-source-note">
+    <span>{agent.id}.agent.json</span>
+    <span>Generates Agents.{agent.id}</span>
+  </div>
+  {#if expanded}
+    {@render generatedContextPreview(agent.id, "workflow-task")}
+  {/if}
+{/snippet}
+
 {#snippet profileRowContent(
   profile: AgentProfileSettings,
   category: "orchestrator" | "special",
   expanded: boolean,
 )}
-  {@const modelOptions = modelOptionsByProfileId[profile.id] ?? []}
-  <div class="agent-profile-main">
-    {#if category === "orchestrator"}
-      <button
-        class="agent-drag-handle"
-        type="button"
-        aria-label={profile.locked ? `${profile.name} stays first` : `Reorder ${profile.name}`}
-        disabled={profile.locked}
-        onpointerdown={(event) => handlePointerDown(event, profile)}
-      >
-        {#if profile.locked}
-          <LockIcon size={12} aria-hidden="true" />
-        {:else}
-          <GripVerticalIcon size={13} aria-hidden="true" />
-        {/if}
-      </button>
-    {:else}
-      <span class="agent-drag-placeholder"><LockIcon size={12} aria-hidden="true" /></span>
-    {/if}
-    {#if profile.locked}
-      <span class="agent-locked-name">{category === "orchestrator" ? "Default" : profile.name}</span>
-    {:else}
-      <Input
-        value={profile.name}
-        class="agent-name-input"
-        aria-label={`${profile.name} name`}
-        disabled={savingProfileId === profile.id}
-        onblur={(event) => void updateName(profile, event.currentTarget.value)}
-        onkeydown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-      />
-    {/if}
-    <div class="agent-middle-controls">
-      <div class="agent-controls">
-        <CompactCombobox
-          value={modelValue(profile)}
-          options={modelOptions.length > 0 ? modelOptions : [{ value: modelValue(profile), label: profile.model, triggerLabel: profile.model }]}
-          ariaLabel={`${profile.name} model`}
-          placeholder="Model"
-          triggerClass="model-pill agent-model-field"
-          menuClass="model-menu"
-          placement="below"
-          disabled={savingProfileId === profile.id}
-          onBeforeOpen={() => loadModelOptions(profile)}
-          onSelect={(value) => updateModel(profile, value)}
-        />
-        <CompactSelect
-          value={profile.reasoningEffort}
-          options={reasoningOptions(profile)}
-          ariaLabel={`${profile.name} reasoning`}
-          triggerClass="model-pill agent-reasoning-field"
-          menuClass="thinking-menu"
-          textTransform="lowercase"
-          placement="below"
-          disabled={savingProfileId === profile.id}
-          onSelect={(value) => updateReasoning(profile, value)}
-        />
-        <CompactCombobox
-          values={profile.extensions}
-          multiple
-          options={[]}
-          ariaLabel={`${profile.name} extensions`}
-          placeholder="Extensions"
-          emptyLabel="No extensions available."
-          triggerClass="model-pill extensions-field"
-          menuClass="extensions-menu"
-          placement="below"
-          disabled={savingProfileId === profile.id}
-          onMultiSelect={(values) => updateExtensions(profile, values)}
-        />
-      </div>
-      <Tooltip
-        label=""
-        details={[
-          { label: "Enabled: sessions using this profile save composer model/reasoning changes back to the profile." },
-          { label: "Disabled: composer changes stay in the current session; new sessions use the profile settings." },
-        ]}
-      >
-        <label class="composer-sync-field">
-          <Checkbox
-            size="sm"
-            checked={profile.updateFromComposer}
-            disabled={savingProfileId === profile.id}
-            onchange={(event) => void updateComposerSync(profile, event.currentTarget.checked)}
-          />
-          <span>Follow composer</span>
-        </label>
-      </Tooltip>
-      <div
-        class="agent-row-actions"
-        use:dismissConfirmation={{
-          active: confirmingDeleteProfileId === profile.id,
-          onDismiss: cancelDeleteProfileConfirmation,
-        }}
-      >
-        {#if category === "orchestrator"}
-          <Tooltip label="Duplicate profile">
-            <button
-              type="button"
-              class="agent-icon-button"
-              aria-label={`Duplicate ${profile.name}`}
-              disabled={savingProfileId === profile.id}
-              onclick={() => void createOrchestratorProfile(profile)}
-            >
-              <CopyPlusIcon size={13} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        {:else}
-          <span class="agent-action-spacer" aria-hidden="true"></span>
-        {/if}
-        {#if confirmingDeleteProfileId === profile.id}
-          <Tooltip label="Confirm delete">
-            <button
-              type="button"
-              class="agent-icon-button danger"
-              aria-label={`Confirm deleting ${profile.name}`}
-              disabled={deletingProfileId === profile.id || savingProfileId === profile.id}
-              onclick={() => void deleteProfile(profile)}
-            >
-              <CheckIcon size={13} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        {:else}
-          <Tooltip label={profile.locked ? "Locked profile cannot be deleted" : "Delete profile"}>
-            <button
-              type="button"
-              class="agent-icon-button danger"
-              aria-label={`Delete ${profile.name}`}
-              disabled={profile.locked || deletingProfileId === profile.id || savingProfileId === profile.id}
-              onclick={() => requestDeleteProfile(profile)}
-            >
-              <Trash2Icon size={13} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        {/if}
-      </div>
-    </div>
-    <button
-      type="button"
-      class="agent-expand-button"
-      aria-expanded={expanded}
-      aria-label={expanded ? `Collapse ${profile.name}` : `Expand ${profile.name}`}
-      onclick={() => toggleExpanded(profile.id)}
-    >
-      {#if expanded}
-        <ChevronDownIcon size={14} strokeWidth={1.9} aria-hidden="true" />
-      {:else}
-        <ChevronRightIcon size={14} strokeWidth={1.9} aria-hidden="true" />
-      {/if}
-    </button>
-  </div>
+  <AgentProfileRowForm
+    {category}
+    {expanded}
+    {modelChoices}
+    {profile}
+    confirmingDelete={confirmingDeleteProfileId === profile.id}
+    deleting={deletingProfileId === profile.id}
+    saving={savingProfileId === profile.id}
+    usageSummary={profileUsageSummary(profile)}
+    onCancelDelete={cancelDeleteProfileConfirmation}
+    onConfirmDelete={() => void deleteProfile(profile)}
+    onDuplicate={category === "orchestrator" ? () => void createOrchestratorProfile(profile) : undefined}
+    onPointerDown={category === "orchestrator" ? (event) => handlePointerDown(event, profile) : undefined}
+    onRequestDelete={() => requestDeleteProfile(profile)}
+    onSave={saveProfile}
+    onToggleExpanded={() => toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")}
+  />
   {#if expanded}
-    <div class="agent-profile-expanded">
-      <p>TODO: expanded profile prompt, extension, and generated contract preview.</p>
-    </div>
+    {@render generatedContextPreview(profile.id, category === "special" ? "handler" : "orchestrator")}
   {/if}
+{/snippet}
+
+{#snippet generatedContextPreview(profileId: AgentProfileId | WorkflowAgentKey, actor: AgentContextActor)}
+  {@const key = contextPreviewKey(actor, profileId)}
+  {@const preview = contextPreviewByProfileId[key]}
+  <div class="agent-profile-expanded">
+    {#if loadingContextPreviewKey === key && !preview}
+      <p>Loading generated context preview...</p>
+    {:else if preview}
+      <div class="context-preview-header">
+        <div>
+          <span class="context-preview-eyebrow">Generated context preview</span>
+          <strong>{preview.profileName}</strong>
+        </div>
+        <span class="context-preview-model">{preview.provider}/{preview.model} · {preview.reasoningEffort}</span>
+      </div>
+      <div class="context-preview-meta">
+        <span>Actor: {preview.actor}</span>
+        <span>Loaded: {preview.loadedExtensionIds.join(", ") || "none"}</span>
+        <span>Available: {preview.availableExtensionIds.join(", ") || "none"}</span>
+      </div>
+      <pre class="context-preview-body">{preview.systemPrompt}</pre>
+    {:else}
+      <Button
+        variant="secondary"
+        size="xs"
+        onclick={() => void loadAgentContextPreview(profileId, actor)}
+      >
+        Load generated context preview
+      </Button>
+    {/if}
+  </div>
 {/snippet}
 
 <style>
@@ -694,8 +655,7 @@
   }
 
   .agents-header p,
-  .agents-status,
-  .category-todo {
+  .agents-status {
     margin: 0.18rem 0 0;
     color: var(--ui-text-tertiary);
     font-size: var(--text-sm);
@@ -775,6 +735,12 @@
     background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
   }
 
+  .agent-profile-row[data-targeted="true"] {
+    border-color: color-mix(in oklab, var(--ui-accent) 45%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent-soft) 28%, var(--ui-surface));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-accent) 18%, transparent);
+  }
+
   .agent-profile-row.dragging {
     opacity: 0.58;
   }
@@ -811,10 +777,6 @@
   .agent-drag-placeholder {
     cursor: default;
     opacity: 0.72;
-  }
-
-  .agent-profile-row.dragging .agent-drag-handle {
-    cursor: grabbing;
   }
 
   .agent-expand-button {
@@ -977,6 +939,51 @@
     height: 1.32rem;
   }
 
+  .workflow-agent-row {
+    gap: 0.36rem;
+  }
+
+  .workflow-instructions-field {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 4rem;
+    resize: vertical;
+    padding: 0.42rem 0.5rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent);
+    color: var(--ui-text-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .workflow-instructions-field:hover,
+  .workflow-instructions-field:focus-visible {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .workflow-source-note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    min-width: 0;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+  }
+
+  .workflow-source-note span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .agent-profile-expanded {
     margin-left: 1.46rem;
     padding: 0.5rem 0.58rem;
@@ -988,5 +995,54 @@
 
   .agent-profile-expanded p {
     margin: 0;
+  }
+
+  .context-preview-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.72rem;
+    min-width: 0;
+    color: var(--ui-text-primary);
+  }
+
+  .context-preview-header > div {
+    display: grid;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .context-preview-eyebrow,
+  .context-preview-model,
+  .context-preview-meta {
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+  }
+
+  .context-preview-eyebrow {
+    text-transform: uppercase;
+  }
+
+  .context-preview-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.72rem;
+    margin-top: 0.46rem;
+  }
+
+  .context-preview-body {
+    max-height: 22rem;
+    min-width: 0;
+    margin: 0.55rem 0 0;
+    overflow: auto;
+    padding: 0.58rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    white-space: pre-wrap;
   }
 </style>

@@ -97,7 +97,7 @@
 </script>
 
 <article
-  class={`session-item ${active ? "active" : ""} ${session.isArchived ? "archived" : ""} ${session.isUnread ? "unread" : ""} ${hasPane ? "open-in-pane" : ""} open-tone-${paneTone} ${isWorking ? "working" : ""}`.trim()}
+  class={`session-item ${active ? "active" : ""} ${session.isArchived ? "archived" : ""} ${session.isUnread ? "unread" : ""} ${hasPane ? "open-in-pane" : ""} ${focusedPaneLocation ? "focused-in-pane" : ""} open-tone-${paneTone} ${isWorking ? "working" : ""}`.trim()}
 >
   <Tooltip
     label="Session open behavior"
@@ -126,6 +126,15 @@
       <div class="session-main-top">
         <strong>{session.title}</strong>
         <div class="session-main-top-meta">
+          {#if primaryPaneLocation}
+            <span
+              class="session-pane-location"
+              data-focused={primaryPaneLocation.focused ? "true" : "false"}
+              title={primaryPaneLocation.focused ? `Focused pane: ${primaryPaneLocation.label}` : `Open pane: ${primaryPaneLocation.label}`}
+            >
+              {primaryPaneLocation.label}
+            </span>
+          {/if}
           {#if session.parentSessionId}
             <GitForkIcon aria-label="Forked session" size={11} strokeWidth={1.85} />
           {/if}
@@ -278,6 +287,15 @@
     background: color-mix(in oklab, var(--ui-text-tertiary) 42%, transparent);
   }
 
+  .focused-in-pane .session-main {
+    border-color: color-mix(in oklab, var(--ui-accent) 36%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-accent) 20%, transparent);
+  }
+
+  .focused-in-pane .session-main::before {
+    background: color-mix(in oklab, var(--ui-accent) 70%, transparent);
+  }
+
   .open-tone-waiting:not(.active) .session-main {
     background: color-mix(in oklab, var(--ui-status-waiting-soft) 28%, transparent);
   }
@@ -340,6 +358,22 @@
 
   .session-main-top-meta span {
     flex-shrink: 0;
+  }
+
+  .session-pane-location {
+    max-width: 5.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 0.28rem;
+    padding: 0 0.28rem;
+    background: color-mix(in oklab, var(--ui-text-tertiary) 10%, transparent);
+    color: var(--ui-text-tertiary);
+  }
+
+  .session-pane-location[data-focused="true"] {
+    background: color-mix(in oklab, var(--ui-accent) 16%, transparent);
+    color: color-mix(in oklab, var(--ui-accent) 84%, var(--ui-text-primary));
   }
 
   .session-main-top-meta :global(svg) {

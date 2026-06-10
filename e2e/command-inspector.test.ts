@@ -141,7 +141,7 @@ async function seedStructuredCommandInspector(input: {
       turnId: turn.id,
       threadId: thread.id,
       parentCommandId: parentCommand.id,
-      toolName: "artifact_write_text",
+      toolName: "exec_command",
       executor: "execute_typescript",
       visibility: "summary",
       title: "Create summary.md",
@@ -243,15 +243,14 @@ async function assertCommandInspectorSurface(page: SvvyApp["page"]): Promise<voi
   expect(rollupText).not.toContain("Loaded docs/prd.md.");
 
   await rollupCard.locator(".reference-workflow-card").click({ force: true });
-  const dialog = page.getByRole("dialog", { name: "Inspect execute_typescript" });
-  await waitForVisible(dialog);
-  expect((await dialog.textContent()) ?? "").toContain("Loaded docs/prd.md.");
-  expect((await dialog.textContent()) ?? "").toContain("Created summary.md.");
-  expect((await dialog.textContent()) ?? "").toContain("execute-typescript.ts");
-  expect((await dialog.textContent()) ?? "").toContain("summary.md");
-
-  await page.locator(".ui-dialog-close").click({ force: true });
-  await dialog.waitFor({ state: "hidden" });
+  const inspector = page.locator(".related-inspector-pane").filter({
+    has: page.getByText("Command", { exact: true }),
+  });
+  await waitForVisible(inspector);
+  expect((await inspector.textContent()) ?? "").toContain("Read docs/prd.md");
+  expect((await inspector.textContent()) ?? "").toContain("Create summary.md");
+  expect((await inspector.textContent()) ?? "").toContain("execute-typescript.ts");
+  expect((await inspector.textContent()) ?? "").toContain("summary.md");
 }
 
 test("renders parent command rollups and opens nested child detail after reload", async () => {

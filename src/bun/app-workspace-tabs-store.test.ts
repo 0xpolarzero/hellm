@@ -78,10 +78,45 @@ describe("app workspace tabs store", () => {
           workspaceLabel: "repo",
           kind: "user",
           openedAt: "2026-05-15T12:00:00.000Z",
+          activeLayoutId: "A",
         },
         {
           workspaceTabId: "tab-2",
           workspaceId: "repo-runtime",
+          cwd: "/tmp/repo",
+          workspaceLabel: "repo",
+          kind: "user",
+          openedAt: "2026-05-15T12:01:00.000Z",
+          activeLayoutId: "C",
+        },
+      ],
+      knownWorkspaces: [],
+    });
+
+    expect(state.tabs.map((tab) => tab.workspaceTabId)).toEqual(["tab-1", "tab-2"]);
+    expect(new Set(state.tabs.map((tab) => tab.workspaceId))).toEqual(new Set(["repo-runtime"]));
+    expect(state.tabs.map((tab) => tab.activeLayoutId)).toEqual(["A", "C"]);
+    expect(state.activeWorkspaceTabId).toBe("tab-2");
+  });
+
+  it("keys active tab restore by workspaceTabId rather than shared workspaceId", () => {
+    const store = createAppWorkspaceTabsStore({ agentDir: tempAgentDir() });
+
+    const state = store.setState({
+      version: 4,
+      activeWorkspaceTabId: "tab-2",
+      tabs: [
+        {
+          workspaceTabId: "tab-1",
+          workspaceId: "shared-runtime",
+          cwd: "/tmp/repo",
+          workspaceLabel: "repo",
+          kind: "user",
+          openedAt: "2026-05-15T12:00:00.000Z",
+        },
+        {
+          workspaceTabId: "tab-2",
+          workspaceId: "shared-runtime",
           cwd: "/tmp/repo",
           workspaceLabel: "repo",
           kind: "user",
@@ -91,12 +126,11 @@ describe("app workspace tabs store", () => {
       knownWorkspaces: [],
     });
 
-    expect(state.tabs.map((tab) => tab.workspaceTabId)).toEqual(["tab-1", "tab-2"]);
-    expect(new Set(state.tabs.map((tab) => tab.workspaceId))).toEqual(new Set(["repo-runtime"]));
     expect(state.activeWorkspaceTabId).toBe("tab-2");
+    expect(state.tabs.filter((tab) => tab.workspaceId === "shared-runtime")).toHaveLength(2);
   });
 
-  it("stores default workspace tabs as real tabs instead of an empty picker state", () => {
+  it("stores default workspace tabs as real tabs without durable layout slots", () => {
     const store = createAppWorkspaceTabsStore({ agentDir: tempAgentDir() });
 
     const state = store.setState({
@@ -123,6 +157,7 @@ describe("app workspace tabs store", () => {
       workspaceLabel: "Default Workspace",
       kind: "default",
     });
+    expect(state.tabs[0]?.activeLayoutId).toBeUndefined();
   });
 
   it("drops an active workspace tab id that is not in the open tab list", () => {

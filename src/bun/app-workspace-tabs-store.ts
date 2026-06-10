@@ -84,6 +84,11 @@ function parseWorkspaceTab(input: unknown, path: string): WorkspaceTabInfo {
       `Invalid app workspace tabs state: ${path} is missing required workspace tab fields.`,
     );
   }
+  const activeLayoutId =
+    raw.kind === "user" &&
+    (raw.activeLayoutId === "A" || raw.activeLayoutId === "B" || raw.activeLayoutId === "C")
+      ? raw.activeLayoutId
+      : undefined;
   return {
     workspaceTabId: raw.workspaceTabId,
     workspaceId: raw.workspaceId,
@@ -92,8 +97,6 @@ function parseWorkspaceTab(input: unknown, path: string): WorkspaceTabInfo {
     kind: raw.kind,
     openedAt: raw.openedAt,
     ...(typeof raw.branch === "string" ? { branch: raw.branch } : {}),
-    ...(raw.activeLayoutId === "A" || raw.activeLayoutId === "B" || raw.activeLayoutId === "C"
-      ? { activeLayoutId: raw.activeLayoutId }
-      : {}),
+    ...(activeLayoutId ? { activeLayoutId } : {}),
   };
 }

@@ -1,11 +1,7 @@
 import type { BrowserWindow } from "electrobun/bun";
 import { mountElectrobunToolBridge } from "electrobun-browser-tools/bridge";
 import type { AgentDefaults } from "../shared/agent-settings";
-import type {
-  ProviderAuthInfo,
-  WorkspaceInfoResponse,
-  WorkspaceTabInfo,
-} from "../shared/workspace-contract";
+import type { ProviderAuthInfo, WorkspaceInfoResponse } from "../shared/workspace-contract";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 type ErrorKind = "app" | "rpc";
@@ -82,7 +78,7 @@ type MountDevBrowserToolsBridgeOptions = {
   getActiveWorkspace: () => WorkspaceInfoResponse | null;
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceBranch: (cwd: string) => string | undefined;
-  getOpenWorkspaces: () => WorkspaceTabInfo[];
+  getOpenWorkspaces: () => WorkspaceInfoResponse[];
   listProviderAuthSummaries: () => ProviderAuthInfo[];
   listOpenSurfaceSnapshots: () => Promise<OpenSurfaceSnapshot[]>;
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;

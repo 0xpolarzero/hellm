@@ -37,32 +37,22 @@ async function currentText(page: SvvyApp["page"], selector: string): Promise<str
   return (await page.locator(selector).textContent())?.trim() ?? "";
 }
 
-test("shows the workspace chrome once the shell is ready", async () => {
-  await withWorkspaceDir(async (workspaceDir) => {
-    const app = await launchSvvyApp({ workspaceDir });
-    try {
-      await waitForWorkspaceChrome(app.page);
-      expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(true);
-      expect(await currentText(app.page, ".workspace-main-title")).toBe("New Session");
-      expect(await currentText(app.page, ".workspace-main-copy")).toContain("Ready");
-    } finally {
-      await app.close();
-    }
-  });
-});
-
 test("default provider and model bootstrap from Bun-side defaults", async () => {
   await withWorkspaceDir(async (workspaceDir) => {
     const app = await launchSvvyApp({ workspaceDir });
     try {
       await waitForWorkspaceChrome(app.page);
 
-      expect(await currentText(app.page, ".model-control strong")).toBe("GLM-5-Turbo");
-      expect(await currentText(app.page, ".thinking-field strong")).toBe(
+      expect(await currentText(app.page, ".model-control .compact-combobox-label")).toBe(
+        "GLM-5-Turbo",
+      );
+      expect(await currentText(app.page, ".thinking-field .compact-select-label")).toBe(
         DEFAULT_AGENT_SETTINGS.reasoningEffort,
       );
-      expect(await currentText(app.page, ".workspace-main-title")).toBe("New Session");
-      expect(await currentText(app.page, ".workspace-main-copy")).toContain("Ready");
+      expect(await currentText(app.page, "[data-testid=active-surface-title]")).toBe(
+        "New orchestrator",
+      );
+      expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
     } finally {
       await app.close();
     }

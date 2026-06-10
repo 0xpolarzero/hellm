@@ -1,26 +1,23 @@
 <script lang="ts">
-	import { getModels, getProviders, modelsAreEqual, type Model } from "@mariozechner/pi-ai";
-	import { onMount } from "svelte";
-	import { discoverModels } from "./model-discovery";
-	import { modelSupportsThinking } from "./model-thinking";
+	import { getModel, modelsAreEqual, type Model } from "@mariozechner/pi-ai";
 	import { searchScore, formatModelCost, formatTokenCount } from "./chat-format";
-	import type { ChatStorage } from "./chat-storage";
+	import type { AgentModelChoice } from "../shared/workspace-contract";
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";
 	import Input from "./ui/Input.svelte";
 
 	type Props = {
 		currentModel: Model<any>;
-		allowedProviders?: string[];
-		storage?: ChatStorage;
+		modelChoices: AgentModelChoice[];
 		onClose: () => void;
-		onSelect: (model: Model<any>) => void;
+		onSelect: (model: Model<any>, choice: AgentModelChoice) => void;
 	};
 
 	type ModelEntry = {
 		id: string;
 		provider: string;
 		model: Model<any>;
+		choice: AgentModelChoice;
 	};
 
 	type ModelGroup = {
@@ -30,17 +27,11 @@
 		topScore: number;
 	};
 
-	let { currentModel, allowedProviders = [], storage, onClose, onSelect }: Props = $props();
+	let { currentModel, modelChoices, onClose, onSelect }: Props = $props();
 
 	let searchQuery = $state("");
 	let filterThinking = $state(false);
 	let filterVision = $state(false);
-	let customProviderModels = $state<ModelEntry[]>([]);
-	let loadingCustomProviders = $state(false);
-
-	onMount(() => {
-		void loadCustomProviders();
-	});
 
 	function compareModelEntries(left: ModelEntry, right: ModelEntry): number {
 		const leftIsCurrent = modelsAreEqual(currentModel, left.model);
@@ -59,74 +50,27 @@
 		return left.localeCompare(right);
 	}
 
-	async function loadCustomProviders() {
-		if (!storage) return;
-		loadingCustomProviders = true;
-		const loaded: ModelEntry[] = [];
-
-		try {
-			const customProviders = await storage.customProviders.getAll();
-			for (const provider of customProviders) {
-				if (
-					(provider.type === "ollama" ||
-						provider.type === "llama.cpp" ||
-						provider.type === "vllm" ||
-						provider.type === "lmstudio") &&
-					provider.baseUrl
-				) {
-					try {
-						const discovered = await discoverModels(provider.type, provider.baseUrl, provider.apiKey);
-						loaded.push(
-							...discovered.map((model) => ({
-								id: model.id,
-								provider: provider.name,
-								model: { ...model, provider: provider.name },
-							})),
-						);
-					} catch (error) {
-						console.debug(`Failed to discover models for ${provider.name}:`, error);
-					}
-					continue;
-				}
-
-				if (!provider.models) continue;
-				loaded.push(
-					...provider.models.map((model) => ({
-						id: model.id,
-						provider: provider.name,
-						model: { ...model, provider: provider.name },
-					})),
-				);
-			}
-		} catch (error) {
-			console.error("Failed to load custom providers:", error);
-		} finally {
-			customProviderModels = loaded;
-			loadingCustomProviders = false;
-		}
-	}
-
 	const groupedModels = $derived.by(() => {
-		const providerAllowlist = new Set(allowedProviders);
-		if (currentModel.provider) {
-			providerAllowlist.add(currentModel.provider);
-		}
-
 		const entries: ModelEntry[] = [];
-		for (const provider of getProviders()) {
-			for (const model of getModels(provider)) {
-				entries.push({ id: model.id, provider, model });
+		for (const choice of modelChoices) {
+			if (!choice.providerAuthenticated) continue;
+			try {
+				const model = getModel(
+					choice.providerId as Parameters<typeof getModel>[0],
+					choice.modelId as Parameters<typeof getModel>[1],
+				);
+				entries.push({ id: choice.modelId, provider: choice.providerId, model, choice });
+			} catch {
+				continue;
 			}
 		}
-		entries.push(...customProviderModels);
-
-		let visible = providerAllowlist.size > 0 ? entries.filter((entry) => providerAllowlist.has(entry.provider)) : [...entries];
+		let visible = entries;
 
 		if (filterThinking) {
-			visible = visible.filter((entry) => modelSupportsThinking(entry.model));
+			visible = visible.filter((entry) => entry.choice.capabilities.reasoning);
 		}
 		if (filterVision) {
-			visible = visible.filter((entry) => entry.model.input.includes("image"));
+			visible = visible.filter((entry) => entry.choice.capabilities.vision);
 		}
 
 		const searching = searchQuery.trim().length > 0;
@@ -183,7 +127,7 @@
 <Dialog
 	title="Select a model"
 	eyebrow="Runtime Model"
-	description="Choose the model svvy should use for future turns. Provider availability comes from Bun-side auth state plus any saved custom providers."
+	description="Choose the model svvy should use for future turns. Provider availability comes from Bun-side provider metadata and auth state."
 	width="lg"
 	onClose={onClose}
 >
@@ -206,10 +150,6 @@
 		</div>
 	</div>
 
-	{#if loadingCustomProviders}
-		<p class="picker-status">Loading custom providers...</p>
-	{/if}
-
 	<div class="model-list" role="list">
 		{#if filteredModelCount === 0}
 			<p class="picker-status">No models match the current filters.</p>
@@ -224,17 +164,21 @@
 				<div class="model-group-rows">
 					{#each group.entries as entry (`${entry.provider}:${entry.id}`)}
 						{@const isCurrent = modelsAreEqual(currentModel, entry.model)}
-						<button class={`model-row ${isCurrent ? "current" : ""}`.trim()} type="button" onclick={() => onSelect(entry.model)}>
+						<button
+							class={`model-row ${isCurrent ? "current" : ""}`.trim()}
+							type="button"
+							onclick={() => onSelect(entry.model, entry.choice)}
+						>
 							<div class="model-copy">
 								<div class="model-title">
 									<strong>{entry.model.name}</strong>
 								</div>
 								<p>
 									{entry.id}
-									{#if modelSupportsThinking(entry.model)}
+									{#if entry.choice.capabilities.reasoning}
 										· thinking
 									{/if}
-									{#if entry.model.input.includes("image")}
+									{#if entry.choice.capabilities.vision}
 										· vision
 									{/if}
 								</p>

@@ -1,29 +1,20 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
+import type { AppLoggerEvent } from "./app-logger";
+import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
-import { createWebProvider } from "./web-runtime/provider-registry";
+import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
+import type { ExtensionCliRequirement, ExtensionRecord } from "../shared/extensions";
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
-const originalCxBin = process.env.SVVY_CX_BIN;
-const originalFetch = globalThis.fetch;
-
 afterEach(() => {
   while (stores.length > 0) {
     stores.pop()?.close();
@@ -34,12 +25,6 @@ afterEach(() => {
       rmSync(dir, { force: true, recursive: true });
     }
   }
-  if (originalCxBin === undefined) {
-    delete process.env.SVVY_CX_BIN;
-  } else {
-    process.env.SVVY_CX_BIN = originalCxBin;
-  }
-  globalThis.fetch = originalFetch;
 });
 
 function createWorkspaceRoot(): string {
@@ -48,32 +33,211 @@ function createWorkspaceRoot(): string {
   return root;
 }
 
-function writeWorkspaceFile(workspaceRoot: string, path: string, text: string): void {
-  const filePath = join(workspaceRoot, path);
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, text, "utf8");
+function userSvvyxExtensionRecord(
+  id: string,
+  overrides: Partial<ExtensionRecord> = {},
+): ExtensionRecord {
+  return {
+    id,
+    category: "user",
+    interface: "svvyx",
+    title: id,
+    description: `${id} extension`,
+    instructionSourceFiles: [],
+    minimalLoadingHint: "",
+    typescriptApiEnabled: true,
+    envReadiness: "not_required",
+    dependencyReadiness: "not_required",
+    resetBehavior: "user_reset",
+    deleteBehavior: "trash_allowed",
+    ...overrides,
+  };
 }
 
-function writeFakeCxBinary(workspaceRoot: string): string {
-  const path = join(workspaceRoot, "fake-cx");
-  writeFileSync(
-    path,
-    [
-      "#!/usr/bin/env bun",
-      "const args = Bun.argv.slice(2);",
-      "if (args[0] === 'overview') console.log(JSON.stringify([{ file: args[1] ?? '.', symbols: ['main'] }]));",
-      "else if (args[0] === 'symbols') console.log(JSON.stringify([{ file: 'src/index.ts', name: 'main', kind: 'function' }]));",
-      "else if (args[0] === 'definition') console.log(JSON.stringify([{ file: 'src/index.ts', line: 1, body: 'function main() {}' }]));",
-      "else if (args[0] === 'references') console.log(JSON.stringify([{ file: 'src/index.ts', line: 2, caller: 'boot' }]));",
-      "else if (args[0] === 'lang' && args[1] === 'list') console.log('typescript installed');",
-      "else if (args[0] === 'cache' && args[1] === 'path') console.log('/tmp/cx-cache');",
-      "else { console.error('unsupported fake cx command'); process.exit(2); }",
-    ].join("\n"),
-    "utf8",
+function createUserSvvyxExtensionBuild(input: {
+  extensionId: string;
+  extensionsRoot: string;
+  commandManifest?: Record<string, unknown>;
+  moduleCode?: string;
+  currentBuild?: boolean;
+  env?: Array<{
+    default?: string;
+    description: string;
+    name: string;
+    required: boolean;
+    secret: boolean;
+  }>;
+  dependencies?: Array<{
+    kind: "dependency" | "trusted_dependency";
+    name: string;
+    version: string;
+  }>;
+  typesDeclaration: string;
+}): void {
+  const sourceRoot = join(input.extensionsRoot, "sources", "user", input.extensionId);
+  const currentRoot = join(
+    input.extensionsRoot,
+    "builds",
+    "extensions",
+    input.extensionId,
+    "current",
   );
-  chmodSync(path, 0o755);
-  process.env.SVVY_CX_BIN = path;
-  return path;
+  const generatedRoot = join(input.extensionsRoot, "generated", "extensions", input.extensionId);
+  mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+  mkdirSync(join(sourceRoot, "instructions"), { recursive: true });
+  if (input.currentBuild !== false) {
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+  }
+  mkdirSync(generatedRoot, { recursive: true });
+  writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+  writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+  writeFileSync(
+    join(sourceRoot, "manifest.json"),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: input.extensionId,
+        title: input.extensionId,
+        description: `${input.extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  if (input.currentBuild !== false) {
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          extensionId: input.extensionId,
+          interface: "svvyx",
+          module: "source/index.js",
+          commandManifest: input.commandManifest ?? defaultLinearCommandManifest(),
+          typescriptTypes: join(generatedRoot, "types.d.ts"),
+          env: input.env ?? [],
+          dependencies: input.dependencies ?? [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      input.moduleCode ??
+        [
+          "export default {",
+          "  async serve(argv, { stdout, exit }) {",
+          "    stdout(JSON.stringify({ argv }));",
+          "    exit(0);",
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+    );
+  }
+  writeFileSync(join(generatedRoot, "types.d.ts"), input.typesDeclaration);
+}
+
+function createUserSvvyxExtensionSource(input: {
+  cliRequirements?: ExtensionCliRequirement[];
+  extensionId: string;
+  extensionsRoot: string;
+}): void {
+  const sourceRoot = join(input.extensionsRoot, "sources", "user", input.extensionId);
+  mkdirSync(join(sourceRoot, "source"), { recursive: true });
+  writeFileSync(
+    join(sourceRoot, "manifest.json"),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: input.extensionId,
+        title: input.extensionId,
+        description: `${input.extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [],
+        ...(input.cliRequirements ? { cliRequirements: input.cliRequirements } : {}),
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(
+    join(sourceRoot, "source", "index.ts"),
+    [
+      'import { Cli, z } from "incur";',
+      "",
+      `const cli = Cli.create(${JSON.stringify(input.extensionId)});`,
+      'cli.command("issues.list", {',
+      "  output: z.object({ ok: z.boolean() }),",
+      "  run() {",
+      "    return { ok: true };",
+      "  },",
+      "});",
+      "",
+      "export default cli;",
+      "",
+    ].join("\n"),
+  );
+}
+
+function defaultLinearCommandManifest(): Record<string, unknown> {
+  return {
+    version: "incur.v1",
+    commands: [
+      {
+        name: "issues.list",
+        schema: {
+          args: {
+            type: "object",
+            properties: {
+              issueId: { type: "string" },
+            },
+            required: ["issueId"],
+          },
+          options: {
+            type: "object",
+            properties: {
+              status: { enum: ["open"] },
+            },
+            required: ["status"],
+          },
+          output: {
+            type: "object",
+            properties: {
+              argv: {
+                type: "array",
+                items: { type: "string" },
+              },
+              token: { type: "string" },
+              label: { type: "string" },
+            },
+            required: ["argv", "token", "label"],
+          },
+        },
+      },
+    ],
+  };
+}
+
+function createMemoryExtensionSecretStore(
+  initial: Record<string, string> = {},
+): ExtensionEnvSecretStore {
+  const values = new Map(Object.entries(initial));
+  return {
+    get: ({ extensionId, name }) => values.get(`${extensionId}:${name}`),
+    has: ({ extensionId, name }) => values.has(`${extensionId}:${name}`),
+    set: ({ extensionId, name }, value) => {
+      values.set(`${extensionId}:${name}`, value);
+    },
+    remove: ({ extensionId, name }) => {
+      values.delete(`${extensionId}:${name}`);
+    },
+  };
 }
 
 function createStore(sessionId: string, workspaceCwd: string): StructuredSessionStateStore {
@@ -82,6 +246,7 @@ function createStore(sessionId: string, workspaceCwd: string): StructuredSession
       id: workspaceCwd,
       label: "svvy",
       cwd: workspaceCwd,
+      artifactDir: join(workspaceCwd, "artifact-store"),
     },
   });
   store.upsertPiSession({
@@ -103,6 +268,7 @@ function createRuntime(
   store: StructuredSessionStateStore,
   sessionId: string,
   promptText = "Inspect the repository with execute_typescript",
+  loadedExtensionIds?: readonly string[],
 ): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
     sessionId,
@@ -123,6 +289,7 @@ function createRuntime(
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: loadedExtensionIds ? [...loadedExtensionIds] : undefined,
     },
   };
 }
@@ -131,6 +298,7 @@ function createHandlerRuntime(
   store: StructuredSessionStateStore,
   sessionId: string,
   promptText = "Inspect the repository with handler execute_typescript",
+  loadedExtensionIds?: readonly string[],
 ): PromptExecutionRuntimeHandle {
   const orchestratorTurn = store.startTurn({
     sessionId,
@@ -164,6 +332,7 @@ function createHandlerRuntime(
       rootEpisodeKind: "change",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: loadedExtensionIds ? [...loadedExtensionIds] : undefined,
     },
   };
 }
@@ -188,10 +357,12 @@ describe("execute_typescript tool", () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-static-failure", workspaceCwd);
     const runtime = createRuntime(store, "session-static-failure");
+    const appLogEvents: AppLoggerEvent[] = [];
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
+      onAppLog: (event) => appLogEvents.push(event),
     });
 
     const result = await tool.execute("tool-call-2", {
@@ -216,99 +387,257 @@ describe("execute_typescript tool", () => {
       }),
     ]);
     expect(snapshot.artifacts.map((artifact) => artifact.name)).toEqual([
-      "execute-typescript.ts",
-      "execute-typescript.diagnostics.json",
+      `${snapshot.commands[0]!.id}-execute-typescript.ts`,
+      `${snapshot.commands[0]!.id}-execute-typescript.diagnostics.json`,
     ]);
     const [snippetArtifact, diagnosticsArtifact] = snapshot.artifacts;
-    expect(basename(snippetArtifact!.path!)).toBe(`${snippetArtifact!.id}-execute-typescript.ts`);
+    expect(basename(snippetArtifact!.path!)).toBe(snippetArtifact!.name);
     expect(existsSync(snippetArtifact!.path!)).toBe(true);
     expect(readFileSync(snippetArtifact!.path!, "utf8")).toBe("const title: string = 42;");
     expect(existsSync(diagnosticsArtifact!.path!)).toBe(true);
+    expect(
+      snapshot.events.filter(
+        (event) =>
+          event.kind === "command.diagnostics" && event.subject.id === snapshot.commands[0]!.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        data: {
+          source: "execute_typescript",
+          stage: "typecheck",
+          diagnostics: [
+            expect.objectContaining({
+              severity: "error",
+              message: expect.stringContaining("Type 'number' is not assignable"),
+              file: "execute-typescript.ts",
+            }),
+          ],
+        },
+      }),
+    ]);
     expect(snapshot.episodes).toEqual([]);
+    expect(appLogEvents).toEqual([
+      expect.objectContaining({
+        level: "info",
+        source: "execute_typescript",
+        message: "Execute TypeScript started.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-static-failure",
+          surfacePiSessionId: "session-static-failure",
+          commandId: snapshot.commands[0]!.id,
+          artifactId: snippetArtifact!.id,
+          actor: "orchestrator",
+        }),
+      }),
+      expect.objectContaining({
+        level: "warning",
+        source: "execute_typescript",
+        message: "Execute TypeScript blocked by static diagnostics.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-static-failure",
+          surfacePiSessionId: "session-static-failure",
+          commandId: snapshot.commands[0]!.id,
+          artifactId: diagnosticsArtifact!.id,
+          diagnosticsCount: 1,
+          stage: "typecheck",
+        }),
+      }),
+    ]);
   });
 
-  it("omits workflow APIs for orchestrator code mode at typecheck and runtime", async () => {
+  it("stops at the approval boundary after persisting source and before diagnostics or runtime", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    writeWorkspaceFile(
-      workspaceCwd,
-      ".svvy/workflows/prompts/proof.mdx",
-      "---\ntitle: Proof prompt\nsummary: Prompt proof.\n---\n",
-    );
-    const store = createStore("session-orchestrator-workflow-denied", workspaceCwd);
-    const runtime = createRuntime(store, "session-orchestrator-workflow-denied");
+    const store = createStore("session-approval-denied", workspaceCwd);
+    const runtime = createRuntime(store, "session-approval-denied");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const approvalRequests: unknown[] = [];
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
-      workflowLibrary: createWorkflowLibrary(workspaceCwd),
+      onAppLog: (event) => appLogEvents.push(event),
+      approvalMode: "user",
+      approvalBoundary: (input) => {
+        approvalRequests.push(input);
+        return { approved: false, reason: "User denied Execute TypeScript." };
+      },
     });
 
-    const typechecked = await tool.execute("tool-call-workflow-typecheck-denied", {
-      typescriptCode: 'return await api.workflow_list_assets({ scope: "saved" });',
+    const result = await tool.execute("tool-call-approval-denied", {
+      typescriptCode: "console.log('should not run');\nconst title: string = 42;",
     });
-    expect(typechecked.details.success).toBe(false);
-    expect(typechecked.details.error?.stage).toBe("typecheck");
-    expect(typechecked.details.error?.message).toContain("workflow");
 
-    const dynamic = await tool.execute("tool-call-workflow-runtime-denied", {
-      typescriptCode: 'return await (api as any).workflow_list_assets({ scope: "saved" });',
+    expect(result.details).toEqual({
+      success: false,
+      error: {
+        message: "User denied Execute TypeScript.",
+        stage: "approval",
+      },
     });
-    expect(dynamic.details.success).toBe(false);
-    expect(dynamic.details.error?.stage).toBe("runtime");
-    expect(dynamic.details.error?.message).toBe(
-      "execute_typescript api.workflow_* helpers are not available for orchestrator actors.",
+    const snapshot = store.getSessionState("session-approval-denied");
+    const command = snapshot.commands[0]!;
+    const snippetArtifact = snapshot.artifacts[0]!;
+    expect(command).toMatchObject({
+      toolName: "execute_typescript",
+      status: "cancelled",
+      summary: "User denied Execute TypeScript.",
+      error: "User denied Execute TypeScript.",
+      facts: {
+        approval: "denied",
+        snippetArtifactId: snippetArtifact.id,
+      },
+    });
+    expect(snapshot.artifacts.map((artifact) => artifact.name)).toEqual([
+      `${command.id}-execute-typescript.ts`,
+    ]);
+    expect(readFileSync(snippetArtifact.path!, "utf8")).toBe(
+      "console.log('should not run');\nconst title: string = 42;",
     );
-    const snapshot = store.getSessionState("session-orchestrator-workflow-denied");
-    expect(snapshot.commands.map((command) => command.toolName)).not.toContain(
-      "workflow_list_assets",
-    );
+    expect(approvalRequests).toEqual([
+      expect.objectContaining({
+        approvalMode: "user",
+        commandId: command.id,
+        context: expect.objectContaining({
+          actor: "orchestrator",
+          sessionId: "session-approval-denied",
+          surfacePiSessionId: "session-approval-denied",
+        }),
+        cwd: workspaceCwd,
+        snippetArtifactId: snippetArtifact.id,
+        toolCallId: "tool-call-approval-denied",
+        toolName: "execute_typescript",
+        typescriptCode: "console.log('should not run');\nconst title: string = 42;",
+      }),
+    ]);
+    expect(appLogEvents).toEqual([
+      expect.objectContaining({
+        level: "info",
+        source: "execute_typescript",
+        message: "Execute TypeScript started.",
+        details: expect.objectContaining({
+          commandId: command.id,
+          artifactId: snippetArtifact.id,
+        }),
+      }),
+      expect.objectContaining({
+        level: "warning",
+        source: "execute_typescript",
+        message: "Execute TypeScript blocked by approval boundary.",
+        details: expect.objectContaining({
+          commandId: command.id,
+          artifactId: snippetArtifact.id,
+          approval: "denied",
+        }),
+      }),
+    ]);
   });
 
-  it("runs a typed composition through duplicated direct tools and records child commands", async () => {
+  it("bypasses the execute_typescript approval boundary in full-access mode", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    writeWorkspaceFile(workspaceCwd, "notes.txt", "alpha\nbeta\n");
-    writeFakeCxBinary(workspaceCwd);
-    writeWorkspaceFile(
-      workspaceCwd,
-      ".svvy/workflows/prompts/proof.mdx",
-      "---\ntitle: Proof prompt\nsummary: Prompt proof.\n---\n",
-    );
+    const store = createStore("session-approval-full-access", workspaceCwd);
+    const runtime = createRuntime(store, "session-approval-full-access");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      approvalMode: "full-access",
+      approvalBoundary: () => {
+        throw new Error("approval boundary should not run in full-access.");
+      },
+    });
 
+    const result = await tool.execute("tool-call-approval-full-access", {
+      typescriptCode: "return 'allowed';",
+    });
+
+    expect(result.details).toEqual({
+      success: true,
+      result: "allowed",
+    });
+  });
+
+  it("omits broad execute_typescript helper APIs at typecheck and runtime", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-removed-apis", workspaceCwd);
+    const runtime = createRuntime(store, "session-removed-apis");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    for (const property of [
+      "read",
+      "bash",
+      "exec_command",
+      "artifact_write_text",
+      "web_search",
+      "cx_overview",
+    ]) {
+      const typechecked = await tool.execute(`tool-call-${property}-typecheck`, {
+        typescriptCode: `return await api.${property}({});`,
+      });
+      expect(typechecked.details.success).toBe(false);
+      expect(typechecked.details.error?.stage).toBe("typecheck");
+      expect(typechecked.details.error?.message).toContain("api");
+    }
+
+    const runtimeResult = await tool.execute("tool-call-no-global-api-runtime", {
+      typescriptCode: [
+        "return {",
+        '  hasApi: "api" in globalThis,',
+        '  hasSvvy: "svvy" in globalThis,',
+        "  extensionKeys: Object.keys(extensions),",
+        "};",
+      ].join("\n"),
+    });
+    expect(runtimeResult.details).toMatchObject({
+      success: true,
+      result: {
+        hasApi: false,
+        hasSvvy: false,
+        extensionKeys: ["artifacts"],
+      },
+    });
+
+    const snapshot = store.getSessionState("session-removed-apis");
+    const commandNames = snapshot.commands.map((command) => command.toolName);
+    expect(commandNames).toEqual(Array(commandNames.length).fill("execute_typescript"));
+  });
+
+  it("runs a typed composition with generated extensions and console only", async () => {
+    const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-success", workspaceCwd);
     const runtime = createHandlerRuntime(
       store,
       "session-success",
       "Inspect a file and persist a summary",
     );
+    const appLogEvents: AppLoggerEvent[] = [];
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
-      workflowLibrary: createWorkflowLibrary(workspaceCwd),
+      onAppLog: (event) => appLogEvents.push(event),
     });
 
     const result = await tool.execute("tool-call-3", {
       typescriptCode: [
-        'const file = await api.read({ path: "notes.txt" });',
-        'const overview = await api.cx_overview({ path: "." });',
-        'const status = await api.bash({ command: "printf clean" });',
-        'const assets = await api.workflow_list_assets({ kind: "prompt", scope: "saved" });',
-        "const artifact = await api.artifact_write_text({",
-        '  name: "summary.md",',
-        '  text: `${file.content[0]?.type === "text" ? file.content[0].text.split("\\n")[0] : ""}:${status.content[0]?.type === "text" ? status.content[0].text.trim() : ""}`',
-        "});",
-        'console.log("artifact", artifact.details.path);',
-        "return { assetCount: assets.details.assets.length, artifactId: artifact.details.artifactId, cxCommand: overview.details.command.join(' ') };",
+        "const values = [1, 2, 3];",
+        "const total = values.reduce((sum, value) => sum + value, 0);",
+        'console.log("total", total);',
+        'console.warn("check", "warnings");',
+        "return { total, extensionKeys: Object.keys(extensions) };",
       ].join("\n"),
     });
 
     expect(result.details).toMatchObject({
       success: true,
       result: {
-        assetCount: 1,
-        artifactId: expect.any(String),
-        cxCommand: "cx overview . --json",
+        total: 6,
+        extensionKeys: ["artifacts", "workflows"],
       },
+      logs: ["total 6", "[warn] check warnings"],
     });
 
     const snapshot = store.getSessionState("session-success");
@@ -321,294 +650,2041 @@ describe("execute_typescript tool", () => {
       toolName: "execute_typescript",
       status: "succeeded",
     });
-    expect(parentCommand?.summary).toContain("Read 1 tool result");
-    expect(parentCommand?.summary).toContain("Ran 1 bash command");
-    expect(parentCommand?.summary).toContain("Ran 1 cx navigation call");
-    expect(parentCommand?.summary).toContain("Created 1 artifact");
-    expect(parentCommand?.summary).toContain("Discovered 1 workflow asset");
-    expect(childCommands.map((command) => command.toolName)).toEqual([
-      "read",
-      "cx_overview",
-      "bash",
-      "workflow_list_assets",
-      "artifact_write_text",
-    ]);
-    expect(childCommands).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          parentCommandId: parentCommand!.id,
-          toolName: "cx_overview",
-          executor: "execute_typescript",
-          visibility: "trace",
-          status: "succeeded",
-          facts: expect.objectContaining({
-            command: ["cx", "overview", ".", "--json"],
-            exitCode: 0,
-            resultCount: 1,
-          }),
-        }),
-        expect.objectContaining({
-          parentCommandId: parentCommand!.id,
-          toolName: "read",
-          executor: "execute_typescript",
-          visibility: "trace",
-          status: "succeeded",
-          facts: expect.objectContaining({
-            path: "notes.txt",
-          }),
-        }),
-        expect.objectContaining({
-          parentCommandId: parentCommand!.id,
-          toolName: "bash",
-          executor: "execute_typescript",
-          visibility: "summary",
-          status: "succeeded",
-          facts: expect.objectContaining({
-            command: "printf clean",
-          }),
-        }),
-        expect.objectContaining({
-          parentCommandId: parentCommand!.id,
-          toolName: "artifact_write_text",
-          executor: "execute_typescript",
-          visibility: "summary",
-          status: "succeeded",
-          facts: expect.objectContaining({
-            artifactId: expect.any(String),
-          }),
-        }),
-      ]),
-    );
+    expect(parentCommand?.arguments).toEqual({
+      typescriptCode: [
+        "const values = [1, 2, 3];",
+        "const total = values.reduce((sum, value) => sum + value, 0);",
+        'console.log("total", total);',
+        'console.warn("check", "warnings");',
+        "return { total, extensionKeys: Object.keys(extensions) };",
+      ].join("\n"),
+    });
+    expect(parentCommand?.summary).toBe('{"total":6,"extensionKeys":["artifacts","workflows"]}');
+    expect(parentCommand?.facts).toMatchObject({
+      childCommandCount: 0,
+      failedChildCommandCount: 0,
+      logsArtifactId: expect.any(String),
+      snippetArtifactId: expect.any(String),
+    });
+    expect(childCommands).toEqual([]);
     expect(snapshot.artifacts.map((artifact) => artifact.name)).toEqual([
-      "execute-typescript.ts",
-      "summary.md",
-      "execute-typescript.logs.log",
+      `${parentCommand!.id}-execute-typescript.ts`,
+      `${parentCommand!.id}-execute-typescript.logs.log`,
+    ]);
+    expect(
+      snapshot.events.filter(
+        (event) => event.kind === "command.output" && event.subject.id === parentCommand!.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        data: {
+          stream: "stdout",
+          text: "total 6",
+          source: "execute_typescript",
+        },
+      }),
+      expect.objectContaining({
+        data: {
+          stream: "stderr",
+          text: "[warn] check warnings",
+          source: "execute_typescript",
+        },
+      }),
+    ]);
+    expect(appLogEvents).toEqual([
+      expect.objectContaining({
+        level: "info",
+        source: "execute_typescript",
+        message: "Execute TypeScript started.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-success",
+          surfacePiSessionId: "session-success-handler",
+          threadId: parentCommand!.threadId,
+          commandId: parentCommand!.id,
+          artifactId: snapshot.artifacts[0]!.id,
+          actor: "handler",
+        }),
+      }),
+      expect.objectContaining({
+        level: "info",
+        source: "execute_typescript",
+        message: "Execute TypeScript finished.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-success",
+          surfacePiSessionId: "session-success-handler",
+          threadId: parentCommand!.threadId,
+          commandId: parentCommand!.id,
+          artifactId: snapshot.artifacts[1]!.id,
+          childCommandCount: 0,
+          logsCount: 2,
+        }),
+      }),
     ]);
   });
 
-  it("exposes api.web_* and records artifact-backed fetch child facts", async () => {
+  it("redacts TypeScript console output, result payloads, log artifacts, and runtime errors", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-web", workspaceCwd);
-    const runtime = createRuntime(store, "session-web", "Fetch web evidence");
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          data: {
-            markdown: "Fetched evidence",
-            url: "https://example.com/reference",
-            metadata: { title: "Docs" },
-          },
-        }),
-        {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        },
-      )) as unknown as typeof fetch;
+    const store = createStore("session-typescript-redaction", workspaceCwd);
+    const runtime = createRuntime(store, "session-typescript-redaction");
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
-      webProvider: createWebProvider({ provider: "firecrawl" }, { firecrawlApiKey: "fc-key" }),
     });
 
-    const result = await tool.execute("tool-call-web", {
+    const success = await tool.execute("tool-call-typescript-redaction-success", {
+      typescriptCode:
+        'console.log("api_key=typescript-secret");\nreturn { token: "typescript-secret", visible: "ok" };',
+    });
+
+    expect(JSON.stringify(success.details)).not.toContain("typescript-secret");
+    expect(success.details).toMatchObject({
+      success: true,
+      result: {
+        token: "[REDACTED]",
+        visible: "ok",
+      },
+      logs: ["api_key=[REDACTED]"],
+    });
+    const successSnapshot = store.getSessionState("session-typescript-redaction");
+    const logsArtifact = successSnapshot.artifacts.find((artifact) =>
+      artifact.name.endsWith("execute-typescript.logs.log"),
+    );
+    expect(logsArtifact).toBeDefined();
+    expect(readFileSync(logsArtifact!.path!, "utf8")).toBe("api_key=[REDACTED]");
+    const successCommand = successSnapshot.commands.at(-1);
+    expect(
+      successSnapshot.events.filter(
+        (event) => event.kind === "command.output" && event.subject.id === successCommand!.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        data: {
+          stream: "stdout",
+          text: "api_key=[REDACTED]",
+          source: "execute_typescript",
+        },
+      }),
+    ]);
+
+    const failure = await tool.execute("tool-call-typescript-redaction-failure", {
+      typescriptCode: 'throw new Error("access_token=runtime-secret");',
+    });
+
+    expect(JSON.stringify(failure.details)).not.toContain("runtime-secret");
+    expect(failure.details).toMatchObject({
+      success: false,
+      error: {
+        message: "access_token=[REDACTED]",
+        stage: "runtime",
+      },
+    });
+    const failureSnapshot = store.getSessionState("session-typescript-redaction");
+    expect(failureSnapshot.commands.at(-1)).toMatchObject({
+      toolName: "execute_typescript",
+      status: "failed",
+      summary: "access_token=[REDACTED]",
+      error: "access_token=[REDACTED]",
+    });
+  });
+
+  it("emits targeted app logs for runtime failures", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-runtime-failure", workspaceCwd);
+    const runtime = createRuntime(store, "session-runtime-failure");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      onAppLog: (event) => appLogEvents.push(event),
+    });
+
+    const result = await tool.execute("tool-call-runtime-failure", {
+      typescriptCode: 'throw new Error("runtime exploded");',
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      error: {
+        stage: "runtime",
+        message: "runtime exploded",
+      },
+    });
+
+    const snapshot = store.getSessionState("session-runtime-failure");
+    const [command] = snapshot.commands;
+    const [snippetArtifact] = snapshot.artifacts;
+    expect(command).toMatchObject({
+      toolName: "execute_typescript",
+      status: "failed",
+      error: "runtime exploded",
+    });
+    expect(appLogEvents).toEqual([
+      expect.objectContaining({
+        level: "info",
+        source: "execute_typescript",
+        message: "Execute TypeScript started.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-runtime-failure",
+          surfacePiSessionId: "session-runtime-failure",
+          commandId: command!.id,
+          artifactId: snippetArtifact!.id,
+        }),
+      }),
+      expect.objectContaining({
+        level: "error",
+        source: "execute_typescript",
+        message: "Execute TypeScript failed.",
+        error: expect.any(Error),
+        details: expect.objectContaining({
+          workspaceSessionId: "session-runtime-failure",
+          surfacePiSessionId: "session-runtime-failure",
+          commandId: command!.id,
+          artifactId: snippetArtifact!.id,
+          childCommandCount: 0,
+          logsCount: 0,
+        }),
+      }),
+    ]);
+  });
+
+  it("generates extension declarations only when each extension is loaded", () => {
+    expect(
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        loadedExtensionIds: ["execute-typescript"],
+      }),
+    ).not.toContain("artifacts: ArtifactsExtensionClient");
+    expect(
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        loadedExtensionIds: ["execute-typescript"],
+      }),
+    ).not.toContain("workflows: WorkflowsExtensionClient");
+    expect(
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        loadedExtensionIds: ["artifacts", "execute-typescript"],
+      }),
+    ).toContain("artifacts: ArtifactsExtensionClient");
+    expect(buildExecuteTypescriptApiDeclaration("orchestrator")).not.toContain(
+      "workflows: WorkflowsExtensionClient",
+    );
+    expect(buildExecuteTypescriptApiDeclaration("handler")).toContain(
+      "workflows: WorkflowsExtensionClient",
+    );
+    const loadedBoth = buildExecuteTypescriptApiDeclaration("orchestrator", {
+      loadedExtensionIds: ["artifacts", "execute-typescript", "workflows"],
+    });
+    expect(loadedBoth).toContain("artifacts: ArtifactsExtensionClient");
+    expect(loadedBoth).toContain("workflows: WorkflowsExtensionClient");
+    expect(loadedBoth).toContain('"models list"');
+    expect(loadedBoth).not.toContain('"models.list"');
+    expect(loadedBoth).not.toContain("runWorkflow");
+  });
+
+  it("generates current-build user svvyx declarations only for loaded TypeScript API extensions", () => {
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      typesDeclaration: [
+        "interface StaleLinearExtensionClient {",
+        '  run(commandId: "stale.command"): Promise<never>;',
+        "}",
+        "interface LoadedExtensionsClient { staleLinear: StaleLinearExtensionClient; }",
+      ].join("\n"),
+    });
+    createUserSvvyxExtensionBuild({
+      extensionId: "notion",
+      extensionsRoot,
+      typesDeclaration: "interface LoadedExtensionsClient { notion: { run(): never } }",
+    });
+
+    const declaration = buildExecuteTypescriptApiDeclaration("orchestrator", {
+      extensionsRoot,
+      loadedExtensionIds: ["execute-typescript", "linear"],
+      loadedExtensionRecords: [
+        userSvvyxExtensionRecord("linear"),
+        userSvvyxExtensionRecord("notion"),
+        userSvvyxExtensionRecord("notes", { interface: "instructions" }),
+        userSvvyxExtensionRecord("disabled", { typescriptApiEnabled: false }),
+      ],
+    });
+
+    expect(declaration).toContain("linear: LinearExtensionClient");
+    expect(declaration).toContain('"issues.list"');
+    expect(declaration).toContain("type LinearExtensionCommandMap");
+    expect(declaration).toContain("args: { issueId: string }");
+    expect(declaration).not.toContain("stale.command");
+    expect(declaration).not.toContain("staleLinear");
+    expect(declaration).not.toContain("notion:");
+    expect(declaration).not.toContain("notes:");
+    expect(declaration).not.toContain("disabled:");
+  });
+
+  it("omits user svvyx declarations without a matching current build", () => {
+    const extensionsRoot = createWorkspaceRoot();
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", "linear");
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(
+      join(generatedRoot, "types.d.ts"),
+      "interface LoadedExtensionsClient { linear: { run(): never } }",
+    );
+
+    expect(
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        extensionsRoot,
+        loadedExtensionIds: ["execute-typescript", "linear"],
+        loadedExtensionRecords: [userSvvyxExtensionRecord("linear")],
+      }),
+    ).not.toContain("linear");
+  });
+
+  it("omits user svvyx declarations when current command manifests have malformed nested fields", () => {
+    const extensionsRoot = createWorkspaceRoot();
+    const malformedManifests: Record<string, unknown>[] = [
+      {
+        version: "incur.v1",
+        commands: [{ name: "issues.list", aliases: "list" }],
+      },
+      {
+        version: "incur.v1",
+        commands: [{ name: "issues.list", examples: [{ description: "missing command" }] }],
+      },
+      {
+        version: "incur.v1",
+        commands: [{ name: "issues.list", schema: { args: "issueId" } }],
+      },
+      {
+        version: "incur.v1",
+        commands: [{ name: "issues.list" }, { name: "issues.list" }],
+      },
+    ];
+    for (const [index, commandManifest] of malformedManifests.entries()) {
+      createUserSvvyxExtensionBuild({
+        extensionId: `linear-${index}`,
+        extensionsRoot,
+        commandManifest,
+        typesDeclaration: "interface LoadedExtensionsClient { staleLinear: { run(): never } }",
+      });
+    }
+
+    const declaration = buildExecuteTypescriptApiDeclaration("orchestrator", {
+      extensionsRoot,
+      loadedExtensionIds: [
+        "execute-typescript",
+        ...malformedManifests.map((_, index) => `linear-${index}`),
+      ],
+      loadedExtensionRecords: malformedManifests.map((_, index) =>
+        userSvvyxExtensionRecord(`linear-${index}`),
+      ),
+    });
+
+    expect(declaration).not.toContain("staleLinear");
+    expect(declaration).not.toContain("linear-");
+  });
+
+  it("does not read generated declarations for malformed user extension ids", () => {
+    const extensionsRoot = createWorkspaceRoot();
+    const escapedCurrentRoot = join(extensionsRoot, "builds", "linear", "current");
+    const escapedGeneratedRoot = join(extensionsRoot, "generated", "linear");
+    mkdirSync(escapedCurrentRoot, { recursive: true });
+    mkdirSync(escapedGeneratedRoot, { recursive: true });
+    writeFileSync(
+      join(escapedCurrentRoot, "manifest.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          extensionId: "../linear",
+          interface: "svvyx",
+          module: "source/index.js",
+          commandManifest: {
+            version: "incur.v1",
+            commands: [{ name: "issues.list" }],
+          },
+          env: [],
+          dependencies: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(escapedGeneratedRoot, "types.d.ts"),
+      "interface LoadedExtensionsClient { escaped: { run(): never } }",
+    );
+
+    expect(
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        extensionsRoot,
+        loadedExtensionIds: ["execute-typescript", "../linear"],
+        loadedExtensionRecords: [userSvvyxExtensionRecord("../linear")],
+      }),
+    ).not.toContain("escaped");
+  });
+
+  it("typechecks loaded user svvyx generated declarations inside execute_typescript", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      typesDeclaration: [
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { options: { status: "open" } }): Promise<{ ok: true; data: { id: string }[] }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-types", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-types", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-types", {
       typescriptCode: [
-        'const fetched = await api.web_fetch({ url: "https://example.com/reference" });',
-        "const artifactPath = fetched.details.artifacts?.[0]?.path;",
-        "if (!artifactPath) throw new Error('missing artifact path');",
-        "const body = await api.read({ path: artifactPath });",
-        "return { provider: fetched.details.providerId, artifactPath, body: body.content[0] };",
+        "type LinearRun = typeof extensions.linear.run;",
+        'const commandId: Parameters<LinearRun>[0] = "issues.list";',
+        "return commandId;",
       ].join("\n"),
     });
 
-    expect(result.details.success).toBe(true);
-    const snapshot = store.getSessionState("session-web");
-    const webFetch = snapshot.commands.find((command) => command.toolName === "web_fetch");
-    expect(webFetch).toMatchObject({
-      executor: "execute_typescript",
-      status: "succeeded",
-      visibility: "summary",
-      facts: expect.objectContaining({
-        providerId: "firecrawl",
-        toolName: "web_fetch",
-        artifactPaths: expect.arrayContaining([expect.stringContaining("web-fetch")]),
-        metadataArtifactId: expect.any(String),
-      }),
+    expect(result.details).toMatchObject({
+      success: true,
+      result: "issues.list",
     });
-    expect(snapshot.commands.map((command) => command.toolName)).toEqual([
-      "execute_typescript",
-      "web_fetch",
-      "read",
-    ]);
-    expect(snapshot.artifacts.map((artifact) => artifact.name)).toEqual([
-      "execute-typescript.ts",
-      "web-fetch.md",
-      "web-fetch.metadata.json",
-    ]);
   });
 
-  it("typechecks api.web_* against the selected provider contract", async () => {
+  it("runs loaded user svvyx generated clients as parent-linked child commands", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-web-types", workspaceCwd);
-    const runtime = createRuntime(store, "session-web-types", "Check web provider typing");
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          data: [{ url: "https://example.com/docs", title: "Docs" }],
-        }),
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      env: [
         {
-          status: 200,
-          headers: { "content-type": "application/json" },
+          name: "LINEAR_TOKEN",
+          required: true,
+          secret: true,
+          description: "Linear token.",
         },
-      )) as unknown as typeof fetch;
+        {
+          name: "LINEAR_LABEL",
+          required: false,
+          secret: false,
+          description: "Default label.",
+          default: "backlog",
+        },
+      ],
+      moduleCode: [
+        "export default {",
+        "  async serve(argv, { env, stdout, exit }) {",
+        "    stdout(JSON.stringify({",
+        "      ok: true,",
+        "      data: {",
+        "        argv,",
+        "        token: env.LINEAR_TOKEN,",
+        "        label: env.LINEAR_LABEL,",
+        "      },",
+        "      meta: { command: argv[0] },",
+        "    }));",
+        "    exit(0);",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      typesDeclaration: [
+        "interface LinearRunOutput {",
+        "  argv: string[];",
+        "  token: string;",
+        "  label: string;",
+        "}",
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { args: { issueId: string }; options: { status: "open" } }): Promise<{ ok: true; data: LinearRunOutput; output: LinearRunOutput; meta: { commandFacts: Record<string, unknown> } }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-runtime", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-runtime", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
-      webProvider: createWebProvider({ provider: "firecrawl" }, { firecrawlApiKey: "fc-key" }),
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore({
+        "linear:LINEAR_TOKEN": "secret-token-value",
+      }),
+      extensionsEnvValues: {
+        linear: {
+          LINEAR_LABEL: "triage",
+        },
+        other: {
+          LINEAR_LABEL: "wrong-extension",
+        },
+      },
     });
 
-    const accepted = await tool.execute("tool-call-web-types-ok", {
-      typescriptCode:
-        'return await api.web_search({ query: "docs", scrapeOptions: { formats: ["markdown"], onlyMainContent: true } });',
-    });
-    expect(accepted.details.success).toBe(true);
-
-    const rejected = await tool.execute("tool-call-web-types-bad", {
-      typescriptCode: 'return await api.web_search({ query: "docs", site: "example.com" });',
-    });
-    expect(rejected.details.success).toBe(false);
-    expect(rejected.details.error?.stage).toBe("typecheck");
-    expect(rejected.details.error?.message).toContain("site");
-  });
-
-  it("typechecks api.web_* against the TinyFish SDK fetch contract", async () => {
-    const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-web-tinyfish-types", workspaceCwd);
-    const runtime = createRuntime(store, "session-web-tinyfish-types", "Check TinyFish web typing");
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          results: [
-            {
-              url: "https://example.com/docs",
-              final_url: "https://example.com/docs",
-              title: "Docs",
-              description: null,
-              language: "en",
-              author: null,
-              published_date: null,
-              latency_ms: 10,
-              format: "markdown",
-              text: "TinyFish docs",
-            },
-          ],
-          errors: [],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      )) as unknown as typeof fetch;
-    const tool = createExecuteTypescriptTool({
-      cwd: workspaceCwd,
-      runtime,
-      store,
-      webProvider: createWebProvider({ provider: "tinyfish" }, { tinyfishApiKey: "tf-key" }),
-    });
-    try {
-      const accepted = await tool.execute("tool-call-tinyfish-web-types-ok", {
-        typescriptCode:
-          'const result = await api.web_fetch({ urls: ["https://example.com/docs"], links: true }); return result.details.providerId;',
-      });
-      expect(accepted.details.success).toBe(true);
-
-      const rejected = await tool.execute("tool-call-tinyfish-web-types-bad", {
-        typescriptCode: 'return await api.web_fetch({ url: "https://example.com/docs" });',
-      });
-      expect(rejected.details.success).toBe(false);
-      expect(rejected.details.error?.stage).toBe("typecheck");
-      expect(rejected.details.error?.message).toContain("url");
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it("fetches one real page through TinyFish and writes artifact-backed output", async () => {
-    const tinyfishApiKey = process.env.TINYFISH_API_KEY?.trim();
-    if (!tinyfishApiKey) {
-      return;
-    }
-    const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-web-tinyfish-live", workspaceCwd);
-    const runtime = createRuntime(
-      store,
-      "session-web-tinyfish-live",
-      "Fetch one live TinyFish page",
-    );
-    const tool = createExecuteTypescriptTool({
-      cwd: workspaceCwd,
-      runtime,
-      store,
-      webProvider: createWebProvider({ provider: "tinyfish" }, { tinyfishApiKey }),
-    });
-
-    const result = await tool.execute("tool-call-tinyfish-live-fetch", {
+    const result = await tool.execute("tool-call-user-svvyx-runtime", {
       typescriptCode: [
-        'const fetched = await api.web_fetch({ urls: ["https://example.com"], format: "markdown" });',
-        "const artifactPath = fetched.details.artifacts?.[0]?.path;",
-        "if (!artifactPath) throw new Error('missing TinyFish fetch artifact path');",
-        "const body = await api.read({ path: artifactPath });",
+        'const listed = await extensions.linear.run("issues.list", {',
+        '  args: { issueId: "BUG-1" },',
+        '  options: { status: "open" },',
+        "});",
         "return {",
-        "  providerId: fetched.details.providerId,",
-        "  artifactCount: fetched.details.artifacts?.length ?? 0,",
-        "  metadataPath: fetched.details.metadataArtifact?.path,",
-        "  bodyPreview: body.content[0],",
+        "  data: listed.data,",
+        "  output: listed.output,",
+        "  command: listed.meta.command,",
+        "  facts: listed.meta.commandFacts,",
         "};",
       ].join("\n"),
     });
 
-    expect(result.details.success).toBe(true);
-    const snapshot = store.getSessionState("session-web-tinyfish-live");
-    const webFetch = snapshot.commands.find((command) => command.toolName === "web_fetch");
-    expect(webFetch).toMatchObject({
-      executor: "execute_typescript",
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        data: {
+          argv: ["issues.list", "BUG-1", "--status", "open", "--verbose", "--format", "json"],
+          token: "[REDACTED]",
+          label: "triage",
+        },
+        output: {
+          format: "json",
+        },
+        command: "issues.list",
+        facts: {
+          svvyxDispatch: true,
+          extensionId: "linear",
+          extensionArgv: [
+            "issues.list",
+            "BUG-1",
+            "--status",
+            "open",
+            "--verbose",
+            "--format",
+            "json",
+          ],
+          exitCode: 0,
+          runtimeReady: true,
+        },
+      },
+    });
+    expect(JSON.stringify(result.details)).not.toContain("secret-token-value");
+
+    const snapshot = store.getSessionState("session-user-svvyx-runtime");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.linear.run",
+    );
+    expect(parentCommand).toMatchObject({
       status: "succeeded",
-      facts: expect.objectContaining({
-        providerId: "tinyfish",
-        toolName: "web_fetch",
-        url: "https://example.com/",
-        artifactPaths: expect.arrayContaining([expect.stringContaining("web-fetch")]),
-        metadataArtifactId: expect.any(String),
+      facts: {
+        childCommandCount: 1,
+        failedChildCommandCount: 0,
+      },
+    });
+    expect(childCommand).toMatchObject({
+      parentCommandId: parentCommand?.id,
+      status: "succeeded",
+      visibility: "summary",
+      facts: {
+        extensionId: "linear",
+        commandId: "issues.list",
+        svvyxDispatch: true,
+        extensionArgv: [
+          "issues.list",
+          "BUG-1",
+          "--status",
+          "open",
+          "--verbose",
+          "--format",
+          "json",
+        ],
+        runtimeReady: true,
+      },
+    });
+  });
+
+  it("uses current command schemas for generated client argv order and output controls", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      commandManifest: {
+        version: "incur.v1",
+        commands: [
+          {
+            name: "issues.order",
+            schema: {
+              args: {
+                type: "object",
+                properties: {
+                  first: { type: "string" },
+                  second: { type: "string" },
+                },
+                required: ["first", "second"],
+              },
+              options: {
+                type: "object",
+                properties: {
+                  alpha: { type: "string" },
+                  zed: { type: "string" },
+                },
+              },
+              output: {
+                type: "object",
+                properties: {
+                  argv: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                },
+                required: ["argv"],
+              },
+            },
+          },
+        ],
+      },
+      moduleCode: [
+        "export default {",
+        "  async serve(argv, { stdout, exit }) {",
+        "    if (argv.includes('--token-count')) {",
+        "      stdout('17');",
+        "      exit(0);",
+        "      return;",
+        "    }",
+        "    stdout(JSON.stringify({ argv }));",
+        "    exit(0);",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      typesDeclaration: "interface LoadedExtensionsClient { linear: unknown }",
+    });
+    const store = createStore("session-user-svvyx-schema-order", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-schema-order", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore(),
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-schema-order", {
+      typescriptCode: [
+        'const listed = await extensions.linear.run("issues.order", {',
+        '  args: { second: "B", first: "A" },',
+        '  options: { zed: "Z", alpha: "A" },',
+        '  selection: ["argv"],',
+        '  outputFormat: "md",',
+        "  outputTokenLimit: 25,",
+        "  outputTokenOffset: 2,",
+        "});",
+        "return { data: listed.data, output: listed.output, facts: listed.meta.commandFacts };",
+      ].join("\n"),
+    });
+
+    const expectedArgv = [
+      "issues.order",
+      "A",
+      "B",
+      "--alpha",
+      "A",
+      "--zed",
+      "Z",
+      "--filter-output",
+      "argv",
+      "--token-limit",
+      "25",
+      "--token-offset",
+      "2",
+      "--verbose",
+      "--format",
+      "json",
+    ];
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        data: {
+          argv: expectedArgv,
+        },
+        output: {
+          format: "md",
+          tokenLimit: 25,
+          tokenOffset: 2,
+        },
+        facts: {
+          extensionId: "linear",
+          extensionArgv: expectedArgv,
+        },
+      },
+    });
+
+    const tokenCountResult = await tool.execute("tool-call-user-svvyx-token-count", {
+      typescriptCode: [
+        'const listed = await extensions.linear.run("issues.order", {',
+        '  args: { first: "A", second: "B" },',
+        "  outputTokenCount: true,",
+        "});",
+        "return { data: listed.data, output: listed.output, facts: listed.meta.commandFacts };",
+      ].join("\n"),
+    });
+
+    expect(tokenCountResult.details).toMatchObject({
+      success: true,
+      result: {
+        data: 17,
+        output: {
+          format: "json",
+          tokenCount: 17,
+        },
+        facts: {
+          extensionArgv: [
+            "issues.order",
+            "A",
+            "B",
+            "--token-count",
+            "--verbose",
+            "--format",
+            "json",
+          ],
+        },
+      },
+    });
+  });
+
+  it("rejects obsolete generated client output objects and unknown schema keys", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      typesDeclaration: "interface LoadedExtensionsClient { linear: unknown }",
+    });
+    const store = createStore("session-user-svvyx-obsolete-output", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-obsolete-output", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore(),
+    });
+
+    const obsoleteOutputResult = await tool.execute("tool-call-user-svvyx-obsolete-output", {
+      typescriptCode:
+        'return await (extensions as any).linear.run("issues.list", { output: { format: "json" } });',
+    });
+    expect(obsoleteOutputResult.details).toMatchObject({
+      success: false,
+      error: {
+        name: "ClientError",
+        stage: "runtime",
+        message: "Unsupported generated client input key: output",
+      },
+    });
+
+    const unknownArgResult = await tool.execute("tool-call-user-svvyx-unknown-arg", {
+      typescriptCode:
+        'return await (extensions as any).linear.run("issues.list", { args: { wrong: "BUG-1" }, options: { status: "open" } });',
+    });
+    expect(unknownArgResult.details).toMatchObject({
+      success: false,
+      error: {
+        name: "ClientError",
+        stage: "runtime",
+        message: "Unsupported args key: wrong",
+      },
+    });
+  });
+
+  it("fails user svvyx generated clients as child commands when env is missing", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      env: [
+        {
+          name: "LINEAR_TOKEN",
+          required: true,
+          secret: true,
+          description: "Linear token.",
+        },
+      ],
+      typesDeclaration: [
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { args: string[] }): Promise<{ ok: true; data: unknown; output: unknown; meta: { commandFacts: Record<string, unknown> } }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-missing-env", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-missing-env", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore(),
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-missing-env", {
+      typescriptCode:
+        'return await extensions.linear.run("issues.list", { args: { issueId: "BUG-1" }, options: { status: "open" } });',
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      error: {
+        name: "ClientError",
+        stage: "runtime",
+        message: "linear requires LINEAR_TOKEN. Configure it in the Extensions pane.",
+      },
+    });
+    const snapshot = store.getSessionState("session-user-svvyx-missing-env");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.linear.run",
+    );
+    expect(parentCommand).toMatchObject({
+      status: "failed",
+      facts: {
+        childCommandCount: 1,
+        failedChildCommandCount: 1,
+      },
+    });
+    expect(childCommand).toMatchObject({
+      parentCommandId: parentCommand?.id,
+      status: "failed",
+      facts: {
+        extensionId: "linear",
+        commandId: "issues.list",
+        svvyxDispatch: true,
+        extensionArgv: [
+          "issues.list",
+          "BUG-1",
+          "--status",
+          "open",
+          "--verbose",
+          "--format",
+          "json",
+        ],
+        runtimeReady: false,
+        errorCode: "extension_env_missing",
+        currentBuildStatus: "valid",
+      },
+    });
+  });
+
+  it("records user svvyx generated client command failures as child command failures", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      env: [
+        {
+          name: "LINEAR_TOKEN",
+          required: true,
+          secret: true,
+          description: "Linear token.",
+        },
+      ],
+      moduleCode: [
+        "export default {",
+        "  async serve(argv, { env, stdout, exit }) {",
+        "    stdout(JSON.stringify({",
+        "      error: `failed with ${env.LINEAR_TOKEN}`,",
+        "      argv,",
+        "    }));",
+        "    exit(1);",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      typesDeclaration: [
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { args: string[] }): Promise<{ ok: true; data: unknown; output: unknown; meta: { commandFacts: Record<string, unknown> } }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-command-failure", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-command-failure", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore({
+        "linear:LINEAR_TOKEN": "secret-token-value",
       }),
     });
-    const fetchArtifact = snapshot.artifacts.find((artifact) => artifact.name === "web-fetch.md");
-    const metadataArtifact = snapshot.artifacts.find(
-      (artifact) => artifact.name === "web-fetch.metadata.json",
-    );
-    expect(fetchArtifact?.path).toBeTruthy();
-    expect(metadataArtifact?.path).toBeTruthy();
-    const fetchContent = readFileSync(fetchArtifact!.path!, "utf8");
-    const metadataContent = readFileSync(metadataArtifact!.path!, "utf8");
-    expect(fetchContent).toContain("documentation examples");
-    expect(metadataContent).toContain("https://example.com");
-    expect(JSON.stringify(snapshot)).not.toContain(tinyfishApiKey);
-  }, 30000);
 
-  it("omits api.web_* when no keyed provider is configured", async () => {
+    const result = await tool.execute("tool-call-user-svvyx-command-failure", {
+      typescriptCode:
+        'return await extensions.linear.run("issues.list", { args: { issueId: "BUG-1" }, options: { status: "open" } });',
+    });
+
+    expect(result.details.success).toBe(false);
+    expect(result.details.error).toMatchObject({
+      name: "ClientError",
+      stage: "runtime",
+    });
+    expect(result.details.error?.message).toContain("[REDACTED]");
+    expect(JSON.stringify(result.details)).not.toContain("secret-token-value");
+
+    const snapshot = store.getSessionState("session-user-svvyx-command-failure");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.linear.run",
+    );
+    expect(parentCommand).toMatchObject({
+      status: "failed",
+      facts: {
+        childCommandCount: 1,
+        failedChildCommandCount: 1,
+      },
+    });
+    expect(childCommand).toMatchObject({
+      parentCommandId: parentCommand?.id,
+      status: "failed",
+      facts: {
+        extensionId: "linear",
+        commandId: "issues.list",
+        svvyxDispatch: true,
+        extensionArgv: [
+          "issues.list",
+          "BUG-1",
+          "--status",
+          "open",
+          "--verbose",
+          "--format",
+          "json",
+        ],
+        exitCode: 1,
+        runtimeReady: true,
+      },
+    });
+    expect(childCommand?.summary).toContain("[REDACTED]");
+    expect(childCommand?.error).toContain("[REDACTED]");
+    expect(childCommand?.error).not.toContain("secret-token-value");
+  });
+
+  it("validates user svvyx generated client product state at invocation time", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-web-absent", workspaceCwd);
-    const runtime = createRuntime(store, "session-web-absent", "Check missing web provider");
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      currentBuild: false,
+      typesDeclaration:
+        "interface LoadedExtensionsClient { linear: { run(commandId: string, input?: unknown): Promise<unknown> } }",
+    });
+    const store = createStore("session-user-svvyx-no-current-build", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-no-current-build", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore(),
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-no-current-build", {
+      typescriptCode:
+        'return await (extensions as any).linear.run("issues.list", { args: ["BUG-1"] });',
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      error: {
+        name: "ClientError",
+        stage: "runtime",
+        message: "linear has no current successful svvyx build.",
+      },
+    });
+    const snapshot = store.getSessionState("session-user-svvyx-no-current-build");
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.linear.run",
+    );
+    expect(childCommand).toMatchObject({
+      status: "failed",
+      facts: {
+        extensionId: "linear",
+        commandId: "issues.list",
+        svvyxDispatch: true,
+        extensionArgv: [],
+        runtimeReady: false,
+        errorCode: "no_current_build",
+        currentBuildStatus: "missing",
+      },
+    });
+  });
+
+  it("rejects user svvyx generated declaration access when the extension is not loaded", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      typesDeclaration: [
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { options: { status: "open" } }): Promise<{ ok: true; data: { id: string }[] }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-unloaded-types", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-unloaded-types", undefined, [
+      "execute-typescript",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-unloaded-types", {
+      typescriptCode: [
+        "type LinearRun = typeof extensions.linear.run;",
+        'const commandId: Parameters<LinearRun>[0] = "issues.list";',
+        "return commandId;",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(false);
+    expect(result.details.error?.stage).toBe("typecheck");
+    expect(result.details.error?.message).toContain("linear");
+  });
+
+  it("runs the generated Artifacts client and links created artifacts to child commands", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-client", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-client");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      onAppLog: (event) => appLogEvents.push(event),
+    });
+
+    const result = await tool.execute("tool-call-artifact-create", {
+      typescriptCode: [
+        'const created = await extensions.artifacts.run("create", { options: { name: "plan.md" } });',
+        "return {",
+        "  ok: created.ok,",
+        "  id: created.data.id,",
+        "  name: created.data.name,",
+        "  outputMatchesData: created.output.id === created.data.id,",
+        "  factArtifactId: created.meta.commandFacts.artifactId,",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        ok: true,
+        name: "plan.md",
+        outputMatchesData: true,
+      },
+    });
+    const returned = result.details.result as { id: string; factArtifactId: string };
+    expect(returned.factArtifactId).toBe(returned.id);
+
+    const snapshot = store.getSessionState("session-artifact-client");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.artifacts.run",
+    );
+    expect(parentCommand).toMatchObject({
+      status: "succeeded",
+      facts: {
+        childCommandCount: 1,
+        failedChildCommandCount: 0,
+      },
+    });
+    expect(childCommand).toMatchObject({
+      parentCommandId: parentCommand?.id,
+      status: "succeeded",
+      visibility: "summary",
+      facts: {
+        artifactId: returned.id,
+        artifactName: "plan.md",
+      },
+    });
+    const artifact = snapshot.artifacts.find((entry) => entry.id === returned.id);
+    expect(artifact).toMatchObject({
+      name: "plan.md",
+      sourceCommandId: childCommand?.id,
+    });
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        source: "artifact",
+        message: "Artifact Create succeeded.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-artifact-client",
+          surfacePiSessionId: "session-artifact-client",
+          commandId: childCommand!.id,
+          artifactId: returned.id,
+          artifactCommandId: "create",
+          artifactName: "plan.md",
+        }),
+      }),
+    );
+  });
+
+  it("supports bracket access for generated Artifacts clients", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-bracket", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-bracket");
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
     });
 
-    const result = await tool.execute("tool-call-web-absent", {
-      typescriptCode: 'return await api.web_search({ query: "docs" });',
+    const result = await tool.execute("tool-call-artifact-bracket", {
+      typescriptCode: [
+        'const created = await extensions["artifacts"].run("create", { options: { name: "bracket.md" } });',
+        'const inspected = await extensions["artifacts"].run("inspect", { options: { id: created.data.id } });',
+        "return { name: inspected.data.name, inspectedVisibility: inspected.meta.commandFacts.artifactName };",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        name: "bracket.md",
+        inspectedVisibility: "bracket.md",
+      },
+    });
+    const snapshot = store.getSessionState("session-artifact-bracket");
+    expect(
+      snapshot.commands.filter((command) => command.toolName === "extensions.artifacts.run"),
+    ).toHaveLength(2);
+    expect(
+      snapshot.commands.find(
+        (command) =>
+          command.toolName === "extensions.artifacts.run" && command.facts?.commandId === "inspect",
+      )?.visibility,
+    ).toBe("trace");
+  });
+
+  it("omits unloaded generated Artifacts clients from typechecking and runtime", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-unloaded", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-unloaded", "Run without Artifacts", [
+      "execute-typescript",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-artifact-unloaded", {
+      typescriptCode:
+        'return await extensions.artifacts.run("create", { options: { name: "blocked.md" } });',
     });
 
     expect(result.details.success).toBe(false);
     expect(result.details.error?.stage).toBe("typecheck");
-    expect(result.details.error?.message).toContain("web");
+    expect(result.details.error?.message).toContain("artifacts");
+    const snapshot = store.getSessionState("session-artifact-unloaded");
+    expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
+  });
+
+  it("runs generated Workflows list, models list, and save clients as child commands", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const otherWorkspaceCwd = createWorkspaceRoot();
+    mkdirSync(join(workspaceCwd, ".smithers", "prompts"), { recursive: true });
+    mkdirSync(join(otherWorkspaceCwd, ".smithers"), { recursive: true });
+    writeFileSync(
+      join(workspaceCwd, ".smithers", "prompts", "review-prompt.mdx"),
+      "# Review prompt\n\nCheck the work.\n",
+    );
+    const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
+    const workflowsGeneratedPackagePath = join(workspaceCwd, "generated-workflows-package");
+    const generatedPackageEvents: Array<{
+      reason: "svvyx-workflows-build" | "svvyx-workflows-save";
+      commandFacts: Record<string, unknown>;
+    }> = [];
+    const appLogEvents: AppLoggerEvent[] = [];
+    const store = createStore("session-workflows-client", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-workflows-client");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      onAppLog: (event) => appLogEvents.push(event),
+      onWorkflowsGeneratedPackageChanged: (event) => {
+        generatedPackageEvents.push(event);
+      },
+      workflowsGeneratedPackagePath,
+      workflowsModelCatalog: () => [
+        {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+          providerAuthenticated: true,
+          authSource: "apikey",
+          supportedReasoning: ["low", "medium", "high"],
+          capabilities: {
+            reasoning: true,
+            vision: true,
+            toolCalling: true,
+          },
+        },
+      ],
+      workflowsSourceRoot,
+      workflowsWorkspaceCwds: () => [workspaceCwd, otherWorkspaceCwd],
+    });
+
+    const result = await tool.execute("tool-call-workflows-client", {
+      typescriptCode: [
+        'const models = await extensions.workflows.run("models list", { options: {} });',
+        'const saved = await extensions.workflows.run("save", {',
+        "  options: {",
+        '    from: ".smithers/prompts/review-prompt.mdx",',
+        '    kind: "prompt",',
+        '    as: "ReviewPrompt",',
+        "  },",
+        "});",
+        'const listed = await extensions.workflows.run("list", { options: { kind: "prompt" } });',
+        "return {",
+        "  extensionKeys: Object.keys(extensions).sort(),",
+        "  modelCount: models.data.items.length,",
+        "  providerCount: models.meta.commandFacts.workflowProviderCount,",
+        "  savedKind: saved.data.kind,",
+        "  savedExportName: saved.data.exportName,",
+        "  linkedWorkspaces: saved.data.linkedWorkspaces,",
+        "  listed: listed.data.items.map((item) => item.qualifiedName),",
+        "  outputMatchesData: listed.output.items[0].qualifiedName === listed.data.items[0].qualifiedName,",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        extensionKeys: ["artifacts", "workflows"],
+        modelCount: 1,
+        providerCount: 1,
+        savedKind: "prompt",
+        savedExportName: "ReviewPrompt",
+        linkedWorkspaces: [workspaceCwd, otherWorkspaceCwd],
+        listed: ["Prompts.ReviewPrompt"],
+        outputMatchesData: true,
+      },
+    });
+    expect(existsSync(join(workflowsSourceRoot, "prompts", "ReviewPrompt.mdx"))).toBe(true);
+    expect(existsSync(join(workflowsGeneratedPackagePath, "prompts", "ReviewPrompt.ts"))).toBe(
+      true,
+    );
+    expect(existsSync(join(workspaceCwd, ".smithers", "node_modules", "@svvy", "workflows"))).toBe(
+      true,
+    );
+    expect(
+      existsSync(join(otherWorkspaceCwd, ".smithers", "node_modules", "@svvy", "workflows")),
+    ).toBe(true);
+    expect(generatedPackageEvents).toHaveLength(1);
+    expect(generatedPackageEvents[0]).toMatchObject({
+      reason: "svvyx-workflows-save",
+      commandFacts: {
+        workflowSavedExportName: "ReviewPrompt",
+        workflowSavedKind: "prompt",
+        workflowBuildOk: true,
+        workflowLinkedWorkspaceCount: 2,
+      },
+    });
+
+    const snapshot = store.getSessionState("session-workflows-client");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    expect(parentCommand?.facts).toMatchObject({
+      childCommandCount: 3,
+      failedChildCommandCount: 0,
+    });
+    const workflowCommands = snapshot.commands.filter(
+      (command) => command.toolName === "extensions.workflows.run",
+    );
+    expect(workflowCommands.map((command) => command.facts?.commandId)).toEqual([
+      "models list",
+      "save",
+      "list",
+    ]);
+    expect(workflowCommands.map((command) => command.arguments)).toEqual([
+      {
+        commandId: "models list",
+        input: {
+          options: {},
+        },
+      },
+      {
+        commandId: "save",
+        input: {
+          options: {
+            as: "ReviewPrompt",
+            from: ".smithers/prompts/review-prompt.mdx",
+            kind: "prompt",
+          },
+        },
+      },
+      {
+        commandId: "list",
+        input: {
+          options: {
+            kind: "prompt",
+          },
+        },
+      },
+    ]);
+    expect(workflowCommands.map((command) => command.visibility)).toEqual([
+      "trace",
+      "summary",
+      "trace",
+    ]);
+    expect(workflowCommands[0]?.facts).toMatchObject({
+      extensionId: "workflows",
+      workflowModelChoiceCount: 1,
+      workflowProviderCount: 1,
+    });
+    expect(workflowCommands[1]?.facts).toMatchObject({
+      extensionId: "workflows",
+      workflowSavedExportName: "ReviewPrompt",
+      workflowSavedKind: "prompt",
+      workflowLinkedWorkspaceCount: 2,
+    });
+    expect(workflowCommands[2]?.facts).toMatchObject({
+      extensionId: "workflows",
+      workflowExportCount: 1,
+      workflowExportKind: "prompt",
+    });
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        source: "workflow.library",
+        message: "Workflows build validation passed.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-workflows-client",
+          surfacePiSessionId: "session-workflows-client-handler",
+          threadId: workflowCommands[1]!.threadId,
+          commandId: workflowCommands[1]!.id,
+          command: expect.stringContaining("svvyx workflows save"),
+          workflowBuildOk: true,
+          workflowSavedExportName: "ReviewPrompt",
+          workflowSavedKind: "prompt",
+          workflowLinkedWorkspaceCount: 2,
+        }),
+      }),
+    );
+  });
+
+  it("forwards Extension prebuild CLI failures through the Workflows generated client", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
+    const workflowsGeneratedPackagePath = join(workspaceCwd, "generated-workflows-package");
+    const workflowsExtensionsGeneratedPackagePath = join(
+      workspaceCwd,
+      "generated-extensions-package",
+    );
+    const extensionsRoot = join(workspaceCwd, "extensions");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const probedRequirements: string[] = [];
+    mkdirSync(join(workflowsSourceRoot, "agents"), { recursive: true });
+    createUserSvvyxExtensionSource({
+      cliRequirements: [
+        {
+          id: "needs-cli",
+          binary: "needs-cli",
+          package: "needs-cli",
+          required: true,
+          version: "1.2.3",
+          installCommand: "npm install -g needs-cli@1.2.3",
+        },
+      ],
+      extensionId: "needs-cli",
+      extensionsRoot,
+    });
+    writeFileSync(
+      join(workflowsSourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "Review CLI-gated extension references.",
+          extensions: ["needs-cli", "missing-workflow-extension"],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const store = createStore("session-workflows-client-cli-prebuild", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-workflows-client-cli-prebuild");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsCliProbe: (requirement) => {
+        probedRequirements.push(requirement.id);
+        return {
+          id: requirement.id,
+          binary: requirement.binary,
+          package: requirement.package ?? null,
+          required: requirement.required,
+          defaultVersion: requirement.version ?? null,
+          currentVersion: null,
+          latestVersion: null,
+          status: "missing",
+          updateAvailable: false,
+          detectedVersion: null,
+          path: null,
+          versionCommand: requirement.versionCommand ?? null,
+          installCommand: requirement.installCommand ?? null,
+          updateCommand: null,
+        };
+      },
+      extensionsRoot,
+      onAppLog: (event) => appLogEvents.push(event),
+      workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath,
+      workflowsModelCatalog: () => [
+        {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+          providerAuthenticated: true,
+          authSource: "apikey",
+          supportedReasoning: ["low", "medium", "high"],
+          capabilities: {
+            reasoning: true,
+            vision: true,
+            toolCalling: true,
+          },
+        },
+      ],
+      workflowsSourceRoot,
+      workflowsWorkspaceCwds: () => [workspaceCwd],
+    });
+
+    const result = await tool.execute("tool-call-workflows-client-cli-prebuild", {
+      typescriptCode: [
+        'import { Client } from "incur/client";',
+        "try {",
+        '  await extensions.workflows.run("build", { options: {} });',
+        "} catch (error) {",
+        "  return {",
+        "    clientError: error instanceof Client.ClientError,",
+        "    message: error instanceof Error ? error.message : String(error),",
+        "  };",
+        "}",
+        "return { clientError: false };",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        clientError: true,
+        message: "Workflows build failed.",
+      },
+    });
+    expect(probedRequirements).toEqual(["needs-cli"]);
+    expect(existsSync(workflowsGeneratedPackagePath)).toBe(false);
+    expect(existsSync(workflowsExtensionsGeneratedPackagePath)).toBe(false);
+
+    const snapshot = store.getSessionState("session-workflows-client-cli-prebuild");
+    expect(
+      snapshot.commands.find((command) => command.toolName === "execute_typescript")?.facts,
+    ).toMatchObject({
+      childCommandCount: 1,
+      failedChildCommandCount: 1,
+    });
+    const workflowCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.workflows.run",
+    );
+    expect(workflowCommand).toMatchObject({
+      status: "failed",
+      facts: {
+        extensionId: "workflows",
+        commandId: "build",
+        errorCode: "build_failed",
+      },
+    });
+    expect(workflowCommand?.error).toContain("needs-cli 1.2.3 is required by needs-cli");
+    expect(workflowCommand?.error).not.toContain("missing-workflow-extension");
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "warning",
+        source: "workflow.library",
+        message: "Workflows build validation failed.",
+        details: expect.objectContaining({
+          command: "svvyx workflows build --json",
+          errorCode: "build_failed",
+          workflowDiagnosticCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it("rejects generated Workflows save sources outside workspace .smithers", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    writeFileSync(join(workspaceCwd, "outside-prompt.mdx"), "# Outside\n");
+    const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
+    const workflowsGeneratedPackagePath = join(workspaceCwd, "generated-workflows-package");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const store = createStore("session-workflows-client-outside-source", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-workflows-client-outside-source");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      onAppLog: (event) => appLogEvents.push(event),
+      workflowsGeneratedPackagePath,
+      workflowsSourceRoot,
+      workflowsWorkspaceCwds: () => [workspaceCwd],
+    });
+
+    const result = await tool.execute("tool-call-workflows-client-outside-source", {
+      typescriptCode: [
+        'return await extensions.workflows.run("save", {',
+        "  options: {",
+        '    from: "outside-prompt.mdx",',
+        '    kind: "prompt",',
+        '    as: "OutsidePrompt",',
+        "  },",
+        "});",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(false);
+    expect(result.details.error?.message).toContain("workspace .smithers source file");
+    expect(existsSync(join(workflowsSourceRoot, "prompts", "OutsidePrompt.mdx"))).toBe(false);
+    expect(existsSync(join(workflowsGeneratedPackagePath, "prompts", "OutsidePrompt.ts"))).toBe(
+      false,
+    );
+
+    const snapshot = store.getSessionState("session-workflows-client-outside-source");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    expect(parentCommand?.facts).toMatchObject({
+      childCommandCount: 1,
+      failedChildCommandCount: 1,
+    });
+    const workflowCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.workflows.run",
+    );
+    expect(workflowCommand?.facts).toMatchObject({
+      extensionId: "workflows",
+      commandId: "save",
+      errorCode: "invalid_source",
+    });
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "warning",
+        source: "workflow.library",
+        message: "Workflows build validation failed.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-workflows-client-outside-source",
+          surfacePiSessionId: "session-workflows-client-outside-source-handler",
+          threadId: workflowCommand!.threadId,
+          commandId: workflowCommand!.id,
+          command: expect.stringContaining("svvyx workflows save"),
+          errorCode: "invalid_source",
+          workflowDiagnosticCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it("omits Workflows from orchestrator defaults and exposes it to handler defaults", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const orchestratorStore = createStore("session-workflows-orchestrator-default", workspaceCwd);
+    const orchestratorRuntime = createRuntime(
+      orchestratorStore,
+      "session-workflows-orchestrator-default",
+    );
+    const orchestratorTool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime: orchestratorRuntime,
+      store: orchestratorStore,
+    });
+
+    const orchestratorResult = await orchestratorTool.execute("tool-call-workflows-orchestrator", {
+      typescriptCode: "return Object.keys(extensions).sort();",
+    });
+
+    expect(orchestratorResult.details).toMatchObject({
+      success: true,
+      result: ["artifacts"],
+    });
+
+    const handlerStore = createStore("session-workflows-handler-default", workspaceCwd);
+    const handlerRuntime = createHandlerRuntime(handlerStore, "session-workflows-handler-default");
+    const handlerTool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime: handlerRuntime,
+      store: handlerStore,
+    });
+
+    const handlerResult = await handlerTool.execute("tool-call-workflows-handler", {
+      typescriptCode: "return Object.keys(extensions).sort();",
+    });
+
+    expect(handlerResult.details).toMatchObject({
+      success: true,
+      result: ["artifacts", "workflows"],
+    });
+  });
+
+  it("keeps removed Workflows runner commands unavailable through generated clients", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const removedCommandIds = [
+      "run",
+      "resume",
+      "approve",
+      "inspect",
+      "debug",
+      "install",
+      "retrieve",
+      "promote",
+      "agents list",
+      "prompts list",
+      "components list",
+      "workflows list",
+      "models.list",
+    ];
+
+    for (const commandId of removedCommandIds) {
+      const sessionId = `session-workflows-removed-${commandId.replaceAll(/\W/g, "-")}`;
+      const store = createStore(sessionId, workspaceCwd);
+      const runtime = createHandlerRuntime(store, sessionId);
+      const tool = createExecuteTypescriptTool({
+        cwd: workspaceCwd,
+        runtime,
+        store,
+      });
+
+      const result = await tool.execute(`tool-call-workflows-removed-${commandId}`, {
+        typescriptCode: `await extensions.workflows.run(${JSON.stringify(commandId)}, { options: {} });`,
+      });
+
+      expect(result.details.success).toBe(false);
+      expect(result.details.error?.stage).toBe("typecheck");
+      expect(result.details.error?.message).toContain(JSON.stringify(commandId));
+      const snapshot = store.getSessionState(sessionId);
+      expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
+    }
+  });
+
+  it("records failed Workflows child commands for invalid dynamic generated-client inputs", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-workflows-invalid-input", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-workflows-invalid-input");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-workflows-invalid-input", {
+      typescriptCode: [
+        'import { Client } from "incur/client";',
+        "const input = { options: { kind: 'runner', oldCommand: true } } as any;",
+        "try {",
+        '  await extensions.workflows.run("list", input);',
+        "} catch (error) {",
+        "  return {",
+        "    clientError: error instanceof Client.ClientError,",
+        "    message: error instanceof Error ? error.message : String(error),",
+        "  };",
+        "}",
+        "return { clientError: false };",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        clientError: true,
+      },
+    });
+    const snapshot = store.getSessionState("session-workflows-invalid-input");
+    expect(
+      snapshot.commands.find((command) => command.toolName === "execute_typescript")?.facts,
+    ).toMatchObject({
+      childCommandCount: 1,
+      failedChildCommandCount: 1,
+    });
+    expect(
+      snapshot.commands.find((command) => command.toolName === "extensions.workflows.run"),
+    ).toMatchObject({
+      status: "failed",
+      facts: {
+        extensionId: "workflows",
+        commandId: "list",
+        errorCode: "INVALID_ARGUMENT",
+      },
+    });
+  });
+
+  it("supports Artifacts and Workflows generated clients in the same loaded extension set", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-generated-clients-together", workspaceCwd);
+    const runtime = createRuntime(store, "session-generated-clients-together", "Use clients", [
+      "artifacts",
+      "execute-typescript",
+      "workflows",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      workflowsModelCatalog: () => [
+        {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+          providerAuthenticated: true,
+          authSource: "apikey",
+          supportedReasoning: ["medium"],
+          capabilities: {
+            reasoning: true,
+            vision: true,
+            toolCalling: true,
+          },
+        },
+      ],
+    });
+
+    const result = await tool.execute("tool-call-generated-clients-together", {
+      typescriptCode: [
+        'const artifact = await extensions.artifacts.run("create", { options: { name: "both.md" } });',
+        'const models = await extensions.workflows.run("models list", { options: {} });',
+        "return {",
+        "  artifactName: artifact.data.name,",
+        "  modelCount: models.data.items.length,",
+        "  extensionKeys: Object.keys(extensions).sort(),",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        artifactName: "both.md",
+        modelCount: 1,
+        extensionKeys: ["artifacts", "workflows"],
+      },
+    });
+    const snapshot = store.getSessionState("session-generated-clients-together");
+    expect(
+      snapshot.commands.filter((command) => command.toolName === "extensions.artifacts.run"),
+    ).toHaveLength(1);
+    expect(
+      snapshot.commands.filter((command) => command.toolName === "extensions.workflows.run"),
+    ).toHaveLength(1);
+    expect(
+      snapshot.commands.find((command) => command.toolName === "execute_typescript")?.facts,
+    ).toMatchObject({
+      childCommandCount: 2,
+      failedChildCommandCount: 0,
+    });
+  });
+
+  it("rejects failed generated Artifacts calls with ClientError and records failed child commands", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-failure", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-failure");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-artifact-failure", {
+      typescriptCode: [
+        'import { Client } from "incur/client";',
+        "try {",
+        '  await extensions.artifacts.run("inspect", { options: { id: "missing-artifact" } });',
+        "} catch (error) {",
+        "  return {",
+        "    clientError: error instanceof Client.ClientError,",
+        "    message: error instanceof Error ? error.message : String(error),",
+        "  };",
+        "}",
+        'return { clientError: false, message: "unexpected success" };',
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        clientError: true,
+      },
+    });
+    const snapshot = store.getSessionState("session-artifact-failure");
+    const parentCommand = snapshot.commands.find(
+      (command) => command.toolName === "execute_typescript",
+    );
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.artifacts.run",
+    );
+    expect(parentCommand?.facts).toMatchObject({
+      childCommandCount: 1,
+      failedChildCommandCount: 1,
+    });
+    expect(childCommand).toMatchObject({
+      status: "failed",
+      facts: {
+        extensionId: "artifacts",
+        commandId: "inspect",
+        errorCode: "ARTIFACT_NOT_FOUND",
+      },
+    });
+  });
+
+  it("opens generated-client artifacts through the attached UI bridge", async () => {
+    const openedArtifacts: Array<{ sessionId: string; artifactId: string }> = [];
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-open", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-open");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      openArtifact: (request) => {
+        openedArtifacts.push(request);
+        return true;
+      },
+    });
+
+    const result = await tool.execute("tool-call-artifact-open", {
+      typescriptCode: [
+        'const created = await extensions.artifacts.run("create", { options: { name: "open.md" } });',
+        'const opened = await extensions.artifacts.run("open", { options: { id: created.data.id } });',
+        "return opened.data;",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        opened: true,
+      },
+    });
+    const returned = result.details.result as { id: string };
+    expect(openedArtifacts).toEqual([
+      {
+        sessionId: "session-artifact-open",
+        artifactId: returned.id,
+      },
+    ]);
+  });
+
+  it("records failed child commands for invalid dynamic generated-client inputs", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-invalid-input", workspaceCwd);
+    const runtime = createRuntime(store, "session-artifact-invalid-input");
+    const appLogEvents: AppLoggerEvent[] = [];
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      onAppLog: (event) => appLogEvents.push(event),
+    });
+
+    const result = await tool.execute("tool-call-artifact-invalid-input", {
+      typescriptCode: [
+        'import { Client } from "incur/client";',
+        "const input = { options: { id: 'missing', commandId: 'old-contract' } } as any;",
+        "try {",
+        '  await extensions.artifacts.run("inspect", input);',
+        "} catch (error) {",
+        "  return { clientError: error instanceof Client.ClientError };",
+        "}",
+        "return { clientError: false };",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        clientError: true,
+      },
+    });
+    const snapshot = store.getSessionState("session-artifact-invalid-input");
+    expect(
+      snapshot.commands.find((command) => command.toolName === "execute_typescript")?.facts,
+    ).toMatchObject({
+      childCommandCount: 1,
+      failedChildCommandCount: 1,
+    });
+    expect(
+      snapshot.commands.find((command) => command.toolName === "extensions.artifacts.run"),
+    ).toMatchObject({
+      status: "failed",
+      facts: {
+        extensionId: "artifacts",
+        commandId: "inspect",
+        errorCode: "INVALID_ARGUMENT",
+      },
+    });
+    const childCommand = snapshot.commands.find(
+      (command) => command.toolName === "extensions.artifacts.run",
+    );
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "warning",
+        source: "artifact",
+        message: "Artifact command failed.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-artifact-invalid-input",
+          surfacePiSessionId: "session-artifact-invalid-input",
+          commandId: childCommand!.id,
+          artifactCommandId: "inspect",
+          errorCode: "INVALID_ARGUMENT",
+        }),
+      }),
+    );
+  });
+
+  it("defaults generated Artifacts list calls to the handler thread", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-artifact-handler", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-artifact-handler");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-artifact-handler", {
+      typescriptCode: [
+        'const created = await extensions.artifacts.run("create", { options: { name: "handler.md" } });',
+        'const listed = await extensions.artifacts.run("list", { options: {} });',
+        "return { createdId: created.data.id, listedIds: listed.data.artifacts.map((artifact) => artifact.id) };",
+      ].join("\n"),
+    });
+
+    const returned = result.details.result as { createdId: string; listedIds: string[] };
+    expect(result.details.success).toBe(true);
+    expect(returned.listedIds).toContain(returned.createdId);
+    const snapshot = store.getSessionState("session-artifact-handler");
+    const handlerThread = snapshot.threads[0];
+    expect(snapshot.artifacts.find((artifact) => artifact.id === returned.createdId)).toMatchObject(
+      {
+        threadId: handlerThread?.id,
+      },
+    );
+  });
+
+  it("supports the documented incur/client import and blocks unsupported module imports", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-incur-client", workspaceCwd);
+    const runtime = createRuntime(store, "session-incur-client");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-incur-client", {
+      typescriptCode: [
+        'import { Client, Resources as R, Run } from "incur/client";',
+        'const error = new Client.ClientError("no configured client");',
+        'console.info("client error", error.name);',
+        "return {",
+        "  errorName: error.name,",
+        "  errorMessage: error.message,",
+        "  resourceKeys: Object.keys(R),",
+        "  runKeys: Object.keys(Run),",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        errorName: "ClientError",
+        errorMessage: "no configured client",
+        resourceKeys: [],
+        runKeys: [],
+      },
+      logs: ["client error ClientError"],
+    });
+
+    const unsupportedIncurImport = await tool.execute("tool-call-invalid-incur-import", {
+      typescriptCode: 'import { Secrets } from "incur/client";\nreturn Secrets;',
+    });
+    expect(unsupportedIncurImport.details).toMatchObject({
+      success: false,
+      error: {
+        stage: "compile",
+      },
+    });
+    expect(unsupportedIncurImport.details.error?.message).toContain(
+      "Only named imports Client, Resources, and Run",
+    );
+
+    const nodeImport = await tool.execute("tool-call-node-import", {
+      typescriptCode: 'import { readFileSync } from "node:fs";\nreturn readFileSync;',
+    });
+    expect(nodeImport.details.success).toBe(false);
+    expect(nodeImport.details.error?.stage).toBe("typecheck");
+    expect(nodeImport.details.error?.message).toContain("import declaration");
   });
 });

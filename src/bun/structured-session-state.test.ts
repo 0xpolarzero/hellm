@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  STRUCTURED_TURN_DECISIONS,
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
@@ -54,12 +55,100 @@ describe("structured session state write API", () => {
         id: workspaceCwd,
         label: "svvy",
         cwd: workspaceCwd,
+        artifactDir: join(workspaceCwd, "artifact-store"),
       },
       now: createDeterministicClock(),
     });
     stores.push(store);
     return store;
   }
+
+  it("keeps the current top-level turn decision inventory aligned with the product spec", () => {
+    expect([...STRUCTURED_TURN_DECISIONS]).toEqual([
+      "pending",
+      "reply",
+      "exec_command",
+      "write_stdin",
+      "apply_patch",
+      "execute_typescript",
+      "list_extensions",
+      "load_extension",
+      "thread_start",
+      "thread_followup",
+      "thread_request_report",
+      "thread_group",
+      "thread_report",
+      "thread_episodes",
+      "request_user_input",
+    ]);
+  });
+
+  it("stores durable generated agent context bindings without replacing older bound payloads", () => {
+    const store = createStore();
+    seedSession(store, "session-generated-binding");
+
+    const first = store.upsertGeneratedAgentContextBinding({
+      surfacePiSessionId: "surface-generated-binding",
+      ownerKind: "session",
+      ownerId: "session-generated-binding",
+      actorKind: "orchestrator",
+      aggregateCacheKey: "aggregate-initial",
+      systemPrompt: "Use the initial generated context.",
+      svvyxGuidance: "Initial svvyx guidance.",
+      commandsDts: "declare const initial: true;",
+      nativeToolSchemasJson: '{"initial":true}',
+      generatedAgentContextFingerprint: "fingerprint-initial",
+      generatedAgentContextRevision: 1,
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["smithers"],
+      externalSourceHashes: ["AGENTS.md:initial:true"],
+    });
+    const second = store.upsertGeneratedAgentContextBinding({
+      surfacePiSessionId: "surface-generated-binding",
+      ownerKind: "session",
+      ownerId: "session-generated-binding",
+      actorKind: "orchestrator",
+      aggregateCacheKey: "aggregate-changed",
+      systemPrompt: "Use the changed generated context.",
+      svvyxGuidance: "Changed svvyx guidance.",
+      commandsDts: "declare const changed: true;",
+      nativeToolSchemasJson: '{"changed":true}',
+      generatedAgentContextFingerprint: "fingerprint-changed",
+      generatedAgentContextRevision: 2,
+      loadedExtensionIds: ["shell", "smithers"],
+      availableExtensionIds: [],
+      externalSourceHashes: ["AGENTS.md:changed:true"],
+    });
+
+    expect(
+      store.getGeneratedAgentContextBinding({
+        surfacePiSessionId: "surface-generated-binding",
+        generatedAgentContextFingerprint: first.generatedAgentContextFingerprint,
+      })?.systemPrompt,
+    ).toBe("Use the initial generated context.");
+    expect(
+      store.getGeneratedAgentContextBinding({
+        surfacePiSessionId: "surface-generated-binding",
+        generatedAgentContextFingerprint: first.generatedAgentContextFingerprint,
+      }),
+    ).toMatchObject({
+      aggregateCacheKey: "aggregate-initial",
+      svvyxGuidance: "Initial svvyx guidance.",
+      commandsDts: "declare const initial: true;",
+      nativeToolSchemasJson: '{"initial":true}',
+    });
+    expect(
+      store.getGeneratedAgentContextBinding({
+        surfacePiSessionId: "surface-generated-binding",
+        generatedAgentContextFingerprint: second.generatedAgentContextFingerprint,
+      })?.loadedExtensionIds,
+    ).toEqual(["shell", "smithers"]);
+    expect(
+      store.getGeneratedAgentContextBinding({
+        surfacePiSessionId: "surface-generated-binding",
+      })?.generatedAgentContextFingerprint,
+    ).toBe("fingerprint-changed");
+  });
 
   it("stores pinned, archived, and sidebar navigation state without deleting session facts", () => {
     const store = createStore();
@@ -166,6 +255,19 @@ describe("structured session state write API", () => {
           workspaceRelativePath: "docs/prd.md",
         },
       ],
+      snippetMentions: [
+        {
+          id: "mention-1",
+          snippetId: "snippet-review",
+          source: "svvy",
+          title: "Review Plan",
+          token: "@Review Plan",
+          body: "Review $1.",
+          contentHash: "fnv1a32:example",
+          arguments: ["docs/prd.md"],
+          metadata: { description: "Review target", argumentHint: "target" },
+        },
+      ],
     });
 
     expect(store.getComposerDraft("session-draft")).toEqual(
@@ -174,6 +276,19 @@ describe("structured session state write API", () => {
         surfacePiSessionId: "session-draft",
         threadId: null,
         text: "Inspect parser state before sending",
+        snippetMentions: [
+          {
+            id: "mention-1",
+            snippetId: "snippet-review",
+            source: "svvy",
+            title: "Review Plan",
+            token: "@Review Plan",
+            body: "Review $1.",
+            contentHash: "fnv1a32:example",
+            arguments: ["docs/prd.md"],
+            metadata: { description: "Review target", argumentHint: "target" },
+          },
+        ],
         updatedAt: "2026-04-18T09:00:00.000Z",
       }),
     );
@@ -238,6 +353,59 @@ describe("structured session state write API", () => {
     ]);
   });
 
+  it("persists generated agent context fingerprints for sessions and threads", () => {
+    const store = createStore();
+    store.upsertPiSession({
+      sessionId: "session-generated-context",
+      title: "Generated context",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      generatedAgentContextFingerprint: "session-fingerprint-001",
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["smithers"],
+      messageCount: 1,
+      status: "idle",
+      createdAt: "2026-04-18T08:55:00.000Z",
+      updatedAt: "2026-04-18T08:56:00.000Z",
+    });
+
+    const turn = store.startTurn({
+      sessionId: "session-generated-context",
+      surfacePiSessionId: "session-generated-context",
+      requestSummary: "Start a handler with generated context",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: "pi-thread-generated-context",
+      title: "Generated context handler",
+      objective: "Use the bound generated context.",
+      generatedAgentContextFingerprint: "thread-fingerprint-001",
+    });
+
+    const snapshot = store.getSessionState("session-generated-context");
+    expect(snapshot.pi.generatedAgentContextFingerprint).toBe("session-fingerprint-001");
+    expect(snapshot.pi.loadedExtensionIds).toEqual(["shell"]);
+    expect(snapshot.pi.availableExtensionIds).toEqual(["smithers"]);
+    expect(
+      snapshot.threads.find((item) => item.id === thread.id)?.generatedAgentContextFingerprint,
+    ).toBe("thread-fingerprint-001");
+
+    const sessionExtensions = store.updatePiSessionExtensionState({
+      sessionId: "session-generated-context",
+      loadedExtensionIds: ["shell", "smithers"],
+      availableExtensionIds: [],
+    });
+    expect(sessionExtensions.loadedExtensionIds).toEqual(["shell", "smithers"]);
+    expect(sessionExtensions.availableExtensionIds).toEqual([]);
+
+    const updated = store.updateThread({
+      threadId: thread.id,
+      generatedAgentContextFingerprint: "thread-fingerprint-002",
+    });
+    expect(updated.generatedAgentContextFingerprint).toBe("thread-fingerprint-002");
+  });
+
   it("writes surface-aware turns, handler threads, multiple workflow runs, and a single terminal episode", () => {
     const store = createStore();
     seedSession(store, "session-model");
@@ -268,8 +436,8 @@ describe("structured session state write API", () => {
     const startWorkflow = store.createCommand({
       turnId: handlerTurn.id,
       threadId: handlerThread.id,
-      toolName: "workflow_start",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
       title: "Start workflow",
       summary: "Start the first workflow run.",
@@ -293,26 +461,6 @@ describe("structured session state write API", () => {
       summary: "Paused for clarification about workflow resume ownership.",
     });
 
-    const ci = store.recordProjectCiResult({
-      workflowRunId: runOne.id,
-      status: "failed",
-      workflowId: "project_ci",
-      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      summary: "The first CI pass failed.",
-      checks: [
-        {
-          checkId: "unit_tests",
-          label: "Unit tests",
-          kind: "test",
-          status: "failed",
-          required: true,
-          command: ["bun", "test"],
-          exitCode: 1,
-          summary: "Unit tests failed.",
-        },
-      ],
-    });
-
     const workflowArtifact = store.createArtifact({
       workflowRunId: runOne.id,
       sourceCommandId: startWorkflow.id,
@@ -329,11 +477,11 @@ describe("structured session state write API", () => {
     const resumeWorkflow = store.createCommand({
       turnId: handlerTurn.id,
       threadId: handlerThread.id,
-      toolName: "workflow_resume",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
-      title: "Resume workflow",
-      summary: "Resume the workflow after clarification.",
+      title: "Resume Smithers CLI",
+      summary: "Resume the workflow after clarification through Shell.",
     });
     const runTwo = store.recordWorkflow({
       threadId: handlerThread.id,
@@ -436,22 +584,6 @@ describe("structured session state write API", () => {
       runOne.id,
       runTwo.id,
     ]);
-    expect(snapshot.ciRuns).toEqual([
-      expect.objectContaining({
-        id: ci.ciRun.id,
-        threadId: handlerThread.id,
-        workflowRunId: runOne.id,
-        workflowId: "project_ci",
-      }),
-    ]);
-    expect(snapshot.ciCheckResults).toEqual([
-      expect.objectContaining({
-        id: ci.checkResults[0]!.id,
-        ciRunId: ci.ciRun.id,
-        workflowRunId: runOne.id,
-        checkId: "unit_tests",
-      }),
-    ]);
     expect(snapshot.episodes).toEqual([
       expect.objectContaining({
         id: episode.id,
@@ -489,8 +621,6 @@ describe("structured session state write API", () => {
       "command.started",
       "command.finished",
       "workflowRun.created",
-      "ciRun.recorded",
-      "ciCheckResult.recorded",
       "artifact.created",
       "thread.updated",
       "command.requested",
@@ -503,7 +633,7 @@ describe("structured session state write API", () => {
     ]);
   });
 
-  it("enforces terminal episodes and preserves ordered handoff history per thread", () => {
+  it("records ordered update and conclusion episodes per thread", () => {
     const store = createStore();
     seedSession(store, "session-episodes");
 
@@ -534,15 +664,13 @@ describe("structured session state write API", () => {
       summary: "Prepare the final episode.",
     });
 
-    expect(() =>
-      store.createEpisode({
-        threadId: thread.id,
-        sourceCommandId: command.id,
-        title: "Too early",
-        summary: "This should fail.",
-        body: "The thread is still running.",
-      }),
-    ).toThrow(/terminal/i);
+    const updateEpisode = store.createEpisode({
+      threadId: thread.id,
+      sourceCommandId: command.id,
+      title: "Progress update",
+      summary: "The thread is still running.",
+      body: "The thread is still running.",
+    });
 
     store.updateThread({
       threadId: thread.id,
@@ -563,9 +691,215 @@ describe("structured session state write API", () => {
     });
     expect(episode.threadId).toBe(thread.id);
     expect(store.getThreadDetail(thread.id).episodes.map((entry) => entry.id)).toEqual([
+      updateEpisode.id,
       episode.id,
       secondEpisode.id,
     ]);
+  });
+
+  it("keeps handler commands and artifacts separate from episodes until thread_report records one", () => {
+    const store = createStore();
+    seedSession(store, "session-episode-hygiene");
+
+    const turn = store.startTurn({
+      sessionId: "session-episode-hygiene",
+      surfacePiSessionId: "session-episode-hygiene",
+      requestSummary: "Delegate ordinary handler work",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: "pi-thread-episode-hygiene",
+      title: "Episode hygiene thread",
+      objective: "Run ordinary handler work without reporting.",
+    });
+    const handlerTurn = store.startTurn({
+      sessionId: "session-episode-hygiene",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      requestSummary: "Run ordinary handler command and artifact work",
+    });
+    const command = store.createCommand({
+      turnId: handlerTurn.id,
+      threadId: thread.id,
+      toolName: "exec_command",
+      executor: "handler",
+      visibility: "surface",
+      title: "Ordinary handler command",
+      summary: "Command summary stays command-owned.",
+    });
+    store.finishCommand({
+      commandId: command.id,
+      status: "succeeded",
+      summary: "Command summary stays command-owned.",
+    });
+    const artifact = store.createArtifact({
+      threadId: thread.id,
+      sourceCommandId: command.id,
+      kind: "text",
+      name: "ordinary-handler-note.txt",
+      content: "Artifact content stays artifact-owned.",
+      mimeType: "text/plain",
+    });
+
+    const snapshot = store.getSessionState("session-episode-hygiene");
+    expect(snapshot.commands.map((entry) => entry.id)).toContain(command.id);
+    expect(snapshot.artifacts.map((entry) => entry.id)).toContain(artifact.id);
+    expect(snapshot.episodes).toEqual([]);
+    expect(store.getThreadDetail(thread.id).episodes).toEqual([]);
+  });
+
+  it("keeps handler objective state separate from activity, waits, and Smithers runtime state", () => {
+    const store = createStore();
+    seedSession(store, "session-objective-state");
+
+    const turn = store.startTurn({
+      sessionId: "session-objective-state",
+      surfacePiSessionId: "session-objective-state",
+      requestSummary: "Delegate objective-state work",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: "pi-thread-objective-state",
+      title: "Objective State",
+      objective: "Repair a workflow locally without concluding the delegated objective.",
+    });
+    const handlerTurn = store.startTurn({
+      sessionId: "session-objective-state",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      requestSummary: "Run workflow and repair locally",
+    });
+    const command = store.createCommand({
+      turnId: handlerTurn.id,
+      threadId: thread.id,
+      toolName: "exec_command",
+      executor: "handler",
+      visibility: "surface",
+      title: "Run Smithers CLI",
+      summary: "Start a workflow through Shell.",
+    });
+    const workflowRun = store.recordWorkflow({
+      threadId: thread.id,
+      commandId: command.id,
+      smithersRunId: "smithers-run-objective-state",
+      workflowName: "objective_state_workflow",
+      workflowSource: "saved",
+      status: "waiting",
+      smithersStatus: "awaiting-approval",
+      waitKind: "approval",
+      summary: "Workflow is waiting on approval.",
+    });
+    store.upsertWorkflowTaskAttempt({
+      workflowRunId: workflowRun.id,
+      smithersRunId: workflowRun.smithersRunId,
+      nodeId: "repair",
+      iteration: 0,
+      attempt: 1,
+      summary: "Task needs local repair.",
+      kind: "agent",
+      status: "failed",
+      smithersState: "failed",
+      error: "The workflow task failed and needs repair.",
+    });
+    store.finishCommand({
+      commandId: command.id,
+      status: "failed",
+      summary: "Smithers CLI failed and needs handler-local repair.",
+      error: "The workflow task failed and needs repair.",
+    });
+    expect(store.getSessionState("session-objective-state")).toMatchObject({
+      episodes: [],
+      queuedMessages: [],
+    });
+
+    const wait = {
+      owner: "workflow" as const,
+      kind: "approval" as const,
+      reason: "Smithers approval is pending",
+      resumeWhen: "Resume after the approval is accepted.",
+      since: "2026-04-18T09:00:03.000Z",
+    };
+    store.updateThread({
+      threadId: thread.id,
+      status: "waiting",
+      wait,
+    });
+    expect(store.getThreadDetail(thread.id)).toMatchObject({
+      thread: {
+        objectiveState: "active",
+        status: "waiting",
+        wait,
+      },
+      latestWorkflowRun: expect.objectContaining({
+        id: workflowRun.id,
+        status: "waiting",
+        smithersStatus: "awaiting-approval",
+        waitKind: "approval",
+      }),
+      workflowTaskAttempts: [
+        expect.objectContaining({
+          nodeId: "repair",
+          status: "failed",
+          smithersState: "failed",
+        }),
+      ],
+    });
+    expect(store.getSessionState("session-objective-state")).toMatchObject({
+      episodes: [],
+      queuedMessages: [],
+    });
+
+    store.updateThread({
+      threadId: thread.id,
+      status: "troubleshooting",
+      wait: null,
+    });
+    expect(store.getThreadDetail(thread.id)).toMatchObject({
+      thread: {
+        objectiveState: "active",
+        status: "troubleshooting",
+        wait: null,
+      },
+    });
+    expect(store.getSessionState("session-objective-state")).toMatchObject({
+      episodes: [],
+      queuedMessages: [],
+    });
+
+    store.updateWorkflow({
+      workflowId: workflowRun.id,
+      status: "completed",
+      smithersStatus: "completed",
+      waitKind: null,
+      summary: "Workflow repaired locally.",
+    });
+    expect(store.getThreadDetail(thread.id)).toMatchObject({
+      thread: {
+        objectiveState: "active",
+      },
+      latestWorkflowRun: expect.objectContaining({
+        id: workflowRun.id,
+        status: "completed",
+        smithersStatus: "completed",
+        waitKind: null,
+      }),
+    });
+    expect(store.getSessionState("session-objective-state")).toMatchObject({
+      episodes: [],
+      queuedMessages: [],
+    });
+
+    store.updateThread({
+      threadId: thread.id,
+      objectiveState: "concluded",
+      status: "completed",
+    });
+    expect(store.getThreadDetail(thread.id)).toMatchObject({
+      thread: {
+        objectiveState: "concluded",
+        status: "completed",
+      },
+    });
   });
 
   it("tracks thread-owned session wait and clears it when runnable work exists again", () => {
@@ -720,6 +1054,455 @@ describe("structured session state write API", () => {
     ).toEqual([[second.id, "queued"]]);
   });
 
+  it("keeps failed queued messages visible and out of future claims until restored", () => {
+    const store = createStore();
+    seedSession(store, "session-queue-failure");
+    const first = store.enqueueSurfaceMessage({
+      sessionId: "session-queue-failure",
+      surfacePiSessionId: "surface-queue-failure",
+      messageJson: JSON.stringify({ role: "user", content: "Malformed queued prompt" }),
+      requestSummary: "Malformed queued prompt",
+    });
+    const second = store.enqueueSurfaceMessage({
+      sessionId: "session-queue-failure",
+      surfacePiSessionId: "surface-queue-failure",
+      messageJson: JSON.stringify({ role: "user", content: "Next queued prompt" }),
+      requestSummary: "Next queued prompt",
+    });
+
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "surface-queue-failure" })?.id,
+    ).toBe(first.id);
+    const failed = store.markSurfaceMessageFailed({
+      id: first.id,
+      failureError: "Queued surface message could not be parsed.",
+    });
+
+    expect(failed).toMatchObject({
+      id: first.id,
+      status: "failed",
+      failureError: "Queued surface message could not be parsed.",
+      failedAt: expect.any(String),
+    });
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "surface-queue-failure" })?.id,
+    ).toBe(second.id);
+    expect(
+      store
+        .listQueuedSurfaceMessages({ surfacePiSessionId: "surface-queue-failure" })
+        .map((message) => [message.id, message.status, message.failureError]),
+    ).toEqual([
+      [second.id, "dispatching", null],
+      [first.id, "failed", "Queued surface message could not be parsed."],
+    ]);
+
+    const restored = store.markSurfaceMessageQueued({ id: first.id, position: "front" });
+    expect(restored).toMatchObject({
+      status: "queued",
+      failedAt: null,
+      failureError: null,
+    });
+  });
+
+  it("persists request_user_input answers as highest-priority same-surface queue work", () => {
+    const store = createStore();
+    seedSession(store, "session-rui-answer");
+    const turn = store.startTurn({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: "session-rui-answer",
+      requestSummary: "Ask for local clarification",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: "pi-thread-rui-answer",
+      title: "Clarify locally",
+      objective: "Use handler-local clarification.",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      toolName: "request_user_input",
+      executor: "handler",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify the repair direction.",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: "tool-call-rui-answer",
+      variant: "nonblocking",
+      questions: [
+        {
+          title: "Repair direction",
+          question: "Should I repair locally or report back now?",
+          defaultAnswer: {
+            kind: "option",
+            label: "Repair locally",
+            text: "Repair locally",
+          },
+          choices: [
+            {
+              label: "Repair locally",
+              description: "Keeps ownership inside this handler thread.",
+              recommended: true,
+            },
+            {
+              label: "Report back",
+              description: "Returns control to the orchestrator.",
+              recommended: false,
+            },
+          ],
+        },
+      ],
+    });
+    const question = request.questions[0]!;
+    const reportBack = question.choices.find((choice) => choice.label === "Report back")!;
+    const ordinary = store.enqueueSurfaceMessage({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      messageJson: JSON.stringify({ role: "user", content: "Ordinary follow-up" }),
+      requestSummary: "Ordinary follow-up",
+    });
+    const refresh = store.enqueueSurfaceMessage({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      kind: "agent_context_refresh",
+      idempotencyKey: "agent_context_refresh:pi-thread-rui-answer",
+      messageJson: JSON.stringify({ role: "user", content: "Refresh" }),
+      payloadJson: JSON.stringify({
+        requestedRevision: 7,
+        requestedAt: "2026-04-18T09:00:00.000Z",
+      }),
+      requestSummary: "Update agent context",
+    });
+
+    const answered = store.answerRequestUserInput({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      requestId: request.requestId,
+      questionId: question.questionId,
+      answer: { kind: "option", optionId: reportBack.optionId },
+      delivery: "steer",
+    });
+    expect(answered.queuedMessage).not.toBeNull();
+
+    expect(answered.request).toMatchObject({
+      requestId: request.requestId,
+      status: "completed",
+      completedAt: "2026-04-18T09:00:06.000Z",
+    });
+    expect(answered.answer).toMatchObject({
+      answeredBy: "user",
+      delivery: "steer",
+      queuedItemId: answered.queuedMessage!.id,
+      answer: {
+        kind: "option",
+        label: "Report back",
+        text: "Report back",
+      },
+    });
+    expect(answered.queuedMessage).toMatchObject({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      kind: "request_user_input_answer",
+      requestSummary: "User answered: Repair direction",
+      status: "steering",
+    });
+    expect(JSON.parse(answered.queuedMessage!.messageJson)).toEqual({
+      type: "request_user_input.answer",
+      title: "Repair direction",
+      question: "Should I repair locally or report back now?",
+      originalAnswer: {
+        kind: "option",
+        label: "Repair locally",
+        text: "Repair locally",
+      },
+      userAnswer: {
+        kind: "option",
+        label: "Report back",
+        text: "Report back",
+      },
+    });
+
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: thread.surfacePiSessionId })?.id,
+    ).toBe(refresh.id);
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: thread.surfacePiSessionId })?.id,
+    ).toBe(answered.queuedMessage!.id);
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: thread.surfacePiSessionId })?.id,
+    ).toBe(ordinary.id);
+  });
+
+  it("preserves FIFO order within request_user_input answer queue work", () => {
+    const store = createStore();
+    seedSession(store, "session-rui-fifo");
+    const turn = store.startTurn({
+      sessionId: "session-rui-fifo",
+      surfacePiSessionId: "session-rui-fifo",
+      requestSummary: "Ask multiple clarifications",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-rui-fifo",
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify two details.",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId: "session-rui-fifo",
+      surfacePiSessionId: "session-rui-fifo",
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: "tool-call-rui-fifo",
+      variant: "nonblocking",
+      questions: [
+        {
+          title: "First detail",
+          question: "What should happen first?",
+          defaultAnswer: { kind: "custom", text: "Use the first default." },
+        },
+        {
+          title: "Second detail",
+          question: "What should happen second?",
+          defaultAnswer: { kind: "custom", text: "Use the second default." },
+        },
+      ],
+    });
+    const ordinary = store.enqueueSurfaceMessage({
+      sessionId: "session-rui-fifo",
+      surfacePiSessionId: "session-rui-fifo",
+      messageJson: JSON.stringify({ role: "user", content: "Ordinary follow-up" }),
+      requestSummary: "Ordinary follow-up",
+    });
+
+    const firstAnswer = store.answerRequestUserInput({
+      sessionId: "session-rui-fifo",
+      surfacePiSessionId: "session-rui-fifo",
+      requestId: request.requestId,
+      questionId: request.questions[0]!.questionId,
+      answer: { kind: "custom", text: "First answer" },
+      delivery: "steer",
+    });
+    const secondAnswer = store.answerRequestUserInput({
+      sessionId: "session-rui-fifo",
+      surfacePiSessionId: "session-rui-fifo",
+      requestId: request.requestId,
+      questionId: request.questions[1]!.questionId,
+      answer: { kind: "custom", text: "Second answer" },
+      delivery: "steer",
+    });
+    expect(firstAnswer.queuedMessage).not.toBeNull();
+    expect(secondAnswer.queuedMessage).not.toBeNull();
+
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "session-rui-fifo" })?.id,
+    ).toBe(firstAnswer.queuedMessage!.id);
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "session-rui-fifo" })?.id,
+    ).toBe(secondAnswer.queuedMessage!.id);
+    expect(
+      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "session-rui-fifo" })?.id,
+    ).toBe(ordinary.id);
+  });
+
+  it("reopens request_user_input questions when a queued answer is cancelled", () => {
+    const store = createStore();
+    seedSession(store, "session-rui-cancel-answer");
+    const turn = store.startTurn({
+      sessionId: "session-rui-cancel-answer",
+      surfacePiSessionId: "session-rui-cancel-answer",
+      requestSummary: "Ask a clarification",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-rui-cancel-answer",
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify one detail.",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId: "session-rui-cancel-answer",
+      surfacePiSessionId: "session-rui-cancel-answer",
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: "tool-call-rui-cancel-answer",
+      variant: "nonblocking",
+      questions: [
+        {
+          title: "CI scope",
+          question: "Should CI run only unit checks or the full suite?",
+          defaultAnswer: { kind: "custom", text: "Run unit checks." },
+        },
+      ],
+    });
+
+    const answered = store.answerRequestUserInput({
+      sessionId: "session-rui-cancel-answer",
+      surfacePiSessionId: "session-rui-cancel-answer",
+      requestId: request.requestId,
+      questionId: request.questions[0]!.questionId,
+      answer: { kind: "custom", text: "Run the full suite." },
+      delivery: "after_turn",
+    });
+    expect(answered.queuedMessage).not.toBeNull();
+    expect(answered.request).toMatchObject({
+      status: "completed",
+      questions: [expect.objectContaining({ status: "answered" })],
+    });
+
+    store.cancelSurfaceMessage({ id: answered.queuedMessage!.id });
+
+    const reopened = store.getRequestUserInputRequest(request.requestId);
+    expect(reopened).toMatchObject({
+      status: "open",
+      completedAt: null,
+      questions: [expect.objectContaining({ status: "open" })],
+    });
+    expect(
+      reopened.answers.filter((answer) => answer.questionId === request.questions[0]!.questionId),
+    ).toEqual([
+      expect.objectContaining({
+        answeredBy: "default",
+        queuedItemId: null,
+      }),
+    ]);
+    expect(store.getSurfaceQueuedMessage({ id: answered.queuedMessage!.id }).status).toBe(
+      "cancelled",
+    );
+  });
+
+  it("rejects invalid request_user_input answers without queueing work", () => {
+    const store = createStore();
+    seedSession(store, "session-rui-invalid");
+    const turn = store.startTurn({
+      sessionId: "session-rui-invalid",
+      surfacePiSessionId: "session-rui-invalid",
+      requestSummary: "Ask for clarification",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-rui-invalid",
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify locally.",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId: "session-rui-invalid",
+      surfacePiSessionId: "session-rui-invalid",
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: "tool-call-rui-invalid",
+      variant: "nonblocking",
+      questions: [
+        {
+          title: "Branch",
+          question: "Which branch should I use?",
+          defaultAnswer: { kind: "custom", text: "Use the current branch." },
+        },
+      ],
+    });
+
+    expect(() =>
+      store.answerRequestUserInput({
+        sessionId: "session-rui-invalid",
+        surfacePiSessionId: "other-surface",
+        requestId: request.requestId,
+        questionId: request.questions[0]!.questionId,
+        answer: { kind: "custom", text: "Use feature/redesign." },
+        delivery: "after_turn",
+      }),
+    ).toThrow("does not belong to the target surface");
+
+    expect(() =>
+      store.answerRequestUserInput({
+        sessionId: "session-rui-invalid",
+        surfacePiSessionId: "session-rui-invalid",
+        requestId: request.requestId,
+        questionId: request.questions[0]!.questionId,
+        answer: { kind: "custom", text: "   " },
+        delivery: "after_turn",
+      }),
+    ).toThrow("custom answer cannot be blank");
+
+    expect(store.listQueuedSurfaceMessages({ surfacePiSessionId: "session-rui-invalid" })).toEqual(
+      [],
+    );
+  });
+
+  it("persists request_user_input timer pause and resume state", () => {
+    const store = createStore();
+    seedSession(store, "session-rui-timer");
+    const turn = store.startTurn({
+      sessionId: "session-rui-timer",
+      surfacePiSessionId: "session-rui-timer",
+      requestSummary: "Ask before proceeding",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-rui-timer",
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify the safe path.",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId: "session-rui-timer",
+      surfacePiSessionId: "session-rui-timer",
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: "tool-call-rui-timer",
+      variant: "blocking",
+      timeout: {
+        enabled: true,
+        durationMs: 300_000,
+      },
+      questions: [
+        {
+          title: "Proceed",
+          question: "Should I proceed now?",
+          defaultAnswer: { kind: "custom", text: "Proceed with the safe default." },
+        },
+      ],
+    });
+
+    const paused = store.setRequestUserInputTimerPaused({
+      requestId: request.requestId,
+      paused: true,
+    });
+    expect(paused.timeout).toMatchObject({
+      pausedAt: "2026-04-18T09:00:03.000Z",
+      remainingMsWhenPaused: 299_000,
+      expiresAt: null,
+    });
+
+    const resumed = store.setRequestUserInputTimerPaused({
+      requestId: request.requestId,
+      paused: false,
+    });
+    expect(resumed.timeout).toMatchObject({
+      pausedAt: null,
+      remainingMsWhenPaused: null,
+      expiresAt: "2026-04-18T09:05:03.000Z",
+    });
+  });
+
   it("claims recovery work with idempotency keys, leases, and owner locks", () => {
     const store = createStore();
     const first = store.ensureRecoveryWork({
@@ -779,6 +1562,58 @@ describe("structured session state write API", () => {
     expect(store.claimNextRecoveryWork({ claimedBy: "coordinator-b" })).toMatchObject({
       id: first.id,
       status: "claimed",
+    });
+  });
+
+  it("persists Workflows build refresh and recovery observability scheduler records", () => {
+    const store = createStore();
+    const workflowsRefresh = store.ensureRecoveryWork({
+      kind: "workflows_build_refresh",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "workflows_build_refresh:workspace",
+      orderingKey: "workspace:root",
+      orderingSeq: 0,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+      payloadJson: {
+        generatedPackagePath: "/tmp/generated-workflows",
+        extensionsGeneratedPackagePath: "/tmp/generated-extensions",
+      },
+    });
+    const duplicate = store.ensureRecoveryWork({
+      kind: "workflows_build_refresh",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "workflows_build_refresh:workspace",
+      orderingKey: "workspace:root",
+      orderingSeq: 0,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+    });
+    store.ensureRecoveryWork({
+      kind: "app_log_projection",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "app_log_projection:startup",
+      orderingKey: "workspace:root",
+      orderingSeq: 1,
+      priority: 90,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+      payloadJson: { reason: "startup" },
+    });
+
+    expect(duplicate.id).toBe(workflowsRefresh.id);
+    expect(store.claimNextRecoveryWork({ claimedBy: "coordinator-a" })).toMatchObject({
+      id: workflowsRefresh.id,
+      kind: "workflows_build_refresh",
+      status: "claimed",
+      attempts: 1,
+      ownerScope: { kind: "workspace" },
+      payloadJson: {
+        generatedPackagePath: "/tmp/generated-workflows",
+        extensionsGeneratedPackagePath: "/tmp/generated-extensions",
+      },
     });
   });
 
@@ -867,20 +1702,20 @@ describe("structured session state write API", () => {
     ).toHaveLength(1);
   });
 
-  it("loads thread context idempotently and records Project CI results by workflow run", () => {
+  it("loads thread context idempotently without Project CI state records", () => {
     const store = createStore();
-    seedSession(store, "session-project-ci");
+    seedSession(store, "session-thread-context");
 
     const orchestratorTurn = store.startTurn({
-      sessionId: "session-project-ci",
-      surfacePiSessionId: "session-project-ci",
+      sessionId: "session-thread-context",
+      surfacePiSessionId: "session-thread-context",
       requestSummary: "Start a handler thread",
     });
     const thread = store.createThread({
       turnId: orchestratorTurn.id,
-      surfacePiSessionId: "pi-thread-ci",
-      title: "Project CI thread",
-      objective: "Run Project CI against a declared CI workflow.",
+      surfacePiSessionId: "pi-thread-context",
+      title: "Context thread",
+      objective: "Run a delegated workflow.",
     });
     const context = store.loadThreadContext({
       threadId: thread.id,
@@ -893,16 +1728,16 @@ describe("structured session state write API", () => {
       contextVersion: "2026-04-24",
     });
     const handlerTurn = store.startTurn({
-      sessionId: "session-project-ci",
+      sessionId: "session-thread-context",
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
-      requestSummary: "Run Project CI",
+      requestSummary: "Run workflow",
     });
     const workflowCommand = store.createCommand({
       turnId: handlerTurn.id,
       threadId: thread.id,
-      toolName: "workflow_start",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
       title: "Start workflow",
       summary: "Start the workflow run.",
@@ -910,74 +1745,22 @@ describe("structured session state write API", () => {
     const workflowRun = store.recordWorkflow({
       threadId: thread.id,
       commandId: workflowCommand.id,
-      smithersRunId: "smithers-run-ci",
-      workflowName: "project_ci",
+      smithersRunId: "smithers-run-context",
+      workflowName: "context_workflow",
       workflowSource: "saved",
-      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      savedEntryId: "project_ci",
+      entryPath: ".svvy/workflows/entries/context-workflow.tsx",
+      savedEntryId: "context_workflow",
       status: "completed",
-      summary: "Project CI finished.",
+      summary: "Workflow finished.",
     });
 
-    const ci = store.recordProjectCiResult({
-      workflowRunId: workflowRun.id,
-      workflowId: "project_ci",
-      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      status: "passed",
-      summary: "Project CI passed.",
-      checks: [
-        {
-          checkId: "typecheck",
-          label: "Typecheck",
-          kind: "typecheck",
-          status: "passed",
-          required: true,
-          command: ["bun", "run", "typecheck"],
-          exitCode: 0,
-          summary: "Typecheck passed.",
-        },
-      ],
-    });
-    const replay = store.recordProjectCiResult({
-      workflowRunId: workflowRun.id,
-      workflowId: "project_ci",
-      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      status: "passed",
-      summary: "Project CI passed again.",
-      checks: [
-        {
-          checkId: "typecheck",
-          label: "Typecheck",
-          kind: "typecheck",
-          status: "passed",
-          required: true,
-          command: ["bun", "run", "typecheck"],
-          exitCode: 0,
-          summary: "Typecheck still passed.",
-        },
-      ],
-    });
-
-    const snapshot = store.getSessionState("session-project-ci");
+    const snapshot = store.getSessionState("session-thread-context");
     expect(context.id).toBe(duplicateContext.id);
     expect(snapshot.threads[0]?.loadedContextKeys).toEqual(["ci"]);
     expect(snapshot.threadContexts).toEqual([expect.objectContaining({ contextKey: "ci" })]);
-    expect(snapshot.ciRuns).toHaveLength(1);
-    expect(snapshot.ciRuns[0]).toEqual(
-      expect.objectContaining({
-        id: ci.ciRun.id,
-        summary: "Project CI passed again.",
-        workflowRunId: workflowRun.id,
-      }),
-    );
-    expect(snapshot.ciCheckResults).toHaveLength(1);
-    expect(snapshot.ciCheckResults[0]).toEqual(
-      expect.objectContaining({
-        id: replay.checkResults[0]!.id,
-        checkId: "typecheck",
-        summary: "Typecheck still passed.",
-      }),
-    );
+    expect(snapshot.workflowRuns).toEqual([expect.objectContaining({ id: workflowRun.id })]);
+    expect("ciRuns" in snapshot).toBe(false);
+    expect("ciCheckResults" in snapshot).toBe(false);
   });
 
   it("keeps artifact ownership thread-based after an episode exists", () => {
@@ -1061,10 +1844,10 @@ describe("structured session state write API", () => {
     const launchCommand = store.createCommand({
       turnId: handlerTurn.id,
       threadId: thread.id,
-      toolName: "smithers_run_workflow",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
-      title: "Run task workflow",
+      title: "Run task workflow through Shell",
       summary: "Launch the task-agent workflow.",
     });
     const workflowRun = store.recordWorkflow({
@@ -1094,6 +1877,18 @@ describe("structured session state write API", () => {
       prompt: "Inspect docs and write a proof file.",
       agentEngine: "pi",
       agentResume: "/tmp/task-agent-session.json",
+      generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+      generatedAgentContextBinding: {
+        aggregateCacheKey: "workflow-task-aggregate-001",
+        systemPrompt: "Use the initial workflow task generated context.",
+        svvyxGuidance: "Workflow svvyx guidance.",
+        commandsDts: "declare const workflowTask: true;",
+        nativeToolSchemasJson: "{}",
+        generatedAgentContextRevision: 3,
+        loadedExtensionIds: ["base-workflow-task", "shell"],
+        availableExtensionIds: ["github"],
+        externalSourceHashes: ["AGENTS.md:initial:true"],
+      },
       meta: {
         kind: "agent",
         agentResume: "/tmp/task-agent-session.json",
@@ -1152,6 +1947,17 @@ describe("structured session state write API", () => {
       smithersState: "finished",
       responseText: '{"status":"completed"}',
       agentResume: "/tmp/task-agent-session.json",
+      generatedAgentContextBinding: {
+        aggregateCacheKey: "workflow-task-aggregate-001",
+        systemPrompt: "Use the initial workflow task generated context.",
+        svvyxGuidance: "Workflow svvyx guidance.",
+        commandsDts: "declare const workflowTask: true;",
+        nativeToolSchemasJson: "{}",
+        generatedAgentContextRevision: 3,
+        loadedExtensionIds: ["base-workflow-task", "shell"],
+        availableExtensionIds: ["github"],
+        externalSourceHashes: ["AGENTS.md:initial:true"],
+      },
       meta: {
         kind: "agent",
         agentResume: "/tmp/task-agent-session.json",
@@ -1161,6 +1967,20 @@ describe("structured session state write API", () => {
     });
 
     const snapshot = store.getSessionState("session-workflow-task-attempts");
+    expect(snapshot.generatedAgentContextBindings).toEqual([
+      expect.objectContaining({
+        ownerKind: "workflow-task-attempt",
+        ownerId: workflowTaskAttempt.id,
+        actorKind: "workflow-task",
+        surfacePiSessionId: "pi-task-agent-001",
+        systemPrompt: "Use the initial workflow task generated context.",
+        generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+        generatedAgentContextRevision: 3,
+        loadedExtensionIds: ["base-workflow-task", "shell"],
+        availableExtensionIds: ["github"],
+        externalSourceHashes: ["AGENTS.md:initial:true"],
+      }),
+    ]);
     expect(snapshot.workflowTaskAttempts).toEqual([
       expect.objectContaining({
         id: workflowTaskAttempt.id,
@@ -1170,6 +1990,7 @@ describe("structured session state write API", () => {
         attempt: 1,
         status: "completed",
         agentResume: "/tmp/task-agent-session.json",
+        generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
       }),
     ]);
     expect(snapshot.commands).toContainEqual(
@@ -1228,10 +2049,10 @@ describe("structured session state write API", () => {
     const command = store.createCommand({
       turnId: turn.id,
       threadId: thread.id,
-      toolName: "smithers_run_workflow",
-      executor: "smithers",
+      toolName: "exec_command",
+      executor: "handler",
       visibility: "surface",
-      title: "Run identity workflow",
+      title: "Run identity workflow through Shell",
       summary: "Launch the identity workflow.",
     });
     const workflowRun = store.recordWorkflow({
@@ -1267,6 +2088,7 @@ describe("structured session state write API", () => {
       status: "running",
       smithersState: "in-progress",
       agentResume: "/tmp/first-session.jsonl",
+      generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
     });
     const updated = store.upsertWorkflowTaskAttempt({
       workflowRunId: workflowRun.id,
@@ -1292,7 +2114,21 @@ describe("structured session state write API", () => {
     ).toMatchObject({
       id: first.id,
       agentResume: "/tmp/second-session.jsonl",
+      generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
     });
+    const refreshed = store.upsertWorkflowTaskAttempt({
+      workflowRunId: workflowRun.id,
+      smithersRunId: workflowRun.smithersRunId,
+      nodeId: "task",
+      iteration: 0,
+      attempt: 1,
+      summary: "Task refreshed generated context.",
+      kind: "agent",
+      status: "running",
+      smithersState: "in-progress",
+      generatedAgentContextFingerprint: "workflow-task-fingerprint-002",
+    });
+    expect(refreshed.generatedAgentContextFingerprint).toBe("workflow-task-fingerprint-002");
     expect(() =>
       store.upsertWorkflowTaskAttempt({
         workflowRunId: workflowRun.id,

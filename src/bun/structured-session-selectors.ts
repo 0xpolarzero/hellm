@@ -3,6 +3,7 @@ import type {
   StructuredArtifactRecord,
   StructuredCommandRecord,
   StructuredEpisodeRecord,
+  StructuredLifecycleEventRecord,
   StructuredSessionSnapshot,
   StructuredSessionStatus,
   StructuredThreadRecord,
@@ -30,6 +31,14 @@ export interface StructuredCommandRollup {
   status: StructuredCommandRecord["status"];
   title: string;
   summary: string;
+  arguments?: unknown | null;
+  facts?: Record<string, unknown> | null;
+  error?: string | null;
+  artifacts?: StructuredCommandArtifactLink[];
+  outputEvents?: StructuredCommandOutputEvent[];
+  progressEvents?: StructuredCommandProgressEvent[];
+  patchSnapshots?: StructuredCommandPatchSnapshot[];
+  diagnostics?: StructuredCommandDiagnosticSnapshot[];
   childCount: number;
   summaryChildCount: number;
   traceChildCount: number;
@@ -50,6 +59,69 @@ export interface StructuredCommandArtifactLink {
   missingFile?: boolean;
 }
 
+export interface StructuredCommandOutputEvent {
+  eventId: string;
+  at: string;
+  stream: "stdout" | "stderr";
+  source: string;
+  text: string;
+}
+
+export interface StructuredCommandProgressEvent {
+  eventId: string;
+  at: string;
+  source: string;
+  phase?: string;
+  family?: string;
+  command?: string;
+  message?: string;
+  progress?: number;
+  facts?: Record<string, unknown>;
+}
+
+export interface StructuredCommandPatchSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  files: StructuredCommandPatchFile[];
+}
+
+export interface StructuredCommandPatchFile {
+  path: string;
+  changeType: "created" | "deleted" | "modified";
+  additions: number;
+  deletions: number;
+}
+
+export interface StructuredCommandDiagnosticSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  stage?: "compile" | "typecheck" | "runtime" | string;
+  diagnostics: StructuredCommandDiagnostic[];
+}
+
+export interface StructuredCommandDiagnostic {
+  severity?: string;
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+}
+
+export interface StructuredProductEvent {
+  eventId: string;
+  at: string;
+  title: string;
+  summary: string;
+  subject: {
+    kind: "session" | "thread";
+    id: string;
+  };
+  details?: Record<string, unknown>;
+}
+
 export interface StructuredCommandInspectorChild extends StructuredCommandRollupChild {
   visibility: StructuredCommandRecord["visibility"];
   facts: Record<string, unknown> | null;
@@ -57,6 +129,10 @@ export interface StructuredCommandInspectorChild extends StructuredCommandRollup
   updatedAt: string;
   finishedAt: string | null;
   artifacts: StructuredCommandArtifactLink[];
+  outputEvents: StructuredCommandOutputEvent[];
+  progressEvents?: StructuredCommandProgressEvent[];
+  patchSnapshots: StructuredCommandPatchSnapshot[];
+  diagnostics: StructuredCommandDiagnosticSnapshot[];
 }
 
 export interface StructuredCommandInspector {
@@ -75,6 +151,10 @@ export interface StructuredCommandInspector {
   updatedAt: string;
   finishedAt: string | null;
   artifacts: StructuredCommandArtifactLink[];
+  outputEvents: StructuredCommandOutputEvent[];
+  progressEvents?: StructuredCommandProgressEvent[];
+  patchSnapshots: StructuredCommandPatchSnapshot[];
+  diagnostics: StructuredCommandDiagnosticSnapshot[];
   childCount: number;
   summaryChildCount: number;
   traceChildCount: number;
@@ -89,79 +169,6 @@ export interface StructuredHandlerThreadWorkflowSummary {
   summary: string;
   updatedAt: string;
   artifacts: StructuredCommandArtifactLink[];
-}
-
-export interface StructuredProjectCiRunSummary {
-  ciRunId: string;
-  workflowRunId: string;
-  workflowId: string;
-  status: StructuredSessionSnapshot["ciRuns"][number]["status"];
-  summary: string;
-  updatedAt: string;
-}
-
-export type StructuredProjectCiPanelStatus =
-  | "not-configured"
-  | "configured"
-  | "running"
-  | StructuredSessionSnapshot["ciRuns"][number]["status"];
-
-export interface StructuredProjectCiEntrySummary {
-  workflowId: string;
-  label: string;
-  summary: string;
-  sourceScope: StructuredWorkflowRunRecord["workflowSource"];
-  entryPath: string;
-}
-
-export interface StructuredProjectCiActiveWorkflowSummary {
-  workflowRunId: string;
-  workflowId: string;
-  entryPath: string | null;
-  threadId: string;
-  threadTitle: string;
-  status: Extract<StructuredWorkflowRunRecord["status"], "running" | "waiting">;
-  summary: string;
-  updatedAt: string;
-}
-
-export interface StructuredProjectCiCheckSummary {
-  checkResultId: string;
-  checkId: string;
-  label: string;
-  kind: string;
-  status: StructuredSessionSnapshot["ciCheckResults"][number]["status"];
-  required: boolean;
-  command: string[] | null;
-  exitCode: number | null;
-  summary: string;
-  artifactIds: string[];
-  artifacts: StructuredCommandArtifactLink[];
-  startedAt: string | null;
-  finishedAt: string | null;
-  updatedAt: string;
-}
-
-export interface StructuredProjectCiRunDetail extends StructuredProjectCiRunSummary {
-  threadId: string;
-  threadTitle: string;
-  smithersRunId: string;
-  entryPath: string;
-  startedAt: string;
-  finishedAt: string;
-}
-
-export interface StructuredProjectCiStatusPanel {
-  status: StructuredProjectCiPanelStatus;
-  summary: string;
-  entries: StructuredProjectCiEntrySummary[];
-  activeWorkflowRun: StructuredProjectCiActiveWorkflowSummary | null;
-  latestRun: StructuredProjectCiRunDetail | null;
-  checks: StructuredProjectCiCheckSummary[];
-  checkCounts: Record<StructuredSessionSnapshot["ciCheckResults"][number]["status"], number> & {
-    total: number;
-  };
-  updatedAt: string | null;
 }
 
 export interface StructuredHandlerThreadEpisodeSummary {
@@ -212,6 +219,14 @@ export interface StructuredWorkflowTaskAttemptInspector extends StructuredWorkfl
   agentModel: string | null;
   agentEngine: string | null;
   agentResume: string | null;
+  generatedAgentContextFingerprint: string | null;
+  generatedAgentContextBinding: {
+    systemPrompt: string;
+    generatedAgentContextRevision: number;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+    externalSourceHashes: string[];
+  } | null;
   meta: Record<string, unknown> | null;
   startedAt: string;
   finishedAt: string | null;
@@ -235,10 +250,9 @@ export interface StructuredHandlerThreadSummary {
   workflowTaskAttemptCount: number;
   episodeCount: number;
   artifactCount: number;
-  ciRunCount: number;
   loadedContextKeys: string[];
+  latestCommandRollup: StructuredCommandRollup | null;
   latestWorkflowRun: StructuredHandlerThreadWorkflowSummary | null;
-  latestCiRun: StructuredProjectCiRunSummary | null;
   latestEpisode: StructuredHandlerThreadEpisodeSummary | null;
   workflowTaskAttempts?: StructuredWorkflowTaskAttemptSummary[];
 }
@@ -272,6 +286,7 @@ export interface StructuredSidebarHandlerThreadRow {
   objective: string;
   status: StructuredThreadRecord["status"];
   subtitle: StructuredSidebarRowSubtitle | null;
+  latestCommandRollup: StructuredCommandRollup | null;
   updatedAt: string;
   workflows: StructuredSidebarWorkflowRow[];
 }
@@ -285,8 +300,6 @@ export interface StructuredSessionView {
     threads: number;
     commands: number;
     episodes: number;
-    ciRuns: number;
-    ciChecks: number;
     workflows: number;
     artifacts: number;
     events: number;
@@ -302,6 +315,7 @@ export interface StructuredSessionView {
   latestWorkflowRunSummary?: string | null;
   sidebarThreads: StructuredSidebarHandlerThreadRow[];
   commandRollups: StructuredCommandRollup[];
+  productEvents: StructuredProductEvent[];
 }
 
 export interface StructuredSessionSummaryProjection {
@@ -326,13 +340,6 @@ function getUpdatedAt(
   record: Pick<StructuredThreadRecord | StructuredTurnRecord, "updatedAt">,
 ): number {
   return Date.parse(record.updatedAt);
-}
-
-function getMostRecentEpisode(session: StructuredSessionSnapshot): StructuredEpisodeRecord | null {
-  return (
-    session.episodes.toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ??
-    null
-  );
 }
 
 function getMostRecentWorkflowRun(
@@ -414,7 +421,7 @@ function buildCommandRollupChild(command: StructuredCommandRecord): StructuredCo
 }
 
 function getArtifactProducer(
-  session: StructuredSessionSnapshot,
+  session: Pick<StructuredSessionSnapshot, "commands" | "workflowRuns" | "workflowTaskAttempts">,
   artifact: StructuredArtifactRecord,
 ): {
   workflowRunId?: string;
@@ -464,7 +471,7 @@ function getArtifactProducer(
 }
 
 export function buildStructuredArtifactLink(
-  session: StructuredSessionSnapshot,
+  session: Pick<StructuredSessionSnapshot, "commands" | "workflowRuns" | "workflowTaskAttempts">,
   artifact: StructuredArtifactRecord,
 ): StructuredCommandArtifactLink {
   return {
@@ -479,13 +486,287 @@ export function buildStructuredArtifactLink(
 }
 
 function buildCommandArtifactLinks(
-  session: StructuredSessionSnapshot,
+  session: Pick<
+    StructuredSessionSnapshot,
+    "artifacts" | "commands" | "workflowRuns" | "workflowTaskAttempts"
+  >,
   commandId: string,
 ): StructuredCommandArtifactLink[] {
   return session.artifacts
     .filter((artifact) => artifact.sourceCommandId === commandId)
     .map((artifact) => buildStructuredArtifactLink(session, artifact))
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function buildCommandOutputEvents(
+  session: Pick<StructuredSessionSnapshot, "events">,
+  commandId: string,
+): StructuredCommandOutputEvent[] {
+  return session.events.flatMap((event) => {
+    if (
+      event.kind !== "command.output" ||
+      event.subject.kind !== "command" ||
+      event.subject.id !== commandId
+    ) {
+      return [];
+    }
+    const outputEvent = parseCommandOutputEvent(event);
+    return outputEvent ? [outputEvent] : [];
+  });
+}
+
+function parseCommandOutputEvent(
+  event: StructuredLifecycleEventRecord,
+): StructuredCommandOutputEvent | null {
+  const data = event.data;
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  const stream = (data as { stream?: unknown }).stream;
+  const text = (data as { text?: unknown }).text;
+  const source = (data as { source?: unknown }).source;
+  if ((stream !== "stdout" && stream !== "stderr") || typeof text !== "string") {
+    return null;
+  }
+  return {
+    eventId: event.id,
+    at: event.at,
+    stream,
+    source: typeof source === "string" && source.trim() ? source : "unknown",
+    text,
+  };
+}
+
+function buildCommandProgressEvents(
+  session: Pick<StructuredSessionSnapshot, "events">,
+  commandId: string,
+): StructuredCommandProgressEvent[] {
+  return session.events
+    .flatMap((event) => {
+      if (
+        event.kind !== "command.progress" ||
+        event.subject.kind !== "command" ||
+        event.subject.id !== commandId
+      ) {
+        return [];
+      }
+      const progressEvent = parseCommandProgressEvent(event);
+      return progressEvent ? [progressEvent] : [];
+    })
+    .toSorted((left, right) => left.at.localeCompare(right.at));
+}
+
+function parseCommandProgressEvent(
+  event: StructuredLifecycleEventRecord,
+): StructuredCommandProgressEvent | null {
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const source = (data as { source?: unknown }).source;
+  const phase = (data as { phase?: unknown }).phase;
+  const family = (data as { family?: unknown }).family;
+  const command = (data as { command?: unknown }).command;
+  const message = (data as { message?: unknown }).message;
+  const progress = (data as { progress?: unknown }).progress;
+  const facts = (data as { facts?: unknown }).facts;
+
+  const parsed: StructuredCommandProgressEvent = {
+    eventId: event.id,
+    at: event.at,
+    source: typeof source === "string" && source.trim() ? source : "unknown",
+  };
+  if (typeof phase === "string" && phase.trim()) {
+    parsed.phase = phase;
+  }
+  if (typeof family === "string" && family.trim()) {
+    parsed.family = family;
+  }
+  if (typeof command === "string" && command.trim()) {
+    parsed.command = command;
+  }
+  if (typeof message === "string" && message.trim()) {
+    parsed.message = message;
+  }
+  if (typeof progress === "number" && Number.isFinite(progress)) {
+    parsed.progress = Math.max(0, Math.min(1, progress));
+  }
+  if (facts && typeof facts === "object" && !Array.isArray(facts)) {
+    parsed.facts = facts as Record<string, unknown>;
+  }
+  return parsed;
+}
+
+function buildCommandPatchSnapshots(
+  session: Pick<StructuredSessionSnapshot, "events">,
+  commandId: string,
+): StructuredCommandPatchSnapshot[] {
+  return session.events
+    .flatMap((event) => {
+      if (
+        event.kind !== "command.patch_snapshot" ||
+        event.subject.kind !== "command" ||
+        event.subject.id !== commandId
+      ) {
+        return [];
+      }
+      const snapshot = parseCommandPatchSnapshot(event);
+      return snapshot ? [snapshot] : [];
+    })
+    .toSorted((left, right) => left.at.localeCompare(right.at));
+}
+
+function parseCommandPatchSnapshot(
+  event: StructuredLifecycleEventRecord,
+): StructuredCommandPatchSnapshot | null {
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const files = (data as { files?: unknown }).files;
+  if (!Array.isArray(files)) {
+    return null;
+  }
+  const parsedFiles = files.flatMap((file): StructuredCommandPatchFile[] => {
+    if (!file || typeof file !== "object" || Array.isArray(file)) {
+      return [];
+    }
+    const path = (file as { path?: unknown }).path;
+    const changeType = (file as { changeType?: unknown }).changeType;
+    const additions = (file as { additions?: unknown }).additions;
+    const deletions = (file as { deletions?: unknown }).deletions;
+    if (
+      typeof path !== "string" ||
+      path.length === 0 ||
+      (changeType !== "created" && changeType !== "deleted" && changeType !== "modified") ||
+      typeof additions !== "number" ||
+      typeof deletions !== "number"
+    ) {
+      return [];
+    }
+    return [{ path, changeType, additions, deletions }];
+  });
+  if (parsedFiles.length === 0) {
+    return null;
+  }
+  const source = (data as { source?: unknown }).source;
+  return {
+    eventId: event.id,
+    at: event.at,
+    source: typeof source === "string" && source.trim() ? source : "unknown",
+    files: parsedFiles,
+  };
+}
+
+function buildCommandDiagnostics(
+  session: Pick<StructuredSessionSnapshot, "events">,
+  commandId: string,
+): StructuredCommandDiagnosticSnapshot[] {
+  return session.events
+    .flatMap((event) => {
+      if (
+        event.kind !== "command.diagnostics" ||
+        event.subject.kind !== "command" ||
+        event.subject.id !== commandId
+      ) {
+        return [];
+      }
+      const snapshot = parseCommandDiagnosticSnapshot(event);
+      return snapshot ? [snapshot] : [];
+    })
+    .toSorted((left, right) => left.at.localeCompare(right.at));
+}
+
+function parseCommandDiagnosticSnapshot(
+  event: StructuredLifecycleEventRecord,
+): StructuredCommandDiagnosticSnapshot | null {
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const diagnostics = (data as { diagnostics?: unknown }).diagnostics;
+  if (!Array.isArray(diagnostics)) {
+    return null;
+  }
+  const parsedDiagnostics = diagnostics.flatMap((diagnostic): StructuredCommandDiagnostic[] => {
+    if (!diagnostic || typeof diagnostic !== "object" || Array.isArray(diagnostic)) {
+      return [];
+    }
+    const message = (diagnostic as { message?: unknown }).message;
+    if (typeof message !== "string" || message.length === 0) {
+      return [];
+    }
+    const severity = (diagnostic as { severity?: unknown }).severity;
+    const file = (diagnostic as { file?: unknown }).file;
+    const line = (diagnostic as { line?: unknown }).line;
+    const column = (diagnostic as { column?: unknown }).column;
+    const code = (diagnostic as { code?: unknown }).code;
+    return [
+      {
+        ...(typeof severity === "string" && severity.trim() ? { severity } : {}),
+        message,
+        ...(typeof file === "string" && file.trim() ? { file } : {}),
+        ...(typeof line === "number" ? { line } : {}),
+        ...(typeof column === "number" ? { column } : {}),
+        ...(typeof code === "string" && code.trim() ? { code } : {}),
+      },
+    ];
+  });
+  if (parsedDiagnostics.length === 0) {
+    return null;
+  }
+  const source = (data as { source?: unknown }).source;
+  const stage = (data as { stage?: unknown }).stage;
+  return {
+    eventId: event.id,
+    at: event.at,
+    source: typeof source === "string" && source.trim() ? source : "unknown",
+    ...(typeof stage === "string" && stage.trim() ? { stage } : {}),
+    diagnostics: parsedDiagnostics,
+  };
+}
+
+function buildProductEvents(
+  session: Pick<StructuredSessionSnapshot, "events">,
+): StructuredProductEvent[] {
+  return session.events
+    .flatMap((event): StructuredProductEvent[] => {
+      if (
+        event.kind !== "Extension change reverted" &&
+        event.kind !== "Agent context update applied" &&
+        event.kind !== "Agent context update cancelled"
+      ) {
+        return [];
+      }
+      const data = event.data ?? {};
+      const fallbackTitle =
+        event.kind === "Extension change reverted" ? "Extension change reverted" : event.kind;
+      const fallbackSummary =
+        event.kind === "Extension change reverted"
+          ? "A user reverted an extension change from the Extensions pane."
+          : event.kind === "Agent context update applied"
+            ? "Agent context update applied."
+            : "Agent context update cancelled.";
+      const title =
+        typeof data.title === "string" && data.title.trim() ? data.title : fallbackTitle;
+      const summary =
+        typeof data.summary === "string" && data.summary.trim() ? data.summary : fallbackSummary;
+      const subjectKind = event.subject.kind === "thread" ? "thread" : "session";
+      return [
+        {
+          eventId: event.id,
+          at: event.at,
+          title,
+          summary,
+          subject: {
+            kind: subjectKind,
+            id: event.subject.id,
+          },
+          details: { ...data },
+        },
+      ];
+    })
+    .toSorted((left, right) => left.at.localeCompare(right.at));
 }
 
 function buildThreadArtifactLinks(
@@ -527,6 +808,7 @@ function buildCommandInspectorChild(
   command: StructuredCommandRecord,
   session: StructuredSessionSnapshot,
 ): StructuredCommandInspectorChild {
+  const progressEvents = buildCommandProgressEvents(session, command.id);
   return {
     ...buildCommandRollupChild(command),
     visibility: command.visibility,
@@ -535,11 +817,21 @@ function buildCommandInspectorChild(
     updatedAt: command.updatedAt,
     finishedAt: command.finishedAt,
     artifacts: buildCommandArtifactLinks(session, command.id),
+    outputEvents: buildCommandOutputEvents(session, command.id),
+    ...(progressEvents.length > 0 ? { progressEvents } : {}),
+    patchSnapshots: buildCommandPatchSnapshots(session, command.id),
+    diagnostics: buildCommandDiagnostics(session, command.id),
   };
 }
 
 function buildCommandRollups(
-  session: Pick<StructuredSessionSnapshot, "commands">,
+  session: Pick<StructuredSessionSnapshot, "commands"> &
+    Partial<
+      Pick<
+        StructuredSessionSnapshot,
+        "artifacts" | "events" | "workflowRuns" | "workflowTaskAttempts"
+      >
+    >,
   options: {
     includeWorkflowTaskAttemptCommands?: boolean;
   } = {},
@@ -558,6 +850,9 @@ function buildCommandRollups(
         (childCommand) => childCommand.visibility === "trace",
       ).length;
 
+      const progressEvents = session.events
+        ? buildCommandProgressEvents({ events: session.events }, command.id)
+        : [];
       return {
         commandId: command.id,
         threadId: command.threadId ?? null,
@@ -568,6 +863,22 @@ function buildCommandRollups(
         status: command.status,
         title: command.title,
         summary: command.summary,
+        arguments: command.arguments,
+        facts: command.facts,
+        error: command.error,
+        artifacts: hasCommandArtifactContext(session)
+          ? buildCommandArtifactLinks(session, command.id)
+          : [],
+        outputEvents: session.events
+          ? buildCommandOutputEvents({ events: session.events }, command.id)
+          : [],
+        ...(progressEvents.length > 0 ? { progressEvents } : {}),
+        patchSnapshots: session.events
+          ? buildCommandPatchSnapshots({ events: session.events }, command.id)
+          : [],
+        diagnostics: session.events
+          ? buildCommandDiagnostics({ events: session.events }, command.id)
+          : [],
         childCount: childCommands.length,
         summaryChildCount: summaryChildren.length,
         traceChildCount,
@@ -576,6 +887,16 @@ function buildCommandRollups(
       };
     })
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function hasCommandArtifactContext(
+  session: Pick<StructuredSessionSnapshot, "commands"> &
+    Partial<Pick<StructuredSessionSnapshot, "artifacts" | "workflowRuns" | "workflowTaskAttempts">>,
+): session is Pick<
+  StructuredSessionSnapshot,
+  "commands" | "artifacts" | "workflowRuns" | "workflowTaskAttempts"
+> {
+  return Boolean(session.artifacts && session.workflowRuns && session.workflowTaskAttempts);
 }
 
 function isDelegatedHandlerThread(
@@ -619,6 +940,7 @@ function buildWorkflowSidebarSubtitle(
 function buildHandlerSidebarSubtitle(
   thread: StructuredThreadRecord,
   latestWorkflowRun: StructuredWorkflowRunRecord | null,
+  latestEpisode: StructuredEpisodeRecord | null,
 ): StructuredSidebarRowSubtitle | null {
   if (thread.wait) {
     return { badge: "waiting", text: thread.wait.reason, tone: "waiting" };
@@ -635,6 +957,10 @@ function buildHandlerSidebarSubtitle(
       latestWorkflowRun.status === "waiting")
   ) {
     return { badge: "workflow", text: latestWorkflowRun.summary, tone: "muted" };
+  }
+
+  if (latestEpisode) {
+    return { badge: "text", text: latestEpisode.summary, tone: "muted" };
   }
 
   return null;
@@ -660,6 +986,7 @@ function buildSidebarThreadRow(
     .filter((workflowRun) => workflowRun.threadId === thread.id)
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const latestWorkflowRun = workflowRuns[0] ?? null;
+  const latestEpisode = getThreadLatestEpisode(session, thread.id);
 
   return {
     threadId: thread.id,
@@ -667,7 +994,8 @@ function buildSidebarThreadRow(
     title: thread.title || thread.objective,
     objective: thread.objective,
     status: thread.status,
-    subtitle: buildHandlerSidebarSubtitle(thread, latestWorkflowRun),
+    subtitle: buildHandlerSidebarSubtitle(thread, latestWorkflowRun, latestEpisode),
+    latestCommandRollup: getThreadLatestCommandRollup(session, thread.id),
     updatedAt: thread.updatedAt,
     workflows: workflowRuns.map((workflowRun) => buildSidebarWorkflowRow(workflowRun)),
   };
@@ -680,125 +1008,6 @@ export function buildStructuredSidebarThreadRows(
     .filter((thread) => isDelegatedHandlerThread(session, thread))
     .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
     .map((thread) => buildSidebarThreadRow(session, thread));
-}
-
-function buildProjectCiRunSummary(
-  ciRun: StructuredSessionSnapshot["ciRuns"][number],
-): StructuredProjectCiRunSummary {
-  return {
-    ciRunId: ciRun.id,
-    workflowRunId: ciRun.workflowRunId,
-    workflowId: ciRun.workflowId,
-    status: ciRun.status,
-    summary: ciRun.summary,
-    updatedAt: ciRun.updatedAt,
-  };
-}
-
-function findProjectCiEntryForWorkflowRun(
-  entries: readonly StructuredProjectCiEntrySummary[],
-  workflowRun: StructuredWorkflowRunRecord,
-): StructuredProjectCiEntrySummary | null {
-  if (!workflowRun.entryPath) {
-    return null;
-  }
-
-  return entries.find((entry) => workflowRun.entryPath === entry.entryPath) ?? null;
-}
-
-function projectCiEntryMatchesWorkflowRun(
-  entries: readonly StructuredProjectCiEntrySummary[],
-  workflowRun: StructuredWorkflowRunRecord,
-): boolean {
-  return findProjectCiEntryForWorkflowRun(entries, workflowRun) !== null;
-}
-
-function projectCiEntryMatchesCiRun(
-  entries: readonly StructuredProjectCiEntrySummary[],
-  ciRun: StructuredSessionSnapshot["ciRuns"][number],
-): boolean {
-  return entries.some((entry) => ciRun.entryPath === entry.entryPath);
-}
-
-function getThreadTitle(session: StructuredSessionSnapshot, threadId: string): string {
-  const thread = session.threads.find((candidate) => candidate.id === threadId);
-  return thread?.title || thread?.objective || threadId;
-}
-
-function buildProjectCiRunDetail(
-  session: StructuredSessionSnapshot,
-  ciRun: StructuredSessionSnapshot["ciRuns"][number],
-): StructuredProjectCiRunDetail {
-  return {
-    ...buildProjectCiRunSummary(ciRun),
-    threadId: ciRun.threadId,
-    threadTitle: getThreadTitle(session, ciRun.threadId),
-    smithersRunId: ciRun.smithersRunId,
-    entryPath: ciRun.entryPath,
-    startedAt: ciRun.startedAt,
-    finishedAt: ciRun.finishedAt,
-  };
-}
-
-function buildProjectCiCheckSummary(
-  session: StructuredSessionSnapshot,
-  checkResult: StructuredSessionSnapshot["ciCheckResults"][number],
-): StructuredProjectCiCheckSummary {
-  const artifactsById = new Map(session.artifacts.map((artifact) => [artifact.id, artifact]));
-  return {
-    checkResultId: checkResult.id,
-    checkId: checkResult.checkId,
-    label: checkResult.label,
-    kind: checkResult.kind,
-    status: checkResult.status,
-    required: checkResult.required,
-    command: checkResult.command ? checkResult.command.slice() : null,
-    exitCode: checkResult.exitCode,
-    summary: checkResult.summary,
-    artifactIds: checkResult.artifactIds.slice(),
-    artifacts: checkResult.artifactIds
-      .map((artifactId) => artifactsById.get(artifactId) ?? null)
-      .filter((artifact): artifact is StructuredArtifactRecord => artifact !== null)
-      .map((artifact) => buildStructuredArtifactLink(session, artifact))
-      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt)),
-    startedAt: checkResult.startedAt,
-    finishedAt: checkResult.finishedAt,
-    updatedAt: checkResult.updatedAt,
-  };
-}
-
-function createProjectCiCheckCounts(
-  checks: StructuredProjectCiCheckSummary[] = [],
-): StructuredProjectCiStatusPanel["checkCounts"] {
-  const counts = {
-    passed: 0,
-    failed: 0,
-    cancelled: 0,
-    skipped: 0,
-    blocked: 0,
-    total: checks.length,
-  };
-  for (const check of checks) {
-    counts[check.status] += 1;
-  }
-  return counts;
-}
-
-function buildProjectCiActiveWorkflowSummary(
-  session: StructuredSessionSnapshot,
-  workflowRun: StructuredWorkflowRunRecord & { status: "running" | "waiting" },
-  entry: StructuredProjectCiEntrySummary,
-): StructuredProjectCiActiveWorkflowSummary {
-  return {
-    workflowRunId: workflowRun.id,
-    workflowId: entry.workflowId,
-    entryPath: entry.entryPath,
-    threadId: workflowRun.threadId,
-    threadTitle: getThreadTitle(session, workflowRun.threadId),
-    status: workflowRun.status,
-    summary: workflowRun.summary,
-    updatedAt: workflowRun.updatedAt,
-  };
 }
 
 function buildThreadEpisodeSummary(
@@ -868,6 +1077,21 @@ function buildThreadCommandRollups(
   });
 }
 
+function getThreadLatestCommandRollup(
+  session: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredCommandRollup | null {
+  const rollups = buildThreadCommandRollups(session, threadId);
+  return (
+    rollups.find(
+      (rollup) =>
+        rollup.status === "requested" || rollup.status === "running" || rollup.status === "waiting",
+    ) ??
+    rollups[0] ??
+    null
+  );
+}
+
 function buildWorkflowTaskAttemptSummary(
   session: StructuredSessionSnapshot,
   workflowTaskAttempt: StructuredSessionSnapshot["workflowTaskAttempts"][number],
@@ -909,10 +1133,7 @@ function buildHandlerThreadSummary(
   );
   const episodes = session.episodes.filter((episode) => episode.threadId === thread.id);
   const artifacts = session.artifacts.filter((artifact) => artifact.threadId === thread.id);
-  const ciRuns = session.ciRuns.filter((ciRun) => ciRun.threadId === thread.id);
   const latestWorkflowRun = getThreadLatestWorkflowRun(session, thread);
-  const latestCiRun =
-    ciRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
   const latestEpisode = getThreadLatestEpisode(session, thread.id);
 
   const summary: StructuredHandlerThreadSummary = {
@@ -932,12 +1153,11 @@ function buildHandlerThreadSummary(
     workflowTaskAttemptCount: workflowTaskAttempts.length,
     episodeCount: episodes.length,
     artifactCount: artifacts.length,
-    ciRunCount: ciRuns.length,
     loadedContextKeys: thread.loadedContextKeys.slice(),
+    latestCommandRollup: getThreadLatestCommandRollup(session, thread.id),
     latestWorkflowRun: latestWorkflowRun
       ? buildThreadWorkflowSummary(session, latestWorkflowRun)
       : null,
-    latestCiRun: latestCiRun ? buildProjectCiRunSummary(latestCiRun) : null,
     latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
   };
   if (workflowTaskAttempts.length > 0) {
@@ -954,8 +1174,8 @@ function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {
     .map((thread) => thread.id);
 }
 
-function deriveLatestEpisodePreview(session: StructuredSessionSnapshot): string | null {
-  return getMostRecentEpisode(session)?.summary ?? null;
+function deriveLatestEpisodePreview(): string | null {
+  return null;
 }
 
 function deriveLatestWorkflowRunSummary(session: StructuredSessionSnapshot): string | null {
@@ -982,11 +1202,6 @@ function derivePreview(session: StructuredSessionSnapshot): string {
   const latestCommandRollup = commandRollups[0] ?? null;
   if (latestCommandRollup) {
     return latestCommandRollup.summary;
-  }
-
-  const latestEpisode = getMostRecentEpisode(session);
-  if (latestEpisode) {
-    return latestEpisode.summary;
   }
 
   return getMostRecentOrchestratorTurnRequestSummary(session) ?? "";
@@ -1053,7 +1268,8 @@ export function buildStructuredSessionView(
   );
   const grouped = groupThreadIdsByStatus(delegatedThreads);
   const commandRollups = buildCommandRollups(session);
-  const latestEpisodePreview = deriveLatestEpisodePreview(session);
+  const productEvents = buildProductEvents(session);
+  const latestEpisodePreview = deriveLatestEpisodePreview();
   const latestWorkflowRunSummary = deriveLatestWorkflowRunSummary(session);
 
   return {
@@ -1072,8 +1288,6 @@ export function buildStructuredSessionView(
       threads: delegatedThreads.length,
       commands: session.commands.length,
       episodes: session.episodes.length,
-      ciRuns: session.ciRuns.length,
-      ciChecks: session.ciCheckResults.length,
       workflows: session.workflowRuns.length,
       artifacts: session.artifacts.length,
       events: session.events.length,
@@ -1084,6 +1298,7 @@ export function buildStructuredSessionView(
     latestWorkflowRunSummary,
     sidebarThreads: buildStructuredSidebarThreadRows(session),
     commandRollups,
+    productEvents,
   };
 }
 
@@ -1149,124 +1364,12 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.threadContexts.length > 0 ||
     buildCommandRollups(session).length > 0 ||
     session.episodes.length > 0 ||
-    session.ciRuns.length > 0 ||
-    session.ciCheckResults.length > 0 ||
     session.workflowRuns.length > 0 ||
     session.workflowTaskAttempts.length > 0 ||
     session.workflowTaskMessages.length > 0 ||
     session.artifacts.length > 0 ||
     session.events.length > 0
   );
-}
-
-export function buildStructuredProjectCiStatusPanel(input: {
-  session: StructuredSessionSnapshot | null;
-  entries: readonly StructuredProjectCiEntrySummary[];
-}): StructuredProjectCiStatusPanel {
-  const entries = input.entries.map((entry) => ({
-    workflowId: entry.workflowId,
-    label: entry.label,
-    summary: entry.summary,
-    sourceScope: entry.sourceScope,
-    entryPath: entry.entryPath,
-  }));
-
-  if (entries.length === 0) {
-    return {
-      status: "not-configured",
-      summary: "No Project CI entry has been configured.",
-      entries,
-      activeWorkflowRun: null,
-      latestRun: null,
-      checks: [],
-      checkCounts: createProjectCiCheckCounts(),
-      updatedAt: null,
-    };
-  }
-
-  const session = input.session;
-  if (!session) {
-    return {
-      status: "configured",
-      summary: "Ready to run Project CI.",
-      entries,
-      activeWorkflowRun: null,
-      latestRun: null,
-      checks: [],
-      checkCounts: createProjectCiCheckCounts(),
-      updatedAt: null,
-    };
-  }
-
-  const activeWorkflowRun =
-    session.workflowRuns
-      .filter(
-        (
-          workflowRun,
-        ): workflowRun is StructuredWorkflowRunRecord & {
-          status: "running" | "waiting";
-        } => workflowRun.status === "running" || workflowRun.status === "waiting",
-      )
-      .filter((workflowRun) => projectCiEntryMatchesWorkflowRun(entries, workflowRun))
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
-
-  if (activeWorkflowRun) {
-    const activeEntry = findProjectCiEntryForWorkflowRun(entries, activeWorkflowRun);
-    if (!activeEntry) {
-      throw new Error(
-        `Matched Project CI workflow run ${activeWorkflowRun.id} without a declared entry path.`,
-      );
-    }
-    const activeSummary = buildProjectCiActiveWorkflowSummary(
-      session,
-      activeWorkflowRun,
-      activeEntry,
-    );
-    return {
-      status: activeWorkflowRun.status === "waiting" ? "blocked" : "running",
-      summary: activeSummary.summary,
-      entries,
-      activeWorkflowRun: activeSummary,
-      latestRun: null,
-      checks: [],
-      checkCounts: createProjectCiCheckCounts(),
-      updatedAt: activeSummary.updatedAt,
-    };
-  }
-
-  const latestCiRun =
-    session.ciRuns
-      .filter((ciRun) => projectCiEntryMatchesCiRun(entries, ciRun))
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
-
-  if (!latestCiRun) {
-    return {
-      status: "configured",
-      summary: "Ready to run Project CI.",
-      entries,
-      activeWorkflowRun: null,
-      latestRun: null,
-      checks: [],
-      checkCounts: createProjectCiCheckCounts(),
-      updatedAt: null,
-    };
-  }
-
-  const checks = session.ciCheckResults
-    .filter((checkResult) => checkResult.ciRunId === latestCiRun.id)
-    .map((checkResult) => buildProjectCiCheckSummary(session, checkResult))
-    .toSorted((left, right) => left.checkId.localeCompare(right.checkId));
-
-  return {
-    status: latestCiRun.status,
-    summary: latestCiRun.summary,
-    entries,
-    activeWorkflowRun: null,
-    latestRun: buildProjectCiRunDetail(session, latestCiRun),
-    checks,
-    checkCounts: createProjectCiCheckCounts(checks),
-    updatedAt: latestCiRun.updatedAt,
-  };
 }
 
 export function buildStructuredCommandInspector(
@@ -1290,6 +1393,7 @@ export function buildStructuredCommandInspector(
   const traceChildren = childCommands
     .filter((childCommand) => childCommand.visibility === "trace")
     .map((childCommand) => buildCommandInspectorChild(childCommand, session));
+  const progressEvents = buildCommandProgressEvents(session, parentCommand.id);
 
   return {
     commandId: parentCommand.id,
@@ -1307,6 +1411,10 @@ export function buildStructuredCommandInspector(
     updatedAt: parentCommand.updatedAt,
     finishedAt: parentCommand.finishedAt,
     artifacts: buildCommandArtifactLinks(session, parentCommand.id),
+    outputEvents: buildCommandOutputEvents(session, parentCommand.id),
+    ...(progressEvents.length > 0 ? { progressEvents } : {}),
+    patchSnapshots: buildCommandPatchSnapshots(session, parentCommand.id),
+    diagnostics: buildCommandDiagnostics(session, parentCommand.id),
     childCount: childCommands.length,
     summaryChildCount: summaryChildren.length,
     traceChildCount: traceChildren.length,
@@ -1347,6 +1455,17 @@ export function buildStructuredWorkflowTaskAttemptInspector(
       createdAt: message.createdAt,
     }))
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const generatedAgentContextBinding =
+    workflowTaskAttempt.surfacePiSessionId && workflowTaskAttempt.generatedAgentContextFingerprint
+      ? (session.generatedAgentContextBindings.find(
+          (binding) =>
+            binding.ownerKind === "workflow-task-attempt" &&
+            binding.ownerId === workflowTaskAttempt.id &&
+            binding.surfacePiSessionId === workflowTaskAttempt.surfacePiSessionId &&
+            binding.generatedAgentContextFingerprint ===
+              workflowTaskAttempt.generatedAgentContextFingerprint,
+        ) ?? null)
+      : null;
 
   return {
     ...buildWorkflowTaskAttemptSummary(session, workflowTaskAttempt),
@@ -1363,6 +1482,16 @@ export function buildStructuredWorkflowTaskAttemptInspector(
     agentModel: workflowTaskAttempt.agentModel,
     agentEngine: workflowTaskAttempt.agentEngine,
     agentResume: workflowTaskAttempt.agentResume,
+    generatedAgentContextFingerprint: workflowTaskAttempt.generatedAgentContextFingerprint,
+    generatedAgentContextBinding: generatedAgentContextBinding
+      ? {
+          systemPrompt: generatedAgentContextBinding.systemPrompt,
+          generatedAgentContextRevision: generatedAgentContextBinding.generatedAgentContextRevision,
+          loadedExtensionIds: generatedAgentContextBinding.loadedExtensionIds,
+          availableExtensionIds: generatedAgentContextBinding.availableExtensionIds,
+          externalSourceHashes: generatedAgentContextBinding.externalSourceHashes,
+        }
+      : null,
     meta: workflowTaskAttempt.meta,
     startedAt: workflowTaskAttempt.startedAt,
     finishedAt: workflowTaskAttempt.finishedAt,

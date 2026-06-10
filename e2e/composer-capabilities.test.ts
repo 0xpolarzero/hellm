@@ -51,12 +51,12 @@ async function runApp<T>(
 
 async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
   await page.locator(".model-control").click();
-  await page.getByRole("dialog", { name: "Select a model" }).waitFor({ state: "visible" });
+  await page.locator(".model-menu").waitFor({ state: "visible" });
 }
 
 async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
   const trigger = page.locator(".thinking-field").first();
-  const menu = page.locator(".thinking-menu");
+  const menu = page.getByRole("listbox", { name: "Thinking level" });
   const deadline = Date.now() + 15_000;
 
   while (Date.now() < deadline) {
@@ -85,22 +85,22 @@ async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
 }
 
 async function providerHeadings(page: SvvyApp["page"]): Promise<string[]> {
-  const headings = page.locator(".model-group h3");
-  const count = await headings.count();
-  const names: string[] = [];
+  const options = page.locator(".model-menu .model-option");
+  const count = await options.count();
+  const labels: string[] = [];
 
   for (let index = 0; index < count; index += 1) {
-    names.push(((await headings.nth(index).textContent()) ?? "").trim());
+    labels.push(((await options.nth(index).textContent()) ?? "").trim());
   }
 
-  return names;
+  return labels;
 }
 
 async function selectModelBySearch(page: SvvyApp["page"], query: string): Promise<void> {
-  const picker = page.getByRole("dialog", { name: "Select a model" });
-  await picker.locator('input[placeholder="Search model families, providers, or ids"]').fill(query);
-  await picker.locator(".model-row").first().click({ force: true });
-  await picker.waitFor({ state: "hidden" });
+  const menu = page.locator(".model-menu");
+  await menu.locator('input[placeholder="Search models"]').fill(query);
+  await menu.locator(".model-option").first().click({ force: true });
+  await menu.waitFor({ state: "hidden" });
 }
 
 async function waitForModelLabel(
@@ -108,7 +108,7 @@ async function waitForModelLabel(
   expectedText: string,
   timeoutMs = 15_000,
 ): Promise<void> {
-  const label = page.locator(".model-control strong");
+  const label = page.locator(".model-control .compact-combobox-label");
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -131,7 +131,7 @@ test("model picker stays scoped to configured providers and updates the composer
     }),
     async ({ page }) => {
       await openReasoningMenu(page);
-      const menu = page.locator(".thinking-menu");
+      const menu = page.getByRole("listbox", { name: "Thinking level" });
       expect(await menu.getByRole("option", { name: /^xhigh$/i }).count()).toBe(0);
 
       await page.locator(".thinking-field").first().click({ force: true });
@@ -139,15 +139,16 @@ test("model picker stays scoped to configured providers and updates the composer
 
       await openModelPicker(page);
 
-      const headings = await providerHeadings(page);
-      expect(headings).toContain("zai");
-      expect(headings).toContain("openai");
-      expect(headings).not.toContain("anthropic");
-      expect(headings).not.toContain("google");
+      const modelLabels = (await providerHeadings(page)).join("\n").toLowerCase();
+      expect(modelLabels).toContain("glm");
+      expect(modelLabels).toContain("gpt");
+      expect(modelLabels).not.toContain("claude");
+      expect(modelLabels).not.toContain("gemini");
       await selectModelBySearch(page, "gpt-5.4");
       await waitForModelLabel(page, "gpt-5.4");
 
-      const modelLabel = (await page.locator(".model-control strong").textContent())?.trim() ?? "";
+      const modelLabel =
+        (await page.locator(".model-control .compact-combobox-label").textContent())?.trim() ?? "";
       expect(modelLabel.toLowerCase()).toContain("gpt-5.4");
     },
   );

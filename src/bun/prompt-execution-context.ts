@@ -1,4 +1,5 @@
 import type { StructuredEpisodeKind } from "./structured-session-state";
+import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 
 export type PromptExecutionSurfaceKind = "orchestrator" | "handler";
 
@@ -14,6 +15,11 @@ export interface PromptExecutionContext {
   rootEpisodeKind: StructuredEpisodeKind;
   sessionWaitApplied: boolean;
   threadWasTerminalAtStart: boolean;
+  loadedExtensionIds?: string[];
+  availableExtensionIds?: string[];
+  externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+  systemPrompt?: string;
+  generatedAgentContextFingerprint?: string;
   suppressPendingWorkflowAttentionDelivery?: boolean;
   queuedMessageId?: string | null;
 }
@@ -33,6 +39,11 @@ export function createPromptExecutionContext(input: {
   promptText: string;
   rootEpisodeKind?: StructuredEpisodeKind;
   threadWasTerminalAtStart?: boolean;
+  loadedExtensionIds?: readonly string[];
+  availableExtensionIds?: readonly string[];
+  externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+  systemPrompt?: string;
+  generatedAgentContextFingerprint?: string;
   suppressPendingWorkflowAttentionDelivery?: boolean;
   queuedMessageId?: string | null;
 }): PromptExecutionContext {
@@ -56,6 +67,11 @@ export function createPromptExecutionContext(input: {
     rootEpisodeKind: defaultEpisodeKind,
     sessionWaitApplied: false,
     threadWasTerminalAtStart: input.threadWasTerminalAtStart ?? false,
+    loadedExtensionIds: [...(input.loadedExtensionIds ?? [])].toSorted(),
+    availableExtensionIds: [...(input.availableExtensionIds ?? [])].toSorted(),
+    externalInstructionSources: structuredClone(input.externalInstructionSources ?? []),
+    systemPrompt: input.systemPrompt,
+    generatedAgentContextFingerprint: input.generatedAgentContextFingerprint,
     suppressPendingWorkflowAttentionDelivery:
       input.suppressPendingWorkflowAttentionDelivery ?? false,
     queuedMessageId: input.queuedMessageId ?? null,

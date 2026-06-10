@@ -49,13 +49,7 @@ const MIXED_AUTH_STATE = {
   },
 } as const;
 
-const OAUTH_SUPPORTED_PROVIDERS = [
-  "anthropic",
-  "github-copilot",
-  "google-antigravity",
-  "google-gemini-cli",
-  "openai-codex",
-] as const;
+const OAUTH_SUPPORTED_PROVIDERS = ["anthropic", "github-copilot", "openai-codex"] as const;
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -91,12 +85,14 @@ async function providerRow(page: SvvyApp["page"], providerId: string) {
 
 async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByRole("dialog").waitFor({ state: "visible" });
+  await page.getByTestId("settings-pane").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Providers" }).click();
+  await page.locator(".settings-search").waitFor({ state: "visible" });
 }
 
 async function closeSettings(page: SvvyApp["page"]): Promise<void> {
-  await page.locator(".ui-dialog-close").click();
-  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "Close pane" }).click();
+  await page.getByTestId("settings-pane").waitFor({ state: "detached" });
 }
 
 async function providerNames(page: SvvyApp["page"]): Promise<string[]> {
@@ -169,15 +165,23 @@ test("settings opens and closes, loads provider summaries, and exposes OAuth act
       await (
         await providerRow(page, providerId)
       )
-        .getByRole("button", { name: "OAuth" })
+        .getByRole("button", { name: new RegExp(`Connect ${providerId} with OAuth`) })
         .waitFor({ state: "visible" });
     }
 
     expect(
-      await (await providerRow(page, "openai")).getByRole("button", { name: "OAuth" }).count(),
+      await (
+        await providerRow(page, "openai")
+      )
+        .getByRole("button", { name: /Connect openai with OAuth/ })
+        .count(),
     ).toBe(0);
     expect(
-      await (await providerRow(page, "zai")).getByRole("button", { name: "OAuth" }).count(),
+      await (
+        await providerRow(page, "zai")
+      )
+        .getByRole("button", { name: /Connect zai with OAuth/ })
+        .count(),
     ).toBe(0);
 
     await closeSettings(page);
@@ -233,7 +237,7 @@ test("API key editor supports cancel and save flows", async () => {
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
     const openaiRow = await providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "Add API key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).click({ force: true });
 
     const apiKeyInput = openaiRow.locator('input[placeholder="Paste API key..."]');
     await apiKeyInput.waitFor({ state: "visible" });
@@ -242,7 +246,7 @@ test("API key editor supports cancel and save flows", async () => {
     await apiKeyInput.waitFor({ state: "detached" });
     expect(await providerStatus(page, "openai")).toBe("Not configured");
 
-    await openaiRow.getByRole("button", { name: "Add API key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).click({ force: true });
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("saved-openai-key");
     await openaiRow.getByRole("button", { name: "Save" }).click({ force: true });
 
@@ -274,8 +278,10 @@ test("removing provider auth clears the status and shows feedback", async () => 
       const openaiRow = await providerRow(page, "openai");
       expect(await providerStatus(page, "openai")).toBe("API key");
 
-      await openaiRow.getByRole("button", { name: "Remove" }).click();
-      const confirmRemove = openaiRow.locator("button").filter({ hasText: "Confirm remove" });
+      await openaiRow.getByRole("button", { name: "Remove openai credentials" }).click();
+      const confirmRemove = openaiRow.getByRole("button", {
+        name: "Confirm removing openai credentials",
+      });
       await confirmRemove.waitFor({ state: "visible" });
       await confirmRemove.click();
       await page.getByText("Removed").waitFor({ state: "visible" });
@@ -288,18 +294,4 @@ test("removing provider auth clears the status and shows feedback", async () => 
       expect(await providerStatus(page, "openai")).toBe("Not configured");
     },
   );
-});
-
-test("missing provider access opens settings when trying to send a prompt", async () => {
-  await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
-    const prompt = page.locator(
-      'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
-    );
-    await prompt.fill("Check auth gating.");
-    await page.getByRole("button", { name: "Send" }).click();
-
-    await page.getByRole("dialog").waitFor({ state: "visible" });
-    await page.locator(".provider-row").first().waitFor({ state: "visible" });
-    expect(await page.getByRole("button", { name: "Open settings" }).count()).toBe(1);
-  });
 });

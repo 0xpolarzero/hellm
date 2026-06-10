@@ -66,14 +66,7 @@ if (buildEnv === "dev") {
   process.exit(0);
 }
 
-const scopes = [
-  "@rivet-dev",
-  "@secure-exec",
-  "@esbuild",
-  "@mariozechner",
-  "@agentclientprotocol",
-  "@smithers-orchestrator",
-];
+const scopes = ["@rivet-dev", "@secure-exec", "@esbuild", "@mariozechner", "@agentclientprotocol"];
 
 const packages = [
   "secure-exec",
@@ -88,7 +81,6 @@ const packages = [
   "pyodide",
   "react",
   "react-dom",
-  "smithers-orchestrator",
   "zod",
 ];
 

@@ -102,11 +102,9 @@ async function launchSeededApp<T>(
   }
 }
 
-test("transcript rendering projects assistant metadata, tool cards, tool results, reasoning, and artifact affordances", async () => {
-  const reportCall = toolCall("artifacts", {
-    command: "create",
-    filename: "report.html",
-    content: "<html><body><main>Artifact transcript</main></body></html>",
+test("transcript rendering projects assistant metadata, tool cards, tool results, and reasoning", async () => {
+  const reportCall = toolCall("execute_typescript", {
+    typescriptCode: "return { artifact: 'report.html' };",
   });
 
   const sessions: SeedSessionInput[] = [
@@ -154,40 +152,22 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
       expect((await firstAssistant.locator("small").textContent())?.trim()).toBe(
         "zai · glm-5-turbo",
       );
-      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
-        "↑12",
-      );
-      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
-        "↓34",
-      );
-      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
-        "$0.1234",
-      );
-      expect((await firstAssistant.locator(".thinking-block pre").textContent()) ?? "").toContain(
+      const messageBudget = firstAssistant.locator("[data-testid=context-budget-inline]");
+      await messageBudget.waitFor({ state: "visible" });
+      expect((await firstAssistant.locator(".thinking-markdown").textContent()) ?? "").toContain(
         "durable artifact",
       );
-      expect((await firstAssistant.locator(".tool-card .tool-status").textContent())?.trim()).toBe(
-        "done",
-      );
-      expect((await page.locator(".tool-result .tool-status").textContent())?.trim()).toBe(
-        "Complete",
-      );
-      expect(await page.getByText("report.html").isVisible()).toBe(true);
-      expect(await page.getByText("Created file report.html").isVisible()).toBe(true);
-
-      await page.getByRole("button", { name: "Open" }).first().click({ force: true });
-      await page.locator(".artifacts-panel").waitFor({ state: "visible" });
-      expect(await page.locator(".artifact-name").textContent()).toBe("report.html");
+      expect(
+        (await firstAssistant.locator('[data-testid^="tool-card-"]').textContent()) ?? "",
+      ).toContain("Done");
+      expect(await page.locator(".artifacts-panel").count()).toBe(0);
     },
   );
 });
 
 test("transcript rendering shows execute_typescript bodies on tool cards", async () => {
   const executeTypescriptCall = toolCall("execute_typescript", {
-    typescriptCode: [
-      'const result = await api.bash({ command: "ls -la" });',
-      "console.log(result.content);",
-    ].join("\n"),
+    typescriptCode: ["const result = { files: ['docs/prd.md'] };", "return result;"].join("\n"),
   });
 
   const sessions: SeedSessionInput[] = [
@@ -224,14 +204,12 @@ test("transcript rendering shows execute_typescript bodies on tool cards", async
         state: "visible",
       });
 
-      const toolCard = page.locator(".tool-card").first();
+      const toolCard = page.locator('[data-testid^="tool-card-"]').first();
       await toolCard.waitFor({ state: "visible" });
-      expect((await toolCard.locator(".tool-body-label").textContent())?.trim()).toBe(
-        "TypeScript body",
-      );
-      const toolBody = (await toolCard.locator(".tool-body-preview pre").textContent()) ?? "";
-      expect(toolBody).toContain('const result = await api.bash({ command: "ls -la" });');
-      expect(toolBody).toContain("console.log(result.content);");
+      await toolCard.locator(".transcript-tool-toggle").click({ force: true });
+      const toolBody = (await toolCard.locator(".transcript-tool-pre").textContent()) ?? "";
+      expect(toolBody).toContain("const result = { files: ['docs/prd.md'] };");
+      expect(toolBody).toContain("return result;");
     },
   );
 });

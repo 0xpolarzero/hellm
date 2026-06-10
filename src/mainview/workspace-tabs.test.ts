@@ -57,6 +57,20 @@ describe("workspace tab counts", () => {
     );
   });
 
+  it("formats default workspace status badges like normal workspace tabs", () => {
+    const counts: WorkspaceTabCounts = {
+      running: 1,
+      unread: 0,
+      waiting: 2,
+      warning: 0,
+      error: 1,
+    };
+
+    expect(formatWorkspaceTabAriaLabel({ workspaceLabel: "Default Workspace" }, counts)).toBe(
+      "Default Workspace. 1 running, 2 waiting, 1 errors",
+    );
+  });
+
   it("summarizes session state and unread app log warnings and errors", () => {
     expect(
       summarizeWorkspaceTabCounts({
@@ -83,7 +97,7 @@ describe("workspace tab counts", () => {
           },
         ],
         appLogSummary: {
-          unread: { total: 5, info: 1, warning: 2, error: 2 },
+          unread: { total: 5, debug: 0, info: 1, warn: 2, error: 2 },
         },
       }),
     ).toEqual({

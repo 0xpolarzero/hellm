@@ -11,7 +11,6 @@ import {
   executeCommandAction,
   executePaletteFallbackPrompt,
   filterCommandActions,
-  getCommandActionCategoryLabel,
   getCommandActionPlacementHints,
   getCommandActionShortcutHints,
   getCommandExecutionPaneId,
@@ -74,10 +73,8 @@ function handlerThread(
     workflowTaskAttemptCount: options.workflowTaskAttemptCount ?? 0,
     episodeCount: options.episodeCount ?? 0,
     artifactCount: options.artifactCount ?? 0,
-    ciRunCount: options.ciRunCount ?? 0,
     loadedContextKeys: options.loadedContextKeys ?? [],
     latestWorkflowRun: options.latestWorkflowRun ?? null,
-    latestCiRun: options.latestCiRun ?? null,
     latestEpisode: options.latestEpisode ?? null,
     workflowTaskAttempts: options.workflowTaskAttempts,
   };
@@ -96,7 +93,7 @@ function orchestratorProfile(
     model: input.model ?? "gpt-5.4",
     reasoningEffort: input.reasoningEffort ?? "medium",
     systemPrompt: input.systemPrompt ?? "Own strategy.",
-    extensions: input.extensions ?? [],
+    extensionUsage: input.extensionUsage ?? {},
     updateFromComposer: input.updateFromComposer ?? false,
     builtin: input.builtin ?? false,
     locked: input.locked ?? false,
@@ -119,6 +116,10 @@ function keyEvent(input: {
   };
 }
 
+function formatOpenTarget(target: unknown): string {
+  return typeof target === "string" ? target : JSON.stringify(target);
+}
+
 function createRuntime(): CommandRuntime & {
   calls: string[];
   createRequests: unknown[];
@@ -133,6 +134,8 @@ function createRuntime(): CommandRuntime & {
       target: runtime.paneTarget,
       scroll: null,
       timelineDensity: "comfortable" as const,
+      chrome: null,
+      restore: null,
     }),
     createSession: async (request = {}, paneId: unknown = "primary") => {
       runtime.calls.push(`create:${paneId}`);
@@ -156,7 +159,7 @@ function createRuntime(): CommandRuntime & {
         target.surface === "orchestrator" || target.surface === "thread"
           ? target.surfacePiSessionId
           : target.surface;
-      runtime.calls.push(`surface:${targetId}:${paneId}`);
+      runtime.calls.push(`surface:${targetId}:${formatOpenTarget(paneId)}`);
       runtime.paneTarget = target;
     },
     splitPane: async (
@@ -252,8 +255,9 @@ describe("command palette shortcuts", () => {
     });
     expect(getShortcutHotkey("surface.logs.open")).toBe("Mod+Shift+1");
     expect(getShortcutReadable("surface.agents.open")).toBe("Cmd+Shift+2");
-    expect(getShortcutReadable("surface.context.open")).toBe("Cmd+Shift+3");
-    expect(getShortcut("surface.context.open")).toMatchObject({
+    expect(getShortcutReadable("surface.extensions.open")).toBe("Cmd+Shift+3");
+    expect(getShortcut("surface.extensions.open")).toMatchObject({
+      label: "Open Extensions",
       readableShortcut: "Cmd+Shift+3",
       scope: "workspace-shell",
       inputPolicy: "allow-while-typing",
@@ -273,7 +277,7 @@ describe("command palette shortcuts", () => {
     expect(shouldShortcutIgnoreInputs("surface.logs.open")).toBe(false);
     expect(shouldShortcutIgnoreInputs("surface.workflows.open")).toBe(false);
     expect(shouldShortcutIgnoreInputs("surface.agents.open")).toBe(false);
-    expect(shouldShortcutIgnoreInputs("surface.context.open")).toBe(false);
+    expect(shouldShortcutIgnoreInputs("surface.extensions.open")).toBe(false);
   });
 
   it("exposes workspace actions through the typed app menu action path", () => {
@@ -295,9 +299,9 @@ describe("command palette shortcuts", () => {
       mode: "commands",
       commandQuery: "Open Session",
     });
-    expect(getCommandPaletteInputState(">Run Project CI")).toEqual({
+    expect(getCommandPaletteInputState(">Open Logs")).toEqual({
       mode: "commands",
-      commandQuery: "Run Project CI",
+      commandQuery: "Open Logs",
     });
   });
 
@@ -344,14 +348,13 @@ describe("command palette shortcuts", () => {
 
     const groups = groupCommandActions(actions);
 
-    expect(getCommandActionCategoryLabel("project-ci")).toBe("Project CI");
     expect(actions[0]?.id).toBe("workspace.open");
     expect(groups.map((group) => group.category)).toEqual([
       "workspace",
       "session",
-      "workflow-library",
+      "surface",
+      "workflows",
       "agents",
-      "project-ci",
       "pane",
       "settings",
     ]);
@@ -380,9 +383,7 @@ describe("command palette shortcuts", () => {
       ),
     ).toEqual([]);
     expect(
-      getCommandActionPlacementHints(
-        actions.find((action) => action.id === "workflow-library.open")!,
-      ),
+      getCommandActionPlacementHints(actions.find((action) => action.id === "workflows.open")!),
     ).toEqual([
       { shortcut: "Enter", label: "New pane" },
       { shortcut: "Cmd+Enter", label: "Focused pane" },
@@ -393,11 +394,17 @@ describe("command palette shortcuts", () => {
       { shortcut: "Enter", label: "New pane" },
       { shortcut: "Cmd+Enter", label: "Focused pane" },
     ]);
+    expect(
+      getCommandActionPlacementHints(actions.find((action) => action.id === "settings.open")!),
+    ).toEqual([
+      { shortcut: "Enter", label: "New pane" },
+      { shortcut: "Cmd+Enter", label: "Focused pane" },
+    ]);
   });
 });
 
 describe("buildCommandRegistry", () => {
-  it("builds session, navigation, Project CI, settings, and handler-thread actions", () => {
+  it("builds session, navigation, settings, and handler-thread actions without Project CI", () => {
     const actions = buildCommandRegistry({
       sessions: [
         session("session-1", "Parser Fix", { preview: "Fix parser" }),
@@ -436,13 +443,47 @@ describe("buildCommandRegistry", () => {
     expect(actions.map((action) => action.id)).toContain("workspace.newTab");
     expect(actions.map((action) => action.id)).toContain("workspace.openInNewTab");
     expect(actions.map((action) => action.id)).toContain("settings.open");
-    expect(actions.map((action) => action.id)).toContain("workflow-library.open");
+    expect(actions.map((action) => action.id)).toContain("workflows.open");
     expect(actions.map((action) => action.id)).toContain("agents.open");
-    expect(actions.map((action) => action.id)).not.toContain("pane.split-right");
-    expect(actions.map((action) => action.id)).not.toContain("pane.split-below");
+    expect(actions.map((action) => action.id)).toContain("extensions.open");
+    expect(actions.map((action) => action.id)).toContain("extensions.generatedContextPreview");
+    expect(actions.map((action) => action.id)).toContain("snippets.open");
+    expect(actions.map((action) => action.id)).toContain("surface.logs.open");
     expect(actions.map((action) => action.id)).toContain("pane.duplicate-right");
     expect(actions.map((action) => action.id)).toContain("pane.duplicate-below");
-    expect(actions.map((action) => action.id)).toContain("project-ci.run");
+    expect(actions.map((action) => action.id)).toContain("pane.place-left");
+    expect(actions.map((action) => action.id)).toContain("pane.place-right");
+    expect(actions.map((action) => action.id)).toContain("pane.place-above");
+    expect(actions.map((action) => action.id)).toContain("pane.place-below");
+    expect(actions.map((action) => action.id)).toContain("pane.place-edge-left");
+    expect(actions.map((action) => action.id)).toContain("pane.place-edge-right");
+    expect(actions.map((action) => action.id)).toContain("pane.place-edge-top");
+    expect(actions.map((action) => action.id)).toContain("pane.place-edge-bottom");
+    expect(actions.map((action) => action.id)).toContain("pane.place-floating");
+    expect(actions.map((action) => action.id)).toContain("pane.place-popout");
+    expect(actions.map((action) => action.id)).not.toContain("pane.split-right");
+    expect(actions.map((action) => action.id)).not.toContain("pane.split-below");
+    expect(actions.map((action) => action.id)).not.toContain("project-ci.run");
+    expect(actions.map((action) => action.id)).not.toContain("project-ci.configure");
+    expect(actions.map((action) => action.id)).not.toContain("thread.resume.thread-1");
+    expect(actions.map((action) => action.id)).not.toContain("thread.handoff.thread-1");
+    expect(actions.map((action) => action.id)).not.toContain("request-context.open");
+    expect(actions.map((action) => action.id)).not.toContain("runtime.current");
+    expect(actions.map((action) => action.id).some((id) => id.startsWith("smithers."))).toBe(false);
+    for (const removedWorkflowPrefix of [
+      "workflow.run",
+      "workflow.resume",
+      "workflow.approve",
+      "workflow.inspect",
+      "workflow.debug",
+      "workflow.install",
+      "workflow.retrieve",
+      "workflow.promote",
+    ]) {
+      expect(
+        actions.map((action) => action.id).some((id) => id.startsWith(removedWorkflowPrefix)),
+      ).toBe(false);
+    }
     expect(actions.map((action) => action.id)).toContain("session.open.session-1");
     expect(actions.map((action) => action.id)).toContain("session.unarchive.session-2");
     expect(actions.map((action) => action.id)).not.toContain("surface.open-orchestrator.session-1");
@@ -466,6 +507,13 @@ describe("buildCommandRegistry", () => {
       "Cmd+Shift+O",
     );
     expect(actions.find((action) => action.id === "agents.open")?.shortcut).toBe("Cmd+Shift+2");
+    expect(actions.find((action) => action.id === "extensions.open")?.shortcut).toBe("Cmd+Shift+3");
+    expect(actions.find((action) => action.id === "surface.logs.open")?.shortcut).toBe(
+      "Cmd+Shift+1",
+    );
+    expect(filterCommandActions(actions, "generated context")[0]?.id).toBe(
+      "extensions.generatedContextPreview",
+    );
   });
 
   it("adds profile-specific New orchestrator actions carrying agent profile ids", () => {
@@ -510,11 +558,11 @@ describe("buildCommandRegistry", () => {
     const action = buildCommandRegistry({
       sessions: [],
       focusedSessionId: undefined,
-    }).find((candidate) => candidate.id === "workflow-library.open");
+    }).find((candidate) => candidate.id === "workflows.open");
 
     expect(action).toMatchObject({
       availability: { kind: "available" },
-      execute: { kind: "open-saved-workflow-library" },
+      execute: { kind: "open-workflows" },
     });
   });
 
@@ -552,12 +600,7 @@ describe("executeCommandAction", () => {
     });
     await executeCommandAction({
       runtime,
-      action: actions.find((action) => action.id === "project-ci.run")!,
-      paneId: "pane-b",
-    });
-    await executeCommandAction({
-      runtime,
-      action: actions.find((action) => action.id === "workflow-library.open")!,
+      action: actions.find((action) => action.id === "workflows.open")!,
       paneId: "pane-c",
     });
     await executeCommandAction({
@@ -565,15 +608,46 @@ describe("executeCommandAction", () => {
       action: actions.find((action) => action.id === "agents.open")!,
       paneId: "pane-d",
     });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "extensions.open")!,
+      paneId: "pane-e",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "snippets.open")!,
+      paneId: "pane-snippets",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "surface.logs.open")!,
+      paneId: "pane-f",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "extensions.generatedContextPreview")!,
+      paneId: "pane-g",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "settings.open")!,
+      paneId: "pane-h",
+    });
 
     expect(runtime.calls).toEqual([
       "open:session-1:pane-a",
       "pin:session-1",
-      "open:session-1:pane-b",
-      "prompt:session-1:Run Project CI for this workspace.",
-      "surface:saved-workflow-library:pane-c",
+      "surface:workflows:pane-c",
       "surface:agents:pane-d",
+      "surface:extensions:pane-e",
+      "surface:snippets:pane-snippets",
+      "surface:app-logs:pane-f",
+      "surface:extensions:pane-g",
+      "surface:settings:pane-h",
     ]);
+    expect(runtime.paneTarget).toEqual({
+      surface: "settings",
+    });
   });
 
   it("passes agent profile ids when executing profile-specific New orchestrator actions", async () => {
@@ -628,9 +702,18 @@ describe("executeCommandAction", () => {
 
   it("routes pane actions to focused pane layout operations", async () => {
     const runtime = createRuntime();
+    const target = {
+      workspaceSessionId: "session-1",
+      surface: "orchestrator",
+      surfacePiSessionId: "session-1",
+    } satisfies PromptTarget;
+    runtime.paneTarget = target;
     const actions = buildCommandRegistry({
       sessions: [session("session-1", "Parser Fix")],
       focusedSessionId: "session-1",
+      focusedPaneExists: true,
+      focusedSurfaceTarget: target,
+      paneTabGroups: [{ groupId: "group-1", label: "Tab", panelIds: ["primary", "secondary"] }],
     });
 
     await executeCommandAction({
@@ -656,6 +739,139 @@ describe("executeCommandAction", () => {
       "focus:new-panel",
       "close:focused-panel",
     ]);
+  });
+
+  it("routes pane placement commands through current pane bindings", async () => {
+    const runtime = createRuntime();
+    const target = {
+      workspaceSessionId: "session-1",
+      surface: "orchestrator",
+      surfacePiSessionId: "session-1",
+    } satisfies PromptTarget;
+    runtime.paneTarget = target;
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+      focusedPaneExists: true,
+      focusedSurfaceTarget: target,
+      paneTabGroups: [{ groupId: "group-1", label: "Tab", panelIds: ["primary", "secondary"] }],
+    });
+
+    for (const actionId of [
+      "pane.place-left",
+      "pane.place-right",
+      "pane.place-above",
+      "pane.place-below",
+      "pane.place-edge-left",
+      "pane.place-edge-right",
+      "pane.place-edge-top",
+      "pane.place-edge-bottom",
+      "pane.place-floating",
+      "pane.place-popout",
+      "pane.place-tab.group-1",
+    ]) {
+      await executeCommandAction({
+        runtime,
+        action: actions.find((action) => action.id === actionId)!,
+        paneId: "focused-panel",
+      });
+    }
+
+    expect(runtime.calls).toEqual([
+      'surface:session-1:{"kind":"split","panelId":"focused-panel","direction":"left"}',
+      'surface:session-1:{"kind":"split","panelId":"focused-panel","direction":"right"}',
+      'surface:session-1:{"kind":"split","panelId":"focused-panel","direction":"above"}',
+      'surface:session-1:{"kind":"split","panelId":"focused-panel","direction":"below"}',
+      'surface:session-1:{"kind":"edge","direction":"left"}',
+      'surface:session-1:{"kind":"edge","direction":"right"}',
+      'surface:session-1:{"kind":"edge","direction":"above"}',
+      'surface:session-1:{"kind":"edge","direction":"below"}',
+      'surface:session-1:{"kind":"floating"}',
+      'surface:session-1:{"kind":"popout"}',
+      'surface:session-1:{"kind":"tab","groupId":"group-1"}',
+    ]);
+  });
+
+  it("generates tab-group placement commands from Dockview group summaries", () => {
+    const target = {
+      workspaceSessionId: "session-1",
+      surface: "orchestrator",
+      surfacePiSessionId: "session-1",
+    } satisfies PromptTarget;
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+      focusedPaneExists: true,
+      focusedSurfaceTarget: target,
+      paneTabGroups: [
+        { groupId: "group-1", label: "Tab", panelIds: ["primary", "secondary"] },
+        { groupId: "group-2", label: "Tab group 2", panelIds: ["logs"] },
+      ],
+    });
+
+    expect(actions.find((action) => action.id === "pane.place-tab.group-1")).toMatchObject({
+      label: "Open Pane in Tab",
+      category: "pane",
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "place-tab", groupId: "group-1" },
+      targetName: "primary, secondary",
+    });
+    expect(actions.find((action) => action.id === "pane.place-tab.group-2")).toMatchObject({
+      label: "Open Pane in Tab group 2",
+      targetName: "logs",
+    });
+  });
+
+  it("wires pane command availability to actual runtime pane state in ChatWorkspace", async () => {
+    const workspaceSource = await Bun.file(
+      new URL("./ChatWorkspace.svelte", import.meta.url),
+    ).text();
+
+    expect(workspaceSource).toContain("focusedPaneExists: !!runtime.paneLayout.focusedPanelId");
+    expect(workspaceSource).toContain("getDockviewTabGroupPlacementTargets(runtime.paneLayout)");
+    expect(workspaceSource).not.toContain("syncArtifactsFromRuntime");
+  });
+
+  it("does not place an unbound pane", async () => {
+    const runtime = createRuntime();
+    const actions = buildCommandRegistry({ sessions: [], focusedPaneExists: true });
+
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "pane.place-floating")!,
+      paneId: "focused-panel",
+    });
+
+    expect(runtime.calls).toEqual([]);
+  });
+
+  it("disables pane placement commands until a focused pane surface exists", () => {
+    const actions = buildCommandRegistry({ sessions: [] });
+
+    expect(actions.find((action) => action.id === "pane.close")?.availability).toEqual({
+      kind: "disabled",
+      reason: "Focus a pane before using pane placement commands.",
+    });
+    expect(actions.find((action) => action.id === "pane.place-floating")?.availability).toEqual({
+      kind: "disabled",
+      reason: "Focus a pane before using pane placement commands.",
+    });
+  });
+
+  it("allows close but not placement when the focused pane has no bound surface", () => {
+    const actions = buildCommandRegistry({ sessions: [], focusedPaneExists: true });
+
+    expect(actions.find((action) => action.id === "pane.close")?.availability).toEqual({
+      kind: "available",
+    });
+    expect(actions.find((action) => action.id === "pane.duplicate-right")?.availability).toEqual({
+      kind: "disabled",
+      reason: "The focused pane has no surface to place.",
+    });
+    expect(actions.find((action) => action.id === "pane.place-popout")?.availability).toEqual({
+      kind: "disabled",
+      reason: "The focused pane has no surface to place.",
+    });
   });
 
   it("opens workflow task-agent sessions through the task-attempt inspector callback", async () => {

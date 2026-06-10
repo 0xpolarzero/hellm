@@ -5,8 +5,7 @@
   import PanelLeftDashedIcon from "@lucide/svelte/icons/panel-left-dashed";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-  import type { AgentSettingsState } from "../shared/agent-settings";
-  import { ArtifactsController } from "./artifacts";
+  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
   import CommandPalette from "./CommandPalette.svelte";
   import DockviewWorkspace from "./DockviewWorkspace.svelte";
   import { formatTimestamp } from "./chat-format";
@@ -27,12 +26,13 @@
   import { getSurfaceDisplayTitle } from "./surface-title";
   import type {
     AppLogSummary,
+    AgentModelChoice,
     WorkspaceHandlerThreadSummary,
-    WorkspaceProjectCiPanelStatus,
-    WorkspaceProjectCiStatusPanel,
     WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
     WorkspacePaneSurfaceTarget,
+    WorkspaceRequestUserInputRequest,
+    WorkspaceRuntimeApprovalRequest,
     WorkspaceSessionNavigationReadModel,
     WorkspaceSessionSummary,
     WorkspaceSidebarHandlerThreadRow,
@@ -61,6 +61,8 @@
   } from "./chat-runtime";
   import {
     createEmptyPaneLayout,
+    getDockviewTabGroupPlacementTargets,
+    getOpenPaneLocations,
     getSidebarPaneOpenTarget,
     getSidebarSessionOpenTarget,
     type PaneOpenTarget,
@@ -86,6 +88,8 @@
     type ShortcutActionId,
   } from "../shared/shortcut-registry";
   import ModelPickerDialog from "./ModelPickerDialog.svelte";
+  import RequestUserInputPanel from "./RequestUserInputPanel.svelte";
+  import RuntimeApprovalPanel from "./RuntimeApprovalPanel.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -99,7 +103,8 @@
   type Props = {
     runtime: ChatRuntime;
     shortcutsEnabled?: boolean;
-    onOpenSettings?: () => void;
+    onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
+    onAppAppearanceChanged?: (appearance: AppAppearance) => void;
     workspaceTabs?: WorkspaceTabStripItem[];
     activeWorkspaceTabId?: string | null;
     openingWorkspace?: boolean;
@@ -116,7 +121,8 @@
   let {
     runtime,
     shortcutsEnabled = true,
-    onOpenSettings,
+    onProviderAuthChanged,
+    onAppAppearanceChanged,
     workspaceTabs = [],
     activeWorkspaceTabId = null,
     openingWorkspace = false,
@@ -131,7 +137,6 @@
   }: Props = $props();
   const sidebarToggleShortcut = getShortcutReadable("sidebar.toggle");
 
-  let controller = $state<ArtifactsController | null>(null);
   let messages = $state<ChatSurfaceController["agent"]["state"]["messages"]>([]);
   let streamMessage = $state<AssistantMessage | null>(null);
   let pendingToolCalls = $state(new Set<string>());
@@ -140,7 +145,7 @@
   let currentModel = $state<Model<any> | null>(null);
   let currentThinkingLevel = $state<ThinkingLevel>("off");
   let showModelPicker = $state(false);
-  let allowedProviders = $state<string[]>([]);
+  let modelChoices = $state<AgentModelChoice[]>([]);
   let promptHistory = $state<PromptHistoryEntry[]>([]);
   let windowWidth = $state(typeof window === "undefined" ? 1024 : window.innerWidth);
   let isMacWindowChrome = $state(false);
@@ -162,8 +167,8 @@
   let appLogSummary = $state<AppLogSummary>({
     latestSeq: 0,
     seenSeq: 0,
-    unread: { total: 0, info: 0, warning: 0, error: 0 },
-    totals: { total: 0, info: 0, warning: 0, error: 0 },
+    unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
   });
   let activeSessionId = $state<string | undefined>(undefined);
   let paneLayout = $state<ChatPaneLayoutState>({
@@ -187,8 +192,6 @@
   let renameTarget = $state<WorkspaceSessionSummary | null>(null);
   let renameValue = $state("");
   let sidebarResizeHandle = $state<HTMLDivElement | null>(null);
-  let artifactSyncSessionId: string | undefined = undefined;
-  let artifactSyncMessageCount = 0;
   let copyTranscriptState = $state<{
     panelId: string | null;
     status: "idle" | "copying" | "copied" | "error";
@@ -199,21 +202,20 @@
   let handlerThreads = $state<WorkspaceHandlerThreadSummary[]>([]);
   let handlerThreadsLoading = $state(false);
   let handlerThreadsError = $state<string | undefined>(undefined);
-  let projectCiStatus = $state<WorkspaceProjectCiStatusPanel | null>(null);
-  let projectCiError = $state<string | undefined>(undefined);
   let paletteOpen = $state(false);
   let paletteInitialInput = $state(getCommandPaletteInitialInput("commands"));
   let paletteError = $state<string | undefined>(undefined);
   let paletteBusy = $state(false);
   let workspaceMentionPaths = $state<ReadonlySet<string>>(new Set());
   let agentSettings = $state<AgentSettingsState | null>(null);
+  let requestUserInputRequests = $state<WorkspaceRequestUserInputRequest[]>([]);
+  let runtimeApprovalRequests = $state<WorkspaceRuntimeApprovalRequest[]>([]);
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
   let sidebarResizeOriginWidth = DEFAULT_SIDEBAR_WIDTH;
   let copyTranscriptResetTimer: ReturnType<typeof setTimeout> | null = null;
   let handlerThreadLoadToken = 0;
-  let projectCiLoadToken = 0;
   let unsubscribeSurfaceController: (() => void) | null = null;
 
   const conversation = $derived(projectConversation(messages));
@@ -268,19 +270,16 @@
   function buildSidebarPaneLocations(
     predicate: (binding: WorkspacePaneSurfaceTarget) => boolean,
   ): SidebarPaneLocation[] {
-    return paneLayout.panels
-      .filter((panel) => panel.binding && predicate(panel.binding))
-      .map((panel, index) => {
-        const paneController = runtime.getPaneController(panel.panelId);
-        return {
-          paneId: panel.panelId,
-          panelId: panel.panelId,
-          label: panel.restore?.lastKnownLocationLabel ?? (index === 0 ? "Docked" : `Docked ${index + 1}`),
-          focused: panel.panelId === paneLayout.focusedPanelId,
-          tone: getSidebarPaneTone(panel.binding, paneController),
-          contextBudget: getPaneContextBudget(paneController),
-        };
-      });
+    return getOpenPaneLocations(paneLayout, predicate).flatMap((location) => {
+      const panel = paneLayout.panels.find((candidate) => candidate.panelId === location.panelId);
+      if (!panel?.binding) return [];
+      const paneController = runtime.getPaneController(location.panelId);
+      return {
+        ...location,
+        tone: getSidebarPaneTone(panel.binding, paneController),
+        contextBudget: getPaneContextBudget(paneController),
+      };
+    });
   }
 
   const paneLocationsBySessionId = $derived(
@@ -308,23 +307,7 @@
       ),
     ),
   );
-  const paneLocationsByWorkflowRunId = $derived(
-    Object.fromEntries(
-      sessions.flatMap((session) =>
-        (session.sidebarThreads ?? []).flatMap((thread) =>
-          thread.workflows.map((workflow) => [
-            workflow.workflowRunId,
-            buildSidebarPaneLocations(
-              (binding) =>
-                binding.workspaceSessionId === session.id &&
-                binding.surface === "workflow-inspector" &&
-                binding.workflowRunId === workflow.workflowRunId,
-            ),
-          ]),
-        ),
-      ),
-    ),
-  );
+  const paneLocationsByWorkflowRunId = $derived<Record<string, SidebarPaneLocation[]>>({});
   const currentSurfaceLabel = $derived.by(() => {
     if (currentSurface?.surface === "thread") {
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
@@ -336,17 +319,17 @@
     paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
-    if (binding?.surface === "workflow-inspector") {
-      return "Workflow Inspector";
-    }
-    if (binding?.surface === "saved-workflow-library") {
+    if (binding?.surface === "workflows") {
       return "Workflows";
-    }
-    if (binding?.surface === "prompt-library") {
-      return "Context";
     }
     if (binding?.surface === "agents") {
       return "Agents";
+    }
+    if (binding?.surface === "extensions") {
+      return "Extensions";
+    }
+    if (binding?.surface === "snippets") {
+      return "Snippets";
     }
     if (binding?.surface === "app-logs") {
       return "Logs";
@@ -360,9 +343,6 @@
     if (binding?.surface === "artifact") {
       return "Artifact";
     }
-    if (binding?.surface === "project-ci-check") {
-      return "Project CI Check";
-    }
     if (paneController?.target.surface === "thread") {
       return "Handler Thread";
     }
@@ -372,17 +352,17 @@
     paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
-    if (binding?.surface === "workflow-inspector") {
-      return binding.workflowRunId;
-    }
-    if (binding?.surface === "saved-workflow-library") {
-      return ".svvy/workflows";
-    }
-    if (binding?.surface === "prompt-library") {
-      return "actors";
+    if (binding?.surface === "workflows") {
+      return "@svvy/workflows";
     }
     if (binding?.surface === "agents") {
       return "profiles";
+    }
+    if (binding?.surface === "extensions") {
+      return "inventory";
+    }
+    if (binding?.surface === "snippets") {
+      return "prompt macros";
     }
     if (binding?.surface === "app-logs") {
       return "workspace";
@@ -398,15 +378,14 @@
   function formatPaneLocationMetadata(
     binding?: WorkspacePaneSurfaceTarget | null,
   ): { label: string; value: string } {
-    if (binding?.surface === "workflow-inspector") return { label: "surface", value: "workflow" };
-    if (binding?.surface === "saved-workflow-library") return { label: "surface", value: "library" };
-    if (binding?.surface === "prompt-library") return { label: "surface", value: "context" };
+    if (binding?.surface === "workflows") return { label: "surface", value: "workflows" };
     if (binding?.surface === "agents") return { label: "surface", value: "agents" };
+    if (binding?.surface === "extensions") return { label: "surface", value: "extensions" };
+    if (binding?.surface === "snippets") return { label: "surface", value: "snippets" };
     if (binding?.surface === "app-logs") return { label: "surface", value: "logs" };
     if (binding?.surface === "command") return { label: "surface", value: "command" };
     if (binding?.surface === "workflow-task-attempt") return { label: "surface", value: "task" };
     if (binding?.surface === "artifact") return { label: "surface", value: "artifact" };
-    if (binding?.surface === "project-ci-check") return { label: "surface", value: "project-ci" };
     if (workspaceBranch) return { label: "worktree", value: workspaceBranch };
     return { label: "workspace", value: runtime.workspaceLabel };
   }
@@ -462,16 +441,6 @@
     currentSurface?.surface === "orchestrator" &&
       (handlerThreadsLoading || !!handlerThreadsError || handlerThreads.length > 0),
   );
-  const hasActionableProjectCiStatus = $derived(
-    !!projectCiError ||
-      !!projectCiStatus?.activeWorkflowRun ||
-      !!projectCiStatus?.latestRun ||
-      (projectCiStatus?.entries.length ?? 0) > 0 ||
-      (projectCiStatus?.checks.length ?? 0) > 0,
-  );
-  const showDetailedProjectCiPanel = $derived(
-    currentSurface?.surface === "orchestrator" && currentSession && hasActionableProjectCiStatus,
-  );
   const transcriptSemanticBlocks = $derived(
     buildTranscriptSemanticBlocks({
       session: currentSession,
@@ -486,8 +455,7 @@
       !streamMessage &&
       !isStreaming &&
       !errorMessage &&
-      !showHandlerThreadPanel &&
-      !showDetailedProjectCiPanel,
+      !showHandlerThreadPanel,
   );
   const recentSessionSuggestions = $derived(
     sessions.filter((session) => session.id !== activeSessionId).slice(0, 3),
@@ -497,10 +465,11 @@
       sessions,
       workspaceKind: runtime.kind,
       focusedSessionId: activeSessionId,
+      focusedPaneExists: !!runtime.paneLayout.focusedPanelId,
       focusedSurfaceTarget,
+      paneTabGroups: getDockviewTabGroupPlacementTargets(runtime.paneLayout),
       orchestratorProfiles: agentSettings?.agents.orchestrators ?? [],
       handlerThreads,
-      projectCiStatus,
     }),
   );
   const visibleCommandActions = $derived(filterCommandActions(commandRegistry, ""));
@@ -560,7 +529,7 @@
       },
       {
         hotkey: getShortcutHotkey("surface.workflows.open"),
-        callback: () => openSavedWorkflowLibrary(),
+        callback: () => openWorkflowsPane(),
         options: () => workspaceShortcutOptions("surface.workflows.open"),
       },
       {
@@ -569,9 +538,9 @@
         options: () => workspaceShortcutOptions("surface.agents.open"),
       },
       {
-        hotkey: getShortcutHotkey("surface.context.open"),
-        callback: () => openPromptLibrary(),
-        options: () => workspaceShortcutOptions("surface.context.open"),
+        hotkey: getShortcutHotkey("surface.extensions.open"),
+        callback: () => openExtensionsPane(),
+        options: () => workspaceShortcutOptions("surface.extensions.open"),
       },
     ],
     () => ({
@@ -633,13 +602,21 @@
     setTimeout(() => {
       showModelPicker = true;
     }, 0);
-    allowedProviders = [currentModel.provider];
+    modelChoices = [];
     try {
-      const configuredProviders = await runtime.listConfiguredProviders();
-      allowedProviders = Array.from(new Set([currentModel.provider, ...configuredProviders]));
+      modelChoices = (await runtime.getAgentModelChoices()).items;
     } catch {
-      allowedProviders = [currentModel.provider];
+      modelChoices = [];
     }
+  }
+
+  function clampThinkingLevelForModel(choice: AgentModelChoice): ThinkingLevel {
+    if (choice.supportedReasoning.includes(currentThinkingLevel)) {
+      return currentThinkingLevel;
+    }
+    return choice.supportedReasoning.includes("medium")
+      ? "medium"
+      : (choice.supportedReasoning[0] ?? "off");
   }
 
   function getLatestAssistantFailureMessage(
@@ -658,25 +635,6 @@
         .trim();
 
     return message || undefined;
-  }
-
-  async function syncArtifactsFromRuntime(force = false) {
-    if (!controller || !currentSurfaceController) return;
-
-    const sessionId = currentSurfaceController.agent.sessionId;
-    const nextMessageCount = currentSurfaceController.agent.state.messages.length;
-    const sessionChanged = artifactSyncSessionId !== sessionId;
-    const cursorWentBackwards = nextMessageCount < artifactSyncMessageCount;
-
-    if (force || sessionChanged || cursorWentBackwards) {
-      await controller.syncFromMessages(currentSurfaceController.agent.state.messages, { replace: true });
-      artifactSyncSessionId = sessionId;
-      artifactSyncMessageCount = nextMessageCount;
-      return;
-    }
-
-    await controller.syncFromMessages(currentSurfaceController.agent.state.messages);
-    artifactSyncMessageCount = nextMessageCount;
   }
 
   function toggleSidebarVisibility() {
@@ -731,7 +689,6 @@
       syncRuntimeState();
       resubscribeSurfaceController();
       syncSurfaceState();
-      await syncArtifactsFromRuntime();
     } catch (error) {
       sidebarError = error instanceof Error ? error.message : "Session update failed.";
       if (options.rethrow) {
@@ -803,13 +760,13 @@
         openAppLogs();
         return;
       case "surface.workflows.open":
-        openSavedWorkflowLibrary();
+        openWorkflowsPane();
         return;
       case "surface.agents.open":
         openAgentsPane();
         return;
-      case "surface.context.open":
-        openPromptLibrary();
+      case "surface.extensions.open":
+        openExtensionsPane();
         return;
     }
   }
@@ -824,7 +781,6 @@
       syncRuntimeState();
       resubscribeSurfaceController();
       syncSurfaceState();
-      await syncArtifactsFromRuntime();
       closePalette();
     } catch (error) {
       paletteError = error instanceof Error ? error.message : "Command failed.";
@@ -849,7 +805,6 @@
             runtime,
             action,
             panelId,
-            onOpenSettings: () => onOpenSettings?.(),
             onWorkspaceAction: (workspaceAction) => {
               if (workspaceAction === "open") onOpenWorkspace?.();
               if (workspaceAction === "new-tab") onNewWorkspaceTab?.();
@@ -973,7 +928,6 @@
     syncRuntimeState();
     resubscribeSurfaceController();
     syncSurfaceState();
-    await syncArtifactsFromRuntime(true);
   }
 
   async function handleOpenPaneModelPicker(panelId: string) {
@@ -1032,20 +986,6 @@
     await runSessionMutation(() => runtime.setSessionNavigationSectionState(section, state));
   }
 
-  async function persistPromptHistoryEntry(input: string, target: PromptTarget | null = currentSurface) {
-    try {
-      const entry = await runtime.storage.promptHistory.append({
-        text: input,
-        sentAt: Date.now(),
-        workspaceId: runtime.workspaceId,
-        sessionId: target?.workspaceSessionId ?? currentSession?.id ?? "unknown-session",
-      });
-      promptHistory = [...promptHistory, entry];
-    } catch (error) {
-      console.error("Failed to persist prompt history:", error);
-    }
-  }
-
   async function handleSend(input: ComposerPromptSubmission): Promise<boolean> {
     return handleSendToPane(focusedPanelId, input);
   }
@@ -1063,14 +1003,27 @@
         syncSurfaceState();
       }
 
-      if (input.text.trim()) {
-        await persistPromptHistoryEntry(input.text.trim(), surface.target);
+      const hasProviderAccess = await runtime.requireProviderAccess(surface.agent.state.model.provider);
+      if (!hasProviderAccess) {
+        const text = input.text.trim();
+        if (text) {
+          try {
+            const entry = await runtime.storage.promptHistory.append({
+              text,
+              sentAt: Date.now(),
+              workspaceId: runtime.workspaceId,
+              sessionId: surface.target.workspaceSessionId,
+            });
+            promptHistory = [...promptHistory, entry];
+          } catch (error) {
+            console.error("Failed to persist prompt history:", error);
+          }
+        }
+        return false;
       }
 
-      const hasProviderAccess = await runtime.requireProviderAccess(surface.agent.state.model.provider);
-      if (!hasProviderAccess) return false;
-
       await surface.sendPrompt(input);
+      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
       return true;
     } finally {
       sendingPrompt = false;
@@ -1140,104 +1093,10 @@
     }
   }
 
-  function getProjectCiStatusLabel(status: WorkspaceProjectCiPanelStatus): string {
-    switch (status) {
-      case "not-configured":
-        return "Not configured";
-      case "configured":
-        return "Configured";
-      case "running":
-        return "Running";
-      case "passed":
-        return "Passed";
-      case "failed":
-        return "Failed";
-      case "blocked":
-        return "Blocked";
-      case "cancelled":
-        return "Cancelled";
-      default:
-        return status;
-    }
-  }
-
-  function getProjectCiStatusTone(
-    status: WorkspaceProjectCiPanelStatus,
-  ): "neutral" | "info" | "success" | "warning" | "danger" {
-    switch (status) {
-      case "running":
-        return "info";
-      case "passed":
-        return "success";
-      case "configured":
-      case "not-configured":
-      case "skipped":
-      case "cancelled":
-        return "neutral";
-      case "blocked":
-        return "info";
-      case "failed":
-        return "danger";
-      default:
-        return "neutral";
-    }
-  }
-
-  function formatProjectCiCommand(command: string[] | null): string | null {
-    if (!command || command.length === 0) {
-      return null;
-    }
-
-    return command.join(" ");
-  }
-
-  function formatProjectCiExitCode(exitCode: number | null): string | null {
-    if (exitCode === null) {
-      return null;
-    }
-
-    return `exit code ${exitCode}`;
-  }
-
-  function formatProjectCiCheckCounts(status: WorkspaceProjectCiStatusPanel): string {
-    const counts = status.checkCounts;
-    if (counts.total === 0) {
-      return "No checks";
-    }
-    const failed = counts.failed + counts.blocked + counts.cancelled;
-    if (failed > 0) {
-      return `${counts.passed}/${counts.total} passed, ${failed} attention`;
-    }
-    return `${counts.passed}/${counts.total} passed`;
-  }
-
-  function handleInspectLatestProjectCiRun() {
-    if (!projectCiStatus?.latestRun) {
-      return;
-    }
-    void openWorkflowInspector(projectCiStatus.latestRun.workflowRunId);
-  }
-
-  function openWorkflowInspector(
-    workflowRunId: string,
-    sessionId = activeSessionId,
-    openTarget: PaneOpenTarget = { kind: "split", panelId: focusedPanelId, direction: "right" },
-  ): void {
-    if (!sessionId) return;
+  function openWorkflowsPane(event?: MouseEvent): void {
     void runtime.openSurface(
       {
-        workspaceSessionId: sessionId,
-        surface: "workflow-inspector",
-        workflowRunId,
-      },
-      openTarget,
-    );
-  }
-
-  function openSavedWorkflowLibrary(event?: MouseEvent): void {
-    void runtime.openSurface(
-      {
-        surface: "saved-workflow-library",
+        surface: "workflows",
       },
       getSidebarPaneOpenTarget(event),
     );
@@ -1252,6 +1111,43 @@
     );
   }
 
+  function openAgentProfile(agentProfileId: string): void {
+    void runtime.openSurface(
+      {
+        surface: "agents",
+        targetAgentProfileId: agentProfileId,
+      },
+      { kind: "focused-panel" },
+    );
+  }
+
+  function openExtensionsPane(event?: MouseEvent): void {
+    void runtime.openSurface(
+      {
+        surface: "extensions",
+      },
+      getSidebarPaneOpenTarget(event),
+    );
+  }
+
+  function openSnippetsPane(event?: MouseEvent): void {
+    void runtime.openSurface(
+      {
+        surface: "snippets",
+      },
+      getSidebarPaneOpenTarget(event),
+    );
+  }
+
+  function openSettingsPane(event?: MouseEvent): void {
+    void runtime.openSurface(
+      {
+        surface: "settings",
+      },
+      getSidebarPaneOpenTarget(event),
+    );
+  }
+
   function openAppLogs(event?: MouseEvent): void {
     void runtime.openSurface(
       {
@@ -1260,15 +1156,6 @@
       getSidebarPaneOpenTarget(event),
     );
     void runtime.markAppLogsSeen(runtime.appLogSummary.latestSeq);
-  }
-
-  function openPromptLibrary(event?: MouseEvent): void {
-    void runtime.openSurface(
-      {
-        surface: "prompt-library",
-      },
-      getSidebarPaneOpenTarget(event),
-    );
   }
 
   function handleOpenHandlerThread(
@@ -1315,7 +1202,9 @@
     workflow: Pick<WorkspaceSidebarWorkflowRow, "workflowRunId">,
     event?: MouseEvent,
   ) {
-    openWorkflowInspector(workflow.workflowRunId, sessionId, getSidebarPaneOpenTarget(event));
+    void sessionId;
+    void workflow;
+    openWorkflowsPane(event);
   }
 
   async function sendPromptToHandlerThread(
@@ -1361,6 +1250,62 @@
     await runSessionMutation(() => runtime.sendPromptToTarget(target, text));
   }
 
+  async function handleAnswerRequestUserInput(
+    request: Parameters<ChatRuntime["answerRequestUserInput"]>[0],
+  ) {
+    await runSessionMutation(() => runtime.answerRequestUserInput(request), { rethrow: true });
+  }
+
+  async function handleSetRequestUserInputTimerPaused(
+    request: Parameters<ChatRuntime["setRequestUserInputTimerPaused"]>[0],
+  ) {
+    await runSessionMutation(() => runtime.setRequestUserInputTimerPaused(request), {
+      rethrow: true,
+    });
+  }
+
+  async function handleOpenRequestUserInputOwner(request: WorkspaceRequestUserInputRequest) {
+    await runSessionMutation(() => {
+      if (request.threadId) {
+        return runtime.openSurface(
+          {
+            workspaceSessionId: request.workspaceSessionId,
+            surface: "thread",
+            surfacePiSessionId: request.surfacePiSessionId,
+            threadId: request.threadId,
+          },
+          { kind: "focused-panel" },
+        );
+      }
+      return runtime.openSession(request.workspaceSessionId, { kind: "focused-panel" });
+    });
+  }
+
+  async function handleAnswerRuntimeApproval(
+    request: Parameters<ChatRuntime["answerRuntimeApprovalRequest"]>[0],
+  ) {
+    await runSessionMutation(() => runtime.answerRuntimeApprovalRequest(request), {
+      rethrow: true,
+    });
+  }
+
+  async function handleOpenRuntimeApprovalOwner(request: WorkspaceRuntimeApprovalRequest) {
+    await runSessionMutation(() => {
+      if (request.threadId) {
+        return runtime.openSurface(
+          {
+            workspaceSessionId: request.workspaceSessionId,
+            surface: "thread",
+            surfacePiSessionId: request.surfacePiSessionId,
+            threadId: request.threadId,
+          },
+          { kind: "focused-panel" },
+        );
+      }
+      return runtime.openSession(request.workspaceSessionId, { kind: "focused-panel" });
+    });
+  }
+
   async function handleRetryFailure(block: TranscriptSemanticBlock & { kind: "failure" }) {
     const target = currentSurfaceController?.target;
     if (!target) {
@@ -1389,37 +1334,6 @@
       { kind: "split", panelId: focusedPanelId, direction: "right" },
     );
   }
-
-  $effect(() => {
-    const session = currentSession;
-    if (!session) {
-      projectCiStatus = null;
-      projectCiError = undefined;
-      return;
-    }
-
-    const loadToken = ++projectCiLoadToken;
-    projectCiError = undefined;
-    projectCiStatus = null;
-    void runtime
-      .getProjectCiStatus(session.id)
-      .then((status) => {
-        if (loadToken !== projectCiLoadToken) {
-          return;
-        }
-
-        projectCiStatus = status;
-      })
-      .catch((error) => {
-        if (loadToken !== projectCiLoadToken) {
-          return;
-        }
-
-        projectCiError =
-          error instanceof Error ? error.message : "Unable to load Project CI status.";
-        projectCiStatus = null;
-      })
-  });
 
   $effect(() => {
     const session = currentSession;
@@ -1459,14 +1373,6 @@
       });
   });
 
-  function syncSurfaceTools() {
-    if (!controller || !currentSurfaceController) {
-      return;
-    }
-
-    currentSurfaceController.agent.state.tools = [controller.tool];
-  }
-
   function syncSurfaceState() {
     const surface = currentSurfaceController;
     if (!surface) {
@@ -1502,6 +1408,8 @@
     activeLayoutId = runtime.activeLayoutId;
     layoutSlots = runtime.layoutSlots;
     layoutSlotsEnabled = runtime.layoutSlotsEnabled;
+    requestUserInputRequests = runtime.getRequestUserInputRequests();
+    runtimeApprovalRequests = runtime.getRuntimeApprovalRequests();
     focusedPanelId = paneLayout.focusedPanelId ?? PRIMARY_CHAT_PANE_ID;
     currentPane = runtime.getPane(focusedPanelId) ?? null;
     focusedSurfaceTarget = currentPane?.target ?? null;
@@ -1517,13 +1425,10 @@
       return;
     }
 
-    syncSurfaceTools();
     unsubscribeSurfaceController = currentSurfaceController.subscribe(() => {
       focusedSurfaceTarget = currentSurfaceController?.target ?? null;
       activeSessionId = currentSurfaceController?.target.workspaceSessionId;
-      syncSurfaceTools();
       syncSurfaceState();
-      void syncArtifactsFromRuntime();
     });
   }
 
@@ -1533,8 +1438,6 @@
   onMount(() => {
     windowWidth = window.innerWidth;
     isMacWindowChrome = navigator.platform.toLowerCase().includes("mac");
-    const nextController = new ArtifactsController();
-    controller = nextController;
     const handleResize = () => {
       windowWidth = window.innerWidth;
     };
@@ -1544,7 +1447,6 @@
     window.addEventListener("resize", handleResize);
     const unsubscribeAppMenuAction = runtime.subscribeAppMenuAction(handleAppMenuMessage);
 
-    syncSurfaceTools();
     void runtime.storage.promptHistory
       .list(runtime.workspaceId)
       .then((entries) => {
@@ -1567,22 +1469,16 @@
       syncRuntimeState();
       resubscribeSurfaceController();
       syncSurfaceState();
-      void syncArtifactsFromRuntime();
     });
-    const unsubscribeArtifacts = nextController.subscribe(() => undefined);
     resubscribeSurfaceController();
-    void syncArtifactsFromRuntime(true);
 
     return () => {
       unsubscribeRuntime();
-      unsubscribeArtifacts();
       unsubscribeSurfaceController?.();
-      nextController.dispose();
       setSidebarResizing(false);
       clearCopyTranscriptResetTimer();
       window.removeEventListener("resize", handleResize);
       unsubscribeAppMenuAction();
-      controller = null;
     };
   });
 </script>
@@ -1629,26 +1525,7 @@
       />
     </div>
     <div class="workspace-titlebar-actions electrobun-webkit-app-region-no-drag">
-      <div class="workspace-main-meta" role="toolbar" aria-label="Workspace actions">
-        {#if projectCiStatus && hasActionableProjectCiStatus}
-          <div class="project-ci-compact" aria-label="Project CI summary">
-            <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
-              CI {getProjectCiStatusLabel(projectCiStatus.status)}
-            </Badge>
-            <span>{projectCiStatus.summary}</span>
-            <span>{formatProjectCiCheckCounts(projectCiStatus)}</span>
-            {#if projectCiStatus.latestRun}
-              <Button
-                variant="ghost"
-                size="sm"
-                onclick={handleInspectLatestProjectCiRun}
-              >
-                Inspect
-              </Button>
-            {/if}
-          </div>
-        {/if}
-      </div>
+      <div class="workspace-main-meta" role="toolbar" aria-label="Workspace actions"></div>
       <div class="workspace-layout-switcher" role="tablist" aria-label="Workspace layouts">
         {#each layoutSlots as slot (slot.id)}
           <Tooltip
@@ -1681,7 +1558,7 @@
   </header>
 
   <div
-    class={`chat-workspace ${effectiveSidebarHidden ? "sidebar-hidden" : ""} viewport-${viewportClass}`.trim()}
+    class={`chat-workspace ${effectiveSidebarHidden ? "sidebar-hidden" : ""} ${requestUserInputRequests.length > 0 ? "has-request-input" : ""} viewport-${viewportClass}`.trim()}
     style={`--sidebar-width: ${effectiveSidebarWidth}px;`}
   >
     <aside class="workspace-sidebar" aria-hidden={effectiveSidebarHidden} inert={effectiveSidebarHidden}>
@@ -1717,10 +1594,11 @@
           onOpenSearch={() => openPalette("search")}
           onOpenCommandPalette={() => openPalette("commands")}
           onOpenAppLogs={openAppLogs}
-          onOpenWorkflowLibrary={openSavedWorkflowLibrary}
+          onOpenWorkflowLibrary={openWorkflowsPane}
           onOpenAgents={openAgentsPane}
-          onOpenPromptLibrary={openPromptLibrary}
-          onOpenSettings={onOpenSettings}
+          onOpenExtensions={openExtensionsPane}
+          onOpenSnippets={openSnippetsPane}
+          onOpenSettings={openSettingsPane}
           onListWorkspaceBranches={runtime.listWorkspaceBranches}
           onSwitchWorkspaceBranch={handleSwitchWorkspaceBranch}
         />
@@ -1758,11 +1636,31 @@
         onFocusPanel={(panelId) => void handleFocusPane(panelId)}
         onOpenModelPicker={(panelId) => void handleOpenPaneModelPicker(panelId)}
         onAgentSettingsChanged={(settings) => (agentSettings = settings)}
+        {onProviderAuthChanged}
+        {onAppAppearanceChanged}
         onOpenWorkspace={() => onOpenWorkspace?.()}
         onOpenWorkspaceInNewTab={() => onOpenWorkspaceInNewTab?.()}
+        onOpenAgentProfile={openAgentProfile}
         onPersistDockview={(dockview, panelId) => runtime.setDockviewLayout(dockview, panelId)}
       />
     </section>
+
+    {#if requestUserInputRequests.length > 0}
+      <RequestUserInputPanel
+        requests={requestUserInputRequests}
+        onAnswer={handleAnswerRequestUserInput}
+        onSetTimerPaused={handleSetRequestUserInputTimerPaused}
+        onOpenOwner={(request) => void handleOpenRequestUserInputOwner(request)}
+      />
+    {/if}
+
+    {#if runtimeApprovalRequests.length > 0}
+      <RuntimeApprovalPanel
+        requests={runtimeApprovalRequests}
+        onAnswer={handleAnswerRuntimeApproval}
+        onOpenOwner={(request) => void handleOpenRuntimeApprovalOwner(request)}
+      />
+    {/if}
 
   </div>
 
@@ -1782,12 +1680,16 @@
 {#if showModelPicker}
   <ModelPickerDialog
     currentModel={currentModel}
-    allowedProviders={allowedProviders}
-    storage={runtime.storage}
+    {modelChoices}
     onClose={() => (showModelPicker = false)}
-    onSelect={(model) => {
+    onSelect={(model, choice) => {
+      const nextThinkingLevel = clampThinkingLevelForModel(choice);
       currentModel = model;
       currentSurfaceController?.agent.setModel(model);
+      if (nextThinkingLevel !== currentThinkingLevel) {
+        currentThinkingLevel = nextThinkingLevel;
+        currentSurfaceController?.agent.setThinkingLevel(nextThinkingLevel);
+      }
       showModelPicker = false;
     }}
   />
@@ -1947,12 +1849,21 @@
     padding: 0;
   }
 
+  .chat-workspace.has-request-input {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) minmax(18rem, 22rem);
+  }
+
   .chat-workspace.sidebar-hidden {
     grid-template-columns: 0rem minmax(0, 1fr);
   }
 
+  .chat-workspace.sidebar-hidden.has-request-input {
+    grid-template-columns: 0rem minmax(0, 1fr) minmax(18rem, 22rem);
+  }
+
   .workspace-sidebar,
-  .workspace-main {
+  .workspace-main,
+  :global(.request-user-input-panel) {
     min-height: 0;
     min-width: 0;
   }
@@ -2173,24 +2084,6 @@
     color: var(--ui-text-primary);
   }
 
-  .project-ci-compact {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.42rem;
-    max-width: min(38rem, 100%);
-    min-height: 1.72rem;
-    padding: 0.18rem 0.28rem;
-    border-radius: var(--ui-radius-md);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 70%, transparent);
-  }
-
-  .project-ci-compact span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .chat-pane {
     min-height: 0;
   }
@@ -2379,24 +2272,21 @@
     color: var(--ui-text-tertiary);
   }
 
-  .handler-thread-empty,
-  .project-ci-empty {
+  .handler-thread-empty {
     margin: 0;
     font-size: var(--text-sm);
     line-height: 1.55;
     color: var(--ui-text-secondary);
   }
 
-  .handler-thread-empty,
-  .project-ci-empty {
+  .handler-thread-empty {
     padding: 0.9rem;
     border-radius: var(--ui-radius-md);
     border: 1px dashed color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
     background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
   }
 
-  .handler-thread-empty.error,
-  .project-ci-empty.error {
+  .handler-thread-empty.error {
     border-color: color-mix(in oklab, var(--ui-danger) 32%, transparent);
     background: color-mix(in oklab, var(--ui-danger-soft) 72%, transparent);
   }
@@ -2464,11 +2354,6 @@
   }
 
   @media (max-width: 980px) {
-    .project-ci-header,
-    .project-ci-entry,
-    .project-ci-run-card-top,
-    .project-ci-check-top,
-    .project-ci-check-meta,
     .structured-command-header,
     .structured-command-card-top,
     .structured-command-card-footer {
@@ -2480,7 +2365,6 @@
       max-width: none;
     }
 
-    .project-ci-check-meta,
     .structured-command-card-meta {
       justify-content: flex-start;
     }
@@ -2489,6 +2373,21 @@
   @media (max-width: 760px) {
     .workspace-shell {
       margin-inline: 0;
+    }
+
+    .chat-workspace.has-request-input,
+    .chat-workspace.sidebar-hidden.has-request-input {
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    }
+
+    .chat-workspace.has-request-input :global(.request-user-input-panel) {
+      position: absolute;
+      top: var(--workspace-chrome-height);
+      right: 0;
+      bottom: 0;
+      z-index: 8;
+      width: min(22rem, 100%);
+      box-shadow: var(--ui-shadow-strong);
     }
 
     .workspace-main-subtitle {

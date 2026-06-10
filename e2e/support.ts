@@ -15,6 +15,7 @@ import type {
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
+import { createAppLogStore, type AppendAppLogEntry } from "../src/bun/app-log-store";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);
@@ -133,6 +134,35 @@ export function getTestSessionDir(homeDir: string, workspaceDir = ROOT_WORKSPACE
     "sessions",
     `--${workspaceDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
   );
+}
+
+export function getTestWorkspaceRuntimeDir(
+  homeDir: string,
+  workspaceDir = ROOT_WORKSPACE_DIR,
+): string {
+  return join(
+    getTestAgentDir(homeDir),
+    "workspace-runtimes",
+    workspaceDir.replace(/^[/\\]/, "").replace(/[/\\:#]/g, "-"),
+  );
+}
+
+export async function seedAppLogs(
+  homeDir: string,
+  entries: AppendAppLogEntry[],
+  workspaceDir = ROOT_WORKSPACE_DIR,
+): Promise<void> {
+  const runtimeDir = getTestWorkspaceRuntimeDir(homeDir, workspaceDir);
+  const store = createAppLogStore({
+    databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+  });
+  try {
+    for (const entry of entries) {
+      store.append(entry);
+    }
+  } finally {
+    store.close();
+  }
 }
 
 export function getTestAuthFile(homeDir: string): string {

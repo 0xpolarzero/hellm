@@ -25,7 +25,7 @@ function commandRollup(commandId = "command-1"): WorkspaceCommandRollup {
     summaryChildren: [
       {
         commandId: "child-1",
-        toolName: "api.bash",
+        toolName: "extensions.artifacts.run",
         status: "succeeded",
         title: "Run bun test",
         summary: "Tests passed.",
@@ -67,8 +67,8 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
   return {
     threadId: "thread-1",
     surfacePiSessionId: "surface-thread-1",
-    title: "CI handler",
-    objective: "Run Project CI.",
+    title: "Workflow handler",
+    objective: "Run delegated workflow.",
     status: "completed",
     wait: null,
     startedAt: "2026-04-29T09:00:00.000Z",
@@ -78,10 +78,8 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 0,
-    ciRunCount: 1,
     loadedContextKeys: ["ci"],
     latestWorkflowRun: null,
-    latestCiRun: null,
     latestEpisode: {
       episodeId: "episode-1",
       kind: "workflow",
@@ -93,7 +91,7 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
 }
 
 describe("transcript projection", () => {
-  it("builds semantic wait, failure, command, and handoff blocks from read models", () => {
+  it("builds semantic wait, failure, command, and thread episode blocks from read models", () => {
     const blocks = buildTranscriptSemanticBlocks({
       session: sessionWithWait(),
       errorMessage: "Latest turn failed.",
@@ -106,7 +104,7 @@ describe("transcript projection", () => {
       "failure",
       "command-rollup",
       "thread",
-      "handoff-episode",
+      "thread-episode",
     ]);
     expect(blocks[0]).toMatchObject({
       kind: "wait",
@@ -116,6 +114,75 @@ describe("transcript projection", () => {
       kind: "command-rollup",
       command: { summaryChildCount: 1, traceChildCount: 1 },
     });
+  });
+
+  it("builds semantic product-event blocks from session product events", () => {
+    const session = {
+      ...sessionWithWait(),
+      productEvents: [
+        {
+          eventId: "event-extension-revert",
+          at: "2026-06-10T10:01:00.000Z",
+          title: "Extension change reverted",
+          summary: "User reverted extension file change chg_abc_123 for linear.",
+          subject: {
+            kind: "session" as const,
+            id: "session-1",
+          },
+        },
+      ],
+    };
+
+    const blocks = buildTranscriptSemanticBlocks({
+      session,
+    });
+
+    expect(blocks.map((block) => block.kind)).toEqual(["wait", "product-event"]);
+    expect(blocks[1]).toMatchObject({
+      kind: "product-event",
+      event: {
+        eventId: "event-extension-revert",
+        summary: "User reverted extension file change chg_abc_123 for linear.",
+      },
+    });
+  });
+
+  it("projects terminal agent context updates as semantic product events only", () => {
+    const blocks = buildTranscriptSemanticBlocks({
+      session: {
+        ...sessionWithWait(),
+        wait: undefined,
+        productEvents: [
+          {
+            eventId: "event-context-cancelled",
+            at: "2026-06-10T10:03:00.000Z",
+            title: "Agent context update cancelled",
+            summary: "Agent context update cancelled: r3->r4.",
+            subject: {
+              kind: "session" as const,
+              id: "session-1",
+            },
+            details: {
+              state: "cancelled",
+              queueMessageId: "sqm-context-001",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(blocks).toEqual([
+      expect.objectContaining({
+        kind: "product-event",
+        key: "product-event:event-context-cancelled",
+        event: expect.objectContaining({
+          title: "Agent context update cancelled",
+          details: expect.objectContaining({
+            state: "cancelled",
+          }),
+        }),
+      }),
+    ]);
   });
 
   it("summarizes execute_typescript result diagnostics and logs", () => {

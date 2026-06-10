@@ -1,14 +1,19 @@
 <script lang="ts">
 	import ChatComposer from "./ChatComposer.svelte";
-	import type { ComposerEditDraft, ComposerSubmit } from "./ChatComposer.svelte";
+	import type {
+		ComposerEditDraft,
+		ComposerModelOption,
+		ComposerSubmit,
+	} from "./ChatComposer.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
   import RelatedInspectorPane from "./RelatedInspectorPane.svelte";
   import AppLogsPane from "./AppLogsPane.svelte";
   import AgentsPane from "./AgentsPane.svelte";
+  import ExtensionsPane from "./ExtensionsPane.svelte";
   import OpenWorkspacePanel from "./OpenWorkspacePanel.svelte";
-  import PromptLibraryPane from "./PromptLibraryPane.svelte";
-  import SavedWorkflowLibraryPane from "./SavedWorkflowLibraryPane.svelte";
-  import WorkflowInspectorPane from "./WorkflowInspectorPane.svelte";
+  import Settings from "./Settings.svelte";
+  import SnippetsPane from "./SnippetsPane.svelte";
+  import WorkflowsPane from "./WorkflowsPane.svelte";
   import Button from "./ui/Button.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import { projectConversation } from "./conversation-projection";
@@ -23,16 +28,16 @@
   import type { ChatRuntime } from "./chat-runtime";
   import type { ChatSurfaceController } from "./chat-runtime";
   import type { QueuedPrompt } from "./chat-runtime";
-  import type { AgentSettingsState } from "../shared/agent-settings";
+  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
   import type {
     WorkspaceHandlerThreadSummary,
     WorkspaceSessionSummary,
     WorkspaceTabInfo,
   } from "../shared/workspace-contract";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-  import type { UserMessage } from "@mariozechner/pi-ai";
+  import { getModel, type UserMessage } from "@mariozechner/pi-ai";
   import { onDestroy, onMount } from "svelte";
-  import { listModelComboboxOptions } from "./model-options";
+  import type { AgentModelChoice } from "../shared/workspace-contract";
 
   type Props = {
     runtime: ChatRuntime;
@@ -43,7 +48,10 @@
     recentWorkspaces?: WorkspaceTabInfo[];
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
+    onOpenAgentProfile?: (agentProfileId: string) => void;
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
+    onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
+    onAppAppearanceChanged?: (appearance: AppAppearance) => void;
   };
 
   let {
@@ -55,7 +63,10 @@
     recentWorkspaces = [],
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
+    onOpenAgentProfile,
     onAgentSettingsChanged,
+    onProviderAuthChanged,
+    onAppAppearanceChanged,
   }: Props = $props();
   let controller = $state<ChatSurfaceController | null>(null);
   let pane = $state<ReturnType<ChatRuntime["getPane"]> | null>(null);
@@ -67,14 +78,18 @@
   let composerDraft = $state<ChatSurfaceController["composerDraft"]>({
     text: "",
     attachments: [],
+    snippetMentions: [],
     updatedAt: null,
   });
-  let composerBuffer = $state<{ text: string; attachments: ChatSurfaceController["composerDraft"]["attachments"] }>(
-    {
-      text: "",
-      attachments: [],
-    },
-  );
+  let composerBuffer = $state<{
+    text: string;
+    attachments: ChatSurfaceController["composerDraft"]["attachments"];
+    snippetMentions?: ChatSurfaceController["composerDraft"]["snippetMentions"];
+  }>({
+    text: "",
+    attachments: [],
+    snippetMentions: [],
+  });
   let promptBinding = $state<ChatSurfaceController["promptBinding"]>(undefined);
   let resolvedSystemPrompt = $state("");
   let isStreaming = $state(false);
@@ -126,9 +141,34 @@
       : undefined;
   });
   const queuedPromptRefresh = $derived(
-    queuedMessages.find((message) => message.kind === "prompt_refresh") ?? null,
+    queuedMessages.find((message) => message.kind === "agent_context_refresh") ?? null,
   );
+  const queuedPromptRefreshCancellable = $derived(
+    Boolean(
+      queuedPromptRefresh &&
+        queuedPromptRefresh.status !== "dispatching" &&
+        queuedPromptRefresh.status !== "failed",
+    ),
+  );
+  const terminalPromptRefresh = $derived(controller?.agentContextUpdate ?? null);
+  const queuedPromptRefreshChangeCount = $derived.by(() => {
+    const update = queuedPromptRefresh?.agentContextUpdate;
+    if (!update) return 0;
+    return [
+      update.systemPromptChanged ? 1 : 0,
+      update.loadedExtensionIds.added.length,
+      update.loadedExtensionIds.removed.length,
+      update.availableExtensionIds.added.length,
+      update.availableExtensionIds.removed.length,
+      update.externalSourceHashes.added.length,
+      update.externalSourceHashes.removed.length,
+    ].reduce((sum, count) => sum + count, 0);
+  });
   const editingUserMessageTimestamp = $derived(editDraft?.messageTimestamp ?? null);
+  const activeSystemPrompt = $derived(resolvedSystemPrompt.trim());
+  const hasSurfaceMetadata = $derived(
+    Boolean(promptBinding?.stale || terminalPromptRefresh || activeSystemPrompt),
+  );
 
   function syncSurfaceState() {
     controllerRevision += 1;
@@ -136,8 +176,8 @@
       messages = [];
       pendingToolCalls = new Set();
       queuedMessages = [];
-      composerDraft = { text: "", attachments: [], updatedAt: null };
-      composerBuffer = { text: "", attachments: [] };
+      composerDraft = { text: "", attachments: [], snippetMentions: [], updatedAt: null };
+      composerBuffer = { text: "", attachments: [], snippetMentions: [] };
       promptBinding = undefined;
       resolvedSystemPrompt = "";
       isStreaming = false;
@@ -160,6 +200,7 @@
       composerBuffer = {
         text: controller.composerDraft.text,
         attachments: structuredClone(controller.composerDraft.attachments),
+        snippetMentions: structuredClone(controller.composerDraft.snippetMentions ?? []),
       };
     }
     promptBinding = controller.promptBinding;
@@ -219,19 +260,12 @@
 	async function send(input: ComposerSubmit): Promise<boolean> {
 		if (!controller || (!input.text.trim() && input.attachments.length === 0)) return false;
 		await runtime.focusPane(panelId);
-		if (input.text.trim()) {
-			await runtime.storage.promptHistory.append({
-				text: input.text.trim(),
-				sentAt: Date.now(),
-				workspaceId: runtime.workspaceId,
-				sessionId: controller.target.workspaceSessionId,
-			});
-		}
 		if (input.editMessageTimestamp !== undefined) {
 			await controller.editCommittedUserMessage(input.editMessageTimestamp, input);
 		} else {
 			await controller.sendPrompt(input);
 		}
+		promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
 		return true;
 	}
 
@@ -252,7 +286,9 @@
     if (!text.trim()) return;
     if (String(editDraft?.messageTimestamp) === String(message.timestamp)) return;
     const hasComposerDraft =
-      composerBuffer.text.trim().length > 0 || composerBuffer.attachments.length > 0;
+      composerBuffer.text.trim().length > 0 ||
+      composerBuffer.attachments.length > 0 ||
+      (composerBuffer.snippetMentions?.length ?? 0) > 0;
     if (hasComposerDraft) {
       pendingEditMessage = { message, text };
       return;
@@ -260,10 +296,39 @@
     startEditingUserMessage(message, text);
   }
 
-  async function listModelsForComposer() {
+  function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {
+    return `${choice.providerId}:${choice.modelId}`;
+  }
+
+  function modelChoiceToComposerOption(choice: AgentModelChoice): ComposerModelOption | null {
+    if (!currentModel) return null;
+    const currentValue = `${currentModel.provider}:${currentModel.id}`;
+    if (!choice.providerAuthenticated && modelChoiceValue(choice) !== currentValue) return null;
+    try {
+      const model = getModel(
+        choice.providerId as Parameters<typeof getModel>[0],
+        choice.modelId as Parameters<typeof getModel>[1],
+      );
+      return {
+        value: modelChoiceValue(choice),
+        label: model.name,
+        triggerLabel: model.name,
+        searchText: `${model.name} ${choice.modelId} ${choice.providerId}`,
+        disabled: !choice.providerAuthenticated,
+        model,
+        supportedThinkingLevels: choice.supportedReasoning,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function listModelsForComposer(): Promise<ComposerModelOption[]> {
     if (!currentModel) return [];
-    const configuredProviders = await runtime.listConfiguredProviders().catch(() => []);
-    return listModelComboboxOptions(currentModel, runtime.storage, configuredProviders);
+    const catalog = await runtime.getAgentModelChoices();
+    return catalog.items
+      .map(modelChoiceToComposerOption)
+      .filter((option): option is ComposerModelOption => Boolean(option));
   }
 
   async function forkFromAssistantMessage(messageTimestamp: string | number): Promise<void> {
@@ -276,8 +341,21 @@
     );
   }
 
-  async function openArtifactFromTranscript(filename: string): Promise<void> {
-    await openWorkspacePathFromTranscript(filename);
+  async function openArtifactFromTranscript(target: string | { id: string; name: string }): Promise<void> {
+    if (typeof target === "object") {
+      if (!controller) return;
+      await runtime.openSurface(
+        {
+          workspaceSessionId: controller.target.workspaceSessionId,
+          surface: "artifact",
+          artifactId: target.id,
+        },
+        transcriptSplitTarget(),
+      );
+      return;
+    }
+
+    await openWorkspacePathFromTranscript(target);
   }
 
   async function openWorkspacePathFromTranscript(path: string): Promise<void> {
@@ -309,18 +387,6 @@
         surface: "thread",
         surfacePiSessionId: thread.surfacePiSessionId,
         threadId: thread.threadId,
-      },
-      transcriptSplitTarget(),
-    );
-  }
-
-  function inspectWorkflowFromTranscript(workflowRunId: string): void {
-    if (!controller) return;
-    void runtime.openSurface(
-      {
-        workspaceSessionId: controller.target.workspaceSessionId,
-        surface: "workflow-inspector",
-        workflowRunId,
       },
       transcriptSplitTarget(),
     );
@@ -400,16 +466,28 @@
   });
 </script>
 
-{#if pane?.target?.surface === "workflow-inspector"}
-  <WorkflowInspectorPane {runtime} sessionId={pane.target.workspaceSessionId} workflowRunId={pane.target.workflowRunId} {panelId} />
-{:else if pane?.target?.surface === "app-logs"}
+{#if pane?.target?.surface === "app-logs"}
   <AppLogsPane {runtime} {panelId} />
 {:else if pane?.target?.surface === "agents"}
-  <AgentsPane {runtime} {panelId} onSettingsChanged={onAgentSettingsChanged} />
-{:else if pane?.target?.surface === "prompt-library"}
-  <PromptLibraryPane {runtime} {panelId} />
-{:else if pane?.target?.surface === "saved-workflow-library"}
-  <SavedWorkflowLibraryPane {runtime} />
+  <AgentsPane
+    {runtime}
+    {panelId}
+    targetAgentProfileId={pane.target.targetAgentProfileId}
+    targetView={pane.target.view}
+    onSettingsChanged={onAgentSettingsChanged}
+  />
+{:else if pane?.target?.surface === "extensions"}
+  <ExtensionsPane {runtime} targetView={pane.target.view} />
+{:else if pane?.target?.surface === "snippets"}
+  <SnippetsPane {runtime} />
+{:else if pane?.target?.surface === "settings"}
+  <Settings
+    workspaceId={runtime.workspaceId}
+    {onProviderAuthChanged}
+    {onAppAppearanceChanged}
+  />
+{:else if pane?.target?.surface === "workflows"}
+  <WorkflowsPane {runtime} onOpenAgentProfile={onOpenAgentProfile} />
 {:else if pane?.target?.surface === "open-workspace"}
   <OpenWorkspacePanel
     {openingWorkspace}
@@ -418,30 +496,97 @@
     onOpenWorkspace={() => onOpenWorkspace?.()}
     onOpenWorkspaceInNewTab={onOpenWorkspaceInNewTab ? () => onOpenWorkspaceInNewTab?.() : undefined}
   />
-{:else if pane?.target?.surface === "command" || pane?.target?.surface === "workflow-task-attempt" || pane?.target?.surface === "artifact" || pane?.target?.surface === "project-ci-check"}
+{:else if pane?.target?.surface === "command" || pane?.target?.surface === "workflow-task-attempt" || pane?.target?.surface === "artifact"}
   <RelatedInspectorPane {runtime} target={pane.target} />
+{:else if pane?.chrome?.kind === "unavailable"}
+  <section
+    class="dockview-unavailable-panel"
+    data-testid="unavailable-surface-panel"
+    data-panel-id={panelId}
+  >
+    <div>
+      <strong>{pane.chrome.title}</strong>
+      {#if pane.chrome.subtitle}
+        <span>{pane.chrome.subtitle}</span>
+      {/if}
+      <p>{pane.restore?.unavailableReason ?? "The restored surface could not be reopened."}</p>
+      {#if pane.restore?.lastKnownLocationLabel}
+        <small>{pane.restore.lastKnownLocationLabel}</small>
+      {/if}
+    </div>
+  </section>
 {:else if controller}
   <section
     class="dockview-chat-panel"
-    class:has-prompt-banner={promptBinding?.stale}
+    class:has-surface-metadata={hasSurfaceMetadata}
     data-testid="workspace-pane"
     data-panel-id={panelId}
   >
-    {#if promptBinding?.stale}
-      <div class="prompt-stale-banner" role="status">
-        <span>
-          {queuedPromptRefresh
-            ? "Context update queued for this surface."
-            : "This surface is using older instructions than the current Context settings."}
-        </span>
-        {#if queuedPromptRefresh}
-          <button type="button" onclick={() => void controller.deleteQueuedPrompt(queuedPromptRefresh.id)}>
-            Cancel update
-          </button>
-        {:else}
-          <button type="button" onclick={() => void controller.queuePromptRefresh()}>
-            Update system prompt
-          </button>
+    {#if hasSurfaceMetadata}
+      <div class="surface-metadata-stack" aria-label="Surface metadata">
+        {#if promptBinding?.stale}
+          <div class="prompt-stale-banner" role="status">
+            <span>
+              {#if queuedPromptRefresh?.agentContextUpdate?.state === "failed"}
+                Agent context update failed.
+              {:else if queuedPromptRefresh?.agentContextUpdate?.state === "out_of_date"}
+                Agent context update is out of date.
+              {:else if queuedPromptRefresh}
+                Agent context update queued for this surface.
+              {:else}
+                This surface is using older instructions than the current generated agent context.
+              {/if}
+              {#if queuedPromptRefresh?.agentContextUpdate}
+                <small>
+                  r{queuedPromptRefresh.agentContextUpdate.requestedRevision}->r{queuedPromptRefresh.agentContextUpdate.currentRevision}
+                  {#if queuedPromptRefreshChangeCount > 0}
+                    , {queuedPromptRefreshChangeCount} {queuedPromptRefreshChangeCount === 1 ? "change" : "changes"}
+                  {/if}
+                </small>
+              {/if}
+              {#if queuedPromptRefresh?.status === "failed" && queuedPromptRefresh.failureError}
+                <small>{queuedPromptRefresh.failureError}</small>
+              {/if}
+            </span>
+            {#if queuedPromptRefreshCancellable}
+              <button type="button" onclick={() => void controller.deleteQueuedPrompt(queuedPromptRefresh.id)}>
+                Cancel update
+              </button>
+            {:else if queuedPromptRefresh?.status === "failed"}
+              <button type="button" onclick={() => void controller.queuePromptRefresh()}>
+                Retry update
+              </button>
+            {:else}
+              <button type="button" onclick={() => void controller.queuePromptRefresh()}>
+                Update agent context
+              </button>
+            {/if}
+          </div>
+        {/if}
+        {#if terminalPromptRefresh && !queuedPromptRefresh}
+          <div class={`agent-context-terminal-banner ${terminalPromptRefresh.state}`} role="status">
+            <span>
+              {#if terminalPromptRefresh.state === "applied"}
+                Agent context update applied.
+              {:else}
+                Agent context update cancelled.
+              {/if}
+              <small>
+                r{terminalPromptRefresh.requestedRevision}->r{terminalPromptRefresh.currentRevision}
+              </small>
+            </span>
+          </div>
+        {/if}
+        {#if activeSystemPrompt}
+          <details class="surface-prompt-metadata">
+            <summary>
+              <strong>{controller.target.surface === "thread" ? "Handler system prompt" : "Surface system prompt"}</strong>
+              {#if promptBinding}
+                <span>revision {promptBinding.currentRevision}</span>
+              {/if}
+            </summary>
+            <pre>{activeSystemPrompt}</pre>
+          </details>
         {/if}
       </div>
     {/if}
@@ -449,7 +594,6 @@
       {conversation}
       target={controller.target}
       sessionId={controller.agent.sessionId ?? controller.target.surfacePiSessionId}
-      systemPrompt={resolvedSystemPrompt}
       streamMessage={visibleStreamMessage}
       currentModel={currentModel ?? controller.agent.state.model}
       {pendingToolCalls}
@@ -464,7 +608,6 @@
       onOpenWorkspacePath={(path) => void openWorkspacePathFromTranscript(path)}
       onInspectCommand={inspectCommandFromTranscript}
       onOpenHandlerThread={openHandlerThreadFromTranscript}
-      onInspectWorkflow={inspectWorkflowFromTranscript}
       onInspectWorkflowTaskAttempt={inspectWorkflowTaskAttemptFromTranscript}
       onForkAssistantMessage={(message) => void forkFromAssistantMessage(message.timestamp)}
       onEditUserMessage={editUserMessageFromTranscript}
@@ -510,6 +653,7 @@
       listWorkspacePaths={(options) => runtime.listWorkspacePaths(options)}
       pickWorkspaceAttachments={() => runtime.pickWorkspaceAttachments()}
       importComposerAttachments={(files) => runtime.importComposerAttachments(files)}
+      listSnippets={() => runtime.getSnippets()}
     />
   </section>
 {:else}
@@ -533,7 +677,8 @@
   >
     <div class="edit-message-dialog">
       <p>
-        TODO: Later when backlog queue feature is implemented, if there is any content in the composer when trying to edit we will just put that content into the backlog.
+        The current composer draft and attachments will be cleared before this earlier message is
+        loaded for editing.
       </p>
       <div class="edit-message-dialog-actions">
         <Button size="sm" variant="ghost" onclick={() => {
@@ -565,8 +710,14 @@
     overflow: hidden;
   }
 
-  .dockview-chat-panel.has-prompt-banner {
+  .dockview-chat-panel.has-surface-metadata {
     grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .surface-metadata-stack {
+    display: grid;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
   }
 
   .prompt-stale-banner {
@@ -581,8 +732,49 @@
     font-size: var(--text-xs);
   }
 
-  .prompt-stale-banner span {
+  .agent-context-terminal-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.38rem 0.75rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    background: color-mix(in oklab, var(--ui-surface) 74%, var(--ui-surface-subtle));
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .agent-context-terminal-banner.cancelled {
+    background: color-mix(in oklab, var(--ui-warning-surface, var(--ui-surface-subtle)) 28%, var(--ui-surface));
+  }
+
+  .agent-context-terminal-banner span {
+    display: flex;
+    align-items: baseline;
     min-width: 0;
+    gap: 0.45rem;
+    font-weight: 650;
+  }
+
+  .agent-context-terminal-banner small {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+  }
+
+  .prompt-stale-banner span {
+    display: flex;
+    align-items: baseline;
+    gap: 0.46rem;
+    min-width: 0;
+  }
+
+  .prompt-stale-banner small {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    white-space: nowrap;
   }
 
   .prompt-stale-banner button {
@@ -602,6 +794,52 @@
     background: var(--ui-surface-hover);
   }
 
+  .surface-prompt-metadata {
+    min-width: 0;
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .surface-prompt-metadata summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    cursor: pointer;
+  }
+
+  .surface-prompt-metadata summary:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .surface-prompt-metadata strong {
+    color: var(--ui-text-primary);
+    font-size: var(--text-xs);
+  }
+
+  .surface-prompt-metadata span {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .surface-prompt-metadata pre {
+    max-height: min(36vh, 22rem);
+    overflow: auto;
+    margin: 0;
+    padding: 0.7rem 0.75rem;
+    border-top: 1px solid var(--ui-border-soft);
+    background: var(--ui-code);
+    color: var(--ui-text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
   .dockview-empty-panel {
     display: grid;
     place-items: center;
@@ -609,6 +847,42 @@
     min-height: 0;
     color: var(--ui-text-muted);
     background: var(--ui-panel);
+  }
+
+  .dockview-unavailable-panel {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    min-height: 0;
+    padding: 1rem;
+    background: var(--ui-panel);
+    color: var(--ui-text-secondary);
+  }
+
+  .dockview-unavailable-panel div {
+    display: grid;
+    gap: 0.35rem;
+    max-width: 26rem;
+    text-align: center;
+  }
+
+  .dockview-unavailable-panel strong {
+    color: var(--ui-text-primary);
+    font-size: var(--text-md);
+  }
+
+  .dockview-unavailable-panel span,
+  .dockview-unavailable-panel small {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .dockview-unavailable-panel p {
+    margin: 0;
+    color: var(--ui-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.45;
   }
 
   .edit-message-dialog {

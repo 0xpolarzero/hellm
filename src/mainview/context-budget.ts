@@ -15,7 +15,7 @@ export function buildContextBudgetFromUsage(
 ): ContextBudget | null {
   if (!usage) return null;
   return createContextBudget({
-    usedTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+    usedTokens: usage.input + usage.cacheRead + usage.cacheWrite,
     maxTokens,
   });
 }
@@ -44,10 +44,5 @@ export function buildSurfaceContextBudget(
   model: Pick<Model<any>, "contextWindow"> | null | undefined,
 ): ContextBudget | null {
   const latestUsage = getLatestAssistantUsage(messages);
-  return latestUsage
-    ? buildContextBudgetFromUsage(latestUsage, model?.contextWindow)
-    : createContextBudget({
-        usedTokens: 0,
-        maxTokens: model?.contextWindow,
-      });
+  return latestUsage ? buildContextBudgetFromUsage(latestUsage, model?.contextWindow) : null;
 }

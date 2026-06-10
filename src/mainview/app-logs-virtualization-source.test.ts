@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 const paneSource = await Bun.file(`${import.meta.dir}/AppLogsPane.svelte`).text();
+const sidebarSource = await Bun.file(`${import.meta.dir}/SessionSidebar.svelte`).text();
 
 describe("AppLogsPane virtualized log list contract", () => {
   it("uses TanStack Virtual with stable log sequence keys and variable-height measurement", () => {
@@ -29,5 +30,43 @@ describe("AppLogsPane virtualized log list contract", () => {
     );
     expect(paneSource).not.toContain("scrollHeight");
     expect(paneSource).not.toContain("previousTotalSize");
+  });
+
+  it("renders related artifact ids through the same linked detail path as commands", () => {
+    expect(paneSource).toContain("entry.artifactId && entry.workspaceSessionId");
+    expect(paneSource).toContain(
+      '{ label: "artifact", value: entry.artifactId, action: "artifact" }',
+    );
+    expect(paneSource).toContain('surface: "artifact", artifactId: target.value');
+  });
+
+  it("keeps pane filtering, mark-read, expandable detail, and stack trace controls wired", () => {
+    expect(paneSource).toContain('aria-label="Filter app logs by source"');
+    expect(paneSource).toContain('aria-label="Search app logs"');
+    expect(paneSource).toContain("class:active={levelFilter === filter.level}");
+    expect(paneSource).toContain("onclick={() => (levelFilter = filter.level)}");
+    expect(paneSource).toContain("class={`severity-option severity-${filter.level}`.trim()}");
+    expect(paneSource).toContain("runtime.markAppLogsSeen(summary.latestSeq)");
+    expect(paneSource).toContain("function toggleExpanded(id: string)");
+    expect(paneSource).toContain("expandedIds = next");
+    expect(paneSource).toContain("toggleExpanded(entry.id)");
+    expect(paneSource).toContain("{#if entry.details}");
+    expect(paneSource).toContain("{#if entry.error}");
+  });
+
+  it("keeps the sidebar Logs action before app-global source-library actions with action-worthy badges", () => {
+    const logsIndex = sidebarSource.indexOf("{#if onOpenAppLogs}");
+    const agentsIndex = sidebarSource.indexOf("{#if onOpenAgents}");
+    const extensionsIndex = sidebarSource.indexOf("{#if onOpenExtensions}");
+    const workflowsIndex = sidebarSource.indexOf("{#if onOpenWorkflowLibrary}");
+
+    expect(logsIndex).toBeGreaterThanOrEqual(0);
+    expect(agentsIndex).toBeGreaterThan(logsIndex);
+    expect(extensionsIndex).toBeGreaterThan(agentsIndex);
+    expect(workflowsIndex).toBeGreaterThan(extensionsIndex);
+    expect(sidebarSource).toContain("getVisibleAppLogUnreadBadges(appLogSummary)");
+    expect(sidebarSource).toContain("formatAppLogCount(badge.count)");
+    expect(sidebarSource).toContain(".log-badge.warn");
+    expect(sidebarSource).toContain(".log-badge.error");
   });
 });

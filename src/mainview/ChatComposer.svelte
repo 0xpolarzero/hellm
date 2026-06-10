@@ -1,5 +1,6 @@
 <script lang="ts">
 	import FileIcon from "@lucide/svelte/icons/file";
+	import FileTextIcon from "@lucide/svelte/icons/file-text";
 	import FolderIcon from "@lucide/svelte/icons/folder";
 	import ImageIcon from "@lucide/svelte/icons/image";
 	import PaperclipIcon from "@lucide/svelte/icons/paperclip";
@@ -21,11 +22,17 @@
 		type PromptHistoryNavigationState,
 	} from "./prompt-history";
 	import {
+		caretAfterSnippetMentionToken,
+		commitTypedSnippetMention,
 		getActiveMentionQuery,
-		searchMentionPaths,
+		expandComposerSnippetMention,
+		nextSnippetArgumentKeyboardTarget,
+		removeComposerSnippetMentionToken,
+		searchComposerMentionResults,
 		selectMentionPath,
+		selectMentionSnippet,
 		serializeComposerDraft,
-		type MentionPickerResult,
+		type ComposerMentionPickerResult,
 		type WorkspacePathIndexEntry,
 	} from "./composer-mentions";
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
@@ -33,22 +40,32 @@
 	import Tooltip from "./ui/Tooltip.svelte";
 	import CompactSelect from "./ui/CompactSelect.svelte";
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
-	import { getModelComboboxValue, type ModelComboboxOption } from "./model-options";
-	import { getSupportedThinkingLevels } from "./model-thinking";
 	import { formatWorkingElapsed, formatWorkingElapsedTooltip } from "./working-timer";
 	import QueuedMessagesStrip from "./QueuedMessagesStrip.svelte";
 	import type { QueuedPrompt } from "./chat-runtime";
 	import type { ComposerAttachment, ComposerDraft } from "../shared/workspace-contract";
+	import type {
+		ComposerSnippetMention,
+		SentSnippetProvenance,
+		SnippetsReadModel,
+	} from "../shared/snippets";
 
 	export type ComposerSubmit = {
 		text: string;
 		attachments: ComposerAttachment[];
+		snippetMentions?: ComposerSnippetMention[];
+		snippetProvenance?: SentSnippetProvenance[];
 		editMessageTimestamp?: string | number;
 	};
 
 	export type ComposerEditDraft = {
 		messageTimestamp: string | number;
 		text: string;
+	};
+
+	export type ComposerModelOption = CompactComboboxOption & {
+		model: Model<any>;
+		supportedThinkingLevels: ThinkingLevel[];
 	};
 
 	type Props = {
@@ -67,12 +84,20 @@
 		targetLabel?: string;
 		worktreeLabel?: string;
 		onOpenModelPicker: () => void;
-		onListModels: () => Promise<ModelComboboxOption[]>;
+		onListModels: () => Promise<ComposerModelOption[]>;
 		onModelChange: (model: Model<any>) => void;
 		onSend: (input: ComposerSubmit) => Promise<boolean> | boolean;
 		onStop: () => Promise<void> | void;
-		onDraftChange?: (draft: { text: string; attachments: ComposerAttachment[] }) => void;
-		onBufferChange?: (draft: { text: string; attachments: ComposerAttachment[] }) => void;
+		onDraftChange?: (draft: {
+			text: string;
+			attachments: ComposerAttachment[];
+			snippetMentions?: ComposerSnippetMention[];
+		}) => void;
+		onBufferChange?: (draft: {
+			text: string;
+			attachments: ComposerAttachment[];
+			snippetMentions?: ComposerSnippetMention[];
+		}) => void;
 		onEditQueuedMessage?: (promptId: string) => Promise<string | null> | string | null;
 		onDeleteQueuedMessage?: (promptId: string) => void;
 		onSteerQueuedMessage?: (promptId: string) => void;
@@ -80,6 +105,7 @@
 		onCancelEditMessage?: () => void;
 		onThinkingChange: (level: ThinkingLevel) => void;
 		listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
+		listSnippets: () => Promise<SnippetsReadModel>;
 		pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
 		importComposerAttachments: (files: File[]) => Promise<ComposerAttachment[]>;
 	};
@@ -113,6 +139,7 @@
 		onCancelEditMessage = () => {},
 		onThinkingChange,
 		listWorkspacePaths,
+		listSnippets,
 		pickWorkspaceAttachments,
 		importComposerAttachments,
 	}: Props = $props();
@@ -124,14 +151,19 @@
 	let showModelMenu = $state(false);
 	let modelOptions = $state<CompactComboboxOption[]>([]);
 	let modelOptionModels = $state(new Map<string, Model<any>>());
+	let modelOptionThinkingLevels = $state(new Map<string, ThinkingLevel[]>());
 	let draftElement = $state<HTMLTextAreaElement | null>(null);
 	let historyNavigation = $state<PromptHistoryNavigationState>(createPromptHistoryNavigationState());
 	let mentionRoot = $state<HTMLDivElement | null>(null);
 	let workspacePaths = $state<WorkspacePathIndexEntry[]>([]);
 	let workspacePathsLoaded = $state(false);
+	let snippets = $state<SnippetsReadModel | null>(null);
+	let snippetsLoaded = $state(false);
 	let mentionLoading = $state(false);
 	let mentionError = $state<string | null>(null);
+	let pendingTypedSnippetCommit = $state(false);
 	let attachments = $state<ComposerAttachment[]>([]);
+	let snippetMentions = $state<ComposerSnippetMention[]>([]);
 	let isDragActive = $state(false);
 	let workingTimerNow = $state(Date.now());
 	let activeMentionIndex = $state(0);
@@ -142,18 +174,29 @@
 	let loadedComposerDraftKey = $state<string | null>(null);
 	let lastPersistedDraftPayloadKey = $state<string | null>(null);
 	let draftPersistenceReady = $state(false);
-	const availableThinkingLevels = $derived(getSupportedThinkingLevels(currentModel));
+	const modelValue = $derived(currentModel ? `${currentModel.provider}:${currentModel.id}` : "no-surface");
+	const availableThinkingLevels = $derived.by(() => {
+		if (!currentModel) return [thinkingLevel];
+		return modelOptionThinkingLevels.get(modelValue) ?? [thinkingLevel];
+	});
 	const thinkingOptions = $derived(
 		availableThinkingLevels.map((level) => ({ value: level, label: level })),
 	);
-	const modelValue = $derived(currentModel ? getModelComboboxValue(currentModel) : "no-surface");
 
 	function cloneComposerAttachments(input: readonly ComposerAttachment[]): ComposerAttachment[] {
 		return input.map((attachment) => ({ ...attachment }));
 	}
+
+	function cloneSnippetMentions(input: readonly ComposerSnippetMention[]): ComposerSnippetMention[] {
+		return input.map((mention) => ({
+			...mention,
+			arguments: [...mention.arguments],
+			metadata: { ...mention.metadata },
+		}));
+	}
 	const visibleModelOptions = $derived.by<CompactComboboxOption[]>(() => {
 		if (!currentModel) return [{ value: "no-surface", label: "No surface", disabled: true }];
-		const currentValue = getModelComboboxValue(currentModel);
+		const currentValue = modelValue;
 		if (modelOptions.some((option) => option.value === currentValue)) return modelOptions;
 		return [{ value: currentValue, label: currentModel.name, triggerLabel: currentModel.name }, ...modelOptions];
 	});
@@ -166,13 +209,20 @@
 				workspacePaths.some((entry) => entry.workspaceRelativePath === mentionQuery.query),
 		),
 	);
-	const mentionResults = $derived<MentionPickerResult[]>(
-		mentionQuery && workspacePathsLoaded ? searchMentionPaths(workspacePaths, mentionQuery.query, 10) : [],
+	const mentionResults = $derived<ComposerMentionPickerResult[]>(
+		mentionQuery && (workspacePathsLoaded || snippetsLoaded)
+			? searchComposerMentionResults({
+					paths: workspacePathsLoaded ? workspacePaths : [],
+					snippets: snippets?.snippets ?? [],
+					query: mentionQuery.query,
+					limit: 10,
+				})
+			: [],
 	);
 	const hasImageAttachments = $derived(attachments.some((attachment) => attachment.kind === "image"));
 	const modelSupportsImages = $derived(Boolean((currentModel as unknown as { input?: string[] } | null)?.input?.includes("image")));
 	const showImageModelWarning = $derived(Boolean(hasImageAttachments && currentModel && !modelSupportsImages));
-	const canSubmit = $derived(Boolean(draft.trim() || attachments.length > 0));
+	const canSubmit = $derived(Boolean(draft.trim() || attachments.length > 0 || snippetMentions.length > 0));
 	const contextBudgetTooltip = $derived(contextBudget ? "" : "Context unavailable");
 	const contextBudgetTooltipDetails = $derived(
 		contextBudget ? buildContextBudgetTooltipDetails(contextBudget) : [],
@@ -211,6 +261,8 @@
 			workspacePathTargetKey = targetKey;
 			workspacePaths = [];
 			workspacePathsLoaded = false;
+			snippets = null;
+			snippetsLoaded = false;
 			mentionLoading = false;
 			mentionError = null;
 			activeMentionIndex = 0;
@@ -223,13 +275,26 @@
 
 	$effect(() => {
 		void draft;
+		const nextMentions = snippetMentions.filter((mention) => draft.includes(mention.token));
+		if (nextMentions.length !== snippetMentions.length) {
+			snippetMentions = nextMentions;
+		}
+	});
+
+	$effect(() => {
+		void draft;
 		void tick().then(syncDraftTextareaHeight);
 	});
 
 	$effect(() => {
 		void draft;
 		void attachments;
-		onBufferChange({ text: draft, attachments: cloneComposerAttachments(attachments) });
+		void snippetMentions;
+		onBufferChange({
+			text: draft,
+			attachments: cloneComposerAttachments(attachments),
+			snippetMentions: cloneSnippetMentions(snippetMentions),
+		});
 	});
 
 	$effect(() => {
@@ -237,16 +302,22 @@
 		const storageKey = draftStorageKey;
 		const updatedAt = composerDraft.updatedAt;
 		const attachmentsKey = JSON.stringify(composerDraft.attachments);
-		const incomingKey = `${storageKey}\u0000${updatedAt ?? ""}\u0000${composerDraft.text}\u0000${attachmentsKey}`;
+		const snippetMentionsKey = JSON.stringify(composerDraft.snippetMentions ?? []);
+		const incomingKey = `${storageKey}\u0000${updatedAt ?? ""}\u0000${composerDraft.text}\u0000${attachmentsKey}\u0000${snippetMentionsKey}`;
 		if (incomingKey === loadedComposerDraftKey) return;
 		loadedComposerDraftKey = incomingKey;
-		lastPersistedDraftPayloadKey = `${composerDraft.text}\u0000${attachmentsKey}`;
-		if (draft === composerDraft.text && JSON.stringify(attachments) === attachmentsKey) {
+		lastPersistedDraftPayloadKey = `${composerDraft.text}\u0000${attachmentsKey}\u0000${snippetMentionsKey}`;
+		if (
+			draft === composerDraft.text &&
+			JSON.stringify(attachments) === attachmentsKey &&
+			JSON.stringify(snippetMentions) === snippetMentionsKey
+		) {
 			draftPersistenceReady = true;
 			return;
 		}
 		draft = composerDraft.text;
 		attachments = cloneComposerAttachments(composerDraft.attachments);
+		snippetMentions = cloneSnippetMentions(composerDraft.snippetMentions ?? []);
 		resetHistoryNavigation();
 		draftPersistenceReady = true;
 		void tick().then(() => moveCaretToDraftEnd(composerDraft.text));
@@ -258,10 +329,15 @@
 		void draftStorageKey;
 		void draft;
 		void attachments;
-		const payloadKey = `${draft}\u0000${JSON.stringify(attachments)}`;
+		void snippetMentions;
+		const payloadKey = `${draft}\u0000${JSON.stringify(attachments)}\u0000${JSON.stringify(snippetMentions)}`;
 		if (payloadKey === lastPersistedDraftPayloadKey) return;
 		lastPersistedDraftPayloadKey = payloadKey;
-		onDraftChange({ text: draft, attachments: cloneComposerAttachments(attachments) });
+		onDraftChange({
+			text: draft,
+			attachments: cloneComposerAttachments(attachments),
+			snippetMentions: cloneSnippetMentions(snippetMentions),
+		});
 	});
 
 	$effect(() => {
@@ -270,6 +346,7 @@
 		loadedEditDraftKey = editKey;
 		draft = editDraft.text;
 		attachments = [];
+		snippetMentions = [];
 		resetHistoryNavigation();
 		void tick().then(() => moveCaretToDraftEnd(editDraft.text));
 	});
@@ -286,6 +363,7 @@
 
 	onMount(() => {
 		syncDraftTextareaHeight();
+		void loadModelOptions();
 
 		const handlePointerDown = (event: PointerEvent) => {
 			const target = event.target;
@@ -338,7 +416,7 @@
 		if (!(target instanceof HTMLTextAreaElement)) return;
 		caretPosition = target.selectionStart;
 		if (getActiveMentionQuery(target.value, target.selectionStart, target.selectionEnd)) {
-			void ensureWorkspacePaths();
+			void ensureMentionSources();
 		}
 	}
 
@@ -355,7 +433,37 @@
 
 	function handleDraftInput(event: Event) {
 		syncCaretFromTextarea(event.currentTarget);
+		commitTypedSnippetMentionFromTextarea(event.currentTarget);
 		syncDraftTextareaHeight();
+	}
+
+	async function commitTypedSnippetMentionFromTextarea(target: EventTarget | null) {
+		if (!(target instanceof HTMLTextAreaElement)) return;
+		if (!/\s$/.test(target.value.slice(0, target.selectionStart))) return;
+		if (!snippetsLoaded || !snippets) {
+			if (mentionLoading) {
+				pendingTypedSnippetCommit = true;
+				return;
+			}
+			await ensureMentionSources();
+		}
+		if (!snippetsLoaded || !snippets) return;
+		const committed = commitTypedSnippetMention({
+			value: target.value,
+			caret: target.selectionStart,
+			snippets: snippets.snippets,
+			existingMentions: snippetMentions,
+		});
+		if (!committed) return;
+		draft = committed.draft;
+		snippetMentions = [...snippetMentions, committed.mention];
+		await tick();
+		caretPosition = committed.caret;
+		if (committed.mention.arguments.length > 0) {
+			await focusSnippetArgument(committed.mention.id, 0);
+		} else {
+			focusComposerAt(committed.caret);
+		}
 	}
 
 	async function scrollActiveMentionIntoView() {
@@ -364,17 +472,27 @@
 		activeOption?.scrollIntoView({ block: "nearest" });
 	}
 
-	async function ensureWorkspacePaths() {
-		if (workspacePathsLoaded || mentionLoading) return;
+	async function ensureMentionSources() {
+		if ((workspacePathsLoaded && snippetsLoaded) || mentionLoading) return;
 		mentionLoading = true;
 		mentionError = null;
 		try {
-			workspacePaths = await listWorkspacePaths({ refresh: true });
+			const [nextWorkspacePaths, nextSnippets] = await Promise.all([
+				workspacePathsLoaded ? Promise.resolve(workspacePaths) : listWorkspacePaths({ refresh: true }),
+				snippetsLoaded ? Promise.resolve(snippets) : listSnippets(),
+			]);
+			workspacePaths = nextWorkspacePaths;
 			workspacePathsLoaded = true;
+			snippets = nextSnippets;
+			snippetsLoaded = true;
 		} catch (error) {
-			mentionError = error instanceof Error ? error.message : "Workspace paths unavailable.";
+			mentionError = error instanceof Error ? error.message : "Mentions unavailable.";
 		} finally {
 			mentionLoading = false;
+			if (pendingTypedSnippetCommit && snippetsLoaded && snippets) {
+				pendingTypedSnippetCommit = false;
+				void tick().then(() => commitTypedSnippetMentionFromTextarea(draftElement));
+			}
 		}
 	}
 
@@ -383,8 +501,23 @@
 		dismissedMentionQueryKey = mentionQueryKey;
 	}
 
-	async function chooseMention(result: MentionPickerResult) {
+	async function chooseMention(result: ComposerMentionPickerResult) {
 		if (!mentionQuery) return;
+		if (result.type === "snippet") {
+			const selection = selectMentionSnippet(draft, mentionQuery, result.snippet, snippetMentions);
+			draft = selection.draft;
+			snippetMentions = [...snippetMentions, selection.mention];
+			activeMentionIndex = 0;
+			dismissedMentionQueryKey = `${mentionQuery.start}:${selection.mention.token}`;
+			await tick();
+			caretPosition = selection.caret;
+			if (selection.mention.arguments.length > 0) {
+				await focusSnippetArgument(selection.mention.id, 0);
+			} else {
+				focusComposerAt(selection.caret);
+			}
+			return;
+		}
 		const selection = selectMentionPath(draft, mentionQuery, result);
 		draft = selection.draft;
 		activeMentionIndex = 0;
@@ -393,6 +526,86 @@
 		draftElement?.focus();
 		draftElement?.setSelectionRange(selection.caret, selection.caret);
 		caretPosition = selection.caret;
+	}
+
+	async function focusSnippetArgument(mentionId: string, argumentIndex: number) {
+		await tick();
+		document
+			.querySelector<HTMLInputElement>(`[data-snippet-argument="${mentionId}:${argumentIndex}"]`)
+			?.focus();
+	}
+
+	function focusComposerAt(caret: number) {
+		draftElement?.focus();
+		draftElement?.setSelectionRange(caret, caret);
+		caretPosition = caret;
+	}
+
+	function focusComposerAfterSnippetArguments(mention: ComposerSnippetMention) {
+		focusComposerAt(caretAfterSnippetMentionToken(draft, mention));
+	}
+
+	async function expandSnippetMention(mention: ComposerSnippetMention) {
+		const selection = expandComposerSnippetMention(draft, mention);
+		draft = selection.draft;
+		snippetMentions = snippetMentions.filter((candidate) => candidate.id !== mention.id);
+		await tick();
+		draftElement?.focus();
+		draftElement?.setSelectionRange(selection.caret, selection.caret);
+		caretPosition = selection.caret;
+	}
+
+	async function removeSnippetMention(mention: ComposerSnippetMention) {
+		const selection = removeComposerSnippetMentionToken(draft, mention);
+		draft = selection.draft;
+		snippetMentions = snippetMentions.filter((candidate) => candidate.id !== mention.id);
+		await tick();
+		draftElement?.focus();
+		draftElement?.setSelectionRange(selection.caret, selection.caret);
+		caretPosition = selection.caret;
+	}
+
+	function updateSnippetMentionArgument(mentionId: string, argumentIndex: number, value: string) {
+		snippetMentions = snippetMentions.map((mention) =>
+			mention.id === mentionId
+				? {
+						...mention,
+						arguments: mention.arguments.map((argument, index) =>
+							index === argumentIndex ? value : argument,
+						),
+					}
+				: mention,
+		);
+	}
+
+	async function handleSnippetArgumentKeydown(
+		event: KeyboardEvent,
+		mentionId: string,
+		argumentIndex: number,
+		argumentCount: number,
+	) {
+		const target = nextSnippetArgumentKeyboardTarget({
+			key: event.key,
+			argumentIndex,
+			argumentCount,
+			shiftKey: event.shiftKey,
+			altKey: event.altKey,
+			ctrlKey: event.ctrlKey,
+			metaKey: event.metaKey,
+		});
+		if (!target) return;
+		event.preventDefault();
+		await tick();
+		if (target.kind === "composer") {
+			const mention = snippetMentions.find((candidate) => candidate.id === mentionId);
+			if (mention) {
+				focusComposerAfterSnippetArguments(mention);
+			} else {
+				draftElement?.focus();
+			}
+			return;
+		}
+		await focusSnippetArgument(mentionId, target.argumentIndex);
 	}
 
 	async function applyPromptHistoryNavigation(direction: PromptHistoryDirection) {
@@ -408,17 +621,22 @@
 	async function submit() {
 		if (!canSubmit || isSubmitting) return;
 		const editingMessageTimestamp = editDraft?.messageTimestamp;
-		const nextDraft = serializeComposerDraft(draft);
+		const serialized = serializeComposerDraft(draft, snippetMentions);
+		const nextDraft = serialized.text;
 		const nextVisibleDraft = draft;
 		const nextAttachments = attachments;
+		const nextSnippetMentions = snippetMentions;
 		draft = "";
 		attachments = [];
+		snippetMentions = [];
 		isSubmitting = true;
 
 		try {
 			const sent = await onSend({
 				text: nextDraft,
 				attachments: nextAttachments,
+				snippetMentions: nextSnippetMentions,
+				snippetProvenance: serialized.snippetProvenance,
 				editMessageTimestamp: editingMessageTimestamp,
 			});
 			if (sent) {
@@ -430,10 +648,12 @@
 			} else {
 				await restoreDraftBuffer(nextVisibleDraft);
 				attachments = nextAttachments;
+				snippetMentions = nextSnippetMentions;
 			}
 		} catch {
 			await restoreDraftBuffer(nextVisibleDraft);
 			attachments = nextAttachments;
+			snippetMentions = nextSnippetMentions;
 		} finally {
 			isSubmitting = false;
 		}
@@ -454,6 +674,7 @@
 		loadedEditDraftKey = null;
 		draft = "";
 		attachments = [];
+		snippetMentions = [];
 		onCancelEditMessage();
 		draftElement?.focus();
 	}
@@ -477,6 +698,40 @@
 			if (event.key === "Escape") {
 				event.preventDefault();
 				closeMentionPicker();
+				return;
+			}
+		}
+
+		if (
+			target instanceof HTMLTextAreaElement &&
+			event.key === " " &&
+			!event.shiftKey &&
+			!event.metaKey &&
+			!event.ctrlKey &&
+			!event.altKey &&
+			snippetsLoaded &&
+			snippets
+		) {
+			const valueWithSpace = `${target.value.slice(0, target.selectionStart)} ${target.value.slice(target.selectionEnd)}`;
+			const caret = target.selectionStart + 1;
+			const committed = commitTypedSnippetMention({
+				value: valueWithSpace,
+				caret,
+				snippets: snippets.snippets,
+				existingMentions: snippetMentions,
+			});
+			if (committed) {
+				event.preventDefault();
+				draft = committed.draft;
+				snippetMentions = [...snippetMentions, committed.mention];
+				caretPosition = committed.caret;
+				void tick().then(() => {
+					if (committed.mention.arguments.length > 0) {
+						void focusSnippetArgument(committed.mention.id, 0);
+					} else {
+						focusComposerAt(committed.caret);
+					}
+				});
 				return;
 			}
 		}
@@ -590,12 +845,26 @@
 		const options = await onListModels();
 		modelOptions = options;
 		modelOptionModels = new Map(options.map((option) => [option.value, option.model]));
+		modelOptionThinkingLevels = new Map(
+			options.map((option) => [option.value, option.supportedThinkingLevels]),
+		);
 	}
 
 	function selectModel(value: string) {
 		const model = modelOptionModels.get(value);
 		if (!model) return;
 		onModelChange(model);
+		const supportedThinkingLevels = modelOptionThinkingLevels.get(value) ?? [];
+		if (
+			supportedThinkingLevels.length > 0 &&
+			!supportedThinkingLevels.includes(thinkingLevel)
+		) {
+			onThinkingChange(
+				(supportedThinkingLevels.includes("medium")
+					? "medium"
+					: supportedThinkingLevels[0]) as ThinkingLevel,
+			);
+		}
 	}
 
 	function exactTokenCount(count: number): string {
@@ -644,13 +913,15 @@
 							onmousedown={(event) => event.preventDefault()}
 							onclick={() => void chooseMention(result)}
 						>
-							{#if result.kind === "folder"}
+							{#if result.type === "snippet"}
+								<FileTextIcon size={14} aria-hidden="true" />
+							{:else if result.kind === "folder"}
 								<FolderIcon size={14} aria-hidden="true" />
 							{:else}
 								<FileIcon size={14} aria-hidden="true" />
 							{/if}
 							<span>{result.basename}</span>
-							<small>{result.disambiguation || result.workspaceRelativePath}</small>
+							<small>{result.disambiguation || (result.type === "snippet" ? result.snippet.source : result.workspaceRelativePath)}</small>
 						</button>
 					{/each}
 				{/if}
@@ -674,12 +945,60 @@
 						onReorder={onReorderQueuedMessage}
 					/>
 				{/if}
-				{#if attachments.length > 0 || showImageModelWarning}
+				{#if snippetMentions.length > 0 || attachments.length > 0 || showImageModelWarning}
 					<section class="composer-context-row" aria-label="Attached file and context items">
 						{#if showImageModelWarning}
 							<div class="composer-attachment-warning" role="status">
 								<TriangleAlertIcon size={13} aria-hidden="true" />
 								<span>Current model is not listed as image-capable. Image attachments may be ignored or rejected.</span>
+							</div>
+						{/if}
+						{#if snippetMentions.length > 0}
+							<div class="snippet-mention-row" aria-label="Snippet mentions">
+								{#each snippetMentions as mention (mention.id)}
+									<div class="snippet-mention-chip">
+										<div class="snippet-mention-main">
+											<FileTextIcon size={13} aria-hidden="true" />
+											<span class="snippet-title">{mention.token}</span>
+											<span class="snippet-source">{mention.source}</span>
+											<button type="button" onclick={() => void expandSnippetMention(mention)}>
+												Expand
+											</button>
+											<button
+												type="button"
+												aria-label={`Remove snippet ${mention.title}`}
+												onclick={() => void removeSnippetMention(mention)}
+											>
+												<XIcon size={11} aria-hidden="true" />
+											</button>
+										</div>
+										{#if mention.arguments.length > 0}
+											<div class="snippet-argument-row">
+												{#each mention.arguments as argument, index (`${mention.id}:arg:${index}`)}
+													<input
+														value={argument}
+														data-snippet-argument={`${mention.id}:${index}`}
+														aria-label={`${mention.title} argument ${index + 1}`}
+														placeholder={mention.metadata.argumentHint ?? `Argument ${index + 1}`}
+														oninput={(event) =>
+															updateSnippetMentionArgument(
+																mention.id,
+																index,
+																event.currentTarget.value,
+															)}
+														onkeydown={(event) =>
+															void handleSnippetArgumentKeydown(
+																event,
+																mention.id,
+																index,
+																mention.arguments.length,
+															)}
+													/>
+												{/each}
+											</div>
+										{/if}
+									</div>
+								{/each}
 							</div>
 						{/if}
 						<div class="mention-chip-row">
@@ -717,7 +1036,7 @@
 					bind:element={draftElement}
 					resize="vertical"
 					rows={1}
-					placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."
+					placeholder="Ask svvy to inspect the repo, make a change, or delegate work."
 					onkeydown={handleKeydown}
 					oninput={handleDraftInput}
 					onpaste={handlePaste}
@@ -751,15 +1070,6 @@
 							textTransform="lowercase"
 							onSelect={(level) => onThinkingChange(level as ThinkingLevel)}
 						/>
-						<div class="compact-budget">
-							<ContextBudgetBar
-								budget={contextBudget ?? null}
-								variant="compact"
-								label="Context"
-								tooltipLabel={contextBudgetTooltip}
-								tooltipDetails={contextBudgetTooltipDetails}
-							/>
-						</div>
 					</div>
 					<div class="composer-action-cluster" aria-label="Composer actions">
 						<Tooltip label="Attach file context">
@@ -806,6 +1116,15 @@
 							</Tooltip>
 						{/if}
 					</div>
+				</div>
+				<div class="focused-context-budget">
+					<ContextBudgetBar
+						budget={contextBudget ?? null}
+						variant="full"
+						label="Context"
+						tooltipLabel={contextBudgetTooltip}
+						tooltipDetails={contextBudgetTooltipDetails}
+					/>
 				</div>
 			</div>
 		</div>
@@ -873,6 +1192,96 @@
 		gap: 0.38rem;
 		flex-wrap: wrap;
 		min-width: 0;
+	}
+
+	.snippet-mention-row {
+		display: grid;
+		gap: 0.36rem;
+		margin-bottom: 0.38rem;
+	}
+
+	.snippet-mention-chip {
+		display: grid;
+		gap: 0.32rem;
+		max-width: 100%;
+		padding: 0.36rem 0.42rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-accent) 54%, var(--ui-border-soft));
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-accent-soft) 34%, var(--ui-surface));
+	}
+
+	.snippet-mention-main {
+		display: flex;
+		align-items: center;
+		gap: 0.34rem;
+		min-width: 0;
+		color: color-mix(in oklab, var(--ui-accent) 72%, var(--ui-text-primary));
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+	}
+
+	.snippet-title {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-weight: 700;
+	}
+
+	.snippet-source {
+		flex: 0 0 auto;
+		padding: 0.04rem 0.26rem;
+		border-radius: var(--ui-radius-xs);
+		background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
+		color: var(--ui-text-secondary);
+		font-size: 0.64rem;
+		text-transform: uppercase;
+	}
+
+	.snippet-mention-main button {
+		flex: 0 0 auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 1.22rem;
+		border: 1px solid transparent;
+		border-radius: var(--ui-radius-xs);
+		background: transparent;
+		color: var(--ui-text-secondary);
+		font: inherit;
+		font-size: var(--text-xs);
+		cursor: pointer;
+	}
+
+	.snippet-mention-main button:hover,
+	.snippet-mention-main button:focus-visible {
+		outline: none;
+		border-color: var(--ui-border-soft);
+		color: var(--ui-text-primary);
+		background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
+	}
+
+	.snippet-argument-row {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+		gap: 0.3rem;
+	}
+
+	.snippet-argument-row input {
+		min-width: 0;
+		width: 100%;
+		padding: 0.26rem 0.34rem;
+		border: 1px solid var(--ui-border-soft);
+		border-radius: var(--ui-radius-xs);
+		background: color-mix(in oklab, var(--ui-surface) 78%, transparent);
+		color: var(--ui-text-primary);
+		font: inherit;
+		font-size: var(--text-xs);
+	}
+
+	.snippet-argument-row input:focus {
+		outline: none;
+		border-color: color-mix(in oklab, var(--ui-accent) 62%, var(--ui-border-strong));
 	}
 
 	.mention-chip {
@@ -1112,24 +1521,9 @@
 		box-shadow: var(--ui-focus-ring);
 	}
 
-	.compact-budget {
-		position: relative;
-		display: flex;
-		align-items: center;
-		width: 7.35rem;
-		height: 1.7rem;
-		flex: 0 0 7.35rem;
-		margin-left: 0.74rem;
-	}
-
-	.compact-budget :global(.context-budget-compact) {
-		position: static;
-		width: 100%;
-	}
-
-	.compact-budget :global(.context-budget-track) {
-		height: 0.32rem;
-		transform: translateY(0.08rem);
+	.focused-context-budget {
+		min-height: 1.7rem;
+		margin-top: 0.42rem;
 	}
 
 	.mention-picker {

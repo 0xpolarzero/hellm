@@ -140,10 +140,8 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     expect((await app.page.locator(".workspace-titlebar-title").textContent())?.trim()).toBe(
       "svvy",
     );
-    expect((await app.page.locator(".workspace-main-copy").textContent()) ?? "").toContain("Ready");
-    expect((await app.page.locator(".workspace-main-meta").textContent()) ?? "").toContain(
-      "Waiting for first turn",
-    );
+    expect(await app.page.locator("[data-testid=active-surface-title]").isVisible()).toBe(true);
+    expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
     expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(true);
 
     const hideButton = app.page.getByRole("button", { name: "Hide sidebar" });
@@ -162,27 +160,27 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     await app.page.getByRole("button", { name: "Hide sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "hidden" });
 
-    expect(await app.page.getByRole("button", { name: "Open settings" }).count()).toBe(0);
+    expect(await app.page.getByRole("button", { name: "Open settings" }).count()).toBe(1);
 
     await app.page.getByRole("button", { name: "Show sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "visible" });
     await app.page.getByRole("button", { name: "Open settings" }).click({ force: true });
-    const settings = app.page.getByRole("dialog", { name: "Settings" });
+    const settings = app.page.getByTestId("settings-pane");
     await settings.waitFor({ state: "visible" });
 
     expect(await app.page.locator(".workspace-titlebar").isVisible()).toBe(true);
-    expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
+    expect(await app.page.getByTestId("settings-pane").isVisible()).toBe(true);
     expect(await app.page.locator(".session-sidebar").isVisible()).toBe(true);
     expect(await app.page.getByRole("button", { name: "Hide sidebar" }).isVisible()).toBe(true);
 
-    await app.page.locator(".ui-dialog-close").click();
+    await app.page.getByRole("button", { name: "Close pane" }).click();
     await settings.waitFor({ state: "detached" });
 
     expect(await app.page.getByRole("button", { name: "Hide sidebar" }).isVisible()).toBe(true);
   });
 });
 
-test("renders artifact output as a mobile overlay at the app's narrow shell width", async () => {
+test("keeps obsolete artifact overlay surfaces out of the redesigned shell", async () => {
   await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
@@ -194,19 +192,15 @@ test("renders artifact output as a mobile overlay at the app's narrow shell widt
       expect(frame.width).toBeLessThan(DESKTOP_SPLIT_BREAKPOINT);
 
       await waitForShellChrome(app.page);
-      expect((await app.page.locator(".workspace-main-title").textContent())?.trim()).toBe(
-        "Workspace shell artifact",
-      );
+      expect(
+        (await app.page.locator("[data-testid=active-surface-title]").textContent())?.trim(),
+      ).toBe("Workspace shell artifact");
       await app.page.getByText("Seed the shell overlay transcript.").waitFor({ state: "visible" });
-      const toolCards = app.page.locator(".tool-card");
+      const toolCards = app.page.locator(".transcript-tool-card");
       await toolCards.first().waitFor({ state: "visible", timeout: 15_000 });
-      expect(await toolCards.count()).toBe(4);
-      await app.page
-        .locator(".artifacts-slot.mobile-slot")
-        .waitFor({ state: "visible", timeout: 15_000 });
-      await app.page
-        .locator(".artifacts-panel.overlay")
-        .waitFor({ state: "visible", timeout: 15_000 });
+      expect(await toolCards.count()).toBeGreaterThanOrEqual(4);
+      expect(await app.page.locator(".artifacts-slot").count()).toBe(0);
+      expect(await app.page.locator(".artifacts-panel").count()).toBe(0);
       expect(await app.page.locator(".artifacts-slot.desktop-open").count()).toBe(0);
       expect(await app.page.locator(".workspace-titlebar").isVisible()).toBe(true);
       expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);

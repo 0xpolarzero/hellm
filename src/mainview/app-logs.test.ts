@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AppLogEntry, AppLogSummary } from "../shared/workspace-contract";
 import {
+  APP_LOG_SOURCES,
   applyAppLogLiveUpdate,
   filterAppLogEntries,
   formatAppLogCount,
@@ -24,8 +25,8 @@ function appLogSummary(overrides: Partial<AppLogSummary> = {}): AppLogSummary {
   return {
     latestSeq: 1,
     seenSeq: 0,
-    unread: { total: 1, info: 1, warning: 0, error: 0 },
-    totals: { total: 1, info: 1, warning: 0, error: 0 },
+    unread: { total: 1, debug: 0, info: 1, warn: 0, error: 0 },
+    totals: { total: 1, debug: 0, info: 1, warn: 0, error: 0 },
     ...overrides,
   };
 }
@@ -38,18 +39,24 @@ describe("formatAppLogCount", () => {
   });
 });
 
+describe("app log sources", () => {
+  it("does not expose Project CI as a current app-log source", () => {
+    expect(APP_LOG_SOURCES).not.toContain("project-ci");
+  });
+});
+
 describe("getVisibleAppLogUnreadBadges", () => {
   it("shows unread badges for warnings and errors but not info logs", () => {
     const summary = {
       latestSeq: 4,
       seenSeq: 0,
-      unread: { total: 4, info: 2, warning: 1, error: 1 },
-      totals: { total: 4, info: 2, warning: 1, error: 1 },
+      unread: { total: 4, debug: 0, info: 2, warn: 1, error: 1 },
+      totals: { total: 4, debug: 0, info: 2, warn: 1, error: 1 },
     };
 
     expect(getVisibleAppLogUnreadBadges(summary)).toEqual([
       { level: "error", count: 1 },
-      { level: "warning", count: 1 },
+      { level: "warn", count: 1 },
     ]);
     expect(formatAppLogUnreadTitle(summary)).toBe("Open app logs: 1 errors, 1 warnings unread");
   });
@@ -58,8 +65,8 @@ describe("getVisibleAppLogUnreadBadges", () => {
     const summary = {
       latestSeq: 2,
       seenSeq: 0,
-      unread: { total: 2, info: 2, warning: 0, error: 0 },
-      totals: { total: 2, info: 2, warning: 0, error: 0 },
+      unread: { total: 2, debug: 0, info: 2, warn: 0, error: 0 },
+      totals: { total: 2, debug: 0, info: 2, warn: 0, error: 0 },
     };
 
     expect(getVisibleAppLogUnreadBadges(summary)).toEqual([]);
@@ -73,7 +80,7 @@ describe("filterAppLogEntries", () => {
     entry({
       id: "2",
       seq: 2,
-      level: "warning",
+      level: "warn",
       source: "auth.provider",
       message: "Provider missing",
     }),
@@ -81,18 +88,19 @@ describe("filterAppLogEntries", () => {
       id: "3",
       seq: 3,
       level: "error",
-      source: "execute-typescript",
+      source: "execute_typescript",
       message: "Compile failed",
       commandId: "cmd-1",
+      artifactId: "artifact-1",
     }),
   ];
 
   it("filters by level and source", () => {
-    expect(filterAppLogEntries(entries, { level: "warning", source: "all", query: "" })).toEqual([
+    expect(filterAppLogEntries(entries, { level: "warn", source: "all", query: "" })).toEqual([
       entries[1]!,
     ]);
     expect(
-      filterAppLogEntries(entries, { level: "all", source: "execute-typescript", query: "" }),
+      filterAppLogEntries(entries, { level: "all", source: "execute_typescript", query: "" }),
     ).toEqual([entries[2]!]);
   });
 
@@ -103,16 +111,19 @@ describe("filterAppLogEntries", () => {
     expect(filterAppLogEntries(entries, { level: "all", source: "all", query: "cmd-1" })).toEqual([
       entries[2]!,
     ]);
+    expect(
+      filterAppLogEntries(entries, { level: "all", source: "all", query: "artifact-1" }),
+    ).toEqual([entries[2]!]);
   });
 });
 
 describe("applyAppLogLiveUpdate", () => {
   const currentEntry = entry({ id: "1", seq: 1, message: "Workspace ready" });
-  const nextEntry = entry({ id: "2", seq: 2, level: "warning", message: "Provider missing" });
+  const nextEntry = entry({ id: "2", seq: 2, level: "warn", message: "Provider missing" });
   const nextSummary = appLogSummary({
     latestSeq: 2,
-    unread: { total: 2, info: 1, warning: 1, error: 0 },
-    totals: { total: 2, info: 1, warning: 1, error: 0 },
+    unread: { total: 2, debug: 0, info: 1, warn: 1, error: 0 },
+    totals: { total: 2, debug: 0, info: 1, warn: 1, error: 0 },
   });
 
   it("appends matching logs in Live mode without showing the New logs affordance while pinned at the end", () => {

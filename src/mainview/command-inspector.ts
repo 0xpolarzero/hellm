@@ -1,6 +1,10 @@
 import type {
   WorkspaceCommandInspector,
   WorkspaceCommandInspectorChild,
+  WorkspaceCommandDiagnosticSnapshot,
+  WorkspaceCommandOutputEvent,
+  WorkspaceCommandPatchSnapshot,
+  WorkspaceCommandProgressEvent,
   WorkspaceCommandRollup,
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
@@ -15,6 +19,30 @@ export interface WorkspaceCommandInspectorSection {
   title: string;
   description: string;
   children: WorkspaceCommandInspectorChild[];
+}
+
+export interface WorkspaceCommandOutputSection {
+  id: WorkspaceCommandOutputEvent["stream"];
+  title: string;
+  events: WorkspaceCommandOutputEvent[];
+}
+
+export interface WorkspaceCommandProgressSection {
+  id: "progress";
+  title: string;
+  events: WorkspaceCommandProgressEvent[];
+}
+
+export interface WorkspaceCommandPatchSection {
+  id: "patch";
+  title: string;
+  snapshots: WorkspaceCommandPatchSnapshot[];
+}
+
+export interface WorkspaceCommandDiagnosticSection {
+  id: "diagnostics";
+  title: string;
+  snapshots: WorkspaceCommandDiagnosticSnapshot[];
 }
 
 export function getVisibleCommandRollups(
@@ -69,4 +97,72 @@ export function getCommandInspectorSections(
   }
 
   return sections;
+}
+
+export function getCommandOutputSections(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandOutputSection[] {
+  if (!inspector || inspector.outputEvents.length === 0) {
+    return [];
+  }
+
+  return (["stdout", "stderr"] as const).flatMap((stream) => {
+    const events = inspector.outputEvents.filter((event) => event.stream === stream);
+    if (events.length === 0) {
+      return [];
+    }
+    return [
+      {
+        id: stream,
+        title: stream === "stdout" ? "Stdout" : "Stderr",
+        events,
+      },
+    ];
+  });
+}
+
+export function getCommandProgressSections(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandProgressSection[] {
+  const events = inspector?.progressEvents ?? [];
+  if (events.length === 0) {
+    return [];
+  }
+  return [
+    {
+      id: "progress",
+      title: "Progress",
+      events,
+    },
+  ];
+}
+
+export function getCommandPatchSections(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandPatchSection[] {
+  if (!inspector || inspector.patchSnapshots.length === 0) {
+    return [];
+  }
+  return [
+    {
+      id: "patch",
+      title: "Patch preview",
+      snapshots: inspector.patchSnapshots,
+    },
+  ];
+}
+
+export function getCommandDiagnosticSections(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandDiagnosticSection[] {
+  if (!inspector || inspector.diagnostics.length === 0) {
+    return [];
+  }
+  return [
+    {
+      id: "diagnostics",
+      title: "Diagnostics",
+      snapshots: inspector.diagnostics,
+    },
+  ];
 }

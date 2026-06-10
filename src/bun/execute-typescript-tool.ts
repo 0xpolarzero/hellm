@@ -1,29 +1,50 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
+import { Formatter } from "incur";
 import type { Static } from "typebox";
 import { basename } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
-import {
-  canUseExecuteTypescriptApiNamespace,
-  getExecuteTypescriptActorCapabilityProfile,
-  type ExecuteTypescriptApiNamespace,
-  type SvvyActorKind,
-} from "./actor-capabilities";
-import { createCxTools } from "./cx-tools";
+import type { SvvyActorKind } from "./actor-capabilities";
+import type { AgentSettingsStore } from "./agent-settings-store";
+import type { AppLoggerEvent } from "./app-logger";
+import { redactAppLogValue } from "./app-log-store";
+import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import type { SvvyApi, SvvyConsole } from "./execute-typescript-api-contract";
+import type { SvvyConsole } from "./execute-typescript-api-contract";
+import {
+  createMacOsKeychainExtensionEnvSecretStore,
+  type ExtensionEnvSecretStore,
+} from "./extension-env-secret-store";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import { createWorkflowLibrary, type WorkflowLibrary } from "./smithers-runtime/workflow-library";
-import { createSvvyDirectTools } from "./svvy-direct-tools";
-import type { WebProvider } from "./web-runtime/contracts";
 import type {
-  StructuredArtifactKind,
+  StructuredCommandRecord,
   StructuredCommandExecutor,
   StructuredCommandStatus,
   StructuredCommandVisibility,
   StructuredSessionStateStore,
 } from "./structured-session-state";
+import {
+  formatSvvyxArtifactsError,
+  runSvvyxArtifactsOperation,
+  type SvvyxArtifactOpenHandler,
+  type SvvyxArtifactsOperationInput,
+  type SvvyxArtifactsRuntimeContext,
+} from "./svvyx-artifacts-command";
+import {
+  formatSvvyxWorkflowsError,
+  runSvvyxWorkflowsCommand,
+  type SvvyxWorkflowsModelCatalogReader,
+} from "./svvyx-workflows-command";
+import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
+import {
+  formatSvvyxRuntimeError,
+  runSvvyxRuntimeGeneratedClientCommand,
+  type SvvyxRuntimeEnvValues,
+} from "./svvyx-runtime-command";
+import { resolveExtensionRecords } from "./svvyx-extensions-command";
+import { resolveActorExtensionState } from "../shared/extensions";
+import type { ApprovalMode } from "../shared/agent-settings";
 
 export const EXECUTE_TYPESCRIPT_TOOL_NAME = "execute_typescript";
 
@@ -47,7 +68,7 @@ export type ExecuteTypescriptResult = {
   error?: {
     message: string;
     name?: string;
-    stage?: "compile" | "typecheck" | "runtime";
+    stage?: "approval" | "compile" | "typecheck" | "runtime";
     diagnostics?: StructuredDiagnostic[];
     line?: number;
   };
@@ -63,20 +84,29 @@ export const executeTypescriptParamsSchema = Type.Object(
 export type ExecuteTypescriptParams = Static<typeof executeTypescriptParamsSchema>;
 
 const EXECUTE_TYPESCRIPT_DESCRIPTION = [
-  "Run a bounded TypeScript program against a small duplicate subset of direct svvy tools.",
-  "Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.",
-  "Inside the snippet, use the injected api object instead of Node.js built-ins such as fs, path, process, or node:* imports.",
-  "The runtime persists the submitted snippet before execution, typechecks before running, and records nested api tool calls as child commands.",
+  "Run a bounded TypeScript program against actor-local generated extension clients.",
+  "Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, or transforming structured extension results.",
+  "Inside the snippet, use generated extensions clients and console; do not assume a global svvy client, broad api helper, Node.js built-ins, or node:* imports.",
+  "The runtime persists the submitted snippet before execution and typechecks before running.",
 ].join(" ");
 
-const EXECUTE_TYPESCRIPT_SUMMARY = "Execute bounded TypeScript against duplicated direct tools.";
+const EXECUTE_TYPESCRIPT_SUMMARY = "Execute bounded TypeScript.";
 const API_DECLARATIONS_FILE = "svvy-api.d.ts";
 const SOURCE_FILE = "execute-typescript.ts";
-const WRAPPER_PREFIX = "export default async function __svvy(api: SvvyApi, console: SvvyConsole) {";
+const DIAGNOSTICS_FILE = "execute-typescript.diagnostics.json";
+const LOGS_FILE = "execute-typescript.logs.log";
+const WRAPPER_PREFIX =
+  "export default async function __svvy(extensions: LoadedExtensionsClient, console: SvvyConsole, __svvyIncurClient: IncurClientModule) {";
 const WRAPPER_SUFFIX = "}";
 const WRAPPER_LINE_OFFSET = 1;
+const INCUR_CLIENT_MODULE = "incur/client";
+const ALLOWED_INCUR_CLIENT_IMPORTS = new Set(["Client", "Resources", "Run"]);
+const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
+const EXECUTE_TYPESCRIPT_SECRET_KEY_PATTERN =
+  /(^|[-_])(api[-_]?key|access[-_]?token|refresh[-_]?token|auth|authorization|cookie|secret|password|token|credential)([-_]|$)/i;
 
-type ExecuteTypescriptContext = {
+export type ExecuteTypescriptContext = {
+  sessionId: string;
   actor: SvvyActorKind;
   turnId?: string | null;
   workflowTaskAttemptId?: string | null;
@@ -85,87 +115,97 @@ type ExecuteTypescriptContext = {
   workflowRunId?: string | null;
   executor?: StructuredCommandExecutor;
   visibility?: StructuredCommandVisibility;
+  loadedExtensionIds?: readonly string[];
 };
 
 type CapturedConsoleLevel = "log" | "info" | "warn" | "error";
-
-export interface ExecuteTypescriptCommandStore {
-  createCommand(input: {
-    turnId?: string | null;
-    workflowTaskAttemptId?: string | null;
-    surfacePiSessionId?: string;
-    threadId?: string | null;
-    workflowRunId?: string | null;
-    parentCommandId?: string | null;
-    toolName: string;
-    executor: StructuredCommandExecutor;
-    visibility: StructuredCommandVisibility;
-    title: string;
-    summary: string;
-    facts?: Record<string, unknown> | null;
-    attempts?: number;
-  }): {
-    id: string;
-  };
-  startCommand(commandId: string): unknown;
-  finishCommand(input: {
-    commandId: string;
-    status: Extract<StructuredCommandStatus, "waiting" | "succeeded" | "failed" | "cancelled">;
-    visibility?: StructuredCommandVisibility;
-    summary?: string;
-    facts?: Record<string, unknown> | null;
-    error?: string | null;
-  }): unknown;
-  createArtifact(input: {
-    sessionId?: string | null;
-    threadId?: string | null;
-    workflowRunId?: string | null;
-    workflowTaskAttemptId?: string | null;
-    sourceCommandId?: string | null;
-    kind: StructuredArtifactKind;
-    name?: string;
-    path?: string;
-    content?: string;
-  }): {
-    id: string;
-    path?: string;
-  };
-}
 
 type ExecuteTypescriptToolOptions = {
   cwd: string;
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
-  workflowLibrary?: WorkflowLibrary;
-  webProvider?: WebProvider;
+  openArtifact?: SvvyxArtifactOpenHandler;
+  onWorkflowsGeneratedPackageChanged?: (input: {
+    reason: "svvyx-workflows-build" | "svvyx-workflows-save";
+    commandFacts: Record<string, unknown>;
+  }) => void | Promise<void>;
+  workflowsExtensionsGeneratedPackagePath?: string;
+  extensionsRoot?: string;
+  workflowsGeneratedPackagePath?: string;
+  workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
+  workflowsSourceRoot?: string;
+  workflowsWorkspaceCwds?: () => readonly string[];
+  agentSettingsStore?: AgentSettingsStore;
+  env?: NodeJS.ProcessEnv;
+  extensionsBuildRoot?: string;
+  extensionsCliProbe?: SvvyxExtensionsCliProbe;
+  extensionEnvSecretStore?: ExtensionEnvSecretStore;
+  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
+  onAppLog?: (event: AppLoggerEvent) => void;
+  approvalBoundary?: ExecuteTypescriptApprovalBoundary;
+  approvalMode?: ApprovalMode | (() => ApprovalMode);
 };
 
-type ExecuteTypescriptApi = SvvyApi & {
-  workflow_list_assets?(input?: unknown): Promise<unknown>;
-  workflow_list_models?(): Promise<unknown>;
-  web_search?(input: unknown): Promise<unknown>;
-  web_fetch?(input: unknown): Promise<unknown>;
+export type ExecuteTypescriptApprovalBoundary = RuntimeApprovalBoundary;
+
+type GeneratedClientRunOutput = {
+  format: "toon" | "json" | "yaml" | "md" | "jsonl";
+  text: string;
+  tokenCount?: number;
+  tokenLimit?: number;
+  tokenOffset?: number;
 };
-type CxApiToolResult = Awaited<ReturnType<ExecuteTypescriptApi["cx_overview"]>>;
+type GeneratedClientRunResult<T> = {
+  ok: true;
+  data: T;
+  output: T | GeneratedClientRunOutput;
+  meta: {
+    commandFacts: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+};
+type GeneratedUserClientInput = {
+  args?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+  selection?: string[];
+  outputFormat?: "toon" | "json" | "yaml" | "md" | "jsonl";
+  outputTokenCount?: boolean;
+  outputTokenLimit?: number;
+  outputTokenOffset?: number;
+};
+type GeneratedUserExtensionClient = {
+  run: (
+    commandId: string,
+    input?: GeneratedUserClientInput,
+  ) => Promise<GeneratedClientRunResult<unknown>>;
+};
+type ExecuteTypescriptExtensions = {
+  artifacts?: {
+    run: (
+      commandId: string,
+      input: { options?: Record<string, unknown> },
+    ) => Promise<GeneratedClientRunResult<unknown>>;
+  };
+  workflows?: {
+    run: (
+      commandId: string,
+      input: { options?: Record<string, unknown> },
+    ) => Promise<GeneratedClientRunResult<unknown>>;
+  };
+} & Record<string, GeneratedUserExtensionClient | undefined>;
+type IncurClientModuleRuntime = {
+  Client: {
+    ClientError: new (message?: string) => Error;
+  };
+  Resources: Record<string, unknown>;
+  Run: Record<string, unknown>;
+};
+type IncurClientImportBinding = {
+  importedName: string;
+  localName: string;
+};
 
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
-
-type ExecuteTypescriptChildActivity = {
-  toolName: string;
-  visibility: StructuredCommandVisibility;
-  status: "succeeded" | "failed";
-  summary: string;
-  facts: ExecuteTypescriptCommandFacts | null;
-};
-
-type ExecuteTypescriptChildCallResult<T> = {
-  value: T;
-  summary?: string;
-  facts?: ExecuteTypescriptCommandFacts | null;
-  status?: "succeeded" | "failed";
-  error?: string | null;
-  visibility?: StructuredCommandVisibility;
-};
 
 export function createExecuteTypescriptTool(
   options: ExecuteTypescriptToolOptions,
@@ -194,14 +234,32 @@ export function createExecuteTypescriptTool(
         signal,
         typescriptCode: params.typescriptCode,
         context: {
+          sessionId: runtime.sessionId,
           turnId: runtime.turnId,
           actor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
           surfacePiSessionId: runtime.surfacePiSessionId,
           threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
           executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+          loadedExtensionIds: runtime.loadedExtensionIds,
         },
-        workflowLibrary: options.workflowLibrary,
-        webProvider: options.webProvider,
+        openArtifact: options.openArtifact,
+        onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
+        workflowsExtensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
+        extensionsRoot: options.extensionsRoot,
+        workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
+        workflowsModelCatalog: options.workflowsModelCatalog,
+        workflowsSourceRoot: options.workflowsSourceRoot,
+        workflowsWorkspaceCwds: options.workflowsWorkspaceCwds,
+        agentSettingsStore: options.agentSettingsStore,
+        env: options.env,
+        extensionsBuildRoot: options.extensionsBuildRoot,
+        extensionsCliProbe: options.extensionsCliProbe,
+        extensionEnvSecretStore: options.extensionEnvSecretStore,
+        extensionsEnvValues: options.extensionsEnvValues,
+        onAppLog: options.onAppLog,
+        approvalBoundary: options.approvalBoundary,
+        approvalMode: options.approvalMode,
+        toolCallId: _toolCallId,
       });
 
       return {
@@ -243,12 +301,31 @@ function ensureRunnableSurfaceThread(
 
 export async function runExecuteTypescript(input: {
   cwd: string;
-  store: ExecuteTypescriptCommandStore;
+  store: StructuredSessionStateStore;
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
-  workflowLibrary?: WorkflowLibrary;
-  webProvider?: WebProvider;
+  openArtifact?: SvvyxArtifactOpenHandler;
+  onWorkflowsGeneratedPackageChanged?: (input: {
+    reason: "svvyx-workflows-build" | "svvyx-workflows-save";
+    commandFacts: Record<string, unknown>;
+  }) => void | Promise<void>;
+  workflowsExtensionsGeneratedPackagePath?: string;
+  extensionsRoot?: string;
+  workflowsGeneratedPackagePath?: string;
+  workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
+  workflowsSourceRoot?: string;
+  workflowsWorkspaceCwds?: () => readonly string[];
+  agentSettingsStore?: AgentSettingsStore;
+  env?: NodeJS.ProcessEnv;
+  extensionsBuildRoot?: string;
+  extensionsCliProbe?: SvvyxExtensionsCliProbe;
+  extensionEnvSecretStore?: ExtensionEnvSecretStore;
+  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
+  onAppLog?: (event: AppLoggerEvent) => void;
+  approvalBoundary?: ExecuteTypescriptApprovalBoundary;
+  approvalMode?: ApprovalMode | (() => ApprovalMode);
+  toolCallId: string;
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createCommand({
     turnId: input.context.turnId ?? null,
@@ -261,28 +338,103 @@ export async function runExecuteTypescript(input: {
     visibility: input.context.visibility ?? "summary",
     title: "Run execute_typescript",
     summary: EXECUTE_TYPESCRIPT_SUMMARY,
+    arguments: {
+      typescriptCode: input.typescriptCode,
+    },
   });
   input.store.startCommand(parentCommand.id);
+  const artifactNamePrefix = `${parentCommand.id}-`;
   const snippetArtifact = input.store.createArtifact({
     workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
     sourceCommandId: parentCommand.id,
     kind: "text",
-    name: "execute-typescript.ts",
+    name: `${artifactNamePrefix}${SOURCE_FILE}`,
     content: input.typescriptCode,
   });
+  input.onAppLog?.({
+    level: "info",
+    source: "execute_typescript",
+    message: "Execute TypeScript started.",
+    details: {
+      workspaceSessionId: input.context.sessionId,
+      surfacePiSessionId: input.context.surfacePiSessionId,
+      threadId: input.context.threadId ?? undefined,
+      workflowRunId: input.context.workflowRunId ?? undefined,
+      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
+      commandId: parentCommand.id,
+      artifactId: snippetArtifact.id,
+      actor: input.context.actor,
+    },
+  });
 
-  const preflight = compileAndTypecheck(
-    input.typescriptCode,
-    input.context.actor,
-    input.webProvider,
-  );
+  const approvalMode = resolveExecuteTypescriptApprovalMode(input);
+  const approval =
+    approvalMode === "full-access" || !input.approvalBoundary
+      ? { approved: true as const }
+      : await input.approvalBoundary({
+          approvalMode,
+          commandId: parentCommand.id,
+          context: input.context,
+          cwd: input.cwd,
+          snippetArtifactId: snippetArtifact.id,
+          toolCallId: input.toolCallId,
+          toolName: EXECUTE_TYPESCRIPT_TOOL_NAME,
+          typescriptCode: input.typescriptCode,
+        });
+  if (approval?.approved === false) {
+    const reason = approval.reason?.trim() || "Execute TypeScript was not approved.";
+    input.store.finishCommand({
+      commandId: parentCommand.id,
+      status: "cancelled",
+      summary: reason,
+      facts: {
+        approval: "denied",
+        snippetArtifactId: snippetArtifact.id,
+      },
+      error: reason,
+    });
+    input.onAppLog?.({
+      level: "warning",
+      source: "execute_typescript",
+      message: "Execute TypeScript blocked by approval boundary.",
+      details: {
+        workspaceSessionId: input.context.sessionId,
+        surfacePiSessionId: input.context.surfacePiSessionId,
+        threadId: input.context.threadId ?? undefined,
+        workflowRunId: input.context.workflowRunId ?? undefined,
+        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
+        commandId: parentCommand.id,
+        artifactId: snippetArtifact.id,
+        approval: "denied",
+      },
+    });
+    return {
+      success: false,
+      error: {
+        message: reason,
+        stage: "approval",
+      },
+    };
+  }
+
+  const preflight = compileAndTypecheck(input.typescriptCode, {
+    context: input.context,
+    extensionsRoot: input.extensionsRoot,
+  });
   if (preflight.errors.length > 0) {
     const diagnosticsArtifact = input.store.createArtifact({
       workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
       sourceCommandId: parentCommand.id,
       kind: "json",
-      name: "execute-typescript.diagnostics.json",
+      name: `${artifactNamePrefix}${DIAGNOSTICS_FILE}`,
       content: JSON.stringify(preflight.errors, null, 2),
+    });
+    recordExecuteTypescriptDiagnostics({
+      store: input.store,
+      sessionId: input.context.sessionId,
+      commandId: parentCommand.id,
+      stage: preflight.stage,
+      diagnostics: preflight.errors,
     });
     const errorMessage = preflight.errors[0]?.message ?? "Static diagnostics blocked execution.";
     input.store.finishCommand({
@@ -296,6 +448,22 @@ export async function runExecuteTypescript(input: {
       },
       error: errorMessage,
     });
+    input.onAppLog?.({
+      level: "warning",
+      source: "execute_typescript",
+      message: "Execute TypeScript blocked by static diagnostics.",
+      details: {
+        workspaceSessionId: input.context.sessionId,
+        surfacePiSessionId: input.context.surfacePiSessionId,
+        threadId: input.context.threadId ?? undefined,
+        workflowRunId: input.context.workflowRunId ?? undefined,
+        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
+        commandId: parentCommand.id,
+        artifactId: diagnosticsArtifact.id,
+        diagnosticsCount: preflight.errors.length,
+        stage: preflight.stage,
+      },
+    });
     const result: ExecuteTypescriptResult = {
       success: false,
       error: {
@@ -308,54 +476,85 @@ export async function runExecuteTypescript(input: {
   }
 
   const logs: string[] = [];
-  const childActivity: ExecuteTypescriptChildActivity[] = [];
+  const childCommandFacts: Array<{ status: StructuredCommandStatus }> = [];
+  const incurClientModule = createIncurClientModule();
   try {
-    const api = createExecuteTypescriptApi({
-      cwd: input.cwd,
-      actor: input.context.actor,
-      store: input.store,
-      surfacePiSessionId: input.context.surfacePiSessionId,
-      turnId: input.context.turnId ?? null,
-      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-      threadId: input.context.threadId,
-      workflowRunId: input.context.workflowRunId ?? null,
-      parentCommandId: parentCommand.id,
-      signal: input.signal,
-      workflowLibrary: input.workflowLibrary ?? createWorkflowLibrary(input.cwd),
-      webProvider: input.webProvider,
-      emitConsole(level, ...args) {
-        appendCapturedConsoleLine(logs, level, ...args);
+    const resultValue = await runCompiledSnippet(preflight.javascript, {
+      logs,
+      onConsoleLine: (line) => {
+        recordExecuteTypescriptOutputEvent({
+          store: input.store,
+          sessionId: input.context.sessionId,
+          commandId: parentCommand.id,
+          line,
+        });
       },
-      recordChildActivity(activity) {
-        childActivity.push(activity);
-      },
+      incurClientModule,
+      extensions: createExecuteTypescriptExtensions({
+        cwd: input.cwd,
+        store: input.store,
+        context: input.context,
+        parentCommand,
+        childCommandFacts,
+        incurClientModule,
+        openArtifact: input.openArtifact,
+        onWorkflowsGeneratedPackageChanged: input.onWorkflowsGeneratedPackageChanged,
+        workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
+        extensionsRoot: input.extensionsRoot,
+        workflowsModelCatalog: input.workflowsModelCatalog,
+        workflowsSourceRoot: input.workflowsSourceRoot,
+        workflowsWorkspaceCwds: input.workflowsWorkspaceCwds,
+        agentSettingsStore: input.agentSettingsStore,
+        env: input.env,
+        extensionsBuildRoot: input.extensionsBuildRoot,
+        extensionsCliProbe: input.extensionsCliProbe,
+        extensionEnvSecretStore: input.extensionEnvSecretStore,
+        extensionsEnvValues: input.extensionsEnvValues,
+        onAppLog: input.onAppLog,
+      }),
     });
-    const resultValue = await runCompiledSnippet(preflight.javascript, api, logs);
+    const redactedResultValue = redactExecuteTypescriptValue(resultValue);
     const logsArtifact =
       logs.length > 0
         ? input.store.createArtifact({
             workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
             sourceCommandId: parentCommand.id,
             kind: "log",
-            name: "execute-typescript.logs.log",
+            name: `${artifactNamePrefix}${LOGS_FILE}`,
             content: logs.join("\n"),
           })
         : null;
     const parentRollup = buildExecuteTypescriptParentRollup({
-      childActivity,
       snippetArtifactId: snippetArtifact.id,
       logsArtifactId: logsArtifact?.id,
+      childCommandFacts,
     });
     input.store.finishCommand({
       commandId: parentCommand.id,
       status: "succeeded",
-      summary: parentRollup.summary ?? summarizeResult(resultValue),
+      summary: parentRollup.summary ?? summarizeResult(redactedResultValue),
       facts: parentRollup.facts,
+    });
+    input.onAppLog?.({
+      level: "info",
+      source: "execute_typescript",
+      message: "Execute TypeScript finished.",
+      details: {
+        workspaceSessionId: input.context.sessionId,
+        surfacePiSessionId: input.context.surfacePiSessionId,
+        threadId: input.context.threadId ?? undefined,
+        workflowRunId: input.context.workflowRunId ?? undefined,
+        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
+        commandId: parentCommand.id,
+        artifactId: logsArtifact?.id ?? snippetArtifact.id,
+        childCommandCount: childCommandFacts.length,
+        logsCount: logs.length,
+      },
     });
 
     const result: ExecuteTypescriptResult = {
       success: true,
-      result: resultValue,
+      result: redactedResultValue,
       logs: logs.length > 0 ? logs : undefined,
     };
     return result;
@@ -366,16 +565,17 @@ export async function runExecuteTypescript(input: {
             workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
             sourceCommandId: parentCommand.id,
             kind: "log",
-            name: "execute-typescript.logs.log",
+            name: `${artifactNamePrefix}${LOGS_FILE}`,
             content: logs.join("\n"),
           })
         : null;
-    const message =
-      error instanceof Error ? error.message : "execute_typescript failed at runtime.";
+    const message = redactExecuteTypescriptString(
+      error instanceof Error ? error.message : "execute_typescript failed at runtime.",
+    );
     const parentRollup = buildExecuteTypescriptParentRollup({
-      childActivity,
       snippetArtifactId: snippetArtifact.id,
       logsArtifactId: logsArtifact?.id,
+      childCommandFacts,
     });
     input.store.finishCommand({
       commandId: parentCommand.id,
@@ -383,6 +583,23 @@ export async function runExecuteTypescript(input: {
       summary: message,
       facts: parentRollup.facts,
       error: message,
+    });
+    input.onAppLog?.({
+      level: "error",
+      source: "execute_typescript",
+      message: "Execute TypeScript failed.",
+      error,
+      details: {
+        workspaceSessionId: input.context.sessionId,
+        surfacePiSessionId: input.context.surfacePiSessionId,
+        threadId: input.context.threadId ?? undefined,
+        workflowRunId: input.context.workflowRunId ?? undefined,
+        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
+        commandId: parentCommand.id,
+        artifactId: logsArtifact?.id ?? snippetArtifact.id,
+        childCommandCount: childCommandFacts.length,
+        logsCount: logs.length,
+      },
     });
     const result: ExecuteTypescriptResult = {
       success: false,
@@ -398,17 +615,45 @@ export async function runExecuteTypescript(input: {
   }
 }
 
+function resolveExecuteTypescriptApprovalMode(input: {
+  approvalMode?: ApprovalMode | (() => ApprovalMode);
+}): ApprovalMode {
+  if (typeof input.approvalMode === "function") {
+    return input.approvalMode();
+  }
+  return input.approvalMode ?? "auto-review";
+}
+
 function compileAndTypecheck(
   typescriptCode: string,
-  actor: SvvyActorKind,
-  webProvider?: WebProvider,
+  input: {
+    context: Pick<ExecuteTypescriptContext, "actor" | "loadedExtensionIds">;
+    extensionsRoot?: string;
+  },
 ): {
   javascript: string;
   errors: StructuredDiagnostic[];
   warnings: StructuredDiagnostic[];
   stage: "compile" | "typecheck";
 } {
-  const wrappedSource = [WRAPPER_PREFIX, typescriptCode, WRAPPER_SUFFIX].join("\n");
+  const prepared = prepareTypescriptSnippet(typescriptCode);
+  const context = input.context;
+  if (prepared.error) {
+    return {
+      javascript: "",
+      errors: [prepared.error],
+      warnings: [],
+      stage: "compile",
+    };
+  }
+  const wrappedSource = [
+    WRAPPER_PREFIX,
+    ...prepared.incurClientImportBindings.map(
+      (binding) => `const ${binding.localName} = __svvyIncurClient.${binding.importedName};`,
+    ),
+    prepared.typescriptCode,
+    WRAPPER_SUFFIX,
+  ].join("\n");
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.CommonJS,
@@ -420,7 +665,17 @@ function compileAndTypecheck(
   const defaultHost = ts.createCompilerHost(compilerOptions, true);
   const sourceFiles = new Map<string, string>([
     [SOURCE_FILE, wrappedSource],
-    [API_DECLARATIONS_FILE, buildExecuteTypescriptApiDeclaration(actor, webProvider)],
+    [
+      API_DECLARATIONS_FILE,
+      buildExecuteTypescriptApiDeclaration(context.actor, {
+        extensionsRoot: input.extensionsRoot,
+        loadedExtensionIds: context.loadedExtensionIds,
+        loadedExtensionRecords: resolveExtensionRecords(
+          context.loadedExtensionIds ?? [],
+          input.extensionsRoot,
+        ),
+      }),
+    ],
   ]);
 
   const host: ts.CompilerHost = {
@@ -480,6 +735,98 @@ function compileAndTypecheck(
   };
 }
 
+function prepareTypescriptSnippet(typescriptCode: string): {
+  typescriptCode: string;
+  incurClientImportBindings: IncurClientImportBinding[];
+  error?: StructuredDiagnostic;
+} {
+  const incurClientImportBindings: IncurClientImportBinding[] = [];
+  const localNames = new Set<string>();
+  const importPattern = /^\s*import\s*\{([^}]+)\}\s*from\s*["']incur\/client["'];?\s*$/gm;
+  const rewrittenCode = typescriptCode.replace(
+    importPattern,
+    (statement, importList: string, offset: number) => {
+      const line = lineNumberAtOffset(typescriptCode, offset);
+      const parsed = parseIncurClientImportList(importList, localNames);
+      if (!parsed.success) {
+        incurClientImportBindings.splice(0, incurClientImportBindings.length);
+        incurClientImportBindings.push({
+          importedName: "__invalid__",
+          localName: String(line),
+        });
+        return statement;
+      }
+      incurClientImportBindings.push(...parsed.bindings);
+      return "";
+    },
+  );
+
+  const invalid = incurClientImportBindings.find(
+    (binding) => binding.importedName === "__invalid__",
+  );
+  if (invalid) {
+    return {
+      typescriptCode,
+      incurClientImportBindings: [],
+      error: {
+        severity: "error",
+        message: `Only named imports Client, Resources, and Run are supported from "${INCUR_CLIENT_MODULE}".`,
+        file: basename(SOURCE_FILE),
+        line: Number(invalid.localName),
+        column: 1,
+        code: "svvy-incur-import",
+      },
+    };
+  }
+
+  return {
+    typescriptCode: rewrittenCode,
+    incurClientImportBindings,
+  };
+}
+
+function parseIncurClientImportList(
+  importList: string,
+  localNames: Set<string>,
+): { success: true; bindings: IncurClientImportBinding[] } | { success: false } {
+  const bindings: IncurClientImportBinding[] = [];
+  for (const rawSpecifier of importList.split(",")) {
+    const specifier = rawSpecifier.trim();
+    if (!specifier) {
+      return { success: false };
+    }
+    const match = /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(specifier);
+    if (!match) {
+      return { success: false };
+    }
+    const importedName = match[1];
+    if (!importedName) {
+      return { success: false };
+    }
+    const localName = match[2] ?? importedName;
+    if (
+      !ALLOWED_INCUR_CLIENT_IMPORTS.has(importedName) ||
+      !IDENTIFIER_PATTERN.test(localName) ||
+      localNames.has(localName)
+    ) {
+      return { success: false };
+    }
+    localNames.add(localName);
+    bindings.push({ importedName, localName });
+  }
+  return { success: true, bindings };
+}
+
+function lineNumberAtOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let index = 0; index < offset; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      line += 1;
+    }
+  }
+  return line;
+}
+
 function mapDiagnostic(diagnostic: ts.Diagnostic): StructuredDiagnostic {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
   const severity = diagnostic.category === ts.DiagnosticCategory.Warning ? "warning" : "error";
@@ -503,11 +850,19 @@ function mapDiagnostic(diagnostic: ts.Diagnostic): StructuredDiagnostic {
 
 async function runCompiledSnippet(
   javascript: string,
-  api: ExecuteTypescriptApi,
-  logs: string[],
+  runtime: {
+    logs: string[];
+    onConsoleLine?: (line: string) => void;
+    extensions: ExecuteTypescriptExtensions;
+    incurClientModule: IncurClientModuleRuntime;
+  },
 ): Promise<unknown> {
   type CompiledSnippetModuleExports = {
-    default?: (api: ExecuteTypescriptApi, console: SvvyConsole) => Promise<unknown>;
+    default?: (
+      extensions: ExecuteTypescriptExtensions,
+      console: SvvyConsole,
+      incurClient: IncurClientModuleRuntime,
+    ) => Promise<unknown>;
   };
   type CompiledSnippetModule = {
     exports: CompiledSnippetModuleExports;
@@ -523,12 +878,859 @@ async function runCompiledSnippet(
   if (typeof module.exports.default !== "function") {
     throw new Error("execute_typescript did not produce an executable function.");
   }
-  return await module.exports.default(api, createCapturedConsole(logs));
+  return await module.exports.default(
+    runtime.extensions,
+    createCapturedConsole(runtime.logs, runtime.onConsoleLine),
+    runtime.incurClientModule,
+  );
 }
 
-function createCapturedConsole(logs: string[]): SvvyConsole {
+function createIncurClientModule(): IncurClientModuleRuntime {
+  class ClientError extends Error {
+    constructor(message?: string) {
+      super(message);
+      this.name = "ClientError";
+    }
+  }
+
+  return Object.freeze({
+    Client: Object.freeze({
+      ClientError,
+    }),
+    Resources: Object.freeze({}),
+    Run: Object.freeze({}),
+  });
+}
+
+function createExecuteTypescriptExtensions(input: {
+  cwd: string;
+  store: StructuredSessionStateStore;
+  context: ExecuteTypescriptContext;
+  parentCommand: Pick<StructuredCommandRecord, "id">;
+  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
+  incurClientModule: IncurClientModuleRuntime;
+  openArtifact?: SvvyxArtifactOpenHandler;
+  onWorkflowsGeneratedPackageChanged?: (input: {
+    reason: "svvyx-workflows-build" | "svvyx-workflows-save";
+    commandFacts: Record<string, unknown>;
+  }) => void | Promise<void>;
+  workflowsExtensionsGeneratedPackagePath?: string;
+  extensionsRoot?: string;
+  workflowsGeneratedPackagePath?: string;
+  workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
+  workflowsSourceRoot?: string;
+  workflowsWorkspaceCwds?: () => readonly string[];
+  agentSettingsStore?: AgentSettingsStore;
+  env?: NodeJS.ProcessEnv;
+  extensionsBuildRoot?: string;
+  extensionsCliProbe?: SvvyxExtensionsCliProbe;
+  extensionEnvSecretStore?: ExtensionEnvSecretStore;
+  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
+  onAppLog?: (event: AppLoggerEvent) => void;
+}): ExecuteTypescriptExtensions {
+  const loadedExtensionIds = effectiveLoadedExtensionIds(input.context);
+
+  const extensions: ExecuteTypescriptExtensions = {};
+  const userExtensionRecords = resolveExtensionRecords(loadedExtensionIds, input.extensionsRoot);
+  const seenUserExtensionIds = new Set<string>();
+  for (const record of userExtensionRecords) {
+    if (
+      record.category !== "user" ||
+      record.interface !== "svvyx" ||
+      !record.typescriptApiEnabled ||
+      !loadedExtensionIds.includes(record.id) ||
+      !isSafeUserExtensionId(record.id) ||
+      record.id === "artifacts" ||
+      record.id === "workflows" ||
+      seenUserExtensionIds.has(record.id)
+    ) {
+      continue;
+    }
+    seenUserExtensionIds.add(record.id);
+    extensions[record.id] = createUserSvvyxGeneratedClient({
+      ...input,
+      extensionId: record.id,
+    });
+  }
+
+  if (loadedExtensionIds.includes("artifacts")) {
+    extensions.artifacts = Object.freeze({
+      run: async (
+        commandId: string,
+        rawInput: { options?: Record<string, unknown> } = {},
+      ): Promise<GeneratedClientRunResult<unknown>> => {
+        const childCommand = input.store.createCommand({
+          turnId: input.context.turnId ?? null,
+          workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+          surfacePiSessionId: input.context.surfacePiSessionId,
+          threadId: input.context.threadId,
+          workflowRunId: input.context.workflowRunId ?? null,
+          parentCommandId: input.parentCommand.id,
+          toolName: "extensions.artifacts.run",
+          executor: input.context.executor ?? "orchestrator",
+          visibility:
+            commandId === "inspect" || commandId === "list"
+              ? "trace"
+              : (input.context.visibility ?? "summary"),
+          title: "Run extensions.artifacts.run",
+          summary: `artifacts.${commandId}`,
+          arguments: {
+            commandId,
+            input: redactExecuteTypescriptValue(rawInput),
+          },
+          facts: {
+            extensionId: "artifacts",
+            commandId,
+          },
+        });
+        input.store.startCommand(childCommand.id);
+        let operationStarted = false;
+        try {
+          const operation = normalizeArtifactsClientOperation(commandId, rawInput);
+          operationStarted = true;
+          const result = await runSvvyxArtifactsOperation({
+            cwd: input.cwd,
+            operation,
+            runtime: artifactsRuntimeContext(input.context),
+            store: input.store,
+            sourceCommand: childCommand,
+            openArtifact: input.openArtifact,
+            onAppLog: input.onAppLog,
+          });
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "succeeded",
+            summary: summarizeResult(result.output),
+            facts: {
+              extensionId: "artifacts",
+              commandId,
+              ...result.commandFacts,
+            },
+          });
+          input.childCommandFacts.push({ status: "succeeded" });
+          return Object.freeze({
+            ok: true,
+            data: result.output,
+            output: result.output,
+            meta: Object.freeze({
+              commandFacts: Object.freeze({ ...result.commandFacts }),
+            }),
+          });
+        } catch (error) {
+          const formatted = formatSvvyxArtifactsError(error).error;
+          if (!operationStarted) {
+            input.onAppLog?.({
+              level: "warning",
+              source: "artifact",
+              message: "Artifact command failed.",
+              details: {
+                workspaceSessionId: input.context.sessionId,
+                surfacePiSessionId: input.context.surfacePiSessionId,
+                ...(input.context.threadId ? { threadId: input.context.threadId } : {}),
+                commandId: childCommand.id,
+                artifactCommandId: commandId,
+                errorCode: formatted.code,
+                errorMessage: formatted.message,
+                ...(formatted.id ? { artifactId: formatted.id } : {}),
+                ...(formatted.path ? { artifactPath: formatted.path } : {}),
+                ...(formatted.name ? { artifactName: formatted.name } : {}),
+              },
+            });
+          }
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "failed",
+            summary: formatted.message,
+            facts: {
+              extensionId: "artifacts",
+              commandId,
+              errorCode: formatted.code,
+            },
+            error: JSON.stringify({ error: formatted }),
+          });
+          input.childCommandFacts.push({ status: "failed" });
+          const ClientError = input.incurClientModule.Client.ClientError;
+          throw new ClientError(formatted.message);
+        }
+      },
+    });
+  }
+
+  if (loadedExtensionIds.includes("workflows")) {
+    extensions.workflows = Object.freeze({
+      run: async (
+        commandId: string,
+        rawInput: { options?: Record<string, unknown> } = {},
+      ): Promise<GeneratedClientRunResult<unknown>> => {
+        const childCommand = input.store.createCommand({
+          turnId: input.context.turnId ?? null,
+          workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+          surfacePiSessionId: input.context.surfacePiSessionId,
+          threadId: input.context.threadId,
+          workflowRunId: input.context.workflowRunId ?? null,
+          parentCommandId: input.parentCommand.id,
+          toolName: "extensions.workflows.run",
+          executor: input.context.executor ?? "orchestrator",
+          visibility:
+            commandId === "list" || commandId === "models list"
+              ? "trace"
+              : (input.context.visibility ?? "summary"),
+          title: "Run extensions.workflows.run",
+          summary: `workflows.${commandId}`,
+          arguments: {
+            commandId,
+            input: redactExecuteTypescriptValue(rawInput),
+          },
+          facts: {
+            extensionId: "workflows",
+            commandId,
+          },
+        });
+        input.store.startCommand(childCommand.id);
+        let command: string | null = null;
+        try {
+          command = normalizeWorkflowsClientCommand(commandId, rawInput);
+          const result = await runSvvyxWorkflowsCommand({
+            agentSettingsStore: input.agentSettingsStore,
+            command,
+            cwd: input.cwd,
+            env: input.env,
+            envSecretStore: resolveExecuteTypescriptExtensionEnvSecretStore(input),
+            extensionsBuildRoot: input.extensionsBuildRoot,
+            extensionsCliProbe: input.extensionsCliProbe,
+            extensionsRoot: input.extensionsRoot,
+            extensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
+            generatedPackagePath: input.workflowsGeneratedPackagePath,
+            readModelCatalog: input.workflowsModelCatalog,
+            sourceRoot: input.workflowsSourceRoot,
+            workspaceCwds: input.workflowsWorkspaceCwds?.(),
+          });
+          if (result.commandFacts.workflowBuildOk === true) {
+            input.onAppLog?.({
+              level: "info",
+              source: "workflow.library",
+              message: "Workflows build validation passed.",
+              details: executeTypescriptWorkflowLogDetails(
+                input.context,
+                childCommand.id,
+                command,
+                pickExecuteTypescriptWorkflowLogFacts(result.commandFacts),
+              ),
+            });
+            await input.onWorkflowsGeneratedPackageChanged?.({
+              reason:
+                typeof result.commandFacts.workflowSavedExportName === "string"
+                  ? "svvyx-workflows-save"
+                  : "svvyx-workflows-build",
+              commandFacts: result.commandFacts,
+            });
+          }
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "succeeded",
+            summary: summarizeResult(result.output),
+            facts: {
+              extensionId: "workflows",
+              commandId,
+              ...result.commandFacts,
+            },
+          });
+          input.childCommandFacts.push({ status: "succeeded" });
+          return Object.freeze({
+            ok: true,
+            data: result.output,
+            output: result.output,
+            meta: Object.freeze({
+              commandFacts: Object.freeze({ ...result.commandFacts }),
+            }),
+          });
+        } catch (error) {
+          const formatted = formatSvvyxWorkflowsError(error).error;
+          if (commandId === "build" || commandId === "save" || formatted.diagnostics) {
+            input.onAppLog?.({
+              level: "warning",
+              source: "workflow.library",
+              message: "Workflows build validation failed.",
+              details: executeTypescriptWorkflowLogDetails(
+                input.context,
+                childCommand.id,
+                command ?? `extensions.workflows.run(${JSON.stringify(commandId)})`,
+                {
+                  errorCode: formatted.code,
+                  errorMessage: formatted.message,
+                  ...(formatted.diagnostics
+                    ? { workflowDiagnosticCount: formatted.diagnostics.length }
+                    : {}),
+                },
+              ),
+            });
+          }
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "failed",
+            summary: formatted.message,
+            facts: {
+              extensionId: "workflows",
+              commandId,
+              errorCode: formatted.code,
+            },
+            error: JSON.stringify({ error: formatted }),
+          });
+          input.childCommandFacts.push({ status: "failed" });
+          const ClientError = input.incurClientModule.Client.ClientError;
+          throw new ClientError(formatted.message);
+        }
+      },
+    });
+  }
+
+  return Object.freeze(extensions);
+}
+
+function createUserSvvyxGeneratedClient(input: {
+  cwd: string;
+  store: StructuredSessionStateStore;
+  context: ExecuteTypescriptContext;
+  parentCommand: Pick<StructuredCommandRecord, "id">;
+  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
+  incurClientModule: IncurClientModuleRuntime;
+  extensionId: string;
+  extensionsRoot?: string;
+  extensionEnvSecretStore?: ExtensionEnvSecretStore;
+  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
+}): GeneratedUserExtensionClient {
+  return Object.freeze({
+    run: async (
+      commandId: string,
+      rawInput: GeneratedUserClientInput = {},
+    ): Promise<GeneratedClientRunResult<unknown>> => {
+      const toolName = `extensions.${input.extensionId}.run`;
+      const childCommand = input.store.createCommand({
+        turnId: input.context.turnId ?? null,
+        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+        surfacePiSessionId: input.context.surfacePiSessionId,
+        threadId: input.context.threadId,
+        workflowRunId: input.context.workflowRunId ?? null,
+        parentCommandId: input.parentCommand.id,
+        toolName,
+        executor: input.context.executor ?? "orchestrator",
+        visibility: input.context.visibility ?? "summary",
+        title: `Run ${toolName}`,
+        summary: `${input.extensionId}.${commandId}`,
+        arguments: {
+          commandId,
+          input: redactExecuteTypescriptValue(rawInput),
+        },
+        facts: {
+          extensionId: input.extensionId,
+          commandId,
+        },
+      });
+      input.store.startCommand(childCommand.id);
+      try {
+        const result = await runSvvyxRuntimeGeneratedClientCommand({
+          commandId,
+          clientInput: rawInput,
+          envSecretStore: resolveExecuteTypescriptExtensionEnvSecretStore(input),
+          envValues: resolveExecuteTypescriptExtensionsEnvValues(input),
+          extensionId: input.extensionId,
+          extensionsRoot: input.extensionsRoot,
+        });
+        const runResult = parseUserSvvyxGeneratedRunResult({
+          commandFacts: result.commandFacts,
+          commandId,
+          extensionId: input.extensionId,
+          input: rawInput,
+          output: result.output,
+        });
+        if (!runResult.ok) {
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "failed",
+            summary: runResult.error.message,
+            facts: {
+              extensionId: input.extensionId,
+              commandId,
+              ...result.commandFacts,
+            },
+            error: JSON.stringify({
+              ok: false,
+              error: {
+                code: "extension_command_failed",
+                message: runResult.error.message,
+              },
+              commandFacts: result.commandFacts,
+            }),
+          });
+          input.childCommandFacts.push({ status: "failed" });
+          const ClientError = input.incurClientModule.Client.ClientError;
+          throw new ClientError(runResult.error.message);
+        }
+        input.store.finishCommand({
+          commandId: childCommand.id,
+          status: "succeeded",
+          summary: summarizeResult(runResult.data),
+          facts: {
+            extensionId: input.extensionId,
+            commandId,
+            ...result.commandFacts,
+          },
+        });
+        input.childCommandFacts.push({ status: "succeeded" });
+        return Object.freeze({
+          ok: true,
+          data: runResult.data,
+          output: runResult.output,
+          meta: Object.freeze({
+            ...runResult.meta,
+            commandFacts: Object.freeze({ ...result.commandFacts }),
+          }),
+        });
+      } catch (error) {
+        if (error instanceof input.incurClientModule.Client.ClientError) {
+          throw error;
+        }
+        const formatted = formatSvvyxRuntimeError(error);
+        input.store.finishCommand({
+          commandId: childCommand.id,
+          status: "failed",
+          summary: formatted.error.message,
+          facts: {
+            extensionId: input.extensionId,
+            commandId,
+            errorCode: formatted.error.code,
+            ...formatted.commandFacts,
+          },
+          error: JSON.stringify(formatted),
+        });
+        input.childCommandFacts.push({ status: "failed" });
+        const ClientError = input.incurClientModule.Client.ClientError;
+        throw new ClientError(formatted.error.message);
+      }
+    },
+  });
+}
+
+function artifactsRuntimeContext(context: ExecuteTypescriptContext): SvvyxArtifactsRuntimeContext {
+  return {
+    sessionId: context.sessionId,
+    surfacePiSessionId: context.surfacePiSessionId,
+    surfaceKind: context.actor === "handler" ? "handler" : "orchestrator",
+    surfaceThreadId: context.actor === "handler" ? context.threadId : null,
+  };
+}
+
+function executeTypescriptWorkflowLogDetails(
+  context: ExecuteTypescriptContext,
+  commandId: string,
+  command: string,
+  facts: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    workspaceSessionId: context.sessionId,
+    surfacePiSessionId: context.surfacePiSessionId,
+    ...(context.threadId ? { threadId: context.threadId } : {}),
+    ...(context.workflowRunId ? { workflowRunId: context.workflowRunId } : {}),
+    ...(context.workflowTaskAttemptId
+      ? { workflowTaskAttemptId: context.workflowTaskAttemptId }
+      : {}),
+    commandId,
+    command,
+    ...facts,
+  };
+}
+
+function pickExecuteTypescriptWorkflowLogFacts(
+  facts: Record<string, unknown>,
+): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  for (const key of [
+    "workflowBuildOk",
+    "workflowDiagnosticCount",
+    "workflowExportCount",
+    "workflowLinkedWorkspaceCount",
+    "workflowSavedExportName",
+    "workflowSavedKind",
+    "workflowSourcePath",
+  ]) {
+    const value = facts[key];
+    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+      details[key] = value;
+    }
+  }
+  return details;
+}
+
+function effectiveLoadedExtensionIds(context: ExecuteTypescriptContext): string[] {
+  return [
+    ...(context.loadedExtensionIds ??
+      resolveActorExtensionState({ actor: context.actor }).loadedExtensionIds),
+  ];
+}
+
+type ParsedUserSvvyxRunResult =
+  | {
+      ok: true;
+      data: unknown;
+      output: GeneratedClientRunOutput;
+      meta: Record<string, unknown>;
+    }
+  | {
+      ok: false;
+      error: { message: string };
+    };
+
+function parseUserSvvyxGeneratedRunResult(input: {
+  commandFacts: Record<string, unknown>;
+  commandId: string;
+  extensionId: string;
+  input: GeneratedUserClientInput;
+  output: unknown;
+}): ParsedUserSvvyxRunResult {
+  if (!isRecord(input.output) || typeof input.output.stdout !== "string") {
+    return {
+      ok: true,
+      data: input.output,
+      output: userSvvyxGeneratedOutput(input.output, input.input),
+      meta: {},
+    };
+  }
+  const stdout = input.output.stdout.trim();
+  const parsed = parseJsonOrUndefined(stdout);
+  if (input.output.ok === false) {
+    return {
+      ok: false,
+      error: {
+        message: userSvvyxGeneratedFailureMessage(
+          input.extensionId,
+          input.commandId,
+          parsed,
+          stdout,
+        ),
+      },
+    };
+  }
+  if (isRecord(parsed) && parsed.ok === false) {
+    return {
+      ok: false,
+      error: {
+        message: userSvvyxGeneratedFailureMessage(
+          input.extensionId,
+          input.commandId,
+          parsed,
+          stdout,
+        ),
+      },
+    };
+  }
+  const data = isRecord(parsed) && parsed.ok === true && "data" in parsed ? parsed.data : parsed;
+  const meta = isRecord(parsed) && isRecord(parsed.meta) ? parsed.meta : {};
+  return {
+    ok: true,
+    data,
+    output: userSvvyxGeneratedOutput(data, input.input),
+    meta,
+  };
+}
+
+function parseJsonOrUndefined(value: string): unknown {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function userSvvyxGeneratedOutput(
+  data: unknown,
+  input: GeneratedUserClientInput,
+): GeneratedClientRunOutput {
+  const format = input.outputFormat ?? "json";
+  return {
+    format,
+    text: renderGeneratedClientOutputText(data, format),
+    ...(input.outputTokenCount === true ? generatedClientTokenCount(data) : {}),
+    ...(input.outputTokenLimit !== undefined ? { tokenLimit: input.outputTokenLimit } : {}),
+    ...(input.outputTokenOffset !== undefined ? { tokenOffset: input.outputTokenOffset } : {}),
+  };
+}
+
+function generatedClientTokenCount(data: unknown): { tokenCount?: number } {
+  if (typeof data === "number" && Number.isFinite(data)) {
+    return { tokenCount: data };
+  }
+  if (typeof data === "string") {
+    const value = Number(data.trim());
+    return Number.isFinite(value) ? { tokenCount: value } : {};
+  }
+  return {};
+}
+
+function renderGeneratedClientOutputText(
+  data: unknown,
+  format: GeneratedClientRunOutput["format"],
+): string {
+  return Formatter.format(data, format);
+}
+
+function userSvvyxGeneratedFailureMessage(
+  extensionId: string,
+  commandId: string,
+  parsed: unknown,
+  stdout: string,
+): string {
+  if (isRecord(parsed)) {
+    if (isRecord(parsed.error) && typeof parsed.error.message === "string") {
+      return parsed.error.message;
+    }
+    if (typeof parsed.message === "string") {
+      return parsed.message;
+    }
+  }
+  if (stdout) {
+    return stdout;
+  }
+  return `${extensionId}.${commandId} failed.`;
+}
+
+function resolveExecuteTypescriptExtensionEnvSecretStore(input: {
+  extensionEnvSecretStore?: ExtensionEnvSecretStore;
+}): ExtensionEnvSecretStore {
+  return input.extensionEnvSecretStore ?? createMacOsKeychainExtensionEnvSecretStore();
+}
+
+function resolveExecuteTypescriptExtensionsEnvValues(input: {
+  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
+}): SvvyxRuntimeEnvValues {
+  return typeof input.extensionsEnvValues === "function"
+    ? input.extensionsEnvValues()
+    : (input.extensionsEnvValues ?? {});
+}
+
+function isSafeUserExtensionId(extensionId: string): boolean {
+  return /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(extensionId);
+}
+
+function normalizeArtifactsClientOperation(
+  commandId: string,
+  input: { options?: Record<string, unknown> },
+): SvvyxArtifactsOperationInput {
+  const options = isRecord(input.options) ? input.options : {};
+  if (commandId === "create") {
+    rejectUnknownArtifactsOptions(options, ["name", "path", "immutable", "mimeType"]);
+    const name = optionalString(options.name, "name");
+    const sourcePath = optionalString(options.path, "path");
+    const mimeType = optionalString(options.mimeType, "mimeType");
+    const immutable = optionalBoolean(options.immutable, "immutable");
+    return {
+      commandId,
+      options: {
+        ...(name ? { name } : {}),
+        ...(sourcePath ? { path: sourcePath } : {}),
+        ...(immutable === true ? { immutable } : {}),
+        ...(mimeType ? { mimeType } : {}),
+      },
+    };
+  }
+  if (commandId === "inspect" || commandId === "open" || commandId === "delete") {
+    rejectUnknownArtifactsOptions(options, ["id"]);
+    return {
+      commandId,
+      options: {
+        id: requiredString(options.id, "id"),
+      },
+    };
+  }
+  if (commandId === "list") {
+    rejectUnknownArtifactsOptions(options, ["threadId", "limit"]);
+    const threadId = optionalString(options.threadId, "threadId");
+    const limit = optionalNumber(options.limit, "limit");
+    return {
+      commandId,
+      options: {
+        ...(threadId ? { threadId } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      },
+    };
+  }
+  throw invalidArtifactsClientInput(`Unsupported Artifacts command: ${commandId}`);
+}
+
+function rejectUnknownArtifactsOptions(
+  options: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  const allowedSet = new Set(allowed);
+  for (const name of Object.keys(options)) {
+    if (!allowedSet.has(name)) {
+      throw invalidArtifactsClientInput(`Unsupported Artifacts option: ${name}`);
+    }
+  }
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw invalidArtifactsClientInput(`${name} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw invalidArtifactsClientInput(`${name} must be a non-empty string when provided.`);
+  }
+  return value;
+}
+
+function optionalBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw invalidArtifactsClientInput(`${name} must be a boolean when provided.`);
+  }
+  return value;
+}
+
+function optionalNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number") {
+    throw invalidArtifactsClientInput(`${name} must be a number when provided.`);
+  }
+  return value;
+}
+
+function invalidArtifactsClientInput(message: string): Error {
+  return new Error(`INVALID_ARGUMENT: ${message}`);
+}
+
+function normalizeWorkflowsClientCommand(
+  commandId: string,
+  input: { options?: Record<string, unknown> },
+): string {
+  const options = isRecord(input?.options) ? input.options : {};
+  if (commandId === "list") {
+    rejectUnknownWorkflowsOptions(options, ["kind"]);
+    const kind = optionalWorkflowKind(options.kind, "kind");
+    return [
+      "svvyx workflows list",
+      ...(kind ? ["--kind", quoteWorkflowsArg(kind)] : []),
+      "--json",
+    ].join(" ");
+  }
+  if (commandId === "models list") {
+    rejectUnknownWorkflowsOptions(options, []);
+    return "svvyx workflows models list --json";
+  }
+  if (commandId === "build") {
+    rejectUnknownWorkflowsOptions(options, []);
+    return "svvyx workflows build --json";
+  }
+  if (commandId === "save") {
+    rejectUnknownWorkflowsOptions(options, ["from", "kind", "as", "export", "overwrite"]);
+    const from = requiredWorkflowString(options.from, "from");
+    const kind = requiredWorkflowKind(options.kind, "kind");
+    const exportName = requiredWorkflowString(options.as, "as");
+    const sourceExportName = optionalWorkflowString(options.export, "export");
+    const overwrite = optionalWorkflowBoolean(options.overwrite, "overwrite");
+    return [
+      "svvyx workflows save",
+      "--from",
+      quoteWorkflowsArg(from),
+      "--kind",
+      quoteWorkflowsArg(kind),
+      "--as",
+      quoteWorkflowsArg(exportName),
+      ...(sourceExportName ? ["--export", quoteWorkflowsArg(sourceExportName)] : []),
+      ...(overwrite === true ? ["--overwrite"] : []),
+      "--json",
+    ].join(" ");
+  }
+  throw invalidWorkflowsClientInput(`Unsupported Workflows command: ${commandId}`);
+}
+
+function rejectUnknownWorkflowsOptions(
+  options: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  const allowedSet = new Set(allowed);
+  for (const name of Object.keys(options)) {
+    if (!allowedSet.has(name)) {
+      throw invalidWorkflowsClientInput(`Unsupported Workflows option: ${name}`);
+    }
+  }
+}
+
+function requiredWorkflowString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw invalidWorkflowsClientInput(`${name} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function optionalWorkflowString(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw invalidWorkflowsClientInput(`${name} must be a non-empty string when provided.`);
+  }
+  return value;
+}
+
+function optionalWorkflowBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw invalidWorkflowsClientInput(`${name} must be a boolean when provided.`);
+  }
+  return value;
+}
+
+function requiredWorkflowKind(value: unknown, name: string): string {
+  const kind = requiredWorkflowString(value, name);
+  if (!["agent", "prompt", "component", "workflow"].includes(kind)) {
+    throw invalidWorkflowsClientInput(
+      `${name} must be one of agent, prompt, component, or workflow.`,
+    );
+  }
+  return kind;
+}
+
+function optionalWorkflowKind(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requiredWorkflowKind(value, name);
+}
+
+function quoteWorkflowsArg(value: string): string {
+  return JSON.stringify(value);
+}
+
+function invalidWorkflowsClientInput(message: string): Error {
+  return new Error(`INVALID_ARGUMENT: ${message}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createCapturedConsole(logs: string[], onLine?: (line: string) => void): SvvyConsole {
   const append = (level: CapturedConsoleLevel, ...args: unknown[]) => {
-    appendCapturedConsoleLine(logs, level, ...args);
+    const line = appendCapturedConsoleLine(logs, level, ...args);
+    if (line) {
+      onLine?.(line);
+    }
   };
   return {
     log: (...args) => append("log", ...args),
@@ -539,403 +1741,90 @@ function createCapturedConsole(logs: string[]): SvvyConsole {
 }
 
 function formatConsoleValue(value: unknown): string {
-  return typeof value === "string" ? value : inspect(value, { depth: 5, breakLength: Infinity });
+  const formatted =
+    typeof value === "string" ? value : inspect(value, { depth: 5, breakLength: Infinity });
+  return redactExecuteTypescriptString(formatted);
+}
+
+function redactExecuteTypescriptString(value: string): string {
+  return String(redactAppLogValue(value));
+}
+
+function redactExecuteTypescriptValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactExecuteTypescriptString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactExecuteTypescriptValue);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    output[key] = EXECUTE_TYPESCRIPT_SECRET_KEY_PATTERN.test(key)
+      ? "[REDACTED]"
+      : redactExecuteTypescriptValue(child);
+  }
+  return output;
 }
 
 function appendCapturedConsoleLine(
   logs: string[],
   level: CapturedConsoleLevel,
   ...args: unknown[]
-): void {
+): string | null {
   const text = args.map(formatConsoleValue).join(" ");
   if (!text) {
-    return;
+    return null;
   }
   const prefix = level === "error" ? "[error] " : level === "warn" ? "[warn] " : "";
-  logs.push(`${prefix}${text}`);
+  const line = `${prefix}${text}`;
+  logs.push(line);
+  return line;
 }
 
-function createExecuteTypescriptApi(input: {
-  cwd: string;
-  actor: SvvyActorKind;
-  store: ExecuteTypescriptCommandStore;
-  surfacePiSessionId: string;
-  turnId?: string | null;
-  workflowTaskAttemptId?: string | null;
-  threadId: string | null;
-  workflowRunId?: string | null;
-  parentCommandId: string;
-  signal?: AbortSignal;
-  workflowLibrary: WorkflowLibrary;
-  webProvider?: WebProvider;
-  emitConsole: (level: CapturedConsoleLevel, ...args: unknown[]) => void;
-  recordChildActivity: (activity: ExecuteTypescriptChildActivity) => void;
-}): ExecuteTypescriptApi {
-  const profile = getExecuteTypescriptActorCapabilityProfile(input.actor);
-  const assertNamespaceAllowed = (namespace: ExecuteTypescriptApiNamespace): void => {
-    if (!profile.executeTypescript.apiNamespaces[namespace]) {
-      throw new Error(
-        `execute_typescript api.${namespace} is not available for ${input.actor} actors.`,
-      );
-    }
-  };
-  const call = async <T>(config: {
-    toolName: string;
-    title: string;
-    summary: string;
-    visibility?: StructuredCommandVisibility;
-    run: (commandId: string) => Promise<ExecuteTypescriptChildCallResult<T>>;
-  }): Promise<T> => {
-    const command = input.store.createCommand({
-      turnId: input.turnId ?? null,
-      workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
-      surfacePiSessionId: input.surfacePiSessionId,
-      threadId: input.threadId,
-      workflowRunId: input.workflowRunId ?? null,
-      parentCommandId: input.parentCommandId,
-      toolName: config.toolName,
-      executor: "execute_typescript",
-      visibility: config.visibility ?? "trace",
-      title: config.title,
-      summary: config.summary,
-    });
-    input.store.startCommand(command.id);
-    try {
-      const outcome = await config.run(command.id);
-      const status = outcome.status ?? "succeeded";
-      const visibility = outcome.visibility ?? config.visibility ?? "trace";
-      const summary =
-        outcome.summary ?? `${config.toolName} ${status === "succeeded" ? "succeeded" : "failed"}.`;
-      const error = status === "failed" ? (outcome.error ?? summary) : null;
-      input.store.finishCommand({
-        commandId: command.id,
-        status,
-        visibility,
-        summary,
-        facts: outcome.facts ?? null,
-        error,
-      });
-      input.recordChildActivity({
-        toolName: config.toolName,
-        visibility,
-        status,
-        summary,
-        facts: outcome.facts ?? null,
-      });
-      return outcome.value;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `${config.toolName} failed.`;
-      input.store.finishCommand({
-        commandId: command.id,
-        status: "failed",
-        visibility: "summary",
-        summary: message,
-        error: message,
-      });
-      input.recordChildActivity({
-        toolName: config.toolName,
-        visibility: "summary",
-        status: "failed",
-        summary: message,
-        facts: null,
-      });
-      throw error;
-    }
-  };
-
-  const invokeTool = async <T>(inputTool: {
-    tool: AgentTool<any>;
-    params: unknown;
-    title: string;
-    summary: string;
-    visibility?: StructuredCommandVisibility;
-    facts?: (result: T) => ExecuteTypescriptCommandFacts | null;
-  }): Promise<T> =>
-    await call<T>({
-      toolName: inputTool.tool.name,
-      title: inputTool.title,
-      summary: inputTool.summary,
-      visibility: inputTool.visibility,
-      run: async (commandId) => {
-        const value = (await inputTool.tool.execute(
-          commandId,
-          inputTool.params as never,
-          input.signal,
-        )) as T;
-        return {
-          value,
-          facts: inputTool.facts?.(value) ?? null,
-          summary: summarizeDirectToolResult(inputTool.tool.name, value),
-        };
-      },
-    });
-
-  const directTools = createSvvyDirectTools({
-    cwd: input.cwd,
-    runtime: { current: null },
-    store: input.store,
-    workflowLibrary: input.workflowLibrary,
-    webProvider: input.webProvider,
-  });
-  const cxTools = createCxTools({ cwd: input.cwd });
-  const toolByName = new Map(
-    [
-      ...cxTools,
-      ...directTools.codingTools,
-      ...directTools.artifactTools,
-      ...(canUseExecuteTypescriptApiNamespace(input.actor, "workflow")
-        ? directTools.workflowTools
-        : []),
-      ...directTools.webTools,
-    ].map((tool) => [tool.name, tool] as const),
-  );
-  const getTool = (name: string): AgentTool<any> => {
-    const tool = toolByName.get(name);
-    if (!tool) {
-      throw new Error(`Code mode tool ${name} is not available.`);
-    }
-    return tool;
-  };
-
-  const api: ExecuteTypescriptApi = {
-    read: (params) =>
-      invokeTool({
-        tool: getTool("read"),
-        params,
-        title: "Read file",
-        summary: `Read ${params.path}`,
-        facts: () => ({ path: params.path, offset: params.offset, limit: params.limit }),
-      }),
-    grep: (params) =>
-      invokeTool({
-        tool: getTool("grep"),
-        params,
-        title: "Search text",
-        summary: `Search for ${params.pattern}`,
-        facts: () => ({
-          pattern: params.pattern,
-          path: params.path,
-          glob: params.glob,
-          limit: params.limit,
-        }),
-      }),
-    find: (params) =>
-      invokeTool({
-        tool: getTool("find"),
-        params,
-        title: "Find files",
-        summary: `Find ${params.pattern}`,
-        facts: () => ({ pattern: params.pattern, path: params.path, limit: params.limit }),
-      }),
-    ls: (params) =>
-      invokeTool({
-        tool: getTool("ls"),
-        params,
-        title: "List directory",
-        summary: `List ${params.path ?? "."}`,
-        facts: () => ({ path: params.path ?? ".", limit: params.limit }),
-      }),
-    bash: (params) =>
-      invokeTool({
-        tool: getTool("bash"),
-        params,
-        title: "Run bash",
-        summary: `Run ${params.command}`,
-        visibility: "summary",
-        facts: () => ({ command: params.command, timeout: params.timeout }),
-      }),
-    cx_overview: (params = {}) =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_overview"),
-        params,
-        title: "cx overview",
-        summary: `cx overview ${params.path ?? "."}`,
-        facts: readCxFacts,
-      }),
-    cx_symbols: (params = {}) =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_symbols"),
-        params,
-        title: "cx symbols",
-        summary: "cx symbols",
-        facts: readCxFacts,
-      }),
-    cx_definition: (params) =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_definition"),
-        params,
-        title: "cx definition",
-        summary: `cx definition ${params.name}`,
-        facts: readCxFacts,
-      }),
-    cx_references: (params) =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_references"),
-        params,
-        title: "cx references",
-        summary: `cx references ${params.name}`,
-        facts: readCxFacts,
-      }),
-    cx_lang_list: () =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_lang_list"),
-        params: {},
-        title: "cx lang list",
-        summary: "cx lang list",
-        facts: readCxFacts,
-      }),
-    cx_cache_path: () =>
-      invokeTool<CxApiToolResult>({
-        tool: getTool("cx_cache_path"),
-        params: {},
-        title: "cx cache path",
-        summary: "cx cache path",
-        facts: readCxFacts,
-      }),
-    artifact_write_text: (params) =>
-      invokeTool({
-        tool: getTool("artifact_write_text"),
-        params,
-        title: "Write artifact",
-        summary: `Write artifact ${params.name}`,
-        visibility: "summary",
-        facts: (result) => readToolResultDetails(result),
-      }),
-    artifact_write_json: (params) =>
-      invokeTool({
-        tool: getTool("artifact_write_json"),
-        params,
-        title: "Write JSON artifact",
-        summary: `Write JSON artifact ${params.name}`,
-        visibility: "summary",
-        facts: (result) => readToolResultDetails(result),
-      }),
-    artifact_attach_file: (params) =>
-      invokeTool({
-        tool: getTool("artifact_attach_file"),
-        params,
-        title: "Attach artifact",
-        summary: `Attach ${params.path}`,
-        visibility: "summary",
-        facts: (result) => readToolResultDetails(result),
-      }),
-  };
-  if (canUseExecuteTypescriptApiNamespace(input.actor, "workflow")) {
-    api.workflow_list_assets = (params = {}) =>
-      invokeTool({
-        tool: getTool("workflow_list_assets"),
-        params,
-        title: "List workflow assets",
-        summary: "List workflow assets",
-        facts: (result) => {
-          const details = readToolResultDetails(result);
-          const assets = Array.isArray(details.assets) ? details.assets : [];
-          return { assetCount: assets.length };
-        },
-      });
-    api.workflow_list_models = () =>
-      invokeTool({
-        tool: getTool("workflow_list_models"),
-        params: {},
-        title: "List workflow models",
-        summary: "List workflow models",
-        facts: (result) => {
-          const details = readToolResultDetails(result);
-          const models = Array.isArray(details.models) ? details.models : [];
-          return { modelCount: models.length };
-        },
-      });
-  }
-
-  const webSearchTool = toolByName.get("web_search");
-  const webFetchTool = toolByName.get("web_fetch");
-  if (!webSearchTool || !webFetchTool) {
-    return guardExecuteTypescriptApi(api, input.actor, assertNamespaceAllowed);
-  }
-
-  api.web_search = (params: unknown) =>
-    invokeTool({
-      tool: webSearchTool,
-      params,
-      title: "Web search",
-      summary: `Web search ${readUnknownProperty(params, "query")}`.trim(),
-      facts: (result) => readCommandFacts(result),
-    });
-  api.web_fetch = (params: unknown) =>
-    invokeTool({
-      tool: webFetchTool,
-      params,
-      title: "Web fetch",
-      summary: `Web fetch ${readWebFetchSummary(params)}`.trim(),
-      visibility: "summary",
-      facts: (result) => readCommandFacts(result),
-    });
-  return guardExecuteTypescriptApi(api, input.actor, assertNamespaceAllowed);
-}
-
-function guardExecuteTypescriptApi(
-  api: ExecuteTypescriptApi,
-  actor: SvvyActorKind,
-  assertNamespaceAllowed: (namespace: ExecuteTypescriptApiNamespace) => void,
-): ExecuteTypescriptApi {
-  return new Proxy(api, {
-    get(target, property, receiver) {
-      if (typeof property === "string" && isWorkflowExecuteTypescriptApiProperty(property)) {
-        if (!canUseExecuteTypescriptApiNamespace(actor, "workflow")) {
-          throw new Error(
-            `execute_typescript api.workflow_* helpers are not available for ${actor} actors.`,
-          );
-        }
-      }
-      if (typeof property === "string" && isExecuteTypescriptApiNamespace(property)) {
-        assertNamespaceAllowed(property);
-      }
-      return Reflect.get(target, property, receiver);
-    },
-    has(target, property) {
-      if (typeof property === "string" && isExecuteTypescriptApiNamespace(property)) {
-        return canUseExecuteTypescriptApiNamespace(actor, property) && property in target;
-      }
-      return property in target;
+function recordExecuteTypescriptOutputEvent(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  commandId: string;
+  line: string;
+}): void {
+  input.store.recordLifecycleEvent({
+    sessionId: input.sessionId,
+    kind: "command.output",
+    subjectKind: "command",
+    subjectId: input.commandId,
+    data: {
+      stream:
+        input.line.startsWith("[error] ") || input.line.startsWith("[warn] ") ? "stderr" : "stdout",
+      text: input.line,
+      source: "execute_typescript",
     },
   });
 }
 
-function isExecuteTypescriptApiNamespace(value: string): value is ExecuteTypescriptApiNamespace {
-  return (
-    value === "read" ||
-    value === "grep" ||
-    value === "find" ||
-    value === "ls" ||
-    value === "bash" ||
-    value === "cx" ||
-    value === "artifact" ||
-    value === "workflow" ||
-    value === "web"
-  );
-}
-
-function isWorkflowExecuteTypescriptApiProperty(value: string): boolean {
-  return value === "workflow_list_assets" || value === "workflow_list_models";
-}
-
-function readUnknownProperty(value: unknown, key: string): string {
-  if (!value || typeof value !== "object" || !(key in value)) {
-    return "";
+function recordExecuteTypescriptDiagnostics(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  commandId: string;
+  stage: "compile" | "typecheck";
+  diagnostics: readonly StructuredDiagnostic[];
+}): void {
+  if (input.diagnostics.length === 0) {
+    return;
   }
-  const property = (value as Record<string, unknown>)[key];
-  return typeof property === "string" ? property : "";
-}
-
-function readWebFetchSummary(value: unknown): string {
-  const url = readUnknownProperty(value, "url");
-  if (url) return url;
-  if (!value || typeof value !== "object" || !("urls" in value)) return "";
-  const urls = (value as { urls?: unknown }).urls;
-  if (!Array.isArray(urls)) return "";
-  const firstUrl = urls.find((entry): entry is string => typeof entry === "string");
-  if (!firstUrl) return "";
-  return urls.length > 1 ? `${firstUrl} +${urls.length - 1}` : firstUrl;
+  input.store.recordLifecycleEvent({
+    sessionId: input.sessionId,
+    kind: "command.diagnostics",
+    subjectKind: "command",
+    subjectId: input.commandId,
+    data: {
+      source: "execute_typescript",
+      stage: input.stage,
+      diagnostics: input.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    },
+  });
 }
 
 function summarizeResult(value: unknown): string {
@@ -949,192 +1838,24 @@ function summarizeResult(value: unknown): string {
   return preview.length <= 160 ? preview : `${preview.slice(0, 159).trimEnd()}…`;
 }
 
-function summarizeDirectToolResult(toolName: string, value: unknown): string {
-  if (!value || typeof value !== "object") {
-    return `${toolName} completed successfully.`;
-  }
-  const content = "content" in value ? (value as { content?: unknown }).content : undefined;
-  if (!Array.isArray(content)) {
-    return `${toolName} completed successfully.`;
-  }
-  const text = content
-    .flatMap((entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      return "type" in entry &&
-        (entry as { type?: unknown }).type === "text" &&
-        typeof (entry as { text?: unknown }).text === "string"
-        ? [(entry as { text: string }).text]
-        : [];
-    })
-    .join("\n")
-    .trim();
-  return text || `${toolName} completed successfully.`;
-}
-
-function readToolResultDetails(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || !("details" in value)) {
-    return {};
-  }
-  const details = (value as { details?: unknown }).details;
-  return details && typeof details === "object" && !Array.isArray(details)
-    ? (details as Record<string, unknown>)
-    : {};
-}
-
-function readCommandFacts(value: unknown): ExecuteTypescriptCommandFacts | null {
-  const details = readToolResultDetails(value);
-  const facts = details.commandFacts;
-  return facts && typeof facts === "object" && !Array.isArray(facts)
-    ? (facts as ExecuteTypescriptCommandFacts)
-    : details;
-}
-
-function readCxFacts(result: unknown): ExecuteTypescriptCommandFacts {
-  const details = readToolResultDetails(result);
-  const json = details.json;
-  const resultCount = Array.isArray(json)
-    ? json.length
-    : json && typeof json === "object" && Array.isArray((json as { results?: unknown }).results)
-      ? (json as { results: unknown[] }).results.length
-      : undefined;
-  return {
-    command: details.command,
-    exitCode: details.exitCode,
-    ...(typeof resultCount === "number" ? { resultCount } : {}),
-  };
-}
-
-function pluralize(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
-function readFactNumber(
-  facts: ExecuteTypescriptCommandFacts | null,
-  key: string,
-): number | undefined {
-  const value = facts?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function readFactString(
-  facts: ExecuteTypescriptCommandFacts | null,
-  key: string,
-): string | undefined {
-  const value = facts?.[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function buildExecuteTypescriptParentRollup(input: {
-  childActivity: ExecuteTypescriptChildActivity[];
   snippetArtifactId: string;
   logsArtifactId?: string;
+  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
 }): {
   summary?: string;
   facts: ExecuteTypescriptCommandFacts;
 } {
-  let readCount = 0;
-  let searchCount = 0;
-  let artifactCount = 0;
-  let bashCount = 0;
-  let bashFailureCount = 0;
-  let cxCount = 0;
-  let workflowAssetCount = 0;
-  let workflowModelCount = 0;
-  const artifactIds: string[] = [];
-
-  for (const activity of input.childActivity) {
-    switch (activity.toolName) {
-      case "read":
-      case "ls":
-        readCount += 1;
-        break;
-      case "grep":
-      case "find":
-        searchCount += 1;
-        break;
-      case "artifact_write_text":
-      case "artifact_write_json":
-      case "artifact_attach_file": {
-        artifactCount += 1;
-        const artifactId = readFactString(activity.facts, "artifactId");
-        if (artifactId) {
-          artifactIds.push(artifactId);
-        }
-        break;
-      }
-      case "bash":
-        bashCount += 1;
-        if (activity.status === "failed") {
-          bashFailureCount += 1;
-        }
-        break;
-      case "cx_overview":
-      case "cx_symbols":
-      case "cx_definition":
-      case "cx_references":
-      case "cx_lang_list":
-      case "cx_cache_path":
-        cxCount += 1;
-        break;
-      case "workflow_list_assets":
-        workflowAssetCount += readFactNumber(activity.facts, "assetCount") ?? 0;
-        break;
-      case "workflow_list_models":
-        workflowModelCount += readFactNumber(activity.facts, "modelCount") ?? 0;
-        break;
-      default:
-        break;
-    }
-  }
-
-  const summaryParts: string[] = [];
-  if (readCount > 0) {
-    summaryParts.push(`Read ${pluralize(readCount, "tool result")}`);
-  }
-  if (searchCount > 0) {
-    summaryParts.push(`Ran ${pluralize(searchCount, "search")}`);
-  }
-  if (artifactCount > 0) {
-    summaryParts.push(`Created ${pluralize(artifactCount, "artifact")}`);
-  }
-  if (bashCount > 0) {
-    summaryParts.push(
-      bashFailureCount > 0
-        ? `Ran ${pluralize(bashCount, "bash command")} (${bashFailureCount} failed)`
-        : `Ran ${pluralize(bashCount, "bash command")}`,
-    );
-  }
-  if (cxCount > 0) {
-    summaryParts.push(`Ran ${pluralize(cxCount, "cx navigation call")}`);
-  }
-  if (workflowAssetCount > 0) {
-    summaryParts.push(`Discovered ${pluralize(workflowAssetCount, "workflow asset")}`);
-  }
-  if (workflowModelCount > 0) {
-    summaryParts.push(`Listed ${pluralize(workflowModelCount, "workflow model")}`);
-  }
-  if (summaryParts.length === 0 && input.childActivity.length > 0) {
-    summaryParts.push(`Ran ${pluralize(input.childActivity.length, "tool call")}`);
-  }
-
+  const failedChildCommandCount = input.childCommandFacts.filter(
+    (command) => command.status === "failed",
+  ).length;
   return {
-    summary: summaryParts.length > 0 ? summaryParts.join(". ") : undefined,
+    summary: undefined,
     facts: {
       snippetArtifactId: input.snippetArtifactId,
       ...(input.logsArtifactId ? { logsArtifactId: input.logsArtifactId } : {}),
-      childCommandCount: input.childActivity.length,
-      failedChildCommandCount: input.childActivity.filter(
-        (activity) => activity.status === "failed",
-      ).length,
-      readCount,
-      searchCount,
-      artifactCount,
-      bashCount,
-      bashFailureCount,
-      cxCount,
-      workflowAssetCount,
-      workflowModelCount,
-      ...(artifactIds.length > 0 ? { artifactIds } : {}),
+      childCommandCount: input.childCommandFacts.length,
+      failedChildCommandCount,
     },
   };
 }

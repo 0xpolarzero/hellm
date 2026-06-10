@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { createPromptExecutionContext } from "./prompt-execution-context";
+import type { AppLoggerEvent } from "./app-logger";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -93,7 +94,7 @@ function createHandlerPromptContext(store: StructuredSessionStateStore) {
 }
 
 describe("tool execution command tracker", () => {
-  it("records generic tool executions as structured commands", () => {
+  it("creates a running command record at tool start before any result arrives", () => {
     const store = createStore();
     const tracker = createToolExecutionCommandTracker({
       store,
@@ -101,13 +102,42 @@ describe("tool execution command tracker", () => {
     });
 
     tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-running",
+      toolName: "exec_command",
+      args: { cmd: "bun test" },
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "exec_command",
+        status: "running",
+        summary: 'exec_command({"cmd":"bun test"})',
+        arguments: { cmd: "bun test" },
+        facts: { toolCallId: "tool-call-running" },
+        finishedAt: null,
+      }),
+    ]);
+    expect(snapshot.turns[0]?.turnDecision).toBe("exec_command");
+  });
+
+  it("records generic tool executions as structured commands", () => {
+    const store = createStore();
+    const appLogEvents: AppLoggerEvent[] = [];
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+      onAppLog: (event) => appLogEvents.push(event),
+    });
+
+    tracker.handleToolExecutionStart({
       toolCallId: "tool-call-1",
-      toolName: "bash",
-      args: { command: "git status --short" },
+      toolName: "exec_command",
+      args: { cmd: "git status --short" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-1",
-      toolName: "bash",
+      toolName: "exec_command",
       result: {
         content: [{ type: "text", text: "M src/bun/session-catalog.ts" }],
       },
@@ -117,13 +147,209 @@ describe("tool execution command tracker", () => {
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
-        toolName: "bash",
+        toolName: "exec_command",
         executor: "orchestrator",
         visibility: "summary",
         status: "succeeded",
         summary: "M src/bun/session-catalog.ts",
       }),
     ]);
+    expect(snapshot.events).toContainEqual(
+      expect.objectContaining({
+        kind: "command.output",
+        subject: {
+          kind: "command",
+          id: snapshot.commands[0]!.id,
+        },
+        data: {
+          stream: "stdout",
+          source: "final-result",
+          text: "M src/bun/session-catalog.ts",
+        },
+      }),
+    );
+    expect(snapshot.turns[0]?.turnDecision).toBe("exec_command");
+    expect(appLogEvents).toEqual([
+      expect.objectContaining({
+        level: "info",
+        source: "direct-tool",
+        message: "Direct tool started.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-tool-tracker",
+          surfacePiSessionId: "session-tool-tracker",
+          commandId: snapshot.commands[0]!.id,
+          toolName: "exec_command",
+        }),
+      }),
+      expect.objectContaining({
+        level: "info",
+        source: "direct-tool",
+        message: "Direct tool finished.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-tool-tracker",
+          surfacePiSessionId: "session-tool-tracker",
+          commandId: snapshot.commands[0]!.id,
+          toolName: "exec_command",
+        }),
+      }),
+    ]);
+  });
+
+  it("settles apply_patch command records from authoritative final command facts", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-patch",
+      toolName: "apply_patch",
+      args: {
+        patch: [
+          "*** Begin Patch",
+          "*** Update File: src/mainview/ChatWorkspace.svelte",
+          "@@",
+          "-  <WorkflowInspector />",
+          "+  <WorkflowsPane />",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+    expect(store.getSessionState("session-tool-tracker").commands[0]).toMatchObject({
+      toolName: "apply_patch",
+      status: "running",
+      summary: expect.stringContaining("src/mainview/ChatWorkspace.svelte"),
+      finishedAt: null,
+    });
+
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-patch",
+      toolName: "apply_patch",
+      result: {
+        content: [{ type: "text", text: "Patch applied successfully." }],
+        details: {
+          commandFacts: {
+            changedFiles: ["src/mainview/ChatWorkspace.svelte"],
+            createdFiles: [],
+            deletedFiles: [],
+            errors: [],
+          },
+        },
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "apply_patch",
+        visibility: "summary",
+        status: "succeeded",
+        summary: "Patch applied successfully.",
+        facts: {
+          changedFiles: ["src/mainview/ChatWorkspace.svelte"],
+          createdFiles: [],
+          deletedFiles: [],
+          errors: [],
+        },
+      }),
+    ]);
+    expect(snapshot.events).toContainEqual(
+      expect.objectContaining({
+        kind: "command.patch_snapshot",
+        subject: {
+          kind: "command",
+          id: snapshot.commands[0]!.id,
+        },
+        data: {
+          source: "accepted-arguments",
+          files: [
+            {
+              path: "src/mainview/ChatWorkspace.svelte",
+              changeType: "modified",
+              additions: 1,
+              deletions: 1,
+            },
+          ],
+        },
+      }),
+    );
+    expect(snapshot.turns[0]?.turnDecision).toBe("apply_patch");
+  });
+
+  it("persists failed apply_patch command facts with errors", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+    const patch = [
+      "--- src/mainview/Missing.svelte",
+      "+++ src/mainview/Missing.svelte",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-patch-failed",
+      toolName: "apply_patch",
+      args: { patch },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-patch-failed",
+      toolName: "apply_patch",
+      result: new Error(
+        JSON.stringify({
+          error: {
+            code: "apply_patch_failed",
+            message: "File to patch was not found.",
+          },
+          commandFacts: {
+            changedFiles: ["src/mainview/Missing.svelte"],
+            createdFiles: [],
+            deletedFiles: [],
+            errors: ["File to patch was not found."],
+          },
+        }),
+      ),
+      isError: true,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands[0]).toMatchObject({
+      toolName: "apply_patch",
+      status: "failed",
+      facts: {
+        changedFiles: ["src/mainview/Missing.svelte"],
+        createdFiles: [],
+        deletedFiles: [],
+        errors: ["File to patch was not found."],
+      },
+      error: "apply_patch failed.",
+    });
+    expect(snapshot.events).toContainEqual(
+      expect.objectContaining({
+        kind: "command.patch_snapshot",
+        subject: {
+          kind: "command",
+          id: snapshot.commands[0]!.id,
+        },
+        data: {
+          source: "accepted-arguments",
+          files: [
+            {
+              path: "src/mainview/Missing.svelte",
+              changeType: "modified",
+              additions: 1,
+              deletions: 1,
+            },
+          ],
+        },
+      }),
+    );
   });
 
   it("records generic tool executions against the active surface thread", () => {
@@ -156,25 +382,80 @@ describe("tool execution command tracker", () => {
         summary: "Loaded docs/prd.md",
       }),
     ]);
+    expect(snapshot.turns[0]?.turnDecision).toBe("pending");
   });
 
-  it("treats api.* calls as execute_typescript trace commands", () => {
+  it("records shell-routed CLI command surfaces as ordinary summary commands", () => {
     const store = createStore();
+    const appLogEvents: AppLoggerEvent[] = [];
     const tracker = createToolExecutionCommandTracker({
       store,
       promptContext: createPromptContext(store),
+      onAppLog: (event) => appLogEvents.push(event),
     });
 
     tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-2",
-      toolName: "api.read",
-      args: { path: "docs/prd.md" },
+      toolCallId: "tool-call-smithers-cli",
+      toolName: "exec_command",
+      args: { cmd: "smithers ps" },
     });
     tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-2",
-      toolName: "api.read",
+      toolCallId: "tool-call-smithers-cli",
+      toolName: "exec_command",
       result: {
-        content: [{ type: "text", text: "Loaded docs/prd.md" }],
+        content: [{ type: "text", text: "No running workflows." }],
+      },
+      isError: false,
+    });
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-cx-cli",
+      toolName: "exec_command",
+      args: { cmd: "cx overview src" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-cx-cli",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: "src/index.ts" }],
+      },
+      isError: false,
+    });
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-tinyfish-cli",
+      toolName: "exec_command",
+      args: { cmd: "tinyfish search query --q svvy --json" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-tinyfish-cli",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: '{"results":[]}' }],
+      },
+      isError: false,
+    });
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-smithers-shell-segment",
+      toolName: "exec_command",
+      args: { cmd: "cd .smithers && smithers list" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-smithers-shell-segment",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: "No workflows." }],
+      },
+      isError: false,
+    });
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-workflows-cli",
+      toolName: "exec_command",
+      args: { cmd: "svvyx workflows list --json" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-workflows-cli",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: '{"workflows":[]}' }],
       },
       isError: false,
     });
@@ -182,63 +463,448 @@ describe("tool execution command tracker", () => {
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
-        toolName: "api.read",
-        executor: "execute_typescript",
-        visibility: "trace",
-        status: "succeeded",
-      }),
-    ]);
-  });
-
-  it("records read-only cx navigation as trace and mutating cx maintenance as summary", () => {
-    const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
-      promptContext: createPromptContext(store),
-    });
-
-    tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-cx-overview",
-      toolName: "cx_overview",
-      args: { path: "src" },
-    });
-    tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-cx-overview",
-      toolName: "cx_overview",
-      result: {
-        content: [{ type: "text", text: '[{"file":"src/index.ts"}]' }],
-      },
-      isError: false,
-    });
-    tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-cx-clean",
-      toolName: "cx_cache_clean",
-      args: {},
-    });
-    tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-cx-clean",
-      toolName: "cx_cache_clean",
-      result: {
-        content: [{ type: "text", text: "cleaned" }],
-      },
-      isError: false,
-    });
-
-    const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "cx_overview",
+        toolName: "exec_command",
         executor: "orchestrator",
-        visibility: "trace",
+        visibility: "summary",
         status: "succeeded",
       }),
       expect.objectContaining({
-        toolName: "cx_cache_clean",
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        status: "succeeded",
+      }),
+      expect.objectContaining({
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        status: "succeeded",
+      }),
+      expect.objectContaining({
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        status: "succeeded",
+      }),
+      expect.objectContaining({
+        toolName: "exec_command",
         executor: "orchestrator",
         visibility: "summary",
         status: "succeeded",
       }),
     ]);
+    expect(snapshot.turns[0]?.turnDecision).toBe("exec_command");
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        source: "smithers",
+        message: "Smithers CLI command started.",
+        details: expect.objectContaining({
+          commandId: snapshot.commands[0]!.id,
+          toolName: "exec_command",
+        }),
+      }),
+    );
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        source: "smithers",
+        message: "Smithers CLI command finished.",
+        details: expect.objectContaining({
+          commandId: snapshot.commands[0]!.id,
+          toolName: "exec_command",
+        }),
+      }),
+    );
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        source: "smithers",
+        message: "Smithers CLI command started.",
+        details: expect.objectContaining({
+          commandId: snapshot.commands[3]!.id,
+          toolName: "exec_command",
+        }),
+      }),
+    );
+  });
+
+  it("records exec_command stdout and stderr as durable command output events", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-output",
+      toolName: "exec_command",
+      args: { cmd: "bun test" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-output",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: "stdout\nstderr\nExit code: 1" }],
+        details: {
+          stdout: "1 pass\n",
+          stderr: "1 fail\n",
+          exitCode: 1,
+          exitSignal: null,
+        },
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    const command = snapshot.commands[0]!;
+    expect(snapshot.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "command.output",
+          subject: {
+            kind: "command",
+            id: command.id,
+          },
+          data: {
+            stream: "stdout",
+            source: "final-result",
+            text: "1 pass\n",
+          },
+        }),
+        expect.objectContaining({
+          kind: "command.output",
+          subject: {
+            kind: "command",
+            id: command.id,
+          },
+          data: {
+            stream: "stderr",
+            source: "final-result",
+            text: "1 fail\n",
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("does not duplicate exec_command streams already recorded from live output", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-live-output",
+      toolName: "exec_command",
+      args: { cmd: "bun test" },
+    });
+    const command = store.getSessionState("session-tool-tracker").commands[0]!;
+    store.recordLifecycleEvent({
+      sessionId: "session-tool-tracker",
+      kind: "command.output",
+      subjectKind: "command",
+      subjectId: command.id,
+      data: {
+        stream: "stdout",
+        source: "live-stream",
+        text: "1 pass\n",
+      },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-live-output",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: "1 pass\nexit code: 0" }],
+        details: {
+          stdout: "1 pass\n",
+          stderr: "",
+          exitCode: 0,
+          exitSignal: null,
+        },
+      },
+      isError: false,
+    });
+
+    const outputEvents = store
+      .getSessionState("session-tool-tracker")
+      .events.filter((event) => event.kind === "command.output" && event.subject.id === command.id);
+    expect(outputEvents).toEqual([
+      expect.objectContaining({
+        data: {
+          stream: "stdout",
+          source: "live-stream",
+          text: "1 pass\n",
+        },
+      }),
+    ]);
+  });
+
+  it("does not add final-result text when intercepted commands already recorded live output", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-live-svvyx",
+      toolName: "exec_command",
+      args: { cmd: "svvyx workflows list --json" },
+    });
+    const command = store.getSessionState("session-tool-tracker").commands[0]!;
+    store.recordLifecycleEvent({
+      sessionId: "session-tool-tracker",
+      kind: "command.output",
+      subjectKind: "command",
+      subjectId: command.id,
+      data: {
+        stream: "stdout",
+        source: "live-stream",
+        text: '{\n  "items": []\n}',
+      },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-live-svvyx",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: '{\n  "items": []\n}' }],
+        details: {
+          items: [],
+          commandFacts: {
+            workflowExportCount: 0,
+          },
+        },
+      },
+      isError: false,
+    });
+
+    const outputEvents = store
+      .getSessionState("session-tool-tracker")
+      .events.filter((event) => event.kind === "command.output" && event.subject.id === command.id);
+    expect(outputEvents).toEqual([
+      expect.objectContaining({
+        data: {
+          stream: "stdout",
+          source: "live-stream",
+          text: '{\n  "items": []\n}',
+        },
+      }),
+    ]);
+  });
+
+  it("emits Smithers app logs for shell-routed Smithers command failures", () => {
+    const store = createStore();
+    const appLogEvents: AppLoggerEvent[] = [];
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+      onAppLog: (event) => appLogEvents.push(event),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-smithers-failed",
+      toolName: "exec_command",
+      args: { cmd: "smithers inspect run-missing" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-smithers-failed",
+      toolName: "exec_command",
+      result: {
+        content: [{ type: "text", text: "run not found" }],
+      },
+      isError: true,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands[0]).toMatchObject({
+      toolName: "exec_command",
+      status: "failed",
+      error: "run not found",
+    });
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "warning",
+        source: "smithers",
+        message: "Smithers CLI command failed.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-tool-tracker",
+          surfacePiSessionId: "session-tool-tracker",
+          commandId: snapshot.commands[0]!.id,
+          toolName: "exec_command",
+          errorMessage: "run not found",
+        }),
+      }),
+    );
+  });
+
+  it("records command facts from failed svvyx exec_command error payloads", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-svvyx-workflows-failed",
+      toolName: "exec_command",
+      args: { cmd: "svvyx workflows build --json" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-svvyx-workflows-failed",
+      toolName: "exec_command",
+      result: new Error(
+        JSON.stringify({
+          error: {
+            code: "build_failed",
+            message: "Workflows build failed.",
+          },
+          commandFacts: {
+            svvyxDispatch: true,
+            extensionId: "workflows",
+            extensionArgv: ["build", "--json"],
+            workflowCommand: "build",
+            workflowBuildOk: false,
+            errorCode: "build_failed",
+            workflowDiagnosticCount: 2,
+          },
+        }),
+      ),
+      isError: true,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands[0]).toMatchObject({
+      toolName: "exec_command",
+      status: "failed",
+      facts: {
+        svvyxDispatch: true,
+        extensionId: "workflows",
+        extensionArgv: ["build", "--json"],
+        workflowCommand: "build",
+        workflowBuildOk: false,
+        errorCode: "build_failed",
+        workflowDiagnosticCount: 2,
+      },
+    });
+  });
+
+  it("marks structured svvyx ok:false exec_command results as failed command records", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-svvyx-runtime-failed",
+      toolName: "exec_command",
+      args: { cmd: "svvyx user-extension run command --json" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-svvyx-runtime-failed",
+      toolName: "exec_command",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: false,
+              error: {
+                code: "runtime_not_ready",
+                message: "Extension runtime is not ready.",
+              },
+            }),
+          },
+        ],
+        details: {
+          ok: false,
+          error: {
+            code: "runtime_not_ready",
+            message: "Extension runtime is not ready.",
+          },
+          commandFacts: {
+            svvyxDispatch: true,
+            extensionId: "user-extension",
+            runtimeReady: false,
+            errorCode: "runtime_not_ready",
+          },
+        },
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands[0]).toMatchObject({
+      toolName: "exec_command",
+      status: "failed",
+      error: JSON.stringify({
+        ok: false,
+        error: {
+          code: "runtime_not_ready",
+          message: "Extension runtime is not ready.",
+        },
+      }),
+      facts: {
+        svvyxDispatch: true,
+        extensionId: "user-extension",
+        runtimeReady: false,
+        errorCode: "runtime_not_ready",
+      },
+    });
+    expect(snapshot.events).toContainEqual(
+      expect.objectContaining({
+        kind: "command.output",
+        subject: {
+          kind: "command",
+          id: snapshot.commands[0]!.id,
+        },
+        data: {
+          stream: "stdout",
+          source: "final-result",
+          text: JSON.stringify({
+            ok: false,
+            error: {
+              code: "runtime_not_ready",
+              message: "Extension runtime is not ready.",
+            },
+          }),
+        },
+      }),
+    );
+  });
+
+  it("does not normalize removed bash tool calls into exec_command", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-old-bash",
+      toolName: "bash",
+      args: { command: "git status --short" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-old-bash",
+      toolName: "bash",
+      result: {
+        content: [{ type: "text", text: "legacy command surface" }],
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "bash",
+        status: "succeeded",
+        summary: "legacy command surface",
+      }),
+    ]);
+    expect(snapshot.turns[0]?.turnDecision).toBe("pending");
   });
 
   it("ignores native control tools that already own structured command writes", () => {
@@ -248,48 +914,33 @@ describe("tool execution command tracker", () => {
       promptContext: createPromptContext(store),
     });
 
-    tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-3",
-      toolName: "thread_start",
-      args: { objective: "Inspect the workspace" },
-    });
-    tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-3",
-      toolName: "thread_start",
-      result: {
-        content: [{ type: "text", text: '{"threadId":"thread-2"}' }],
-      },
-      isError: false,
-    });
-
-    const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toHaveLength(0);
-  });
-
-  it("ignores thread_handoff because the handler-thread tool owns its structured writes", () => {
-    const store = createStore();
-    const { promptContext } = createHandlerPromptContext(store);
-    const tracker = createToolExecutionCommandTracker({
-      store,
-      promptContext,
-    });
-
-    tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-handoff",
-      toolName: "thread_handoff",
-      args: {
-        summary: "Delivered the delegated result.",
-        body: "Delivered the delegated result and handed control back.",
-      },
-    });
-    tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-handoff",
-      toolName: "thread_handoff",
-      result: {
-        content: [{ type: "text", text: '{"episodeId":"episode-2"}' }],
-      },
-      isError: false,
-    });
+    for (const toolName of [
+      "list_extensions",
+      "load_extension",
+      "thread_start",
+      "thread_followup",
+      "thread_request_report",
+      "thread_current",
+      "thread_list",
+      "thread_episodes",
+      "thread_group",
+      "thread_report",
+      "request_user_input",
+    ]) {
+      tracker.handleToolExecutionStart({
+        toolCallId: `tool-call-${toolName}`,
+        toolName,
+        args: { objective: "Inspect the workspace" },
+      });
+      tracker.handleToolExecutionEnd({
+        toolCallId: `tool-call-${toolName}`,
+        toolName,
+        result: {
+          content: [{ type: "text", text: '{"threadId":"thread-2"}' }],
+        },
+        isError: false,
+      });
+    }
 
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toHaveLength(0);
@@ -322,9 +973,11 @@ describe("tool execution command tracker", () => {
 
   it("marks dangling tracked commands as failed or cancelled", () => {
     const store = createStore();
+    const appLogEvents: AppLoggerEvent[] = [];
     const tracker = createToolExecutionCommandTracker({
       store,
       promptContext: createPromptContext(store),
+      onAppLog: (event) => appLogEvents.push(event),
     });
 
     tracker.handleToolExecutionStart({
@@ -345,5 +998,19 @@ describe("tool execution command tracker", () => {
         error: "Prompt execution ended before the tool run finished.",
       }),
     ]);
+    expect(appLogEvents).toContainEqual(
+      expect.objectContaining({
+        level: "warning",
+        source: "direct-tool",
+        message: "Direct tool cancelled.",
+        details: expect.objectContaining({
+          workspaceSessionId: "session-tool-tracker",
+          surfacePiSessionId: "session-tool-tracker",
+          commandId: snapshot.commands[0]!.id,
+          toolName: "read",
+          errorMessage: "Prompt execution ended before the tool run finished.",
+        }),
+      }),
+    );
   });
 });

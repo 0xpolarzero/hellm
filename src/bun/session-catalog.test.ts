@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -21,10 +22,15 @@ import type {
 import {
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
+  DEFAULT_THREAD_HANDLER_PROFILE_ID,
   DEFAULT_THREAD_HANDLER_PROMPT,
   type AgentProfileSettings,
 } from "../shared/agent-settings";
 import { buildSystemPrompt } from "./default-system-prompt";
+import {
+  createPromptExecutionContext,
+  type PromptExecutionContext,
+} from "./prompt-execution-context";
 import {
   getSvvyAgentDir,
   getSvvyDataDir,
@@ -35,8 +41,10 @@ import {
   type SessionDefaults,
   type TitleGenerationLogEvent,
 } from "./session-catalog";
-import { SmithersRuntimeManager } from "./smithers-runtime/manager";
+import type { RuntimeApprovalBoundary } from "./approval-boundary";
+import { createAgentSettingsStore } from "./agent-settings-store";
 import type { StructuredSessionStateStore } from "./structured-session-state";
+import { createThreadReportTool } from "./thread-report-tool";
 
 const tempDirs: string[] = [];
 
@@ -79,6 +87,7 @@ type PromptableSession = {
   };
   sessionManager: {
     appendMessage(message: Message): void;
+    buildSessionContext(): { messages: Message[] };
     getSessionFile(): string;
   };
 };
@@ -90,17 +99,17 @@ type ManagedSurfaceRecord = {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
+  generatedAgentContextFingerprint: string;
   smithersToolSurfaceVersion?: string | null;
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
   session: PromptableSession;
   activePrompt: boolean;
   abortRequested: boolean;
   recreateOnNextPrompt: boolean;
   retainCount: number;
   promptExecutionRuntime: {
-    current: {
-      rootThreadId: string | null;
-      turnId: string;
-    } | null;
+    current: PromptExecutionContext | null;
   };
 };
 
@@ -110,10 +119,30 @@ function createWorkspaceFixture() {
   const cwd = join(root, "workspace");
   const agentDir = join(root, "agent");
   const sessionDir = getSvvySessionDir(cwd, agentDir);
+  const workflowsSourceRoot = join(root, "workflows");
   mkdirSync(cwd, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(sessionDir, { recursive: true });
-  return { cwd, agentDir, sessionDir };
+  return { cwd, agentDir, sessionDir, workflowsSourceRoot };
+}
+
+function createWorkspaceSessionCatalog(
+  cwd: string,
+  agentDir: string,
+  sessionDir: string,
+  approvalBoundary?: RuntimeApprovalBoundary,
+): WorkspaceSessionCatalog {
+  return new WorkspaceSessionCatalog(
+    cwd,
+    agentDir,
+    sessionDir,
+    undefined,
+    undefined,
+    {
+      workflowsSourceRoot: join(agentDir, "..", "workflows"),
+    },
+    approvalBoundary,
+  );
 }
 
 function createDeferred<T = void>() {
@@ -202,10 +231,13 @@ function createThreadTarget(
   };
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
+async function waitFor(
+  condition: () => boolean | Promise<boolean>,
+  timeoutMs = 2_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (condition()) {
+    if (await condition()) {
       return;
     }
     await Bun.sleep(10);
@@ -261,26 +293,6 @@ function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): Structured
     .structuredSessionStore;
 }
 
-function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog): {
-  listWorkflows(): unknown[];
-  restoreSessionSupervision(
-    sessionId: string,
-    options?: { emitAttention?: boolean },
-  ): Promise<void>;
-} {
-  return (
-    catalog as unknown as {
-      smithersRuntimeManager: {
-        listWorkflows(): unknown[];
-        restoreSessionSupervision(
-          sessionId: string,
-          options?: { emitAttention?: boolean },
-        ): Promise<void>;
-      };
-    }
-  ).smithersRuntimeManager;
-}
-
 function getManagedSurfaces(catalog: WorkspaceSessionCatalog): Map<string, ManagedSurfaceRecord> {
   return (
     catalog as unknown as {
@@ -306,6 +318,21 @@ function getActiveToolNames(surface: ManagedSurfaceRecord): string[] {
       getActiveToolNames(): string[];
     }
   ).getActiveToolNames();
+}
+
+function getCustomTool(surface: ManagedSurfaceRecord, name: string) {
+  const tool = (
+    surface.session as unknown as {
+      _customTools: Array<{
+        execute: (toolCallId: string, input: unknown, signal?: AbortSignal) => Promise<unknown>;
+        name: string;
+      }>;
+    }
+  )._customTools.find((candidate) => candidate.name === name);
+  if (!tool) {
+    throw new Error(`Custom tool not found: ${name}`);
+  }
+  return tool;
 }
 
 function expectNoPromptReconstruction(promptText: string): void {
@@ -340,13 +367,13 @@ function findManagedSurfaceBySession(
   return null;
 }
 
-function appendPromptLibraryMarker(catalog: WorkspaceSessionCatalog, marker: string): void {
-  const state = catalog.getPromptLibraryState();
+function appendGeneratedAgentContextMarker(catalog: WorkspaceSessionCatalog, marker: string): void {
+  const state = catalog.getGeneratedAgentContextState();
   const block = Object.values(state.instructionBlocks)[0];
   if (!block) {
-    throw new Error("Expected default prompt library instruction block.");
+    throw new Error("Expected default generated agent context instruction block.");
   }
-  catalog.updatePromptLibraryState({
+  catalog.updateGeneratedAgentContextState({
     ...state,
     revision: state.revision + 1,
     updatedAt: new Date().toISOString(),
@@ -483,7 +510,6 @@ async function createHandlerThreadHarness(
         parentThreadId: string;
         parentSurfacePiSessionId: string;
         objective: string;
-        contextKeys: [];
         loadedByCommandId: string;
         autoStart?: boolean;
       }): Promise<{ id: string; surfacePiSessionId: string }>;
@@ -494,7 +520,6 @@ async function createHandlerThreadHarness(
     parentThreadId: orchestratorThread.id,
     parentSurfacePiSessionId: workspaceSessionId,
     objective: input.objective,
-    contextKeys: [],
     loadedByCommandId: orchestratorThread.id,
     autoStart: false,
   });
@@ -512,55 +537,6 @@ async function createHandlerThreadHarness(
   };
 }
 
-async function seedDurableWorkflowSession(input: {
-  cwd: string;
-  agentDir: string;
-  sessionDir: string;
-  workflowStatus?: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
-  pendingAttentionSeq?: number | null;
-}): Promise<string> {
-  const catalog = new WorkspaceSessionCatalog(input.cwd, input.agentDir, input.sessionDir);
-  await catalog.restoreDurableWorkflowSupervision();
-
-  try {
-    const created = await catalog.createSession({ title: "Durable Workflow" }, DEFAULTS);
-    const sessionId = created.target.workspaceSessionId;
-    const handler = await createHandlerThreadHarness(catalog, sessionId, {
-      title: "Durable Workflow",
-      objective: "Supervise durable workflow.",
-    });
-    const store = getStructuredSessionStore(catalog);
-    const workflowCommand = store.createCommand({
-      turnId: handler.turnId,
-      surfacePiSessionId: handler.surfacePiSessionId,
-      threadId: handler.threadId,
-      toolName: "smithers_run_workflow",
-      executor: "smithers",
-      visibility: "surface",
-      title: "Run durable workflow",
-      summary: "Launch durable workflow.",
-    });
-    store.startCommand(workflowCommand.id);
-    store.recordWorkflow({
-      threadId: handler.threadId,
-      commandId: workflowCommand.id,
-      smithersRunId: "smithers-run-durable-startup",
-      workflowName: "durable_startup",
-      workflowSource: "saved",
-      entryPath: ".svvy/workflows/entries/durable-startup.tsx",
-      savedEntryId: "durable_startup",
-      status: input.workflowStatus ?? "running",
-      smithersStatus: input.workflowStatus === "completed" ? "finished" : "running",
-      pendingAttentionSeq: input.pendingAttentionSeq ?? null,
-      lastAttentionSeq: null,
-      summary: "Durable workflow needs startup supervision.",
-    });
-    return sessionId;
-  } finally {
-    await catalog.dispose();
-  }
-}
-
 function hasAssistantReply(messages: readonly AgentMessage[], text: string): boolean {
   return messages.some(
     (message) =>
@@ -571,21 +547,516 @@ function hasAssistantReply(messages: readonly AgentMessage[], text: string): boo
 }
 
 describe("WorkspaceSessionCatalog", () => {
-  it("writes generated context library entries into workspace-owned files", () => {
+  it("writes generated agent context entries into workspace-owned files", () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
-    const entries = catalog.getPromptLibraryGeneratedEntries();
+    const entries = catalog.getGeneratedAgentContextEntries();
     const webContext = entries.orchestrator.find((entry) => entry.id === "web-context");
 
     expect(webContext?.sourcePath).toBe(
-      ".svvy/generated/context-library/orchestrator/web-context.md",
+      ".svvy/generated/agent-context/orchestrator/web-context.md",
     );
-    expect(webContext?.source).toBe(".svvy/generated/context-library/orchestrator/web-context.md");
+    expect(webContext?.source).toBe(".svvy/generated/agent-context/orchestrator/web-context.md");
     expect(existsSync(join(cwd, webContext!.sourcePath))).toBe(true);
     expect(readFileSync(join(cwd, webContext!.sourcePath), "utf8")).toContain(
-      "Loaded always-on prompt context: provider-backed web tools.",
+      "Loaded extension: Web.",
     );
+  });
+
+  it("writes generated actor prompt aggregates into the app-global extension cache", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    const preview = await catalog.getAgentContextPreview({ actor: "orchestrator" });
+    const aggregatesRoot = join(agentDir, "..", "extensions", "generated", "aggregates");
+    const blobIds = readdirSync(join(aggregatesRoot, "blobs")).filter(
+      (entry) => !entry.startsWith("."),
+    );
+
+    expect(preview.systemPrompt).toContain("You are svvy");
+    expect(existsSync(join(aggregatesRoot, "index.sqlite"))).toBe(true);
+    expect(blobIds).toHaveLength(1);
+    expect(readFileSync(join(aggregatesRoot, "blobs", blobIds[0]!, "prompt.md"), "utf8")).toBe(
+      preview.systemPrompt,
+    );
+    expect(
+      JSON.parse(readFileSync(join(aggregatesRoot, "blobs", blobIds[0]!, "manifest.json"), "utf8"))
+        .inputs.actorKind,
+    ).toBe("orchestrator");
+  });
+
+  it("passes the runtime approval boundary into session-created direct and TypeScript tools", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const settingsStore = createAgentSettingsStore({
+      cwd,
+      agentDir,
+      workflowsSourceRoot: join(agentDir, "..", "workflows"),
+    });
+    settingsStore.setAppPreferences({
+      ...settingsStore.getState().appPreferences,
+      artifactDirectory: join(agentDir, "artifacts"),
+    });
+    const approvalRequests: unknown[] = [];
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir, (input) => {
+      approvalRequests.push(input);
+      return { approved: false, reason: `Denied ${input.toolName}` };
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "Approval Wiring" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+
+      await expect(
+        getCustomTool(managed, "exec_command").execute("tool-call-session-shell", {
+          cmd: "echo should-not-run",
+        }),
+      ).rejects.toThrow("Denied exec_command");
+
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run denied execute_typescript",
+      });
+      managed.promptExecutionRuntime.current = createPromptExecutionContext({
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        rootThreadId: null,
+        promptText: "Run denied execute_typescript",
+      });
+
+      await expect(
+        getCustomTool(managed, "execute_typescript").execute("tool-call-session-ts", {
+          typescriptCode: "console.log('should not run');",
+        }),
+      ).resolves.toMatchObject({
+        details: {
+          success: false,
+          error: {
+            message: "Denied execute_typescript",
+            stage: "approval",
+          },
+        },
+      });
+
+      expect(approvalRequests).toMatchObject([
+        {
+          approvalMode: "auto-review",
+          command: "echo should-not-run",
+          cwd,
+          toolCallId: "tool-call-session-shell",
+          toolName: "exec_command",
+        },
+        {
+          approvalMode: "auto-review",
+          context: {
+            sessionId: created.target.workspaceSessionId,
+            surfacePiSessionId: created.target.surfacePiSessionId,
+            actor: "orchestrator",
+          },
+          cwd,
+          toolCallId: "tool-call-session-ts",
+          toolName: "execute_typescript",
+          typescriptCode: "console.log('should not run');",
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("records auto-review approval decisions through the production runtime boundary", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Auto Approval" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run auto-approved shell",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Shell",
+        summary: "printf auto-approved",
+        facts: { toolCallId: "tool-auto-approved-shell" },
+      });
+      store.startCommand(command.id);
+
+      const result = await getCustomTool(managed, "exec_command").execute(
+        "tool-auto-approved-shell",
+        { cmd: "printf auto-approved" },
+        new AbortController().signal,
+      );
+
+      expect(JSON.stringify(result)).toContain("auto-approved");
+      expect(
+        store.getSessionState(created.target.workspaceSessionId).runtimeApprovalRequests,
+      ).toMatchObject([
+        {
+          approvalMode: "auto-review",
+          command: "printf auto-approved",
+          status: "approved",
+          reviewer: "auto-review",
+          toolName: "exec_command",
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("denies unsafe auto-review requests through the production runtime boundary", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Auto Denial" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run auto-denied shell",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Shell",
+        summary: "sudo printf denied",
+        facts: { toolCallId: "tool-auto-denied-shell" },
+      });
+      store.startCommand(command.id);
+
+      await expect(
+        getCustomTool(managed, "exec_command").execute(
+          "tool-auto-denied-shell",
+          { cmd: "sudo printf denied" },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Auto-review denied privilege escalation.");
+
+      const snapshot = store.getSessionState(created.target.workspaceSessionId);
+      const approvalRequest = snapshot.runtimeApprovalRequests?.[0];
+      expect(approvalRequest).toMatchObject({
+        approvalMode: "auto-review",
+        command: "sudo printf denied",
+        status: "denied",
+        reviewer: "auto-review",
+        toolName: "exec_command",
+        decisionReason: "Auto-review denied privilege escalation.",
+      });
+      expect(snapshot.commands.find((entry) => entry.id === command.id)).toMatchObject({
+        status: "cancelled",
+        facts: {
+          approval: "denied",
+          approvalRequestId: approvalRequest?.requestId,
+        },
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("pauses user-mode runtime approval requests until answered", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "User Approval" }, DEFAULTS);
+      const settingsStore = createAgentSettingsStore({
+        cwd,
+        agentDir,
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      });
+      catalog.updateAppPreferences({
+        ...settingsStore.getState().appPreferences,
+        approvalMode: "user",
+      });
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run user-approved shell",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Shell",
+        summary: "printf user-approved",
+        facts: { toolCallId: "tool-user-approved-shell" },
+      });
+      store.startCommand(command.id);
+
+      const pending = getCustomTool(managed, "exec_command").execute(
+        "tool-user-approved-shell",
+        { cmd: "printf user-approved" },
+        new AbortController().signal,
+      );
+
+      await waitFor(() =>
+        store
+          .listOpenRuntimeApprovalRequests()
+          .some(
+            (request) =>
+              request.toolCallId === "tool-user-approved-shell" && request.status === "pending",
+          ),
+      );
+      const request = store.listOpenRuntimeApprovalRequests()[0]!;
+      expect(store.getSessionState(created.target.workspaceSessionId).session.wait).toMatchObject({
+        kind: "approval",
+      });
+      expect(store.getSessionState(created.target.workspaceSessionId).commands[0]).toMatchObject({
+        status: "waiting",
+        facts: {
+          approval: "pending",
+          approvalRequestId: request.requestId,
+        },
+      });
+
+      await catalog.answerRuntimeApprovalRequest({
+        requestId: request.requestId,
+        approved: true,
+      });
+      const result = await pending;
+
+      expect(JSON.stringify(result)).toContain("user-approved");
+      expect(
+        store.getSessionState(created.target.workspaceSessionId).runtimeApprovalRequests,
+      ).toMatchObject([
+        {
+          approvalMode: "user",
+          command: "printf user-approved",
+          status: "approved",
+          reviewer: "user",
+          toolName: "exec_command",
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("settles user-denied runtime approval requests without running the command", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Denied Approval" }, DEFAULTS);
+      const settingsStore = createAgentSettingsStore({
+        cwd,
+        agentDir,
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      });
+      catalog.updateAppPreferences({
+        ...settingsStore.getState().appPreferences,
+        approvalMode: "user",
+      });
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const targetPath = join(cwd, "should-not-run.txt");
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run denied shell",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Shell",
+        summary: `printf denied > ${targetPath}`,
+        facts: { toolCallId: "tool-user-denied-shell" },
+      });
+      store.startCommand(command.id);
+
+      const pending = getCustomTool(managed, "exec_command").execute(
+        "tool-user-denied-shell",
+        { cmd: `printf denied > ${targetPath}` },
+        new AbortController().signal,
+      );
+
+      await waitFor(() =>
+        store
+          .listOpenRuntimeApprovalRequests()
+          .some(
+            (request) =>
+              request.toolCallId === "tool-user-denied-shell" && request.status === "pending",
+          ),
+      );
+      const request = store.listOpenRuntimeApprovalRequests()[0]!;
+      await catalog.answerRuntimeApprovalRequest({
+        requestId: request.requestId,
+        approved: false,
+        reason: "User denied command.",
+      });
+
+      await expect(pending).rejects.toThrow("User denied command.");
+      expect(existsSync(targetPath)).toBe(false);
+      expect(store.getSessionState(created.target.workspaceSessionId).session.wait).toBeNull();
+      expect(store.getSessionState(created.target.workspaceSessionId).commands[0]).toMatchObject({
+        status: "cancelled",
+        facts: {
+          approval: "denied",
+          approvalRequestId: request.requestId,
+        },
+      });
+      expect(
+        store.getSessionState(created.target.workspaceSessionId).runtimeApprovalRequests,
+      ).toMatchObject([
+        {
+          approvalMode: "user",
+          command: `printf denied > ${targetPath}`,
+          status: "denied",
+          reviewer: "user",
+          toolName: "exec_command",
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("cancels pending runtime approval requests when the owning prompt is cancelled", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Cancelled Approval" }, DEFAULTS);
+      const settingsStore = createAgentSettingsStore({
+        cwd,
+        agentDir,
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      });
+      catalog.updateAppPreferences({
+        ...settingsStore.getState().appPreferences,
+        approvalMode: "user",
+      });
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run cancellable shell",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Shell",
+        summary: "printf cancelled",
+        facts: { toolCallId: "tool-cancelled-approval-shell" },
+      });
+      store.startCommand(command.id);
+
+      const pending = getCustomTool(managed, "exec_command").execute(
+        "tool-cancelled-approval-shell",
+        { cmd: "printf cancelled" },
+        new AbortController().signal,
+      );
+
+      await waitFor(() =>
+        store
+          .listOpenRuntimeApprovalRequests()
+          .some(
+            (request) =>
+              request.toolCallId === "tool-cancelled-approval-shell" &&
+              request.status === "pending",
+          ),
+      );
+      const request = store.listOpenRuntimeApprovalRequests()[0]!;
+      managed.activePrompt = true;
+      await cancelSurfacePrompt(catalog, created.target);
+
+      await expect(pending).rejects.toThrow("Prompt cancelled.");
+      expect(store.getSessionState(created.target.workspaceSessionId).session.wait).toBeNull();
+      expect(store.getSessionState(created.target.workspaceSessionId).commands[0]).toMatchObject({
+        status: "cancelled",
+        facts: {
+          approval: "cancelled",
+          approvalRequestId: request.requestId,
+        },
+      });
+      expect(
+        store.getSessionState(created.target.workspaceSessionId).runtimeApprovalRequests,
+      ).toMatchObject([
+        {
+          approvalMode: "user",
+          command: "printf cancelled",
+          status: "cancelled",
+          reviewer: "user",
+          toolName: "exec_command",
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("builds generated agent context previews from the active profile and extension state", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    writeFileSync(join(cwd, "AGENTS.md"), "# Project Standards\n\nUse repo rules.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const preview = await catalog.getAgentContextPreview({
+        actor: "orchestrator",
+        profileId: DEFAULT_ORCHESTRATOR_PROFILE_ID,
+      });
+
+      expect(preview.actor).toBe("orchestrator");
+      expect(preview.profileId).toBe(DEFAULT_ORCHESTRATOR_PROFILE_ID);
+      expect(preview.loadedExtensionIds).toContain("base-common");
+      expect(preview.loadedExtensionIds).toContain("base-orchestrator");
+      expect(preview.systemPrompt).toContain("This surface is the orchestrator.");
+      expect(preview.systemPrompt).toContain("Loaded native extension: Shell.");
+      expect(preview.systemPrompt).toContain("Loaded external_instruction records:");
+      expect(preview.systemPrompt).toContain("# Project Standards");
+
+      const handlerPreview = await catalog.getAgentContextPreview({ actor: "handler" });
+
+      expect(handlerPreview.actor).toBe("handler");
+      expect(handlerPreview.profileId).toBe(DEFAULT_THREAD_HANDLER_PROFILE_ID);
+      expect(handlerPreview.loadedExtensionIds).toContain("base-common");
+      expect(handlerPreview.loadedExtensionIds).toContain("base-handler");
+      expect(handlerPreview.loadedExtensionIds).not.toContain("base-orchestrator");
+      expect(handlerPreview.systemPrompt).toContain("This surface is a delegated handler thread.");
+      expect(handlerPreview.systemPrompt).toContain("## Handler Profile Override");
+
+      const workflowTaskPreview = await catalog.getAgentContextPreview({
+        actor: "workflow-task",
+        profileId: "explorer",
+      });
+
+      expect(workflowTaskPreview.actor).toBe("workflow-task");
+      expect(workflowTaskPreview.profileId).toBe("explorer");
+      expect(workflowTaskPreview.profileName).toBe("Explorer");
+      expect(workflowTaskPreview.loadedExtensionIds).toContain("base-common");
+      expect(workflowTaskPreview.loadedExtensionIds).toContain("base-workflow-task");
+      expect(workflowTaskPreview.loadedExtensionIds).not.toContain("base-orchestrator");
+    } finally {
+      await catalog.dispose();
+    }
   });
 
   it("normalizes generated session title casing and punctuation without deleting suffixes", () => {
@@ -593,17 +1064,6 @@ describe("WorkspaceSessionCatalog", () => {
     expect(normalizeGeneratedTitle("Project CI Thread")).toBe("Project CI thread");
     expect(normalizeGeneratedTitle("Greeting Exchange")).toBe("greeting exchange");
     expect(normalizeGeneratedTitle("Session")).toBe("Session");
-  });
-
-  it("starts without registering test or POC Smithers workflows", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      expect(getSmithersRuntimeManager(catalog).listWorkflows()).toEqual([]);
-    } finally {
-      await catalog.dispose();
-    }
   });
 
   it("lists workspace sessions through a sessions array without activeSessionId", async () => {
@@ -614,7 +1074,7 @@ describe("WorkspaceSessionCatalog", () => {
       reply: "Queue inspected",
       thinkingLevel: "high",
     });
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Live Session" }, DEFAULTS);
@@ -625,6 +1085,47 @@ describe("WorkspaceSessionCatalog", () => {
         result.sessions.some((session) => session.id === created.target.workspaceSessionId),
       ).toBe(true);
       expect("activeSessionId" in (result as unknown as Record<string, unknown>)).toBe(false);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("records UI-triggered extension revert product events on the owning conversation", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Extension Revert" }, DEFAULTS);
+      const recorded = await catalog.recordExtensionRevertProductEvent({
+        target: created.target,
+        changeId: "chg_linear_00000000-0000-4000-8000-000000000001",
+        revertChangeId: "chg_linear_00000000-0000-4000-8000-000000000002",
+        extensionId: "linear",
+        resultKind: "extension_files",
+        autoBuildStatus: "succeeded",
+      });
+
+      expect(recorded).toBe(true);
+      expect((await catalog.listSessions()).sessions[0]?.productEvents).toEqual([
+        expect.objectContaining({
+          title: "Extension change reverted",
+          summary:
+            "User reverted extension extension_files chg_linear_00000000-0000-4000-8000-000000000001 for linear.",
+          subject: {
+            kind: "session",
+            id: created.target.workspaceSessionId,
+          },
+          details: expect.objectContaining({
+            surface: "orchestrator",
+            surfacePiSessionId: created.target.surfacePiSessionId,
+            changeId: "chg_linear_00000000-0000-4000-8000-000000000001",
+            revertChangeId: "chg_linear_00000000-0000-4000-8000-000000000002",
+            extensionId: "linear",
+            resultKind: "extension_files",
+            autoBuildStatus: "succeeded",
+          }),
+        }),
+      ]);
     } finally {
       await catalog.dispose();
     }
@@ -646,7 +1147,7 @@ describe("WorkspaceSessionCatalog", () => {
     chmodSync(fakeTrashPath, 0o755);
     const previousPath = process.env.PATH;
     process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Delete Me" }, DEFAULTS);
@@ -704,7 +1205,7 @@ describe("WorkspaceSessionCatalog", () => {
     chmodSync(fakeTrashPath, 0o755);
     const previousPath = process.env.PATH;
     process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Archived Delete Me" }, DEFAULTS);
@@ -748,7 +1249,7 @@ describe("WorkspaceSessionCatalog", () => {
     chmodSync(fakeTrashPath, 0o755);
     const previousPath = process.env.PATH;
     process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const deletedSessionIds: string[] = [];
@@ -802,7 +1303,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("aborts an active prompt before hard-deleting the session", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Streaming Delete" }, DEFAULTS);
@@ -881,7 +1382,7 @@ describe("WorkspaceSessionCatalog", () => {
       timestamp: 2_222,
     });
 
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const forked = await catalog.forkSession(
@@ -913,7 +1414,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("commits provider errors as visible assistant text when pi records empty content", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Error Surface" }, DEFAULTS);
@@ -962,115 +1463,9 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("restores workflow supervision with pending handler attention delivery when a tracked session opens", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Tracked Session" }, DEFAULTS);
-      const sessionId = created.target.workspaceSessionId;
-      const handler = await createHandlerThreadHarness(catalog, sessionId, {
-        title: "Tracked Workflow",
-        objective: "Supervise tracked workflow.",
-      });
-      const store = getStructuredSessionStore(catalog);
-      const workflowCommand = store.createCommand({
-        turnId: handler.turnId,
-        surfacePiSessionId: handler.surfacePiSessionId,
-        threadId: handler.threadId,
-        toolName: "smithers_run_workflow",
-        executor: "smithers",
-        visibility: "surface",
-        title: "Run tracked workflow",
-        summary: "Launch tracked workflow.",
-      });
-      store.startCommand(workflowCommand.id);
-      store.recordWorkflow({
-        threadId: handler.threadId,
-        commandId: workflowCommand.id,
-        smithersRunId: "smithers-run-tracked-open",
-        workflowName: "tracked_open",
-        workflowSource: "saved",
-        entryPath: ".svvy/workflows/entries/tracked-open.tsx",
-        savedEntryId: "tracked_open",
-        status: "completed",
-        smithersStatus: "finished",
-        pendingAttentionSeq: 7,
-        lastAttentionSeq: null,
-        summary: "Tracked workflow finished and needs handler attention.",
-      });
-      const restoreCalls: Array<{ sessionId: string; options?: { emitAttention?: boolean } }> = [];
-      const manager = getSmithersRuntimeManager(catalog);
-      const restoreSpy = spyOn(manager, "restoreSessionSupervision").mockImplementation(
-        async (nextSessionId, options) => {
-          restoreCalls.push({ sessionId: nextSessionId, options });
-        },
-      );
-
-      try {
-        await catalog.openSession(sessionId);
-      } finally {
-        restoreSpy.mockRestore();
-      }
-
-      expect(restoreCalls).toEqual([{ sessionId, options: undefined }]);
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("restores durable workflow supervision at catalog startup without opening a surface", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const sessionId = await seedDurableWorkflowSession({ cwd, agentDir, sessionDir });
-    const restoreCalls: Array<{ sessionId: string; options?: { emitAttention?: boolean } }> = [];
-    const restoreSpy = spyOn(
-      SmithersRuntimeManager.prototype,
-      "restoreSessionSupervision",
-    ).mockImplementation(async (nextSessionId, options) => {
-      restoreCalls.push({ sessionId: nextSessionId, options });
-    });
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      await waitFor(() => restoreCalls.length === 1);
-
-      expect(restoreCalls).toEqual([{ sessionId, options: undefined }]);
-      expect(getManagedSurfaces(catalog).size).toBe(0);
-    } finally {
-      restoreSpy.mockRestore();
-      await catalog.dispose();
-    }
-  });
-
-  it("does not restore durable workflow supervision for sessions with no workflow state", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const seedCatalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    await seedCatalog.restoreDurableWorkflowSupervision();
-    await seedCatalog.createSession({ title: "No Workflow State" }, DEFAULTS);
-    await seedCatalog.dispose();
-
-    const restoreCalls: string[] = [];
-    const restoreSpy = spyOn(
-      SmithersRuntimeManager.prototype,
-      "restoreSessionSupervision",
-    ).mockImplementation(async (sessionId) => {
-      restoreCalls.push(sessionId);
-    });
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      await catalog.restoreDurableWorkflowSupervision();
-
-      expect(restoreCalls).toEqual([]);
-    } finally {
-      restoreSpy.mockRestore();
-      await catalog.dispose();
-    }
-  });
-
   it("blocks manual rename while top-level title generation is pending", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
@@ -1091,7 +1486,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("uses the live first composer draft as the provisional session title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
@@ -1099,7 +1494,17 @@ describe("WorkspaceSessionCatalog", () => {
         target: created.target,
         draft: {
           text: "A text written in the composer should survive closing surfaces",
-          attachments: [],
+          attachments: [
+            {
+              id: "attachment:docs/progress.md",
+              kind: "file",
+              name: "progress.md",
+              path: join(cwd, "docs/progress.md"),
+              workspaceRelativePath: "docs/progress.md",
+              mimeType: "text/markdown",
+              sizeBytes: 123,
+            },
+          ],
         },
       });
 
@@ -1111,6 +1516,17 @@ describe("WorkspaceSessionCatalog", () => {
       expect(reopened.composerDraft.text).toBe(
         "A text written in the composer should survive closing surfaces",
       );
+      expect(reopened.composerDraft.attachments).toEqual([
+        {
+          id: "attachment:docs/progress.md",
+          kind: "file",
+          name: "progress.md",
+          path: join(cwd, "docs/progress.md"),
+          workspaceRelativePath: "docs/progress.md",
+          mimeType: "text/markdown",
+          sizeBytes: 123,
+        },
+      ]);
 
       getStructuredSessionStore(catalog).completeTitleGeneration({
         sessionId: created.target.workspaceSessionId,
@@ -1125,7 +1541,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("starts top-level title generation while the first orchestrator turn is still running", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
@@ -1176,7 +1592,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("marks title generation failed instead of using the first message when the namer returns a generic title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
@@ -1228,7 +1644,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("marks title generation failed instead of using the first message when the namer returns no title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
@@ -1280,7 +1696,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("surfaces namer model errors instead of using the first message as a title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       await Bun.sleep(0);
@@ -1358,7 +1774,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("uses the namer agent to title handler threads from the delegated objective", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Handler Naming" }, DEFAULTS);
@@ -1377,20 +1793,20 @@ describe("WorkspaceSessionCatalog", () => {
       ) {
         appendMessagesToSession(this, [
           userMessage(promptText),
-          assistantMessage("Project CI setup"),
+          assistantMessage("Workflow setup"),
         ]);
       });
       const store = getStructuredSessionStore(catalog);
       const turn = store.startTurn({
         sessionId: created.target.workspaceSessionId,
         surfacePiSessionId: created.target.surfacePiSessionId,
-        requestSummary: "Delegate Project CI context work",
+        requestSummary: "Delegate workflow context work",
       });
       const orchestratorThread = store.createThread({
         turnId: turn.id,
         surfacePiSessionId: created.target.surfacePiSessionId,
-        title: "Delegate Project CI context work",
-        objective: "Open a handler thread with Project CI context.",
+        title: "Delegate workflow context work",
+        objective: "Open a handler thread with workflow context.",
       });
 
       try {
@@ -1402,7 +1818,6 @@ describe("WorkspaceSessionCatalog", () => {
               parentThreadId: string;
               parentSurfacePiSessionId: string;
               objective: string;
-              contextKeys: [];
               agentProfileSettings: null;
               loadedByCommandId: string;
             }): Promise<{ id: string; title: string }>;
@@ -1412,15 +1827,14 @@ describe("WorkspaceSessionCatalog", () => {
           turnId: turn.id,
           parentThreadId: orchestratorThread.id,
           parentSurfacePiSessionId: created.target.surfacePiSessionId,
-          objective: "Configure Project CI checks for this repository.",
-          contextKeys: [],
+          objective: "Configure workflow checks for this repository.",
           agentProfileSettings: null,
           loadedByCommandId: orchestratorThread.id,
         });
 
-        expect(handlerThread.title).toBe("Configure Project CI checks for this repository.");
+        expect(handlerThread.title).toBe("Configure workflow checks for this repository.");
         await waitFor(
-          () => store.getThreadDetail(handlerThread.id).thread.title === "Project CI setup",
+          () => store.getThreadDetail(handlerThread.id).thread.title === "Workflow setup",
         );
       } finally {
         promptSpy.mockRestore();
@@ -1458,25 +1872,49 @@ describe("WorkspaceSessionCatalog", () => {
   it("loads svvy's prompt into pi's real systemPrompt channel for orchestrator and handler surfaces", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     writeFileSync(join(cwd, "AGENTS.md"), "# Project Standards\n\nUse repo rules.");
+    writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Standards\n\nKeep visible instructions.");
+    writeFileSync(join(cwd, "APPEND_SYSTEM.md"), "Hidden root append text.");
     mkdirSync(join(cwd, ".pi"), { recursive: true });
     writeFileSync(join(cwd, ".pi", "APPEND_SYSTEM.md"), "Hidden append text.");
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    writeFileSync(join(cwd, ".pi", "SYSTEM.md"), "Hidden replacement text.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Prompt Channel" }, DEFAULTS);
       const orchestratorManaged = getManagedSurface(catalog, created.target.surfacePiSessionId);
 
-      expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
-      expect(created.resolvedSystemPrompt).toContain(buildSystemPrompt("orchestrator"));
-      expect(created.resolvedSystemPrompt).toContain("# Project Context");
+      expect(created.systemPrompt).toContain(
+        "You are svvy, a pragmatic software engineering assistant",
+      );
+      expect(created.systemPrompt).toContain("Loaded native extension: Shell.");
+      expect(created.systemPrompt).toContain("Loaded external_instruction records:");
+      expect(created.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
+      expect(created.systemPrompt).not.toContain(
+        `# Claude Standards\n\nKeep visible instructions.`,
+      );
+      expect(created.resolvedSystemPrompt).toContain(
+        "You are svvy, a pragmatic software engineering assistant",
+      );
+      expect(created.resolvedSystemPrompt).not.toContain("# Project Context");
       expect(created.resolvedSystemPrompt).toContain("# Project Standards");
+      expect(created.resolvedSystemPrompt).not.toContain("# Claude Standards");
       expect(created.resolvedSystemPrompt).not.toContain("Hidden append text.");
+      expect(created.resolvedSystemPrompt).not.toContain("Hidden root append text.");
+      expect(created.resolvedSystemPrompt).not.toContain("Hidden replacement text.");
       expect(created.externalContextSources).toEqual([
         expect.objectContaining({
           kind: "AGENTS.md",
           path: join(cwd, "AGENTS.md"),
           content: "# Project Standards\n\nUse repo rules.",
           contentHash: expect.any(String),
+          enabled: true,
+        }),
+        expect.objectContaining({
+          kind: "CLAUDE.md",
+          path: join(cwd, "CLAUDE.md"),
+          content: "# Claude Standards\n\nKeep visible instructions.",
+          contentHash: expect.any(String),
+          enabled: false,
         }),
       ]);
       expect(created.resolvedSystemPrompt).toContain("Current date:");
@@ -1492,12 +1930,25 @@ describe("WorkspaceSessionCatalog", () => {
       const openedHandler = await catalog.openSurface(handler.target);
       const handlerManaged = getManagedSurface(catalog, handler.target.surfacePiSessionId);
 
-      expect(openedHandler.systemPrompt).toBe(
-        `${buildSystemPrompt("handler")}\n\n## Handler Profile Override\n${DEFAULT_THREAD_HANDLER_PROMPT}`,
+      expect(openedHandler.systemPrompt).toContain("This surface is a delegated handler thread.");
+      expect(openedHandler.systemPrompt).toContain("Loaded native extension: Shell.");
+      expect(openedHandler.systemPrompt).toContain("Loaded external_instruction records:");
+      expect(openedHandler.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
+      expect(openedHandler.systemPrompt).not.toContain(
+        `# Claude Standards\n\nKeep visible instructions.`,
       );
-      expect(openedHandler.resolvedSystemPrompt).toContain(buildSystemPrompt("handler"));
+      expect(openedHandler.systemPrompt).toContain(
+        `## Handler Profile Override\n${DEFAULT_THREAD_HANDLER_PROMPT}`,
+      );
+      expect(openedHandler.resolvedSystemPrompt).toContain(
+        "This surface is a delegated handler thread.",
+      );
+      expect(openedHandler.resolvedSystemPrompt).not.toContain("# Project Context");
       expect(openedHandler.resolvedSystemPrompt).toContain("# Project Standards");
+      expect(openedHandler.resolvedSystemPrompt).not.toContain("# Claude Standards");
       expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden append text.");
+      expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden root append text.");
+      expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden replacement text.");
       expect(openedHandler.externalContextSources).toEqual(created.externalContextSources);
       expect(handlerManaged.session.agent.state.systemPrompt).toBe(
         openedHandler.resolvedSystemPrompt,
@@ -1507,11 +1958,136 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("applies thread_start extension overrides over the threadHandler profile at creation", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Overrides" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Delegate with handler extension overrides",
+      });
+      const orchestratorThread = store.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        title: "Delegate with handler extension overrides",
+        objective: "Open a handler with explicit extension usage overrides.",
+      });
+
+      const handlerThread = await (
+        catalog as unknown as {
+          createHandlerThread(input: {
+            sessionId: string;
+            turnId: string;
+            parentThreadId: string;
+            parentSurfacePiSessionId: string;
+            objective: string;
+            historyMode: "isolated";
+            extensions: Record<string, "default_loaded" | "available" | "unavailable">;
+            agentProfileSettings: null;
+            loadedByCommandId: string;
+            autoStart: false;
+          }): Promise<{ id: string; surfacePiSessionId: string }>;
+        }
+      ).createHandlerThread({
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        parentThreadId: orchestratorThread.id,
+        parentSurfacePiSessionId: created.target.surfacePiSessionId,
+        objective: "Use a narrower handler extension binding for this objective.",
+        historyMode: "isolated",
+        extensions: {
+          "extension-managing": "default_loaded",
+          smithers: "available",
+          workflows: "unavailable",
+          "request-user-input": "unavailable",
+          "thread-orchestration": "default_loaded",
+          "thread-handling": "unavailable",
+        },
+        agentProfileSettings: null,
+        loadedByCommandId: orchestratorThread.id,
+        autoStart: false,
+      });
+
+      const storedThread = store.getThreadDetail(handlerThread.id).thread;
+      expect(JSON.parse(storedThread.agentProfileJson ?? "{}")).toMatchObject({
+        id: "thread-handler",
+        name: "Thread handler",
+      });
+      expect(storedThread.loadedExtensionIds).toContain("extension-managing");
+      expect(storedThread.loadedExtensionIds).not.toContain("smithers");
+      expect(storedThread.loadedExtensionIds).not.toContain("workflows");
+      expect(storedThread.loadedExtensionIds).not.toContain("thread-orchestration");
+      expect(storedThread.loadedExtensionIds).not.toContain("thread-handling");
+      expect(storedThread.availableExtensionIds).toEqual(["smithers"]);
+
+      const openedHandler = await catalog.openSurface(
+        createThreadTarget(
+          created.target.workspaceSessionId,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
+      );
+      expect(openedHandler.resolvedSystemPrompt).not.toContain(
+        "Loaded prompt-only extension: Smithers CLI workflow authoring.",
+      );
+      expect(openedHandler.resolvedSystemPrompt).toContain(
+        "- smithers: Use official Smithers CLI commands through Shell for workspace .smithers work.",
+      );
+      expect(openedHandler.resolvedSystemPrompt).not.toContain("svvyx workflows");
+      expect(openedHandler.resolvedSystemPrompt).not.toContain(
+        "Loaded native extension: Thread Orchestration.",
+      );
+      expect(openedHandler.resolvedSystemPrompt).not.toContain(
+        "Loaded native extension: Request User Input.",
+      );
+      const handlerManaged = getManagedSurface(catalog, handlerThread.surfacePiSessionId);
+      const handlerTools = getActiveToolNames(handlerManaged);
+      expect(handlerTools).not.toContain("request_user_input");
+      expect(handlerTools).not.toContain("thread_current");
+      expect(handlerTools).not.toContain("thread_group");
+      expect(handlerTools).not.toContain("thread_report");
+      expect(handlerTools).not.toContain("thread_episodes");
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps pi ambient resources and submit expansion disabled for managed svvy sessions", () => {
+    const source = readFileSync(new URL("./session-catalog.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("noExtensions: true");
+    expect(source).toContain("noSkills: true");
+    expect(source).toContain("noPromptTemplates: true");
+    expect(source).toContain("noThemes: true");
+    expect(source).toContain("additionalExtensionPaths: []");
+    expect(source).toContain("additionalSkillPaths: []");
+    expect(source).toContain("additionalPromptTemplatePaths: []");
+    expect(source).toContain("additionalThemePaths: []");
+    expect(source).toContain("extensionFactories: []");
+    expect(source).toContain("systemPromptOverride: () => options.systemPrompt");
+    expect(source).toContain("agentsFilesOverride: () => ({ agentsFiles: [] })");
+    expect(source).toContain("appendSystemPromptOverride: () => []");
+    expect(source).toContain(
+      "extensionsOverride: (base) => ({ ...base, extensions: [], errors: [] })",
+    );
+    expect(source).toContain("skillsOverride: () => ({ skills: [], diagnostics: [] })");
+    expect(source).toContain("promptsOverride: () => ({ prompts: [], diagnostics: [] })");
+    expect(source).toContain("themesOverride: () => ({ themes: [], diagnostics: [] })");
+    expect(source).toContain('noTools: "builtin"');
+    expect(source).toContain("customTools,");
+    expect(source).not.toContain("extendResources(");
+    expect(source).toContain("expandPromptTemplates: false");
+  });
+
   it("marks prompt binding stale when runtime standards change", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const standardsPath = join(cwd, "AGENTS.md");
     writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Standards Drift" }, DEFAULTS);
@@ -1530,9 +2106,301 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("binds top-level sessions to the stored generated agent context fingerprint", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Generated Context Binding" }, DEFAULTS);
+      const storedFingerprint = getStructuredSessionStore(catalog).getSessionState(
+        created.target.workspaceSessionId,
+      ).pi.generatedAgentContextFingerprint;
+
+      expect(storedFingerprint).toBeTruthy();
+      if (!storedFingerprint) {
+        throw new Error("Expected generated context fingerprint to be stored.");
+      }
+      expect(created.promptBinding?.boundFingerprint).toBe(storedFingerprint);
+      expect(created.promptBinding?.currentFingerprint).toBe(storedFingerprint);
+      expect(created.promptBinding?.stale).toBe(false);
+
+      writeFileSync(standardsPath, "# Project Standards\n\nChanged.");
+      const reopened = await catalog.openSurface(created.target);
+      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
+      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
+      expect(reopened.promptBinding?.stale).toBe(true);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps a disposed top-level session bound to its stored generated context fingerprint", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Reopen Context Binding" }, DEFAULTS);
+      const storedFingerprint = created.promptBinding?.boundFingerprint;
+      expect(storedFingerprint).toBeTruthy();
+      if (!storedFingerprint) {
+        throw new Error("Expected generated context fingerprint to be stored.");
+      }
+
+      await closeSurface(catalog, created.target);
+      writeFileSync(standardsPath, "# Project Standards\n\nChanged after close.");
+
+      const reopened = await catalog.openSurface(created.target);
+      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
+      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
+      expect(reopened.promptBinding?.stale).toBe(true);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("restores a top-level session's bound generated context payload after catalog restart", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial restart payload.");
+    const firstCatalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    let target: PromptTarget;
+    let storedFingerprint: string;
+    let storedAggregateCacheKey = "";
+
+    try {
+      const created = await firstCatalog.createSession(
+        { title: "Restart Context Binding" },
+        DEFAULTS,
+      );
+      target = created.target;
+      storedFingerprint = created.promptBinding?.boundFingerprint ?? "";
+      expect(created.promptBinding?.boundSystemPrompt).toContain("Initial restart payload.");
+      expect(storedFingerprint).toBeTruthy();
+      const binding = getStructuredSessionStore(firstCatalog).getGeneratedAgentContextBinding({
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        generatedAgentContextFingerprint: storedFingerprint,
+      });
+      expect(binding?.aggregateCacheKey).toBeTruthy();
+      expect(binding?.systemPrompt).toContain("Initial restart payload.");
+      expect(binding?.commandsDts).toContain("declare");
+      expect(binding?.nativeToolSchemasJson).toContain("{");
+      storedAggregateCacheKey = binding?.aggregateCacheKey ?? "";
+    } finally {
+      await firstCatalog.dispose();
+    }
+
+    writeFileSync(standardsPath, "# Project Standards\n\nChanged after catalog restart.");
+    rmSync(join(agentDir, "..", "extensions", "generated", "aggregates"), {
+      recursive: true,
+      force: true,
+    });
+    const secondCatalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const reopened = await secondCatalog.openSurface(target!);
+      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint!);
+      expect(reopened.promptBinding?.boundSystemPrompt).toContain("Initial restart payload.");
+      expect(reopened.promptBinding?.boundSystemPrompt).not.toContain(
+        "Changed after catalog restart.",
+      );
+      expect(reopened.promptBinding?.currentSystemPrompt).toContain(
+        "Changed after catalog restart.",
+      );
+      expect(reopened.promptBinding?.stale).toBe(true);
+      const binding = getStructuredSessionStore(secondCatalog).getGeneratedAgentContextBinding({
+        surfacePiSessionId: target!.surfacePiSessionId,
+        generatedAgentContextFingerprint: storedFingerprint!,
+      });
+      expect(binding?.aggregateCacheKey).toBe(storedAggregateCacheKey!);
+      expect(binding?.systemPrompt).toContain("Initial restart payload.");
+      expect(binding?.commandsDts).toContain("declare");
+    } finally {
+      await secondCatalog.dispose();
+    }
+  });
+
+  it("binds handler surfaces to the stored generated agent context fingerprint", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Context Binding" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "handler-context-binding",
+        objective: "Inspect handler generated context binding.",
+      });
+      const storedThread = getStructuredSessionStore(catalog)
+        .getSessionState(created.target.workspaceSessionId)
+        .threads.find((thread) => thread.id === handler.threadId);
+
+      const storedFingerprint = storedThread?.generatedAgentContextFingerprint;
+      expect(storedFingerprint).toBeTruthy();
+      if (!storedFingerprint) {
+        throw new Error("Expected handler generated context fingerprint to be stored.");
+      }
+
+      const openedHandler = await catalog.openSurface(handler.target);
+      expect(openedHandler.promptBinding?.boundFingerprint).toBe(storedFingerprint);
+      expect(openedHandler.promptBinding?.currentFingerprint).toBe(storedFingerprint);
+      expect(openedHandler.promptBinding?.stale).toBe(false);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps a disposed handler surface bound to its stored generated context fingerprint", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Reopen Binding" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "handler-reopen-binding",
+        objective: "Inspect handler reopen generated context binding.",
+      });
+      const openedHandler = await catalog.openSurface(handler.target);
+      const storedFingerprint = openedHandler.promptBinding?.boundFingerprint;
+      expect(storedFingerprint).toBeTruthy();
+      if (!storedFingerprint) {
+        throw new Error("Expected handler generated context fingerprint to be stored.");
+      }
+
+      await closeSurface(catalog, handler.target);
+      writeFileSync(standardsPath, "# Project Standards\n\nChanged after handler close.");
+
+      const reopened = await catalog.openSurface(handler.target);
+      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
+      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
+      expect(reopened.promptBinding?.stale).toBe(true);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("restores a handler surface's bound generated context payload after catalog restart", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial handler restart payload.");
+    const firstCatalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    let handlerTarget: PromptTarget;
+    let storedFingerprint: string;
+
+    try {
+      const created = await firstCatalog.createSession(
+        { title: "Handler Restart Binding" },
+        DEFAULTS,
+      );
+      const handler = await createHandlerThreadHarness(
+        firstCatalog,
+        created.target.workspaceSessionId,
+        {
+          title: "handler-restart-binding",
+          objective: "Inspect handler generated context binding after restart.",
+        },
+      );
+      const openedHandler = await firstCatalog.openSurface(handler.target);
+      handlerTarget = handler.target;
+      storedFingerprint = openedHandler.promptBinding?.boundFingerprint ?? "";
+      expect(openedHandler.promptBinding?.boundSystemPrompt).toContain(
+        "Initial handler restart payload.",
+      );
+      expect(storedFingerprint).toBeTruthy();
+    } finally {
+      await firstCatalog.dispose();
+    }
+
+    writeFileSync(standardsPath, "# Project Standards\n\nChanged handler restart payload.");
+    const secondCatalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const reopened = await secondCatalog.openSurface(handlerTarget!);
+      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint!);
+      expect(reopened.promptBinding?.boundSystemPrompt).toContain(
+        "Initial handler restart payload.",
+      );
+      expect(reopened.promptBinding?.boundSystemPrompt).not.toContain(
+        "Changed handler restart payload.",
+      );
+      expect(reopened.promptBinding?.currentSystemPrompt).toContain(
+        "Changed handler restart payload.",
+      );
+      expect(reopened.promptBinding?.stale).toBe(true);
+    } finally {
+      await secondCatalog.dispose();
+    }
+  });
+
+  it("updates a handler thread's stored generated context fingerprint after refresh", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const standardsPath = join(cwd, "AGENTS.md");
+    writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Refresh Binding" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "handler-refresh-binding",
+        objective: "Inspect handler refresh generated context binding.",
+      });
+      const openedHandler = await catalog.openSurface(handler.target);
+      const originalFingerprint = openedHandler.promptBinding?.boundFingerprint;
+      expect(originalFingerprint).toBeTruthy();
+
+      writeFileSync(standardsPath, "# Project Standards\n\nChanged before refresh.");
+      const stale = await catalog.openSurface(handler.target);
+      expect(stale.promptBinding?.stale).toBe(true);
+
+      await catalog.queuePromptRefresh({ target: handler.target });
+      const storedThread = getStructuredSessionStore(catalog)
+        .getSessionState(created.target.workspaceSessionId)
+        .threads.find((thread) => thread.id === handler.threadId);
+      const refreshed = await catalog.openSurface(handler.target);
+
+      expect(storedThread?.generatedAgentContextFingerprint).toBe(
+        refreshed.promptBinding?.currentFingerprint,
+      );
+      expect(storedThread?.generatedAgentContextFingerprint).not.toBe(originalFingerprint);
+      expect(refreshed.promptBinding?.boundFingerprint).toBe(
+        refreshed.promptBinding?.currentFingerprint,
+      );
+      expect(refreshed.promptBinding?.stale).toBe(false);
+      expect(
+        getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId)
+          .events,
+      ).toContainEqual(
+        expect.objectContaining({
+          kind: "Agent context updated",
+          subject: {
+            kind: "thread",
+            id: handler.threadId,
+          },
+          data: expect.objectContaining({
+            surface: "thread",
+            surfacePiSessionId: handler.surfacePiSessionId,
+            previousFingerprint: originalFingerprint,
+            currentFingerprint: refreshed.promptBinding?.currentFingerprint,
+            systemPromptChanged: true,
+            externalSourceHashes: expect.objectContaining({
+              added: expect.any(Array),
+              removed: expect.any(Array),
+            }),
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("does not mark a fresh orchestrator profile prompt binding stale", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession(
@@ -1548,7 +2416,7 @@ describe("WorkspaceSessionCatalog", () => {
             model: DEFAULTS.model,
             reasoningEffort: DEFAULTS.thinkingLevel,
             systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-            extensions: [],
+            extensionUsage: {},
             updateFromComposer: false,
             builtin: true,
             locked: true,
@@ -1564,9 +2432,605 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("marks prompt binding stale when the orchestrator profile removes an extension", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
+    const profile: AgentProfileSettings = {
+      id: "extension-drift-orchestrator",
+      kind: "orchestrator",
+      name: "Extension drift orchestrator",
+      provider: DEFAULTS.provider,
+      model: DEFAULTS.model,
+      reasoningEffort: DEFAULTS.thinkingLevel,
+      systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
+      extensionUsage: { smithers: "default_loaded" },
+      updateFromComposer: false,
+      builtin: false,
+      locked: false,
+    };
+
+    try {
+      setCatalogAgentProfile(catalog, profile);
+      const created = await catalog.createSession(
+        {
+          title: "Profile Extension Drift",
+          agentProfileId: profile.id,
+        },
+        DEFAULTS,
+      );
+
+      expect(created.promptBinding?.stale).toBe(false);
+      expect(created.systemPrompt).toContain(smithersLoadedMarker);
+
+      setCatalogAgentProfile(catalog, {
+        ...profile,
+        extensionUsage: {},
+      });
+      const reopened = await catalog.openSurface(created.target);
+
+      expect(reopened.promptBinding?.stale).toBe(true);
+      expect(reopened.promptBinding?.boundSystemPrompt).toContain(smithersLoadedMarker);
+      expect(reopened.promptBinding?.currentSystemPrompt).not.toContain(smithersLoadedMarker);
+
+      await catalog.queuePromptRefresh({ target: created.target });
+      const refreshed = await catalog.openSurface(created.target);
+      expect(refreshed.promptBinding?.stale).toBe(false);
+      expect(refreshed.resolvedSystemPrompt).not.toContain(smithersLoadedMarker);
+      expect(refreshed.queuedMessages).toEqual([]);
+      expect(refreshed.agentContextUpdate).toMatchObject({
+        state: "applied",
+        requestedRevision: expect.any(Number),
+        currentRevision: expect.any(Number),
+        systemPromptChanged: true,
+      });
+      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
+        expect.objectContaining({
+          title: "Agent context update applied",
+          summary: expect.stringContaining("Agent context update applied"),
+          details: expect.objectContaining({
+            state: "applied",
+            surfacePiSessionId: created.target.surfacePiSessionId,
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("projects cancelled context refreshes without keeping stale active queue rows", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Cancel Context Refresh" }, DEFAULTS);
+      await catalog.openSurface(created.target);
+      const queued = getStructuredSessionStore(catalog).enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        kind: "agent_context_refresh",
+        idempotencyKey: "agent_context_refresh:test-cancelled-terminal",
+        messageJson: "{}",
+        payloadJson: JSON.stringify({
+          requestedRevision: 7,
+          requestedAt: "2026-06-10T12:00:00.000Z",
+          reason: "test cancellation",
+        }),
+        requestSummary: "Update agent context",
+        position: "front",
+      });
+
+      const cancelled = await catalog.deleteQueuedSurfaceMessage({
+        target: created.target,
+        queuedMessageId: queued.id,
+      });
+
+      expect(cancelled.snapshot?.queuedMessages).toEqual([]);
+      expect(cancelled.snapshot?.agentContextUpdate).toMatchObject({
+        state: "cancelled",
+        queueMessageId: queued.id,
+        requestedRevision: 7,
+        reason: "test cancellation",
+      });
+      expect(
+        getStructuredSessionStore(catalog)
+          .listQueuedSurfaceMessages({ surfacePiSessionId: created.target.surfacePiSessionId })
+          .map((message) => message.id),
+      ).toEqual([]);
+      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
+        expect.objectContaining({
+          title: "Agent context update cancelled",
+          summary: expect.stringContaining("Agent context update cancelled"),
+          details: expect.objectContaining({
+            state: "cancelled",
+            queueMessageId: queued.id,
+            surfacePiSessionId: created.target.surfacePiSessionId,
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("records cancelled context refreshes when edit-and-resend clears queued rows", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Edit Cancels Refresh" }, DEFAULTS);
+      const original = {
+        ...userMessage("Original request"),
+        timestamp: 101,
+      };
+      appendMessagesToSession(
+        getManagedSurface(catalog, created.target.surfacePiSessionId).session,
+        [original, assistantMessage("Original answer.")],
+      );
+      const queued = getStructuredSessionStore(catalog).enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        kind: "agent_context_refresh",
+        idempotencyKey: "agent_context_refresh:test-edit-cancelled-terminal",
+        messageJson: "{}",
+        payloadJson: JSON.stringify({
+          requestedRevision: 8,
+          requestedAt: "2026-06-10T12:30:00.000Z",
+          reason: "edit resend",
+        }),
+        requestSummary: "Update agent context",
+        position: "front",
+      });
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const promptPrototype = Object.getPrototypeOf(managed.session) as {
+        prompt(promptText: string): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Edited answer."),
+        ]);
+      });
+
+      try {
+        await catalog.editCommittedUserMessage({
+          target: created.target,
+          messageTimestamp: original.timestamp,
+          message: userMessage("Edited request"),
+          onEvent: () => {},
+        });
+
+        await waitFor(
+          () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
+        );
+      } finally {
+        promptSpy.mockRestore();
+      }
+
+      const reopened = await catalog.openSurface(created.target);
+      expect(reopened.queuedMessages).toEqual([]);
+      expect(reopened.agentContextUpdate).toMatchObject({
+        state: "cancelled",
+        queueMessageId: queued.id,
+        requestedRevision: 8,
+        reason: "edit resend",
+      });
+      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
+        expect.objectContaining({
+          title: "Agent context update cancelled",
+          details: expect.objectContaining({
+            state: "cancelled",
+            queueMessageId: queued.id,
+            surfacePiSessionId: created.target.surfacePiSessionId,
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("projects dispatching context refreshes as updating without exposing prompt-bearing dispatch rows", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Updating Context Refresh" }, DEFAULTS);
+      await catalog.openSurface(created.target);
+      const store = getStructuredSessionStore(catalog);
+      const refresh = store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        kind: "agent_context_refresh",
+        idempotencyKey: "agent_context_refresh:test-updating",
+        messageJson: "{}",
+        payloadJson: JSON.stringify({
+          requestedRevision: 9,
+          requestedAt: "2026-06-10T13:00:00.000Z",
+        }),
+        requestSummary: "Update agent context",
+        position: "front",
+      });
+      store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        kind: "user_message",
+        idempotencyKey: "user_message:test-dispatch-hidden",
+        messageJson: JSON.stringify(userMessage("Hidden dispatching prompt.")),
+        requestSummary: "Hidden dispatching prompt.",
+        position: "back",
+      });
+      expect(
+        store.claimNextQueuedSurfaceMessage({
+          surfacePiSessionId: created.target.surfacePiSessionId,
+        })?.id,
+      ).toBe(refresh.id);
+      const userDispatch = store.claimNextQueuedSurfaceMessage({
+        surfacePiSessionId: created.target.surfacePiSessionId,
+      });
+      expect(userDispatch?.kind).toBe("user_message");
+
+      const snapshot = await catalog.openSurface(created.target);
+
+      expect(snapshot.queuedMessages.map((message) => [message.id, message.status])).toEqual([
+        [refresh.id, "dispatching"],
+      ]);
+      expect(snapshot.queuedMessages[0]?.agentContextUpdate).toMatchObject({
+        state: "updating",
+        requestedRevision: 9,
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps failed context refreshes visible with grouped context details", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const profile: AgentProfileSettings = {
+      id: "failed-refresh-extension-drift",
+      kind: "orchestrator",
+      name: "Failed refresh extension drift",
+      provider: DEFAULTS.provider,
+      model: DEFAULTS.model,
+      reasoningEffort: DEFAULTS.thinkingLevel,
+      systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
+      extensionUsage: { smithers: "default_loaded" },
+      updateFromComposer: false,
+      builtin: false,
+      locked: false,
+    };
+
+    try {
+      setCatalogAgentProfile(catalog, profile);
+      const created = await catalog.createSession(
+        {
+          title: "Failed Context Refresh",
+          agentProfileId: profile.id,
+        },
+        DEFAULTS,
+      );
+      await catalog.openSurface(created.target);
+      setCatalogAgentProfile(catalog, {
+        ...profile,
+        extensionUsage: {},
+      });
+      const refreshSpy = spyOn(
+        catalog as unknown as {
+          refreshManagedSurfacePromptBinding(...args: unknown[]): Promise<unknown>;
+        },
+        "refreshManagedSurfacePromptBinding",
+      ).mockRejectedValue(new Error("Generated context refresh failed."));
+
+      try {
+        await expect(catalog.queuePromptRefresh({ target: created.target })).rejects.toThrow(
+          "Generated context refresh failed.",
+        );
+      } finally {
+        refreshSpy.mockRestore();
+      }
+
+      const snapshot = await catalog.openSurface(created.target);
+      expect(snapshot.queuedMessages).toHaveLength(1);
+      expect(snapshot.queuedMessages[0]).toMatchObject({
+        kind: "agent_context_refresh",
+        status: "failed",
+        failureError: "Generated context refresh failed.",
+        agentContextUpdate: {
+          state: "failed",
+          loadedExtensionIds: {
+            added: [],
+            removed: ["smithers"],
+          },
+          availableExtensionIds: {
+            added: ["smithers"],
+            removed: [],
+          },
+        },
+      });
+
+      await catalog.queuePromptRefresh({ target: created.target });
+      await waitFor(
+        async () => (await catalog.openSurface(created.target)).promptBinding?.stale === false,
+      );
+      const retried = await catalog.openSurface(created.target);
+      expect(retried.queuedMessages).toEqual([]);
+      expect(retried.promptBinding?.stale).toBe(false);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("preserves top-level actor-local loaded extensions across context refresh", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
+
+    try {
+      const created = await catalog.createSession(
+        { title: "Actor Local Extension Load" },
+        DEFAULTS,
+      );
+      expect(created.systemPrompt).not.toContain(smithersLoadedMarker);
+
+      getStructuredSessionStore(catalog).updatePiSessionExtensionState({
+        sessionId: created.target.workspaceSessionId,
+        loadedExtensionIds: [
+          ...(getManagedSurface(catalog, created.target.surfacePiSessionId).loadedExtensionIds ??
+            []),
+          "smithers",
+        ],
+        availableExtensionIds: getManagedSurface(
+          catalog,
+          created.target.surfacePiSessionId,
+        ).availableExtensionIds.filter((id) => id !== "smithers"),
+      });
+      await closeSurface(catalog, created.target);
+
+      const stale = await catalog.openSurface(created.target);
+      expect(stale.promptBinding?.stale).toBe(true);
+      expect(stale.promptBinding?.currentSystemPrompt).toContain(smithersLoadedMarker);
+
+      await catalog.queuePromptRefresh({ target: created.target });
+      const refreshed = await catalog.openSurface(created.target);
+
+      expect(refreshed.promptBinding?.stale).toBe(false);
+      expect(refreshed.resolvedSystemPrompt).toContain(smithersLoadedMarker);
+      expect(
+        getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
+          .loadedExtensionIds,
+      ).toContain("smithers");
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("applies load_extension context changes to the durable generated binding", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
+
+    try {
+      const created = await catalog.createSession({ title: "Load Extension Binding" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      expect(managed.systemPrompt).not.toContain(smithersLoadedMarker);
+      expect(managed.availableExtensionIds).toContain("smithers");
+      const beforeFingerprint = managed.generatedAgentContextFingerprint;
+      const turn = getStructuredSessionStore(catalog).startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Load Smithers",
+      });
+      const loadedExtensionIds = [...managed.loadedExtensionIds, "smithers"].toSorted();
+      const availableExtensionIds = managed.availableExtensionIds
+        .filter((id) => id !== "smithers")
+        .toSorted();
+      const runtime = {
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        surfaceThreadId: null,
+        surfaceKind: "orchestrator" as const,
+        defaultEpisodeKind: "analysis" as const,
+        rootThreadId: null,
+        promptText: "Load Smithers",
+        rootEpisodeKind: "analysis" as const,
+        sessionWaitApplied: false,
+        threadWasTerminalAtStart: false,
+        loadedExtensionIds,
+        availableExtensionIds,
+        externalInstructionSources: [],
+        systemPrompt: undefined as string | undefined,
+        generatedAgentContextFingerprint: undefined as string | undefined,
+      };
+
+      const refreshed = await (
+        catalog as unknown as {
+          applyLoadedExtensionContext(input: {
+            extensionId: string;
+            refreshedContext: {
+              actor: "orchestrator";
+              loadedExtensionIds: string[];
+              availableExtensionIds: string[];
+              systemPrompt: string;
+              executeTypescriptDeclaration: string;
+            };
+            runtime: typeof runtime;
+          }): Promise<{
+            actor: "orchestrator";
+            loadedExtensionIds: string[];
+            availableExtensionIds: string[];
+            systemPrompt: string;
+            executeTypescriptDeclaration: string;
+          }>;
+        }
+      ).applyLoadedExtensionContext({
+        extensionId: "smithers",
+        refreshedContext: {
+          actor: "orchestrator",
+          loadedExtensionIds,
+          availableExtensionIds,
+          systemPrompt: "",
+          executeTypescriptDeclaration: "",
+        },
+        runtime,
+      });
+
+      expect(refreshed.loadedExtensionIds).toContain("smithers");
+      expect(refreshed.availableExtensionIds).not.toContain("smithers");
+      expect(refreshed.systemPrompt).toContain(smithersLoadedMarker);
+      expect(runtime.systemPrompt).toBe(refreshed.systemPrompt);
+      expect(runtime.generatedAgentContextFingerprint).toBeTruthy();
+      expect(managed.systemPrompt).toContain(smithersLoadedMarker);
+      expect(managed.generatedAgentContextFingerprint).not.toBe(beforeFingerprint);
+      expect(managed.recreateOnNextPrompt).toBe(true);
+      const snapshot = getStructuredSessionStore(catalog).getSessionState(
+        created.target.workspaceSessionId,
+      );
+      expect(snapshot.pi.loadedExtensionIds).toContain("smithers");
+      expect(snapshot.pi.availableExtensionIds).not.toContain("smithers");
+      expect(snapshot.pi.generatedAgentContextFingerprint).toBe(
+        managed.generatedAgentContextFingerprint,
+      );
+      expect(snapshot.events).toContainEqual(
+        expect.objectContaining({
+          kind: "Agent context updated",
+          subject: {
+            kind: "session",
+            id: created.target.workspaceSessionId,
+          },
+          data: expect.objectContaining({
+            surface: "orchestrator",
+            surfacePiSessionId: created.target.surfacePiSessionId,
+            previousFingerprint: beforeFingerprint,
+            currentFingerprint: managed.generatedAgentContextFingerprint,
+            loadedExtensionIds: {
+              added: ["smithers"],
+              removed: [],
+            },
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("applies handler load_extension context changes to thread bindings", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Load" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "handler-load-extension",
+        objective: "Load handler-local extension guidance.",
+      });
+      await catalog.openSurface(handler.target);
+      const managed = getManagedSurface(catalog, handler.surfacePiSessionId);
+      expect(managed.availableExtensionIds).toContain("extension-managing");
+      const beforeFingerprint = managed.generatedAgentContextFingerprint;
+      const turn = getStructuredSessionStore(catalog).startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: handler.surfacePiSessionId,
+        threadId: handler.threadId,
+        requestSummary: "Load Extension Managing",
+      });
+      const loadedExtensionIds = [...managed.loadedExtensionIds, "extension-managing"].toSorted();
+      const availableExtensionIds = managed.availableExtensionIds
+        .filter((id) => id !== "extension-managing")
+        .toSorted();
+      const runtime = {
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        surfacePiSessionId: handler.surfacePiSessionId,
+        surfaceThreadId: handler.threadId,
+        surfaceKind: "handler" as const,
+        defaultEpisodeKind: "analysis" as const,
+        rootThreadId: handler.threadId,
+        promptText: "Load Extension Managing",
+        rootEpisodeKind: "analysis" as const,
+        sessionWaitApplied: false,
+        threadWasTerminalAtStart: false,
+        loadedExtensionIds,
+        availableExtensionIds,
+        externalInstructionSources: [],
+        systemPrompt: undefined as string | undefined,
+        generatedAgentContextFingerprint: undefined as string | undefined,
+      };
+
+      await (
+        catalog as unknown as {
+          applyLoadedExtensionContext(input: {
+            extensionId: string;
+            refreshedContext: {
+              actor: "handler";
+              loadedExtensionIds: string[];
+              availableExtensionIds: string[];
+              systemPrompt: string;
+              executeTypescriptDeclaration: string;
+            };
+            runtime: typeof runtime;
+          }): Promise<{
+            actor: "handler";
+            loadedExtensionIds: string[];
+            availableExtensionIds: string[];
+            systemPrompt: string;
+            executeTypescriptDeclaration: string;
+          }>;
+        }
+      ).applyLoadedExtensionContext({
+        extensionId: "extension-managing",
+        refreshedContext: {
+          actor: "handler",
+          loadedExtensionIds,
+          availableExtensionIds,
+          systemPrompt: "",
+          executeTypescriptDeclaration: "",
+        },
+        runtime,
+      });
+
+      const snapshot = getStructuredSessionStore(catalog).getSessionState(
+        created.target.workspaceSessionId,
+      );
+      const thread = snapshot.threads.find((entry) => entry.id === handler.threadId);
+      expect(thread?.loadedExtensionIds).toContain("extension-managing");
+      expect(thread?.availableExtensionIds).not.toContain("extension-managing");
+      expect(thread?.generatedAgentContextFingerprint).toBe(
+        managed.generatedAgentContextFingerprint,
+      );
+      expect(managed.generatedAgentContextFingerprint).not.toBe(beforeFingerprint);
+      expect(managed.recreateOnNextPrompt).toBe(true);
+      expect(snapshot.events).toContainEqual(
+        expect.objectContaining({
+          kind: "Agent context updated",
+          subject: {
+            kind: "thread",
+            id: handler.threadId,
+          },
+          data: expect.objectContaining({
+            surface: "thread",
+            surfacePiSessionId: handler.surfacePiSessionId,
+            loadedExtensionIds: {
+              added: ["extension-managing"],
+              removed: [],
+            },
+          }),
+        }),
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("composes new-session prompts from raw orchestrator profile settings once", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const suffix = "Custom raw orchestrator profile suffix.";
 
     try {
@@ -1583,7 +3047,7 @@ describe("WorkspaceSessionCatalog", () => {
             model: DEFAULTS.model,
             reasoningEffort: DEFAULTS.thinkingLevel,
             systemPrompt: suffix,
-            extensions: [],
+            extensionUsage: {},
             updateFromComposer: false,
             builtin: false,
             locked: false,
@@ -1604,7 +3068,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("rejects unknown create-session agent profiles instead of falling back", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       await expect(
@@ -1618,15 +3082,15 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("keeps a stale surface on its bound prompt until the user queues a context update", async () => {
+  it("applies stale idle context before the next prompt-bearing user message", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Keep Stale Prompt" }, DEFAULTS);
       const oldPrompt = getManagedSurface(catalog, created.target.surfacePiSessionId).systemPrompt;
       const freshMarker = "Fresh prompt marker for explicit refresh.";
-      appendPromptLibraryMarker(catalog, freshMarker);
+      appendGeneratedAgentContextMarker(catalog, freshMarker);
 
       const reopened = await catalog.openSurface(created.target);
       expect(reopened.promptBinding?.stale).toBe(true);
@@ -1660,8 +3124,8 @@ describe("WorkspaceSessionCatalog", () => {
         await waitFor(
           () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
         );
-        expect(systemPromptsSeen.at(-1)).toContain(oldPrompt);
-        expect(systemPromptsSeen.at(-1)).not.toContain(freshMarker);
+        expect(systemPromptsSeen.at(-1)).toContain(freshMarker);
+        expect(systemPromptsSeen.at(-1)).not.toBe(oldPrompt);
       } finally {
         promptSpy.mockRestore();
       }
@@ -1670,9 +3134,9 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("emits a stale prompt binding update when the context library changes", async () => {
+  it("emits a stale prompt binding update when generated agent context changes", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -1682,7 +3146,7 @@ describe("WorkspaceSessionCatalog", () => {
       const created = await catalog.createSession({ title: "Context Sync" }, DEFAULTS);
       expect(created.promptBinding?.stale).toBe(false);
 
-      appendPromptLibraryMarker(catalog, "Fresh prompt marker for live sync.");
+      appendGeneratedAgentContextMarker(catalog, "Fresh prompt marker for live sync.");
 
       await waitFor(() =>
         surfaceSyncs.some(
@@ -1697,8 +3161,136 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(update?.snapshot?.promptBinding?.stale).toBe(true);
       expect(update?.snapshot?.promptBinding?.currentRevision).toBe(
-        catalog.getPromptLibraryState().revision,
+        catalog.getGeneratedAgentContextState().revision,
       );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("emits a stale prompt binding update when Request User Input mode changes", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const surfaceSyncs: SurfaceSyncMessage[] = [];
+    catalog.setSurfaceSyncListener((payload) => {
+      surfaceSyncs.push(payload);
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "Request Input Mode" }, DEFAULTS);
+      expect(created.promptBinding?.stale).toBe(false);
+      expect(created.promptBinding?.boundSystemPrompt).toContain(
+        "where you can choose a conservative default now",
+      );
+
+      catalog.updateRequestUserInputSettings({
+        mode: "blocking",
+        blockingTimeout: {
+          enabled: true,
+          durationMs: 300_000,
+        },
+      });
+
+      await waitFor(() =>
+        surfaceSyncs.some(
+          (payload) =>
+            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
+            payload.snapshot?.promptBinding?.stale === true &&
+            payload.snapshot.promptBinding.currentSystemPrompt.includes(
+              "only when the answer is required before proceeding",
+            ),
+        ),
+      );
+
+      const update = surfaceSyncs.findLast(
+        (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
+      );
+      expect(update?.snapshot?.promptBinding?.stale).toBe(true);
+      expect(update?.snapshot?.promptBinding?.boundSystemPrompt).toContain(
+        "where you can choose a conservative default now",
+      );
+      expect(update?.snapshot?.promptBinding?.currentSystemPrompt).toContain(
+        "only when the answer is required before proceeding",
+      );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("emits a stale prompt binding update when external instruction controls change", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const agentsPath = join(cwd, "AGENTS.md");
+    writeFileSync(agentsPath, "# Project Standards\n\nUse repo rules.");
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const surfaceSyncs: SurfaceSyncMessage[] = [];
+    catalog.setSurfaceSyncListener((payload) => {
+      surfaceSyncs.push(payload);
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "External Sync" }, DEFAULTS);
+      expect(created.promptBinding?.stale).toBe(false);
+      expect(created.promptBinding?.boundSystemPrompt).toContain("# Project Standards");
+
+      const currentPreferences = createAgentSettingsStore({
+        cwd,
+        agentDir,
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      }).getState().appPreferences;
+      catalog.updateAppPreferences({
+        ...currentPreferences,
+        externalInstructions: {
+          ...currentPreferences.externalInstructions,
+          workspaceControls: {
+            ...currentPreferences.externalInstructions.workspaceControls,
+            [cwd]: {
+              ...currentPreferences.externalInstructions.workspaceControls[cwd],
+              [agentsPath]: {
+                enabled: false,
+                actors: ["orchestrator", "handler", "workflow-task"],
+              },
+            },
+          },
+        },
+      });
+
+      await waitFor(() =>
+        surfaceSyncs.some(
+          (payload) =>
+            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
+            payload.snapshot?.promptBinding?.stale === true &&
+            !payload.snapshot.promptBinding.currentSystemPrompt.includes("# Project Standards"),
+        ),
+      );
+
+      const staleUpdate = surfaceSyncs.find(
+        (payload) =>
+          payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
+          payload.snapshot?.promptBinding?.stale === true &&
+          !payload.snapshot.promptBinding.currentSystemPrompt.includes("# Project Standards"),
+      );
+      expect(staleUpdate?.snapshot?.promptBinding?.stale).toBe(true);
+      expect(staleUpdate?.snapshot?.promptBinding?.boundSystemPrompt).toContain(
+        "# Project Standards",
+      );
+      expect(staleUpdate?.snapshot?.promptBinding?.currentSystemPrompt).not.toContain(
+        "# Project Standards",
+      );
+
+      await waitFor(
+        () =>
+          getStructuredSessionStore(catalog)
+            .getSessionState(created.target.workspaceSessionId)
+            .queuedMessages?.some(
+              (message) =>
+                message.kind === "agent_context_refresh" && message.status === "delivered",
+            ) === true,
+      );
+
+      const refreshed = await catalog.openSurface(created.target);
+      expect(refreshed.promptBinding?.stale).toBe(false);
+      expect(refreshed.promptBinding?.boundSystemPrompt).not.toContain("# Project Standards");
+      expect(refreshed.promptBinding?.currentSystemPrompt).not.toContain("# Project Standards");
     } finally {
       await catalog.dispose();
     }
@@ -1706,7 +3298,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("clears the live stale prompt binding when context returns to the bound prompt", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -1714,8 +3306,8 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "Context Revert" }, DEFAULTS);
-      const originalPromptState = catalog.getPromptLibraryState();
-      appendPromptLibraryMarker(catalog, "Temporary prompt marker for live revert.");
+      const originalPromptState = catalog.getGeneratedAgentContextState();
+      appendGeneratedAgentContextMarker(catalog, "Temporary prompt marker for live revert.");
 
       await waitFor(() =>
         surfaceSyncs.some(
@@ -1725,7 +3317,7 @@ describe("WorkspaceSessionCatalog", () => {
         ),
       );
 
-      catalog.updatePromptLibraryState(originalPromptState);
+      catalog.updateGeneratedAgentContextState(originalPromptState);
 
       await waitFor(() => {
         const latest = surfaceSyncs.findLast(
@@ -1739,7 +3331,7 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(update?.snapshot?.promptBinding?.stale).toBe(false);
       expect(update?.snapshot?.promptBinding?.currentRevision).toBe(
-        catalog.getPromptLibraryState().revision,
+        catalog.getGeneratedAgentContextState().revision,
       );
       expect(update?.snapshot?.promptBinding?.boundSystemPrompt).toBe(
         update?.snapshot?.promptBinding?.currentSystemPrompt,
@@ -1751,7 +3343,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("applies an idle prompt refresh through the durable surface queue", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -1760,7 +3352,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const created = await catalog.createSession({ title: "Idle Prompt Refresh" }, DEFAULTS);
       const freshMarker = "Fresh prompt marker for idle refresh.";
-      appendPromptLibraryMarker(catalog, freshMarker);
+      appendGeneratedAgentContextMarker(catalog, freshMarker);
       const stale = await catalog.openSurface(created.target);
       expect(stale.promptBinding?.stale).toBe(true);
 
@@ -1772,7 +3364,9 @@ describe("WorkspaceSessionCatalog", () => {
           (payload) =>
             payload.reason === "surface.updated" &&
             payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
-            payload.snapshot?.queuedMessages.some((message) => message.kind === "prompt_refresh"),
+            payload.snapshot?.queuedMessages.some(
+              (message) => message.kind === "agent_context_refresh",
+            ),
         ),
       ).toBe(false);
       await waitFor(
@@ -1797,12 +3391,11 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("queues a prompt refresh and applies it before the next queued user message", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Queued Prompt Refresh" }, DEFAULTS);
       const freshMarker = "Fresh prompt marker for queued refresh.";
-      appendPromptLibraryMarker(catalog, freshMarker);
 
       const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
       const promptPrototype = Object.getPrototypeOf(managed.session) as {
@@ -1840,10 +3433,31 @@ describe("WorkspaceSessionCatalog", () => {
             getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
         );
 
+        appendGeneratedAgentContextMarker(catalog, freshMarker);
         const refresh = await catalog.queuePromptRefresh({ target: created.target });
         expect(refresh.snapshot?.queuedMessages.map((message) => message.kind)).toEqual([
-          "prompt_refresh",
+          "agent_context_refresh",
         ]);
+        const queuedRefresh = refresh.snapshot?.queuedMessages[0];
+        expect(queuedRefresh?.summary).toContain("system prompt");
+        expect(queuedRefresh?.agentContextUpdate).toMatchObject({
+          state: "queued",
+          requestedRevision: catalog.getGeneratedAgentContextState().revision,
+          currentRevision: catalog.getGeneratedAgentContextState().revision,
+          systemPromptChanged: true,
+        });
+
+        const newerMarker = "Superseding prompt marker for queued refresh.";
+        appendGeneratedAgentContextMarker(catalog, newerMarker);
+        const superseded = await catalog.openSurface(created.target);
+        const supersededRefresh = superseded.queuedMessages.find(
+          (message) => message.kind === "agent_context_refresh",
+        );
+        expect(supersededRefresh?.agentContextUpdate?.state).toBe("out_of_date");
+        expect(supersededRefresh?.agentContextUpdate?.currentRevision).toBe(
+          catalog.getGeneratedAgentContextState().revision,
+        );
+        expect(supersededRefresh?.summary).toContain("Out-of-date context update");
 
         await catalog.sendPrompt({
           ...DEFAULTS,
@@ -1855,7 +3469,7 @@ describe("WorkspaceSessionCatalog", () => {
           getStructuredSessionStore(catalog)
             .getSessionState(created.target.workspaceSessionId)
             .queuedMessages?.map((message) => message.kind),
-        ).toEqual(["prompt_refresh", "user_message", "user_message"]);
+        ).toEqual(["agent_context_refresh", "user_message", "user_message"]);
 
         firstPromptGate.resolve();
         await waitFor(() => orchestratorPromptCount === 2);
@@ -1865,6 +3479,7 @@ describe("WorkspaceSessionCatalog", () => {
 
         expect(systemPromptsSeen[0]).not.toContain(freshMarker);
         expect(systemPromptsSeen[1]).toContain(freshMarker);
+        expect(systemPromptsSeen[1]).toContain(newerMarker);
         const refreshed = await catalog.openSurface(created.target);
         expect(refreshed.promptBinding?.stale).toBe(false);
         expect(refreshed.queuedMessages).toEqual([]);
@@ -1879,7 +3494,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("sends first orchestrator prompts as raw user text without prompt reconstruction", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Raw Prompt" }, DEFAULTS);
@@ -1888,9 +3503,11 @@ describe("WorkspaceSessionCatalog", () => {
         prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
       };
       const sentPrompts: string[] = [];
+      const sentPromptOptions: Array<{ expandPromptTemplates?: boolean } | undefined> = [];
       const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
         this: PromptableSession,
         promptText: string,
+        options?: { expandPromptTemplates?: boolean },
       ) {
         if (promptText.startsWith("First user message:")) {
           appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Raw prompt")]);
@@ -1898,6 +3515,7 @@ describe("WorkspaceSessionCatalog", () => {
         }
 
         sentPrompts.push(promptText);
+        sentPromptOptions.push(options);
         appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Done.")]);
       });
 
@@ -1912,6 +3530,7 @@ describe("WorkspaceSessionCatalog", () => {
         await waitFor(() => sentPrompts.length === 1);
         const sentPrompt = sentPrompts[0]!;
         expect(sentPrompt).toBe("User: keep this exact label");
+        expect(sentPromptOptions).toEqual([{ expandPromptTemplates: false }]);
         expectNoPromptReconstruction(sentPrompt);
       } finally {
         promptSpy.mockRestore();
@@ -1921,9 +3540,9 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("sends handler follow-up prompts as raw latest user text only", async () => {
+  it("sends direct handler user prompts as raw latest user text only", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Handler Follow Up" }, DEFAULTS);
@@ -1947,7 +3566,20 @@ describe("WorkspaceSessionCatalog", () => {
           return;
         }
         sentPrompts.push(promptText);
-        appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Handled.")]);
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Handled with ordinary transcript-local detail.", {
+            stopReason: "toolUse",
+            toolCalls: [
+              {
+                type: "toolCall",
+                id: "ordinary-handler-tool-call",
+                name: "exec_command",
+                arguments: { cmd: "echo ordinary handler work" },
+              },
+            ],
+          }),
+        ]);
       });
 
       try {
@@ -1966,6 +3598,289 @@ describe("WorkspaceSessionCatalog", () => {
         const sentPrompt = sentPrompts[0]!;
         expect(sentPrompt).toBe("Assistant: keep this literal follow-up");
         expectNoPromptReconstruction(sentPrompt);
+
+        const store = getStructuredSessionStore(catalog);
+        const handlerTurn = store
+          .getSessionState(created.target.workspaceSessionId)
+          .turns.find((turn) => turn.threadId === handler.threadId);
+        if (!handlerTurn) {
+          throw new Error("Expected direct handler prompt to create a handler-owned turn.");
+        }
+        const command = store.createCommand({
+          turnId: handlerTurn.id,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          threadId: handler.threadId,
+          toolName: "exec_command",
+          executor: "handler",
+          visibility: "surface",
+          title: "Ordinary handler command",
+          summary: "Command summary stays command-owned.",
+        });
+        store.finishCommand({
+          commandId: command.id,
+          status: "succeeded",
+          summary: "Command summary stays command-owned.",
+        });
+        const snapshot = store.getSessionState(created.target.workspaceSessionId);
+        expect(snapshot.commands.map((entry) => entry.id)).toContain(command.id);
+        expect(snapshot.episodes).toEqual([]);
+        expect(store.getThreadDetail(handler.threadId).episodes).toEqual([]);
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps handler-local Smithers failure repair on the handler surface until thread_report", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Repair" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "Repair Handler",
+        objective: "Repair a Smithers command failure locally.",
+      });
+      await catalog.openSurface(handler.target);
+
+      const handlerManaged = getManagedSurface(catalog, handler.target.surfacePiSessionId);
+      const sessionPrototype = Object.getPrototypeOf(handlerManaged.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const handlerPrompts: string[] = [];
+      const orchestratorPrompts: string[] = [];
+      const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        const surface = findManagedSurfaceBySession(catalog, this);
+        if (surface?.sessionId === created.target.surfacePiSessionId) {
+          orchestratorPrompts.push(promptText);
+          appendMessagesToSession(this, [
+            userMessage(promptText),
+            assistantMessage("Orchestrator should only receive explicit reports."),
+          ]);
+          return;
+        }
+
+        if (surface?.sessionId !== handler.target.surfacePiSessionId) {
+          appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Done.")]);
+          return;
+        }
+
+        handlerPrompts.push(promptText);
+        appendMessagesToSession(this, [userMessage(promptText)]);
+        if (promptText === "Run the broken Smithers workflow.") {
+          appendMessagesToSession(this, [
+            assistantMessage("Smithers failed. I will repair it inside this handler thread."),
+          ]);
+          return;
+        }
+
+        if (promptText === "Repair and rerun the Smithers workflow locally.") {
+          appendMessagesToSession(this, [
+            assistantMessage("Repair rerun succeeded and remains handler-local."),
+          ]);
+          return;
+        }
+
+        appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Done.")]);
+      });
+
+      try {
+        const store = getStructuredSessionStore(catalog);
+        const initialOrchestratorTurnIds = store
+          .getSessionState(created.target.workspaceSessionId)
+          .turns.filter(
+            (turn) =>
+              turn.surfacePiSessionId === created.target.surfacePiSessionId && !turn.threadId,
+          )
+          .map((turn) => turn.id);
+
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: handler.target,
+          messages: [userMessage("Run the broken Smithers workflow.")],
+          onEvent: () => {},
+        });
+        await waitFor(() => handlerPrompts.length === 1);
+
+        const firstHandlerTurn = store
+          .getSessionState(created.target.workspaceSessionId)
+          .turns.find(
+            (turn) =>
+              turn.threadId === handler.threadId &&
+              turn.surfacePiSessionId === handler.target.surfacePiSessionId,
+          );
+        if (!firstHandlerTurn) {
+          throw new Error("Expected failed Smithers prompt to create a handler-owned turn.");
+        }
+        const failedCommand = store.createCommand({
+          turnId: firstHandlerTurn.id,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          threadId: handler.threadId,
+          toolName: "exec_command",
+          executor: "handler",
+          visibility: "surface",
+          title: "Run Smithers workflow",
+          summary: "smithers workflow run broken.workflow.tsx",
+          facts: {
+            command: "smithers workflow run broken.workflow.tsx",
+            toolCallId: "tool-call-smithers-failed",
+          },
+        });
+        store.startCommand(failedCommand.id);
+        store.finishCommand({
+          commandId: failedCommand.id,
+          status: "failed",
+          summary: "Smithers failed: missing input binding.",
+          error: "Smithers failed: missing input binding.",
+        });
+        const afterFailure = store.getSessionState(created.target.workspaceSessionId);
+        const storedFailedCommand = afterFailure.commands.find(
+          (command) => command.id === failedCommand.id,
+        );
+        expect(storedFailedCommand).toMatchObject({
+          threadId: handler.threadId,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          toolName: "exec_command",
+          executor: "handler",
+          status: "failed",
+          error: "Smithers failed: missing input binding.",
+        });
+        expect(afterFailure.episodes).toEqual([]);
+        expect(
+          afterFailure.turns
+            .filter(
+              (turn) =>
+                turn.surfacePiSessionId === created.target.surfacePiSessionId && !turn.threadId,
+            )
+            .map((turn) => turn.id),
+        ).toEqual(initialOrchestratorTurnIds);
+        expect(
+          store
+            .listQueuedSurfaceMessages({
+              surfacePiSessionId: created.target.surfacePiSessionId,
+            })
+            .filter((message) => message.kind === "thread_report_notification"),
+        ).toEqual([]);
+        expect(orchestratorPrompts).toEqual([]);
+
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: handler.target,
+          messages: [userMessage("Repair and rerun the Smithers workflow locally.")],
+          onEvent: () => {},
+        });
+        await waitFor(() => handlerPrompts.length === 2);
+
+        const handlerTurns = store
+          .getSessionState(created.target.workspaceSessionId)
+          .turns.filter(
+            (turn) =>
+              turn.threadId === handler.threadId &&
+              turn.surfacePiSessionId === handler.target.surfacePiSessionId,
+          );
+        expect(handlerTurns).toHaveLength(2);
+        const secondHandlerTurn = handlerTurns[1]!;
+        const rerunCommand = store.createCommand({
+          turnId: secondHandlerTurn.id,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          threadId: handler.threadId,
+          toolName: "exec_command",
+          executor: "handler",
+          visibility: "surface",
+          title: "Rerun Smithers workflow",
+          summary: "smithers workflow run repaired.workflow.tsx",
+          facts: {
+            command: "smithers workflow run repaired.workflow.tsx",
+            toolCallId: "tool-call-smithers-rerun",
+          },
+        });
+        store.startCommand(rerunCommand.id);
+        store.finishCommand({
+          commandId: rerunCommand.id,
+          status: "succeeded",
+          summary: "Smithers run completed.",
+          facts: { exitCode: 0 },
+        });
+        const afterRepair = store.getSessionState(created.target.workspaceSessionId);
+        const storedRerunCommand = afterRepair.commands.find(
+          (command) => command.id === rerunCommand.id,
+        );
+        expect(storedRerunCommand).toMatchObject({
+          threadId: handler.threadId,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          toolName: "exec_command",
+          executor: "handler",
+          status: "succeeded",
+        });
+        expect(afterRepair.episodes).toEqual([]);
+        expect(orchestratorPrompts).toEqual([]);
+        expect(
+          afterRepair.turns
+            .filter(
+              (turn) =>
+                turn.surfacePiSessionId === created.target.surfacePiSessionId && !turn.threadId,
+            )
+            .map((turn) => turn.id),
+        ).toEqual(initialOrchestratorTurnIds);
+        expect(
+          store
+            .listQueuedSurfaceMessages({
+              surfacePiSessionId: created.target.surfacePiSessionId,
+            })
+            .filter((message) => message.kind === "thread_report_notification"),
+        ).toEqual([]);
+
+        const reportTurn = store.startTurn({
+          sessionId: created.target.workspaceSessionId,
+          surfacePiSessionId: handler.target.surfacePiSessionId,
+          threadId: handler.threadId,
+          requestSummary: "Report repaired handler work",
+        });
+        const reportTool = createThreadReportTool({
+          runtime: {
+            current: createPromptExecutionContext({
+              sessionId: created.target.workspaceSessionId,
+              turnId: reportTurn.id,
+              surfacePiSessionId: handler.target.surfacePiSessionId,
+              surfaceThreadId: handler.threadId,
+              surfaceKind: "handler",
+              rootThreadId: handler.threadId,
+              promptText: "Report repaired handler work.",
+            }),
+          },
+          store,
+          queueThreadReportNotification: (request) =>
+            (
+              catalog as unknown as {
+                queueThreadReportNotification(input: typeof request): Promise<void>;
+              }
+            ).queueThreadReportNotification.call(catalog, request),
+        });
+        await reportTool.execute("tool-call-handler-report", {
+          summary: "Smithers repair completed",
+          details: "The handler repaired and reran the Smithers workflow.",
+          outcome: "succeeded",
+          relatedCommandIds: [rerunCommand!.id],
+        });
+
+        expect(store.getSessionState(created.target.workspaceSessionId).episodes).toEqual([
+          expect.objectContaining({
+            threadId: handler.threadId,
+            summary: "Smithers repair completed",
+          }),
+        ]);
+        expect(
+          store
+            .listQueuedSurfaceMessages({
+              surfacePiSessionId: created.target.surfacePiSessionId,
+            })
+            .filter((message) => message.kind === "thread_report_notification"),
+        ).toHaveLength(1);
       } finally {
         promptSpy.mockRestore();
       }
@@ -1976,7 +3891,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("exposes thread state tools on the intended actor surfaces", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Tool Surface" }, DEFAULTS);
@@ -1984,15 +3899,22 @@ describe("WorkspaceSessionCatalog", () => {
       const orchestratorTools = getActiveToolNames(orchestratorManaged);
       expect(orchestratorTools).toEqual(
         expect.arrayContaining([
+          "request_user_input",
           "thread_list",
-          "thread_handoffs",
+          "thread_episodes",
           "thread_start",
-          "thread_resume",
-          "wait",
+          "thread_followup",
+          "thread_request_report",
         ]),
       );
       expect(orchestratorTools).not.toContain("thread_current");
+      expect(orchestratorTools).not.toContain("thread_group");
+      expect(orchestratorTools).not.toContain("thread_report");
       expect(orchestratorTools).not.toContain("thread_handoff");
+      expect(orchestratorTools).not.toContain("thread_handoffs");
+      expect(orchestratorTools).not.toContain("thread_resume");
+      expect(orchestratorTools).not.toContain("wait");
+      expect(orchestratorTools).not.toContain("request_context");
       expect(orchestratorTools.some((name) => name.startsWith("smithers_"))).toBe(false);
 
       const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
@@ -2004,91 +3926,21 @@ describe("WorkspaceSessionCatalog", () => {
       const handlerTools = getActiveToolNames(handlerManaged);
       expect(handlerTools).toEqual(
         expect.arrayContaining([
+          "request_user_input",
           "thread_current",
-          "thread_list",
-          "thread_handoffs",
-          "thread_handoff",
-          "request_context",
-          "wait",
-          "smithers_list_workflows",
-          "smithers_run_workflow",
+          "thread_group",
+          "thread_report",
+          "thread_episodes",
         ]),
       );
+      expect(handlerTools).not.toContain("thread_list");
       expect(handlerTools).not.toContain("thread_start");
       expect(handlerTools).not.toContain("thread_resume");
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("preloads optional prompt context into handler surface prompts", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Context Prompt Channel" }, DEFAULTS);
-      const store = getStructuredSessionStore(catalog);
-      const turn = store.startTurn({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        requestSummary: "Delegate Project CI context work",
-      });
-      const orchestratorThread = store.createThread({
-        turnId: turn.id,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        title: "Delegate Project CI context work",
-        objective: "Open a handler thread with Project CI context.",
-      });
-      const command = store.createCommand({
-        turnId: turn.id,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        threadId: orchestratorThread.id,
-        toolName: "thread_start",
-        executor: "orchestrator",
-        visibility: "surface",
-        title: "Start Project CI handler",
-        summary: "Start a handler thread with Project CI context.",
-      });
-      const handlerThread = await (
-        catalog as unknown as {
-          createHandlerThread(input: {
-            sessionId: string;
-            turnId: string;
-            parentThreadId: string;
-            parentSurfacePiSessionId: string;
-            objective: string;
-            contextKeys: ["ci"];
-            loadedByCommandId: string;
-          }): Promise<{ id: string; surfacePiSessionId: string }>;
-        }
-      ).createHandlerThread({
-        sessionId: created.target.workspaceSessionId,
-        turnId: turn.id,
-        parentThreadId: orchestratorThread.id,
-        parentSurfacePiSessionId: created.target.surfacePiSessionId,
-        objective: "Create or update Project CI when requested.",
-        contextKeys: ["ci"],
-        loadedByCommandId: command.id,
-      });
-
-      const openedHandler = await catalog.openSurface(
-        createThreadTarget(
-          created.target.workspaceSessionId,
-          handlerThread.surfacePiSessionId,
-          handlerThread.id,
-        ),
-      );
-
-      expect(openedHandler.systemPrompt).toBe(
-        `${buildSystemPrompt("handler", {
-          loadedContextKeys: ["ci"],
-        })}\n\n## Handler Profile Override\n${DEFAULT_THREAD_HANDLER_PROMPT}`,
-      );
-      expect(openedHandler.resolvedSystemPrompt).toContain(
-        "Loaded optional prompt context: Project CI.",
-      );
-      expect(openedHandler.resolvedSystemPrompt).toContain('productKind = "project-ci"');
-      expect(store.getThreadDetail(handlerThread.id).thread.loadedContextKeys).toEqual(["ci"]);
+      expect(handlerTools).not.toContain("thread_handoffs");
+      expect(handlerTools).not.toContain("thread_handoff");
+      expect(handlerTools).not.toContain("request_context");
+      expect(handlerTools).not.toContain("wait");
+      expect(handlerTools.some((name) => name.startsWith("smithers_"))).toBe(false);
     } finally {
       await catalog.dispose();
     }
@@ -2096,7 +3948,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("opens multiple surfaces simultaneously and only disposes them after explicit closes", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -2165,7 +4017,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("emits workspace and surface syncs through separate payloads", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const workspaceSyncs: WorkspaceSyncMessage[] = [];
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setWorkspaceSyncListener((payload) => {
@@ -2267,7 +4119,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("keeps prompt locks independent across surfaces", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -2393,7 +4245,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("claims idle sends before publishing a visible queued row", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -2516,9 +4368,75 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("keeps pre-turn queued delivery failures as failed composer rows", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const surfaceSyncs: SurfaceSyncMessage[] = [];
+    catalog.setSurfaceSyncListener((payload) => {
+      surfaceSyncs.push(payload);
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "Queue Delivery Failure" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const queued = store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        messageJson: "{not-json",
+        requestSummary: "Malformed queued prompt",
+      });
+      const runner = catalog as unknown as {
+        runSurfaceQueue(target: PromptTarget): Promise<void>;
+      };
+
+      await expect(runner.runSurfaceQueue(created.target)).rejects.toThrow(
+        `Queued surface message ${queued.id} could not be parsed.`,
+      );
+
+      const failed = store.getSurfaceQueuedMessage({ id: queued.id });
+      expect(failed).toMatchObject({
+        id: queued.id,
+        status: "failed",
+        failureError: `Queued surface message ${queued.id} could not be parsed.`,
+      });
+      const snapshot = await catalog.openSurface(created.target);
+      expect(snapshot.queuedMessages).toContainEqual(
+        expect.objectContaining({
+          id: queued.id,
+          status: "failed",
+          text: "Malformed queued prompt",
+          failureError: `Queued surface message ${queued.id} could not be parsed.`,
+        }),
+      );
+      expect(snapshot.activeTurnId).toBeNull();
+      expect(
+        store
+          .getSessionState(created.target.workspaceSessionId)
+          .turns.filter((turn) => turn.surfacePiSessionId === created.target.surfacePiSessionId),
+      ).toEqual([]);
+      expect(
+        surfaceSyncs.some((payload) =>
+          payload.snapshot?.queuedMessages.some(
+            (message) => message.id === queued.id && message.status === "failed",
+          ),
+        ),
+      ).toBe(true);
+
+      const restored = await catalog.editQueuedSurfaceMessage({
+        target: created.target,
+        queuedMessageId: queued.id,
+      });
+      expect(restored.text).toBe("Malformed queued prompt");
+      expect(restored.snapshot?.queuedMessages).toEqual([]);
+    } finally {
+      catalog.setSurfaceSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
   it("routes active steer requests through the durable surface queue", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Steer Surface" }, DEFAULTS);
@@ -2594,12 +4512,12 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("records handler handoff durably while orchestrator reconciliation is queued", async () => {
+  it("records handler thread reports durably while orchestrator reconciliation is queued", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
-      const created = await catalog.createSession({ title: "Blocked Handoff" }, DEFAULTS);
+      const created = await catalog.createSession({ title: "Blocked Report" }, DEFAULTS);
       const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
       const promptGate = createDeferred<void>();
       const sessionPrototype = Object.getPrototypeOf(managed.session) as {
@@ -2631,7 +4549,7 @@ describe("WorkspaceSessionCatalog", () => {
         const turn = store.startTurn({
           sessionId: created.target.workspaceSessionId,
           surfacePiSessionId: created.target.surfacePiSessionId,
-          requestSummary: "Delegate durable handoff work",
+          requestSummary: "Delegate durable report work",
         });
         const parentThread = store.createThread({
           turnId: turn.id,
@@ -2642,25 +4560,36 @@ describe("WorkspaceSessionCatalog", () => {
         const handlerThread = store.createThread({
           turnId: turn.id,
           parentThreadId: parentThread.id,
-          surfacePiSessionId: "handler-blocked-handoff",
+          surfacePiSessionId: "handler-blocked-report",
           title: "Handler",
-          objective: "Finish the durable handoff.",
+          objective: "Finish the durable report.",
         });
         const command = store.createCommand({
           turnId: turn.id,
           surfacePiSessionId: handlerThread.surfacePiSessionId,
           threadId: handlerThread.id,
-          toolName: "thread_handoff",
+          toolName: "thread_report",
           executor: "handler",
           visibility: "surface",
-          title: "Hand off",
+          title: "Thread report",
           summary: "Handler finished while orchestrator was active.",
         });
         store.startCommand(command.id);
-
-        const accepted = await (
+        const episode = store.createEpisode({
+          threadId: handlerThread.id,
+          sourceCommandId: command.id,
+          title: "Durable report",
+          summary: "Handler finished while orchestrator was active.",
+          body: "The handler completed its work and is asking the orchestrator to reconcile.",
+        });
+        store.updateThread({
+          threadId: handlerThread.id,
+          objectiveState: "concluded",
+          status: "completed",
+        });
+        await (
           catalog as unknown as {
-            awaitThreadHandoffAcceptance(input: {
+            queueThreadReportNotification(input: {
               runtime: {
                 sessionId: string;
                 turnId: string;
@@ -2674,13 +4603,11 @@ describe("WorkspaceSessionCatalog", () => {
                 threadWasTerminalAtStart: false;
               };
               commandId: string;
-              title: string;
-              summary: string;
-              body: string;
-              kind: "change";
-            }): Promise<{ episodeId: string }>;
+              episode: typeof episode;
+              outcome: "succeeded";
+            }): Promise<void>;
           }
-        ).awaitThreadHandoffAcceptance.call(catalog, {
+        ).queueThreadReportNotification.call(catalog, {
           runtime: {
             sessionId: created.target.workspaceSessionId,
             turnId: turn.id,
@@ -2694,10 +4621,8 @@ describe("WorkspaceSessionCatalog", () => {
             threadWasTerminalAtStart: false,
           },
           commandId: command.id,
-          title: "Durable handoff",
-          summary: "Handler finished while orchestrator was active.",
-          body: "The handler completed its work and is asking the orchestrator to reconcile.",
-          kind: "change",
+          episode,
+          outcome: "succeeded",
         });
 
         await waitFor(() =>
@@ -2705,16 +4630,16 @@ describe("WorkspaceSessionCatalog", () => {
             .listQueuedSurfaceMessages({
               surfacePiSessionId: created.target.surfacePiSessionId,
             })
-            .some((message) => message.kind === "handler_handoff"),
+            .some((message) => message.kind === "thread_report_notification"),
         );
         const queued = store
           .listQueuedSurfaceMessages({ surfacePiSessionId: created.target.surfacePiSessionId })
-          .find((message) => message.kind === "handler_handoff");
+          .find((message) => message.kind === "thread_report_notification");
         expect(queued).toBeDefined();
         if (!queued) return;
         expect(store.getSessionState(created.target.workspaceSessionId).episodes).toEqual([
           expect.objectContaining({
-            id: accepted.episodeId,
+            id: episode.id,
             threadId: handlerThread.id,
             sourceCommandId: command.id,
           }),
@@ -2730,7 +4655,7 @@ describe("WorkspaceSessionCatalog", () => {
         });
         expect(store.getSessionState(created.target.workspaceSessionId).episodes).toEqual([
           expect.objectContaining({
-            id: accepted.episodeId,
+            id: episode.id,
             threadId: handlerThread.id,
             sourceCommandId: command.id,
           }),
@@ -2749,9 +4674,9 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("resumes a completed handler thread through the durable surface queue", async () => {
+  it("reactivates a concluded handler thread through thread_followup", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Resume Handler" }, DEFAULTS);
@@ -2760,7 +4685,11 @@ describe("WorkspaceSessionCatalog", () => {
         objective: "Own follow-up investigation context.",
       });
       const store = getStructuredSessionStore(catalog);
-      store.updateThread({ threadId: handler.threadId, status: "completed" });
+      store.updateThread({
+        threadId: handler.threadId,
+        objectiveState: "concluded",
+        status: "completed",
+      });
 
       const handlerPrompts: string[] = [];
       await catalog.openSurface(handler.target);
@@ -2788,41 +4717,55 @@ describe("WorkspaceSessionCatalog", () => {
         const command = store.createCommand({
           turnId: turn.id,
           surfacePiSessionId: created.target.surfacePiSessionId,
-          toolName: "thread_resume",
+          toolName: "thread_followup",
           executor: "orchestrator",
           visibility: "surface",
-          title: "Resume handler",
+          title: "Queue thread follow-up",
           summary: "Ask the same handler for follow-up evidence.",
         });
         store.startCommand(command.id);
 
-        const resumed = await (
+        const followup = await (
           catalog as unknown as {
-            resumeHandlerThread(input: {
-              sessionId: string;
-              turnId: string;
-              threadId: string;
+            queueThreadFollowup(input: {
+              runtime: {
+                sessionId: string;
+                turnId: string;
+                surfacePiSessionId: string;
+                surfaceKind: "orchestrator";
+                rootThreadId: null;
+              };
+              commandId: string;
+              threadIds: string[];
+              threadGroupId: null;
               message: string;
-              resumedByCommandId: string;
-            }): Promise<{ queuedMessageId: string }>;
+              activate: true;
+            }): Promise<{ threads: Array<{ queuedMessageId: string }> }>;
           }
-        ).resumeHandlerThread.call(catalog, {
-          sessionId: created.target.workspaceSessionId,
-          turnId: turn.id,
-          threadId: handler.threadId,
-          message: "Please inspect the previous handoff and add one missing detail.",
-          resumedByCommandId: command.id,
+        ).queueThreadFollowup.call(catalog, {
+          runtime: {
+            sessionId: created.target.workspaceSessionId,
+            turnId: turn.id,
+            surfacePiSessionId: created.target.surfacePiSessionId,
+            surfaceKind: "orchestrator",
+            rootThreadId: null,
+          },
+          commandId: command.id,
+          threadIds: [handler.threadId],
+          threadGroupId: null,
+          message: "Please inspect the previous report and add one missing detail.",
+          activate: true,
         });
 
-        expect(resumed.queuedMessageId).toBeTruthy();
+        expect(followup.threads[0]?.queuedMessageId).toBeTruthy();
         expect(
           store
             .getSessionState(created.target.workspaceSessionId)
             .threads.find((thread) => thread.id === handler.threadId),
-        ).toMatchObject({ status: "running-handler" });
+        ).toMatchObject({ objectiveState: "active", status: "running-handler" });
         await waitFor(() => handlerPrompts.length === 1);
         expect(handlerPrompts[0]).toBe(
-          "Please inspect the previous handoff and add one missing detail.",
+          "Please inspect the previous report and add one missing detail.",
         );
       } finally {
         promptSpy.mockRestore();
@@ -2832,12 +4775,156 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("accepts a queued handler handoff as the next orchestrator input", async () => {
+  it("delivers later request_user_input answers to the owning handler surface", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
-      const created = await catalog.createSession({ title: "Accepted Handoff" }, DEFAULTS);
+      const created = await catalog.createSession({ title: "Handler Answer" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "Clarification Target",
+        objective: "Own a clarification request inside the handler thread.",
+      });
+      const store = getStructuredSessionStore(catalog);
+      const command = store.createCommand({
+        turnId: handler.turnId,
+        surfacePiSessionId: handler.surfacePiSessionId,
+        threadId: handler.threadId,
+        toolName: "request_user_input",
+        executor: "handler",
+        visibility: "surface",
+        title: "Ask user",
+        summary: "Clarify the handler repair direction.",
+      });
+      const request = store.createRequestUserInputRequest({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: handler.surfacePiSessionId,
+        threadId: handler.threadId,
+        turnId: handler.turnId,
+        commandId: command.id,
+        toolItemId: "tool-call-handler-answer",
+        variant: "nonblocking",
+        questions: [
+          {
+            title: "Repair direction",
+            question: "Should I repair locally or report back now?",
+            defaultAnswer: {
+              kind: "option",
+              label: "Repair locally",
+              text: "Repair locally",
+            },
+            choices: [
+              {
+                label: "Repair locally",
+                description: "Keeps the objective inside this handler.",
+                recommended: true,
+              },
+              {
+                label: "Report back",
+                description: "Returns control to the orchestrator.",
+                recommended: false,
+              },
+            ],
+          },
+        ],
+      });
+      const reportBack = request.questions[0]!.choices.find(
+        (choice) => choice.label === "Report back",
+      )!;
+      expect((await catalog.listSessions()).requestUserInputRequests).toEqual([
+        expect.objectContaining({
+          requestId: request.requestId,
+          workspaceSessionId: created.target.workspaceSessionId,
+          surfacePiSessionId: handler.surfacePiSessionId,
+          threadId: handler.threadId,
+          ownerTitle: "Own a clarification request inside the handler thread.",
+          variant: "nonblocking",
+          status: "open",
+          questions: [
+            expect.objectContaining({
+              questionId: request.questions[0]!.questionId,
+              title: "Repair direction",
+              status: "open",
+              choices: [
+                expect.objectContaining({ label: "Repair locally", recommended: true }),
+                expect.objectContaining({ label: "Report back", recommended: false }),
+              ],
+            }),
+          ],
+        }),
+      ]);
+      await catalog.openSurface(handler.target);
+      const managed = getManagedSurface(catalog, handler.target.surfacePiSessionId);
+      const sessionPrototype = Object.getPrototypeOf(managed.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const handlerPrompts: string[] = [];
+      const orchestratorPrompts: string[] = [];
+      const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        const surface = findManagedSurfaceBySession(catalog, this);
+        if (surface?.sessionId === handler.surfacePiSessionId) {
+          handlerPrompts.push(promptText);
+        }
+        if (surface?.sessionId === created.target.surfacePiSessionId) {
+          orchestratorPrompts.push(promptText);
+        }
+        appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Done.")]);
+      });
+
+      try {
+        const answer = await catalog.answerRequestUserInput({
+          surfacePiSessionId: handler.surfacePiSessionId,
+          requestId: request.requestId,
+          questionId: request.questions[0]!.questionId,
+          answer: { kind: "option", optionId: reportBack.optionId },
+          delivery: "after_turn",
+        });
+        await waitFor(() => handlerPrompts.length === 1);
+        expect(orchestratorPrompts).toEqual([]);
+        expect(JSON.parse(handlerPrompts[0]!)).toEqual({
+          type: "request_user_input.answer",
+          title: "Repair direction",
+          question: "Should I repair locally or report back now?",
+          originalAnswer: {
+            kind: "option",
+            label: "Repair locally",
+            text: "Repair locally",
+          },
+          userAnswer: {
+            kind: "option",
+            label: "Report back",
+            text: "Report back",
+          },
+        });
+        const queuedMessageId = answer.snapshot?.queuedMessages.find(
+          (message) => message.kind === "request_user_input_answer",
+        )?.id;
+        expect(queuedMessageId).toBeTruthy();
+        expect(store.getSurfaceQueuedMessage({ id: queuedMessageId! }).status).toBe("delivered");
+        expect((await catalog.listSessions()).requestUserInputRequests).toEqual([
+          expect.objectContaining({
+            requestId: request.requestId,
+            status: "completed",
+            questions: [expect.objectContaining({ status: "answered" })],
+          }),
+        ]);
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("delivers a queued thread report notification as the next orchestrator input", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Accepted Report" }, DEFAULTS);
       const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
       const sessionPrototype = Object.getPrototypeOf(managed.session) as {
         prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
@@ -2859,7 +4946,7 @@ describe("WorkspaceSessionCatalog", () => {
         const turn = store.startTurn({
           sessionId: created.target.workspaceSessionId,
           surfacePiSessionId: created.target.surfacePiSessionId,
-          requestSummary: "Delegate accepted handoff work",
+          requestSummary: "Delegate accepted report work",
         });
         const parentThread = store.createThread({
           turnId: turn.id,
@@ -2870,25 +4957,36 @@ describe("WorkspaceSessionCatalog", () => {
         const handlerThread = store.createThread({
           turnId: turn.id,
           parentThreadId: parentThread.id,
-          surfacePiSessionId: "handler-accepted-handoff",
+          surfacePiSessionId: "handler-accepted-report",
           title: "Handler",
-          objective: "Finish the accepted handoff.",
+          objective: "Finish the accepted report.",
         });
         const command = store.createCommand({
           turnId: turn.id,
           surfacePiSessionId: handlerThread.surfacePiSessionId,
           threadId: handlerThread.id,
-          toolName: "thread_handoff",
+          toolName: "thread_report",
           executor: "handler",
           visibility: "surface",
-          title: "Hand off",
-          summary: "Handler finished and can be accepted.",
+          title: "Thread report",
+          summary: "Handler finished and can be reconciled.",
         });
         store.startCommand(command.id);
-
-        const accepted = await (
+        const episode = store.createEpisode({
+          threadId: handlerThread.id,
+          sourceCommandId: command.id,
+          title: "Accepted report",
+          summary: "Handler finished and can be reconciled.",
+          body: "The handler completed its work and is asking the orchestrator to reconcile.",
+        });
+        store.updateThread({
+          threadId: handlerThread.id,
+          objectiveState: "concluded",
+          status: "completed",
+        });
+        await (
           catalog as unknown as {
-            awaitThreadHandoffAcceptance(input: {
+            queueThreadReportNotification(input: {
               runtime: {
                 sessionId: string;
                 turnId: string;
@@ -2902,13 +5000,11 @@ describe("WorkspaceSessionCatalog", () => {
                 threadWasTerminalAtStart: false;
               };
               commandId: string;
-              title: string;
-              summary: string;
-              body: string;
-              kind: "change";
-            }): Promise<{ episodeId: string }>;
+              episode: typeof episode;
+              outcome: "succeeded";
+            }): Promise<void>;
           }
-        ).awaitThreadHandoffAcceptance.call(catalog, {
+        ).queueThreadReportNotification.call(catalog, {
           runtime: {
             sessionId: created.target.workspaceSessionId,
             turnId: turn.id,
@@ -2916,27 +5012,25 @@ describe("WorkspaceSessionCatalog", () => {
             surfaceThreadId: handlerThread.id,
             surfaceKind: "handler",
             rootThreadId: handlerThread.id,
-            promptText: "Hand off",
+            promptText: "Thread report",
             rootEpisodeKind: "change",
             sessionWaitApplied: false,
             threadWasTerminalAtStart: false,
           },
           commandId: command.id,
-          title: "Accepted handoff",
-          summary: "Handler finished and can be accepted.",
-          body: "The handler completed its work and is asking the orchestrator to reconcile.",
-          kind: "change",
+          episode,
+          outcome: "succeeded",
         });
 
         await waitFor(() => orchestratorPrompts.length === 1);
         expect(orchestratorPrompts[0]).toContain(
-          "System event: A handler thread emitted a durable handoff.",
+          "System event: A handler thread concluded with outcome succeeded.",
         );
-        expect(orchestratorPrompts[0]).toContain("Handler finished and can be accepted.");
+        expect(orchestratorPrompts[0]).toContain("Handler finished and can be reconciled.");
         const snapshot = store.getSessionState(created.target.workspaceSessionId);
         expect(snapshot.episodes).toEqual([
           expect.objectContaining({
-            id: accepted.episodeId,
+            id: episode.id,
             threadId: handlerThread.id,
             sourceCommandId: command.id,
           }),
@@ -2959,7 +5053,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("applies model and reasoning changes only to the targeted surface", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -3009,9 +5103,37 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("clamps surface reasoning when a model change no longer supports the current level", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const surfaceSyncs: SurfaceSyncMessage[] = [];
+    catalog.setSurfaceSyncListener((payload) => {
+      surfaceSyncs.push(payload);
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "Reasoning Clamp" }, DEFAULTS);
+      await setSurfaceThoughtLevel(catalog, created.target, "high");
+      await setSurfaceModel(catalog, created.target, "amazon.nova-2-lite-v1:0", "amazon-bedrock");
+
+      const [snapshot] = await catalog.listOpenSurfaceSnapshots();
+      expect(snapshot?.provider).toBe("amazon-bedrock");
+      expect(snapshot?.model).toBe("amazon.nova-2-lite-v1:0");
+      expect(snapshot?.reasoningEffort).toBe("off");
+
+      const latestUpdate = surfaceSyncs
+        .filter((payload) => payload.reason === "surface.updated")
+        .at(-1);
+      expect(latestUpdate?.snapshot?.reasoningEffort).toBe("off");
+    } finally {
+      catalog.setSurfaceSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
   it("updates orchestrator profile defaults from composer changes only when enabled", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const syncedProfile: AgentProfileSettings = {
       id: "composer-synced",
       kind: "orchestrator",
@@ -3020,7 +5142,7 @@ describe("WorkspaceSessionCatalog", () => {
       model: "gpt-4o",
       reasoningEffort: "medium",
       systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-      extensions: [],
+      extensionUsage: {},
       updateFromComposer: true,
       builtin: false,
       locked: false,
@@ -3086,7 +5208,7 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("auto-starts a new handler thread and clears live handler activity after a normal reply", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
     catalog.setSurfaceSyncListener((payload) => {
       surfaceSyncs.push(payload);
@@ -3156,7 +5278,6 @@ describe("WorkspaceSessionCatalog", () => {
               parentThreadId: string;
               parentSurfacePiSessionId: string;
               objective: string;
-              contextKeys: [];
               loadedByCommandId: string;
               agentProfileSettings: null;
             }): Promise<{ id: string; surfacePiSessionId: string }>;
@@ -3167,7 +5288,6 @@ describe("WorkspaceSessionCatalog", () => {
           parentThreadId: orchestratorThread.id,
           parentSurfacePiSessionId: created.target.surfacePiSessionId,
           objective: "Inspect the repository and report the result.",
-          contextKeys: [],
           loadedByCommandId: orchestratorThread.id,
           agentProfileSettings: null,
         });
@@ -3248,9 +5368,244 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("delivers forked handler history as a first-prompt context block only", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Forked Handler" }, DEFAULTS);
+      const orchestratorManaged = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      appendMessagesToSession(orchestratorManaged.session, [
+        userMessage("The accepted direction is to keep the pi runtime seam."),
+        assistantMessage("Accepted: no standalone terminal loop."),
+        {
+          ...assistantMessage("Visible assistant text only.", {
+            stopReason: "toolUse",
+            toolCalls: [
+              {
+                type: "toolCall",
+                id: "tool-call-not-inherited",
+                name: "exec_command",
+                arguments: { cmd: "echo should-not-appear-from-tool-call" },
+              },
+            ],
+          }),
+        },
+        {
+          role: "toolResult",
+          timestamp: Date.now(),
+          toolCallId: "tool-call-not-inherited",
+          toolName: "exec_command",
+          content: [{ type: "text", text: "tool result should not be inherited" }],
+        } as Message,
+        {
+          role: "user",
+          timestamp: Date.now(),
+          content: [
+            { type: "text", text: "Keep the textual parent fact." },
+            { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+          ],
+        } as Message,
+        userMessage("Please continue this exact design discussion in a handler."),
+      ]);
+
+      const sessionPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const handlerPrompts: string[] = [];
+      const handlerSessionMessages: Message[][] = [];
+      let handlerSystemPrompt = "";
+      const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        const surface = findManagedSurfaceBySession(catalog, this);
+        if (surface?.actorKind !== "handler") {
+          appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Ignored.")]);
+          return;
+        }
+        handlerPrompts.push(promptText);
+        handlerSystemPrompt = this.agent.state.systemPrompt ?? "";
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Forked handler started."),
+        ]);
+        handlerSessionMessages.push([...this.sessionManager.buildSessionContext().messages]);
+      });
+
+      try {
+        const store = getStructuredSessionStore(catalog);
+        const turn = store.startTurn({
+          sessionId: created.target.workspaceSessionId,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          requestSummary: "Delegate forked history work",
+        });
+        const orchestratorThread = store.createThread({
+          turnId: turn.id,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          title: "Delegate forked history work",
+          objective: "Open a forked handler thread.",
+        });
+        const handlerThread = await (
+          catalog as unknown as {
+            createHandlerThread(input: {
+              sessionId: string;
+              turnId: string;
+              parentThreadId: string;
+              parentSurfacePiSessionId: string;
+              objective: string;
+              historyMode: "forked";
+              loadedByCommandId: string;
+              agentProfileSettings: null;
+            }): Promise<{ id: string; surfacePiSessionId: string }>;
+          }
+        ).createHandlerThread({
+          sessionId: created.target.workspaceSessionId,
+          turnId: turn.id,
+          parentThreadId: orchestratorThread.id,
+          parentSurfacePiSessionId: created.target.surfacePiSessionId,
+          objective: "Continue the runtime-seam design discussion and report the decision.",
+          historyMode: "forked",
+          loadedByCommandId: orchestratorThread.id,
+          agentProfileSettings: null,
+        });
+
+        await waitFor(() => handlerPrompts.length === 1);
+        const handlerPrompt = handlerPrompts[0]!;
+        expect(handlerPrompt).toContain(
+          "Continue the runtime-seam design discussion and report the decision.",
+        );
+        expect(handlerPrompt).toContain("<inherited_history>");
+        expect(handlerPrompt).toContain("</inherited_history>");
+        expect(handlerPrompt).toContain(
+          "1. orchestrator user: The accepted direction is to keep the pi runtime seam.",
+        );
+        expect(handlerPrompt).toContain(
+          "2. orchestrator assistant: Accepted: no standalone terminal loop.",
+        );
+        expect(handlerPrompt).toContain("3. orchestrator assistant: Visible assistant text only.");
+        expect(handlerPrompt).toContain("4. orchestrator user: Keep the textual parent fact.");
+        expect(handlerPrompt).toContain(
+          "5. orchestrator user: Please continue this exact design discussion in a handler.",
+        );
+        expect(handlerPrompt).not.toContain("tool result should not be inherited");
+        expect(handlerPrompt).not.toContain("should-not-appear-from-tool-call");
+        expect(handlerPrompt).not.toContain("[image]");
+        expect(handlerPrompt).toContain(
+          "Use the inherited history only as bounded background for this delegated objective.",
+        );
+        expect(handlerSystemPrompt).not.toContain("<inherited_history>");
+        expect(handlerSystemPrompt).not.toContain(
+          "The accepted direction is to keep the pi runtime seam.",
+        );
+        expect(handlerSessionMessages[0]?.map((message) => message.role)).toEqual([
+          "user",
+          "assistant",
+        ]);
+        expect(userMessageText(handlerSessionMessages[0]?.[0])).toBe(handlerPrompt);
+        expect(
+          store
+            .getSessionState(created.target.workspaceSessionId)
+            .turns.filter((entry) => entry.threadId === handlerThread.id),
+        ).toHaveLength(1);
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("does not inherit parent history for isolated handler starts", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Isolated Handler" }, DEFAULTS);
+      const orchestratorManaged = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      appendMessagesToSession(orchestratorManaged.session, [
+        userMessage("This parent transcript must stay out of an isolated handler."),
+        assistantMessage("This assistant history must also stay out."),
+      ]);
+
+      const sessionPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const handlerPrompts: string[] = [];
+      const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        const surface = findManagedSurfaceBySession(catalog, this);
+        if (surface?.actorKind !== "handler") {
+          appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Ignored.")]);
+          return;
+        }
+        handlerPrompts.push(promptText);
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Isolated handler started."),
+        ]);
+      });
+
+      try {
+        const store = getStructuredSessionStore(catalog);
+        const turn = store.startTurn({
+          sessionId: created.target.workspaceSessionId,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          requestSummary: "Delegate isolated history work",
+        });
+        const orchestratorThread = store.createThread({
+          turnId: turn.id,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          title: "Delegate isolated history work",
+          objective: "Open an isolated handler thread.",
+        });
+        await (
+          catalog as unknown as {
+            createHandlerThread(input: {
+              sessionId: string;
+              turnId: string;
+              parentThreadId: string;
+              parentSurfacePiSessionId: string;
+              objective: string;
+              historyMode: "isolated";
+              loadedByCommandId: string;
+              agentProfileSettings: null;
+            }): Promise<{ id: string; surfacePiSessionId: string }>;
+          }
+        ).createHandlerThread({
+          sessionId: created.target.workspaceSessionId,
+          turnId: turn.id,
+          parentThreadId: orchestratorThread.id,
+          parentSurfacePiSessionId: created.target.surfacePiSessionId,
+          objective: "Inspect the repository without inherited parent transcript context.",
+          historyMode: "isolated",
+          loadedByCommandId: orchestratorThread.id,
+          agentProfileSettings: null,
+        });
+
+        await waitFor(() => handlerPrompts.length === 1);
+        const handlerPrompt = handlerPrompts[0]!;
+        expect(handlerPrompt).toBe(
+          "Inspect the repository without inherited parent transcript context.",
+        );
+        expect(handlerPrompt).not.toContain("<inherited_history>");
+        expect(handlerPrompt).not.toContain(
+          "This parent transcript must stay out of an isolated handler.",
+        );
+        expect(handlerPrompt).not.toContain("This assistant history must also stay out.");
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("cancels only the targeted surface prompt", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       const created = await catalog.createSession({ title: "Surface Cancel" }, DEFAULTS);
@@ -3370,171 +5725,6 @@ describe("WorkspaceSessionCatalog", () => {
         handlerAbortSpy.mockRestore();
       }
     } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("routes workflow attention to the owning handler surface when multiple handlers are open", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
-
-    try {
-      const created = await catalog.createSession({ title: "Workflow Attention" }, DEFAULTS);
-      const handlerA = await createHandlerThreadHarness(
-        catalog,
-        created.target.workspaceSessionId,
-        {
-          title: "Workflow A",
-          objective: "Own workflow A attention.",
-        },
-      );
-      const handlerB = await createHandlerThreadHarness(
-        catalog,
-        created.target.workspaceSessionId,
-        {
-          title: "Workflow B",
-          objective: "Own workflow B attention.",
-        },
-      );
-      await catalog.openSurface(handlerA.target);
-      await catalog.openSurface(handlerB.target);
-
-      const store = getStructuredSessionStore(catalog);
-      const workflowCommand = store.createCommand({
-        turnId: handlerA.turnId,
-        surfacePiSessionId: handlerA.surfacePiSessionId,
-        threadId: handlerA.threadId,
-        toolName: "smithers_run_workflow",
-        executor: "smithers",
-        visibility: "surface",
-        title: "Run workflow A",
-        summary: "Launch workflow A.",
-      });
-      store.startCommand(workflowCommand.id);
-      const workflow = store.recordWorkflow({
-        threadId: handlerA.threadId,
-        commandId: workflowCommand.id,
-        smithersRunId: "smithers-run-workflow-a",
-        workflowName: "workflow_a",
-        workflowSource: "saved",
-        entryPath: ".svvy/workflows/entries/workflow-a.tsx",
-        savedEntryId: "workflow_a",
-        status: "completed",
-        smithersStatus: "finished",
-        pendingAttentionSeq: 42,
-        lastAttentionSeq: null,
-        summary: "workflow_a finished and still needs handler attention.",
-      });
-      store.updateThread({
-        threadId: handlerA.threadId,
-        status: "running-handler",
-        wait: null,
-      });
-
-      const handlerAManaged = getManagedSurface(catalog, handlerA.surfacePiSessionId);
-      const handlerBManaged = getManagedSurface(catalog, handlerB.surfacePiSessionId);
-      const handlerAPrompts: string[] = [];
-      const handlerAPromptSpy = spyOn(handlerAManaged.session, "prompt").mockImplementation(
-        async function (this: PromptableSession, promptText: string) {
-          handlerAPrompts.push(promptText);
-          appendMessagesToSession(this, [
-            userMessage(
-              "System event: A supervised Smithers workflow now requires handler attention.",
-            ),
-            assistantMessage("Handler A reconciled workflow attention."),
-          ]);
-        },
-      );
-      const handlerBPromptSpy = spyOn(handlerBManaged.session, "prompt").mockImplementation(
-        async function () {
-          throw new Error("Workflow attention routed to the wrong handler surface.");
-        },
-      );
-
-      try {
-        const delivered = await (
-          catalog as unknown as {
-            resumeHandlerAfterWorkflowAttention(
-              input: {
-                sessionId: string;
-                threadId: string;
-                workflowRunId: string;
-                smithersRunId: string;
-                workflowId: string;
-                summary: string;
-                reason: string;
-              },
-              systemPrompt: string,
-            ): Promise<boolean>;
-          }
-        ).resumeHandlerAfterWorkflowAttention(
-          {
-            sessionId: created.target.workspaceSessionId,
-            threadId: handlerA.threadId,
-            workflowRunId: workflow.id,
-            smithersRunId: "smithers-run-workflow-a",
-            workflowId: "workflow_a",
-            summary: "workflow_a finished and still needs handler attention.",
-            reason: "The workflow completed and still needs handler reconciliation.",
-          },
-          buildSystemPrompt("handler"),
-        );
-
-        expect(delivered).toBe(true);
-        await waitFor(() => handlerAPrompts.length === 1);
-        expect(handlerAPrompts).toHaveLength(1);
-        expect(handlerAPrompts[0]).toBe(
-          [
-            "System event: A supervised Smithers workflow now requires handler attention.",
-            "Use thread_current for current handler state and active workflow run ids, then inspect workflow details with smithers_* tools and decide the next handler action.",
-          ].join("\n"),
-        );
-        expect(handlerAPrompts[0]).not.toContain("smithers-run-workflow-a");
-        expect(handlerBPromptSpy).not.toHaveBeenCalled();
-
-        const attentionEvents = surfaceSyncs.filter(
-          (payload) =>
-            payload.reason === "background.started" || payload.reason === "prompt.settled",
-        );
-        expect(attentionEvents).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              reason: "background.started",
-              target: handlerA.target,
-            }),
-            expect.objectContaining({
-              reason: "prompt.settled",
-              target: handlerA.target,
-            }),
-          ]),
-        );
-        expect(
-          attentionEvents.some((payload) => payload.target.threadId === handlerB.threadId),
-        ).toBe(false);
-
-        const snapshotA =
-          (await catalog.listOpenSurfaceSnapshots()).find(
-            (snapshot) => snapshot.target.surfacePiSessionId === handlerA.surfacePiSessionId,
-          ) ?? null;
-        const snapshotB =
-          (await catalog.listOpenSurfaceSnapshots()).find(
-            (snapshot) => snapshot.target.surfacePiSessionId === handlerB.surfacePiSessionId,
-          ) ?? null;
-
-        expect(
-          hasAssistantReply(snapshotA?.messages ?? [], "Handler A reconciled workflow attention."),
-        ).toBe(true);
-        expect(snapshotB?.messages).toEqual([]);
-      } finally {
-        handlerAPromptSpy.mockRestore();
-        handlerBPromptSpy.mockRestore();
-      }
-    } finally {
-      catalog.setSurfaceSyncListener(null);
       await catalog.dispose();
     }
   });

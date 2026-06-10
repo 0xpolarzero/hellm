@@ -46,6 +46,16 @@ Prompt history is written once at queue time for user messages.
 
 Queued user messages can be removed, restored to composer, or reordered before delivery.
 
+If queued work cannot be converted into the next pi user/control message before a turn starts, the
+queue item is marked `failed` with `failedAt` and a `failureError`. Failed items remain visible near
+the owning surface composer, are not claimed by later queue drains, and do not create a normal failed
+turn. Failed user messages can be restored to the composer or deleted; failed control items can be
+dismissed. Restore-to-composer falls back to the queue-time request summary when the original message
+payload cannot be parsed.
+
+Failures after a turn has accepted the queued message remain normal turn failures. They do not use
+the queue-row-local delivery-failure state.
+
 ## Thread Control Work
 
 `thread_followup`, report requests, and thread report notifications use the same surface queue as

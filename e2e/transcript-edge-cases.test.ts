@@ -48,7 +48,7 @@ function edgeCaseSession(): SeedSessionInput {
     usage: ZERO_USAGE,
     stopReason: "toolUse",
     content: [
-      { type: "thinking", thinking: "" },
+      { type: "thinking", thinking: "", redacted: true },
       { type: "text", text: "This assistant row should show a redacted reasoning block." },
       failingToolCall,
     ],
@@ -108,7 +108,7 @@ async function waitForExactText(
 
 test("renders seeded transcript timestamps, tool error states, and reasoning fallbacks", async () => {
   await launchEdgeCaseApp(async ({ page }) => {
-    await waitForExactText(page.locator(".workspace-main-title"), SESSION_TITLE);
+    await waitForExactText(page.locator("[data-testid=active-surface-title]"), SESSION_TITLE);
 
     const times = page.locator("time");
     expect(await times.count()).toBe(3);
@@ -117,22 +117,29 @@ test("renders seeded transcript timestamps, tool error states, and reasoning fal
     expect((await times.nth(2).textContent())?.trim()).not.toBe("");
 
     const firstAssistant = page.locator(".assistant-row").nth(0);
-    expect(await firstAssistant.locator(".thinking-block pre").textContent()).toBe("[redacted]");
-    expect(await firstAssistant.locator(".tool-card.error").count()).toBe(1);
-    expect(await firstAssistant.locator(".tool-card.error .tool-status").textContent()).toBe(
-      "error",
+    expect(await firstAssistant.locator(".thinking-markdown").textContent()).toBe("[redacted]");
+    const failedToolCard = firstAssistant.locator('[data-testid^="tool-card-"]').first();
+    expect(await failedToolCard.count()).toBe(1);
+    expect(await failedToolCard.locator('[data-testid="status-badge-failed"]').textContent()).toBe(
+      "Failed",
     );
 
-    const toolResult = page.locator(".tool-result.error");
+    const toolResult = page.locator(".tool-row").first();
     expect(await toolResult.count()).toBe(1);
-    expect(await toolResult.locator(".tool-status").textContent()).toBe("Error");
-    expect(await toolResult.locator("summary").textContent()).toBe("Error output");
-    expect(await toolResult.locator("pre").textContent()).toContain("Unable to create broken.txt");
+    expect(await toolResult.locator('[data-testid="status-badge-failed"]').textContent()).toBe(
+      "Failed",
+    );
+    await toolResult.locator(".transcript-tool-toggle").click({ force: true });
+    expect(await toolResult.locator(".transcript-tool-pre").textContent()).toContain(
+      "Unable to create broken.txt",
+    );
 
     const reasoningBlocks = page.locator(".assistant-row .thinking-block");
     expect(await reasoningBlocks.count()).toBe(2);
-    expect(await reasoningBlocks.nth(0).locator("pre").textContent()).toBe("[redacted]");
-    expect(await reasoningBlocks.nth(1).locator("pre").textContent()).toBe(
+    expect(await reasoningBlocks.nth(0).locator(".thinking-markdown").textContent()).toBe(
+      "[redacted]",
+    );
+    expect(await reasoningBlocks.nth(1).locator(".thinking-markdown").textContent()).toBe(
       "Visible reasoning for contrast.",
     );
   });

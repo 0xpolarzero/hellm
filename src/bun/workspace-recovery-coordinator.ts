@@ -8,19 +8,13 @@ import type {
 } from "./structured-session-state";
 
 export interface WorkspaceRecoveryCoordinatorHandlers {
-  bootstrapSmithers(): Promise<void>;
   recoverSurfaceTurn(surfacePiSessionId: string): Promise<void>;
   drainSurfaceQueue(target: PromptTarget): Promise<void>;
   startInitialHandler(input: { sessionId: string; threadId: string }): Promise<void>;
-  resolveHandlerHandoff(queuedItemId: string): Promise<void>;
+  recoverThreadReportNotification(queuedItemId: string): Promise<void>;
   generateTitle(owner: { sessionId?: string; threadId?: string }): Promise<void>;
-  projectWorkflowAttention(input: {
-    sessionId: string;
-    threadId?: string;
-    workflowRunId?: string;
-  }): Promise<void>;
-  projectCi(input: { sessionId: string; workflowRunId: string }): Promise<void>;
   projectRecoveryLog(work: StructuredRecoveryWorkRecord): Promise<void>;
+  refreshWorkflowsBuild(work: StructuredRecoveryWorkRecord): Promise<void>;
   resolveSurfaceTarget(surfacePiSessionId: string): PromptTarget;
 }
 
@@ -39,14 +33,6 @@ export class WorkspaceRecoveryCoordinator {
 
   seedFromDurableState(): void {
     this.store.normalizeWorkspaceRecoveryState({ claimedBy: this.claimedBy });
-    this.enqueue({
-      kind: "smithers_bootstrap",
-      ownerScope: { kind: "workspace" },
-      idempotencyKey: `smithers_bootstrap:${this.store.workspaceId}`,
-      orderingKey: `workspace:${this.store.workspaceId}:smithers`,
-      priority: 0,
-    });
-
     for (const snapshot of this.store.listSessionStates()) {
       const sessionId = snapshot.session.id;
       const runningTurnsBySurface = new Set<string>();
@@ -77,15 +63,15 @@ export class WorkspaceRecoveryCoordinator {
           message.status === "steering"
         ) {
           queuedSurfaces.add(message.surfacePiSessionId);
-          if (message.kind === "handler_handoff") {
+          if (message.kind === "thread_report_notification") {
             this.enqueue({
-              kind: "handler_handoff_resolution",
+              kind: "thread_report_notification_delivery",
               ownerScope: {
                 kind: "queue_item",
                 queuedItemId: message.id,
                 surfacePiSessionId: message.surfacePiSessionId,
               },
-              idempotencyKey: `handler_handoff_resolution:${message.id}`,
+              idempotencyKey: `thread_report_notification_delivery:${message.id}`,
               orderingKey: `surface:${message.surfacePiSessionId}`,
               orderingSeq: message.position,
               priority: 25,
@@ -148,49 +134,6 @@ export class WorkspaceRecoveryCoordinator {
             orderingKey: `thread:${thread.id}`,
             priority: 70,
             payloadJson: { threadId: thread.id },
-          });
-        }
-      }
-
-      for (const workflowRun of snapshot.workflowRuns) {
-        if (
-          workflowRun.status === "running" ||
-          workflowRun.status === "waiting" ||
-          workflowRun.pendingAttentionSeq !== workflowRun.lastAttentionSeq
-        ) {
-          this.enqueue({
-            kind: "workflow_attention",
-            ownerScope: {
-              kind: "workflow_run",
-              workflowRunId: workflowRun.id,
-              smithersRunId: workflowRun.smithersRunId,
-            },
-            idempotencyKey: `workflow_attention:${workflowRun.id}:${workflowRun.pendingAttentionSeq ?? "bootstrap"}`,
-            orderingKey: `workflow:${workflowRun.id}`,
-            priority: 5,
-            payloadJson: {
-              sessionId,
-              threadId: workflowRun.threadId,
-              workflowRunId: workflowRun.id,
-            },
-          });
-        }
-        if (
-          workflowRun.entryPath &&
-          workflowRun.status !== "running" &&
-          workflowRun.status !== "waiting"
-        ) {
-          this.enqueue({
-            kind: "project_ci_projection",
-            ownerScope: {
-              kind: "workflow_run",
-              workflowRunId: workflowRun.id,
-              smithersRunId: workflowRun.smithersRunId,
-            },
-            idempotencyKey: `project_ci_projection:${workflowRun.id}:${workflowRun.finishedAt ?? workflowRun.updatedAt}`,
-            orderingKey: `workflow:${workflowRun.id}`,
-            priority: 15,
-            payloadJson: { sessionId, workflowRunId: workflowRun.id },
           });
         }
       }
@@ -269,9 +212,6 @@ export class WorkspaceRecoveryCoordinator {
   private async runWork(work: StructuredRecoveryWorkRecord): Promise<void> {
     const payload = isRecord(work.payloadJson) ? work.payloadJson : {};
     switch (work.kind) {
-      case "smithers_bootstrap":
-        await this.handlers.bootstrapSmithers();
-        return;
       case "surface_turn_recovery":
         await this.handlers.recoverSurfaceTurn(readSurfacePiSessionId(work));
         return;
@@ -286,27 +226,16 @@ export class WorkspaceRecoveryCoordinator {
           threadId: String(payload.threadId ?? readThreadId(work)),
         });
         return;
-      case "handler_handoff_resolution":
-        await this.handlers.resolveHandlerHandoff(readQueuedItemId(work));
+      case "thread_report_notification_delivery":
+        await this.handlers.recoverThreadReportNotification(readQueuedItemId(work));
+        return;
+      case "workflows_build_refresh":
+        await this.handlers.refreshWorkflowsBuild(work);
         return;
       case "title_generation":
         await this.handlers.generateTitle({
           sessionId: typeof payload.sessionId === "string" ? payload.sessionId : undefined,
           threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
-        });
-        return;
-      case "workflow_attention":
-        await this.handlers.projectWorkflowAttention({
-          sessionId: String(payload.sessionId ?? ""),
-          threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
-          workflowRunId:
-            typeof payload.workflowRunId === "string" ? payload.workflowRunId : undefined,
-        });
-        return;
-      case "project_ci_projection":
-        await this.handlers.projectCi({
-          sessionId: String(payload.sessionId ?? ""),
-          workflowRunId: String(payload.workflowRunId ?? readWorkflowRunId(work)),
         });
         return;
       case "app_log_projection":
@@ -345,9 +274,4 @@ function readThreadId(work: StructuredRecoveryWorkRecord): string {
 function readQueuedItemId(work: StructuredRecoveryWorkRecord): string {
   if (work.ownerScope.kind === "queue_item") return work.ownerScope.queuedItemId;
   throw new Error(`Recovery work ${work.id} has no queue item owner.`);
-}
-
-function readWorkflowRunId(work: StructuredRecoveryWorkRecord): string {
-  if (work.ownerScope.kind === "workflow_run") return work.ownerScope.workflowRunId;
-  throw new Error(`Recovery work ${work.id} has no workflow-run owner.`);
 }

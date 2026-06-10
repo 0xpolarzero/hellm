@@ -1,5 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { ensureBuilt, escapeForRegExp, withSvvyApp } from "./harness";
+import { ensureBuilt, withSvvyApp } from "./harness";
 
 setDefaultTimeout(30_000);
 
@@ -13,26 +13,12 @@ test("real app boots and renders the workspace shell", async () => {
     await page.locator(".session-sidebar").waitFor({ state: "visible" });
 
     expect(await page.locator(".workspace-titlebar-title").textContent()).toBe("svvy");
-    await page.getByText("1 sessions").waitFor({ state: "visible" });
-    expect(await page.getByRole("button", { name: /Session actions for/ }).count()).toBe(1);
-
-    const nextTitle = `Smoke Renamed ${Date.now()}`;
-    const firstSession = page.locator(".session-item").first();
-    await firstSession.getByRole("button", { name: /Session actions for/ }).click({ force: true });
-    await page.getByRole("button", { name: "Rename" }).click();
-
-    const dialog = page.getByRole("dialog", { name: "Rename Session" });
-    await dialog.waitFor({ state: "visible" });
-
-    const titleInput = page.locator('input[placeholder="Session title"]');
-    await titleInput.fill(nextTitle);
-    await dialog.getByRole("button", { name: "Save" }).click();
-
+    await page.getByText("Sessions 1").waitFor({ state: "visible" });
+    expect(await page.locator(".session-item").count()).toBe(1);
     await page
-      .getByRole("button", {
-        name: new RegExp(`^Session actions for ${escapeForRegExp(nextTitle)}$`),
-      })
+      .locator(
+        'textarea[placeholder="Ask svvy to inspect the repo, make a change, or delegate work."]',
+      )
       .waitFor({ state: "visible" });
-    expect(await page.locator(".workspace-main-title").textContent()).toBe(nextTitle);
   });
 });

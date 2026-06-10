@@ -75,7 +75,7 @@ function toolResultMessage(timestamp: number, text: string): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId: "tool-call-1",
-    toolName: "artifacts",
+    toolName: "exec_command",
     timestamp,
     isError: false,
     content: [{ type: "text", text }],
@@ -87,9 +87,7 @@ describe("conversation projection", () => {
     const messages: AgentMessage[] = [
       userMessage(1, "Hello"),
       assistantMessage(2, "First reply", {
-        toolCalls: [
-          toolCall("tool-call-1", "artifacts", { command: "create", filename: "summary.html" }),
-        ],
+        toolCalls: [toolCall("tool-call-1", "exec_command", { cmd: "cat docs/prd.md" })],
       }),
       toolResultMessage(3, "Created file summary.html"),
       assistantMessage(4, "Second reply", {
@@ -124,12 +122,8 @@ describe("conversation projection", () => {
     });
     expect(projection.toolCallsById.get("tool-call-1")).toEqual({
       id: "tool-call-1",
-      name: "artifacts",
-      argumentsValue: { command: "create", filename: "summary.html" },
-      artifactParams: {
-        command: "create",
-        filename: "summary.html",
-      },
+      name: "exec_command",
+      argumentsValue: { cmd: "cat docs/prd.md" },
       attempt: 1,
       totalAttempts: 1,
     });
@@ -137,12 +131,10 @@ describe("conversation projection", () => {
       id: "tool-call-2",
       name: "search",
       argumentsValue: { query: "svvy" },
-      artifactParams: undefined,
       attempt: 1,
       totalAttempts: 1,
     });
-    expect(projection.toolResultsById.get("tool-call-1")?.toolName).toBe("artifacts");
-    expect(projection.artifactResultTextById.get("tool-call-1")).toBe("Created file summary.html");
+    expect(projection.toolResultsById.get("tool-call-1")?.toolName).toBe("exec_command");
   });
 
   it("tracks repeated tool-use loops as numbered attempts within one retry chain", () => {

@@ -30,37 +30,58 @@ import {
   type WorkspaceBranchInfo,
   type WorkspaceCommandInspector,
   type WorkspacePathIndexEntry,
+  type SvvyUserMessage,
   type WorkspaceHandlerThreadInspector,
   type WorkspaceHandlerThreadSummary,
   type WorkspaceArtifactPreview,
-  type WorkspaceProjectCiStatusPanel,
-  type WorkspaceSavedWorkflowLibraryReadModel,
+  type AnswerRuntimeApprovalRequest,
+  type RequestUserInputAnswerRequest,
+  type SetRequestUserInputTimerPausedRequest,
   type WorkspaceSessionNavigationReadModel,
+  type WorkspaceRequestUserInputRequest,
+  type WorkspaceRuntimeApprovalRequest,
   type WorkspaceSessionSummary,
   type WorkspaceSyncMessage,
   type WorkspaceWorkflowTaskAttemptInspector,
-  type WorkspaceWorkflowInspectorMode,
-  type WorkspaceWorkflowInspectorLiveUpdate,
-  type WorkspaceWorkflowInspectorReadModel,
+  type WorkspaceWorkflowsGeneratedReadModel,
   type WorkspacePaneSurfaceTarget,
   type WorkspaceInfoResponse,
-  type WorkspaceTabInfo,
+  type AgentContextPreviewRequest,
+  type AgentContextPreviewResponse,
+  type AgentModelChoicesResponse,
+  type ExtensionsInventoryReadModel,
+  type RemoveExtensionEnvOverrideRequest,
+  type RemoveExtensionEnvSecretRequest,
+  type SetExtensionEnvOverrideRequest,
+  type SetExtensionEnvSecretRequest,
 } from "../shared/workspace-contract";
 import type {
-  PromptLibraryActor,
-  PromptLibraryExternalSource,
-  PromptLibraryGeneratedEntry,
-  PromptLibrarySnapshotSummary,
-  PromptLibraryState,
-  UpdatePromptLibraryRequest,
-} from "../shared/prompt-library";
+  GeneratedAgentContextActor,
+  GeneratedAgentContextExternalSource,
+  GeneratedAgentContextEntry,
+  GeneratedAgentContextSnapshotSummary,
+  GeneratedAgentContextState,
+  UpdateGeneratedAgentContextRequest,
+} from "../shared/generated-agent-context";
+import type {
+  ComposerSnippetMention,
+  CreateManagedSnippetRequest,
+  ManagedSnippet,
+  SentSnippetProvenance,
+  SnippetsReadModel,
+  UpdateManagedSnippetRequest,
+} from "../shared/snippets";
 import { createChatStorage, type ChatStorage } from "./chat-storage";
 import {
   DEFAULT_AGENT_SETTINGS,
   type AgentSettingsState,
+  type AppPreferences,
   type ReasoningEffort,
   type AgentProfileSettings,
   type AgentProfileId,
+  type RequestUserInputSettings,
+  type WorkflowAgentKey,
+  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import type { AppMenuAction } from "../shared/shortcut-registry";
 import {
@@ -71,6 +92,7 @@ import {
   createPanelId,
   focusPane,
   isInitializedPaneLayout,
+  markDockviewPanelUnavailable,
   normalizePaneLayout,
   PRIMARY_CHAT_PANE_ID,
   setDockviewSerializedLayout,
@@ -141,11 +163,17 @@ function buildUserMessage(input: ComposerPromptSubmission): Message {
     if (attachment.kind !== "image" || !attachment.dataBase64 || !attachment.mimeType) continue;
     content.push({ type: "image", data: attachment.dataBase64, mimeType: attachment.mimeType });
   }
-  return {
+  const message: SvvyUserMessage = {
     role: "user",
     content: content.length > 0 ? content : [{ type: "text", text: "" }],
     timestamp: Date.now(),
   };
+  if (input.snippetProvenance?.length) {
+    message.svvyMetadata = {
+      snippetProvenance: structuredClone(input.snippetProvenance),
+    };
+  }
+  return message;
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -166,6 +194,8 @@ export type QueuedPrompt = QueuedSurfaceMessage;
 export type ComposerPromptSubmission = {
   text: string;
   attachments: ComposerAttachment[];
+  snippetMentions?: ComposerSnippetMention[];
+  snippetProvenance?: SentSnippetProvenance[];
 };
 
 export interface ChatPaneState {
@@ -173,6 +203,8 @@ export interface ChatPaneState {
   target: WorkspacePaneSurfaceTarget | null;
   scroll: ChatPaneLayoutState["panels"][number]["localState"]["scroll"];
   timelineDensity: "compact" | "comfortable";
+  chrome: ChatPaneLayoutState["panels"][number]["chrome"] | null;
+  restore: ChatPaneLayoutState["panels"][number]["restore"] | null;
 }
 
 export type ChatPaneLayoutState = WorkspaceDockviewLayoutState;
@@ -182,7 +214,8 @@ export interface ChatSurfaceController {
   target: PromptTarget;
   resolvedSystemPrompt: string;
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
-  externalContextSources: PromptLibraryExternalSource[];
+  agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
+  externalContextSources: GeneratedAgentContextExternalSource[];
   agentProfileId: AgentProfileId;
   promptStatus: PromptStatus;
   activeTurnId: string | null;
@@ -192,7 +225,9 @@ export interface ChatSurfaceController {
   composerDraft: ComposerDraft;
   ownerPaneIds: string[];
   sendPrompt: (input: ComposerPromptSubmission) => Promise<void>;
-  updateComposerDraft: (draft: Pick<ComposerDraft, "text" | "attachments">) => Promise<void>;
+  updateComposerDraft: (
+    draft: Pick<ComposerDraft, "text" | "attachments" | "snippetMentions">,
+  ) => Promise<void>;
   editCommittedUserMessage: (
     messageTimestamp: string | number,
     input: ComposerPromptSubmission,
@@ -235,21 +270,35 @@ export interface ChatRuntimeRpcClient {
   request: {
     getDefaults: typeof rpc.request.getDefaults;
     getAgentSettings: typeof rpc.request.getAgentSettings;
-    getPromptLibrary: typeof rpc.request.getPromptLibrary;
-    getPromptLibraryDefaults: typeof rpc.request.getPromptLibraryDefaults;
-    updatePromptLibrary: typeof rpc.request.updatePromptLibrary;
-    resetPromptLibrary: typeof rpc.request.resetPromptLibrary;
-    listPromptLibrarySnapshots: typeof rpc.request.listPromptLibrarySnapshots;
-    createPromptLibrarySnapshot: typeof rpc.request.createPromptLibrarySnapshot;
-    renamePromptLibrarySnapshot: typeof rpc.request.renamePromptLibrarySnapshot;
-    restorePromptLibrarySnapshot: typeof rpc.request.restorePromptLibrarySnapshot;
-    getPromptLibraryExternalSources: typeof rpc.request.getPromptLibraryExternalSources;
+    getAgentContextPreview: typeof rpc.request.getAgentContextPreview;
+    getAgentModelChoices: typeof rpc.request.getAgentModelChoices;
+    getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
+    getAppPreferences: typeof rpc.request.getAppPreferences;
+    revertExtensionChange: typeof rpc.request.revertExtensionChange;
+    setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
+    removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
+    setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
+    removeExtensionEnvOverride: typeof rpc.request.removeExtensionEnvOverride;
+    getGeneratedAgentContext: typeof rpc.request.getGeneratedAgentContext;
+    getGeneratedAgentContextDefaults: typeof rpc.request.getGeneratedAgentContextDefaults;
+    updateGeneratedAgentContext: typeof rpc.request.updateGeneratedAgentContext;
+    resetGeneratedAgentContext: typeof rpc.request.resetGeneratedAgentContext;
+    listGeneratedAgentContextSnapshots: typeof rpc.request.listGeneratedAgentContextSnapshots;
+    createGeneratedAgentContextSnapshot: typeof rpc.request.createGeneratedAgentContextSnapshot;
+    renameGeneratedAgentContextSnapshot: typeof rpc.request.renameGeneratedAgentContextSnapshot;
+    restoreGeneratedAgentContextSnapshot: typeof rpc.request.restoreGeneratedAgentContextSnapshot;
+    getGeneratedAgentContextExternalSources: typeof rpc.request.getGeneratedAgentContextExternalSources;
+    getSnippets: typeof rpc.request.getSnippets;
+    createManagedSnippet: typeof rpc.request.createManagedSnippet;
+    updateManagedSnippet: typeof rpc.request.updateManagedSnippet;
+    deleteManagedSnippet: typeof rpc.request.deleteManagedSnippet;
+    openSnippetExternalSourceInEditor: typeof rpc.request.openSnippetExternalSourceInEditor;
     updateAgentProfile: typeof rpc.request.updateAgentProfile;
     deleteAgentProfile: typeof rpc.request.deleteAgentProfile;
     reorderOrchestratorAgents: typeof rpc.request.reorderOrchestratorAgents;
     updateWorkflowAgent: typeof rpc.request.updateWorkflowAgent;
     updateAppPreferences: typeof rpc.request.updateAppPreferences;
-    ensureWorkflowAgentsComponent: typeof rpc.request.ensureWorkflowAgentsComponent;
+    updateRequestUserInputSettings: typeof rpc.request.updateRequestUserInputSettings;
     getProviderAuthState: typeof rpc.request.getProviderAuthState;
     getOpenWorkspaces: typeof rpc.request.getOpenWorkspaces;
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
@@ -265,19 +314,15 @@ export interface ChatRuntimeRpcClient {
     pickWorkspaceAttachments: typeof rpc.request.pickWorkspaceAttachments;
     importComposerAttachments: typeof rpc.request.importComposerAttachments;
     openWorkspacePath: typeof rpc.request.openWorkspacePath;
-    getSavedWorkflowLibrary: typeof rpc.request.getSavedWorkflowLibrary;
-    deleteSavedWorkflowLibraryItem: typeof rpc.request.deleteSavedWorkflowLibraryItem;
+    getWorkflowsGenerated: typeof rpc.request.getWorkflowsGenerated;
     openWorkspaceSourceInEditor: typeof rpc.request.openWorkspaceSourceInEditor;
-    openPromptLibraryExternalSourceInEditor: typeof rpc.request.openPromptLibraryExternalSourceInEditor;
-    getPromptLibraryGeneratedEntries: typeof rpc.request.getPromptLibraryGeneratedEntries;
+    openGeneratedAgentContextExternalSourceInEditor: typeof rpc.request.openGeneratedAgentContextExternalSourceInEditor;
+    getGeneratedAgentContextEntries: typeof rpc.request.getGeneratedAgentContextEntries;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
-    getWorkflowInspector: typeof rpc.request.getWorkflowInspector;
-    streamWorkflowInspector: typeof rpc.request.streamWorkflowInspector;
-    getProjectCiStatus: typeof rpc.request.getProjectCiStatus;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
@@ -303,6 +348,9 @@ export interface ChatRuntimeRpcClient {
     editQueuedSurfaceMessage: typeof rpc.request.editQueuedSurfaceMessage;
     reorderQueuedSurfaceMessage: typeof rpc.request.reorderQueuedSurfaceMessage;
     steerQueuedSurfaceMessage: typeof rpc.request.steerQueuedSurfaceMessage;
+    answerRequestUserInput: typeof rpc.request.answerRequestUserInput;
+    answerRuntimeApprovalRequest: typeof rpc.request.answerRuntimeApprovalRequest;
+    setRequestUserInputTimerPaused: typeof rpc.request.setRequestUserInputTimerPaused;
     queuePromptRefresh: typeof rpc.request.queuePromptRefresh;
     setSurfaceModel: typeof rpc.request.setSurfaceModel;
     setSurfaceThoughtLevel: typeof rpc.request.setSurfaceThoughtLevel;
@@ -378,31 +426,12 @@ export interface ChatRuntime {
     workflowTaskAttemptId: string,
     sessionId?: string,
   ) => Promise<WorkspaceWorkflowTaskAttemptInspector>;
-  getWorkflowInspector: (
-    workflowRunId: string,
-    options?: {
-      sessionId?: string;
-      selectedNodeKey?: string | null;
-      expandedNodeKeys?: string[];
-      userCollapsedNodeKeys?: string[];
-      searchQuery?: string;
-      mode?: WorkspaceWorkflowInspectorMode;
-    },
-  ) => Promise<WorkspaceWorkflowInspectorReadModel>;
-  streamWorkflowInspector: (
-    workflowRunId: string,
-    options?: {
-      sessionId?: string;
-      selectedNodeKey?: string | null;
-      expandedNodeKeys?: string[];
-      userCollapsedNodeKeys?: string[];
-      searchQuery?: string;
-      mode?: WorkspaceWorkflowInspectorMode;
-      fromSeq?: number | null;
-    },
-  ) => Promise<WorkspaceWorkflowInspectorLiveUpdate>;
-  getProjectCiStatus: (sessionId?: string) => Promise<WorkspaceProjectCiStatusPanel>;
   getArtifactPreview: (artifactId: string, sessionId?: string) => Promise<WorkspaceArtifactPreview>;
+  getRequestUserInputRequests: () => WorkspaceRequestUserInputRequest[];
+  answerRequestUserInput: (request: RequestUserInputAnswerRequest) => Promise<void>;
+  setRequestUserInputTimerPaused: (request: SetRequestUserInputTimerPausedRequest) => Promise<void>;
+  getRuntimeApprovalRequests: () => WorkspaceRuntimeApprovalRequest[];
+  answerRuntimeApprovalRequest: (request: AnswerRuntimeApprovalRequest) => Promise<void>;
   getAppLogs: (query?: AppLogQuery) => Promise<AppLogReadModel>;
   getAppLogSummary: () => Promise<AppLogSummary>;
   markAppLogsSeen: (throughSeq: number) => Promise<AppLogSummary>;
@@ -443,37 +472,71 @@ export interface ChatRuntime {
   sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
   syncProviderAuth: (providerId: string) => Promise<boolean>;
   requireProviderAccess: (providerId: string) => Promise<boolean>;
-  listConfiguredProviders: () => Promise<string[]>;
-  listOpenWorkspaces: () => Promise<WorkspaceTabInfo[]>;
+  listOpenWorkspaces: () => Promise<WorkspaceInfoResponse[]>;
   listWorkspaceBranches: () => Promise<WorkspaceBranchInfo[]>;
   switchWorkspaceBranch: (branch: string) => Promise<void>;
   listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
   pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
   importComposerAttachments: (files: File[]) => Promise<ComposerAttachment[]>;
   openWorkspacePath: (workspaceRelativePath: string) => Promise<boolean>;
-  getSavedWorkflowLibrary: () => Promise<WorkspaceSavedWorkflowLibraryReadModel>;
-  deleteSavedWorkflowLibraryItem: (path: string) => Promise<WorkspaceSavedWorkflowLibraryReadModel>;
+  getWorkflowsGenerated: () => Promise<WorkspaceWorkflowsGeneratedReadModel>;
   openWorkspaceSourceInEditor: (path: string) => Promise<boolean>;
-  openPromptLibraryExternalSourceInEditor: (path: string) => Promise<boolean>;
-  getPromptLibrary: () => Promise<PromptLibraryState>;
-  getPromptLibraryDefaults: () => Promise<PromptLibraryState>;
-  getPromptLibraryGeneratedEntries: () => Promise<
-    Record<PromptLibraryActor, PromptLibraryGeneratedEntry[]>
+  openGeneratedAgentContextExternalSourceInEditor: (path: string) => Promise<boolean>;
+  getGeneratedAgentContext: () => Promise<GeneratedAgentContextState>;
+  getGeneratedAgentContextDefaults: () => Promise<GeneratedAgentContextState>;
+  getGeneratedAgentContextEntries: () => Promise<
+    Record<GeneratedAgentContextActor, GeneratedAgentContextEntry[]>
   >;
-  getPromptLibraryExternalSources: () => Promise<PromptLibraryExternalSource[]>;
+  getGeneratedAgentContextExternalSources: () => Promise<GeneratedAgentContextExternalSource[]>;
   getAgentSettings: () => Promise<AgentSettingsState>;
+  getAgentContextPreview: (
+    request?: AgentContextPreviewRequest,
+  ) => Promise<AgentContextPreviewResponse>;
+  getAgentModelChoices: () => Promise<AgentModelChoicesResponse>;
+  getExtensionsInventory: () => Promise<ExtensionsInventoryReadModel>;
+  getAppPreferences: () => Promise<AppPreferences>;
+  updateAppPreferences: (preferences: AppPreferences) => Promise<AppPreferences>;
+  revertExtensionChange: (changeId: string) => Promise<ExtensionsInventoryReadModel>;
+  setExtensionEnvSecret: (
+    input: Omit<SetExtensionEnvSecretRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  removeExtensionEnvSecret: (
+    input: Omit<RemoveExtensionEnvSecretRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  setExtensionEnvOverride: (
+    input: Omit<SetExtensionEnvOverrideRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  removeExtensionEnvOverride: (
+    input: Omit<RemoveExtensionEnvOverrideRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
   updateAgentProfile: (profile: AgentProfileSettings) => Promise<AgentSettingsState>;
   deleteAgentProfile: (id: AgentProfileId) => Promise<AgentSettingsState>;
   reorderOrchestratorAgents: (ids: AgentProfileId[]) => Promise<AgentSettingsState>;
-  updatePromptLibrary: (request: UpdatePromptLibraryRequest) => Promise<PromptLibraryState>;
-  resetPromptLibrary: () => Promise<PromptLibraryState>;
-  listPromptLibrarySnapshots: () => Promise<PromptLibrarySnapshotSummary[]>;
-  createPromptLibrarySnapshot: (name: string) => Promise<PromptLibrarySnapshotSummary>;
-  renamePromptLibrarySnapshot: (
+  updateWorkflowAgent: (
+    key: WorkflowAgentKey,
+    settings: WorkflowAgentSettings,
+  ) => Promise<AgentSettingsState>;
+  updateRequestUserInputSettings: (
+    settings: RequestUserInputSettings,
+  ) => Promise<AgentSettingsState>;
+  updateGeneratedAgentContext: (
+    request: UpdateGeneratedAgentContextRequest,
+  ) => Promise<GeneratedAgentContextState>;
+  resetGeneratedAgentContext: () => Promise<GeneratedAgentContextState>;
+  listGeneratedAgentContextSnapshots: () => Promise<GeneratedAgentContextSnapshotSummary[]>;
+  createGeneratedAgentContextSnapshot: (
+    name: string,
+  ) => Promise<GeneratedAgentContextSnapshotSummary>;
+  renameGeneratedAgentContextSnapshot: (
     snapshotId: string,
     name: string,
-  ) => Promise<PromptLibrarySnapshotSummary>;
-  restorePromptLibrarySnapshot: (snapshotId: string) => Promise<PromptLibraryState>;
+  ) => Promise<GeneratedAgentContextSnapshotSummary>;
+  restoreGeneratedAgentContextSnapshot: (snapshotId: string) => Promise<GeneratedAgentContextState>;
+  getSnippets: () => Promise<SnippetsReadModel>;
+  createManagedSnippet: (input: CreateManagedSnippetRequest) => Promise<ManagedSnippet>;
+  updateManagedSnippet: (input: UpdateManagedSnippetRequest) => Promise<ManagedSnippet>;
+  deleteManagedSnippet: (snippetId: string) => Promise<void>;
+  openSnippetExternalSourceInEditor: (path: string) => Promise<boolean>;
 }
 
 function createFailureMessage(
@@ -539,13 +602,20 @@ function isRestorableStaticTarget(
     (options.allowOpenWorkspace && target.surface === "open-workspace") ||
     target.surface === "app-logs" ||
     target.surface === "agents" ||
-    target.surface === "prompt-library" ||
-    target.surface === "saved-workflow-library"
+    target.surface === "extensions" ||
+    target.surface === "settings" ||
+    target.surface === "workflows"
   );
 }
 
 function getPaneTargetWorkspaceSessionId(target: WorkspacePaneSurfaceTarget): string | null {
   return "workspaceSessionId" in target ? (target.workspaceSessionId ?? null) : null;
+}
+
+function formatUnavailableSurfaceReason(error: unknown): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : "The restored surface could not be reopened.";
 }
 
 function convertToLlm(messages: AgentMessage[]): Message[] {
@@ -712,14 +782,20 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   target: PromptTarget;
   resolvedSystemPrompt: string;
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
-  externalContextSources: PromptLibraryExternalSource[];
+  agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
+  externalContextSources: GeneratedAgentContextExternalSource[];
   agentProfileId: AgentProfileId;
   promptStatus: PromptStatus;
   activeTurnId: string | null;
   activeTurnStartedAt: string | null;
   turnTimings: ConversationTurnTiming[] = [];
   queuedPrompts: QueuedPrompt[] = [];
-  composerDraft: ComposerDraft = { text: "", attachments: [], updatedAt: null };
+  composerDraft: ComposerDraft = {
+    text: "",
+    attachments: [],
+    snippetMentions: [],
+    updatedAt: null,
+  };
 
   private listeners = new Set<ChatRuntimeListener>();
   private panelIds = new Set<string>();
@@ -736,10 +812,12 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     snapshot: ConversationSurfaceSnapshot,
     private readonly rpcClient: ChatRuntimeRpcClient,
     private readonly workspaceId: string,
+    private readonly storage: ChatStorage,
   ) {
     this.target = normalizePromptTarget(snapshot.target);
     this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
     this.promptBinding = snapshot.promptBinding;
+    this.agentContextUpdate = snapshot.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshot.externalContextSources ?? []);
     this.agentProfileId = snapshot.agentProfileId;
     this.promptStatus = snapshot.promptStatus;
@@ -832,6 +910,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.target = normalizePromptTarget(snapshotForAgent.target);
     this.resolvedSystemPrompt = snapshotForAgent.resolvedSystemPrompt;
     this.promptBinding = snapshotForAgent.promptBinding;
+    this.agentContextUpdate = snapshotForAgent.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshotForAgent.externalContextSources ?? []);
     this.agentProfileId = snapshotForAgent.agentProfileId;
     this.promptStatus = snapshotForAgent.promptStatus;
@@ -919,25 +998,46 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     const submission = {
       text: input.text.trim(),
       attachments: input.attachments,
+      snippetMentions: structuredClone(input.snippetMentions ?? []),
+      snippetProvenance: structuredClone(input.snippetProvenance ?? []),
     };
     if (!submission.text && submission.attachments.length === 0) {
       return;
     }
 
+    await this.persistPromptHistoryEntry(submission.text);
+
     if (this.promptDispatchInFlight || this.promptStatus === "streaming") {
-      await this.updateComposerDraft({ text: "", attachments: [] });
+      await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });
       await this.enqueuePrompt(submission);
       return;
     }
 
-    await this.updateComposerDraft({ text: "", attachments: [] });
+    await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });
     await this.dispatchPrompt(submission);
   }
 
-  async updateComposerDraft(draft: Pick<ComposerDraft, "text" | "attachments">): Promise<void> {
+  private async persistPromptHistoryEntry(text: string): Promise<void> {
+    if (!text) return;
+    try {
+      await this.storage.promptHistory.append({
+        text,
+        sentAt: Date.now(),
+        workspaceId: this.workspaceId,
+        sessionId: this.target.workspaceSessionId,
+      });
+    } catch (error) {
+      console.error("Failed to persist prompt history:", error);
+    }
+  }
+
+  async updateComposerDraft(
+    draft: Pick<ComposerDraft, "text" | "attachments" | "snippetMentions">,
+  ): Promise<void> {
     const nextDraft = {
       text: draft.text,
       attachments: structuredClone(draft.attachments),
+      snippetMentions: structuredClone(draft.snippetMentions ?? []),
       updatedAt: new Date().toISOString(),
     };
     this.composerDraft = nextDraft;
@@ -968,6 +1068,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
           draft: {
             text: draft.text,
             attachments: draft.attachments,
+            snippetMentions: draft.snippetMentions ?? [],
           },
         });
         this.target = normalizePromptTarget(response.target);
@@ -986,6 +1087,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     const submission = {
       text: input.text.trim(),
       attachments: input.attachments,
+      snippetProvenance: structuredClone(input.snippetProvenance ?? []),
     };
     if (!submission.text && submission.attachments.length === 0) {
       return;
@@ -1239,6 +1341,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       systemPrompt: this.agent.state.systemPrompt,
       resolvedSystemPrompt: this.resolvedSystemPrompt,
       externalContextSources: structuredClone(this.externalContextSources),
+      agentContextUpdate: this.agentContextUpdate,
       promptBinding: this.promptBinding,
       promptStatus: this.promptStatus,
       activeTurnId: this.activeTurnId,
@@ -1302,11 +1405,13 @@ export async function createChatRuntime(
   const surfaceControllers = new Map<string, ChatSurfaceControllerInternal>();
   let sessions: WorkspaceSessionSummary[] = [];
   let sessionNavigation: WorkspaceSessionNavigationReadModel = buildWorkspaceSessionNavigation([]);
+  let requestUserInputRequests: WorkspaceRequestUserInputRequest[] = [];
+  let runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[] = [];
   let appLogSummary: AppLogSummary = {
     latestSeq: 0,
     seenSeq: 0,
-    unread: { total: 0, info: 0, warning: 0, error: 0 },
-    totals: { total: 0, info: 0, warning: 0, error: 0 },
+    unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
   };
   let paneLayout = createEmptyPaneLayout();
   const durableLayoutEnabled = workspaceInfo.kind !== "default";
@@ -1402,7 +1507,12 @@ export async function createChatRuntime(
       return existing;
     }
 
-    const controller = new SurfaceControllerImpl(snapshot, rpcClient, workspaceInfo.workspaceId);
+    const controller = new SurfaceControllerImpl(
+      snapshot,
+      rpcClient,
+      workspaceInfo.workspaceId,
+      storage,
+    );
     surfaceControllers.set(surfacePiSessionId, controller);
     return controller;
   };
@@ -1519,6 +1629,8 @@ export async function createChatRuntime(
     const response = await rpcClient.request.listSessions(scoped());
     sessions = response.sessions;
     sessionNavigation = response.navigation;
+    requestUserInputRequests = response.requestUserInputRequests;
+    runtimeApprovalRequests = response.runtimeApprovalRequests;
     emit();
     return sessions;
   };
@@ -1566,6 +1678,12 @@ export async function createChatRuntime(
       : undefined;
   };
 
+  const getFocusedPromptTarget = (): PromptTarget | null => {
+    const focusedTarget =
+      paneLayout.panels.find((pane) => pane.panelId === paneLayout.focusedPanelId)?.binding ?? null;
+    return isPromptTarget(focusedTarget) ? normalizePromptTarget(focusedTarget) : null;
+  };
+
   const syncProviderAuth = async (providerId: string): Promise<boolean> => {
     const auth = await rpcClient.request.getProviderAuthState({ providerId });
     if (auth.connected) {
@@ -1585,11 +1703,6 @@ export async function createChatRuntime(
       options.onMissingProviderAccess?.(providerId);
     }
     return hasAccess;
-  };
-
-  const listConfiguredProviders = async (): Promise<string[]> => {
-    const auths = await rpcClient.request.listProviderAuths();
-    return auths.filter((authInfo) => authInfo.hasKey).map((authInfo) => authInfo.provider);
   };
 
   const getCommandInspector = async (
@@ -1665,84 +1778,6 @@ export async function createChatRuntime(
     return inspector;
   };
 
-  const getWorkflowInspector = async (
-    workflowRunId: string,
-    request: {
-      sessionId?: string;
-      selectedNodeKey?: string | null;
-      expandedNodeKeys?: string[];
-      userCollapsedNodeKeys?: string[];
-      searchQuery?: string;
-      mode?: WorkspaceWorkflowInspectorMode;
-    } = {},
-  ): Promise<WorkspaceWorkflowInspectorReadModel> => {
-    const sessionId = request.sessionId ?? getSelectedSessionId();
-    if (!sessionId) {
-      throw new Error("Expected a workspace session before inspecting a workflow run.");
-    }
-
-    const inspector = await rpcClient.request.getWorkflowInspector(
-      scoped({
-        sessionId,
-        workflowRunId,
-        selectedNodeKey: request.selectedNodeKey,
-        expandedNodeKeys: request.expandedNodeKeys,
-        userCollapsedNodeKeys: request.userCollapsedNodeKeys,
-        searchQuery: request.searchQuery,
-        mode: request.mode,
-      }),
-    );
-    if (!inspector) {
-      throw new Error(`Workflow inspector not found: ${workflowRunId}`);
-    }
-
-    return inspector;
-  };
-
-  const streamWorkflowInspector = async (
-    workflowRunId: string,
-    request: {
-      sessionId?: string;
-      selectedNodeKey?: string | null;
-      expandedNodeKeys?: string[];
-      userCollapsedNodeKeys?: string[];
-      searchQuery?: string;
-      mode?: WorkspaceWorkflowInspectorMode;
-      fromSeq?: number | null;
-    } = {},
-  ): Promise<WorkspaceWorkflowInspectorLiveUpdate> => {
-    const sessionId = request.sessionId ?? getSelectedSessionId();
-    if (!sessionId) {
-      throw new Error("Expected a workspace session before streaming a workflow inspector.");
-    }
-    const update = await rpcClient.request.streamWorkflowInspector(
-      scoped({
-        sessionId,
-        workflowRunId,
-        selectedNodeKey: request.selectedNodeKey,
-        expandedNodeKeys: request.expandedNodeKeys,
-        userCollapsedNodeKeys: request.userCollapsedNodeKeys,
-        searchQuery: request.searchQuery,
-        mode: request.mode,
-        fromSeq: request.fromSeq,
-      }),
-    );
-    if (!update) {
-      throw new Error(`Workflow inspector stream not found: ${workflowRunId}`);
-    }
-    return update;
-  };
-
-  const getProjectCiStatus = async (
-    sessionId = getSelectedSessionId(),
-  ): Promise<WorkspaceProjectCiStatusPanel> => {
-    if (!sessionId) {
-      throw new Error("Expected a workspace session before loading Project CI status.");
-    }
-
-    return await rpcClient.request.getProjectCiStatus(scoped({ sessionId }));
-  };
-
   const getArtifactPreview = async (
     artifactId: string,
     sessionId = getSelectedSessionId(),
@@ -1811,6 +1846,7 @@ export async function createChatRuntime(
         : getFallbackPanelId();
       return referencePanelId
         ? addBoundPanel(binding, createPanelId(), {
+            kind: "split",
             referencePanelId,
             direction: openTarget.direction,
             size: openTarget.size,
@@ -1818,25 +1854,35 @@ export async function createChatRuntime(
         : addBoundPanel(binding);
     }
     if (openTarget.kind === "tab") {
-      return addBoundPanel(binding);
+      return addBoundPanel(binding, createPanelId(), {
+        kind: "tab",
+        groupId: openTarget.groupId,
+        index: openTarget.index,
+      });
     }
     const basePaneId = getFallbackPanelId();
     if (!basePaneId) {
       return addBoundPanel(binding);
     }
     const before = new Set(paneLayout.panels.map((pane) => pane.panelId));
-    const direction =
+    const placement: DockviewPanelPlacementState =
       openTarget.kind === "new-panel"
-        ? openTarget.direction
+        ? {
+            kind: "split",
+            referencePanelId: basePaneId,
+            direction: openTarget.direction,
+            size: openTarget.size,
+          }
         : openTarget.kind === "edge"
-          ? openTarget.direction
-          : "right";
-    const size = "size" in openTarget ? openTarget.size : undefined;
-    const nextPanelId = addBoundPanel(binding, createPanelId(), {
-      referencePanelId: basePaneId,
-      direction,
-      size,
-    });
+          ? {
+              kind: "edge",
+              direction: openTarget.direction,
+              size: openTarget.size,
+            }
+          : openTarget.kind === "floating"
+            ? { kind: "floating", box: openTarget.box }
+            : { kind: "popout", box: openTarget.box };
+    const nextPanelId = addBoundPanel(binding, createPanelId(), placement);
     return paneLayout.panels.find((pane) => !before.has(pane.panelId))?.panelId ?? nextPanelId;
   };
 
@@ -1847,6 +1893,8 @@ export async function createChatRuntime(
   ]);
   sessions = initialCatalog.sessions;
   sessionNavigation = initialCatalog.navigation;
+  requestUserInputRequests = initialCatalog.requestUserInputRequests;
+  runtimeApprovalRequests = initialCatalog.runtimeApprovalRequests;
   appLogSummary = initialAppLogSummary;
 
   const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
@@ -1947,11 +1995,34 @@ export async function createChatRuntime(
         restoredPaneIds.push(paneState.panelId);
       } catch (error) {
         console.error("Failed to restore workspace pane:", error);
-        paneLayout = closePane(paneLayout, paneState.panelId);
+        paneLayout = markDockviewPanelUnavailable(
+          paneLayout,
+          paneState.panelId,
+          formatUnavailableSurfaceReason(error),
+        );
       }
     }
     if (restoredPaneIds.length === 0 && paneLayout.panels.every((paneState) => paneState.binding)) {
       paneLayout = createEmptyPaneLayout();
+    }
+  };
+
+  const initializeUserWorkspaceFallbackPane = async (): Promise<void> => {
+    try {
+      const initialSession = sessions[0] ?? null;
+      const snapshot = initialSession
+        ? await rpcClient.request.openSession(scoped({ sessionId: initialSession.id }))
+        : await rpcClient.request.createSession(scoped({}));
+      const target = normalizePromptTarget(snapshot.target);
+      paneLayout = addDockviewPanel(createEmptyPaneLayout(), target, PRIMARY_CHAT_PANE_ID);
+      await bindPaneToSnapshot(PRIMARY_CHAT_PANE_ID, { ...snapshot, target });
+      if (!initialSession) {
+        await refreshSessions();
+      }
+    } catch (error) {
+      console.error("Failed to initialize workspace surface:", error);
+      paneLayout = createEmptyPaneLayout();
+      emit();
     }
   };
 
@@ -2003,9 +2074,24 @@ export async function createChatRuntime(
     persistWorkspaceUiRestore();
     emit();
   } else {
-    paneLayout = createEmptyPaneLayout();
-    emit();
+    await initializeUserWorkspaceFallbackPane();
   }
+
+  const openStaticWorkspacePane = (
+    target: WorkspacePaneSurfaceTarget,
+    openTarget?: PaneOpenTarget | string,
+  ): void => {
+    const nextPaneId = resolveOpenTarget({ ...target }, openTarget);
+    const previousTarget =
+      paneLayout.panels.find((pane) => pane.panelId === nextPaneId)?.binding ?? null;
+    if (isPromptTarget(previousTarget)) {
+      surfaceControllers.get(previousTarget.surfacePiSessionId)?.detachPane(nextPaneId);
+    }
+    paneLayout = bindPane(paneLayout, nextPaneId, { ...target });
+    persistWorkspaceUiRestore();
+    emit();
+    recordFocusedSession();
+  };
 
   const workspaceSyncListener = (payload: WorkspaceSyncMessage) => {
     if (payload.workspaceId !== workspaceInfo.workspaceId) {
@@ -2013,6 +2099,16 @@ export async function createChatRuntime(
     }
     sessions = payload.sessions;
     sessionNavigation = payload.navigation;
+    requestUserInputRequests = payload.requestUserInputRequests;
+    runtimeApprovalRequests = payload.runtimeApprovalRequests;
+    if (payload.reason === "artifact.open" && payload.artifactOpenRequest) {
+      openStaticWorkspacePane({
+        workspaceSessionId: payload.artifactOpenRequest.workspaceSessionId,
+        surface: "artifact",
+        artifactId: payload.artifactOpenRequest.artifactId,
+      });
+      return;
+    }
     emit();
   };
 
@@ -2149,6 +2245,8 @@ export async function createChatRuntime(
         target: pane.binding ? { ...pane.binding } : null,
         scroll: pane.localState.scroll,
         timelineDensity: pane.localState.timelineDensity,
+        chrome: pane.chrome ? { ...pane.chrome } : null,
+        restore: pane.restore ? { ...pane.restore } : null,
       };
     },
     getPaneController: (panelId) => {
@@ -2250,10 +2348,27 @@ export async function createChatRuntime(
     listHandlerThreads,
     getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
-    getWorkflowInspector,
-    streamWorkflowInspector,
-    getProjectCiStatus,
     getArtifactPreview,
+    getRequestUserInputRequests: () => structuredClone(requestUserInputRequests),
+    getRuntimeApprovalRequests: () => structuredClone(runtimeApprovalRequests),
+    answerRequestUserInput: async (request) => {
+      const response = await rpcClient.request.answerRequestUserInput(scoped(request));
+      if (response.snapshot) {
+        upsertSurfaceController(response.snapshot);
+      }
+      await refreshSessions();
+    },
+    setRequestUserInputTimerPaused: async (request) => {
+      await rpcClient.request.setRequestUserInputTimerPaused(scoped(request));
+      await refreshSessions();
+    },
+    answerRuntimeApprovalRequest: async (request) => {
+      const response = await rpcClient.request.answerRuntimeApprovalRequest(scoped(request));
+      if (response.snapshot) {
+        upsertSurfaceController(response.snapshot);
+      }
+      await refreshSessions();
+    },
     getAppLogs: (query) => rpcClient.request.getAppLogs(scoped(query ?? {})),
     getAppLogSummary: async () => {
       appLogSummary = await rpcClient.request.getAppLogSummary(scoped());
@@ -2319,27 +2434,18 @@ export async function createChatRuntime(
     },
     openSurface: async (target, openTarget) => {
       if (
-        target.surface === "workflow-inspector" ||
         target.surface === "command" ||
         target.surface === "workflow-task-attempt" ||
         target.surface === "artifact" ||
-        target.surface === "project-ci-check" ||
-        target.surface === "saved-workflow-library" ||
+        target.surface === "workflows" ||
         target.surface === "agents" ||
-        target.surface === "prompt-library" ||
+        target.surface === "extensions" ||
+        target.surface === "snippets" ||
+        target.surface === "settings" ||
         target.surface === "app-logs" ||
         target.surface === "open-workspace"
       ) {
-        const nextPaneId = resolveOpenTarget({ ...target }, openTarget);
-        const previousTarget =
-          paneLayout.panels.find((pane) => pane.panelId === nextPaneId)?.binding ?? null;
-        if (isPromptTarget(previousTarget)) {
-          surfaceControllers.get(previousTarget.surfacePiSessionId)?.detachPane(nextPaneId);
-        }
-        paneLayout = bindPane(paneLayout, nextPaneId, { ...target });
-        persistWorkspaceUiRestore();
-        emit();
-        recordFocusedSession();
+        openStaticWorkspacePane(target, openTarget);
         return;
       }
       const normalizedTarget = normalizePromptTarget(target);
@@ -2492,16 +2598,15 @@ export async function createChatRuntime(
       if (!text) {
         return;
       }
-      await rpcClient.request.sendPrompt(
-        scoped({
-          messages: [{ role: "user", content: text } as Message],
-          target: normalizePromptTarget(target),
-        }),
-      );
+      const normalizedTarget = normalizePromptTarget(target);
+      const controller = surfaceControllers.get(normalizedTarget.surfacePiSessionId);
+      if (!controller) {
+        throw new Error("Expected an active prompt surface before sending a prompt.");
+      }
+      await controller.sendPrompt({ text, attachments: [] });
     },
     syncProviderAuth,
     requireProviderAccess,
-    listConfiguredProviders,
     listOpenWorkspaces: () => rpcClient.request.getOpenWorkspaces(),
     listWorkspaceBranches: async () => {
       const result = await rpcClient.request.listWorkspaceBranches(scoped());
@@ -2536,39 +2641,75 @@ export async function createChatRuntime(
       const result = await rpcClient.request.openWorkspacePath(scoped({ workspaceRelativePath }));
       return result.opened;
     },
-    getSavedWorkflowLibrary: () => rpcClient.request.getSavedWorkflowLibrary(scoped()),
-    deleteSavedWorkflowLibraryItem: (path) =>
-      rpcClient.request.deleteSavedWorkflowLibraryItem(scoped({ path })),
+    getWorkflowsGenerated: () => rpcClient.request.getWorkflowsGenerated(scoped()),
     openWorkspaceSourceInEditor: async (path) => {
       const result = await rpcClient.request.openWorkspaceSourceInEditor(scoped({ path }));
       return result.opened;
     },
-    openPromptLibraryExternalSourceInEditor: async (path) => {
-      const result = await rpcClient.request.openPromptLibraryExternalSourceInEditor(
+    openGeneratedAgentContextExternalSourceInEditor: async (path) => {
+      const result = await rpcClient.request.openGeneratedAgentContextExternalSourceInEditor(
         scoped({ path }),
       );
       return result.opened;
     },
     getAgentSettings: () => rpcClient.request.getAgentSettings(scoped()),
+    getAgentContextPreview: (request = {}) =>
+      rpcClient.request.getAgentContextPreview(scoped(request)),
+    getAgentModelChoices: () => rpcClient.request.getAgentModelChoices(scoped()),
+    getExtensionsInventory: () => rpcClient.request.getExtensionsInventory(scoped()),
+    getAppPreferences: () => rpcClient.request.getAppPreferences(),
+    updateAppPreferences: async (preferences) => {
+      const state = await rpcClient.request.updateAppPreferences(preferences);
+      return state.appPreferences;
+    },
+    revertExtensionChange: (changeId) =>
+      rpcClient.request.revertExtensionChange(
+        scoped({
+          changeId,
+          ...(getFocusedPromptTarget() ? { owningSurface: getFocusedPromptTarget()! } : {}),
+        }),
+      ),
+    setExtensionEnvSecret: (input) => rpcClient.request.setExtensionEnvSecret(scoped(input)),
+    removeExtensionEnvSecret: (input) => rpcClient.request.removeExtensionEnvSecret(scoped(input)),
+    setExtensionEnvOverride: (input) => rpcClient.request.setExtensionEnvOverride(scoped(input)),
+    removeExtensionEnvOverride: (input) =>
+      rpcClient.request.removeExtensionEnvOverride(scoped(input)),
     updateAgentProfile: (profile) => rpcClient.request.updateAgentProfile(scoped({ profile })),
     deleteAgentProfile: (id) => rpcClient.request.deleteAgentProfile(scoped({ id })),
     reorderOrchestratorAgents: (ids) =>
       rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
-    getPromptLibrary: () => rpcClient.request.getPromptLibrary(scoped()),
-    getPromptLibraryDefaults: () => rpcClient.request.getPromptLibraryDefaults(scoped()),
-    getPromptLibraryGeneratedEntries: () =>
-      rpcClient.request.getPromptLibraryGeneratedEntries(scoped()),
-    getPromptLibraryExternalSources: () =>
-      rpcClient.request.getPromptLibraryExternalSources(scoped()),
-    updatePromptLibrary: (request) => rpcClient.request.updatePromptLibrary(scoped(request)),
-    resetPromptLibrary: () => rpcClient.request.resetPromptLibrary(scoped()),
-    listPromptLibrarySnapshots: () => rpcClient.request.listPromptLibrarySnapshots(scoped()),
-    createPromptLibrarySnapshot: (name) =>
-      rpcClient.request.createPromptLibrarySnapshot(scoped({ name })),
-    renamePromptLibrarySnapshot: (snapshotId, name) =>
-      rpcClient.request.renamePromptLibrarySnapshot(scoped({ snapshotId, name })),
-    restorePromptLibrarySnapshot: (snapshotId) =>
-      rpcClient.request.restorePromptLibrarySnapshot(scoped({ snapshotId })),
+    updateWorkflowAgent: (key, settings) =>
+      rpcClient.request.updateWorkflowAgent(scoped({ key, settings })),
+    updateRequestUserInputSettings: (settings) =>
+      rpcClient.request.updateRequestUserInputSettings(scoped(settings)),
+    getGeneratedAgentContext: () => rpcClient.request.getGeneratedAgentContext(scoped()),
+    getGeneratedAgentContextDefaults: () =>
+      rpcClient.request.getGeneratedAgentContextDefaults(scoped()),
+    getGeneratedAgentContextEntries: () =>
+      rpcClient.request.getGeneratedAgentContextEntries(scoped()),
+    getGeneratedAgentContextExternalSources: () =>
+      rpcClient.request.getGeneratedAgentContextExternalSources(scoped()),
+    updateGeneratedAgentContext: (request) =>
+      rpcClient.request.updateGeneratedAgentContext(scoped(request)),
+    resetGeneratedAgentContext: () => rpcClient.request.resetGeneratedAgentContext(scoped()),
+    listGeneratedAgentContextSnapshots: () =>
+      rpcClient.request.listGeneratedAgentContextSnapshots(scoped()),
+    createGeneratedAgentContextSnapshot: (name) =>
+      rpcClient.request.createGeneratedAgentContextSnapshot(scoped({ name })),
+    renameGeneratedAgentContextSnapshot: (snapshotId, name) =>
+      rpcClient.request.renameGeneratedAgentContextSnapshot(scoped({ snapshotId, name })),
+    restoreGeneratedAgentContextSnapshot: (snapshotId) =>
+      rpcClient.request.restoreGeneratedAgentContextSnapshot(scoped({ snapshotId })),
+    getSnippets: () => rpcClient.request.getSnippets(scoped()),
+    createManagedSnippet: (input) => rpcClient.request.createManagedSnippet(scoped(input)),
+    updateManagedSnippet: (input) => rpcClient.request.updateManagedSnippet(scoped(input)),
+    deleteManagedSnippet: async (snippetId) => {
+      await rpcClient.request.deleteManagedSnippet(scoped({ snippetId }));
+    },
+    openSnippetExternalSourceInEditor: async (path) => {
+      const result = await rpcClient.request.openSnippetExternalSourceInEditor(scoped({ path }));
+      return result.opened;
+    },
   };
 
   return runtime;

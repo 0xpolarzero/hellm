@@ -3,12 +3,12 @@ import type {
   PromptTarget,
   WorkspacePaneSurfaceTarget,
   WorkspaceHandlerThreadSummary,
-  WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
   WorkspaceKind,
   WorkspaceWorkflowTaskAttemptSummary,
 } from "../shared/workspace-contract";
 import type { ChatRuntime } from "./chat-runtime";
+import type { DockviewTabGroupPlacementTarget } from "./pane-layout";
 import { getShortcutReadable } from "../shared/shortcut-registry";
 
 export type CommandPaletteMode = "commands" | "search";
@@ -19,10 +19,8 @@ export type CommandActionCategory =
   | "workspace"
   | "session"
   | "surface"
-  | "project-ci"
   | "handler-thread"
-  | "workflow-inspector"
-  | "workflow-library"
+  | "workflows"
   | "pane"
   | "settings"
   | "agents";
@@ -33,6 +31,21 @@ export type CommandAvailability =
   | { kind: "hidden" };
 
 export type CommandPlacement = "new-panel" | "focused-panel";
+type PanePlacementAction =
+  | "duplicate-right"
+  | "duplicate-below"
+  | "place-left"
+  | "place-right"
+  | "place-above"
+  | "place-below"
+  | "place-edge-left"
+  | "place-edge-right"
+  | "place-edge-top"
+  | "place-edge-bottom"
+  | "place-floating"
+  | "place-popout"
+  | "place-tab"
+  | "close";
 
 export type CommandExecutionTarget =
   | { kind: "create-session"; agentProfileId?: string; initialPrompt?: string }
@@ -48,14 +61,18 @@ export type CommandExecutionTarget =
       action: "pin" | "unpin" | "archive" | "unarchive";
     }
   | { kind: "open-surface"; surface: PromptTarget }
-  | { kind: "open-saved-workflow-library" }
-  | { kind: "open-agents" }
+  | { kind: "open-workflows" }
+  | { kind: "open-agents"; view?: "profiles" | "generated-context-preview" }
+  | { kind: "open-extensions"; view?: "inventory" | "generated-context-preview" }
+  | { kind: "open-snippets" }
+  | { kind: "open-app-logs" }
   | { kind: "start-orchestrator-turn"; workspaceSessionId: string; prompt: string }
-  | { kind: "open-settings"; target: string }
+  | { kind: "open-settings" }
   | { kind: "workspace-action"; action: "open" | "new-tab" | "open-in-new-tab" }
   | {
       kind: "pane-action";
-      action: "duplicate-right" | "duplicate-below" | "close";
+      action: PanePlacementAction;
+      groupId?: string;
     };
 
 export type CommandAction = {
@@ -85,10 +102,11 @@ export type CommandRegistryInput = {
   sessions: WorkspaceSessionSummary[];
   workspaceKind?: WorkspaceKind;
   focusedSessionId?: string;
+  focusedPaneExists?: boolean;
   focusedSurfaceTarget?: PromptTarget | null;
+  paneTabGroups?: DockviewTabGroupPlacementTarget[];
   orchestratorProfiles?: AgentProfileSettings[];
   handlerThreads?: WorkspaceHandlerThreadSummary[];
-  projectCiStatus?: WorkspaceProjectCiStatusPanel | null;
 };
 
 export type CommandRuntime = Pick<
@@ -122,10 +140,8 @@ const COMMAND_ACTION_CATEGORY_LABELS: Record<CommandActionCategory, string> = {
   workspace: "Workspace",
   session: "Sessions",
   surface: "Surfaces",
-  "project-ci": "Project CI",
   "handler-thread": "Handler Threads",
-  "workflow-inspector": "Workflow Inspectors",
-  "workflow-library": "Workflows",
+  workflows: "Workflows",
   pane: "Panes",
   settings: "Settings",
   agents: "Agents",
@@ -136,10 +152,8 @@ const COMMAND_ACTION_CATEGORY_ORDER: CommandActionCategory[] = [
   "session",
   "handler-thread",
   "surface",
-  "workflow-inspector",
-  "workflow-library",
+  "workflows",
   "agents",
-  "project-ci",
   "pane",
   "settings",
 ];
@@ -185,28 +199,9 @@ export function getCommandExecutionPaneId(input: {
 }
 
 export function buildCommandRegistry(input: CommandRegistryInput): CommandAction[] {
-  const focusedSession = input.focusedSessionId
-    ? input.sessions.find((session) => session.id === input.focusedSessionId)
-    : null;
-  const hasFocusedSession = !!focusedSession;
-  const projectCiAvailability =
-    input.workspaceKind === "default"
-      ? {
-          kind: "disabled" as const,
-          reason: "Open a repository workspace before running Project CI.",
-        }
-      : hasFocusedSession
-        ? { kind: "available" as const }
-        : { kind: "disabled" as const, reason: "Open a session before running Project CI." };
-  const projectCiConfigureAvailability =
-    input.workspaceKind === "default"
-      ? {
-          kind: "disabled" as const,
-          reason: "Open a repository workspace before configuring Project CI.",
-        }
-      : hasFocusedSession
-        ? { kind: "available" as const }
-        : { kind: "disabled" as const, reason: "Open a session before configuring Project CI." };
+  const duplicatePaneAvailability = getPaneCommandAvailability(input, "duplicate");
+  const placementPaneAvailability = getPaneCommandAvailability(input, "placement");
+  const closePaneAvailability = getPaneCommandAvailability(input, "close");
   const actions: CommandAction[] = [
     {
       id: "workspace.open",
@@ -251,16 +246,58 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       aliases: ["providers", "api keys", "preferences"],
       shortcut: null,
       availability: { kind: "available" },
-      execute: { kind: "open-settings", target: "root" },
+      execute: { kind: "open-settings" },
     },
     {
-      id: "workflow-library.open",
+      id: "workflows.open",
       label: "Open Workflows",
-      category: "workflow-library",
-      aliases: ["saved workflows", "workflow assets", "workflow entries", "workflow library"],
+      category: "workflows",
+      aliases: ["generated workflows", "workflow exports", "@svvy/workflows", "workflow library"],
       shortcut: null,
       availability: { kind: "available" },
-      execute: { kind: "open-saved-workflow-library" },
+      execute: { kind: "open-workflows" },
+    },
+    {
+      id: "extensions.open",
+      label: "Open Extensions",
+      category: "surface",
+      aliases: ["extension inventory", "loaded extensions", "available extensions"],
+      shortcut: getShortcutReadable("surface.extensions.open"),
+      availability: { kind: "available" },
+      execute: { kind: "open-extensions" },
+    },
+    {
+      id: "extensions.generatedContextPreview",
+      label: "Open Generated Context Preview",
+      category: "surface",
+      aliases: [
+        "agent context",
+        "generated agent context",
+        "context preview",
+        "system prompt preview",
+        "extension preview",
+      ],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "open-extensions", view: "generated-context-preview" },
+    },
+    {
+      id: "snippets.open",
+      label: "Open Snippets",
+      category: "surface",
+      aliases: ["prompt macros", "snippet library", "claude commands", "pi prompts"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "open-snippets" },
+    },
+    {
+      id: "surface.logs.open",
+      label: "Open Logs",
+      category: "surface",
+      aliases: ["app logs", "runtime logs", "log pane"],
+      shortcut: getShortcutReadable("surface.logs.open"),
+      availability: { kind: "available" },
+      execute: { kind: "open-app-logs" },
     },
     {
       id: "agents.open",
@@ -278,7 +315,7 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       category: "pane",
       aliases: ["duplicate current pane", "clone pane right"],
       shortcut: null,
-      availability: { kind: "available" },
+      availability: duplicatePaneAvailability,
       execute: { kind: "pane-action", action: "duplicate-right" },
     },
     {
@@ -287,45 +324,108 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       category: "pane",
       aliases: ["duplicate current pane below", "clone pane below"],
       shortcut: null,
-      availability: { kind: "available" },
+      availability: duplicatePaneAvailability,
       execute: { kind: "pane-action", action: "duplicate-below" },
     },
+    {
+      id: "pane.place-left",
+      label: "Open Pane Left",
+      category: "pane",
+      aliases: ["split current pane left", "place pane left"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-left" },
+    },
+    {
+      id: "pane.place-right",
+      label: "Open Pane Right",
+      category: "pane",
+      aliases: ["split current pane right", "place pane right"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-right" },
+    },
+    {
+      id: "pane.place-above",
+      label: "Open Pane Above",
+      category: "pane",
+      aliases: ["split current pane above", "place pane above"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-above" },
+    },
+    {
+      id: "pane.place-below",
+      label: "Open Pane Below",
+      category: "pane",
+      aliases: ["split current pane below", "place pane below"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-below" },
+    },
+    {
+      id: "pane.place-edge-left",
+      label: "Open Pane in Left Edge",
+      category: "pane",
+      aliases: ["root edge left", "edge group left", "dock pane left edge"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-edge-left" },
+    },
+    {
+      id: "pane.place-edge-right",
+      label: "Open Pane in Right Edge",
+      category: "pane",
+      aliases: ["root edge right", "edge group right", "dock pane right edge"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-edge-right" },
+    },
+    {
+      id: "pane.place-edge-top",
+      label: "Open Pane in Top Edge",
+      category: "pane",
+      aliases: ["root edge top", "edge group top", "dock pane top edge"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-edge-top" },
+    },
+    {
+      id: "pane.place-edge-bottom",
+      label: "Open Pane in Bottom Edge",
+      category: "pane",
+      aliases: ["root edge bottom", "edge group bottom", "dock pane bottom edge"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-edge-bottom" },
+    },
+    {
+      id: "pane.place-floating",
+      label: "Open Pane Floating",
+      category: "pane",
+      aliases: ["floating pane", "floating group", "detach pane"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-floating" },
+    },
+    {
+      id: "pane.place-popout",
+      label: "Open Pane Popout",
+      category: "pane",
+      aliases: ["popout pane", "external window", "pop out pane"],
+      shortcut: null,
+      availability: placementPaneAvailability,
+      execute: { kind: "pane-action", action: "place-popout" },
+    },
+    ...buildPaneTabGroupActions(input.paneTabGroups ?? [], placementPaneAvailability),
     {
       id: "pane.close",
       label: "Close Pane",
       category: "pane",
       aliases: ["remove pane", "detach pane"],
       shortcut: null,
-      availability: { kind: "available" },
+      availability: closePaneAvailability,
       execute: { kind: "pane-action", action: "close" },
-    },
-    {
-      id: "project-ci.run",
-      label: "Run Project CI",
-      category: "project-ci",
-      aliases: ["ci", "checks", "test project"],
-      shortcut: null,
-      availability: projectCiAvailability,
-      execute: {
-        kind: "start-orchestrator-turn",
-        workspaceSessionId: input.focusedSessionId ?? "",
-        prompt: "Run Project CI for this workspace.",
-      },
-      targetName: input.projectCiStatus ? input.projectCiStatus.summary : undefined,
-    },
-    {
-      id: "project-ci.configure",
-      label: "Configure Project CI",
-      category: "project-ci",
-      aliases: ["setup ci", "edit project ci", "ci configuration"],
-      shortcut: null,
-      availability: projectCiConfigureAvailability,
-      execute: {
-        kind: "start-orchestrator-turn",
-        workspaceSessionId: input.focusedSessionId ?? "",
-        prompt: "Configure Project CI for this workspace.",
-      },
-      targetName: input.projectCiStatus ? input.projectCiStatus.summary : undefined,
     },
   ];
 
@@ -413,6 +513,45 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
   }
 
   return actions;
+}
+
+function buildPaneTabGroupActions(
+  tabGroups: readonly DockviewTabGroupPlacementTarget[],
+  availability: CommandAvailability,
+): CommandAction[] {
+  return tabGroups.map((group) => ({
+    id: `pane.place-tab.${group.groupId}`,
+    label: `Open Pane in ${group.label}`,
+    category: "pane",
+    aliases: [
+      "tab placement",
+      "tab group placement",
+      "open pane as tab",
+      group.groupId,
+      ...group.panelIds,
+    ],
+    shortcut: null,
+    availability,
+    execute: { kind: "pane-action", action: "place-tab", groupId: group.groupId },
+    targetName: group.panelIds.join(", "),
+  }));
+}
+
+function getPaneCommandAvailability(
+  input: CommandRegistryInput,
+  command: "duplicate" | "placement" | "close",
+): CommandAvailability {
+  const hasFocusedPane = input.focusedPaneExists ?? input.focusedSurfaceTarget != null;
+  if (!hasFocusedPane) {
+    return { kind: "disabled", reason: "Focus a pane before using pane placement commands." };
+  }
+  if (command === "close") {
+    return { kind: "available" };
+  }
+  if (!input.focusedSurfaceTarget) {
+    return { kind: "disabled", reason: "The focused pane has no surface to place." };
+  }
+  return { kind: "available" };
 }
 
 function buildProfileNewOrchestratorActions(
@@ -565,8 +704,11 @@ export function getCommandActionShortcutHints(action: CommandAction): string[] {
     case "create-session":
     case "open-session":
     case "open-surface":
-    case "open-saved-workflow-library":
+    case "open-workflows":
     case "open-agents":
+    case "open-extensions":
+    case "open-app-logs":
+    case "open-settings":
     case "start-orchestrator-turn":
       return action.shortcut
         ? [
@@ -596,8 +738,11 @@ export function getCommandActionPlacementHints(
     case "create-session":
     case "open-session":
     case "open-surface":
-    case "open-saved-workflow-library":
+    case "open-workflows":
     case "open-agents":
+    case "open-extensions":
+    case "open-app-logs":
+    case "open-settings":
     case "start-orchestrator-turn":
       return [
         { shortcut: getShortcutReadable("commandPalette.submit"), label: "New pane" },
@@ -615,7 +760,6 @@ export async function executeCommandAction(input: {
   runtime: CommandRuntime;
   action: CommandAction;
   paneId: string;
-  onOpenSettings?: (target: string) => void;
   onWorkspaceAction?: (action: "open" | "new-tab" | "open-in-new-tab") => Promise<void> | void;
   onOpenWorkflowTaskAttempt?: (input: {
     workspaceSessionId: string;
@@ -656,18 +800,27 @@ export async function executeCommandAction(input: {
     case "open-surface":
       await runtime.openSurface(target.surface, paneId);
       return;
-    case "open-saved-workflow-library":
-      await runtime.openSurface({ surface: "saved-workflow-library" }, paneId);
+    case "open-workflows":
+      await runtime.openSurface({ surface: "workflows" }, paneId);
       return;
     case "open-agents":
-      await runtime.openSurface({ surface: "agents" }, paneId);
+      await runtime.openSurface({ surface: "agents", view: target.view }, paneId);
+      return;
+    case "open-extensions":
+      await runtime.openSurface({ surface: "extensions", view: target.view }, paneId);
+      return;
+    case "open-snippets":
+      await runtime.openSurface({ surface: "snippets" }, paneId);
+      return;
+    case "open-app-logs":
+      await runtime.openSurface({ surface: "app-logs" }, paneId);
       return;
     case "start-orchestrator-turn":
       await runtime.openSession(target.workspaceSessionId, paneId);
       await executeInitialPrompt({ runtime, paneId, prompt: target.prompt });
       return;
     case "open-settings":
-      input.onOpenSettings?.(target.target);
+      await runtime.openSurface({ surface: "settings" }, paneId);
       return;
     case "workspace-action":
       await input.onWorkspaceAction?.(target.action);
@@ -676,12 +829,88 @@ export async function executeCommandAction(input: {
       if (target.action === "duplicate-right") {
         const nextPanelId = await runtime.splitPane(paneId, "right", { duplicateBinding: true });
         if (nextPanelId) runtime.focusPane(nextPanelId);
+        return;
       }
       if (target.action === "duplicate-below") {
         const nextPanelId = await runtime.splitPane(paneId, "below", { duplicateBinding: true });
         if (nextPanelId) runtime.focusPane(nextPanelId);
+        return;
       }
-      if (target.action === "close") await runtime.closePane(paneId);
+      if (target.action === "close") {
+        await runtime.closePane(paneId);
+        return;
+      }
+      await executePanePlacementAction({
+        runtime,
+        paneId,
+        action: target.action,
+        groupId: target.groupId,
+      });
+      return;
+  }
+}
+
+async function executePanePlacementAction(input: {
+  runtime: CommandRuntime;
+  paneId: string;
+  action: Exclude<PanePlacementAction, "duplicate-right" | "duplicate-below" | "close">;
+  groupId?: string;
+}): Promise<void> {
+  const target = input.runtime.getPane(input.paneId)?.target ?? null;
+  if (!target) {
+    return;
+  }
+
+  switch (input.action) {
+    case "place-left":
+      await input.runtime.openSurface(target, {
+        kind: "split",
+        panelId: input.paneId,
+        direction: "left",
+      });
+      return;
+    case "place-right":
+      await input.runtime.openSurface(target, {
+        kind: "split",
+        panelId: input.paneId,
+        direction: "right",
+      });
+      return;
+    case "place-above":
+      await input.runtime.openSurface(target, {
+        kind: "split",
+        panelId: input.paneId,
+        direction: "above",
+      });
+      return;
+    case "place-below":
+      await input.runtime.openSurface(target, {
+        kind: "split",
+        panelId: input.paneId,
+        direction: "below",
+      });
+      return;
+    case "place-edge-left":
+      await input.runtime.openSurface(target, { kind: "edge", direction: "left" });
+      return;
+    case "place-edge-right":
+      await input.runtime.openSurface(target, { kind: "edge", direction: "right" });
+      return;
+    case "place-edge-top":
+      await input.runtime.openSurface(target, { kind: "edge", direction: "above" });
+      return;
+    case "place-edge-bottom":
+      await input.runtime.openSurface(target, { kind: "edge", direction: "below" });
+      return;
+    case "place-floating":
+      await input.runtime.openSurface(target, { kind: "floating" });
+      return;
+    case "place-popout":
+      await input.runtime.openSurface(target, { kind: "popout" });
+      return;
+    case "place-tab":
+      if (!input.groupId) return;
+      await input.runtime.openSurface(target, { kind: "tab", groupId: input.groupId });
       return;
   }
 }

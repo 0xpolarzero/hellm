@@ -10,13 +10,17 @@ import {
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
   type PromptTarget,
+  type RequestUserInputAnswerRequest,
   type SendPromptRequest,
+  type SetRequestUserInputTimerPausedRequest,
   type SurfaceSyncMessage,
   type WorkspaceCommandInspector,
   type WorkspaceHandlerThreadInspector,
   type WorkspaceHandlerThreadSummary,
-  type WorkspaceProjectCiStatusPanel,
+  type WorkspaceRuntimeApprovalRequest,
+  type WorkspaceRequestUserInputRequest,
   type WorkspaceSessionSummary,
+  type WorkspaceScoped,
   type WorkspaceSyncMessage,
   type WorkspaceWorkflowTaskAttemptInspector,
   type WorkspaceTabInfo,
@@ -24,12 +28,16 @@ import {
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
 import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane-layout";
-import { getPromptLibraryContentKey, type PromptLibraryState } from "../shared/prompt-library";
+import {
+  getGeneratedAgentContextContentKey,
+  type GeneratedAgentContextState,
+} from "../shared/generated-agent-context";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
 } from "../shared/agent-settings";
 import { buildWorkspaceSessionNavigation } from "./session-state";
+import { executePaletteFallbackPrompt } from "./command-palette";
 
 mock.module("electrobun/view", () => {
   const MockElectroview = Object.assign(
@@ -106,10 +114,16 @@ type FakeRpcHarness = {
     sessionId: string;
     workflowTaskAttemptId: string;
   }>;
-  projectCiStatusRequests: string[];
+  requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>>;
+  runtimeApprovalAnswerRequests: Array<WorkspaceScoped<{ requestId: string; approved: boolean }>>;
+  requestUserInputTimerRequests: Array<WorkspaceScoped<SetRequestUserInputTimerPausedRequest>>;
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
-  emitWorkspaceSync: (reason?: WorkspaceSyncMessage["reason"], workspaceId?: string) => void;
+  emitWorkspaceSync: (
+    reason?: WorkspaceSyncMessage["reason"],
+    workspaceId?: string,
+    extra?: Pick<WorkspaceSyncMessage, "artifactOpenRequest">,
+  ) => void;
   emitSurfaceSync: (
     payload: Omit<SurfaceSyncMessage, "workspaceId"> & { workspaceId?: string },
   ) => void;
@@ -246,8 +260,6 @@ function createSummary(
       threads: 0,
       commands: 0,
       episodes: 0,
-      ciRuns: 0,
-      ciChecks: 0,
       workflows: 0,
       artifacts: 0,
       events: 0,
@@ -328,13 +340,16 @@ function createCommandInspector(
     updatedAt: "2026-04-10T10:05:00.000Z",
     finishedAt: "2026-04-10T10:05:00.000Z",
     artifacts: [],
+    outputEvents: [],
+    patchSnapshots: [],
+    diagnostics: [],
     childCount: 1,
     summaryChildCount: 1,
     traceChildCount: 0,
     summaryChildren: [
       {
         commandId: "command-summary-1",
-        toolName: "artifact_write_text",
+        toolName: "exec_command",
         visibility: "summary",
         status: "succeeded",
         title: "Create summary.md",
@@ -347,6 +362,9 @@ function createCommandInspector(
         updatedAt: "2026-04-10T10:02:00.000Z",
         finishedAt: "2026-04-10T10:02:00.000Z",
         artifacts: [],
+        outputEvents: [],
+        patchSnapshots: [],
+        diagnostics: [],
       },
     ],
     traceChildren: [],
@@ -368,28 +386,19 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 1,
-    ciRunCount: 1,
     loadedContextKeys: ["ci"],
     latestWorkflowRun: {
       workflowRunId: "workflow-1",
-      workflowName: "project_ci",
+      workflowName: "parser_regression",
       status: "completed",
-      summary: "Project CI workflow completed.",
+      summary: "Parser workflow completed.",
       updatedAt: "2026-04-10T10:04:30.000Z",
       artifacts: [],
-    },
-    latestCiRun: {
-      ciRunId: "ci-run-1",
-      workflowRunId: "workflow-1",
-      workflowId: "project_ci",
-      status: "passed",
-      summary: "Project CI passed.",
-      updatedAt: "2026-04-10T10:04:30.000Z",
     },
     latestEpisode: {
       episodeId: "episode-1",
       kind: "change",
-      title: "Latest handoff",
+      title: "Latest report",
       summary: "Patched the parser transitions and added regression coverage.",
       createdAt: "2026-04-10T10:04:00.000Z",
     },
@@ -403,9 +412,9 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
     workflowRuns: [
       {
         workflowRunId: "workflow-1",
-        workflowName: "project_ci",
+        workflowName: "parser_regression",
         status: "completed",
-        summary: "Project CI workflow completed.",
+        summary: "Parser workflow completed.",
         updatedAt: "2026-04-10T10:04:30.000Z",
         artifacts: [],
       },
@@ -433,70 +442,12 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
       {
         episodeId: "episode-1",
         kind: "change",
-        title: "Latest handoff",
+        title: "Latest report",
         summary: "Patched the parser transitions and added regression coverage.",
         createdAt: "2026-04-10T10:04:00.000Z",
       },
     ],
     artifacts: [],
-  };
-}
-
-function createProjectCiStatusPanel(): WorkspaceProjectCiStatusPanel {
-  return {
-    status: "passed",
-    summary: "Project CI passed.",
-    entries: [
-      {
-        workflowId: "project_ci",
-        label: "Project CI",
-        summary: "Runs Project CI checks.",
-        sourceScope: "saved",
-        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      },
-    ],
-    activeWorkflowRun: null,
-    latestRun: {
-      ciRunId: "ci-run-1",
-      workflowRunId: "workflow-1",
-      workflowId: "project_ci",
-      status: "passed",
-      summary: "Project CI passed.",
-      updatedAt: "2026-04-10T10:04:30.000Z",
-      threadId: "thread-1",
-      threadTitle: "Parser fix thread",
-      smithersRunId: "smithers-run-1",
-      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-      startedAt: "2026-04-10T10:03:30.000Z",
-      finishedAt: "2026-04-10T10:04:30.000Z",
-    },
-    checks: [
-      {
-        checkResultId: "ci-check-1",
-        checkId: "typecheck",
-        label: "Typecheck",
-        kind: "typecheck",
-        status: "passed",
-        required: true,
-        command: ["bun", "run", "typecheck"],
-        exitCode: 0,
-        summary: "Typecheck passed.",
-        artifactIds: [],
-        artifacts: [],
-        startedAt: "2026-04-10T10:03:30.000Z",
-        finishedAt: "2026-04-10T10:04:30.000Z",
-        updatedAt: "2026-04-10T10:04:30.000Z",
-      },
-    ],
-    checkCounts: {
-      passed: 1,
-      failed: 0,
-      cancelled: 0,
-      skipped: 0,
-      blocked: 0,
-      total: 1,
-    },
-    updatedAt: "2026-04-10T10:04:30.000Z",
   };
 }
 
@@ -532,6 +483,8 @@ function createWorkflowTaskAttemptInspector(
     agentModel: "gpt-4o",
     agentEngine: "pi",
     agentResume: "/tmp/task-agent-session.json",
+    generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+    generatedAgentContextBinding: null,
     meta: null,
     startedAt: "2026-04-10T10:03:00.000Z",
     finishedAt: "2026-04-10T10:03:30.000Z",
@@ -553,6 +506,54 @@ function createWorkflowTaskAttemptInspector(
     ],
     commandRollups: [],
     artifacts: [],
+  };
+}
+
+function createRequestUserInputRequest(
+  overrides: Partial<WorkspaceRequestUserInputRequest> = {},
+): WorkspaceRequestUserInputRequest {
+  return {
+    requestId: "rui-request-1",
+    workspaceSessionId: "session-1",
+    surfacePiSessionId: "session-1",
+    threadId: null,
+    ownerTitle: "Orchestrator",
+    variant: "nonblocking",
+    status: "open",
+    createdAt: "2026-04-10T10:12:00.000Z",
+    completedAt: null,
+    timeout: null,
+    questions: [
+      {
+        questionId: "rui-question-1",
+        ordinal: 0,
+        title: "Pick scope",
+        question: "Which implementation scope should proceed?",
+        defaultAnswer: {
+          kind: "option",
+          label: "Small",
+          text: "Make the smallest useful change.",
+        },
+        choices: [
+          {
+            optionId: "rui-option-1",
+            ordinal: 0,
+            label: "Small",
+            description: "Make the smallest useful change.",
+            recommended: true,
+          },
+          {
+            optionId: "rui-option-2",
+            ordinal: 1,
+            label: "Broad",
+            description: "Take the broader slice.",
+            recommended: false,
+          },
+        ],
+        status: "open",
+      },
+    ],
+    ...structuredClone(overrides),
   };
 }
 
@@ -617,7 +618,8 @@ function createFakeRpc(input: {
   handlerThreads?: WorkspaceHandlerThreadSummary[];
   handlerThreadInspector?: WorkspaceHandlerThreadInspector;
   workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
-  projectCiStatus?: WorkspaceProjectCiStatusPanel;
+  requestUserInputRequests?: WorkspaceRequestUserInputRequest[];
+  runtimeApprovalRequests?: WorkspaceRuntimeApprovalRequest[];
 }): FakeRpcHarness {
   const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
   const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
@@ -648,7 +650,15 @@ function createFakeRpc(input: {
     sessionId: string;
     workflowTaskAttemptId: string;
   }> = [];
-  const projectCiStatusRequests: string[] = [];
+  const requestUserInputRequests = structuredClone(input.requestUserInputRequests ?? []);
+  const runtimeApprovalRequests = structuredClone(input.runtimeApprovalRequests ?? []);
+  const requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>> = [];
+  const runtimeApprovalAnswerRequests: Array<
+    WorkspaceScoped<{ requestId: string; approved: boolean }>
+  > = [];
+  const requestUserInputTimerRequests: Array<
+    WorkspaceScoped<SetRequestUserInputTimerPausedRequest>
+  > = [];
   const appLogSeenRequests: number[] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
@@ -667,6 +677,15 @@ function createFakeRpc(input: {
 
   const listNavigation = () =>
     buildWorkspaceSessionNavigation(listSessions(), archivedGroupCollapsed);
+
+  const listRequestUserInputRequests = (): WorkspaceRequestUserInputRequest[] =>
+    structuredClone(
+      requestUserInputRequests.filter(
+        (request) => request.status === "open" || request.status === "completed",
+      ),
+    );
+  const listRuntimeApprovalRequests = (): WorkspaceRuntimeApprovalRequest[] =>
+    structuredClone(runtimeApprovalRequests.filter((request) => request.status === "pending"));
 
   const getSurfaceRecord = (surfacePiSessionId: string): SurfaceRecord => {
     const record = surfaces.get(surfacePiSessionId) ?? null;
@@ -690,12 +709,16 @@ function createFakeRpc(input: {
   const emitWorkspaceSync = (
     reason: WorkspaceSyncMessage["reason"] = "workspace.updated",
     workspaceId = TEST_WORKSPACE_INFO.workspaceId,
+    extra: Pick<WorkspaceSyncMessage, "artifactOpenRequest"> = {},
   ): void => {
     const payload: WorkspaceSyncMessage = {
       workspaceId,
       reason,
       sessions: listSessions(),
       navigation: listNavigation(),
+      requestUserInputRequests: listRequestUserInputRequests(),
+      runtimeApprovalRequests: listRuntimeApprovalRequests(),
+      ...extra,
     };
     for (const listener of workspaceSyncListeners) {
       listener(structuredClone(payload));
@@ -732,8 +755,9 @@ function createFakeRpc(input: {
     const latestSeq = appLogEntries.at(-1)?.seq ?? 0;
     const totals = {
       total: appLogEntries.length,
+      debug: appLogEntries.filter((entry) => entry.level === "debug").length,
       info: appLogEntries.filter((entry) => entry.level === "info").length,
-      warning: appLogEntries.filter((entry) => entry.level === "warning").length,
+      warn: appLogEntries.filter((entry) => entry.level === "warn").length,
       error: appLogEntries.filter((entry) => entry.level === "error").length,
     };
     const unreadEntries = appLogEntries.filter((entry) => entry.seq > appLogSeenSeq);
@@ -742,8 +766,9 @@ function createFakeRpc(input: {
       seenSeq: appLogSeenSeq,
       unread: {
         total: unreadEntries.length,
+        debug: unreadEntries.filter((entry) => entry.level === "debug").length,
         info: unreadEntries.filter((entry) => entry.level === "info").length,
-        warning: unreadEntries.filter((entry) => entry.level === "warning").length,
+        warn: unreadEntries.filter((entry) => entry.level === "warn").length,
         error: unreadEntries.filter((entry) => entry.level === "error").length,
       },
       totals,
@@ -783,7 +808,7 @@ function createFakeRpc(input: {
     });
   };
 
-  let promptLibraryState: PromptLibraryState = {
+  let generatedAgentContextState: GeneratedAgentContextState = {
     version: 1,
     revision: 1,
     updatedAt: new Date(0).toISOString(),
@@ -846,8 +871,9 @@ function createFakeRpc(input: {
               provider: "openai",
               model: "gpt-4o",
               reasoningEffort: "medium",
-              systemPrompt: "Explore",
-              toolSurface: ["execute_typescript"],
+              instructions: "Explore",
+              extensions: [],
+              extensionUsage: {},
             },
             implementer: {
               id: "implementer",
@@ -855,8 +881,9 @@ function createFakeRpc(input: {
               provider: "openai",
               model: "gpt-4o",
               reasoningEffort: "medium",
-              systemPrompt: "Implement",
-              toolSurface: ["execute_typescript"],
+              instructions: "Implement",
+              extensions: [],
+              extensionUsage: {},
             },
             reviewer: {
               id: "reviewer",
@@ -864,47 +891,97 @@ function createFakeRpc(input: {
               provider: "openai",
               model: "gpt-4o",
               reasoningEffort: "medium",
-              systemPrompt: "Review",
-              toolSurface: ["execute_typescript"],
+              instructions: "Review",
+              extensions: [],
+              extensionUsage: {},
             },
           },
           appPreferences: {
             appAppearance: "system",
             preferredExternalEditor: "system",
             customExternalEditorCommand: "",
-            webProvider: null,
+            artifactDirectory: "~/.config/svvy/artifacts",
+            approvalMode: "auto-review",
+            networkAccess: true,
+            externalInstructions: structuredClone(
+              DEFAULT_AGENT_SETTINGS_STATE.appPreferences.externalInstructions,
+            ),
+            ambientAgentResources: structuredClone(
+              DEFAULT_AGENT_SETTINGS_STATE.appPreferences.ambientAgentResources,
+            ),
           },
         }),
-        getPromptLibrary: async () => structuredClone(promptLibraryState),
-        getPromptLibraryDefaults: async () => structuredClone(promptLibraryState),
-        updatePromptLibrary: async ({ state }) => {
-          promptLibraryState = structuredClone(state);
-          return structuredClone(promptLibraryState);
+        getAgentContextPreview: async () => ({
+          actor: "orchestrator",
+          profileId: "default-orchestrator",
+          profileName: "Default orchestrator",
+          provider: "openai",
+          model: "gpt-4o",
+          reasoningEffort: "medium",
+          loadedExtensionIds: [],
+          availableExtensionIds: [],
+          systemPrompt: "Generated context preview",
+        }),
+        getAgentModelChoices: async () => ({
+          items: [
+            {
+              providerId: "openai",
+              modelId: "gpt-4o",
+              providerAuthenticated: true,
+              authSource: "apikey",
+              supportedReasoning: ["low", "medium", "high"],
+              capabilities: {
+                reasoning: true,
+                vision: true,
+                toolCalling: true,
+              },
+            },
+          ],
+        }),
+        getExtensionsInventory: async () => ({ extensions: [], reversibleChanges: [] }),
+        getAppPreferences: async () => {
+          return (
+            await harness.client.request.getAgentSettings({
+              workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+            })
+          ).appPreferences;
         },
-        resetPromptLibrary: async () => {
-          promptLibraryState = {
-            ...promptLibraryState,
-            revision: promptLibraryState.revision + 1,
+        revertExtensionChange: async () => ({ extensions: [], reversibleChanges: [] }),
+        setExtensionEnvSecret: async () => ({ extensions: [], reversibleChanges: [] }),
+        removeExtensionEnvSecret: async () => ({ extensions: [], reversibleChanges: [] }),
+        setExtensionEnvOverride: async () => ({ extensions: [], reversibleChanges: [] }),
+        removeExtensionEnvOverride: async () => ({ extensions: [], reversibleChanges: [] }),
+        getGeneratedAgentContext: async () => structuredClone(generatedAgentContextState),
+        getGeneratedAgentContextDefaults: async () => structuredClone(generatedAgentContextState),
+        updateGeneratedAgentContext: async ({ state }) => {
+          generatedAgentContextState = structuredClone(state);
+          return structuredClone(generatedAgentContextState);
+        },
+        resetGeneratedAgentContext: async () => {
+          generatedAgentContextState = {
+            ...generatedAgentContextState,
+            revision: generatedAgentContextState.revision + 1,
             updatedAt: new Date().toISOString(),
           };
-          return structuredClone(promptLibraryState);
+          return structuredClone(generatedAgentContextState);
         },
-        listPromptLibrarySnapshots: async () => [],
-        createPromptLibrarySnapshot: async ({ name }) => ({
+        listGeneratedAgentContextSnapshots: async () => [],
+        createGeneratedAgentContextSnapshot: async ({ name }) => ({
           id: "snapshot-1",
           name,
           createdAt: new Date().toISOString(),
-          revision: promptLibraryState.revision,
-          contentKey: getPromptLibraryContentKey(promptLibraryState),
+          revision: generatedAgentContextState.revision,
+          contentKey: getGeneratedAgentContextContentKey(generatedAgentContextState),
         }),
-        renamePromptLibrarySnapshot: async ({ snapshotId, name }) => ({
+        renameGeneratedAgentContextSnapshot: async ({ snapshotId, name }) => ({
           id: snapshotId,
           name,
           createdAt: new Date().toISOString(),
-          revision: promptLibraryState.revision,
-          contentKey: getPromptLibraryContentKey(promptLibraryState),
+          revision: generatedAgentContextState.revision,
+          contentKey: getGeneratedAgentContextContentKey(generatedAgentContextState),
         }),
-        restorePromptLibrarySnapshot: async () => structuredClone(promptLibraryState),
+        restoreGeneratedAgentContextSnapshot: async () =>
+          structuredClone(generatedAgentContextState),
         getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
         updateAgentProfile: async ({ profile, workspaceId }) => {
           const next = await harness.client.request.getAgentSettings({ workspaceId });
@@ -942,15 +1019,20 @@ function createFakeRpc(input: {
             },
           };
         },
-        updateAppPreferences: async ({ workspaceId, ...preferences }) => {
+        updateAppPreferences: async (preferences) => {
           return {
-            ...(await harness.client.request.getAgentSettings({ workspaceId })),
+            ...(await harness.client.request.getAgentSettings({
+              workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+            })),
             appPreferences: preferences,
           };
         },
-        ensureWorkflowAgentsComponent: async () => ({
-          path: "/tmp/svvy/.svvy/workflows/components/agents.ts",
-        }),
+        updateRequestUserInputSettings: async ({ workspaceId, ...settings }) => {
+          return {
+            ...(await harness.client.request.getAgentSettings({ workspaceId })),
+            requestUserInput: settings,
+          };
+        },
         getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
         getWorkspaceInfo: async () => structuredClone(workspaceInfo),
         getWorkspaceUiRestore: async ({ workspaceId }) =>
@@ -1024,36 +1106,15 @@ function createFakeRpc(input: {
           opened: workspaceRelativePath === "docs/progress.md",
           kind: workspaceRelativePath === "docs/progress.md" ? "file" : "missing",
         }),
-        getSavedWorkflowLibrary: async () => ({
-          rootPath: ".svvy/workflows",
-          artifactRootPath: ".svvy/artifacts/workflows",
+        getWorkflowsGenerated: async () => ({
+          generatedPackagePath: "~/.config/svvy/workflows/generated/package",
           items: [],
           counts: {
-            definition: 0,
-            prompt: 0,
+            agent: 0,
             component: 0,
-            entry: 0,
-            "artifact-workflow": 0,
-          },
-          diagnostics: [],
-          preferredExternalEditor: "system",
-          customExternalEditorCommand: "",
-          updatedAt: new Date(0).toISOString(),
-        }),
-        deleteSavedWorkflowLibraryItem: async () => ({
-          rootPath: ".svvy/workflows",
-          artifactRootPath: ".svvy/artifacts/workflows",
-          items: [],
-          counts: {
-            definition: 0,
             prompt: 0,
-            component: 0,
-            entry: 0,
-            "artifact-workflow": 0,
+            workflow: 0,
           },
-          diagnostics: [],
-          preferredExternalEditor: "system",
-          customExternalEditorCommand: "",
           updatedAt: new Date(0).toISOString(),
         }),
         openWorkspaceSourceInEditor: async ({ path }) => ({
@@ -1061,20 +1122,58 @@ function createFakeRpc(input: {
           editor: "system",
           path,
         }),
-        openPromptLibraryExternalSourceInEditor: async ({ path }) => ({
+        openGeneratedAgentContextExternalSourceInEditor: async ({ path }) => ({
           opened: true,
           editor: "system",
           path,
         }),
-        getPromptLibraryGeneratedEntries: async () => ({
+        getGeneratedAgentContextEntries: async () => ({
           orchestrator: [],
           handler: [],
           "workflow-task": [],
         }),
-        getPromptLibraryExternalSources: async () => [],
+        getGeneratedAgentContextExternalSources: async () => [],
+        getSnippets: async () => ({ managed: [], discovered: [], snippets: [] }),
+        createManagedSnippet: async ({ title, body, description, argumentHint }) => ({
+          id: "snippet-1",
+          source: "svvy",
+          title,
+          body,
+          metadata: {
+            description: description ?? null,
+            argumentHint: argumentHint ?? null,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          readOnly: false,
+        }),
+        updateManagedSnippet: async ({ snippetId, title, body, description, argumentHint }) => ({
+          id: snippetId,
+          source: "svvy",
+          title: title ?? "Updated snippet",
+          body: body ?? "",
+          metadata: {
+            description: description ?? null,
+            argumentHint: argumentHint ?? null,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          readOnly: false,
+        }),
+        deleteManagedSnippet: async () => ({ ok: true }),
+        openSnippetExternalSourceInEditor: async ({ path }) => ({
+          opened: true,
+          editor: "system",
+          path,
+        }),
         listSessions: async () => {
           requestCounts.listSessions += 1;
-          return { sessions: listSessions(), navigation: listNavigation() };
+          return {
+            sessions: listSessions(),
+            navigation: listNavigation(),
+            requestUserInputRequests: listRequestUserInputRequests(),
+            runtimeApprovalRequests: listRuntimeApprovalRequests(),
+          };
         },
         getCommandInspector: async ({ sessionId, commandId }) => {
           commandInspectorRequests.push({ sessionId, commandId });
@@ -1101,84 +1200,6 @@ function createFakeRpc(input: {
             input.workflowTaskAttemptInspector ??
               createWorkflowTaskAttemptInspector(workflowTaskAttemptId),
           );
-        },
-        getWorkflowInspector: async ({ sessionId, workflowRunId }) => ({
-          surfaceId: `workflow-inspector:${workflowRunId}`,
-          workflowRunId,
-          smithersRunId: "smithers-run-1",
-          owningSessionId: sessionId,
-          owningThreadId: "thread-1",
-          selectedNodeKey: "root",
-          expandedNodeKeys: ["root"],
-          mode: { kind: "live" },
-          runHeader: {
-            svvyStatus: "running",
-            smithersStatus: "running",
-            runId: "smithers-run-1",
-            workflowId: "workflow-1",
-            workflowLabel: "Workflow",
-            owningHandlerThreadTitle: "Thread",
-            startedAt: null,
-            finishedAt: null,
-            updatedAt: null,
-            heartbeatAt: null,
-            lastEventAt: null,
-            frameNo: null,
-            frameCount: 0,
-            lastSeq: null,
-          },
-          tree: {
-            nodes: [],
-            visibleNodeKeys: [],
-            searchQuery: "",
-            matchedNodeKeys: [],
-          },
-          frames: [],
-          selectedNode: null,
-          detailTabs: [],
-          rawSnapshot: null,
-        }),
-        streamWorkflowInspector: async ({ sessionId, workflowRunId, fromSeq }) => ({
-          workflowRunId,
-          smithersRunId: "smithers-run-1",
-          fromSeq: fromSeq ?? null,
-          lastSeq: fromSeq ?? null,
-          events: [],
-          inspector: {
-            surfaceId: `workflow-inspector:${workflowRunId}`,
-            workflowRunId,
-            smithersRunId: "smithers-run-1",
-            owningSessionId: sessionId,
-            owningThreadId: "thread-1",
-            selectedNodeKey: "root",
-            expandedNodeKeys: ["root"],
-            mode: { kind: "live" },
-            runHeader: {
-              svvyStatus: "running",
-              smithersStatus: "running",
-              runId: "smithers-run-1",
-              workflowId: "workflow-1",
-              workflowLabel: "Workflow",
-              owningHandlerThreadTitle: "Thread",
-              startedAt: null,
-              finishedAt: null,
-              updatedAt: null,
-              heartbeatAt: null,
-              lastEventAt: null,
-              frameNo: null,
-              frameCount: 0,
-              lastSeq: fromSeq ?? null,
-            },
-            tree: { nodes: [], visibleNodeKeys: [], searchQuery: "", matchedNodeKeys: [] },
-            frames: [],
-            selectedNode: null,
-            detailTabs: [],
-            rawSnapshot: null,
-          },
-        }),
-        getProjectCiStatus: async ({ sessionId }) => {
-          projectCiStatusRequests.push(sessionId);
-          return structuredClone(input.projectCiStatus ?? createProjectCiStatusPanel());
         },
         getArtifactPreview: async ({ sessionId, artifactId }) => ({
           artifactId,
@@ -1507,8 +1528,11 @@ function createFakeRpc(input: {
             composerDraft: {
               text: draft.text,
               attachments: structuredClone(draft.attachments),
+              snippetMentions: structuredClone(draft.snippetMentions ?? []),
               updatedAt:
-                draft.text.trim() || draft.attachments.length > 0
+                draft.text.trim() ||
+                draft.attachments.length > 0 ||
+                (draft.snippetMentions?.length ?? 0) > 0
                   ? "2026-04-10T10:12:00.000Z"
                   : null,
             },
@@ -1613,10 +1637,113 @@ function createFakeRpc(input: {
             snapshot: structuredClone(record.snapshot),
           };
         },
+        answerRequestUserInput: async (request) => {
+          requestUserInputAnswerRequests.push(structuredClone(request));
+          for (const inputRequest of requestUserInputRequests) {
+            if (inputRequest.requestId !== request.requestId) {
+              continue;
+            }
+            inputRequest.questions = inputRequest.questions.map((question) =>
+              question.questionId === request.questionId
+                ? { ...question, status: "answered" }
+                : question,
+            );
+            inputRequest.status = inputRequest.questions.every(
+              (question) => question.status !== "open",
+            )
+              ? "completed"
+              : inputRequest.status;
+            inputRequest.completedAt =
+              inputRequest.status === "completed"
+                ? "2026-04-10T10:13:00.000Z"
+                : inputRequest.completedAt;
+          }
+          const surfaceRecord = getSurfaceRecord(request.surfacePiSessionId);
+          const target = surfaceRecord.snapshot.target;
+          surfaceRecord.snapshot = {
+            ...surfaceRecord.snapshot,
+            queuedMessages: [
+              {
+                id: `queued-${++queuedMessageSequence}`,
+                kind: "request_user_input_answer",
+                title: "Request user input answered",
+                text: JSON.stringify({
+                  type: "request_user_input.answer",
+                  requestId: request.requestId,
+                  questionId: request.questionId,
+                  delivery: request.delivery,
+                }),
+                status: "queued",
+                createdAt: "2026-04-10T10:13:00.000Z",
+                updatedAt: "2026-04-10T10:13:00.000Z",
+              },
+              ...surfaceRecord.snapshot.queuedMessages,
+            ],
+          };
+          queueMicrotask(() => {
+            emitSurfaceSync({
+              reason: "surface.updated",
+              target: cloneTarget(target),
+              snapshot: structuredClone(surfaceRecord.snapshot),
+            });
+            emitWorkspaceSync("structured.updated");
+          });
+          return {
+            ok: true,
+            target: cloneTarget(target),
+            snapshot: structuredClone(surfaceRecord.snapshot),
+          };
+        },
+        answerRuntimeApprovalRequest: async (request) => {
+          runtimeApprovalAnswerRequests.push({
+            workspaceId: request.workspaceId,
+            requestId: request.requestId,
+            approved: request.approved,
+          });
+          for (const approvalRequest of runtimeApprovalRequests) {
+            if (approvalRequest.requestId !== request.requestId) {
+              continue;
+            }
+            approvalRequest.status = request.approved ? "approved" : "denied";
+            approvalRequest.completedAt = "2026-04-10T10:13:00.000Z";
+          }
+          emitWorkspaceSync("structured.updated");
+          const target = surfaces.values().next().value?.snapshot.target ?? {
+            workspaceSessionId: "session-1",
+            surface: "orchestrator",
+            surfacePiSessionId: "session-1",
+          };
+          return {
+            ok: true,
+            target: cloneTarget(target),
+          };
+        },
+        setRequestUserInputTimerPaused: async (request) => {
+          requestUserInputTimerRequests.push(structuredClone(request));
+          for (const inputRequest of requestUserInputRequests) {
+            if (inputRequest.requestId !== request.requestId || !inputRequest.timeout) {
+              continue;
+            }
+            inputRequest.timeout = request.paused
+              ? {
+                  ...inputRequest.timeout,
+                  pausedAt: "2026-04-10T10:12:30.000Z",
+                  remainingMsWhenPaused: 120_000,
+                  expiresAt: null,
+                }
+              : {
+                  ...inputRequest.timeout,
+                  pausedAt: null,
+                  remainingMsWhenPaused: null,
+                  expiresAt: "2026-04-10T10:14:30.000Z",
+                };
+          }
+          return { ok: true };
+        },
         queuePromptRefresh: async ({ target }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
           const existing = record.snapshot.queuedMessages.find(
-            (message) => message.kind === "prompt_refresh",
+            (message) => message.kind === "agent_context_refresh",
           );
           if (!existing) {
             record.snapshot = {
@@ -1624,8 +1751,8 @@ function createFakeRpc(input: {
               queuedMessages: [
                 {
                   id: `queued-${record.snapshot.queuedMessages.length + 1}`,
-                  kind: "prompt_refresh",
-                  text: "Update instructions",
+                  kind: "agent_context_refresh",
+                  text: "Update agent context",
                   summary: "Context revision 2",
                   status: "queued",
                   createdAt: "2026-04-10T10:12:00.000Z",
@@ -1760,7 +1887,9 @@ function createFakeRpc(input: {
     handlerThreadListRequests,
     handlerThreadInspectorRequests,
     workflowTaskAttemptInspectorRequests,
-    projectCiStatusRequests,
+    requestUserInputAnswerRequests,
+    runtimeApprovalAnswerRequests,
+    requestUserInputTimerRequests,
     appLogSeenRequests,
     branchListRequests,
     branchSwitchRequests,
@@ -1852,6 +1981,10 @@ describe("createChatRuntime", () => {
               content: "# Standards",
               contentHash: "abc123",
               order: 0,
+              enabled: true,
+              actors: ["orchestrator", "handler", "workflow-task"],
+              sourceGroup: "workspace_chain",
+              readStatus: { status: "readable" },
             },
           ],
         }),
@@ -1875,6 +2008,136 @@ describe("createChatRuntime", () => {
     expect(controller?.agent.state.messages.at(-1)).toMatchObject({
       role: "assistant",
     });
+
+    runtime.dispose();
+  });
+
+  it("hydrates request-user-input requests and answers them through the workspace RPC", async () => {
+    const requestUserInputRequest = createRequestUserInputRequest({
+      variant: "blocking",
+      timeout: {
+        enabled: true,
+        durationMs: 300_000,
+        startedAt: "2026-04-10T10:12:00.000Z",
+        pausedAt: null,
+        remainingMsWhenPaused: null,
+        expiresAt: "2026-04-10T10:17:00.000Z",
+      },
+    });
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "Waiting")],
+      requestUserInputRequests: [requestUserInputRequest],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("clarify"), assistantMessage("Waiting")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+
+    expect(runtime.getRequestUserInputRequests()).toEqual([requestUserInputRequest]);
+
+    await runtime.setRequestUserInputTimerPaused({
+      surfacePiSessionId: "session-1",
+      requestId: "rui-request-1",
+      paused: true,
+    });
+
+    expect(harness.requestUserInputTimerRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        surfacePiSessionId: "session-1",
+        requestId: "rui-request-1",
+        paused: true,
+      },
+    ]);
+    expect(runtime.getRequestUserInputRequests()[0]?.timeout).toMatchObject({
+      pausedAt: "2026-04-10T10:12:30.000Z",
+      remainingMsWhenPaused: 120_000,
+      expiresAt: null,
+    });
+
+    await runtime.answerRequestUserInput({
+      surfacePiSessionId: "session-1",
+      requestId: "rui-request-1",
+      questionId: "rui-question-1",
+      answer: { kind: "option", optionId: "rui-option-2" },
+      delivery: "steer",
+    });
+
+    expect(harness.requestUserInputAnswerRequests).toEqual([
+      {
+        surfacePiSessionId: "session-1",
+        requestId: "rui-request-1",
+        questionId: "rui-question-1",
+        answer: { kind: "option", optionId: "rui-option-2" },
+        delivery: "steer",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      },
+    ]);
+    expect(runtime.getRequestUserInputRequests()).toEqual([
+      expect.objectContaining({
+        requestId: "rui-request-1",
+        status: "completed",
+        questions: [expect.objectContaining({ questionId: "rui-question-1", status: "answered" })],
+      }),
+    ]);
+    expect(runtime.getPaneController(runtime.primaryPaneId)?.queuedPrompts[0]).toMatchObject({
+      kind: "request_user_input_answer",
+      status: "queued",
+    });
+
+    runtime.dispose();
+  });
+
+  it("hydrates runtime approval requests and answers them through the workspace RPC", async () => {
+    const runtimeApprovalRequest: WorkspaceRuntimeApprovalRequest = {
+      requestId: "apr-request-1",
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
+      threadId: null,
+      ownerTitle: "Orchestrator",
+      toolName: "exec_command",
+      approvalMode: "user",
+      cwd: "/tmp/workspace",
+      command: "printf approved",
+      commandFamily: null,
+      snippetArtifactId: null,
+      status: "pending",
+      createdAt: "2026-04-10T10:12:00.000Z",
+      completedAt: null,
+      summary: "Run command: printf approved",
+    };
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "Waiting")],
+      runtimeApprovalRequests: [runtimeApprovalRequest],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("run"), assistantMessage("Waiting")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+
+    expect(runtime.getRuntimeApprovalRequests()).toEqual([runtimeApprovalRequest]);
+
+    await runtime.answerRuntimeApprovalRequest({
+      requestId: "apr-request-1",
+      approved: true,
+    });
+
+    expect(harness.runtimeApprovalAnswerRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        requestId: "apr-request-1",
+        approved: true,
+      },
+    ]);
+    expect(runtime.getRuntimeApprovalRequests()).toEqual([]);
 
     runtime.dispose();
   });
@@ -2361,6 +2624,46 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("writes prompt history once when user messages enter the surface queue", async () => {
+    const session = createSummary("session-1", "Parser", "Initial");
+    const target = createOrchestratorTarget(session.id);
+    const storage = createMemoryStorage();
+    const harness = createFakeRpc({
+      sessions: [session],
+      surfaces: [
+        createSurfaceSnapshot({
+          target,
+          messages: [userMessage("Initial"), assistantMessage("Ready")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness, storage);
+    const controller = runtime.getPaneController("primary");
+    expect(controller).not.toBeNull();
+    if (!controller) return;
+
+    const activeTurn = createDeferred<PromptHandlerResult>();
+    harness.setPromptHandler(target.surfacePiSessionId, () => activeTurn.promise);
+
+    const activePrompt = controller.sendPrompt({ text: "Active turn", attachments: [] });
+    await waitFor(() => controller.promptStatus === "streaming");
+    await controller.sendPrompt({ text: "Queued follow-up", attachments: [] });
+
+    expect(
+      (await storage.promptHistory.list(runtime.workspaceId)).map((entry) => entry.text),
+    ).toEqual(["Active turn", "Queued follow-up"]);
+
+    activeTurn.resolve({ assistantText: "First turn done" });
+    await activePrompt;
+    await waitFor(() => harness.promptRequests.length >= 2);
+
+    expect(
+      (await storage.promptHistory.list(runtime.workspaceId)).map((entry) => entry.text),
+    ).toEqual(["Active turn", "Queued follow-up"]);
+
+    runtime.dispose();
+  });
+
   it("sends composer image attachments as tagged attachment metadata plus image content", async () => {
     const session = createSummary("session-1", "Vision", "Initial");
     const target = createOrchestratorTarget(session.id);
@@ -2437,6 +2740,80 @@ describe("createChatRuntime", () => {
         sizeBytes: undefined,
       },
     ]);
+
+    runtime.dispose();
+  });
+
+  it("sends expanded snippet text while retaining product snippet provenance metadata", async () => {
+    const session = createSummary("session-1", "Snippet", "Initial");
+    const target = createOrchestratorTarget(session.id);
+    const harness = createFakeRpc({
+      sessions: [session],
+      surfaces: [
+        createSurfaceSnapshot({
+          target,
+          messages: [userMessage("Initial"), assistantMessage("Ready")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const controller = runtime.getPaneController("primary");
+    expect(controller).not.toBeNull();
+    if (!controller) return;
+
+    await controller.sendPrompt({
+      text: "Please Review docs/prd.md.",
+      attachments: [],
+      snippetMentions: [
+        {
+          id: "mention-1",
+          snippetId: "snippet-review",
+          source: "svvy",
+          title: "Review Plan",
+          token: "@Review Plan",
+          body: "Review $1.",
+          contentHash: "fnv1a32:example",
+          arguments: ["docs/prd.md"],
+          metadata: { description: "Review target", argumentHint: "target" },
+        },
+      ],
+      snippetProvenance: [
+        {
+          mentionId: "mention-1",
+          snippetId: "snippet-review",
+          source: "svvy",
+          title: "Review Plan",
+          contentHash: "fnv1a32:example",
+          arguments: ["docs/prd.md"],
+          resolvedText: "Review docs/prd.md.",
+        },
+      ],
+    });
+
+    const request = harness.promptRequests[0];
+    const user = request?.messages.findLast((message) => message.role === "user");
+    const firstBlock = Array.isArray(user?.content) ? user.content[0] : null;
+
+    expect(firstBlock).toEqual({
+      type: "text",
+      text: "Please Review docs/prd.md.",
+    });
+    expect(firstBlock).not.toHaveProperty("textSignature");
+    expect(user).toMatchObject({
+      svvyMetadata: {
+        snippetProvenance: [
+          {
+            mentionId: "mention-1",
+            snippetId: "snippet-review",
+            source: "svvy",
+            title: "Review Plan",
+            contentHash: "fnv1a32:example",
+            arguments: ["docs/prd.md"],
+            resolvedText: "Review docs/prd.md.",
+          },
+        ],
+      },
+    });
 
     runtime.dispose();
   });
@@ -2562,6 +2939,17 @@ describe("createChatRuntime", () => {
     await controller.editCommittedUserMessage(101, {
       text: "Revised request",
       attachments: [],
+      snippetProvenance: [
+        {
+          mentionId: "mention-edit",
+          snippetId: "snippet-edit",
+          source: "svvy",
+          title: "Edit Snippet",
+          contentHash: "fnv1a32:edit",
+          arguments: ["target"],
+          resolvedText: "Revised request",
+        },
+      ],
     });
 
     await waitFor(() => controller.agent.state.messages.length === 2);
@@ -2578,6 +2966,21 @@ describe("createChatRuntime", () => {
 
     const [promptRequest] = harness.promptRequests;
     expect(promptRequest?.messages).toHaveLength(1);
+    expect(promptRequest?.messages[0]).toMatchObject({
+      svvyMetadata: {
+        snippetProvenance: [
+          {
+            mentionId: "mention-edit",
+            snippetId: "snippet-edit",
+            source: "svvy",
+            title: "Edit Snippet",
+            contentHash: "fnv1a32:edit",
+            arguments: ["target"],
+            resolvedText: "Revised request",
+          },
+        ],
+      },
+    });
 
     runtime.dispose();
   });
@@ -2601,7 +3004,7 @@ describe("createChatRuntime", () => {
 
     expect(await controller.queuePromptRefresh()).toBe(true);
     expect(controller.queuedPrompts.map((prompt) => [prompt.kind, prompt.text])).toEqual([
-      ["prompt_refresh", "Update instructions"],
+      ["agent_context_refresh", "Update agent context"],
     ]);
     const refresh = controller.queuedPrompts[0];
     expect(refresh).toBeDefined();
@@ -3181,6 +3584,35 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("opens artifact inspector panes from workspace sync open requests", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    harness.emitWorkspaceSync("artifact.open", TEST_WORKSPACE_INFO.workspaceId, {
+      artifactOpenRequest: {
+        workspaceSessionId: "session-1",
+        artifactId: "artifact-1",
+      },
+    });
+
+    const focusedPaneId = runtime.paneLayout.focusedPanelId ?? runtime.primaryPaneId;
+    expect(runtime.getPane(focusedPaneId)?.target).toEqual({
+      workspaceSessionId: "session-1",
+      surface: "artifact",
+      artifactId: "artifact-1",
+    });
+
+    runtime.dispose();
+  });
+
   it("ignores workspace and surface sync messages for other workspace ids", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -3267,13 +3699,11 @@ describe("createChatRuntime", () => {
     const workflowTaskAttemptDetail = await runtime.getWorkflowTaskAttemptInspector(
       "workflow-task-attempt-77",
     );
-    const projectCiStatus = await runtime.getProjectCiStatus();
 
     expect(detail).toEqual(commandInspector);
     expect(threads).toEqual(handlerThreads);
     expect(threadDetail).toEqual(handlerThreadInspector);
     expect(workflowTaskAttemptDetail).toEqual(workflowTaskAttemptInspector);
-    expect(projectCiStatus).toEqual(createProjectCiStatusPanel());
     expect(harness.commandInspectorRequests).toEqual([
       { sessionId: "session-2", commandId: "command-77" },
     ]);
@@ -3284,7 +3714,6 @@ describe("createChatRuntime", () => {
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
       { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
     ]);
-    expect(harness.projectCiStatusRequests).toEqual(["session-2"]);
 
     runtime.dispose();
   });
@@ -3449,10 +3878,8 @@ describe("createChatRuntime", () => {
     const storage = createMemoryStorage();
     const orchestratorTarget = createOrchestratorTarget("session-1");
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
-    const workflowInspectorTarget = {
-      workspaceSessionId: "session-1",
-      surface: "workflow-inspector" as const,
-      workflowRunId: "workflow-1",
+    const workflowsTarget = {
+      surface: "workflows" as const,
     };
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -3499,7 +3926,7 @@ describe("createChatRuntime", () => {
           },
           {
             panelId: "inspector",
-            binding: workflowInspectorTarget,
+            binding: workflowsTarget,
             localState: {
               scroll: null,
               timelineDensity: "comfortable",
@@ -3517,7 +3944,7 @@ describe("createChatRuntime", () => {
     expect(runtime.getPane("primary")?.target).toEqual(orchestratorTarget);
     expect(runtime.getPane("thread-left")?.target).toEqual(threadTarget);
     expect(runtime.getPane("thread-right")?.target).toEqual(threadTarget);
-    expect(runtime.getPane("inspector")?.target).toEqual(workflowInspectorTarget);
+    expect(runtime.getPane("inspector")?.target).toEqual(workflowsTarget);
 
     const threadController = runtime.getSurfaceController(threadTarget.surfacePiSessionId);
     expect(threadController?.ownerPaneIds.toSorted()).toEqual(["thread-left", "thread-right"]);
@@ -3530,6 +3957,148 @@ describe("createChatRuntime", () => {
         (target) => target.surfacePiSessionId === threadTarget.surfacePiSessionId,
       ),
     ).toHaveLength(1);
+
+    runtime.dispose();
+  });
+
+  it("restores mixed Dockview JSON, focus, panel-local state, static panes, and floating interactive panes", async () => {
+    const storage = createMemoryStorage();
+    const orchestratorTarget = createOrchestratorTarget("session-1");
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const dockview = {
+      grid: {
+        root: {
+          type: "branch",
+          data: [
+            { type: "leaf", data: { views: ["primary"] } },
+            { type: "leaf", data: { views: ["settings"] } },
+          ],
+        },
+      },
+      panels: {
+        primary: {},
+        settings: {},
+        "thread-float": {},
+        "logs-edge": {},
+        "artifact-popout": {},
+      },
+      activeGroup: "main-group",
+      floatingGroups: [{ data: { id: "floating-group", views: ["thread-float"] } }],
+      popoutGroups: [
+        {
+          data: { id: "popout-group", views: ["artifact-popout"] },
+          position: { left: 40, top: 60, width: 720, height: 520 },
+        },
+      ],
+      edgeGroups: {
+        left: {
+          size: 280,
+          group: { id: "edge-group", views: ["logs-edge"] },
+        },
+      },
+    } as unknown as WorkspaceDockviewLayoutState["dockview"];
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: orchestratorTarget,
+          messages: [assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
+      ],
+    });
+    harness.setWorkspaceUiRestore(
+      TEST_WORKSPACE_INFO.workspaceId,
+      createWorkspaceRestoreState({
+        dockview,
+        compactSurfaces: [],
+        panels: [
+          {
+            panelId: "primary",
+            binding: orchestratorTarget,
+            localState: {
+              scroll: { transcriptAnchorId: "assistant-main", offsetPx: 33 },
+              timelineDensity: "compact",
+            },
+          },
+          {
+            panelId: "settings",
+            binding: { surface: "settings" },
+            localState: {
+              scroll: null,
+              timelineDensity: "comfortable",
+            },
+          },
+          {
+            panelId: "thread-float",
+            binding: threadTarget,
+            localState: {
+              scroll: { transcriptAnchorId: "assistant-thread", offsetPx: 12 },
+              timelineDensity: "comfortable",
+            },
+            placement: {
+              kind: "floating",
+              box: { x: 20, y: 30, width: 640, height: 480 },
+            },
+          },
+          {
+            panelId: "logs-edge",
+            binding: { surface: "app-logs" },
+            localState: {
+              scroll: null,
+              timelineDensity: "comfortable",
+            },
+            placement: { kind: "edge", direction: "left", size: 280 },
+          },
+          {
+            panelId: "artifact-popout",
+            binding: {
+              workspaceSessionId: "session-1",
+              surface: "artifact",
+              artifactId: "artifact-1",
+            },
+            localState: {
+              scroll: null,
+              timelineDensity: "comfortable",
+            },
+            placement: {
+              kind: "popout",
+              box: { left: 40, top: 60, width: 720, height: 520 },
+            },
+          },
+        ],
+        focusedPanelId: "thread-float",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+      }),
+    );
+
+    const runtime = await createRuntime(harness, storage);
+
+    expect(runtime.paneLayout.dockview).toEqual(dockview);
+    expect(runtime.paneLayout.focusedPanelId).toBe("thread-float");
+    expect(runtime.getPane("primary")).toMatchObject({
+      target: orchestratorTarget,
+      scroll: { transcriptAnchorId: "assistant-main", offsetPx: 33 },
+      timelineDensity: "compact",
+    });
+    expect(runtime.getPane("settings")?.target).toEqual({ surface: "settings" });
+    expect(runtime.getPane("thread-float")).toMatchObject({
+      target: threadTarget,
+      scroll: { transcriptAnchorId: "assistant-thread", offsetPx: 12 },
+    });
+    expect(runtime.getPaneController("thread-float")).toBe(
+      runtime.getSurfaceController(threadTarget.surfacePiSessionId),
+    );
+    expect(runtime.paneLayout.panels.map((panel) => [panel.panelId, panel.placement])).toEqual([
+      ["primary", null],
+      ["settings", null],
+      ["thread-float", { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } }],
+      ["logs-edge", { kind: "edge", direction: "left", size: 280 }],
+      ["artifact-popout", { kind: "popout", box: { left: 40, top: 60, width: 720, height: 520 } }],
+    ]);
 
     runtime.dispose();
   });
@@ -3865,7 +4434,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("starts an uninitialized user workspace layout empty instead of reopening the first session", async () => {
+  it("starts an uninitialized user workspace by opening the newest session", async () => {
     const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -3882,8 +4451,38 @@ describe("createChatRuntime", () => {
     });
 
     expect(runtime.sessions).toHaveLength(1);
-    expect(runtime.paneLayout.panels).toHaveLength(0);
-    expect(runtime.paneLayout.focusedPanelId).toBeNull();
+    expect(runtime.paneLayout.panels).toEqual([
+      expect.objectContaining({
+        panelId: "primary",
+        binding: createOrchestratorTarget("session-1"),
+      }),
+    ]);
+    expect(runtime.paneLayout.focusedPanelId).toBe("primary");
+    expect(runtime.getSurfaceController("session-1")).not.toBeNull();
+
+    runtime.dispose();
+  });
+
+  it("starts an uninitialized empty user workspace by creating a new orchestrator", async () => {
+    const storage = createMemoryStorage();
+    const harness = createFakeRpc({
+      sessions: [],
+      surfaces: [],
+    });
+
+    const runtime = await createRuntime(harness, storage, TEST_WORKSPACE_INFO, {
+      seedInitialLayout: false,
+    });
+
+    expect(runtime.sessions).toHaveLength(1);
+    expect(runtime.paneLayout.panels).toEqual([
+      expect.objectContaining({
+        panelId: "primary",
+        binding: createOrchestratorTarget("session-1"),
+      }),
+    ]);
+    expect(runtime.paneLayout.focusedPanelId).toBe("primary");
+    expect(runtime.getSurfaceController("session-1")).not.toBeNull();
 
     runtime.dispose();
   });
@@ -3928,6 +4527,305 @@ describe("createChatRuntime", () => {
     await runtime.switchWorkspaceLayout("B");
     expect(runtime.activeLayoutId).toBe("A");
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "open-workspace" });
+
+    runtime.dispose();
+  });
+
+  it("keeps default workspace runtime-backed surfaces available beyond Open Workspace", async () => {
+    const storage = createMemoryStorage();
+    const defaultWorkspaceInfo: WorkspaceTabInfo = {
+      ...TEST_WORKSPACE_INFO,
+      workspaceTabId: "default-tab-1",
+      workspaceId: "workspace:default",
+      cwd: "/tmp/svvy/default-workspace",
+      workspaceLabel: "Default Workspace",
+      kind: "default",
+      branch: undefined,
+    };
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+
+    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+
+    await runtime.createSession();
+    expect(runtime.sessions).toHaveLength(1);
+    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
+
+    await runtime.openSurface({ surface: "app-logs" }, { kind: "focused-panel" });
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "app-logs" });
+    expect(await runtime.getAppLogs()).toMatchObject({ entries: [] });
+
+    await runtime.openSurface({ surface: "agents" }, { kind: "focused-panel" });
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "agents" });
+
+    await runtime.openSurface({ surface: "extensions" }, { kind: "focused-panel" });
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "extensions" });
+
+    await runtime.openSurface({ surface: "settings" }, { kind: "focused-panel" });
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "settings" });
+
+    await runtime.openSurface({ surface: "workflows" }, { kind: "focused-panel" });
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "workflows" });
+    expect(await runtime.getWorkflowsGenerated()).toMatchObject({
+      generatedPackagePath: "~/.config/svvy/workflows/generated/package",
+      counts: { agent: 0, component: 0, prompt: 0, workflow: 0 },
+    });
+
+    await runtime.openSurface(
+      { workspaceSessionId: "session-1", surface: "artifact", artifactId: "artifact-1" },
+      { kind: "focused-panel" },
+    );
+    expect(runtime.getPane("primary")?.target).toEqual({
+      workspaceSessionId: "session-1",
+      surface: "artifact",
+      artifactId: "artifact-1",
+    });
+    expect(await runtime.getArtifactPreview("artifact-1", "session-1")).toMatchObject({
+      artifactId: "artifact-1",
+      sessionId: "session-1",
+      content: "artifact artifact-1",
+    });
+
+    await runtime.storage.promptHistory.append({
+      workspaceId: runtime.workspaceId,
+      sessionId: "session-1",
+      text: "default workspace prompt",
+      sentAt: 1,
+    });
+    expect(await runtime.storage.promptHistory.list("workspace:default")).toEqual([
+      {
+        workspaceId: "workspace:default",
+        sessionId: "session-1",
+        text: "default workspace prompt",
+        sentAt: 1,
+      },
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("preserves Dockview placement command targets when opening static panes", async () => {
+    const runtime = await createRuntime(
+      createFakeRpc({
+        sessions: [createSummary("session-1", "Existing", "ready")],
+        surfaces: [
+          createSurfaceSnapshot({
+            target: createOrchestratorTarget("session-1"),
+            messages: [],
+          }),
+        ],
+      }),
+    );
+
+    await runtime.openSurface(
+      { surface: "app-logs" },
+      { kind: "edge", direction: "left", size: 280 },
+    );
+    await runtime.openSurface(
+      { surface: "agents" },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+    );
+    await runtime.openSurface(
+      { surface: "extensions" },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+    );
+    await runtime.openSurface(
+      { surface: "settings" },
+      { kind: "split", panelId: "primary", direction: "below", size: 340 },
+    );
+    await runtime.openSurface(
+      { surface: "workflows" },
+      { kind: "tab", groupId: "group-1", index: 1 },
+    );
+
+    expect(runtime.paneLayout.panels.map((panel) => panel.placement)).toEqual([
+      null,
+      { kind: "edge", direction: "left", size: 280 },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+      { kind: "split", referencePanelId: "primary", direction: "below", size: 340 },
+      { kind: "tab", groupId: "group-1", index: 1 },
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("preserves Dockview placement command targets when opening interactive surfaces", async () => {
+    const target = createOrchestratorTarget("session-1");
+    const runtime = await createRuntime(
+      createFakeRpc({
+        sessions: [createSummary("session-1", "Existing", "ready")],
+        surfaces: [
+          createSurfaceSnapshot({
+            target,
+            messages: [],
+          }),
+        ],
+      }),
+    );
+
+    await runtime.openSurface(target, {
+      kind: "split",
+      panelId: "primary",
+      direction: "left",
+      size: 320,
+    });
+    await runtime.openSurface(target, {
+      kind: "edge",
+      direction: "right",
+      size: 280,
+    });
+    await runtime.openSurface(target, {
+      kind: "floating",
+      box: { x: 20, y: 30, width: 640, height: 480 },
+    });
+    await runtime.openSurface(target, {
+      kind: "popout",
+      box: { left: 40, top: 50, width: 800, height: 600 },
+    });
+
+    expect(runtime.paneLayout.panels.map((panel) => panel.placement)).toEqual([
+      null,
+      { kind: "split", referencePanelId: "primary", direction: "left", size: 320 },
+      { kind: "edge", direction: "right", size: 280 },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+    ]);
+    expect(
+      runtime.getSurfaceController(target.surfacePiSessionId)?.ownerPaneIds.toSorted(),
+    ).toEqual(runtime.paneLayout.panels.map((panel) => panel.panelId).toSorted());
+
+    runtime.dispose();
+  });
+
+  it("restores Dockview placement metadata for static panes after restart", async () => {
+    const storage = createMemoryStorage();
+    const firstHarness = createFakeRpc({
+      sessions: [createSummary("session-1", "Existing", "ready")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+    });
+    const firstRuntime = await createRuntime(firstHarness, storage);
+
+    await firstRuntime.openSurface(
+      { surface: "app-logs" },
+      { kind: "edge", direction: "left", size: 280 },
+    );
+    await firstRuntime.openSurface(
+      { surface: "agents" },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+    );
+    await firstRuntime.openSurface(
+      { surface: "extensions" },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+    );
+    await firstRuntime.openSurface(
+      { surface: "settings" },
+      { kind: "split", panelId: "primary", direction: "below", size: 340 },
+    );
+    await firstRuntime.openSurface(
+      { surface: "workflows" },
+      { kind: "tab", groupId: "group-1", index: 1 },
+    );
+    firstRuntime.dispose();
+
+    const restoreState = firstHarness.getWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId);
+    expect(restoreState?.layouts.A?.panels.map((panel) => panel.placement)).toEqual([
+      null,
+      { kind: "edge", direction: "left", size: 280 },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+      { kind: "split", referencePanelId: "primary", direction: "below", size: 340 },
+      { kind: "tab", groupId: "group-1", index: 1 },
+    ]);
+
+    const secondHarness = createFakeRpc({
+      sessions: [createSummary("session-1", "Existing", "ready")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+    });
+    secondHarness.setWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
+    const secondRuntime = await createRuntime(secondHarness, storage);
+
+    expect(secondRuntime.paneLayout.panels.map((panel) => panel.placement)).toEqual([
+      null,
+      { kind: "edge", direction: "left", size: 280 },
+      { kind: "floating", box: { x: 20, y: 30, width: 640, height: 480 } },
+      { kind: "popout", box: { left: 40, top: 50, width: 800, height: 600 } },
+      { kind: "split", referencePanelId: "primary", direction: "below", size: 340 },
+      { kind: "tab", groupId: "group-1", index: 1 },
+    ]);
+
+    secondRuntime.dispose();
+  });
+
+  it("creates a default workspace session and records history from command palette fallback text", async () => {
+    const storage = createMemoryStorage();
+    const defaultWorkspaceInfo: WorkspaceTabInfo = {
+      ...TEST_WORKSPACE_INFO,
+      workspaceTabId: "default-tab-1",
+      workspaceId: "workspace:default",
+      cwd: "/tmp/svvy/default-workspace",
+      workspaceLabel: "Default Workspace",
+      kind: "default",
+      branch: undefined,
+    };
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    harness.setWorkspaceUiRestore(
+      defaultWorkspaceInfo.workspaceId,
+      createWorkspaceRestoreState({
+        dockview: null,
+        compactSurfaces: [],
+        panels: [
+          {
+            panelId: "primary",
+            binding: { surface: "open-workspace" },
+            localState: {
+              scroll: null,
+              timelineDensity: "comfortable",
+            },
+          },
+        ],
+        focusedPanelId: "primary",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+      }),
+    );
+    const createdTargets: PromptTarget[] = [];
+
+    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const didRun = await executePaletteFallbackPrompt({
+      runtime,
+      prompt: "  Implement default workspace fallback prompt  ",
+      paneId: "primary",
+      onCreatedTarget: (target) => {
+        createdTargets.push(target);
+      },
+    });
+
+    expect(didRun).toBe(true);
+    expect(runtime.sessions).toHaveLength(1);
+    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
+    expect(createdTargets).toEqual([createOrchestratorTarget("session-1")]);
+    expect(harness.promptRequests).toHaveLength(1);
+    expect(harness.promptRequests[0]?.target).toEqual(createOrchestratorTarget("session-1"));
+    expect(
+      (await storage.promptHistory.list("workspace:default")).map((entry) => ({
+        sessionId: entry.sessionId,
+        text: entry.text,
+      })),
+    ).toEqual([
+      {
+        sessionId: "session-1",
+        text: "Implement default workspace fallback prompt",
+      },
+    ]);
 
     runtime.dispose();
   });
@@ -4016,7 +4914,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("removes restored prompt panes that fail to reopen instead of leaving unavailable surfaces", async () => {
+  it("preserves restored prompt panes that fail to reopen as unavailable surfaces", async () => {
     const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("missing-session", "Missing", "")],
@@ -4045,8 +4943,24 @@ describe("createChatRuntime", () => {
     const runtime = await createRuntime(harness, storage);
 
     expect(runtime.sessions).toHaveLength(1);
-    expect(runtime.paneLayout.panels).toHaveLength(0);
-    expect(runtime.getPane("primary")).toBeUndefined();
+    expect(runtime.paneLayout.panels).toHaveLength(1);
+    expect(runtime.paneLayout.panels[0]).toMatchObject({
+      panelId: "primary",
+      binding: null,
+      chrome: {
+        title: "Surface unavailable",
+        subtitle: "Orchestrator",
+        kind: "unavailable",
+      },
+      restore: {
+        unavailableReason: "Missing fake surface missing-session",
+      },
+    });
+    expect(runtime.getPane("primary")?.target).toBeNull();
+    expect(runtime.getPane("primary")?.chrome?.kind).toBe("unavailable");
+    expect(runtime.getPane("primary")?.restore?.unavailableReason).toBe(
+      "Missing fake surface missing-session",
+    );
 
     runtime.dispose();
   });
@@ -4079,8 +4993,8 @@ describe("createChatRuntime", () => {
       summary: {
         latestSeq: 1,
         seenSeq: 0,
-        unread: { total: 1, info: 0, warning: 0, error: 1 },
-        totals: { total: 1, info: 0, warning: 0, error: 1 },
+        unread: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
+        totals: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
       },
     });
 
@@ -4123,33 +5037,12 @@ describe("createChatRuntime", () => {
       summary: {
         latestSeq: 1,
         seenSeq: 0,
-        unread: { total: 1, info: 0, warning: 0, error: 1 },
-        totals: { total: 1, info: 0, warning: 0, error: 1 },
+        unread: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
+        totals: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
       },
     });
 
     expect(runtime.appLogSummary.unread.total).toBe(0);
-
-    runtime.dispose();
-  });
-
-  it("opens the context library as a static renderer pane without backend surface activation", async () => {
-    const harness = createFakeRpc({
-      sessions: [createSummary("session-1", "Prompt Work", "done")],
-      surfaces: [
-        createSurfaceSnapshot({
-          target: createOrchestratorTarget("session-1"),
-          messages: [assistantMessage("done")],
-        }),
-      ],
-    });
-    const runtime = await createRuntime(harness);
-    const openedBefore = harness.openedTargets.length;
-
-    await runtime.openSurface({ surface: "prompt-library" }, "primary");
-
-    expect(runtime.getPane("primary")?.target).toEqual({ surface: "prompt-library" });
-    expect(harness.openedTargets).toHaveLength(openedBefore);
 
     runtime.dispose();
   });

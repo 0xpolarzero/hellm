@@ -45,19 +45,47 @@
   }
 
   function getStatusLabel(prompt: QueuedPrompt): string {
+    if (prompt.status === "failed") return "Failed";
     if (prompt.status === "steering") return "Steering";
     if (prompt.status === "dispatching") {
-      return prompt.kind === "prompt_refresh" ? "Updating" : "Sending";
+      return prompt.kind === "agent_context_refresh" ? "Updating" : "Sending";
     }
-    if (prompt.kind === "handler_handoff") return "Handoff";
-    if (prompt.kind === "prompt_refresh") return "Context";
+    if (prompt.agentContextUpdate?.state === "out_of_date") return "Out of date";
+    if (prompt.kind === "thread_report_notification") return "Report";
+    if (prompt.kind === "agent_context_refresh") return "Context";
+    if (prompt.kind === "report_request") return "Report request";
     return "Queued";
   }
 
   function getItemTitle(prompt: QueuedPrompt): string {
-    if (prompt.kind === "handler_handoff" && prompt.summary) return prompt.summary;
-    if (prompt.kind === "prompt_refresh") return "Update instructions";
+    if (prompt.status === "failed" && prompt.failureError) return prompt.failureError;
+    return getItemText(prompt);
+  }
+
+  function getItemText(prompt: QueuedPrompt): string {
+    if (prompt.kind === "thread_report_notification" && prompt.summary) return prompt.summary;
+    if (prompt.kind === "agent_context_refresh") return prompt.summary ?? "Update agent context";
     return prompt.text;
+  }
+
+  function getContextChangeCount(prompt: QueuedPrompt): number {
+    const update = prompt.agentContextUpdate;
+    if (!update) return 0;
+    return [
+      update.systemPromptChanged ? 1 : 0,
+      update.loadedExtensionIds.added.length,
+      update.loadedExtensionIds.removed.length,
+      update.availableExtensionIds.added.length,
+      update.availableExtensionIds.removed.length,
+      update.externalSourceHashes.added.length,
+      update.externalSourceHashes.removed.length,
+    ].reduce((sum, count) => sum + count, 0);
+  }
+
+  function getContextRevisionLabel(prompt: QueuedPrompt): string | null {
+    const update = prompt.agentContextUpdate;
+    if (!update) return null;
+    return `r${update.requestedRevision}->r${update.currentRevision}`;
   }
 
   function getDropTarget(clientY: number): string | null {
@@ -191,7 +219,7 @@
     <div class="queued-strip-scroll" role="list" bind:this={stripElement}>
       {#each displayedQueuedMessages as prompt, index (prompt.id)}
         <article
-          class={`queued-message ${prompt.id === draggedPromptId ? "dragging" : ""} ${isLocked(prompt) ? "locked" : ""} ${prompt.kind === "handler_handoff" ? "handoff" : ""} ${prompt.kind === "prompt_refresh" ? "prompt-refresh" : ""}`.trim()}
+          class={`queued-message ${prompt.id === draggedPromptId ? "dragging" : ""} ${isLocked(prompt) ? "locked" : ""} ${prompt.kind === "thread_report_notification" ? "thread-report" : ""} ${prompt.kind === "agent_context_refresh" ? "prompt-refresh" : ""}`.trim()}
           data-prompt-id={prompt.id}
           data-reorderable={isLocked(prompt) ? "false" : "true"}
           role="listitem"
@@ -214,21 +242,58 @@
             {/if}
           </button>
           <span class="queued-copy" title={getItemTitle(prompt)}>
-            {#if prompt.kind === "handler_handoff"}
-              <span class="queued-kind">Handoff</span>
-            {:else if prompt.kind === "prompt_refresh"}
+            {#if prompt.kind === "thread_report_notification"}
+              <span class="queued-kind">Report</span>
+            {:else if prompt.kind === "report_request"}
+              <span class="queued-kind">Request</span>
+            {:else if prompt.kind === "agent_context_refresh"}
               <span class="queued-kind">Context</span>
             {/if}
-            {getItemTitle(prompt)}
+            {getItemText(prompt)}
+            {#if prompt.kind === "agent_context_refresh" && prompt.agentContextUpdate}
+              <span class={`context-update-state ${prompt.agentContextUpdate.state}`}>
+                {getStatusLabel(prompt)}
+              </span>
+              {#if getContextChangeCount(prompt) > 0}
+                <span class="context-update-detail">{getContextChangeCount(prompt)} changes</span>
+              {/if}
+              {#if getContextRevisionLabel(prompt)}
+                <span class="context-update-detail">{getContextRevisionLabel(prompt)}</span>
+              {/if}
+            {/if}
           </span>
           {#if isLocked(prompt)}
-            <div class="queued-status" aria-label={`${getStatusLabel(prompt)} queued message`}>
-              <LockIcon size={11} aria-hidden="true" />
-              <span>{getStatusLabel(prompt)}</span>
+            <div class="queued-locked-controls">
+              <div class="queued-status" aria-label={`${getStatusLabel(prompt)} queued message`}>
+                <LockIcon size={11} aria-hidden="true" />
+                <span>{getStatusLabel(prompt)}</span>
+              </div>
+              {#if prompt.status === "failed"}
+                <div class="queued-actions failed-actions">
+                  {#if prompt.kind === "user_message"}
+                    <Tooltip label="Restore to composer">
+                      <button class="queued-icon-button" type="button" aria-label="Restore failed queued message" onclick={() => onEdit(prompt.id)}>
+                        <PencilIcon size={12} aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label="Delete">
+                      <button class="queued-icon-button danger" type="button" aria-label="Delete failed queued message" onclick={() => onDelete(prompt.id)}>
+                        <Trash2Icon size={12} aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                  {:else}
+                    <Tooltip label="Dismiss failed queue item">
+                      <button class="queued-reject-button" type="button" aria-label="Dismiss failed queue item" onclick={() => onDelete(prompt.id)}>
+                        Dismiss
+                      </button>
+                    </Tooltip>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {:else}
             <div class="queued-actions">
-              {#if prompt.kind !== "prompt_refresh"}
+              {#if prompt.kind !== "agent_context_refresh"}
                 <Tooltip label="Steer at next safe boundary">
                   <button class="queued-steer-button" type="button" aria-label="Steer queued message" onclick={() => steer(prompt.id)}>
                     <CornerUpRightIcon size={12} aria-hidden="true" />
@@ -247,10 +312,16 @@
                     <Trash2Icon size={12} aria-hidden="true" />
                   </button>
                 </Tooltip>
-              {:else if prompt.kind === "handler_handoff"}
-                <Tooltip label="Reject handoff">
-                  <button class="queued-reject-button" type="button" aria-label="Reject handoff" onclick={() => onDelete(prompt.id)}>
-                    Reject
+              {:else if prompt.kind === "thread_report_notification"}
+                <Tooltip label="Dismiss report">
+                  <button class="queued-reject-button" type="button" aria-label="Dismiss report" onclick={() => onDelete(prompt.id)}>
+                    Dismiss
+                  </button>
+                </Tooltip>
+              {:else if prompt.kind === "request_user_input_answer"}
+                <Tooltip label="Cancel answer">
+                  <button class="queued-reject-button" type="button" aria-label="Cancel queued answer" onclick={() => onDelete(prompt.id)}>
+                    Cancel
                   </button>
                 </Tooltip>
               {:else}
@@ -349,7 +420,7 @@
     color: var(--ui-text-tertiary);
   }
 
-  .queued-message.handoff {
+  .queued-message.thread-report {
     border-color: color-mix(in oklab, var(--ui-accent) 30%, var(--ui-border-soft));
     background: color-mix(in oklab, var(--ui-accent) 8%, var(--ui-surface-subtle));
   }
@@ -410,6 +481,34 @@
     text-transform: uppercase;
   }
 
+  .context-update-state,
+  .context-update-detail {
+    display: inline-grid;
+    place-items: center;
+    margin-left: 0.34rem;
+    padding: 0.08rem 0.28rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+    border-radius: var(--ui-radius-xs);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    vertical-align: 0.08rem;
+  }
+
+  .context-update-state.queued,
+  .context-update-state.updating {
+    border-color: color-mix(in oklab, var(--ui-warning-border, var(--ui-border-soft)) 50%, transparent);
+    color: color-mix(in oklab, var(--ui-warning-text, var(--ui-text-secondary)) 74%, var(--ui-text-primary));
+  }
+
+  .context-update-state.out_of_date {
+    border-color: color-mix(in oklab, var(--ui-danger) 48%, transparent);
+    color: var(--ui-danger);
+  }
+
   .queued-message.locked .queued-copy {
     color: var(--ui-text-secondary);
   }
@@ -436,6 +535,17 @@
     font-weight: 600;
     line-height: 1;
     text-transform: uppercase;
+  }
+
+  .queued-locked-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .failed-actions {
+    padding-left: 0;
   }
 
   .queued-icon-button,

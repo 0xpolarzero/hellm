@@ -62,7 +62,7 @@ export function summarizeWorkspaceTabCounts(input: WorkspaceTabSummaryInput): Wo
       (session.threadIdsByStatus?.runningHandler.length ?? 0) +
       (session.threadIdsByStatus?.runningWorkflow.length ?? 0);
   }
-  counts.warning += input.appLogSummary?.unread.warning ?? 0;
+  counts.warning += input.appLogSummary?.unread.warn ?? 0;
   counts.error += input.appLogSummary?.unread.error ?? 0;
   return counts;
 }

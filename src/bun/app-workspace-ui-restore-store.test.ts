@@ -21,7 +21,7 @@ describe("app workspace UI restore store", () => {
       layouts: {
         A: null,
         B: {
-          panels: [{ panelId: "primary", binding: { surface: "saved-workflow-library" } }],
+          panels: [{ panelId: "primary", binding: { surface: "workflows" } }],
           dockview: null,
           compactSurfaces: [],
           focusedPanelId: "primary",

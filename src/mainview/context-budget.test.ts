@@ -43,13 +43,23 @@ describe("context budget", () => {
 
   it("projects the latest processed tokens as active context percentage", () => {
     expect(
-      buildContextBudgetFromUsage({ input: 300, output: 45, cacheRead: 30, cacheWrite: 30 }, 1000),
+      buildContextBudgetFromUsage({ input: 340, output: 45, cacheRead: 30, cacheWrite: 30 }, 1000),
     ).toMatchObject({
-      usedTokens: 405,
+      usedTokens: 400,
       maxTokens: 1000,
-      percent: 40.5,
+      percent: 40,
       tone: "orange",
-      label: "40.5% context",
+      label: "40% context",
+    });
+  });
+
+  it("excludes output tokens because the meter describes prompt input pressure", () => {
+    expect(
+      buildContextBudgetFromUsage({ input: 20, output: 900, cacheRead: 10, cacheWrite: 5 }, 100),
+    ).toMatchObject({
+      usedTokens: 35,
+      percent: 35,
+      tone: "neutral",
     });
   });
 
@@ -62,15 +72,13 @@ describe("context budget", () => {
     expect(budget && formatContextBudgetTooltip(budget)).toBe("12,345 / 200,000 tokens");
   });
 
-  it("shows an empty live surface as 0 percent when the model has a context window", () => {
-    expect(buildSurfaceContextBudget([], { contextWindow: 200000 })).toMatchObject({
-      usedTokens: 0,
-      maxTokens: 200000,
-      percent: 0,
-      tone: "neutral",
-      label: "0% context",
-      detail: "0 of 200k tokens",
-    });
+  it("omits live surface budget until assistant input usage is known", () => {
+    expect(buildSurfaceContextBudget([], { contextWindow: 200000 })).toBeNull();
+    expect(
+      buildSurfaceContextBudget([{ role: "user", content: "first", timestamp: Date.now() }], {
+        contextWindow: 200000,
+      }),
+    ).toBeNull();
   });
 
   it("uses the latest assistant usage for a live surface", () => {
@@ -85,8 +93,8 @@ describe("context budget", () => {
     );
 
     expect(budget).toMatchObject({
-      usedTokens: 61,
-      percent: 61,
+      usedTokens: 60,
+      percent: 60,
       tone: "red",
     });
   });

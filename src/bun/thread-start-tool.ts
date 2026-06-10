@@ -1,39 +1,51 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "typebox";
-import type { AgentPromptSettings } from "../shared/agent-settings";
+import type { AgentProfileSettings } from "../shared/agent-settings";
+import type { AppLoggerEvent } from "./app-logger";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
   StructuredSessionStateStore,
   StructuredThreadRecord,
+  StructuredThreadHistoryMode,
 } from "./structured-session-state";
-import {
-  getOptionalPromptContext,
-  validateOptionalPromptContextKeys,
-  type OptionalPromptContextKey,
-} from "./prompt-contexts";
 
 export const START_THREAD_TOOL_NAME = "thread_start";
 
+const extensionUsageStateSchema = Type.Union([
+  Type.Literal("default_loaded"),
+  Type.Literal("available"),
+  Type.Literal("unavailable"),
+]);
+
+const threadHistorySchema = Type.Union([Type.Literal("isolated"), Type.Literal("forked")], {
+  description:
+    "Defaults to isolated. Use forked only when explicit conversational continuity is requested or materially necessary; do not use forked for ordinary implementation, research, tests, review, verification, or tasks already specified by durable files.",
+});
+
+const threadStartItemSchema = Type.Object(
+  {
+    objective: Type.String({
+      minLength: 1,
+      description:
+        "Compact task packet with goal, acceptance criteria, durable paths, accepted decisions, constraints, expected output, and what not to do.",
+    }),
+    history: Type.Optional(threadHistorySchema),
+    extensions: Type.Optional(
+      Type.Record(Type.String({ minLength: 1 }), extensionUsageStateSchema),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export const startThreadParamsSchema = Type.Object(
   {
-    objective: Type.String({ minLength: 1 }),
-    context: Type.Optional(Type.Array(Type.Literal("ci"))),
-    agent: Type.Optional(
-      Type.Object(
-        {
-          provider: Type.String({ minLength: 1 }),
-          model: Type.String({ minLength: 1 }),
-          reasoningEffort: Type.Union([
-            Type.Literal("low"),
-            Type.Literal("medium"),
-            Type.Literal("high"),
-          ]),
-          systemPrompt: Type.Optional(Type.String({ minLength: 1 })),
-        },
-        { additionalProperties: false },
-      ),
-    ),
+    threadGroupId: Type.Optional(Type.String({ minLength: 1 })),
+    threads: Type.Array(threadStartItemSchema, {
+      minItems: 1,
+      description:
+        "Required and normally one item. Use multiple items only for separate user-visible handler conversations that should share one durable thread group and may need independent direct follow-up; do not use multiple items for ordinary internal parallelism.",
+    }),
   },
   { additionalProperties: false },
 );
@@ -43,6 +55,7 @@ export type StartThreadParams = Static<typeof startThreadParamsSchema>;
 const START_THREAD_DESCRIPTION = [
   "Open a delegated handler thread for a bounded objective.",
   "Use this from the orchestrator when the work should continue inside its own handler-thread surface.",
+  "Normally pass one threads[] item; pass multiple items only for separate user-visible handler conversations with independent follow-up needs.",
 ].join(" ");
 
 export interface ThreadStartBridge {
@@ -51,9 +64,11 @@ export interface ThreadStartBridge {
     turnId: string;
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
+    threadGroupId: string | null;
     objective: string;
-    contextKeys: OptionalPromptContextKey[];
-    agentProfileSettings: AgentPromptSettings | null;
+    historyMode: StructuredThreadHistoryMode;
+    extensions: Record<string, "default_loaded" | "available" | "unavailable"> | null;
+    agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
   }): Promise<StructuredThreadRecord>;
 }
@@ -62,6 +77,7 @@ export function createStartThreadTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
   bridge: ThreadStartBridge;
+  onAppLog?: (event: AppLoggerEvent) => void;
 }): AgentTool<typeof startThreadParamsSchema, Record<string, unknown>> {
   return {
     label: "Thread",
@@ -80,8 +96,14 @@ export function createStartThreadTool(options: {
         onlyIfPending: true,
       });
 
-      const objective = params.objective.trim();
-      const contextKeys = validateOptionalPromptContextKeys(params.context ?? []);
+      const requestedThreads = params.threads.map((thread) => ({
+        objective: thread.objective.trim(),
+        historyMode: thread.history ?? "isolated",
+        extensions: thread.extensions ?? null,
+      }));
+      const emptyObjective = requestedThreads.find((thread) => !thread.objective);
+      let threadGroupId = params.threadGroupId?.trim() || null;
+      const summary = requestedThreads.map((thread) => thread.objective).join("; ");
       const command = options.store.createCommand({
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
@@ -89,64 +111,94 @@ export function createStartThreadTool(options: {
         toolName: START_THREAD_TOOL_NAME,
         executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         visibility: "surface",
-        title: `Start handler thread: ${objective}`,
-        summary: objective,
+        title:
+          requestedThreads.length === 1
+            ? `Start handler thread: ${requestedThreads[0]!.objective}`
+            : `Start ${requestedThreads.length} handler threads`,
+        summary,
+        arguments: {
+          ...(threadGroupId ? { threadGroupId } : {}),
+          threads: requestedThreads,
+        },
       });
       options.store.startCommand(command.id);
+      if (emptyObjective) {
+        const message = `${START_THREAD_TOOL_NAME} requires every thread objective to be non-empty.`;
+        options.store.finishCommand({
+          commandId: command.id,
+          status: "failed",
+          summary: message,
+          error: message,
+        });
+        throw new Error(message);
+      }
 
       try {
-        const thread = await options.bridge.createHandlerThread({
-          sessionId: runtime.sessionId,
-          turnId: runtime.turnId,
-          parentThreadId: runtime.rootThreadId ?? null,
-          parentSurfacePiSessionId: runtime.surfacePiSessionId,
-          objective,
-          contextKeys,
-          agentProfileSettings: params.agent
-            ? {
-                provider: params.agent.provider,
-                model: params.agent.model,
-                reasoningEffort: params.agent.reasoningEffort,
-                systemPrompt: params.agent.systemPrompt ?? "",
-              }
-            : null,
-          loadedByCommandId: command.id,
-        });
+        const threads: StructuredThreadRecord[] = [];
+        for (const requestedThread of requestedThreads) {
+          const thread = await options.bridge.createHandlerThread({
+            sessionId: runtime.sessionId,
+            turnId: runtime.turnId,
+            parentThreadId: runtime.rootThreadId ?? null,
+            parentSurfacePiSessionId: runtime.surfacePiSessionId,
+            threadGroupId,
+            objective: requestedThread.objective,
+            historyMode: requestedThread.historyMode,
+            extensions: requestedThread.extensions,
+            agentProfileSettings: null,
+            loadedByCommandId: command.id,
+          });
+          threadGroupId = thread.threadGroupId;
+          threads.push(thread);
+        }
+
+        const resultThreads = threads.map((thread) => ({
+          threadId: thread.id,
+          surfacePiSessionId: thread.surfacePiSessionId,
+          objective: thread.objective,
+          objectiveState: thread.objectiveState,
+        }));
 
         options.store.finishCommand({
           commandId: command.id,
           status: "succeeded",
-          summary: `Opened handler thread ${thread.id} for ${objective}.`,
+          summary:
+            threads.length === 1
+              ? `Opened handler thread ${threads[0]!.id} for ${threads[0]!.objective}.`
+              : `Opened ${threads.length} handler threads in group ${threadGroupId}.`,
           facts: {
-            threadId: thread.id,
-            surfacePiSessionId: thread.surfacePiSessionId ?? null,
-            objective: thread.objective,
-            contextKeys: contextKeys.map((key) => getOptionalPromptContext(key).key),
+            threadGroupId,
+            threads: resultThreads,
+          },
+        });
+        options.onAppLog?.({
+          level: "info",
+          source: "thread",
+          message:
+            threads.length === 1 ? "Handler thread created." : "Handler thread group created.",
+          details: {
+            workspaceSessionId: runtime.sessionId,
+            surfacePiSessionId: runtime.surfacePiSessionId,
+            ...(runtime.rootThreadId ? { threadId: runtime.rootThreadId } : {}),
+            commandId: command.id,
+            threadGroupId: threadGroupId!,
+            threadIds: threads.map((thread) => thread.id),
+            threadCount: threads.length,
           },
         });
 
+        const details = {
+          threadGroupId: threadGroupId!,
+          threads: resultThreads,
+        };
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                ok: true,
-                threadId: thread.id,
-                surfacePiSessionId: thread.surfacePiSessionId ?? null,
-                title: thread.title,
-                objective: thread.objective,
-                loadedContextKeys: thread.loadedContextKeys,
-              }),
+              text: JSON.stringify(details),
             },
           ],
-          details: {
-            ok: true,
-            threadId: thread.id,
-            surfacePiSessionId: thread.surfacePiSessionId ?? null,
-            title: thread.title,
-            objective: thread.objective,
-            loadedContextKeys: thread.loadedContextKeys,
-          },
+          details,
         };
       } catch (error) {
         const message =
@@ -156,6 +208,18 @@ export function createStartThreadTool(options: {
           status: "failed",
           summary: message,
           error: message,
+        });
+        options.onAppLog?.({
+          level: "warning",
+          source: "thread",
+          message: "Handler thread creation failed.",
+          details: {
+            workspaceSessionId: runtime.sessionId,
+            surfacePiSessionId: runtime.surfacePiSessionId,
+            ...(runtime.rootThreadId ? { threadId: runtime.rootThreadId } : {}),
+            commandId: command.id,
+            errorMessage: message,
+          },
         });
 
         return {

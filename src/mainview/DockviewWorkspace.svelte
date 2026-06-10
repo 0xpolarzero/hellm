@@ -6,17 +6,18 @@
     type GroupPanelPartInitParameters,
     type IContentRenderer,
     type IHeaderActionsRenderer,
+    type ITabGroupChipRenderer,
     type IDisposable,
     type ITabRenderer,
+    type IWatermarkRenderer,
     type SerializedDockview,
     type TabPartInitParameters,
   } from "dockview-core";
   // oxlint-disable-next-line import/no-unassigned-import
   import "dockview-core/dist/styles/dockview.css";
   import DockviewPanelHost from "./DockviewPanelHost.svelte";
-  import PromptLibrarySnapshotControls from "./PromptLibrarySnapshotControls.svelte";
   import type { ChatRuntime } from "./chat-runtime";
-  import type { AgentSettingsState } from "../shared/agent-settings";
+  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
   import type { WorkspaceTabInfo } from "../shared/workspace-contract";
   import type { WorkspaceDockviewPanelState } from "./pane-layout";
   import { getSurfaceDisplayTitle } from "./surface-title";
@@ -38,6 +39,9 @@
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
+    onOpenAgentProfile?: (agentProfileId: string) => void;
+    onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
+    onAppAppearanceChanged?: (appearance: AppAppearance) => void;
     onPersistDockview: (dockview: SerializedDockview | null, focusedPanelId: string | null) => void;
   };
 
@@ -54,6 +58,9 @@
     onAgentSettingsChanged,
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
+    onOpenAgentProfile,
+    onProviderAuthChanged,
+    onAppAppearanceChanged,
     onPersistDockview,
   }: Props = $props();
   let hostElement = $state<HTMLDivElement | null>(null);
@@ -96,6 +103,9 @@
           recentWorkspaces,
           onOpenWorkspace,
           onOpenWorkspaceInNewTab,
+          onOpenAgentProfile,
+          onProviderAuthChanged,
+          onAppAppearanceChanged,
         },
       }) as Record<string, unknown>;
     }
@@ -115,6 +125,9 @@
           recentWorkspaces,
           onOpenWorkspace,
           onOpenWorkspaceInNewTab,
+          onOpenAgentProfile,
+          onProviderAuthChanged,
+          onAppAppearanceChanged,
         },
       }) as Record<string, unknown>;
     }
@@ -168,10 +181,14 @@
       this.element.ariaLabel = this.element.title;
       this.element.dataset.focused = panel?.panelId === focusedPanelId ? "true" : "false";
       this.element.dataset.state = presentation.state ?? "idle";
+      this.element.dataset.testid =
+        panel?.panelId === focusedPanelId ? "active-surface-tab" : "surface-tab";
 
       const title = document.createElement("span");
       title.className = "dockview-surface-tab-title";
       title.textContent = presentation.title;
+      title.dataset.testid =
+        panel?.panelId === focusedPanelId ? "active-surface-title" : "surface-title";
 
       this.element.append(title);
 
@@ -228,10 +245,7 @@
         return "orchestrator";
       case "thread":
         return "handler";
-      case "workflow-inspector":
-        return "workflow";
-      case "saved-workflow-library":
-      case "prompt-library":
+      case "workflows":
       case "app-logs":
       case "open-workspace":
         return null;
@@ -241,8 +255,6 @@
         return "task";
       case "artifact":
         return "artifact";
-      case "project-ci-check":
-        return "ci";
       default:
         return null;
     }
@@ -359,17 +371,7 @@
     private syncSnapshotControls(): void {
       const panel = this.activePanel;
       const panelId = panel?.panelId ?? null;
-      if (!panelId || panel?.binding?.surface !== "prompt-library") {
-        this.unmountSnapshotControls();
-        return;
-      }
-      if (this.snapshotComponent && this.renderedSnapshotPanelId === panelId) return;
       this.unmountSnapshotControls();
-      this.snapshotComponent = mount(PromptLibrarySnapshotControls, {
-        target: this.snapshotContainer,
-        props: { runtime, panelId },
-      }) as Record<string, unknown>;
-      this.renderedSnapshotPanelId = panelId;
     }
 
     private unmountSnapshotControls(): void {
@@ -379,6 +381,51 @@
       }
       this.renderedSnapshotPanelId = null;
       this.snapshotContainer.replaceChildren();
+    }
+  }
+
+  class SurfaceWatermarkRenderer implements IWatermarkRenderer {
+    readonly element = document.createElement("div");
+
+    init(): void {
+      this.element.className = "dockview-surface-watermark";
+      this.element.dataset.testid = "dockview-watermark";
+
+      const title = document.createElement("strong");
+      title.textContent = "No panes open";
+      const detail = document.createElement("span");
+      detail.textContent = "Open a session, Logs, Agents, Extensions, Snippets, Workflows, or Settings.";
+      this.element.replaceChildren(title, detail);
+    }
+
+    dispose(): void {
+      this.element.replaceChildren();
+    }
+  }
+
+  class SurfaceTabGroupChipRenderer implements ITabGroupChipRenderer {
+    readonly element = document.createElement("button");
+
+    init(params: Parameters<ITabGroupChipRenderer["init"]>[0]): void {
+      this.element.type = "button";
+      this.element.className = "dockview-tab-group-chip";
+      this.element.dataset.testid = "dockview-tab-group-chip";
+      this.render(params.tabGroup);
+    }
+
+    update(params: Parameters<NonNullable<ITabGroupChipRenderer["update"]>>[0]): void {
+      this.render(params.tabGroup);
+    }
+
+    dispose(): void {
+      this.element.replaceChildren();
+    }
+
+    private render(tabGroup: Parameters<ITabGroupChipRenderer["init"]>[0]["tabGroup"]): void {
+      const label = tabGroup.label?.trim() || "Group";
+      this.element.textContent = label;
+      this.element.ariaLabel = `Tab group ${label}`;
+      this.element.title = this.element.ariaLabel;
     }
   }
 
@@ -471,6 +518,8 @@
       createComponent: () => new SurfaceContentRenderer(),
       createTabComponent: () => new SurfaceTabRenderer(),
       createRightHeaderActionComponent: () => new SurfaceHeaderActionsRenderer(),
+      createWatermarkComponent: () => new SurfaceWatermarkRenderer(),
+      createTabGroupChipComponent: () => new SurfaceTabGroupChipRenderer(),
       defaultRenderer: "onlyWhenVisible",
       defaultTabComponent: "surfaceTab",
       noPanelsOverlay: "emptyGroup",
@@ -495,7 +544,7 @@
     });
 
     dockview.onDidActivePanelChange((panel) => {
-      if (panel) onFocusPanel(panel.id);
+      if (!applying && panel) onFocusPanel(panel.id);
       persistDockview();
     });
     dockview.onDidAddPanel(() => persistDockview());
@@ -504,6 +553,21 @@
         void runtime.closePane(panel.id);
       }
       persistDockview();
+    });
+    dockview.onWillShowOverlay((event) => {
+      if (!isAllowedDockviewDropData(event.getData())) {
+        event.preventDefault();
+      }
+    });
+    dockview.onWillDrop((event) => {
+      if (!isAllowedDockviewDropData(event.getData())) {
+        event.preventDefault();
+      }
+    });
+    dockview.onUnhandledDragOverEvent((event) => {
+      if (isAllowedDockviewDropData(event.getData())) {
+        event.accept();
+      }
     });
     dockview.onDidLayoutChange(() => persistDockview());
     dockview.onDidDrop(() => persistDockview());
@@ -581,6 +645,15 @@
     return dockview?.panels.find((panel) => panel.id === panelId);
   }
 
+  function isKnownDockviewDragPanel(panelId: string | null | undefined): boolean {
+    return !!panelId && panels.some((panel) => panel.panelId === panelId);
+  }
+
+  function isAllowedDockviewDropData(data: { panelId: string | null; viewId: string } | undefined): boolean {
+    if (!data) return false;
+    return isKnownDockviewDragPanel(data.panelId) || isKnownDockviewDragPanel(data.viewId);
+  }
+
   function runtimePanels(): WorkspaceDockviewPanelState[] {
     return runtime.paneLayout.panels;
   }
@@ -612,10 +685,7 @@
         const existingPanel = getDockviewPanel(panel.panelId);
         const renderKey = getPanelRenderKey(panel);
         if (!existingPanel) {
-          const referencePanel = panel.placement?.referencePanelId
-            ? getDockviewPanel(panel.placement.referencePanelId)
-            : undefined;
-          dockview.addPanel({
+          const addedPanel = dockview.addPanel({
             id: panel.panelId,
             component: "surface",
             tabComponent: "surfaceTab",
@@ -624,14 +694,11 @@
             minimumWidth: 0,
             minimumHeight: 0,
             inactive: panel.panelId !== nextFocusedPanelId,
-            position:
-              dockview.totalPanels > 0
-                ? {
-                    referencePanel: referencePanel ?? dockview.activePanel ?? dockview.panels[0]!,
-                    direction: panel.placement?.direction ?? "right",
-                  }
-                : undefined,
+            ...getDockviewAddPanelPlacement(panel),
           });
+          if (panel.placement?.kind === "popout") {
+            void dockview.addPopoutGroup(addedPanel, { position: panel.placement.box });
+          }
           panelRenderKeys.set(panel.panelId, renderKey);
         } else if (panelRenderKeys.get(panel.panelId) !== renderKey) {
           existingPanel.setTitle(panel.chrome?.title ?? "Surface");
@@ -653,6 +720,54 @@
     } finally {
       applying = false;
     }
+  }
+
+  function getDockviewAddPanelPlacement(panel: WorkspaceDockviewPanelState): Partial<Parameters<DockviewComponent["addPanel"]>[0]> {
+    const fallbackReferencePanel = dockview?.activePanel ?? dockview?.panels[0];
+    const placement = panel.placement;
+    if (!dockview || dockview.totalPanels === 0 || !placement) {
+      return {};
+    }
+    if (placement.kind === "split") {
+      return {
+        position: {
+          referencePanel: getDockviewPanel(placement.referencePanelId) ?? fallbackReferencePanel!,
+          direction: placement.direction,
+        },
+        initialWidth: placement.direction === "left" || placement.direction === "right" ? placement.size : undefined,
+        initialHeight: placement.direction === "above" || placement.direction === "below" ? placement.size : undefined,
+      };
+    }
+    if (placement.kind === "tab") {
+      const referenceGroup = dockview.getGroup(placement.groupId);
+      return referenceGroup
+        ? {
+            position: {
+              referenceGroup,
+              direction: "within",
+              index: placement.index,
+            },
+          }
+        : {};
+    }
+    if (placement.kind === "edge") {
+      return {
+        position: { direction: placement.direction },
+        initialWidth: placement.direction === "left" || placement.direction === "right" ? placement.size : undefined,
+        initialHeight: placement.direction === "above" || placement.direction === "below" ? placement.size : undefined,
+      };
+    }
+    if (placement.kind === "floating") {
+      return {
+        floating: placement.box ?? true,
+      };
+    }
+    return {
+      position: {
+        referencePanel: fallbackReferencePanel!,
+        direction: "right",
+      },
+    };
   }
 
   $effect(() => {
@@ -744,6 +859,50 @@
   :global(.dockview-workbench .dv-void-container),
   :global(.dockview-workbench .dv-right-actions-container) {
     background: var(--dv-tabs-and-actions-container-background-color);
+  }
+
+  :global(.dockview-surface-watermark) {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 0.34rem;
+    height: 100%;
+    min-height: 11rem;
+    padding: 1rem;
+    color: var(--ui-text-tertiary);
+    text-align: center;
+  }
+
+  :global(.dockview-surface-watermark strong) {
+    color: var(--ui-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  :global(.dockview-surface-watermark span) {
+    max-width: 24rem;
+    font-size: var(--text-xs);
+    line-height: 1.35;
+  }
+
+  :global(.dockview-tab-group-chip) {
+    display: inline-flex;
+    align-items: center;
+    max-width: 8rem;
+    height: 1.25rem;
+    padding: 0 0.38rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 74%, transparent);
+    color: var(--ui-text-tertiary);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   :global(.dockview-workbench .dv-pane-container.dv-animated .dv-view),

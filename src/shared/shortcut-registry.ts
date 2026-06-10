@@ -13,7 +13,7 @@ export type ShortcutActionId =
   | "sidebar.toggle"
   | "surface.logs.open"
   | "surface.agents.open"
-  | "surface.context.open"
+  | "surface.extensions.open"
   | "surface.workflows.open"
   | "dialog.close"
   | "commandPalette.submit"
@@ -32,7 +32,7 @@ export type AppMenuAction = Extract<
   | "sidebar.toggle"
   | "surface.logs.open"
   | "surface.agents.open"
-  | "surface.context.open"
+  | "surface.extensions.open"
   | "surface.workflows.open"
 >;
 
@@ -166,9 +166,9 @@ export const SHORTCUTS = {
     scope: "workspace-shell",
     inputPolicy: "allow-while-typing",
   },
-  "surface.context.open": {
-    id: "surface.context.open",
-    label: "Open Context",
+  "surface.extensions.open": {
+    id: "surface.extensions.open",
+    label: "Open Extensions",
     hotkey: "Mod+Shift+3",
     readableShortcut: "Cmd+Shift+3",
     compactShortcut: "⌘⇧3",
@@ -253,7 +253,7 @@ const APP_MENU_ACTION_IDS = new Set<string>([
   "sidebar.toggle",
   "surface.logs.open",
   "surface.agents.open",
-  "surface.context.open",
+  "surface.extensions.open",
   "surface.workflows.open",
 ]);
 

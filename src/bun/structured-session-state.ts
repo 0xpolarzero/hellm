@@ -1,7 +1,19 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import type { AgentProfileId } from "../shared/agent-settings";
+import type { ComposerSnippetMention } from "../shared/snippets";
 import type { ComposerAttachment } from "../shared/workspace-contract";
 
 const DEFAULT_SIDEBAR_SECTION_SIZES = {
@@ -15,26 +27,24 @@ const MAX_SIDEBAR_SECTION_SIZE_PX = 1000;
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
 export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
-export type StructuredTurnDecision =
-  | "pending"
-  | "reply"
-  | "execute_typescript"
-  | "read"
-  | "grep"
-  | "find"
-  | "ls"
-  | "edit"
-  | "write"
-  | "bash"
-  | `artifact_${string}`
-  | `workflow_${string}`
-  | "clarify"
-  | "thread_start"
-  | "thread_resume"
-  | "request_context"
-  | "thread_handoff"
-  | "wait"
-  | `smithers_${string}`;
+export const STRUCTURED_TURN_DECISIONS = [
+  "pending",
+  "reply",
+  "exec_command",
+  "write_stdin",
+  "apply_patch",
+  "execute_typescript",
+  "list_extensions",
+  "load_extension",
+  "thread_start",
+  "thread_followup",
+  "thread_request_report",
+  "thread_group",
+  "thread_report",
+  "thread_episodes",
+  "request_user_input",
+] as const;
+export type StructuredTurnDecision = (typeof STRUCTURED_TURN_DECISIONS)[number];
 export type StructuredThreadStatus =
   | "idle"
   | "running-handler"
@@ -42,6 +52,8 @@ export type StructuredThreadStatus =
   | "waiting"
   | "troubleshooting"
   | "completed";
+export type StructuredThreadHistoryMode = "isolated" | "forked";
+export type StructuredThreadObjectiveState = "active" | "concluded";
 export type StructuredWaitKind = "user" | "external" | "approval" | "signal" | "timer";
 export type StructuredThreadWaitOwner = "handler" | "workflow";
 export type StructuredWorkflowWaitKind = "approval" | "event" | "timer";
@@ -50,8 +62,7 @@ export type StructuredCommandExecutor =
   | "handler"
   | "workflow-task-agent"
   | "execute_typescript"
-  | "runtime"
-  | "smithers";
+  | "runtime";
 export type StructuredCommandVisibility = "trace" | "summary" | "surface";
 export type StructuredCommandStatus =
   | "requested"
@@ -60,15 +71,14 @@ export type StructuredCommandStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
+export type StructuredRuntimeApprovalStatus = "pending" | "approved" | "denied" | "cancelled";
+export type StructuredRuntimeApprovalMode = "auto-review" | "user";
+export type StructuredRuntimeApprovalToolName =
+  | "apply_patch"
+  | "exec_command"
+  | "execute_typescript";
 export type StructuredEpisodeKind = "analysis" | "change" | "workflow" | "clarification";
 export type StructuredArtifactKind = "text" | "log" | "json" | "file";
-export type StructuredProjectCiStatus = "passed" | "failed" | "cancelled" | "blocked";
-export type StructuredProjectCiCheckStatus =
-  | "passed"
-  | "failed"
-  | "cancelled"
-  | "skipped"
-  | "blocked";
 export type StructuredWorkflowStatus =
   | "running"
   | "waiting"
@@ -84,6 +94,11 @@ export type StructuredWorkflowTaskAttemptStatus =
   | "failed"
   | "cancelled";
 export type StructuredWorkflowTaskMessageRole = "user" | "assistant" | "stderr";
+export type StructuredGeneratedAgentContextActor = "orchestrator" | "handler" | "workflow-task";
+export type StructuredGeneratedAgentContextBindingOwner =
+  | "session"
+  | "thread"
+  | "workflow-task-attempt";
 export type StructuredWorkflowTaskMessageSource = "prompt" | "event" | "responseText";
 export type StructuredTitleGenerationStatus =
   | "not-started"
@@ -115,6 +130,9 @@ export interface StructuredPiSessionRecord {
   reasoningEffort?: string;
   orchestratorAgentProfileId?: AgentProfileId;
   orchestratorAgentProfileJson?: string | null;
+  generatedAgentContextFingerprint?: string | null;
+  loadedExtensionIds?: string[];
+  availableExtensionIds?: string[];
   titleNamerAgentJson?: string | null;
   titleGenerationStatus?: StructuredTitleGenerationStatus;
   titleGenerationTriggeredAt?: string | null;
@@ -134,6 +152,7 @@ export interface StructuredComposerDraftRecord {
   threadId: string | null;
   text: string;
   attachments: ComposerAttachment[];
+  snippetMentions: ComposerSnippetMention[];
   updatedAt: string;
 }
 
@@ -175,17 +194,43 @@ export interface StructuredThreadRecord {
   sessionId: string;
   turnId: string;
   parentThreadId: string | null;
+  threadGroupId: string;
   surfacePiSessionId: string;
   title: string;
   objective: string;
+  historyMode: StructuredThreadHistoryMode;
+  objectiveState: StructuredThreadObjectiveState;
   status: StructuredThreadStatus;
   wait: StructuredWaitState | null;
   loadedContextKeys: string[];
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
   worktree?: string;
   agentProfileJson?: string | null;
+  generatedAgentContextFingerprint?: string | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
+}
+
+export interface StructuredGeneratedAgentContextBindingRecord {
+  id: string;
+  surfacePiSessionId: string;
+  ownerKind: StructuredGeneratedAgentContextBindingOwner;
+  ownerId: string;
+  actorKind: StructuredGeneratedAgentContextActor;
+  aggregateCacheKey: string;
+  systemPrompt: string;
+  svvyxGuidance: string;
+  commandsDts: string;
+  nativeToolSchemasJson: string;
+  generatedAgentContextFingerprint: string;
+  generatedAgentContextRevision: number;
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
+  externalSourceHashes: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface StructuredThreadContextRecord {
@@ -214,6 +259,7 @@ export interface StructuredCommandRecord {
   attempts: number;
   title: string;
   summary: string;
+  arguments: unknown | null;
   facts: Record<string, unknown> | null;
   error: string | null;
   startedAt: string;
@@ -233,42 +279,6 @@ export interface StructuredEpisodeRecord {
   createdAt: string;
 }
 
-export interface StructuredProjectCiRunRecord {
-  id: string;
-  sessionId: string;
-  threadId: string;
-  workflowRunId: string;
-  smithersRunId: string;
-  workflowId: string;
-  entryPath: string;
-  status: StructuredProjectCiStatus;
-  summary: string;
-  createdAt: string;
-  updatedAt: string;
-  startedAt: string;
-  finishedAt: string;
-}
-
-export interface StructuredProjectCiCheckResultRecord {
-  id: string;
-  sessionId: string;
-  ciRunId: string;
-  workflowRunId: string;
-  checkId: string;
-  label: string;
-  kind: string;
-  status: StructuredProjectCiCheckStatus;
-  required: boolean;
-  command: string[] | null;
-  exitCode: number | null;
-  summary: string;
-  artifactIds: string[];
-  startedAt: string | null;
-  finishedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface StructuredWorkflowRunRecord {
   id: string;
   sessionId: string;
@@ -285,8 +295,6 @@ export interface StructuredWorkflowRunRecord {
   continuedFromRunIds: string[];
   activeDescendantRunId: string | null;
   lastEventSeq: number | null;
-  pendingAttentionSeq: number | null;
-  lastAttentionSeq: number | null;
   heartbeatAt: string | null;
   summary: string;
   startedAt: string;
@@ -320,6 +328,7 @@ export interface StructuredWorkflowTaskAttemptRecord {
   agentModel: string | null;
   agentEngine: string | null;
   agentResume: string | null;
+  generatedAgentContextFingerprint: string | null;
   meta: Record<string, unknown> | null;
   startedAt: string;
   updatedAt: string;
@@ -337,6 +346,103 @@ export interface StructuredWorkflowTaskMessageRecord {
   createdAt: string;
 }
 
+export type StructuredRequestUserInputVariant = "nonblocking" | "blocking";
+export type StructuredRequestUserInputStatus = "open" | "completed" | "cancelled" | "expired";
+export type StructuredRequestUserInputQuestionStatus =
+  | "open"
+  | "answered"
+  | "defaulted"
+  | "cancelled";
+export type StructuredRequestUserInputAnsweredBy = "user" | "default" | "timeout_default";
+export type StructuredRequestUserInputDelivery = "steer" | "after_turn";
+export type StructuredRequestUserInputAnswer =
+  | {
+      kind: "option";
+      label: string;
+      text: string;
+    }
+  | {
+      kind: "custom";
+      text: string;
+    };
+
+export interface StructuredRequestUserInputOptionRecord {
+  optionId: string;
+  ordinal: number;
+  label: string;
+  description: string;
+  recommended: boolean;
+}
+
+export interface StructuredRequestUserInputQuestionRecord {
+  questionId: string;
+  requestId: string;
+  ordinal: number;
+  title: string;
+  question: string;
+  defaultAnswer: StructuredRequestUserInputAnswer;
+  choices: StructuredRequestUserInputOptionRecord[];
+  status: StructuredRequestUserInputQuestionStatus;
+}
+
+export interface StructuredRequestUserInputAnswerRecord {
+  answerId: string;
+  requestId: string;
+  questionId: string;
+  answer: StructuredRequestUserInputAnswer;
+  answeredBy: StructuredRequestUserInputAnsweredBy;
+  delivery: StructuredRequestUserInputDelivery | null;
+  queuedItemId: string | null;
+  createdAt: string;
+}
+
+export interface StructuredRequestUserInputRequestRecord {
+  requestId: string;
+  sessionId: string;
+  surfacePiSessionId: string;
+  threadId: string | null;
+  turnId: string;
+  commandId: string;
+  toolItemId: string;
+  variant: StructuredRequestUserInputVariant;
+  status: StructuredRequestUserInputStatus;
+  createdAt: string;
+  completedAt: string | null;
+  timeout: null | {
+    enabled: boolean;
+    durationMs: number;
+    startedAt: string;
+    pausedAt: string | null;
+    remainingMsWhenPaused: number | null;
+    expiresAt: string | null;
+  };
+  questions: StructuredRequestUserInputQuestionRecord[];
+  answers: StructuredRequestUserInputAnswerRecord[];
+}
+
+export interface StructuredRuntimeApprovalRequestRecord {
+  requestId: string;
+  sessionId: string;
+  surfacePiSessionId: string;
+  threadId: string | null;
+  turnId: string | null;
+  commandId: string | null;
+  toolCallId: string;
+  toolName: StructuredRuntimeApprovalToolName;
+  approvalMode: StructuredRuntimeApprovalMode;
+  cwd: string;
+  command: string | null;
+  commandFamily: string | null;
+  patch: string | null;
+  snippetArtifactId: string | null;
+  typescriptCode: string | null;
+  status: StructuredRuntimeApprovalStatus;
+  decisionReason: string | null;
+  reviewer: "auto-review" | "user" | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface StructuredArtifactRecord {
   id: string;
   sessionId: string;
@@ -347,8 +453,12 @@ export interface StructuredArtifactRecord {
   kind: StructuredArtifactKind;
   name: string;
   path?: string;
-  content?: string;
+  mimeType: string;
+  bytes: number;
+  sha256: string;
+  immutable: boolean;
   createdAt: string;
+  deletedAt: string | null;
 }
 
 export type StructuredEventSubjectKind =
@@ -357,8 +467,6 @@ export type StructuredEventSubjectKind =
   | "thread"
   | "command"
   | "episode"
-  | "ciRun"
-  | "ciCheckResult"
   | "workflowRun"
   | "workflowTaskAttempt"
   | "artifact";
@@ -380,24 +488,32 @@ export type StructuredSurfaceQueuedMessageStatus =
   | "steering"
   | "dispatching"
   | "delivered"
+  | "failed"
   | "cancelled";
 
 export type StructuredSurfaceQueueItemKind =
   | "user_message"
-  | "handler_handoff"
-  | "prompt_refresh"
+  | "agent_context_refresh"
   | "initial_handler_start"
-  | "workflow_attention";
+  | "thread_followup"
+  | "report_request"
+  | "thread_report_notification"
+  | "request_user_input_answer";
+
+type RequestUserInputAnswerQueuePayload = {
+  requestId: string;
+  questionId: string;
+  answerId: string;
+  delivery: StructuredRequestUserInputDelivery;
+};
 
 export type StructuredRecoveryWorkKind =
-  | "smithers_bootstrap"
-  | "workflow_attention"
   | "surface_turn_recovery"
   | "queue_drain"
   | "initial_handler_start"
-  | "handler_handoff_resolution"
+  | "thread_report_notification_delivery"
+  | "workflows_build_refresh"
   | "title_generation"
-  | "project_ci_projection"
   | "app_log_projection";
 
 export type StructuredRecoveryWorkStatus =
@@ -461,6 +577,8 @@ export interface StructuredSurfaceQueuedMessageRecord {
   createdAt: string;
   updatedAt: string;
   deliveredAt: string | null;
+  failedAt: string | null;
+  failureError: string | null;
   cancelledAt: string | null;
 }
 
@@ -482,11 +600,12 @@ export interface StructuredSessionSnapshot {
   threadContexts: StructuredThreadContextRecord[];
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
-  ciRuns: StructuredProjectCiRunRecord[];
-  ciCheckResults: StructuredProjectCiCheckResultRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
   workflowTaskMessages: StructuredWorkflowTaskMessageRecord[];
+  generatedAgentContextBindings: StructuredGeneratedAgentContextBindingRecord[];
+  requestUserInputRequests: StructuredRequestUserInputRequestRecord[];
+  runtimeApprovalRequests?: StructuredRuntimeApprovalRequestRecord[];
   artifacts: StructuredArtifactRecord[];
   queuedMessages?: StructuredSurfaceQueuedMessageRecord[];
   events: StructuredLifecycleEventRecord[];
@@ -508,8 +627,6 @@ export interface StructuredThreadDetail {
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
   threadContexts: StructuredThreadContextRecord[];
-  ciRuns: StructuredProjectCiRunRecord[];
-  ciCheckResults: StructuredProjectCiCheckResultRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   latestWorkflowRun: StructuredWorkflowRunRecord | null;
   workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
@@ -526,6 +643,31 @@ export interface CreateStructuredSessionStateStoreOptions {
 export interface StructuredSessionStateStore {
   readonly workspaceId: string;
   upsertPiSession(pi: StructuredPiSessionRecord): void;
+  upsertGeneratedAgentContextBinding(input: {
+    surfacePiSessionId: string;
+    ownerKind: StructuredGeneratedAgentContextBindingOwner;
+    ownerId: string;
+    actorKind: StructuredGeneratedAgentContextActor;
+    aggregateCacheKey: string;
+    systemPrompt: string;
+    svvyxGuidance: string;
+    commandsDts: string;
+    nativeToolSchemasJson: string;
+    generatedAgentContextFingerprint: string;
+    generatedAgentContextRevision: number;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+    externalSourceHashes: string[];
+  }): StructuredGeneratedAgentContextBindingRecord;
+  getGeneratedAgentContextBinding(input: {
+    surfacePiSessionId: string;
+    generatedAgentContextFingerprint?: string | null;
+  }): StructuredGeneratedAgentContextBindingRecord | null;
+  updatePiSessionExtensionState(input: {
+    sessionId: string;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+  }): StructuredPiSessionRecord;
   isSessionDeleted(sessionId: string): boolean;
   startTurn(input: {
     sessionId: string;
@@ -545,11 +687,17 @@ export interface StructuredSessionStateStore {
   createThread(input: {
     turnId: string;
     parentThreadId?: string | null;
+    threadGroupId?: string | null;
     surfacePiSessionId?: string;
     title: string;
     objective: string;
+    historyMode?: StructuredThreadHistoryMode;
+    objectiveState?: StructuredThreadObjectiveState;
+    loadedExtensionIds?: string[];
+    availableExtensionIds?: string[];
     worktree?: string;
     agentProfileJson?: string | null;
+    generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord;
   loadThreadContext(input: {
     threadId: string;
@@ -560,11 +708,15 @@ export interface StructuredSessionStateStore {
   updateThread(input: {
     threadId: string;
     status?: StructuredThreadStatus;
+    objectiveState?: StructuredThreadObjectiveState;
     wait?: StructuredWaitState | null;
     title?: string;
     objective?: string;
+    loadedExtensionIds?: string[];
+    availableExtensionIds?: string[];
     worktree?: string | null;
     agentProfileJson?: string | null;
+    generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord;
   setSessionWait(input: {
     sessionId: string;
@@ -608,6 +760,7 @@ export interface StructuredSessionStateStore {
     visibility: StructuredCommandVisibility;
     title: string;
     summary: string;
+    arguments?: unknown;
     facts?: Record<string, unknown> | null;
     attempts?: number;
   }): StructuredCommandRecord;
@@ -638,7 +791,22 @@ export interface StructuredSessionStateStore {
     name?: string;
     path?: string;
     content?: string;
+    mimeType?: string;
+    immutable?: boolean;
   }): StructuredArtifactRecord;
+  deleteArtifact(input: {
+    sessionId?: string | null;
+    artifactId: string;
+  }): StructuredArtifactRecord;
+  inspectArtifact(input: {
+    sessionId?: string | null;
+    artifactId: string;
+  }): StructuredArtifactRecord;
+  listArtifacts(input: {
+    sessionId: string;
+    threadId?: string | null;
+    limit?: number;
+  }): StructuredArtifactRecord[];
   upsertWorkflowTaskAttempt(input: {
     workflowRunId: string;
     smithersRunId: string;
@@ -662,6 +830,18 @@ export interface StructuredSessionStateStore {
     agentModel?: string | null;
     agentEngine?: string | null;
     agentResume?: string | null;
+    generatedAgentContextFingerprint?: string | null;
+    generatedAgentContextBinding?: {
+      aggregateCacheKey: string;
+      systemPrompt: string;
+      svvyxGuidance: string;
+      commandsDts: string;
+      nativeToolSchemasJson: string;
+      generatedAgentContextRevision: number;
+      loadedExtensionIds: string[];
+      availableExtensionIds: string[];
+      externalSourceHashes: string[];
+    } | null;
     meta?: Record<string, unknown> | null;
     startedAt?: string;
     finishedAt?: string | null;
@@ -684,28 +864,6 @@ export interface StructuredSessionStateStore {
     iteration: number;
     attempt: number;
   }): StructuredWorkflowTaskAttemptRecord | null;
-  recordProjectCiResult(input: {
-    workflowRunId: string;
-    workflowId: string;
-    entryPath: string;
-    status: StructuredProjectCiStatus;
-    summary: string;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    checks: Array<{
-      checkId: string;
-      label: string;
-      kind: string;
-      status: StructuredProjectCiCheckStatus;
-      required: boolean;
-      command?: string[] | null;
-      exitCode?: number | null;
-      summary: string;
-      artifactIds?: string[];
-      startedAt?: string | null;
-      finishedAt?: string | null;
-    }>;
-  }): { ciRun: StructuredProjectCiRunRecord; checkResults: StructuredProjectCiCheckResultRecord[] };
   recordWorkflow(input: {
     threadId: string;
     commandId: string;
@@ -720,8 +878,6 @@ export interface StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number | null;
-    pendingAttentionSeq?: number | null;
-    lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord;
@@ -734,8 +890,6 @@ export interface StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number | null;
-    pendingAttentionSeq?: number | null;
-    lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary?: string;
   }): StructuredWorkflowRunRecord;
@@ -750,6 +904,77 @@ export interface StructuredSessionStateStore {
     requestSummary: string;
     position?: "front" | "back";
   }): StructuredSurfaceQueuedMessageRecord;
+  createRequestUserInputRequest(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    threadId?: string | null;
+    turnId: string;
+    commandId: string;
+    toolItemId: string;
+    variant: StructuredRequestUserInputVariant;
+    timeout?: null | {
+      enabled: boolean;
+      durationMs: number;
+    };
+    questions: Array<{
+      title: string;
+      question: string;
+      defaultAnswer: StructuredRequestUserInputAnswer;
+      choices?: Array<{
+        label: string;
+        description: string;
+        recommended: boolean;
+      }>;
+    }>;
+  }): StructuredRequestUserInputRequestRecord;
+  createRuntimeApprovalRequest(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    threadId?: string | null;
+    turnId?: string | null;
+    commandId?: string | null;
+    toolCallId: string;
+    toolName: StructuredRuntimeApprovalToolName;
+    approvalMode: StructuredRuntimeApprovalMode;
+    cwd: string;
+    command?: string | null;
+    commandFamily?: string | null;
+    patch?: string | null;
+    snippetArtifactId?: string | null;
+    typescriptCode?: string | null;
+  }): StructuredRuntimeApprovalRequestRecord;
+  resolveRuntimeApprovalRequest(input: {
+    requestId: string;
+    status: Extract<StructuredRuntimeApprovalStatus, "approved" | "denied" | "cancelled">;
+    reviewer: "auto-review" | "user";
+    decisionReason?: string | null;
+  }): StructuredRuntimeApprovalRequestRecord;
+  getRuntimeApprovalRequest(requestId: string): StructuredRuntimeApprovalRequestRecord;
+  listOpenRuntimeApprovalRequests(): StructuredRuntimeApprovalRequestRecord[];
+  answerRequestUserInput(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    requestId: string;
+    questionId: string;
+    answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
+    delivery: StructuredRequestUserInputDelivery;
+  }): {
+    request: StructuredRequestUserInputRequestRecord;
+    answer: StructuredRequestUserInputAnswerRecord;
+    queuedMessage: StructuredSurfaceQueuedMessageRecord | null;
+  };
+  defaultOpenRequestUserInputQuestions(input: {
+    requestId: string;
+    answeredBy: "timeout_default";
+  }): StructuredRequestUserInputRequestRecord;
+  cancelRequestUserInputRequest(input: {
+    requestId: string;
+  }): StructuredRequestUserInputRequestRecord;
+  setRequestUserInputTimerPaused(input: {
+    requestId: string;
+    paused: boolean;
+  }): StructuredRequestUserInputRequestRecord;
+  getRequestUserInputRequest(requestId: string): StructuredRequestUserInputRequestRecord;
   listQueuedSurfaceMessages(input: {
     surfacePiSessionId: string;
   }): StructuredSurfaceQueuedMessageRecord[];
@@ -763,6 +988,10 @@ export interface StructuredSessionStateStore {
     position?: "front" | "back";
   }): StructuredSurfaceQueuedMessageRecord;
   markSurfaceMessageDelivered(input: { id: string }): StructuredSurfaceQueuedMessageRecord;
+  markSurfaceMessageFailed(input: {
+    id: string;
+    failureError: string;
+  }): StructuredSurfaceQueuedMessageRecord;
   cancelSurfaceMessage(input: { id: string }): StructuredSurfaceQueuedMessageRecord;
   reorderSurfaceMessage(input: {
     surfacePiSessionId: string;
@@ -806,6 +1035,7 @@ export interface StructuredSessionStateStore {
     threadId?: string | null;
     text: string;
     attachments?: ComposerAttachment[];
+    snippetMentions?: ComposerSnippetMention[];
   }): StructuredComposerDraftRecord | null;
 }
 
@@ -817,6 +1047,9 @@ type SessionRow = {
   reasoning_effort: string | null;
   orchestrator_agent_profile_id: AgentProfileId | null;
   orchestrator_agent_profile_json: string | null;
+  generated_agent_context_fingerprint: string | null;
+  loaded_extension_ids_json: string | null;
+  available_extension_ids_json: string | null;
   title_namer_agent_json: string | null;
   title_generation_status: StructuredTitleGenerationStatus | null;
   title_generation_triggered_at: string | null;
@@ -859,6 +1092,27 @@ type ComposerDraftRow = {
   thread_id: string | null;
   text: string;
   attachments_json: string | null;
+  snippet_mentions_json: string | null;
+  updated_at: string;
+};
+
+type GeneratedAgentContextBindingRow = {
+  id: string;
+  surface_pi_session_id: string;
+  owner_kind: StructuredGeneratedAgentContextBindingOwner;
+  owner_id: string;
+  actor_kind: StructuredGeneratedAgentContextActor;
+  aggregate_cache_key: string;
+  system_prompt: string;
+  svvyx_guidance: string;
+  commands_dts: string;
+  native_tool_schemas_json: string;
+  generated_agent_context_fingerprint: string;
+  generated_agent_context_revision: number;
+  loaded_extension_ids_json: string;
+  available_extension_ids_json: string;
+  external_source_hashes_json: string;
+  created_at: string;
   updated_at: string;
 };
 
@@ -880,9 +1134,14 @@ type ThreadRow = {
   session_id: string;
   turn_id: string;
   parent_thread_id: string | null;
+  thread_group_id: string;
   surface_pi_session_id: string;
   title: string;
   objective: string;
+  history_mode: StructuredThreadHistoryMode;
+  objective_state: StructuredThreadObjectiveState;
+  loaded_extension_ids_json: string | null;
+  available_extension_ids_json: string | null;
   status: StructuredThreadStatus;
   wait_owner: StructuredThreadWaitOwner | null;
   wait_kind: StructuredWaitKind | null;
@@ -891,6 +1150,7 @@ type ThreadRow = {
   wait_since: string | null;
   worktree: string | null;
   agent_profile_json: string | null;
+  generated_agent_context_fingerprint: string | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -922,6 +1182,7 @@ type CommandRow = {
   attempts: number;
   title: string;
   summary: string;
+  arguments_json: string | null;
   facts_json: string | null;
   error: string | null;
   started_at: string;
@@ -941,42 +1202,6 @@ type EpisodeRow = {
   created_at: string;
 };
 
-type ProjectCiRunRow = {
-  id: string;
-  session_id: string;
-  thread_id: string;
-  workflow_run_id: string;
-  smithers_run_id: string;
-  workflow_id: string;
-  entry_path: string;
-  status: StructuredProjectCiStatus;
-  summary: string;
-  created_at: string;
-  updated_at: string;
-  started_at: string;
-  finished_at: string;
-};
-
-type ProjectCiCheckResultRow = {
-  id: string;
-  session_id: string;
-  ci_run_id: string;
-  workflow_run_id: string;
-  check_id: string;
-  label: string;
-  kind: string;
-  status: StructuredProjectCiCheckStatus;
-  required: number;
-  command_json: string | null;
-  exit_code: number | null;
-  summary: string;
-  artifact_ids_json: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 type WorkflowRunRow = {
   id: string;
   session_id: string;
@@ -993,8 +1218,6 @@ type WorkflowRunRow = {
   continued_from_run_ids_json: string | null;
   active_descendant_run_id: string | null;
   last_event_seq: number | null;
-  pending_attention_seq: number | null;
-  last_attention_seq: number | null;
   heartbeat_at: string | null;
   summary: string;
   started_at: string;
@@ -1028,6 +1251,7 @@ type WorkflowTaskAttemptRow = {
   agent_model: string | null;
   agent_engine: string | null;
   agent_resume: string | null;
+  generated_agent_context_fingerprint: string | null;
   meta_json: string | null;
   started_at: string;
   updated_at: string;
@@ -1043,6 +1267,66 @@ type WorkflowTaskMessageRow = {
   smithers_event_seq: number | null;
   text: string;
   created_at: string;
+};
+
+type RequestUserInputRequestRow = {
+  id: string;
+  session_id: string;
+  surface_pi_session_id: string;
+  thread_id: string | null;
+  turn_id: string;
+  command_id: string;
+  tool_item_id: string;
+  variant: StructuredRequestUserInputVariant;
+  status: StructuredRequestUserInputStatus;
+  timeout_json: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+type RequestUserInputQuestionRow = {
+  id: string;
+  request_id: string;
+  ordinal: number;
+  title: string;
+  question: string;
+  default_answer_json: string;
+  choices_json: string;
+  status: StructuredRequestUserInputQuestionStatus;
+};
+
+type RequestUserInputAnswerRow = {
+  id: string;
+  request_id: string;
+  question_id: string;
+  answer_json: string;
+  answered_by: StructuredRequestUserInputAnsweredBy;
+  delivery: StructuredRequestUserInputDelivery | null;
+  queued_item_id: string | null;
+  created_at: string;
+};
+
+type RuntimeApprovalRequestRow = {
+  id: string;
+  session_id: string;
+  surface_pi_session_id: string;
+  thread_id: string | null;
+  turn_id: string | null;
+  command_id: string | null;
+  tool_call_id: string;
+  tool_name: StructuredRuntimeApprovalToolName;
+  approval_mode: StructuredRuntimeApprovalMode;
+  cwd: string;
+  command_text: string | null;
+  command_family: string | null;
+  patch_text: string | null;
+  snippet_artifact_id: string | null;
+  typescript_code: string | null;
+  status: StructuredRuntimeApprovalStatus;
+  decision_reason: string | null;
+  reviewer: "auto-review" | "user" | null;
+  created_at: string;
+  completed_at: string | null;
 };
 
 type RecoveryWorkRow = {
@@ -1079,8 +1363,12 @@ type ArtifactRow = {
   kind: StructuredArtifactKind;
   name: string;
   path: string | null;
-  content: string | null;
+  mime_type: string;
+  bytes: number;
+  sha256: string;
+  immutable: number;
   created_at: string;
+  deleted_at: string | null;
 };
 
 type SurfaceQueuedMessageRow = {
@@ -1098,6 +1386,8 @@ type SurfaceQueuedMessageRow = {
   created_at: string;
   updated_at: string;
   delivered_at: string | null;
+  failed_at: string | null;
+  failure_error: string | null;
   cancelled_at: string | null;
 };
 
@@ -1150,8 +1440,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           id: options.workspace.id,
           label: options.workspace.label,
           cwd: options.workspace.cwd,
-          artifactDir:
-            options.workspace.artifactDir ?? join(options.workspace.cwd, ".svvy", "artifacts"),
+          artifactDir: options.workspace.artifactDir ?? defaultArtifactDirectory(),
         };
 
     try {
@@ -1227,10 +1516,21 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
          SET status = ?,
              updated_at = ?,
              delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END,
+             failed_at = CASE WHEN ? = 'failed' THEN ? ELSE failed_at END,
              cancelled_at = CASE WHEN ? = 'cancelled' THEN ? ELSE cancelled_at END
          WHERE id = ?`,
       )
-      .run(input.status, timestamp, input.status, timestamp, input.status, timestamp, input.id);
+      .run(
+        input.status,
+        timestamp,
+        input.status,
+        timestamp,
+        input.status,
+        timestamp,
+        input.status,
+        timestamp,
+        input.id,
+      );
     this.recordSurfaceMessageEvent(existing, input.eventKind, timestamp);
     return this.mustFindSurfaceQueuedMessageRecord(input.id);
   }
@@ -1251,6 +1551,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            reasoning_effort,
            orchestrator_agent_profile_id,
            orchestrator_agent_profile_json,
+           generated_agent_context_fingerprint,
+           loaded_extension_ids_json,
+           available_extension_ids_json,
            title_namer_agent_json,
            title_generation_status,
            title_generation_triggered_at,
@@ -1274,7 +1577,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pi.sessionId,
@@ -1284,6 +1587,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         pi.reasoningEffort ?? null,
         pi.orchestratorAgentProfileId ?? existing?.orchestrator_agent_profile_id ?? null,
         pi.orchestratorAgentProfileJson ?? existing?.orchestrator_agent_profile_json ?? null,
+        pi.generatedAgentContextFingerprint ??
+          existing?.generated_agent_context_fingerprint ??
+          null,
+        pi.loadedExtensionIds === undefined
+          ? (existing?.loaded_extension_ids_json ?? null)
+          : toJson(normalizeStringList(pi.loadedExtensionIds)),
+        pi.availableExtensionIds === undefined
+          ? (existing?.available_extension_ids_json ?? null)
+          : toJson(normalizeStringList(pi.availableExtensionIds)),
         pi.titleNamerAgentJson ?? existing?.title_namer_agent_json ?? null,
         pi.titleGenerationStatus ?? existing?.title_generation_status ?? "not-started",
         pi.titleGenerationTriggeredAt ?? existing?.title_generation_triggered_at ?? null,
@@ -1316,6 +1628,173 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         existing?.wait_resume_when ?? null,
         existing?.wait_since ?? null,
       );
+  }
+
+  upsertGeneratedAgentContextBinding(input: {
+    surfacePiSessionId: string;
+    ownerKind: StructuredGeneratedAgentContextBindingOwner;
+    ownerId: string;
+    actorKind: StructuredGeneratedAgentContextActor;
+    aggregateCacheKey: string;
+    systemPrompt: string;
+    svvyxGuidance: string;
+    commandsDts: string;
+    nativeToolSchemasJson: string;
+    generatedAgentContextFingerprint: string;
+    generatedAgentContextRevision: number;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+    externalSourceHashes: string[];
+  }): StructuredGeneratedAgentContextBindingRecord {
+    const timestamp = this.now();
+    const existing = this.db
+      .query(
+        `SELECT * FROM generated_agent_context_binding
+         WHERE surface_pi_session_id = ? AND generated_agent_context_fingerprint = ?
+         LIMIT 1`,
+      )
+      .get(input.surfacePiSessionId, input.generatedAgentContextFingerprint) as
+      | GeneratedAgentContextBindingRow
+      | undefined;
+    if (existing) {
+      this.db
+        .query(
+          `UPDATE generated_agent_context_binding
+           SET owner_kind = ?,
+               owner_id = ?,
+               actor_kind = ?,
+               aggregate_cache_key = ?,
+               system_prompt = ?,
+               svvyx_guidance = ?,
+               commands_dts = ?,
+               native_tool_schemas_json = ?,
+               generated_agent_context_revision = ?,
+               loaded_extension_ids_json = ?,
+               available_extension_ids_json = ?,
+               external_source_hashes_json = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.ownerKind,
+          input.ownerId,
+          input.actorKind,
+          input.aggregateCacheKey,
+          input.systemPrompt,
+          input.svvyxGuidance,
+          input.commandsDts,
+          input.nativeToolSchemasJson,
+          input.generatedAgentContextRevision,
+          toJson(normalizeStringList(input.loadedExtensionIds)),
+          toJson(normalizeStringList(input.availableExtensionIds)),
+          toJson(normalizeStringList(input.externalSourceHashes)),
+          timestamp,
+          existing.id,
+        );
+      return this.mapGeneratedAgentContextBinding(
+        this.mustFindGeneratedAgentContextBindingRow(existing.id),
+      );
+    }
+
+    const id = createId("generated-context-binding");
+    this.db
+      .query(
+        `INSERT INTO generated_agent_context_binding (
+           id,
+           surface_pi_session_id,
+           owner_kind,
+           owner_id,
+           actor_kind,
+           aggregate_cache_key,
+           system_prompt,
+           svvyx_guidance,
+           commands_dts,
+           native_tool_schemas_json,
+           generated_agent_context_fingerprint,
+           generated_agent_context_revision,
+           loaded_extension_ids_json,
+           available_extension_ids_json,
+           external_source_hashes_json,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.surfacePiSessionId,
+        input.ownerKind,
+        input.ownerId,
+        input.actorKind,
+        input.aggregateCacheKey,
+        input.systemPrompt,
+        input.svvyxGuidance,
+        input.commandsDts,
+        input.nativeToolSchemasJson,
+        input.generatedAgentContextFingerprint,
+        input.generatedAgentContextRevision,
+        toJson(normalizeStringList(input.loadedExtensionIds)),
+        toJson(normalizeStringList(input.availableExtensionIds)),
+        toJson(normalizeStringList(input.externalSourceHashes)),
+        timestamp,
+        timestamp,
+      );
+    return this.mapGeneratedAgentContextBinding(this.mustFindGeneratedAgentContextBindingRow(id));
+  }
+
+  getGeneratedAgentContextBinding(input: {
+    surfacePiSessionId: string;
+    generatedAgentContextFingerprint?: string | null;
+  }): StructuredGeneratedAgentContextBindingRecord | null {
+    const row = input.generatedAgentContextFingerprint
+      ? (this.db
+          .query(
+            `SELECT * FROM generated_agent_context_binding
+             WHERE surface_pi_session_id = ? AND generated_agent_context_fingerprint = ?
+             LIMIT 1`,
+          )
+          .get(input.surfacePiSessionId, input.generatedAgentContextFingerprint) as
+          | GeneratedAgentContextBindingRow
+          | undefined)
+      : (this.db
+          .query(
+            `SELECT * FROM generated_agent_context_binding
+             WHERE surface_pi_session_id = ?
+             ORDER BY updated_at DESC, rowid DESC
+             LIMIT 1`,
+          )
+          .get(input.surfacePiSessionId) as GeneratedAgentContextBindingRow | undefined);
+    return row ? this.mapGeneratedAgentContextBinding(row) : null;
+  }
+
+  updatePiSessionExtensionState(input: {
+    sessionId: string;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+  }): StructuredPiSessionRecord {
+    const existing = this.mustFindSessionRow(input.sessionId);
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE session
+         SET loaded_extension_ids_json = ?,
+             available_extension_ids_json = ?,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(
+        toJson(normalizeStringList(input.loadedExtensionIds)),
+        toJson(normalizeStringList(input.availableExtensionIds)),
+        timestamp,
+        existing.session_id,
+      );
+    this.recordEvent({
+      sessionId: existing.session_id,
+      kind: "session.updated",
+      subjectKind: "session",
+      subjectId: existing.session_id,
+      at: timestamp,
+    });
+    return this.mapPiSession(this.mustFindSessionRow(existing.session_id));
   }
 
   isSessionDeleted(sessionId: string): boolean {
@@ -1482,13 +1961,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     threadId?: string | null;
     text: string;
     attachments?: ComposerAttachment[];
+    snippetMentions?: ComposerSnippetMention[];
   }): StructuredComposerDraftRecord | null {
     this.ensureSessionRow(input.sessionId);
     const text = input.text;
     const attachments = input.attachments ?? [];
+    const snippetMentions = input.snippetMentions ?? [];
     const timestamp = this.now();
 
-    if (!text.trim() && attachments.length === 0) {
+    if (!text.trim() && attachments.length === 0 && snippetMentions.length === 0) {
       this.db
         .query(`DELETE FROM surface_composer_draft WHERE surface_pi_session_id = ?`)
         .run(input.surfacePiSessionId);
@@ -1514,13 +1995,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            thread_id,
            text,
            attachments_json,
+           snippet_mentions_json,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(surface_pi_session_id) DO UPDATE SET
            session_id = excluded.session_id,
            thread_id = excluded.thread_id,
            text = excluded.text,
            attachments_json = excluded.attachments_json,
+           snippet_mentions_json = excluded.snippet_mentions_json,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -1529,6 +2012,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.threadId ?? null,
         text,
         toJson(attachments),
+        toJson(snippetMentions),
         timestamp,
       );
     this.db
@@ -1696,16 +2180,23 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   createThread(input: {
     turnId: string;
     parentThreadId?: string | null;
+    threadGroupId?: string | null;
     surfacePiSessionId?: string;
     title: string;
     objective: string;
+    historyMode?: StructuredThreadHistoryMode;
+    objectiveState?: StructuredThreadObjectiveState;
+    loadedExtensionIds?: string[];
+    availableExtensionIds?: string[];
     worktree?: string;
     agentProfileJson?: string | null;
+    generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord {
     const turn = this.mustFindTurnRow(input.turnId);
     const parent = input.parentThreadId ? this.mustFindThreadRow(input.parentThreadId) : null;
     const timestamp = this.now();
     const threadId = createId("thread");
+    const threadGroupId = input.threadGroupId?.trim() || parent?.thread_group_id || threadId;
     const surfacePiSessionId =
       input.surfacePiSessionId ?? parent?.surface_pi_session_id ?? turn.surface_pi_session_id;
 
@@ -1716,9 +2207,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            session_id,
            turn_id,
            parent_thread_id,
+           thread_group_id,
            surface_pi_session_id,
            title,
            objective,
+           history_mode,
+           objective_state,
+           loaded_extension_ids_json,
+           available_extension_ids_json,
            status,
            wait_owner,
            wait_kind,
@@ -1727,22 +2223,29 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_since,
            worktree,
            agent_profile_json,
+           generated_agent_context_fingerprint,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         threadId,
         turn.session_id,
         input.turnId,
         input.parentThreadId ?? null,
+        threadGroupId,
         surfacePiSessionId,
         input.title,
         input.objective,
+        input.historyMode ?? "isolated",
+        input.objectiveState ?? "active",
+        toJson(normalizeStringList(input.loadedExtensionIds ?? [])),
+        toJson(normalizeStringList(input.availableExtensionIds ?? [])),
         "running-handler",
         input.worktree ?? null,
         input.agentProfileJson ?? null,
+        input.generatedAgentContextFingerprint ?? null,
         timestamp,
         timestamp,
       );
@@ -1817,15 +2320,20 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   updateThread(input: {
     threadId: string;
     status?: StructuredThreadStatus;
+    objectiveState?: StructuredThreadObjectiveState;
     wait?: StructuredWaitState | null;
     title?: string;
     objective?: string;
+    loadedExtensionIds?: string[];
+    availableExtensionIds?: string[];
     worktree?: string | null;
     agentProfileJson?: string | null;
+    generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord {
     const existing = this.mustFindThreadRow(input.threadId);
     const timestamp = this.now();
     const nextStatus = input.status ?? existing.status;
+    const nextObjectiveState = input.objectiveState ?? existing.objective_state;
     const nextWait =
       input.wait !== undefined
         ? input.wait
@@ -1834,12 +2342,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           : this.mapThreadWait(existing);
     const nextTitle = input.title ?? existing.title;
     const nextObjective = input.objective ?? existing.objective;
+    const nextLoadedExtensionIds =
+      input.loadedExtensionIds === undefined
+        ? existing.loaded_extension_ids_json
+        : toJson(normalizeStringList(input.loadedExtensionIds));
+    const nextAvailableExtensionIds =
+      input.availableExtensionIds === undefined
+        ? existing.available_extension_ids_json
+        : toJson(normalizeStringList(input.availableExtensionIds));
     const nextWorktree =
       input.worktree === undefined ? existing.worktree : (input.worktree ?? null);
     const nextAgentProfileJson =
       input.agentProfileJson === undefined
         ? existing.agent_profile_json
         : (input.agentProfileJson ?? null);
+    const nextGeneratedAgentContextFingerprint =
+      input.generatedAgentContextFingerprint === undefined
+        ? existing.generated_agent_context_fingerprint
+        : (input.generatedAgentContextFingerprint ?? null);
     const finishedAt = isTerminalThreadStatus(nextStatus) ? timestamp : null;
 
     this.db
@@ -1847,6 +2367,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         `UPDATE thread
          SET title = ?,
              objective = ?,
+             objective_state = ?,
+             loaded_extension_ids_json = ?,
+             available_extension_ids_json = ?,
              status = ?,
              wait_owner = ?,
              wait_kind = ?,
@@ -1855,6 +2378,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              wait_since = ?,
              worktree = ?,
              agent_profile_json = ?,
+             generated_agent_context_fingerprint = ?,
              updated_at = ?,
              finished_at = ?
          WHERE id = ?`,
@@ -1862,6 +2386,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .run(
         nextTitle,
         nextObjective,
+        nextObjectiveState,
+        nextLoadedExtensionIds,
+        nextAvailableExtensionIds,
         nextStatus,
         nextWait?.owner ?? null,
         nextWait?.kind ?? null,
@@ -1870,6 +2397,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         nextWait?.since ?? null,
         nextWorktree,
         nextAgentProfileJson,
+        nextGeneratedAgentContextFingerprint,
         timestamp,
         finishedAt,
         input.threadId,
@@ -2190,6 +2718,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     visibility: StructuredCommandVisibility;
     title: string;
     summary: string;
+    arguments?: unknown;
     facts?: Record<string, unknown> | null;
     attempts?: number;
   }): StructuredCommandRecord {
@@ -2242,12 +2771,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            attempts,
            title,
            summary,
+           arguments_json,
            facts_json,
            error,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
       )
       .run(
         commandId,
@@ -2265,6 +2795,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.attempts ?? 1,
         input.title,
         input.summary,
+        input.arguments === undefined ? null : toJson(input.arguments),
         toJson(input.facts ?? null),
         timestamp,
         timestamp,
@@ -2356,10 +2887,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const thread = this.mustFindThreadRow(input.threadId);
     const sessionId = thread.session_id;
 
-    if (!isTerminalThreadStatus(thread.status)) {
-      throw new Error("Terminal episodes can only be created once the thread is terminal.");
-    }
-
     const episodeId = createId("episode");
     const timestamp = this.now();
     this.db
@@ -2409,6 +2936,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     name?: string;
     path?: string;
     content?: string;
+    mimeType?: string;
+    immutable?: boolean;
   }): StructuredArtifactRecord {
     const sourceCommand = input.sourceCommandId
       ? this.mustFindCommandRow(input.sourceCommandId)
@@ -2454,60 +2983,183 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
     const artifactId = createId("artifact");
     const timestamp = this.now();
-    const name = input.name?.trim() || basename(input.path ?? "artifact");
+    const name = validateArtifactName(input.name?.trim() || basename(input.path ?? ""));
+    const immutable = input.immutable === true;
     const path = resolveArtifactPath({
       artifactDir: this.workspace.artifactDir,
       sessionId,
-      artifactId,
-      requestedPath: input.path,
       name,
-      content: input.content,
+      immutable,
     });
+    const mimeType = normalizeArtifactMimeType(input.mimeType) ?? inferArtifactMimeType(name);
 
-    if (input.content !== undefined && path) {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, input.content);
+    const activeName = this.db
+      .query(
+        `SELECT id FROM artifact
+         WHERE session_id = ? AND name = ? AND immutable = ? AND deleted_at IS NULL
+         LIMIT 1`,
+      )
+      .get(sessionId, name, immutable ? 1 : 0) as { id: string } | undefined;
+    if (activeName || existsSync(path)) {
+      throw new Error(`ARTIFACT_EXISTS: active artifact already owns ${name}`);
     }
 
-    this.db
-      .query(
-        `INSERT INTO artifact (
-           id,
-           session_id,
-           thread_id,
-           workflow_run_id,
-           workflow_task_attempt_id,
-           source_command_id,
-           kind,
-           name,
-           path,
-           content,
-           created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        artifactId,
-        sessionId,
-        threadId,
-        workflowRunId,
-        workflowTaskAttemptId,
-        sourceCommandId,
-        input.kind,
-        name,
-        path ?? null,
-        input.content ?? null,
-        timestamp,
-      );
+    let wroteArtifactFile = false;
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      if (input.path && input.content === undefined) {
+        copyArtifactSourceFile(input.path, path);
+      } else {
+        writeFileSync(path, input.content ?? "");
+      }
+      wroteArtifactFile = true;
+      const fileMetadata = readArtifactFileMetadata(path);
 
-    this.recordEvent({
-      sessionId,
-      kind: "artifact.created",
-      subjectKind: "artifact",
-      subjectId: artifactId,
-      at: timestamp,
-    });
+      this.db.transaction(() => {
+        this.db
+          .query(
+            `INSERT INTO artifact (
+               id,
+               session_id,
+               thread_id,
+               workflow_run_id,
+               workflow_task_attempt_id,
+               source_command_id,
+               kind,
+               name,
+               path,
+               mime_type,
+               bytes,
+               sha256,
+               immutable,
+               created_at,
+               deleted_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            artifactId,
+            sessionId,
+            threadId,
+            workflowRunId,
+            workflowTaskAttemptId,
+            sourceCommandId,
+            input.kind,
+            name,
+            path,
+            mimeType,
+            fileMetadata.bytes,
+            fileMetadata.sha256,
+            immutable ? 1 : 0,
+            timestamp,
+            null,
+          );
+
+        this.recordEvent({
+          sessionId,
+          kind: "artifact.created",
+          subjectKind: "artifact",
+          subjectId: artifactId,
+          at: timestamp,
+        });
+      })();
+    } catch (error) {
+      if (wroteArtifactFile) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // Preserve the original persistence failure.
+        }
+      }
+      if (isStructuredArtifactError(error)) {
+        throw error;
+      }
+      throw new Error(`COPY_FAILED: ${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      });
+    }
 
     return this.mustFindArtifactRecord(artifactId);
+  }
+
+  deleteArtifact(input: {
+    sessionId?: string | null;
+    artifactId: string;
+  }): StructuredArtifactRecord {
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(input.artifactId) as
+      | ArtifactRow
+      | undefined;
+    if (!row || (input.sessionId && row.session_id !== input.sessionId)) {
+      throw new Error(`ARTIFACT_NOT_FOUND: ${input.artifactId}`);
+    }
+
+    if (row.deleted_at) {
+      return this.mapArtifact(row);
+    }
+
+    const timestamp = this.now();
+    this.db.transaction(() => {
+      if (row.path && existsSync(row.path)) {
+        try {
+          unlinkSync(row.path);
+        } catch (error) {
+          throw new Error(
+            `DELETE_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
+        }
+      }
+      this.db
+        .query(`UPDATE artifact SET deleted_at = ? WHERE id = ?`)
+        .run(timestamp, input.artifactId);
+      this.recordEvent({
+        sessionId: row.session_id,
+        kind: "artifact.deleted",
+        subjectKind: "artifact",
+        subjectId: input.artifactId,
+        at: timestamp,
+      });
+    })();
+
+    return this.mustFindArtifactRecord(input.artifactId);
+  }
+
+  inspectArtifact(input: {
+    sessionId?: string | null;
+    artifactId: string;
+  }): StructuredArtifactRecord {
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(input.artifactId) as
+      | ArtifactRow
+      | undefined;
+    if (!row || (input.sessionId && row.session_id !== input.sessionId)) {
+      throw new Error(`ARTIFACT_NOT_FOUND: ${input.artifactId}`);
+    }
+    return this.mapArtifact(row);
+  }
+
+  listArtifacts(input: {
+    sessionId: string;
+    threadId?: string | null;
+    limit?: number;
+  }): StructuredArtifactRecord[] {
+    const limit = input.limit ?? 20;
+    const rows = input.threadId
+      ? (this.db
+          .query(
+            `SELECT * FROM artifact
+             WHERE session_id = ? AND thread_id = ? AND deleted_at IS NULL
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?`,
+          )
+          .all(input.sessionId, input.threadId, limit) as ArtifactRow[])
+      : (this.db
+          .query(
+            `SELECT * FROM artifact
+             WHERE session_id = ? AND deleted_at IS NULL
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?`,
+          )
+          .all(input.sessionId, limit) as ArtifactRow[]);
+    return rows.map((row) => this.mapArtifact(row));
   }
 
   upsertWorkflowTaskAttempt(input: {
@@ -2533,6 +3185,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     agentModel?: string | null;
     agentEngine?: string | null;
     agentResume?: string | null;
+    generatedAgentContextFingerprint?: string | null;
+    generatedAgentContextBinding?: {
+      aggregateCacheKey: string;
+      systemPrompt: string;
+      svvyxGuidance: string;
+      commandsDts: string;
+      nativeToolSchemasJson: string;
+      generatedAgentContextRevision: number;
+      loadedExtensionIds: string[];
+      availableExtensionIds: string[];
+      externalSourceHashes: string[];
+    } | null;
     meta?: Record<string, unknown> | null;
     startedAt?: string;
     finishedAt?: string | null;
@@ -2584,6 +3248,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
                agent_model = ?,
                agent_engine = ?,
                agent_resume = ?,
+               generated_agent_context_fingerprint = ?,
                meta_json = ?,
                started_at = ?,
                updated_at = ?,
@@ -2608,6 +3273,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.agentModel === undefined ? existing.agent_model : (input.agentModel ?? null),
           input.agentEngine === undefined ? existing.agent_engine : (input.agentEngine ?? null),
           input.agentResume === undefined ? existing.agent_resume : (input.agentResume ?? null),
+          input.generatedAgentContextFingerprint === undefined
+            ? existing.generated_agent_context_fingerprint
+            : (input.generatedAgentContextFingerprint ?? null),
           input.meta === undefined ? existing.meta_json : toJson(input.meta ?? null),
           startedAt,
           timestamp,
@@ -2622,6 +3290,30 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         subjectId: existing.id,
         at: timestamp,
       });
+      const bindingSurfacePiSessionId = input.surfacePiSessionId ?? existing.surface_pi_session_id;
+      const bindingFingerprint =
+        input.generatedAgentContextFingerprint ??
+        existing.generated_agent_context_fingerprint ??
+        null;
+      if (input.generatedAgentContextBinding && bindingSurfacePiSessionId && bindingFingerprint) {
+        this.upsertGeneratedAgentContextBinding({
+          surfacePiSessionId: bindingSurfacePiSessionId,
+          ownerKind: "workflow-task-attempt",
+          ownerId: existing.id,
+          actorKind: "workflow-task",
+          aggregateCacheKey: input.generatedAgentContextBinding.aggregateCacheKey,
+          systemPrompt: input.generatedAgentContextBinding.systemPrompt,
+          svvyxGuidance: input.generatedAgentContextBinding.svvyxGuidance,
+          commandsDts: input.generatedAgentContextBinding.commandsDts,
+          nativeToolSchemasJson: input.generatedAgentContextBinding.nativeToolSchemasJson,
+          generatedAgentContextFingerprint: bindingFingerprint,
+          generatedAgentContextRevision:
+            input.generatedAgentContextBinding.generatedAgentContextRevision,
+          loadedExtensionIds: input.generatedAgentContextBinding.loadedExtensionIds,
+          availableExtensionIds: input.generatedAgentContextBinding.availableExtensionIds,
+          externalSourceHashes: input.generatedAgentContextBinding.externalSourceHashes,
+        });
+      }
       return this.mustFindWorkflowTaskAttemptRecord(existing.id);
     }
 
@@ -2654,11 +3346,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            agent_model,
            agent_engine,
            agent_resume,
+           generated_agent_context_fingerprint,
            meta_json,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         workflowTaskAttemptId,
@@ -2686,11 +3379,35 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.agentModel ?? null,
         input.agentEngine ?? null,
         input.agentResume ?? null,
+        input.generatedAgentContextFingerprint ?? null,
         toJson(input.meta ?? null),
         startedAt,
         timestamp,
         finishedAt,
       );
+    if (
+      input.generatedAgentContextBinding &&
+      input.surfacePiSessionId &&
+      input.generatedAgentContextFingerprint
+    ) {
+      this.upsertGeneratedAgentContextBinding({
+        surfacePiSessionId: input.surfacePiSessionId,
+        ownerKind: "workflow-task-attempt",
+        ownerId: workflowTaskAttemptId,
+        actorKind: "workflow-task",
+        aggregateCacheKey: input.generatedAgentContextBinding.aggregateCacheKey,
+        systemPrompt: input.generatedAgentContextBinding.systemPrompt,
+        svvyxGuidance: input.generatedAgentContextBinding.svvyxGuidance,
+        commandsDts: input.generatedAgentContextBinding.commandsDts,
+        nativeToolSchemasJson: input.generatedAgentContextBinding.nativeToolSchemasJson,
+        generatedAgentContextFingerprint: input.generatedAgentContextFingerprint,
+        generatedAgentContextRevision:
+          input.generatedAgentContextBinding.generatedAgentContextRevision,
+        loadedExtensionIds: input.generatedAgentContextBinding.loadedExtensionIds,
+        availableExtensionIds: input.generatedAgentContextBinding.availableExtensionIds,
+        externalSourceHashes: input.generatedAgentContextBinding.externalSourceHashes,
+      });
+    }
 
     this.recordEvent({
       sessionId: workflowRun.session_id,
@@ -2764,173 +3481,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapWorkflowTaskAttempt(row) : null;
   }
 
-  recordProjectCiResult(input: {
-    workflowRunId: string;
-    workflowId: string;
-    entryPath: string;
-    status: StructuredProjectCiStatus;
-    summary: string;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    checks: Array<{
-      checkId: string;
-      label: string;
-      kind: string;
-      status: StructuredProjectCiCheckStatus;
-      required: boolean;
-      command?: string[] | null;
-      exitCode?: number | null;
-      summary: string;
-      artifactIds?: string[];
-      startedAt?: string | null;
-      finishedAt?: string | null;
-    }>;
-  }): {
-    ciRun: StructuredProjectCiRunRecord;
-    checkResults: StructuredProjectCiCheckResultRecord[];
-  } {
-    const workflowRun = this.mustFindWorkflowRunRow(input.workflowRunId);
-    const thread = this.mustFindThreadRow(workflowRun.thread_id);
-    const timestamp = this.now();
-    const startedAt = input.startedAt ?? workflowRun.started_at;
-    const finishedAt = input.finishedAt ?? workflowRun.finished_at ?? timestamp;
-    const existingCiRun = this.findProjectCiRunRowByWorkflowRunId(input.workflowRunId);
-    const ciRunId = existingCiRun?.id ?? createId("ci-run");
-    const createdAt = existingCiRun?.created_at ?? timestamp;
-
-    this.db
-      .query(
-        `INSERT INTO ci_run (
-           id,
-           session_id,
-           thread_id,
-           workflow_run_id,
-           smithers_run_id,
-           workflow_id,
-           entry_path,
-           status,
-           summary,
-           started_at,
-           finished_at,
-           created_at,
-           updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(workflow_run_id) DO UPDATE SET
-           thread_id = excluded.thread_id,
-           smithers_run_id = excluded.smithers_run_id,
-           workflow_id = excluded.workflow_id,
-           entry_path = excluded.entry_path,
-           status = excluded.status,
-           summary = excluded.summary,
-           started_at = excluded.started_at,
-           finished_at = excluded.finished_at,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
-        ciRunId,
-        workflowRun.session_id,
-        workflowRun.thread_id,
-        workflowRun.id,
-        workflowRun.smithers_run_id,
-        input.workflowId,
-        input.entryPath,
-        input.status,
-        input.summary,
-        startedAt,
-        finishedAt,
-        createdAt,
-        timestamp,
-      );
-
-    if (!existingCiRun) {
-      this.recordEvent({
-        sessionId: thread.session_id,
-        kind: "ciRun.recorded",
-        subjectKind: "ciRun",
-        subjectId: ciRunId,
-        at: timestamp,
-      });
-    }
-
-    const checkResults: StructuredProjectCiCheckResultRecord[] = [];
-    for (const check of input.checks) {
-      const existingCheck = this.findProjectCiCheckResultRow(ciRunId, check.checkId);
-      const checkResultId = existingCheck?.id ?? createId("ci-check-result");
-      const checkCreatedAt = existingCheck?.created_at ?? timestamp;
-      this.db
-        .query(
-          `INSERT INTO ci_check_result (
-             id,
-             session_id,
-             ci_run_id,
-             workflow_run_id,
-             check_id,
-             label,
-             kind,
-             status,
-             required,
-             command_json,
-             exit_code,
-             summary,
-             artifact_ids_json,
-             started_at,
-             finished_at,
-             created_at,
-             updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(ci_run_id, check_id) DO UPDATE SET
-             workflow_run_id = excluded.workflow_run_id,
-             label = excluded.label,
-             kind = excluded.kind,
-             status = excluded.status,
-             required = excluded.required,
-             command_json = excluded.command_json,
-             exit_code = excluded.exit_code,
-             summary = excluded.summary,
-             artifact_ids_json = excluded.artifact_ids_json,
-             started_at = excluded.started_at,
-             finished_at = excluded.finished_at,
-             updated_at = excluded.updated_at`,
-        )
-        .run(
-          checkResultId,
-          workflowRun.session_id,
-          ciRunId,
-          workflowRun.id,
-          check.checkId,
-          check.label,
-          check.kind,
-          check.status,
-          check.required ? 1 : 0,
-          toJson(check.command ?? null),
-          check.exitCode ?? null,
-          check.summary,
-          toJson(check.artifactIds ?? []),
-          check.startedAt ?? null,
-          check.finishedAt ?? null,
-          checkCreatedAt,
-          timestamp,
-        );
-
-      if (!existingCheck) {
-        this.recordEvent({
-          sessionId: thread.session_id,
-          kind: "ciCheckResult.recorded",
-          subjectKind: "ciCheckResult",
-          subjectId: checkResultId,
-          at: timestamp,
-        });
-      }
-
-      checkResults.push(this.mustFindProjectCiCheckResultRecord(checkResultId));
-    }
-
-    return {
-      ciRun: this.mustFindProjectCiRunRecord(ciRunId),
-      checkResults,
-    };
-  }
-
   recordWorkflow(input: {
     threadId: string;
     commandId: string;
@@ -2945,8 +3495,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number | null;
-    pendingAttentionSeq?: number | null;
-    lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord {
@@ -2972,14 +3520,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            continued_from_run_ids_json,
            active_descendant_run_id,
            last_event_seq,
-           pending_attention_seq,
-           last_attention_seq,
            heartbeat_at,
            summary,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         workflowId,
@@ -2997,8 +3543,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         toJson(input.continuedFromRunIds ?? []),
         input.activeDescendantRunId ?? null,
         input.lastEventSeq ?? null,
-        input.pendingAttentionSeq ?? null,
-        input.lastAttentionSeq ?? null,
         input.heartbeatAt ?? null,
         input.summary,
         timestamp,
@@ -3026,8 +3570,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number | null;
-    pendingAttentionSeq?: number | null;
-    lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary?: string;
   }): StructuredWorkflowRunRecord {
@@ -3047,8 +3589,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              continued_from_run_ids_json = ?,
              active_descendant_run_id = ?,
              last_event_seq = ?,
-             pending_attention_seq = ?,
-             last_attention_seq = ?,
              heartbeat_at = ?,
              summary = ?,
              updated_at = ?,
@@ -3067,10 +3607,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ? existing.active_descendant_run_id
           : (input.activeDescendantRunId ?? null),
         input.lastEventSeq === undefined ? existing.last_event_seq : input.lastEventSeq,
-        input.pendingAttentionSeq === undefined
-          ? existing.pending_attention_seq
-          : input.pendingAttentionSeq,
-        input.lastAttentionSeq === undefined ? existing.last_attention_seq : input.lastAttentionSeq,
         input.heartbeatAt === undefined ? existing.heartbeat_at : (input.heartbeatAt ?? null),
         input.summary ?? existing.summary,
         timestamp,
@@ -3091,6 +3627,581 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return this.mustFindWorkflowRunRecord(input.workflowId);
+  }
+
+  createRequestUserInputRequest(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    threadId?: string | null;
+    turnId: string;
+    commandId: string;
+    toolItemId: string;
+    variant: StructuredRequestUserInputVariant;
+    timeout?: null | {
+      enabled: boolean;
+      durationMs: number;
+    };
+    questions: Array<{
+      title: string;
+      question: string;
+      defaultAnswer: StructuredRequestUserInputAnswer;
+      choices?: Array<{
+        label: string;
+        description: string;
+        recommended: boolean;
+      }>;
+    }>;
+  }): StructuredRequestUserInputRequestRecord {
+    this.mustFindSessionRow(input.sessionId);
+    this.mustFindTurnRow(input.turnId);
+    this.mustFindCommandRow(input.commandId);
+    if (input.threadId) {
+      this.mustFindThreadRow(input.threadId);
+    }
+    if (input.questions.length < 1 || input.questions.length > 3) {
+      throw new Error("Request user input requires one to three questions.");
+    }
+
+    const requestId = createId("rui");
+    const timestamp = this.now();
+    const timeout =
+      input.timeout && input.variant === "blocking"
+        ? {
+            enabled: input.timeout.enabled,
+            durationMs: input.timeout.durationMs,
+            startedAt: timestamp,
+            pausedAt: null,
+            remainingMsWhenPaused: null,
+            expiresAt: input.timeout.enabled
+              ? new Date(Date.parse(timestamp) + input.timeout.durationMs).toISOString()
+              : null,
+          }
+        : null;
+    const insertRequest = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO request_user_input_request (
+             id,
+             session_id,
+             surface_pi_session_id,
+             thread_id,
+             turn_id,
+             command_id,
+             tool_item_id,
+             variant,
+             status,
+             timeout_json,
+             created_at,
+             completed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL)`,
+        )
+        .run(
+          requestId,
+          input.sessionId,
+          input.surfacePiSessionId,
+          input.threadId ?? null,
+          input.turnId,
+          input.commandId,
+          input.toolItemId,
+          input.variant,
+          toJson(timeout),
+          timestamp,
+        );
+
+      input.questions.forEach((question, questionIndex) => {
+        const questionId = createId("ruiq");
+        const choices = (question.choices ?? []).map((choice, choiceIndex) => ({
+          optionId: createId("ruio"),
+          ordinal: choiceIndex + 1,
+          label: choice.label,
+          description: choice.description,
+          recommended: choice.recommended,
+        }));
+        this.db
+          .query(
+            `INSERT INTO request_user_input_question (
+               id,
+               request_id,
+               ordinal,
+               title,
+               question,
+               default_answer_json,
+               choices_json,
+               status
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`,
+          )
+          .run(
+            questionId,
+            requestId,
+            questionIndex + 1,
+            question.title,
+            question.question,
+            toJson(question.defaultAnswer),
+            toJson(choices),
+          );
+        this.db
+          .query(
+            `INSERT INTO request_user_input_answer (
+               id,
+               request_id,
+               question_id,
+               answer_json,
+               answered_by,
+               delivery,
+               queued_item_id,
+               created_at
+             ) VALUES (?, ?, ?, ?, 'default', NULL, NULL, ?)`,
+          )
+          .run(createId("ruia"), requestId, questionId, toJson(question.defaultAnswer), timestamp);
+      });
+
+      this.recordEvent({
+        sessionId: input.sessionId,
+        kind: "requestUserInput.created",
+        subjectKind: "command",
+        subjectId: input.commandId,
+        at: timestamp,
+        data: {
+          requestId,
+          surfacePiSessionId: input.surfacePiSessionId,
+          threadId: input.threadId ?? null,
+          variant: input.variant,
+          questionCount: input.questions.length,
+        },
+      });
+    });
+    insertRequest();
+    return this.mustFindRequestUserInputRequestRecord(requestId);
+  }
+
+  createRuntimeApprovalRequest(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    threadId?: string | null;
+    turnId?: string | null;
+    commandId?: string | null;
+    toolCallId: string;
+    toolName: StructuredRuntimeApprovalToolName;
+    approvalMode: StructuredRuntimeApprovalMode;
+    cwd: string;
+    command?: string | null;
+    commandFamily?: string | null;
+    patch?: string | null;
+    snippetArtifactId?: string | null;
+    typescriptCode?: string | null;
+  }): StructuredRuntimeApprovalRequestRecord {
+    this.mustFindSessionRow(input.sessionId);
+    if (input.turnId) {
+      this.mustFindTurnRow(input.turnId);
+    }
+    if (input.commandId) {
+      this.mustFindCommandRow(input.commandId);
+    }
+    if (input.threadId) {
+      this.mustFindThreadRow(input.threadId);
+    }
+    const requestId = createId("apr");
+    const timestamp = this.now();
+    const insert = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO runtime_approval_request (
+             id,
+             session_id,
+             surface_pi_session_id,
+             thread_id,
+             turn_id,
+             command_id,
+             tool_call_id,
+             tool_name,
+             approval_mode,
+             cwd,
+             command_text,
+             command_family,
+             patch_text,
+             snippet_artifact_id,
+             typescript_code,
+             status,
+             decision_reason,
+             reviewer,
+             created_at,
+             completed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL)`,
+        )
+        .run(
+          requestId,
+          input.sessionId,
+          input.surfacePiSessionId,
+          input.threadId ?? null,
+          input.turnId ?? null,
+          input.commandId ?? null,
+          input.toolCallId,
+          input.toolName,
+          input.approvalMode,
+          input.cwd,
+          input.command ?? null,
+          input.commandFamily ?? null,
+          input.patch ?? null,
+          input.snippetArtifactId ?? null,
+          input.typescriptCode ?? null,
+          timestamp,
+        );
+      this.recordEvent({
+        sessionId: input.sessionId,
+        kind: "runtimeApproval.created",
+        subjectKind: "command",
+        subjectId: input.commandId ?? requestId,
+        at: timestamp,
+        data: {
+          requestId,
+          surfacePiSessionId: input.surfacePiSessionId,
+          threadId: input.threadId ?? null,
+          toolName: input.toolName,
+          approvalMode: input.approvalMode,
+        },
+      });
+    });
+    insert();
+    return this.getRuntimeApprovalRequest(requestId);
+  }
+
+  resolveRuntimeApprovalRequest(input: {
+    requestId: string;
+    status: Extract<StructuredRuntimeApprovalStatus, "approved" | "denied" | "cancelled">;
+    reviewer: "auto-review" | "user";
+    decisionReason?: string | null;
+  }): StructuredRuntimeApprovalRequestRecord {
+    const existing = this.getRuntimeApprovalRequest(input.requestId);
+    if (existing.status !== "pending") {
+      throw new Error("Runtime approval request is no longer pending.");
+    }
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE runtime_approval_request
+         SET status = ?,
+             decision_reason = ?,
+             reviewer = ?,
+             completed_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(input.status, input.decisionReason ?? null, input.reviewer, timestamp, input.requestId);
+    this.recordEvent({
+      sessionId: existing.sessionId,
+      kind: "runtimeApproval.resolved",
+      subjectKind: "command",
+      subjectId: existing.commandId ?? existing.requestId,
+      at: timestamp,
+      data: {
+        requestId: existing.requestId,
+        status: input.status,
+        reviewer: input.reviewer,
+      },
+    });
+    return this.getRuntimeApprovalRequest(input.requestId);
+  }
+
+  getRuntimeApprovalRequest(requestId: string): StructuredRuntimeApprovalRequestRecord {
+    return this.mustFindRuntimeApprovalRequestRecord(requestId);
+  }
+
+  listOpenRuntimeApprovalRequests(): StructuredRuntimeApprovalRequestRecord[] {
+    return (
+      this.db
+        .query(
+          `SELECT * FROM runtime_approval_request
+           WHERE status = 'pending'
+           ORDER BY created_at ASC`,
+        )
+        .all() as RuntimeApprovalRequestRow[]
+    ).map((row) => this.mapRuntimeApprovalRequest(row));
+  }
+
+  answerRequestUserInput(input: {
+    sessionId: string;
+    surfacePiSessionId: string;
+    requestId: string;
+    questionId: string;
+    answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
+    delivery: StructuredRequestUserInputDelivery;
+  }): {
+    request: StructuredRequestUserInputRequestRecord;
+    answer: StructuredRequestUserInputAnswerRecord;
+    queuedMessage: StructuredSurfaceQueuedMessageRecord | null;
+  } {
+    this.mustFindSessionRow(input.sessionId);
+    const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
+    if (
+      request.sessionId !== input.sessionId ||
+      request.surfacePiSessionId !== input.surfacePiSessionId
+    ) {
+      throw new Error("Request user input answer does not belong to the target surface.");
+    }
+    if (request.status !== "open") {
+      throw new Error("Request user input request is no longer answerable.");
+    }
+    const question = request.questions.find((entry) => entry.questionId === input.questionId);
+    if (!question || question.requestId !== request.requestId) {
+      throw new Error("Request user input question does not belong to the request.");
+    }
+    if (question.status !== "open") {
+      throw new Error("Request user input question is no longer answerable.");
+    }
+    if (input.delivery !== "steer" && input.delivery !== "after_turn") {
+      throw new Error("Request user input answer delivery must be steer or after_turn.");
+    }
+
+    const userAnswer =
+      input.answer.kind === "option"
+        ? resolveRequestUserInputOptionAnswer(question, input.answer.optionId)
+        : normalizeRequestUserInputCustomAnswer(input.answer.text);
+    const originalAnswer = question.defaultAnswer;
+    const payload = {
+      type: "request_user_input.answer",
+      title: question.title,
+      question: question.question,
+      originalAnswer,
+      userAnswer,
+    };
+    const answerId = createId("ruia");
+    const timestamp = this.now();
+    const result = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO request_user_input_answer (
+             id,
+             request_id,
+             question_id,
+             answer_json,
+             answered_by,
+             delivery,
+             queued_item_id,
+             created_at
+           ) VALUES (?, ?, ?, ?, 'user', ?, NULL, ?)`,
+        )
+        .run(
+          answerId,
+          request.requestId,
+          question.questionId,
+          toJson(userAnswer),
+          input.delivery,
+          timestamp,
+        );
+      this.db
+        .query(
+          `UPDATE request_user_input_question
+           SET status = 'answered'
+           WHERE id = ?`,
+        )
+        .run(question.questionId);
+
+      const remainingOpen = this.db
+        .query(
+          `SELECT COUNT(*) AS count
+           FROM request_user_input_question
+           WHERE request_id = ? AND status = 'open'`,
+        )
+        .get(request.requestId) as { count: number };
+      if (remainingOpen.count === 0) {
+        this.db
+          .query(
+            `UPDATE request_user_input_request
+             SET status = 'completed',
+                 completed_at = ?
+             WHERE id = ?`,
+          )
+          .run(timestamp, request.requestId);
+      }
+
+      if (request.variant === "blocking") {
+        return null;
+      }
+
+      const queuedMessage = this.enqueueSurfaceMessage({
+        sessionId: request.sessionId,
+        surfacePiSessionId: request.surfacePiSessionId,
+        threadId: request.threadId,
+        kind: "request_user_input_answer",
+        idempotencyKey: `request_user_input_answer:${answerId}`,
+        messageJson: JSON.stringify(payload),
+        payloadJson: JSON.stringify({
+          requestId: request.requestId,
+          questionId: question.questionId,
+          answerId,
+          delivery: input.delivery,
+        }),
+        requestSummary: `User answered: ${question.title}`,
+        position: "back",
+      });
+      this.db
+        .query(
+          `UPDATE request_user_input_answer
+           SET queued_item_id = ?
+           WHERE id = ?`,
+        )
+        .run(queuedMessage.id, answerId);
+      return queuedMessage;
+    })();
+    const deliveredQueuedMessage =
+      result && input.delivery === "steer"
+        ? this.markSurfaceMessageSteering({ id: result.id })
+        : result;
+
+    return {
+      request: this.mustFindRequestUserInputRequestRecord(request.requestId),
+      answer: this.mustFindRequestUserInputAnswerRecord(answerId),
+      queuedMessage: deliveredQueuedMessage,
+    };
+  }
+
+  defaultOpenRequestUserInputQuestions(input: {
+    requestId: string;
+    answeredBy: "timeout_default";
+  }): StructuredRequestUserInputRequestRecord {
+    const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
+    if (request.status !== "open") {
+      return request;
+    }
+    const openQuestions = request.questions.filter((question) => question.status === "open");
+    if (openQuestions.length === 0) {
+      return request;
+    }
+    const timestamp = this.now();
+    const defaultOpenQuestions = this.db.transaction(() => {
+      for (const question of openQuestions) {
+        this.db
+          .query(
+            `INSERT INTO request_user_input_answer (
+               id,
+               request_id,
+               question_id,
+               answer_json,
+               answered_by,
+               delivery,
+               queued_item_id,
+               created_at
+             ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
+          )
+          .run(
+            createId("ruia"),
+            request.requestId,
+            question.questionId,
+            toJson(question.defaultAnswer),
+            input.answeredBy,
+            timestamp,
+          );
+        this.db
+          .query(
+            `UPDATE request_user_input_question
+             SET status = 'defaulted'
+             WHERE id = ?`,
+          )
+          .run(question.questionId);
+      }
+
+      this.db
+        .query(
+          `UPDATE request_user_input_request
+           SET status = 'expired',
+               completed_at = ?
+           WHERE id = ?`,
+        )
+        .run(timestamp, request.requestId);
+    });
+    defaultOpenQuestions();
+    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+  }
+
+  cancelRequestUserInputRequest(input: {
+    requestId: string;
+  }): StructuredRequestUserInputRequestRecord {
+    const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
+    if (request.status !== "open") {
+      return request;
+    }
+    const timestamp = this.now();
+    const cancelRequest = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE request_user_input_question
+           SET status = 'cancelled'
+           WHERE request_id = ? AND status = 'open'`,
+        )
+        .run(request.requestId);
+      this.db
+        .query(
+          `UPDATE request_user_input_request
+           SET status = 'cancelled',
+               completed_at = ?
+           WHERE id = ?`,
+        )
+        .run(timestamp, request.requestId);
+      this.recordEvent({
+        sessionId: request.sessionId,
+        kind: "requestUserInput.cancelled",
+        subjectKind: "command",
+        subjectId: request.commandId,
+        at: timestamp,
+        data: {
+          requestId: request.requestId,
+          surfacePiSessionId: request.surfacePiSessionId,
+        },
+      });
+    });
+    cancelRequest();
+    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+  }
+
+  setRequestUserInputTimerPaused(input: {
+    requestId: string;
+    paused: boolean;
+  }): StructuredRequestUserInputRequestRecord {
+    const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
+    if (request.status !== "open") {
+      throw new Error("Request user input timer is no longer active.");
+    }
+    if (request.variant !== "blocking" || !request.timeout?.enabled) {
+      throw new Error("Request user input timer is not enabled.");
+    }
+    if (input.paused && request.timeout.pausedAt) {
+      return request;
+    }
+    if (!input.paused && !request.timeout.pausedAt) {
+      return request;
+    }
+
+    const timestamp = this.now();
+    const timeout = input.paused
+      ? {
+          ...request.timeout,
+          pausedAt: timestamp,
+          remainingMsWhenPaused: Math.max(
+            0,
+            Date.parse(request.timeout.expiresAt ?? timestamp) - Date.parse(timestamp),
+          ),
+          expiresAt: null,
+        }
+      : {
+          ...request.timeout,
+          pausedAt: null,
+          remainingMsWhenPaused: null,
+          expiresAt: new Date(
+            Date.parse(timestamp) + (request.timeout.remainingMsWhenPaused ?? 0),
+          ).toISOString(),
+        };
+
+    this.db
+      .query(
+        `UPDATE request_user_input_request
+         SET timeout_json = ?
+         WHERE id = ?`,
+      )
+      .run(toJson(timeout), request.requestId);
+    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+  }
+
+  getRequestUserInputRequest(requestId: string): StructuredRequestUserInputRequestRecord {
+    return this.mustFindRequestUserInputRequestRecord(requestId);
   }
 
   enqueueSurfaceMessage(input: {
@@ -3144,8 +4255,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            created_at,
            updated_at,
            delivered_at,
+           failed_at,
+           failure_error,
            cancelled_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, NULL, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, NULL, NULL, NULL, NULL)`,
       )
       .run(
         id,
@@ -3200,8 +4313,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         (this.db
           .query(
             `SELECT * FROM surface_message_queue
-             WHERE surface_pi_session_id = ? AND status = 'queued'
-             ORDER BY position ASC, rowid ASC
+             WHERE surface_pi_session_id = ? AND status IN ('queued', 'steering')
+             ORDER BY
+               CASE
+                 WHEN kind = 'agent_context_refresh' THEN 0
+                 WHEN kind = 'request_user_input_answer' THEN 1
+                 ELSE 2
+               END ASC,
+               CASE
+                 WHEN status = 'steering' THEN 0
+                 ELSE 1
+               END ASC,
+               position ASC,
+               rowid ASC
              LIMIT 1`,
           )
           .get(input.surfacePiSessionId) as SurfaceQueuedMessageRow | undefined) ?? null;
@@ -3213,7 +4337,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           `UPDATE surface_message_queue
            SET status = 'dispatching',
                updated_at = ?
-           WHERE id = ? AND status = 'queued'`,
+           WHERE id = ? AND status IN ('queued', 'steering')`,
         )
         .run(timestamp, row.id);
       if (result.changes !== 1) {
@@ -3250,6 +4374,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              position = ?,
              updated_at = ?,
              delivered_at = NULL,
+             failed_at = NULL,
+             failure_error = NULL,
              cancelled_at = NULL
          WHERE id = ?`,
       )
@@ -3266,19 +4392,75 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
   }
 
-  cancelSurfaceMessage(input: { id: string }): StructuredSurfaceQueuedMessageRecord {
+  markSurfaceMessageFailed(input: {
+    id: string;
+    failureError: string;
+  }): StructuredSurfaceQueuedMessageRecord {
     const existing = this.mustFindSurfaceQueuedMessageRow(input.id);
     const timestamp = this.now();
     this.db
       .query(
         `UPDATE surface_message_queue
-         SET status = 'cancelled',
+         SET status = 'failed',
              updated_at = ?,
-             cancelled_at = ?
+             failed_at = ?,
+             failure_error = ?
          WHERE id = ?`,
       )
-      .run(timestamp, timestamp, input.id);
-    this.recordSurfaceMessageEvent(existing, "surfaceMessage.cancelled", timestamp);
+      .run(timestamp, timestamp, input.failureError, input.id);
+    this.recordSurfaceMessageEvent(existing, "surfaceMessage.failed", timestamp);
+    return this.mustFindSurfaceQueuedMessageRecord(input.id);
+  }
+
+  cancelSurfaceMessage(input: { id: string }): StructuredSurfaceQueuedMessageRecord {
+    const existing = this.mustFindSurfaceQueuedMessageRow(input.id);
+    const timestamp = this.now();
+    const cancel = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE surface_message_queue
+           SET status = 'cancelled',
+               updated_at = ?,
+               cancelled_at = ?
+           WHERE id = ?`,
+        )
+        .run(timestamp, timestamp, input.id);
+
+      if (existing.kind === "request_user_input_answer") {
+        const payload = fromJson<RequestUserInputAnswerQueuePayload>(existing.payload_json);
+        if (payload?.answerId && payload.questionId && payload.requestId) {
+          this.db
+            .query(
+              `DELETE FROM request_user_input_answer
+               WHERE id = ?
+                 AND request_id = ?
+                 AND question_id = ?
+                 AND queued_item_id = ?`,
+            )
+            .run(payload.answerId, payload.requestId, payload.questionId, input.id);
+          this.db
+            .query(
+              `UPDATE request_user_input_question
+               SET status = 'open'
+               WHERE id = ?
+                 AND request_id = ?`,
+            )
+            .run(payload.questionId, payload.requestId);
+          this.db
+            .query(
+              `UPDATE request_user_input_request
+               SET status = 'open',
+                   completed_at = NULL
+               WHERE id = ?
+                 AND status = 'completed'`,
+            )
+            .run(payload.requestId);
+        }
+      }
+
+      this.recordSurfaceMessageEvent(existing, "surfaceMessage.cancelled", timestamp);
+    });
+    cancel();
     return this.mustFindSurfaceQueuedMessageRecord(input.id);
   }
 
@@ -3411,7 +4593,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   normalizeWorkspaceRecoveryState(_input: { claimedBy: string }): void {
     const timestamp = this.now();
-    const normalize = this.db.transaction(() => {
+    const normalizeRecoveryState = this.db.transaction(() => {
       this.db
         .query(
           `UPDATE recovery_work
@@ -3436,7 +4618,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         )
         .run(timestamp);
     });
-    normalize();
+    normalizeRecoveryState();
   }
 
   claimNextRecoveryWork(input: {
@@ -3569,11 +4751,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       threadContexts: this.queryThreadContextRecords(sessionId),
       commands: this.queryCommandRecords(sessionId),
       episodes: this.queryEpisodeRecords(sessionId),
-      ciRuns: this.queryProjectCiRunRecords(sessionId),
-      ciCheckResults: this.queryProjectCiCheckResultRecords(sessionId),
       workflowRuns,
       workflowTaskAttempts: this.queryWorkflowTaskAttemptRecords(sessionId),
       workflowTaskMessages: this.queryWorkflowTaskMessageRecords(sessionId),
+      generatedAgentContextBindings: this.queryGeneratedAgentContextBindingRecords(sessionId),
+      requestUserInputRequests: this.queryRequestUserInputRequestRecords(sessionId),
+      runtimeApprovalRequests: this.queryRuntimeApprovalRequestRecords(sessionId),
       artifacts: this.queryArtifactRecords(sessionId),
       queuedMessages: this.querySurfaceQueuedMessageRecords(sessionId),
       events: this.queryEventRecords(sessionId),
@@ -3590,15 +4773,31 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   deleteSessionState(sessionId: string): void {
     const deleteRows = this.db.transaction((targetSessionId: string) => {
       const timestamp = this.now();
+      this.db
+        .query(
+          `DELETE FROM request_user_input_answer
+           WHERE request_id IN (
+             SELECT id FROM request_user_input_request WHERE session_id = ?
+           )`,
+        )
+        .run(targetSessionId);
+      this.db
+        .query(
+          `DELETE FROM request_user_input_question
+           WHERE request_id IN (
+             SELECT id FROM request_user_input_request WHERE session_id = ?
+           )`,
+        )
+        .run(targetSessionId);
       for (const table of [
         "surface_composer_draft",
         "surface_message_queue",
         "event",
         "artifact",
+        "runtime_approval_request",
         "workflow_task_message",
+        "request_user_input_request",
         "workflow_task_attempt",
-        "ci_check_result",
-        "ci_run",
         "workflow_run",
         "episode",
         "command",
@@ -3634,10 +4833,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       episodes: this.queryEpisodeRowsByThread(threadId).map((row) => this.mapEpisode(row)),
       threadContexts: this.queryThreadContextRowsByThread(threadId).map((row) =>
         this.mapThreadContext(row),
-      ),
-      ciRuns: this.queryProjectCiRunRowsByThread(threadId).map((row) => this.mapProjectCiRun(row)),
-      ciCheckResults: this.queryProjectCiCheckResultRowsByThread(threadId).map((row) =>
-        this.mapProjectCiCheckResult(row),
       ),
       workflowRuns,
       latestWorkflowRun,
@@ -3762,6 +4957,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row;
   }
 
+  private mustFindRuntimeApprovalRequestRow(requestId: string): RuntimeApprovalRequestRow {
+    const row = this.db
+      .query(`SELECT * FROM runtime_approval_request WHERE id = ?`)
+      .get(requestId) as RuntimeApprovalRequestRow | undefined;
+    if (!row) {
+      throw new Error(`Runtime approval request not found: ${requestId}`);
+    }
+    return row;
+  }
+
   private mustFindEpisodeRow(episodeId: string): EpisodeRow {
     const row = this.db.query(`SELECT * FROM episode WHERE id = ?`).get(episodeId) as
       | EpisodeRow
@@ -3806,6 +5011,36 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       | undefined;
     if (!row) {
       throw new Error(`Structured queued surface message not found: ${id}`);
+    }
+    return row;
+  }
+
+  private mustFindGeneratedAgentContextBindingRow(id: string): GeneratedAgentContextBindingRow {
+    const row = this.db
+      .query(`SELECT * FROM generated_agent_context_binding WHERE id = ?`)
+      .get(id) as GeneratedAgentContextBindingRow | undefined;
+    if (!row) {
+      throw new Error(`Generated agent context binding not found: ${id}`);
+    }
+    return row;
+  }
+
+  private mustFindRequestUserInputRequestRow(requestId: string): RequestUserInputRequestRow {
+    const row = this.db
+      .query(`SELECT * FROM request_user_input_request WHERE id = ?`)
+      .get(requestId) as RequestUserInputRequestRow | undefined;
+    if (!row) {
+      throw new Error(`Request user input request not found: ${requestId}`);
+    }
+    return row;
+  }
+
+  private mustFindRequestUserInputAnswerRow(answerId: string): RequestUserInputAnswerRow {
+    const row = this.db
+      .query(`SELECT * FROM request_user_input_answer WHERE id = ?`)
+      .get(answerId) as RequestUserInputAnswerRow | undefined;
+    if (!row) {
+      throw new Error(`Request user input answer not found: ${answerId}`);
     }
     return row;
   }
@@ -3865,28 +5100,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mapThreadContext(row);
   }
 
-  private mustFindProjectCiRunRecord(ciRunId: string): StructuredProjectCiRunRecord {
-    const row = this.db.query(`SELECT * FROM ci_run WHERE id = ?`).get(ciRunId) as
-      | ProjectCiRunRow
-      | undefined;
-    if (!row) {
-      throw new Error(`Structured Project CI run not found: ${ciRunId}`);
-    }
-    return this.mapProjectCiRun(row);
-  }
-
-  private mustFindProjectCiCheckResultRecord(
-    checkResultId: string,
-  ): StructuredProjectCiCheckResultRecord {
-    const row = this.db.query(`SELECT * FROM ci_check_result WHERE id = ?`).get(checkResultId) as
-      | ProjectCiCheckResultRow
-      | undefined;
-    if (!row) {
-      throw new Error(`Structured Project CI check result not found: ${checkResultId}`);
-    }
-    return this.mapProjectCiCheckResult(row);
-  }
-
   private mustFindWorkflowRunRecord(workflowId: string): StructuredWorkflowRunRecord {
     return this.mapWorkflowRun(this.mustFindWorkflowRunRow(workflowId));
   }
@@ -3899,6 +5112,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private mustFindSurfaceQueuedMessageRecord(id: string): StructuredSurfaceQueuedMessageRecord {
     return this.mapSurfaceQueuedMessage(this.mustFindSurfaceQueuedMessageRow(id));
+  }
+
+  private mustFindRequestUserInputRequestRecord(
+    requestId: string,
+  ): StructuredRequestUserInputRequestRecord {
+    return this.mapRequestUserInputRequest(this.mustFindRequestUserInputRequestRow(requestId));
+  }
+
+  private mustFindRequestUserInputAnswerRecord(
+    answerId: string,
+  ): StructuredRequestUserInputAnswerRecord {
+    return this.mapRequestUserInputAnswer(this.mustFindRequestUserInputAnswerRow(answerId));
+  }
+
+  private mustFindRuntimeApprovalRequestRecord(
+    requestId: string,
+  ): StructuredRuntimeApprovalRequestRecord {
+    return this.mapRuntimeApprovalRequest(this.mustFindRuntimeApprovalRequestRow(requestId));
   }
 
   private mustFindRecoveryWorkRecord(id: string): StructuredRecoveryWorkRecord {
@@ -3975,18 +5206,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(sessionId) as EpisodeRow[];
   }
 
-  private queryProjectCiRunRows(sessionId: string): ProjectCiRunRow[] {
-    return this.db
-      .query(`SELECT * FROM ci_run WHERE session_id = ? ORDER BY rowid ASC`)
-      .all(sessionId) as ProjectCiRunRow[];
-  }
-
-  private queryProjectCiCheckResultRows(sessionId: string): ProjectCiCheckResultRow[] {
-    return this.db
-      .query(`SELECT * FROM ci_check_result WHERE session_id = ? ORDER BY rowid ASC`)
-      .all(sessionId) as ProjectCiCheckResultRow[];
-  }
-
   private queryWorkflowRunRows(sessionId: string): WorkflowRunRow[] {
     return this.db
       .query(`SELECT * FROM workflow_run WHERE session_id = ? ORDER BY rowid ASC`)
@@ -4003,6 +5222,48 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(`SELECT * FROM workflow_task_message WHERE session_id = ? ORDER BY rowid ASC`)
       .all(sessionId) as WorkflowTaskMessageRow[];
+  }
+
+  private queryGeneratedAgentContextBindingRows(
+    sessionId: string,
+  ): GeneratedAgentContextBindingRow[] {
+    return this.db
+      .query(
+        `SELECT * FROM generated_agent_context_binding
+         WHERE (owner_kind = 'session' AND owner_id = ?)
+            OR (owner_kind = 'thread' AND owner_id IN (
+              SELECT id FROM thread WHERE session_id = ?
+            ))
+            OR (owner_kind = 'workflow-task-attempt' AND owner_id IN (
+              SELECT id FROM workflow_task_attempt WHERE session_id = ?
+            ))
+         ORDER BY updated_at DESC, rowid DESC`,
+      )
+      .all(sessionId, sessionId, sessionId) as GeneratedAgentContextBindingRow[];
+  }
+
+  private queryRequestUserInputRequestRows(sessionId: string): RequestUserInputRequestRow[] {
+    return this.db
+      .query(`SELECT * FROM request_user_input_request WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as RequestUserInputRequestRow[];
+  }
+
+  private queryRequestUserInputQuestionRows(requestId: string): RequestUserInputQuestionRow[] {
+    return this.db
+      .query(`SELECT * FROM request_user_input_question WHERE request_id = ? ORDER BY ordinal ASC`)
+      .all(requestId) as RequestUserInputQuestionRow[];
+  }
+
+  private queryRequestUserInputAnswerRows(requestId: string): RequestUserInputAnswerRow[] {
+    return this.db
+      .query(`SELECT * FROM request_user_input_answer WHERE request_id = ? ORDER BY rowid ASC`)
+      .all(requestId) as RequestUserInputAnswerRow[];
+  }
+
+  private queryRuntimeApprovalRequestRows(sessionId: string): RuntimeApprovalRequestRow[] {
+    return this.db
+      .query(`SELECT * FROM runtime_approval_request WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as RuntimeApprovalRequestRow[];
   }
 
   private queryArtifactRows(sessionId: string): ArtifactRow[] {
@@ -4025,8 +5286,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(
         `SELECT * FROM surface_message_queue
-         WHERE surface_pi_session_id = ? AND status IN ('queued', 'steering', 'dispatching')
-         ORDER BY position ASC, rowid ASC`,
+         WHERE surface_pi_session_id = ? AND status IN ('queued', 'steering', 'dispatching', 'failed')
+         ORDER BY
+           CASE
+             WHEN status = 'failed' THEN 3
+             WHEN kind = 'agent_context_refresh' THEN 0
+             WHEN kind = 'request_user_input_answer' THEN 1
+             ELSE 2
+           END ASC,
+           position ASC,
+           rowid ASC`,
       )
       .all(surfacePiSessionId) as SurfaceQueuedMessageRow[];
   }
@@ -4057,18 +5326,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.queryEpisodeRows(sessionId).map((row) => this.mapEpisode(row));
   }
 
-  private queryProjectCiRunRecords(sessionId: string): StructuredProjectCiRunRecord[] {
-    return this.queryProjectCiRunRows(sessionId).map((row) => this.mapProjectCiRun(row));
-  }
-
-  private queryProjectCiCheckResultRecords(
-    sessionId: string,
-  ): StructuredProjectCiCheckResultRecord[] {
-    return this.queryProjectCiCheckResultRows(sessionId).map((row) =>
-      this.mapProjectCiCheckResult(row),
-    );
-  }
-
   private queryWorkflowRunRecords(sessionId: string): StructuredWorkflowRunRecord[] {
     return this.queryWorkflowRunRows(sessionId).map((row) => this.mapWorkflowRun(row));
   }
@@ -4086,6 +5343,30 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   ): StructuredWorkflowTaskMessageRecord[] {
     return this.queryWorkflowTaskMessageRows(sessionId).map((row) =>
       this.mapWorkflowTaskMessage(row),
+    );
+  }
+
+  private queryGeneratedAgentContextBindingRecords(
+    sessionId: string,
+  ): StructuredGeneratedAgentContextBindingRecord[] {
+    return this.queryGeneratedAgentContextBindingRows(sessionId).map((row) =>
+      this.mapGeneratedAgentContextBinding(row),
+    );
+  }
+
+  private queryRequestUserInputRequestRecords(
+    sessionId: string,
+  ): StructuredRequestUserInputRequestRecord[] {
+    return this.queryRequestUserInputRequestRows(sessionId).map((row) =>
+      this.mapRequestUserInputRequest(row),
+    );
+  }
+
+  private queryRuntimeApprovalRequestRecords(
+    sessionId: string,
+  ): StructuredRuntimeApprovalRequestRecord[] {
+    return this.queryRuntimeApprovalRequestRows(sessionId).map((row) =>
+      this.mapRuntimeApprovalRequest(row),
     );
   }
 
@@ -4127,24 +5408,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(`SELECT * FROM thread_context WHERE thread_id = ? ORDER BY rowid ASC`)
       .all(threadId) as ThreadContextRow[];
-  }
-
-  private queryProjectCiRunRowsByThread(threadId: string): ProjectCiRunRow[] {
-    return this.db
-      .query(`SELECT * FROM ci_run WHERE thread_id = ? ORDER BY rowid ASC`)
-      .all(threadId) as ProjectCiRunRow[];
-  }
-
-  private queryProjectCiCheckResultRowsByThread(threadId: string): ProjectCiCheckResultRow[] {
-    return this.db
-      .query(
-        `SELECT check_result.*
-         FROM ci_check_result AS check_result
-         JOIN ci_run AS ci_run ON ci_run.id = check_result.ci_run_id
-         WHERE ci_run.thread_id = ?
-         ORDER BY check_result.rowid ASC`,
-      )
-      .all(threadId) as ProjectCiCheckResultRow[];
   }
 
   private queryWorkflowRunRowsForThread(threadId: string): WorkflowRunRow[] {
@@ -4199,29 +5462,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(`SELECT * FROM artifact WHERE thread_id = ? ORDER BY rowid ASC`)
       .all(threadId) as ArtifactRow[];
-  }
-
-  private findProjectCiRunRowByWorkflowRunId(workflowRunId: string): ProjectCiRunRow | null {
-    return (
-      (this.db
-        .query(`SELECT * FROM ci_run WHERE workflow_run_id = ? LIMIT 1`)
-        .get(workflowRunId) as ProjectCiRunRow | undefined) ?? null
-    );
-  }
-
-  private findProjectCiCheckResultRow(
-    ciRunId: string,
-    checkId: string,
-  ): ProjectCiCheckResultRow | null {
-    return (
-      (this.db
-        .query(
-          `SELECT * FROM ci_check_result
-           WHERE ci_run_id = ? AND check_id = ?
-           LIMIT 1`,
-        )
-        .get(ciRunId, checkId) as ProjectCiCheckResultRow | undefined) ?? null
-    );
   }
 
   private reconcileSessionWaitAfterRunnableChange(sessionId: string): void {
@@ -4294,6 +5534,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       reasoningEffort: row.reasoning_effort ?? undefined,
       orchestratorAgentProfileId: row.orchestrator_agent_profile_id ?? undefined,
       orchestratorAgentProfileJson: row.orchestrator_agent_profile_json,
+      generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
+      loadedExtensionIds: row.loaded_extension_ids_json
+        ? (fromJson<string[]>(row.loaded_extension_ids_json) ?? [])
+        : undefined,
+      availableExtensionIds: row.available_extension_ids_json
+        ? (fromJson<string[]>(row.available_extension_ids_json) ?? [])
+        : undefined,
       titleNamerAgentJson: row.title_namer_agent_json,
       titleGenerationStatus: row.title_generation_status ?? "not-started",
       titleGenerationTriggeredAt: row.title_generation_triggered_at,
@@ -4303,6 +5550,30 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       titleManualOverride: Boolean(row.title_manual_override),
       messageCount: row.message_count,
       status: row.pi_status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapGeneratedAgentContextBinding(
+    row: GeneratedAgentContextBindingRow,
+  ): StructuredGeneratedAgentContextBindingRecord {
+    return {
+      id: row.id,
+      surfacePiSessionId: row.surface_pi_session_id,
+      ownerKind: row.owner_kind,
+      ownerId: row.owner_id,
+      actorKind: row.actor_kind,
+      aggregateCacheKey: row.aggregate_cache_key,
+      systemPrompt: row.system_prompt,
+      svvyxGuidance: row.svvyx_guidance,
+      commandsDts: row.commands_dts,
+      nativeToolSchemasJson: row.native_tool_schemas_json,
+      generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
+      generatedAgentContextRevision: row.generated_agent_context_revision,
+      loadedExtensionIds: fromJson<string[]>(row.loaded_extension_ids_json) ?? [],
+      availableExtensionIds: fromJson<string[]>(row.available_extension_ids_json) ?? [],
+      externalSourceHashes: fromJson<string[]>(row.external_source_hashes_json) ?? [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -4346,6 +5617,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       threadId: row.thread_id,
       text: row.text,
       attachments: fromJson<ComposerAttachment[]>(row.attachments_json) ?? [],
+      snippetMentions: fromJson<ComposerSnippetMention[]>(row.snippet_mentions_json) ?? [],
       updatedAt: row.updated_at,
     };
   }
@@ -4390,16 +5662,22 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       sessionId: row.session_id,
       turnId: row.turn_id,
       parentThreadId: row.parent_thread_id,
+      threadGroupId: row.thread_group_id,
       surfacePiSessionId: row.surface_pi_session_id,
       title: row.title,
       objective: row.objective,
+      historyMode: row.history_mode,
+      objectiveState: row.objective_state,
       status: row.status,
       wait: this.mapThreadWait(row),
       loadedContextKeys: this.queryThreadContextRowsByThread(row.id).map(
         (context) => context.context_key,
       ),
+      loadedExtensionIds: fromJson<string[]>(row.loaded_extension_ids_json) ?? [],
+      availableExtensionIds: fromJson<string[]>(row.available_extension_ids_json) ?? [],
       worktree: row.worktree ?? undefined,
       agentProfileJson: row.agent_profile_json,
+      generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
@@ -4435,6 +5713,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       attempts: row.attempts,
       title: row.title,
       summary: row.summary,
+      arguments: fromJson<unknown>(row.arguments_json),
       facts: fromJson<Record<string, unknown>>(row.facts_json),
       error: row.error,
       startedAt: row.started_at,
@@ -4461,48 +5740,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  private mapProjectCiRun(row: ProjectCiRunRow): StructuredProjectCiRunRecord {
-    return {
-      id: row.id,
-      sessionId: row.session_id,
-      threadId: row.thread_id,
-      workflowRunId: row.workflow_run_id,
-      smithersRunId: row.smithers_run_id,
-      workflowId: row.workflow_id,
-      entryPath: row.entry_path,
-      status: row.status,
-      summary: row.summary,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-    };
-  }
-
-  private mapProjectCiCheckResult(
-    row: ProjectCiCheckResultRow,
-  ): StructuredProjectCiCheckResultRecord {
-    return {
-      id: row.id,
-      sessionId: row.session_id,
-      ciRunId: row.ci_run_id,
-      workflowRunId: row.workflow_run_id,
-      checkId: row.check_id,
-      label: row.label,
-      kind: row.kind,
-      status: row.status,
-      required: Boolean(row.required),
-      command: fromJson<string[]>(row.command_json),
-      exitCode: row.exit_code,
-      summary: row.summary,
-      artifactIds: fromJson<string[]>(row.artifact_ids_json) ?? [],
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
-
   private mapWorkflowRun(row: WorkflowRunRow): StructuredWorkflowRunRecord {
     return {
       id: row.id,
@@ -4520,8 +5757,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       continuedFromRunIds: fromJson<string[]>(row.continued_from_run_ids_json) ?? [],
       activeDescendantRunId: row.active_descendant_run_id,
       lastEventSeq: row.last_event_seq,
-      pendingAttentionSeq: row.pending_attention_seq,
-      lastAttentionSeq: row.last_attention_seq,
       heartbeatAt: row.heartbeat_at,
       summary: row.summary,
       startedAt: row.started_at,
@@ -4557,6 +5792,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       agentModel: row.agent_model,
       agentEngine: row.agent_engine,
       agentResume: row.agent_resume,
+      generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
       meta: fromJson<Record<string, unknown>>(row.meta_json),
       startedAt: row.started_at,
       updatedAt: row.updated_at,
@@ -4577,6 +5813,88 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private mapRequestUserInputRequest(
+    row: RequestUserInputRequestRow,
+  ): StructuredRequestUserInputRequestRecord {
+    return {
+      requestId: row.id,
+      sessionId: row.session_id,
+      surfacePiSessionId: row.surface_pi_session_id,
+      threadId: row.thread_id,
+      turnId: row.turn_id,
+      commandId: row.command_id,
+      toolItemId: row.tool_item_id,
+      variant: row.variant,
+      status: row.status,
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+      timeout: fromJson<StructuredRequestUserInputRequestRecord["timeout"]>(row.timeout_json),
+      questions: this.queryRequestUserInputQuestionRows(row.id).map((question) =>
+        this.mapRequestUserInputQuestion(question),
+      ),
+      answers: this.queryRequestUserInputAnswerRows(row.id).map((answer) =>
+        this.mapRequestUserInputAnswer(answer),
+      ),
+    };
+  }
+
+  private mapRequestUserInputQuestion(
+    row: RequestUserInputQuestionRow,
+  ): StructuredRequestUserInputQuestionRecord {
+    return {
+      questionId: row.id,
+      requestId: row.request_id,
+      ordinal: row.ordinal,
+      title: row.title,
+      question: row.question,
+      defaultAnswer: fromJson<StructuredRequestUserInputAnswer>(row.default_answer_json)!,
+      choices: fromJson<StructuredRequestUserInputOptionRecord[]>(row.choices_json) ?? [],
+      status: row.status,
+    };
+  }
+
+  private mapRequestUserInputAnswer(
+    row: RequestUserInputAnswerRow,
+  ): StructuredRequestUserInputAnswerRecord {
+    return {
+      answerId: row.id,
+      requestId: row.request_id,
+      questionId: row.question_id,
+      answer: fromJson<StructuredRequestUserInputAnswer>(row.answer_json)!,
+      answeredBy: row.answered_by,
+      delivery: row.delivery,
+      queuedItemId: row.queued_item_id,
+      createdAt: row.created_at,
+    };
+  }
+
+  private mapRuntimeApprovalRequest(
+    row: RuntimeApprovalRequestRow,
+  ): StructuredRuntimeApprovalRequestRecord {
+    return {
+      requestId: row.id,
+      sessionId: row.session_id,
+      surfacePiSessionId: row.surface_pi_session_id,
+      threadId: row.thread_id,
+      turnId: row.turn_id,
+      commandId: row.command_id,
+      toolCallId: row.tool_call_id,
+      toolName: row.tool_name,
+      approvalMode: row.approval_mode,
+      cwd: row.cwd,
+      command: row.command_text,
+      commandFamily: row.command_family,
+      patch: row.patch_text,
+      snippetArtifactId: row.snippet_artifact_id,
+      typescriptCode: row.typescript_code,
+      status: row.status,
+      decisionReason: row.decision_reason,
+      reviewer: row.reviewer,
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+    };
+  }
+
   private mapArtifact(row: ArtifactRow): StructuredArtifactRecord {
     return {
       id: row.id,
@@ -4588,8 +5906,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       kind: row.kind,
       name: row.name,
       path: row.path ?? undefined,
-      content: row.content ?? undefined,
+      mimeType: row.mime_type || inferArtifactMimeType(row.name),
+      bytes: row.bytes ?? 0,
+      sha256: row.sha256 || EMPTY_SHA256,
+      immutable: row.immutable === 1,
       createdAt: row.created_at,
+      deletedAt: row.deleted_at ?? null,
     };
   }
 
@@ -4611,6 +5933,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       deliveredAt: row.delivered_at,
+      failedAt: row.failed_at,
+      failureError: row.failure_error,
       cancelledAt: row.cancelled_at,
     };
   }
@@ -4675,6 +5999,9 @@ function initializeSchema(db: Database): void {
       reasoning_effort TEXT,
       orchestrator_agent_profile_id TEXT,
       orchestrator_agent_profile_json TEXT,
+      generated_agent_context_fingerprint TEXT,
+      loaded_extension_ids_json TEXT,
+      available_extension_ids_json TEXT,
       title_namer_agent_json TEXT,
       title_generation_status TEXT NOT NULL DEFAULT 'not-started',
       title_generation_triggered_at TEXT,
@@ -4734,9 +6061,14 @@ function initializeSchema(db: Database): void {
       session_id TEXT NOT NULL,
       turn_id TEXT NOT NULL,
       parent_thread_id TEXT,
+      thread_group_id TEXT NOT NULL,
       surface_pi_session_id TEXT NOT NULL,
       title TEXT NOT NULL,
       objective TEXT NOT NULL,
+      history_mode TEXT NOT NULL DEFAULT 'isolated',
+      objective_state TEXT NOT NULL DEFAULT 'active',
+      loaded_extension_ids_json TEXT,
+      available_extension_ids_json TEXT,
       status TEXT NOT NULL,
       wait_owner TEXT,
       wait_kind TEXT,
@@ -4745,6 +6077,7 @@ function initializeSchema(db: Database): void {
       wait_since TEXT,
       worktree TEXT,
       agent_profile_json TEXT,
+      generated_agent_context_fingerprint TEXT,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       finished_at TEXT
@@ -4759,6 +6092,27 @@ function initializeSchema(db: Database): void {
       loaded_by_command_id TEXT,
       loaded_at TEXT NOT NULL,
       UNIQUE(thread_id, context_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS generated_agent_context_binding (
+      id TEXT PRIMARY KEY,
+      surface_pi_session_id TEXT NOT NULL,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      actor_kind TEXT NOT NULL,
+      aggregate_cache_key TEXT NOT NULL,
+      system_prompt TEXT NOT NULL,
+      svvyx_guidance TEXT NOT NULL,
+      commands_dts TEXT NOT NULL,
+      native_tool_schemas_json TEXT NOT NULL,
+      generated_agent_context_fingerprint TEXT NOT NULL,
+      generated_agent_context_revision INTEGER NOT NULL,
+      loaded_extension_ids_json TEXT NOT NULL,
+      available_extension_ids_json TEXT NOT NULL,
+      external_source_hashes_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(surface_pi_session_id, generated_agent_context_fingerprint)
     );
 
     CREATE TABLE IF NOT EXISTS command (
@@ -4777,6 +6131,7 @@ function initializeSchema(db: Database): void {
       attempts INTEGER NOT NULL,
       title TEXT NOT NULL,
       summary TEXT NOT NULL,
+      arguments_json TEXT,
       facts_json TEXT,
       error TEXT,
       started_at TEXT NOT NULL,
@@ -4796,44 +6151,6 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS ci_run (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      thread_id TEXT NOT NULL,
-      workflow_run_id TEXT NOT NULL,
-      smithers_run_id TEXT NOT NULL,
-      workflow_id TEXT NOT NULL,
-      entry_path TEXT NOT NULL,
-      status TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      finished_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(workflow_run_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ci_check_result (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      ci_run_id TEXT NOT NULL,
-      workflow_run_id TEXT NOT NULL,
-      check_id TEXT NOT NULL,
-      label TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      required INTEGER NOT NULL,
-      command_json TEXT,
-      exit_code INTEGER,
-      summary TEXT NOT NULL,
-      artifact_ids_json TEXT,
-      started_at TEXT,
-      finished_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(ci_run_id, check_id)
-    );
-
     CREATE TABLE IF NOT EXISTS workflow_run (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -4850,8 +6167,6 @@ function initializeSchema(db: Database): void {
       continued_from_run_ids_json TEXT,
       active_descendant_run_id TEXT,
       last_event_seq INTEGER,
-      pending_attention_seq INTEGER,
-      last_attention_seq INTEGER,
       heartbeat_at TEXT,
       summary TEXT NOT NULL,
       started_at TEXT NOT NULL,
@@ -4885,6 +6200,7 @@ function initializeSchema(db: Database): void {
       agent_model TEXT,
       agent_engine TEXT,
       agent_resume TEXT,
+      generated_agent_context_fingerprint TEXT,
       meta_json TEXT,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -4902,6 +6218,66 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS request_user_input_request (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      surface_pi_session_id TEXT NOT NULL,
+      thread_id TEXT,
+      turn_id TEXT NOT NULL,
+      command_id TEXT NOT NULL,
+      tool_item_id TEXT NOT NULL,
+      variant TEXT NOT NULL,
+      status TEXT NOT NULL,
+      timeout_json TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS request_user_input_question (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      question TEXT NOT NULL,
+      default_answer_json TEXT NOT NULL,
+      choices_json TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS request_user_input_answer (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      answer_json TEXT NOT NULL,
+      answered_by TEXT NOT NULL,
+      delivery TEXT,
+      queued_item_id TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runtime_approval_request (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      surface_pi_session_id TEXT NOT NULL,
+      thread_id TEXT,
+      turn_id TEXT,
+      command_id TEXT,
+      tool_call_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      approval_mode TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      command_text TEXT,
+      command_family TEXT,
+      patch_text TEXT,
+      snippet_artifact_id TEXT,
+      typescript_code TEXT,
+      status TEXT NOT NULL,
+      decision_reason TEXT,
+      reviewer TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS artifact (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -4912,8 +6288,12 @@ function initializeSchema(db: Database): void {
       kind TEXT NOT NULL,
       name TEXT NOT NULL,
       path TEXT,
-      content TEXT,
-      created_at TEXT NOT NULL
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      bytes INTEGER NOT NULL DEFAULT 0,
+      sha256 TEXT NOT NULL DEFAULT '${EMPTY_SHA256}',
+      immutable INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      deleted_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS surface_message_queue (
@@ -4931,6 +6311,8 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       delivered_at TEXT,
+      failed_at TEXT,
+      failure_error TEXT,
       cancelled_at TEXT
     );
 
@@ -4940,6 +6322,7 @@ function initializeSchema(db: Database): void {
       thread_id TEXT,
       text TEXT NOT NULL,
       attachments_json TEXT,
+      snippet_mentions_json TEXT,
       updated_at TEXT NOT NULL
     );
 
@@ -4984,6 +6367,9 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "session", "last_read_at", "TEXT");
   ensureColumn(db, "session", "orchestrator_agent_profile_id", "TEXT");
   ensureColumn(db, "session", "orchestrator_agent_profile_json", "TEXT");
+  ensureColumn(db, "session", "generated_agent_context_fingerprint", "TEXT");
+  ensureColumn(db, "session", "loaded_extension_ids_json", "TEXT");
+  ensureColumn(db, "session", "available_extension_ids_json", "TEXT");
   ensureColumn(db, "session", "title_namer_agent_json", "TEXT");
   ensureColumn(db, "session", "title_generation_status", "TEXT NOT NULL DEFAULT 'not-started'");
   ensureColumn(db, "session", "title_generation_triggered_at", "TEXT");
@@ -5022,11 +6408,34 @@ function initializeSchema(db: Database): void {
     "INTEGER NOT NULL DEFAULT 190",
   );
   ensureColumn(db, "thread", "agent_profile_json", "TEXT");
+  ensureColumn(db, "thread", "generated_agent_context_fingerprint", "TEXT");
+  ensureColumn(db, "thread", "thread_group_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "thread", "history_mode", "TEXT NOT NULL DEFAULT 'isolated'");
+  ensureColumn(db, "thread", "objective_state", "TEXT NOT NULL DEFAULT 'active'");
+  ensureColumn(db, "thread", "loaded_extension_ids_json", "TEXT");
+  ensureColumn(db, "thread", "available_extension_ids_json", "TEXT");
+  ensureColumn(db, "workflow_task_attempt", "generated_agent_context_fingerprint", "TEXT");
+  ensureColumn(db, "artifact", "mime_type", "TEXT NOT NULL DEFAULT 'application/octet-stream'");
+  ensureColumn(db, "artifact", "bytes", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "artifact", "sha256", `TEXT NOT NULL DEFAULT '${EMPTY_SHA256}'`);
+  ensureColumn(db, "artifact", "immutable", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "artifact", "deleted_at", "TEXT");
+  ensureColumn(db, "command", "arguments_json", "TEXT");
+  db.exec(
+    `UPDATE thread
+     SET thread_group_id = CASE
+       WHEN thread_group_id IS NULL OR thread_group_id = '' THEN id
+       ELSE thread_group_id
+     END`,
+  );
   ensureColumn(db, "surface_message_queue", "position", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "surface_message_queue", "cancelled_at", "TEXT");
+  ensureColumn(db, "surface_message_queue", "failed_at", "TEXT");
+  ensureColumn(db, "surface_message_queue", "failure_error", "TEXT");
   ensureColumn(db, "surface_message_queue", "kind", "TEXT NOT NULL DEFAULT 'user_message'");
   ensureColumn(db, "surface_message_queue", "idempotency_key", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "surface_message_queue", "payload_json", "TEXT");
+  ensureColumn(db, "surface_composer_draft", "snippet_mentions_json", "TEXT");
   db.exec(
     `UPDATE surface_message_queue
      SET idempotency_key = 'surface_queue:' || id
@@ -5035,6 +6444,26 @@ function initializeSchema(db: Database): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_surface_message_queue_pending
      ON surface_message_queue (surface_pi_session_id, status, position)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_request_user_input_request_session
+     ON request_user_input_request (session_id, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_request_user_input_question_request
+     ON request_user_input_question (request_id, ordinal)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_request_user_input_answer_request
+     ON request_user_input_answer (request_id, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_runtime_approval_request_session
+     ON runtime_approval_request (session_id, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_runtime_approval_request_pending
+     ON runtime_approval_request (status, created_at)`,
   );
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_message_queue_active_idempotency
@@ -5182,6 +6611,36 @@ function fromJson<T>(value: string | null | undefined): T | null {
   return JSON.parse(value) as T;
 }
 
+function normalizeStringList(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].toSorted();
+}
+
+function resolveRequestUserInputOptionAnswer(
+  question: StructuredRequestUserInputQuestionRecord,
+  optionId: string,
+): StructuredRequestUserInputAnswer {
+  const option = question.choices.find((choice) => choice.optionId === optionId);
+  if (!option) {
+    throw new Error("Request user input option does not belong to the question.");
+  }
+  return {
+    kind: "option",
+    label: option.label,
+    text: option.label,
+  };
+}
+
+function normalizeRequestUserInputCustomAnswer(text: string): StructuredRequestUserInputAnswer {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error("Request user input custom answer cannot be blank.");
+  }
+  return {
+    kind: "custom",
+    text: trimmed,
+  };
+}
+
 function isTerminalThreadStatus(status: StructuredThreadStatus): boolean {
   return status === "completed";
 }
@@ -5228,28 +6687,131 @@ function defaultWaitKindForWorkflowStatus(
   return status === "waiting" ? "event" : null;
 }
 
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+function defaultArtifactDirectory(): string {
+  return join(homedir(), ".config", "svvy", "artifacts");
+}
+
 function resolveArtifactPath(input: {
   artifactDir: string;
   sessionId: string;
-  artifactId: string;
-  requestedPath?: string;
   name: string;
-  content?: string;
-}): string | undefined {
-  if (input.requestedPath && input.content === undefined) {
-    return input.requestedPath;
+  immutable: boolean;
+}): string {
+  const artifactRoot = resolve(input.artifactDir);
+  const sessionArtifactDir = resolve(
+    artifactRoot,
+    input.sessionId,
+    input.immutable ? "immutable" : "",
+  );
+  const artifactPath = resolve(sessionArtifactDir, input.name);
+  if (!isPathInside(artifactPath, artifactRoot)) {
+    throw new Error(`INVALID_ARGUMENT: artifact path escapes artifact directory`);
   }
-
-  if (input.content === undefined) {
-    return input.requestedPath;
-  }
-
-  const sessionArtifactDir = join(input.artifactDir, input.sessionId);
-  mkdirSync(sessionArtifactDir, { recursive: true });
-  return join(sessionArtifactDir, `${input.artifactId}-${sanitizeArtifactName(input.name)}`);
+  return artifactPath;
 }
 
-function sanitizeArtifactName(name: string): string {
-  const normalized = basename(name).replace(/[^\w.-]+/g, "-");
-  return normalized || "artifact";
+function validateArtifactName(name: string): string {
+  const normalized = normalize(name);
+  if (
+    !name ||
+    normalized !== basename(normalized) ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("..") ||
+    hasAsciiControlCharacter(name) ||
+    name === "immutable" ||
+    name.startsWith(".") ||
+    !name.includes(".") ||
+    name.endsWith(".")
+  ) {
+    throw new Error(`INVALID_ARGUMENT: invalid artifact filename ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
+function hasAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function copyArtifactSourceFile(sourcePath: string, artifactPath: string): void {
+  if (!existsSync(sourcePath)) {
+    throw new Error(`SOURCE_NOT_FOUND: ${sourcePath}`);
+  }
+  let realSourcePath: string;
+  let sourceStat;
+  try {
+    realSourcePath = realpathSync(sourcePath);
+    sourceStat = statSync(realSourcePath);
+  } catch (error) {
+    throw new Error(
+      `SOURCE_UNREADABLE: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  if (sourceStat.isDirectory()) {
+    throw new Error(`SOURCE_IS_DIRECTORY: ${sourcePath}`);
+  }
+  if (!sourceStat.isFile()) {
+    throw new Error(`SOURCE_NOT_FILE: ${sourcePath}`);
+  }
+  copyFileSync(realSourcePath, artifactPath);
+}
+
+function isStructuredArtifactError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /^(ARTIFACT_EXISTS|ARTIFACT_NOT_FOUND|INVALID_ARGUMENT|SOURCE_NOT_FOUND|SOURCE_IS_DIRECTORY|SOURCE_NOT_FILE|SOURCE_UNREADABLE|COPY_FAILED|DELETE_FAILED):/.test(
+    error.message,
+  );
+}
+
+function readArtifactFileMetadata(path: string): { bytes: number; sha256: string } {
+  const content = readFileSync(path);
+  return {
+    bytes: content.byteLength,
+    sha256: createHash("sha256").update(content).digest("hex"),
+  };
+}
+
+function normalizeArtifactMimeType(mimeType?: string): string | undefined {
+  if (!mimeType) {
+    return undefined;
+  }
+  const mediaType = mimeType.split(";")[0]?.trim().toLowerCase();
+  if (!mediaType || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(mediaType)) {
+    throw new Error(`INVALID_ARGUMENT: invalid artifact MIME type ${JSON.stringify(mimeType)}`);
+  }
+  return mediaType;
+}
+
+function inferArtifactMimeType(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".log")) return "text/plain";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".ts")) return "text/typescript";
+  if (lower.endsWith(".js")) return "text/javascript";
+  return "application/octet-stream";
+}
+
+function isPathInside(path: string, root: string): boolean {
+  const relativePath = relative(root, path);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }

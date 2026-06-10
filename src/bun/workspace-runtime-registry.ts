@@ -6,9 +6,8 @@ import type {
   WorkspaceInfoResponse,
   WorkspaceKind,
   WorkspaceSyncMessage,
-  WorkspaceTabInfo,
 } from "../shared/workspace-contract";
-import { createAppLogger, type BridgeLogLevel } from "./app-logger";
+import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
 import { createAppLogStore, type AppLogStore } from "./app-log-store";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import {
@@ -17,6 +16,7 @@ import {
   getSvvyDataDir,
   WorkspaceSessionCatalog,
   type TitleGenerationLogEvent,
+  type WorkflowsGeneratedPackageLogEvent,
 } from "./session-catalog";
 import { canonicalizeWorkspaceCwd, getDefaultWorkspaceCwd } from "./workspace-context";
 import { WorkspacePathIndex } from "./workspace-path-index";
@@ -36,6 +36,9 @@ type WorkspaceRuntimeRegistryOptions = {
   onAppLogUpdate?: (workspaceId: string, payload: AppLogUpdateMessage) => void;
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
+  workflowsGeneratedPackagePath?: string;
+  workflowsExtensionsGeneratedPackagePath?: string;
+  workflowsSourceRoot?: string;
 };
 
 type OpenWorkspaceOptions = {
@@ -139,12 +142,8 @@ export class WorkspaceRuntimeRegistry {
     return runtime;
   }
 
-  listOpenWorkspaces(): WorkspaceTabInfo[] {
-    return Array.from(this.runtimes.values()).map((runtime) => ({
-      ...runtime.getInfo(),
-      workspaceTabId: runtime.workspaceId,
-      openedAt: runtime.openedAt,
-    }));
+  listOpenWorkspaces(): WorkspaceInfoResponse[] {
+    return Array.from(this.runtimes.values()).map((runtime) => runtime.getInfo());
   }
 
   async closeWorkspace(workspaceId: string): Promise<boolean> {
@@ -184,11 +183,18 @@ export class WorkspaceRuntimeRegistry {
       sessionDir,
       join(sessionDir, "namer"),
       workspaceId,
+      {
+        workflowsExtensionsGeneratedPackagePath:
+          this.options.workflowsExtensionsGeneratedPackagePath,
+        workflowsGeneratedPackagePath: this.options.workflowsGeneratedPackagePath,
+        workflowsSourceRoot: this.options.workflowsSourceRoot,
+      },
     );
     const pathIndex = new WorkspacePathIndex(cwd);
     const agentSettingsStore = createAgentSettingsStore({
       cwd,
       agentDir: this.agentDir,
+      workflowsSourceRoot: this.options.workflowsSourceRoot,
     });
     const appLogStore = this.acquireAppLogStore(cwd);
     const appLog = createAppLogger({
@@ -203,6 +209,11 @@ export class WorkspaceRuntimeRegistry {
         entries,
         summary,
       });
+    });
+    appLog.info("app.lifecycle", "Workspace runtime opened.", {
+      workspaceId,
+      kind,
+      cwd,
     });
 
     catalog.setWorkspaceSyncListener((payload) => {
@@ -220,8 +231,17 @@ export class WorkspaceRuntimeRegistry {
     catalog.setTitleGenerationLogListener((event) => {
       recordTitleGenerationLog(appLog, event);
     });
-    catalog.scheduleDurableWorkflowSupervisionRestore();
-
+    catalog.setWorkflowsGeneratedPackageLogListener((event) => {
+      for (const runtime of this.runtimes.values()) {
+        recordWorkflowsGeneratedPackageLog(runtime.appLog, event);
+      }
+    });
+    catalog.setAppLogListener((event) => {
+      appendAppLoggerEvent(appLog, event);
+    });
+    catalog.setOpenWorkspaceCwdsReader(() =>
+      this.listOpenWorkspaces().map((workspace) => workspace.cwd),
+    );
     const runtime: RuntimeRecord = {
       workspaceId,
       cwd,
@@ -242,10 +262,18 @@ export class WorkspaceRuntimeRegistry {
         kind,
       }),
       dispose: async () => {
+        appLog.info("app.lifecycle", "Workspace runtime closed.", {
+          workspaceId,
+          kind,
+          cwd,
+        });
         unsubscribeAppLog();
         catalog.setWorkspaceSyncListener(null);
         catalog.setSurfaceSyncListener(null);
         catalog.setTitleGenerationLogListener(null);
+        catalog.setWorkflowsGeneratedPackageLogListener(null);
+        catalog.setAppLogListener(null);
+        catalog.setOpenWorkspaceCwdsReader(null);
         await catalog.dispose();
         this.releaseAppLogStore(cwd);
       },
@@ -312,6 +340,35 @@ function recordTitleGenerationLog(
     return;
   }
   appLog.info("session.title", message, details);
+}
+
+function recordWorkflowsGeneratedPackageLog(
+  appLog: ReturnType<typeof createAppLogger>,
+  event: WorkflowsGeneratedPackageLogEvent,
+): void {
+  appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
+    reason: event.reason,
+    ...pickWorkflowGeneratedPackageFacts(event.commandFacts),
+  });
+}
+
+function pickWorkflowGeneratedPackageFacts(
+  facts: Record<string, unknown>,
+): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  for (const key of [
+    "workflowDiagnosticCount",
+    "workflowExportCount",
+    "workflowLinkedWorkspaceCount",
+    "workflowSavedExportName",
+    "workflowSavedKind",
+  ]) {
+    const value = facts[key];
+    if (typeof value === "number" || typeof value === "string") {
+      details[key] = value;
+    }
+  }
+  return details;
 }
 
 function formatTitleGenerationLogMessage(event: TitleGenerationLogEvent): string {

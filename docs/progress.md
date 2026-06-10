@@ -30,74 +30,113 @@ How to use this file:
 - [x] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Persist handler-thread records with title, objective, objective state, backing pi session id, and durable thread linkage. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Persist artifact references independently from transcript parsing at thread and command scope. Commit(s): `fff54d7`
-- [ ] Store artifacts under the configured artifact directory as per-session files, with mutable artifacts
-  directly under `<artifactDir>/<sessionId>/`, immutable artifacts under
-  `<artifactDir>/<sessionId>/immutable/`, exact stored filenames, immutable metadata, refreshed
-  file-backed byte/digest facts, and no reliance on OS-level file flags for immutability.
+- [x] Store artifacts under the configured artifact directory as per-session files, with mutable artifacts
+      directly under `<artifactDir>/<sessionId>/`, immutable artifacts under
+      `<artifactDir>/<sessionId>/immutable/`, exact stored filenames, immutable metadata, refreshed
+      file-backed byte/digest facts, and no reliance on OS-level file flags for immutability. Commit(s): pending local changes
 - [x] Persist ordered update and conclusion episode records each time a handler thread reports to the orchestrator, while preserving earlier episodes for later follow-up turns. Commit(s): `d323012`
 - [x] Persist session wait state as a frontier-level summary derived from surface, workflow, request-user-input, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
-- [ ] Build a POC Codex-like live tool projection stream for one surface, covering tool item start,
-  streamed argument snapshots, command output deltas, structured file-change patch snapshots,
-  approval or wait state, final command facts, and renderer recovery after reload.
-- [ ] Persist and render live tool projection across native direct tools, thread-control tools,
-  extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
-  `svvyx ...`, and prompt-only CLI usage such as Smithers without introducing a workflow-specific
-  rendering or recovery path.
+- [x] Build a POC Codex-like live tool projection stream for one surface on the current pi seams, covering tool item start, accepted argument snapshots, command output deltas, structured file-change patch snapshots, approval or wait state, final command facts, and renderer recovery after reload. Commit(s): pending local changes
+  - [ ] Follow-up: add true pre-runtime partial argument/source streaming once pi exposes incremental tool-call argument events; do not invent fake streaming callbacks in `svvy`.
+- [x] Persist and render live tool projection across native direct tools, thread-control tools,
+      extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
+      `svvyx ...`, and prompt-only CLI usage such as Smithers without introducing a workflow-specific
+      rendering or recovery path. Commit(s): pending local changes
+  - [x] Preserve `svvyx workflows ...` failure command facts in the thrown `exec_command` JSON payload and persist those facts on the ordinary failed command record through the generic command tracker. Commit(s): pending
+  - [x] Persist running command records for direct tools at execution start and waiting command records for native control tools that pause for user input. Commit(s): pending
+  - [x] Persist final command-family `exec_command` stdout/stderr or JSON output as durable command-subject output events through the ordinary command tracker, and settle structured `{ ok: false }` `svvyx` results as failed command records. Commit(s): pending
+  - [x] Persist accepted `execute_typescript` source on the parent command, recover generated-client child inputs from child command records, and stream captured TypeScript console stdout/stderr into the shared durable command-output projection. Commit(s): pending
+  - [x] Persist blocking `execute_typescript` static diagnostics as durable command-subject diagnostic events and recover them into neutral transcript command cards plus command inspectors. Commit(s): pending
+  - [x] Expose recovered command output events in the command inspector read model and render stdout/stderr sections in the ordinary command inspector. Commit(s): pending
+  - [x] Render transcript command rollups through neutral tool-call cards instead of workflow-shaped cards. Commit(s): pending
+  - [x] Recover transcript command rollups from durable command output events, retained artifacts, and final command facts after reload without transcript prose parsing. Commit(s): pending
+  - [x] Persist accepted command argument snapshots on structured command records and recover them into neutral transcript command cards after reload. Commit(s): pending
+  - [x] Persist accepted argument snapshots for specialized native control commands (`thread_start`, `thread_followup`, `thread_request_report`, `thread_report`, and `request_user_input`) while preserving their existing authoritative final facts. Commit(s): pending
+  - [x] Persist direct command records for Extension Loading and read-only thread state tool executions inside the native tools themselves, including active-runtime validation failures, while the generic pi callback tracker skips those native names to avoid duplicate command cards. Commit(s): pending
+  - [x] Persist `request_user_input` created request/question-count command progress and final nonblocking `RequestUserInputResult` facts on the authoritative command record. Commit(s): pending
+  - [x] Return structured final `apply_patch` file-change facts from the real direct tool result so the shared command tracker persists actual patch facts instead of synthetic test-only facts. Commit(s): pending
+  - [x] Persist accepted `apply_patch` file-change snapshots as durable command events and recover them into neutral transcript command cards and command inspectors alongside final patch facts. Commit(s): pending
+  - [x] Project read-only thread state tools (`thread_current`, `thread_list`, `thread_episodes`, and `thread_group`) through ordinary command records instead of dropping them at the generic tracker boundary. Commit(s): pending
+  - [x] Persist live stdout/stderr chunks from ordinary `exec_command` execution as durable command-subject output events, update the original command with final facts for long-running `write_stdin` continuations, and retain final-result output event fallback for callers that do not stream. Commit(s): pending
+  - [x] Recover durable `command.progress` lifecycle events from ordinary command records into neutral transcript and command-inspector projection, without adding a workflow-specific renderer. Commit(s): pending
+  - [x] Add retained immutable log artifacts for oversized command-family stdout/stderr, link them to the source command, and keep retained stream text out of stored command facts and durable output events while preserving small-output event projection. Commit(s): pending
 
 ## 2. `execute_typescript`
 
 - [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract. Commit(s): `76cc8f3`, `b41e5e6`
-- [ ] Expose the resolved `execute_typescript` runtime surface with no global `svvy` client and no injected `api` object.
+- [x] Expose the resolved `execute_typescript` runtime surface with no global `svvy` client and no injected `api` object. Commit(s): pending local changes
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
-- [ ] Route the top-level `execute_typescript` action through the same approval-boundary path as other approval-gated native actions before executing submitted code.
-- [ ] Generate actor-specific `execute_typescript` declarations containing only the current actor's loaded TypeScript-enabled `svvyx` extension clients under `extensions["<id>"]`, plus only those extensions' command map types.
-- [ ] Make `incur/client` importable in `execute_typescript` snippets for public Incur types and `Client.ClientError`.
+- [x] Route the top-level `execute_typescript` action through the same approval-boundary path as other approval-gated native actions before executing submitted code. Commit(s): pending local changes
+- [x] Make the top-level `execute_typescript` approval hook use the shared mode-aware runtime approval request shape, persist source before review, and bypass the boundary in `approvalMode: "full-access"`. Commit(s): pending local changes
+- [x] Add an injectable runtime approval-boundary seam before direct `exec_command`, intercepted `svvyx ...` command-family dispatch, and `apply_patch`, with `approvalMode: "full-access"` bypassing that seam. Commit(s): pending local changes
+- [x] Pass the injected mode-aware approval-boundary seam into session-created direct tools and top-level `execute_typescript`, with managed-session denial coverage for Shell and TypeScript tool calls. Commit(s): pending local changes
+- [x] Connect the injected approval-boundary seam to app-owned automatic review and actor-local user approval requests, with durable runtime approval records, pending user approval projection, and approve/deny RPC/UI actions. Commit(s): pending local changes
+- [x] Settle denied and cancelled runtime approval requests by clearing wait state, resolving the blocked tool call without running it, and recording cancelled command facts. Commit(s): pending local changes
+- [x] Replace the approve-all automatic-reviewer placeholder with a fail-closed app-owned review policy that can classify and deny unsafe approval-boundary requests without relying on prompt memory. Commit(s): pending local changes
+- [x] Generate actor-specific `execute_typescript` declarations containing only the current actor's loaded TypeScript-enabled `svvyx` extension clients under `extensions["<id>"]`, plus only those extensions' command map types. Commit(s): pending local changes
+- [x] Make `incur/client` importable in `execute_typescript` snippets for public Incur types and `Client.ClientError`. Commit(s): pending local changes
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while Smithers workflow operations use official CLI commands through Shell. Commit(s): `a02bd48`
-- [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
+- [x] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients through schema-backed current-build command semantics, while keeping `MemoryClient` and local Incur actions unexposed to snippets. Commit(s): pending local changes
+  - [x] Extract current-build Incur command manifests during successful user `svvyx` builds and generate TypeScript declaration files from those command maps for loaded extension clients. Commit(s): pending
+  - [x] Invoke generated user clients through schema-backed Incur input/output semantics, including output controls and the non-streaming `Run.Result` envelope, instead of the temporary insertion-order argv adapter. Commit(s): pending
+  - [ ] Move generated user clients from the current CLI-backed transport to a public Incur memory-client path once the packaged Incur dependency exposes one, including streaming responses, CTA command runners, and richer `Client.ClientError` metadata while keeping MemoryClient and local actions internal.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Vendor a Codex-derived native Rust sandbox helper that preserves Codex filesystem policy
-  semantics for `Read`, `Write`, and `None` entries, most-specific path precedence, writable roots
-  with read-only subpaths, protected metadata carveouts, macOS Seatbelt generation through
-  `/usr/bin/sandbox-exec`, and fail-closed behavior when carveouts cannot be enforced.
-- [ ] Grant the active session artifact directory as a writable root while treating that session's
-  `immutable/` artifact child as a read-only subpath, without granting broad writable access to the
-  configured artifact root or to artifacts owned by other sessions.
-- [ ] Implement the Artifacts `svvyx` command and generated-client contract for empty artifact
-  creation with exact `--name <filename.ext>`, copy creation with `--path` plus optional exact
-  `--name`, `--immutable`, extension-required basename validation, collision rejection, and no
-  `--kind`, implicit extension, inline content, or OS file-flag immutability.
-- [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`.
+      semantics for `Read`, `Write`, and `None` entries, most-specific path precedence, writable roots
+      with read-only subpaths, protected metadata carveouts, macOS Seatbelt generation through
+      `/usr/bin/sandbox-exec`, and fail-closed behavior when carveouts cannot be enforced.
+  - [x] Generate a parameterized macOS Seatbelt profile artifact from the managed filesystem policy,
+        covering writable-root write allowance, read-only subpath exclusions, protected metadata regex
+        carveouts, network denial, and unrestricted/full-access omission. Commit(s): pending
+  - [x] Maintain a tested internal managed filesystem policy model for `Read`, `Write`, and `None`
+        entries, most-specific and equal-specific precedence, workspace-write roots, `/tmp` and
+        `$TMPDIR` writable roots, full-access bypass, and protected `.git`, `.agents`, and `.codex`
+        metadata carveouts; apply that policy to `apply_patch` target validation before invoking the
+        patch subprocess. Commit(s): pending
+  - [ ] Package native sandbox verification through an app-owned helper/test seam so unit tests do not depend on launching nested raw `sandbox-exec` from the Codex-hosted test process.
+- [x] Grant the active session artifact directory as a writable root while treating that session's
+      `immutable/` artifact child as a read-only subpath, without granting broad writable access to the
+      configured artifact root or to artifacts owned by other sessions. Commit(s): pending local changes
+- [x] Implement the Artifacts `svvyx` command and generated-client contract for empty artifact
+      creation with exact `--name <filename.ext>`, copy creation with `--path` plus optional exact
+      `--name`, `--immutable`, extension-required basename validation, collision rejection, and no
+      `--kind`, implicit extension, inline content, or OS file-flag immutability. Commit(s): pending local changes
+- [x] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`. Commit(s): pending local changes
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Persist normalized child-command facts for generated `extensions["<id>"].run(...)` calls while the parent `execute_typescript` attempt remains the main semantic unit.
+- [x] Persist normalized child-command facts for user-generated `extensions["<id>"].run(...)` calls backed by current user `svvyx` builds while the parent `execute_typescript` attempt remains the main semantic unit; builtin Artifacts and Workflows generated clients already record child commands. Commit(s): pending local changes
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
 ## 2A. Prompt-Only TinyFish Web Extension
 
 Current product decisions for this section are specified in `docs/specs/extension/web.extension.spec.md`.
 
-- [ ] Expose Web as a builtin `instructions` extension that is default-loaded for orchestrators,
-  handler threads, and workflow task agents only while `networkAccess` is true, and unavailable with
-  no prompt guidance when `networkAccess` is false.
-- [ ] Vendor the TinyFish-owned `use-tinyfish` agent instructions as the Web extension's core prompt content.
-- [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
-- [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
-- [ ] Keep Web v1 limited to prompt-only TinyFish CLI guidance, without Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, or self-hosted web search.
-- [ ] Declare TinyFish as a Web extension CLI requirement with a default target version and reusable
-  exact-version install/update command template; keep installation and updates as ordinary
-  `exec_command` work after build or inspect reports a missing or unknown required binary, or after
-  the UI/agent chooses to update an available detected binary, while TinyFish CLI owns
-  authentication, status, search, fetch, browser-backed commands, and API key storage through
-  TinyFish-owned CLI commands.
-- [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
-- [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
-  for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is
-  false, and absent from native tool declarations, loaded `svvyx` command guidance, generated TypeScript
-  declarations, provider settings, and Firecrawl provider lists.
+- [x] Expose Web as a builtin `instructions` extension that is default-loaded for orchestrators,
+      handler threads, and workflow task agents only while `networkAccess` is true, and unavailable with
+      no prompt guidance when `networkAccess` is false. Commit(s): pending local changes
+- [x] Generate the Web extension's core prompt content from the TinyFish-owned `@tiny-fish/cli@0.1.6` package artifact instead of mutable skill URLs. Commit(s): pending local changes
+- [x] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs. Commit(s): pending local changes
+- [x] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage. Commit(s): pending local changes
+- [x] Keep Web v1 limited to prompt-only TinyFish CLI guidance, without Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, or self-hosted web search. Commit(s): pending local changes
+- [x] Declare TinyFish as a Web extension CLI requirement with a default target version and reusable
+      exact-version install/update command template; keep installation and updates as ordinary
+      `exec_command` work after build or inspect reports a missing or unknown required binary, or after
+      the UI/agent chooses to update an available detected binary, while TinyFish CLI owns
+      authentication, status, search, fetch, browser-backed commands, and API key storage through
+      TinyFish-owned CLI commands. Commit(s): pending local changes
+- [x] Fail `svvyx extensions build web --json` with structured JSON errors when TinyFish is missing
+      or its version is unknown, while using detected TinyFish versions for successful builds and
+      reporting update metadata without adding native Web tools or generated Web clients. Commit(s):
+      pending local changes
+- [x] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts. Commit(s): pending local changes
+- [x] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
+      for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is
+      false, and absent from native tool declarations, loaded `svvyx` command guidance, generated TypeScript
+      declarations, provider settings, and Firecrawl provider lists. Commit(s): pending local changes
 
 ## 3. Turn Decisions And Delegation
 
@@ -105,7 +144,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread_start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
-- [ ] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; agent-facing prompts and tool schemas contain only that thread-control surface.
+- [x] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; agent-facing prompts and runtime tool declarations contain only that thread-control surface. Commit(s): pending local changes
 - [x] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread_start`. Commit(s): `d323012`
 - [x] Re-enter orchestrator control from durable handler-thread episodes, using durable thread objective state plus the latest episode instead of raw transcript scanning. Commit(s): `d323012`, `fdaf460`
 
@@ -115,6 +154,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Persist handler-thread objective state separately from handler activity, workflow activity, waits, and repair context, without flattening workflow failure or cancellation into thread objective conclusion. Commit(s): `f53c9b8`, `fdaf460`, `a02bd48`
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread clarification, waiting, and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
+- [x] Add runtime-level verification that handler-local command or Smithers failure can continue or rerun on the handler surface without an orchestrator turn unless the handler explicitly calls `thread_report`. Commit(s): pending local changes
 - [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
 - [x] Let a concluded handler objective move back to active through explicit orchestrator re-engagement with `thread_followup({ activate: true })`, preserving handler and workflow activity as derived facts. Commit(s): `f53c9b8`, `a02bd48`
 - [x] Preserve earlier thread episodes when the same thread later returns control again. Commit(s): `d323012`
@@ -130,27 +170,30 @@ Current product decisions for this section are specified in `docs/specs/extensio
 
 Current product decisions for this section are specified in `docs/specs/extension/smithers.extension.spec.md`.
 
-- [ ] Keep Smithers as a builtin prompt-only extension that loads official CLI and authoring guidance for handler threads without native Smithers tools, generated TypeScript clients, or product workflow wrappers.
-- [ ] Generate the Smithers core instruction fragment from the Extension Managing-selected `smithers-orchestrator` documentation version while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces.
-- [ ] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, checked global `smithers` CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output.
-- [ ] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads default-load Smithers prompt guidance and workflow task agents do not default-load Smithers.
+- [x] Keep Smithers as a builtin prompt-only extension that loads official CLI and authoring guidance for handler threads without native Smithers tools, generated TypeScript clients, product workflow wrappers, or bundled app Smithers runtime dependencies. Commit(s): pending local changes
+- [x] Generate the Smithers core instruction fragment from the Extension Managing-selected `smithers-orchestrator` documentation version while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces. Commit(s): pending local changes
+- [x] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, checked global `smithers` CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output. Commit(s): pending local changes
+- [x] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads default-load Smithers prompt guidance and workflow task agents do not default-load Smithers. Commit(s): pending local changes
 
 ## 6. Workflows Source, Build, And Generated Surface
 
 Current product decisions for this section are specified in `docs/specs/workflow-library.spec.md` and `docs/specs/extension/workflows.extension.spec.md`.
 
-- [ ] Store app-global reusable Workflows source under `~/.config/svvy/workflows/agents`, `prompts`, `components`, and `workflows`, with generated output under `~/.config/svvy/workflows/generated`.
-- [ ] Treat generated Workflows output and workspace `.smithers/node_modules/@svvy/workflows` links as read-only plumbing outside the safe writable boundary; ordinary edits target source and then build.
-- [ ] Generate `@svvy/workflows` with only `Agents`, `Components`, `Prompts`, and `Workflows` root namespaces, and export `Agents.defineTaskAgent` plus `Agents.TaskAgentParameters` under `Agents`.
-- [ ] Link `@svvy/workflows` and generated `@svvy/extensions` into each opened workspace's `.smithers/node_modules` without relying on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or source-checkout-relative paths.
-- [ ] Implement `svvyx workflows list [--kind agent|prompt|component|workflow] --json` with only mechanically available export identity and source/generated paths.
-- [ ] Implement `svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json`, with strict overwrite rejection by default and automatic build after successful save.
-- [ ] Implement `svvyx workflows build --json` so it first builds Extensions, generates `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and repairs workspace links.
-- [ ] Implement `svvyx workflows models list --json` from the same pi-normalized provider/model/auth/reasoning metadata used by the Agents pane, without a live completion request by default.
-- [ ] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports.
-- [ ] Save `--kind agent` by statically extracting `Agents.defineTaskAgent(...)` or resolvable `defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic or unresolved inputs with structured diagnostics.
-- [ ] Attach generated export metadata internally for UI source/generated links without exposing public metadata fields, public declarations, `__exports`, or changed import usage to agents.
-- [ ] Render the Workflows pane as read-only visibility into generated `@svvy/workflows`, with export identity, read-only generated code, generated-file link, source-file link, and Agents-pane customization links for `Agents.*`.
+- [x] Store app-global reusable Workflows source under `~/.config/svvy/workflows/agents`, `prompts`, `components`, and `workflows`, with generated output under `~/.config/svvy/workflows/generated`. Commit(s): pending local changes
+- [x] Treat generated Workflows output and workspace `.smithers/node_modules/@svvy/workflows` links as read-only plumbing outside the safe writable boundary; ordinary edits target source and then build. Commit(s): pending local changes
+- [x] Generate `@svvy/workflows` with only `Agents`, `Components`, `Prompts`, and `Workflows` root namespaces, and export `Agents.defineTaskAgent` plus `Agents.TaskAgentParameters` under `Agents`. Commit(s): pending local changes
+- [x] Link `@svvy/workflows` and generated `@svvy/extensions` into each opened workspace's `.smithers/node_modules` without relying on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or source-checkout-relative paths. Commit(s): pending local changes
+- [x] Generate `@svvy/extensions` during the Workflows build path from workflow-task-safe builtin ids plus active ready user `svvyx` extensions that opt into TypeScript API generation after Extension prebuild, including dependency-backed current builds only when their exact approved package artifacts are installed; reject workflow-agent references to deleted, instruction-only, dependency-missing, build-failed, or workflow-task-unavailable extension ids. Commit(s): pending local changes
+- [x] Implement `svvyx workflows list [--kind agent|prompt|component|workflow] --json` with only mechanically available export identity and source/generated paths. Commit(s): pending local changes
+- [x] Implement `svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json`, with strict overwrite rejection by default and automatic build after successful save. Commit(s): pending local changes
+- [x] Implement `svvyx workflows build --json` so it first builds Extensions, generates `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and repairs workspace links. Commit(s): pending local changes
+  - [x] Preflight app-owned user Extension source before Workflows source validation so invalid Extension build inputs and TypeScript-enabled `svvyx` extensions that cannot rebuild fail with Extension-specific diagnostics before `@svvy/extensions` or `@svvy/workflows` package writes. Commit(s): pending
+  - [x] Add automatic Extension rebuild and dependency/CLI-aware outcomes to the Workflows build pipeline before workflow-agent extension references are accepted. Commit(s): pending
+- [x] Implement `svvyx workflows models list --json` from the same pi-normalized provider/model/auth/reasoning metadata used by the Agents pane, without a live completion request by default. Commit(s): pending local changes
+- [x] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports. Commit(s): pending local changes
+- [x] Save `--kind agent` by statically extracting `Agents.defineTaskAgent(...)` or resolvable `defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic or unresolved inputs with structured diagnostics. Commit(s): pending local changes
+- [x] Attach generated export metadata internally for UI source/generated links without exposing public metadata fields, public declarations, `__exports`, or changed import usage to agents. Commit(s): pending local changes
+- [x] Render the Workflows pane as read-only visibility into generated `@svvy/workflows`, with export identity, read-only generated code, generated-file link, source-file link, and Agents-pane customization links for `Agents.*`. Commit(s): pending local changes
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
@@ -163,18 +206,18 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [x] Render archived sessions inside one Archived group in the session sidebar. Commit(s): `3855fe4`
 - [x] Persist the Archived group collapsed state per workspace. Commit(s): `3855fe4`
 - [x] Add session row actions for pin, unpin, archive, and unarchive. Commit(s): `3855fe4`
-- [ ] Keep durable unread state session-level with sidebar timestamp dots, focus-to-read clearing, and session row context-menu actions for mark read or unread, pin, rename, archive, and confirmed delete; pane unread treatment, when present, reads from the same session metadata.
+- [x] Keep durable unread state session-level with sidebar timestamp dots, focus-to-read clearing, and session row context-menu actions for mark read or unread, pin, rename, archive, and confirmed delete; pane unread treatment, when present, reads from the same session metadata. Commit(s): pending local changes
 - [x] Join session summaries, focused panel, and panel-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
 - [x] Give each live surface its own prompt lock, model state, reasoning state, and cancellation lifecycle. Commit(s): `9a21f87`, `b0ee858`
-- [x] Render handler-thread rows from structured state in the workspace shell while keeping lifecycle subtitles, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
+- [x] Render handler-thread rows from structured state in the workspace shell while keeping lifecycle subtitles, active command summaries, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`, pending
 - [x] Show thread objective, objective state, and row-local derived blocked reason in panel-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest thread episode for an inspected thread while preserving earlier episodes in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render thread-linked artifacts before relying on transcript reconstruction. Commit(s): `3855fe4`
 - [x] Restore focused panel, panel-to-surface bindings, and inspector selection after restart. Commit(s): `3855fe4`
-- [ ] Keep open workspaces as left-aligned, horizontally scrollable, draggable app-chrome tabs with durable user-defined tab order, compact icon controls, >0-only colored status count badges, a svvy-owned default workspace runtime when no user workspace tabs restore, exactly one `Open Workspace` pane as each new default workspace tab's first surface, current-tab `Open Workspace`, `New Tab` as a new default workspace tab with no durable layout slots, and `Open Workspace in New Tab` as picker-backed user workspace tab creation; duplicate same-cwd tabs are separate chrome views over the same backend workspace runtime, session catalog, durable workspace state, live surface registry, queues, threads, app logs, saved Workflows generated-state visibility, and durable layout slots keyed by `(workspaceId, layoutId)`, while each tab stores only its selected active layout id.
-- [ ] Route all workspace-scoped backend requests and renderer sync events through explicit `workspaceId` instead of process-global cwd, active workspace, focused tab, or active runtime; keep app-global settings on separate app-global APIs, and require explicit `workspaceId` for workspace-affecting settings plus generated agent-context projections and Workflows library operations.
+- [x] Keep open workspaces as left-aligned, horizontally scrollable, draggable app-chrome tabs with durable user-defined tab order, compact icon controls, >0-only colored status count badges, a svvy-owned default workspace runtime when no user workspace tabs restore, exactly one `Open Workspace` pane as each new default workspace tab's first surface, current-tab `Open Workspace`, `New Tab` as a new default workspace tab with no durable layout slots, and `Open Workspace in New Tab` as picker-backed user workspace tab creation; duplicate same-cwd tabs are separate chrome views over the same backend workspace runtime, session catalog, durable workspace state, live surface registry, queues, threads, app logs, saved Workflows generated-state visibility, and durable layout slots keyed by `(workspaceId, layoutId)`, while each tab stores only its selected active layout id. Commit(s): pending local changes
+- [x] Route all workspace-scoped backend requests and renderer sync events through explicit `workspaceId` instead of process-global cwd, active workspace, focused tab, or active runtime; keep app-global settings on separate app-global APIs, and require explicit `workspaceId` for workspace-affecting settings plus generated agent-context projections and Workflows library operations. Commit(s): pending local changes
 
 ## 9. Command Palette And Quick Open
 
@@ -191,31 +234,40 @@ Current product decisions for this section are specified in `docs/specs/command-
 - [x] Route unmatched non-empty command-mode text after `>` into a New orchestrator initial prompt through the normal orchestrator turn model. Commit(s): `cb319ac`
 - [x] Add keyboard shortcut handling for `Cmd+Shift+P`, `Cmd+P`, Enter, and command-palette `Cmd+Enter` placement once Dockview layout exists. Commit(s): `cb319ac`
 - [x] Add tests for shortcut dispatch, command matching, action routing, disabled or hidden availability, and unmatched prompt-session creation. Commit(s): `cb319ac`
-- [ ] Keep a product-owned shortcut registry with stable action ids, labels, platform chords, compact and readable display strings, scopes, input-typing policy, availability, and command-palette or tooltip metadata.
-- [ ] Use TanStack Hotkeys as the renderer shortcut dispatch primitive for palette, quick-open, sidebar shell actions, dialog-local actions, pane placement, and future focused-pane actions.
+- [x] Keep a product-owned shortcut registry with stable action ids, labels, platform chords, compact and readable display strings, scopes, input-typing policy, and app-menu routing metadata, while command availability and palette result metadata stay on product action definitions. Commit(s): pending
+- [x] Use TanStack Hotkeys as the renderer shortcut dispatch primitive for palette, quick-open, sidebar shell actions, dialog-local actions, pane placement, and future focused-pane actions. Commit(s): pending
 
 ## 10. Pane Layout, Surface Ownership, And Expanded Surfaces
 
 Current product decisions for this section are specified in `docs/specs/pane-layout.spec.md`.
 
-- [ ] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance from the Svelte renderer.
-- [ ] Build the Svelte renderer adapter for Dockview content, tabs, header actions, context menu items, tab-group chips, watermark, and unavailable-surface panels.
-- [ ] Persist Dockview serialized layout state plus svvy panel metadata, including panel-to-surface bindings, panel-local state, chrome state, restore state, and minimum panel policy.
-- [ ] Persist fixed user workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, with the selected slot autosaved on pane changes and empty slots rendered as muted but selectable controls pinned at the far right of workspace chrome; keep default workspace tab pane changes ephemeral and initialize every new default workspace tab with exactly one `Open Workspace` pane.
-- [ ] Keep panel-to-surface bindings separate from live surface runtime state.
+- [x] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance from the Svelte renderer. Commit(s): pending local changes
+- [x] Build the Svelte renderer adapter for Dockview content, tabs, header actions, context menu items, tab-group chips, watermark, and unavailable-surface panels. Commit(s): pending
+- [x] Add Settings as a Dockview-bindable pane target and renderer branch. Commit(s): pending
+- [x] Persist Dockview serialized layout state plus svvy panel metadata, including panel-to-surface bindings, panel-local state, chrome state, restore state, and minimum panel policy. Commit(s): pending local changes
+- [x] Persist fixed user workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, with the selected slot autosaved on pane changes and empty slots rendered as muted but selectable controls pinned at the far right of workspace chrome; keep default workspace tab pane changes ephemeral and initialize every new default workspace tab with exactly one `Open Workspace` pane. Commit(s): pending local changes
+- [x] Keep panel-to-surface bindings separate from live surface runtime state. Commit(s): pending local changes
 - [ ] Support Dockview split, splitter resize, close, tab placement, panel and group drag placement, root-edge placement, edge groups, floating groups, and popout groups through svvy placement commands.
-- [ ] Configure Dockview drag/drop overlays and `dndEdges`, with svvy policy enforced through `onWillShowOverlay`, `onWillDrop`, `onDidDrop`, and `onUnhandledDragOverEvent`.
-- [ ] Manage explicit open and close semantics for live surfaces independently from Dockview panel focus.
-- [ ] Allow the same interactive surface to be opened in more than one Dockview panel at once.
-- [ ] Keep one underlying live surface controller per `surfacePiSessionId` regardless of panel count.
-- [ ] Persist Dockview layout JSON, panel occupancy, panel-local state, tab-group state, edge-group state, floating/popout state, and panel metadata across app restart.
-- [ ] Restore the focused Dockview panel on app restart.
-- [ ] Show exact Dockview panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations.
-- [ ] Show a clear highlight for the currently focused Dockview panel surface.
-- [ ] Define the stored shape for compact thread surfaces inside the workspace shell.
-- [ ] Render compact thread cards in the workspace shell timeline.
-- [ ] Open a selected handler-thread surface in a chosen Dockview panel as a fully interactive surface.
-- [ ] Keep duplicated panel views of the same surface synchronized while allowing independent scroll position.
+  - [x] Preserve tab, root-edge, floating, and popout placement intent through runtime pane state and Dockview adapter placement options. Commit(s): pending local changes
+  - [x] Expose command-palette placement actions for the current pane's surface into left/right/above/below splits, left/right/top/bottom root edges, floating groups, and popouts through the shared runtime placement target path. Commit(s): pending
+  - [x] Derive command-safe Dockview tab-group targets from serialized layout state and expose `pane.place-tab.<groupId>` placement commands through the shared runtime placement target path. Commit(s): pending
+  - [ ] Add explicit resize commands once the product has a stable command target-selection contract for Dockview-owned groups and splitters.
+- [x] Configure Dockview drag/drop overlays and `dndEdges`, with svvy policy enforced through `onWillShowOverlay`, `onWillDrop`, `onDidDrop`, and `onUnhandledDragOverEvent`. Commit(s): pending local changes
+- [x] Manage explicit open and close semantics for live surfaces independently from Dockview panel focus. Commit(s): pending local changes
+- [x] Allow the same interactive surface to be opened in more than one Dockview panel at once. Commit(s): pending local changes
+- [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of panel count. Commit(s): pending local changes
+- [x] Persist Dockview layout JSON, panel occupancy, panel-local state, tab-group state, edge-group state, floating/popout state, and panel metadata across app restart. Commit(s): pending local changes
+  - [x] Persist and restore static-pane tab, root-edge, floating, and popout placement metadata through workspace UI restore state. Commit(s): pending local changes
+  - [x] Restore mixed runtime layout state for serialized Dockview JSON, prompt and static pane bindings, focused panel id, panel-local scroll and density, and edge/floating/popout placement metadata. Commit(s): pending
+  - [x] Add mounted Dockview verification that `fromJSON` restores edge and floating groups while preserving svvy's saved focused panel state in the real Svelte adapter. Commit(s): pending
+  - [ ] Follow-up: add mounted popout restore verification once the app/test harness can observe or permit startup popout windows without relying on ordinary fallback panel sync; the OrbStack GTK/browser-tools lane currently reports only the main window after a seeded startup popout restore, even with a packaged Dockview popout host page.
+- [x] Restore the focused Dockview panel on app restart. Commit(s): pending local changes
+- [x] Show exact Dockview panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations. Commit(s): pending local changes
+- [x] Show a clear highlight for the currently focused Dockview panel surface. Commit(s): pending local changes
+- [x] Define the stored shape for compact thread surfaces inside the workspace shell. Commit(s): pending local changes
+- [x] Render compact thread cards in the workspace shell timeline. Commit(s): pending local changes
+- [x] Open a selected handler-thread surface in a chosen Dockview panel as a fully interactive surface. Commit(s): pending local changes
+- [x] Keep duplicated panel views of the same surface synchronized while allowing independent scroll position. Commit(s): pending local changes
 
 ## 11. Agents Pane And Agent Profiles
 
@@ -227,16 +279,19 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Build a POC New orchestrator creation flow with profile-backed orchestrator selection. Commit(s): `8e19462`
 - [x] Persist the orchestrator profile snapshot and prompt selection used by created sessions. Commit(s): `8e19462`
 - [x] Persist per-session orchestrator profile overrides. Commit(s): `8e19462`
-- [ ] Persist and deliver handler start history mode for delegated handler threads, defaulting `thread_start.threads[].history` to `isolated` and supporting explicit `forked` starts only for conservative continuity cases where the user asks for current conversation context, unresolved design nuance cannot be captured in durable files or a compact objective, or multiple approaches must start from the exact same conversational point.
-- [ ] Persist handler creation-time extension-state overrides for delegated handler threads as partial overrides over the `threadHandler` profile.
+- [x] Persist and deliver handler start history mode for delegated handler threads, defaulting `thread_start.threads[].history` to `isolated` and supporting explicit `forked` starts only for conservative continuity cases where the user asks for current conversation context, unresolved design nuance cannot be captured in durable files or a compact objective, or multiple approaches must start from the exact same conversational point. Commit(s): pending local changes
+- [x] Persist handler creation-time extension-state overrides for delegated handler threads as partial overrides over the `threadHandler` profile. Commit(s): pending local changes
 - [x] Keep the Agents sidebar pane between Logs and Extensions, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Drive the New orchestrator picker order, profile-specific command palette actions, and surface profile badges from Agents-pane orchestrator profile order. Commit(s): `2b97c46648`, `031510ba2b`
 - [x] Keep the default orchestrator profile locked, first, non-draggable, non-deletable, and editable for settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Keep the `threadHandler` special profile available for delegated handler-thread surfaces. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Show the current focused-surface agent profile summary in pane chrome. Commit(s): `8e19462`
-- [ ] Use TanStack Form for complex agent profile, provider key, and app-preference settings forms, including direct-save semantics, validation, dirty state, reset/cancel, pending submit state, async save errors, and pi-normalized provider/model/reasoning constraints.
-- [ ] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports.
-- [ ] Define handler guidance for reusable workflow-agent parameter records without coupling shipped product workflow authoring to repo-root `workflows/`.
+- [x] Use TanStack Form for complex settings forms where renderer-local validation and save state are needed. Commit(s): pending
+  - [x] Provider API key entry and app-preference settings use TanStack Form with validation, dirty state, reset/cancel, pending submit state, async save errors, and backend-normalized reset defaults. Commit(s): pending
+  - [x] Agent-profile and workflow-agent profile editors use TanStack Form while preserving direct-save semantics and pi-normalized provider/model/reasoning constraints. Commit(s): pending
+  - [x] Extension env editors cover editable non-secret overrides and secret writes/removals through app-owned UI with redacted async errors and backend-authoritative readiness refresh. Commit(s): pending
+- [x] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports. Commit(s): pending
+- [x] Define handler guidance for reusable workflow-agent parameter records without coupling shipped product workflow authoring to repo-root `workflows/`. Commit(s): pending local changes
 
 ## 12. Session Titles
 
@@ -266,13 +321,14 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 Current product decisions for this section are specified in `docs/specs/queued-messages.spec.md`.
 
-- [ ] Persist durable surface queue items as structured surface-local product state keyed by `workspaceSessionId`, `surfacePiSessionId`, optional `threadId`, kind, and FIFO queue position.
-- [ ] When a composer submits to an active orchestrator or handler-thread surface, queue the message for that same surface instead of steering the current turn, interrupting tool work, starting a concurrent turn, or retargeting to the focused panel.
-- [ ] Deliver queued messages as the next real pi user message after the owning surface prompt lock releases, creating a normal turn record and preserving prompt history as a single queue-time submission.
-- [ ] Project blocked queue items near the owning surface composer, including count, order, remove, restore-to-composer, delivery failure, and duplicated-panel consistency, while idle-surface items first appear as pending or active work after atomic claim.
-- [ ] Restore queued messages after app restart without transcript inference and resume delivery only after the owning surface runtime and prompt lock state are reconstructed.
+- [x] Persist durable surface queue items as structured surface-local product state keyed by `workspaceSessionId`, `surfacePiSessionId`, optional `threadId`, kind, and FIFO queue position. Commit(s): pending
+- [x] When a composer submits to an active orchestrator or handler-thread surface, queue the message for that same surface instead of steering the current turn, interrupting tool work, starting a concurrent turn, or retargeting to the focused panel. Commit(s): pending
+- [x] Deliver queued messages as the next real pi user message after the owning surface prompt lock releases, creating a normal turn record and preserving prompt history as a single queue-time submission. Commit(s): pending
+- [x] Project blocked queue items near the owning surface composer, including count, order, remove, restore-to-composer, and duplicated-panel consistency, while idle-surface items first appear as pending or active work after atomic claim. Commit(s): pending
+  - [x] Add an explicit composer-strip delivery-failure state if failed delivery should remain queue-row-local instead of surfacing as normal failed turns or queue restoration/cancellation. Commit(s): pending
+- [x] Restore queued messages after app restart without transcript inference and resume delivery only after the owning surface runtime and prompt lock state are reconstructed. Commit(s): pending
 - [x] Claim queued messages atomically through one shared queue runner per `surfacePiSessionId` and prevent duplicated panes or tabs from starting duplicate backend queue drains. Commit(s): `45bdbe8b46`
-- [ ] Land idle-surface queue-manager claim before renderer-visible queued state so idle sends and idle agent context refreshes first appear as pending or active surface work.
+- [x] Land idle-surface queue-manager claim before renderer-visible queued state so idle sends and idle agent context refreshes first appear as pending or active surface work. Commit(s): pending
 - [x] Keep queued-message drag reorder previews local until drop, persist only final changed order, and skip no-op durable reorder writes. Commit(s): `98c73ecbb6`
 - [x] Represent handler reports as durable episode records that schedule typed `thread_report` orchestrator reconciliation notifications; notification dismissal does not roll back the episode or return a handler tool error. Commit(s): 7739c2c824
 - [x] Represent generated agent context refresh as typed surface queue work, apply it before later prompt-bearing items, and expose queued, cancel, retry, and out-of-date recovery UI. Commit(s): 61ba639d6a
@@ -288,39 +344,90 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Render loaded and available extension bindings in surface metadata so users can see when specialized extensions are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
 - [x] Add an `Extensions` sidebar surface below `Agents`, with builtin, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
-- [ ] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as builtin instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls.
+- [x] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as builtin instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls. Commit(s): pending local changes
 - [x] Seed builtin extension records for base actor instructions, code navigation, prompt-only Smithers guidance, Workflows source-library commands, workflow task boundaries, Web, Git, GitHub, Artifacts, and Request User Input, with per-agent usage states, non-deletable builtin rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
-- [ ] Implement the stable app-owned `svvyx <extension-id> ...` dispatcher that resolves extension current builds, imports default-exported Incur CLIs, invokes `cli.serve` with invocation-local explicit env, records command facts, and treats extension usage state as generated guidance/client visibility rather than shell impossibility.
-- [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
-- [ ] Add automatic generated agent context update projection for existing orchestrator and handler-thread surfaces, including grouped semantic diff details on queued, applied, failed, cancelled, and out-of-date states.
-- [ ] Route `thread_start` extension overrides and handler-side `load_extension` through generated agent context bindings while preserving durable loaded and available extension ids on each affected surface.
+- [x] Create app-owned user extension skeletons through `svvyx extensions create`, with `instructions` and `svvyx` interfaces, neutral instruction files, an Incur default-export source skeleton for `svvyx`, manifest-backed inspect/build visibility under the same app-owned root, initial draft/build-required state, and rejection for builtin, reserved, manifest-collision, duplicate, invalid, and native-tool targets. Commit(s): pending local changes
+- [x] Manage user extension full instruction files through `svvyx extensions instructions add`, `rename`, `remove`, `reorder`, and `configure`, with app-owned file/config-only mutations, lexicographic file ordering, bypass config stored in the editable manifest, deterministic reorder prefix renames, before/after lifecycle change records, focused validation, and dirty build state that leaves the current successful build active until the next successful build. Commit(s): pending local changes
+- [x] Revert recorded instruction lifecycle changes through `svvyx extensions revert <change-id> --json`, with exact current-state conflict detection, `extension_files` `revertedChangeId`/`changeId` output, reverted file facts including manifest-only config changes, a follow-up change record for the revert, and an immediate same-build-path auto-build projection that reports success, blocked build errors, or durable dependency approval pauses. Commit(s): pending local changes
+- [x] Delete user extensions through `svvyx extensions delete <id> --json` by recording an app-global reversible delete change before moving app-owned source into trash, rejecting builtin deletes, blocking stale `svvyx` runtime dispatch for deleted current builds, and restoring deleted source through `svvyx extensions revert <change-id> --json` with active-source collision and build-required handling. Commit(s): pending local changes
+- [x] Manage local Extension Managing snapshots through `svvyx extensions snapshots list/save/rename/delete --json`, with path-free snapshot summaries, app-generated ids, source/package/registry-state payload capture, and exclusion of generated outputs, build outputs, `node_modules`, and unsafe path/token-bearing package files. Commit(s): pending local changes
+- [x] Build user extension contexts through staged Extension Managing builds that promote successful output to `current/`, preserve the previous current build on validation failures, report manifest env/dependency/trusted-dependency declarations in inspect/build readiness, keep env output status-only and redacted, split `contextReady` from `runtimeReady` for missing required env and unapproved dependency declarations, block missing or unknown required CLI requirements before promotion, validate exact dependency versions, generated-instruction declarations, instruction config references, env defaults, and `svvyx` source shape, and refuse generated-instruction activation until generator execution is implemented. Commit(s): pending local changes
+- [x] Record explicit Extension Managing build dependency approval requests in an app-global durable ledger keyed by exact dependency and trusted-dependency identities, pause those builds before staging promotion with a durable approval request id, reuse pending requests for repeated builds with the same unapproved identity set, project existing pending request ids through later inspect/readiness output, obsolete stale requests when the extension no longer requires those identities, and require new approval when the exact dependency or trusted dependency identity changes. Commit(s): pending local changes
+- [x] Resume blocked Extension Managing install/build work after dependency approval, install approved extension package dependencies from the app-owned package area with lifecycle scripts disabled unless the exact trusted dependency identity is approved, preserve current builds on install failure, and project exact installed/missing package artifact status. Commit(s): pending local changes
+- [x] Manage app-global extension env values with non-secret app-level overrides in agent settings plus secret entry, update, and removal through the Extensions pane backed by macOS Keychain storage; Extension Managing and inventory report only declaration metadata and configured/missing/defaulted status, while `svvyx` runtime dispatch injects values only for the trusted extension invocation and redacts secret stdout. Commit(s): pending local changes
+- [x] Project builtin extension CLI readiness into the Extensions pane from the same Extension Managing inspect/build readiness facts, including missing, unknown, available, detected/current/default/latest versions, update-available status, and install/update command facts without renderer-side CLI probing. Commit(s): pending local changes
+- [x] Project reversible Extension Managing change cards into the Extensions pane from the same lifecycle, usage, and delete change records used by `svvyx extensions revert <change-id> --json`, with UI-triggered reverts routed through Bun and refreshed from authoritative inventory state. Commit(s): pending local changes
+- [x] Dispatch built user `svvyx` extensions through app-owned `exec_command` routing that resolves current build manifests, validates exact installed dependency package artifacts before runtime invocation, imports bundled default-exported Incur CLIs, rejects non-standalone shell-control invocations, invokes `cli.serve` with unchanged extension argv and invocation-local env, redacts returned secret env values, reports structured runtime errors with readiness or command-failure facts, and returns dispatcher command facts without treating extension usage state as a shell-level command block. Commit(s): pending local changes
+- [x] Extract Incur command manifests during successful user `svvyx` extension builds, persist them in current build metadata, and reject malformed command-manifest current builds before runtime dispatch or generated declaration consumption. Commit(s): pending local changes
+- [x] Manage orchestrator and `threadHandler` profile extension usage through `svvyx extensions set-usage`, with persistent tri-state profile usage, fixed always-loaded Extension Loading, app-global reversible usage change records, exact usage-revert conflict detection, profile-backed inspect usage output, and queued `agent_context_refresh` work for affected surfaces without directly mutating the caller's current binding. Commit(s): pending local changes
+- [x] Rebuild builtin instruction-overlay resets through the same Extension build path used by explicit builds, surfacing successful or blocked auto-build projections in reset output and command facts. Commit(s): pending local changes
+- [x] Load local Extension Managing snapshots through `svvyx extensions snapshots load <snapshot-id> --json` by restoring app-owned source/config/package state, removing live source entries absent from the snapshot, excluding package `node_modules`, immediately attempting restored extension builds through the normal build path, and creating or reusing durable dependency approval requests with `blockedOperation: "snapshot_load"` before promotion when unapproved dependency identities are present. Commit(s): pending local changes
+- [x] Preserve local Extension Managing snapshot secret state through app-managed secret storage on snapshot save/load/delete, report only coarse `hasSecretState` and restore status, and keep raw secret values plus internal snapshot secret storage ids out of command output and snapshot files. Commit(s): pending local changes
+- [x] Queue `agent_context_refresh` for existing orchestrator and handler surfaces impacted by successful Extension Managing snapshot load, and drop removed user extensions from their stored loaded/available extension ids before refresh. Commit(s): pending local changes
+- [x] Keep existing current builds intact when snapshot-loaded replacement source fails to bundle, report a structured blocked build result, and skip loaded-session refresh for the failed replacement. Commit(s): pending local changes
+- [x] Complete the `svvyx` runtime surface with packaged executable availability, full Extension-build-owned `@svvy/extensions` generation, dependency-approved package resolution, generated TypeScript declarations from extracted Incur command manifests, schema-backed generated user extension clients in `execute_typescript`, workflow-agent tri-state extension usage for `set-usage`, and live projection/recovery coverage. Commit(s): pending local changes
+- [x] Extend Extension Managing lifecycle to conversation-owned UI revert events backed by durable session/thread lifecycle records and transcript semantic projection. Commit(s): pending
+- [x] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart. Commit(s): pending local changes
+  - [x] Persist local Extension Managing snapshot save/list/rename/delete metadata and payloads, plus actor surface loaded/available extension ids and generated context fingerprints. Commit(s): pending
+  - [x] Store durable generated-context binding records with aggregate cache keys plus bound prompt, `svvyx` guidance, TypeScript declarations, native tool schemas, loaded/available extension ids, and external source hashes so historical surfaces can inspect their bound context after restart even when current extension/external-instruction sources change or aggregate cache blobs are pruned. Commit(s): pending local changes
+  - [x] Implement Extension snapshot load with local source/config/package restore and normal build/dependency-approval pause flow. Commit(s): pending local changes
+  - [x] Implement local Extension snapshot secret-state preservation through app-managed secret storage with coarse save/load status and delete cleanup. Commit(s): pending local changes
+  - [x] Implement loaded-session `agent_context_refresh` queueing and removed user-extension state cleanup after successful snapshot load. Commit(s): pending local changes
+  - [x] Implement dependency-approval resume/install completion after explicit build and snapshot-load approval pauses, with installed artifact validation and snapshot resume conflict protection. Commit(s): pending local changes
+- [x] Add automatic generated agent context update projection for existing orchestrator and handler-thread surfaces, including grouped semantic diff details on queued, applied, failed, cancelled, and out-of-date states. Commit(s): pending local changes
+  - [x] Project queued, updating, and out-of-date `agent_context_refresh` rows with grouped semantic details for system prompt, loaded extensions, available extensions, external source hashes, revision, and superseded-fingerprint state in surface snapshots and compact queue UI. Commit(s): pending local changes
+  - [x] Add a durable visible terminal-state projection for applied and cancelled generated-context updates without reintroducing transcript prose or keeping stale terminal queue rows in the active queue strip. Commit(s): pending local changes
+- [x] Route `thread_start` extension overrides and handler-side `load_extension` through generated agent context bindings while preserving durable loaded and available extension ids on each affected surface. Commit(s): pending
 
 ## 14A. Ambient Agent Resources
 
 Current product decisions for this section are specified in `docs/specs/ambient-agent-resources-baseline.spec.md`.
 
-- [ ] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, target agent/profile configuration, category, and source for extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources.
-- [ ] Implement the pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and load extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings only when enabled for the exact target agent/profile configuration, category, and source.
+- [x] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, target agent/profile configuration, category, and source for callable capabilities, extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources. Commit(s): pending local changes
+  - [x] Persist the disabled-by-default category ledger without letting that ledger affect prompts, tools, commands, UI, provider/auth behavior, or execution policy until the full enablement model exists. Commit(s): pending
+  - [x] Persist normalized host, source, app/workspace scope, category, and actor/profile enablement records for ambient resources without letting those records affect runtime behavior. Commit(s): pending
+  - [x] Add a pure resolved-binding helper that returns enabled ambient candidates only when category, source, scope, actor, and profile all match. Commit(s): pending
+- [x] Implement the baseline pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and keep behavior-changing ambient extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings disabled until enabled through exact category/source/workspace/profile contracts. Commit(s): pending local changes
+  - [x] Create managed pi actor sessions with default-deny resource loading, svvy-composed system prompts, empty agent files and append prompts, no host extensions/skills/prompt templates/themes/additional paths/factories, suppressed pi built-in tools, svvy-owned custom tools only, disabled prompt-template expansion, and no ambient `extendResources()` calls. Commit(s): pending
+  - [x] Discover same-directory `AGENTS.md` and `CLAUDE.md` as visible external instruction records while default-loading only `AGENTS.md`; lone `CLAUDE.md` files remain enabled by default. Commit(s): pending
+  - [x] Implement backend and Settings controls for external-instruction per-file enablement, actor selection, default-off builtin global roots, custom global roots, read-status visibility, and external-editor actions. Commit(s): pending local changes
+  - [x] Project external-instruction records into the Extensions pane's distinct read-only External Instructions category with source group, path, read status, content, hash, per-file enablement, actor controls, Extension Managing inspect metadata, live stale prompt-binding updates, and external-editor actions. Commit(s): pending local changes
+  - [ ] Connect enabled ambient resources to runtime loading only after category-specific host/source/workspace/profile contracts exist.
 - [ ] Reflect enabled ambient callable resources in actor-specific generated API declarations, enabled prompt-affecting resources in generated agent context previews and agent context fingerprints, and enabled command resources in product command routing without hidden tools or invisible prompt mutation.
+  - [ ] Add resolved enabled ambient callable-resource bindings to actor-specific generated API declarations.
+  - [ ] Add resolved enabled ambient prompt-resource generated previews/fingerprints and resolved ambient command-resource product routing.
 
 ## 14B. Snippets Prompt Macros
 
 Current product decisions for this section are specified in `docs/specs/snippets.spec.md`.
 
-- [ ] Add the Snippets pane with managed `svvy` snippets, read-only discovered Markdown snippets, source badges, previews, open-external-editor actions, and managed snippet create/edit/rename/delete controls.
-- [ ] Add composer `@` picker Snippet results with argument fields, mention chips, explicit expand-to-text behavior, and clean prompt-text expansion before sending to pi.
-- [ ] Persist sent Snippet provenance in product metadata while keeping the agent-facing message as ordinary prompt text.
-- [ ] Keep pi, Claude, Codex, plugin, MCP, and host slash-command expansion disabled so Snippets never grant tools, alter generated agent context, mount commands, or change execution policy.
+- [x] Add the Snippets pane with managed `svvy` snippets, read-only discovered Markdown snippets, source badges, previews, open-external-editor actions, and managed snippet create/edit/rename/delete controls. Commit(s): pending.
+  - [x] Add managed `svvy` Snippet storage plus workspace-scoped RPC/read-model contracts for create, edit/rename, delete, and merged managed/discovered listing while keeping discovered Snippets read-only. Commit(s): pending.
+- [x] Replace old Prompt Library/Context Library implementation with Agents/Extensions generated context plus separate Snippets. Commit(s): pending.
+  - [x] Remove the obsolete Prompt Library/Context Library renderer pane surface, Dockview chrome, header snapshot controls, and shell open path so generated agent context is no longer exposed through the removed prompt-library product UI. Commit(s): pending.
+  - [x] Replace the remaining internal prompt-library state/edit RPC/store naming with generated agent-context and Snippets-native contracts. Commit(s): pending.
+- [x] Add composer `@` picker Snippet results with argument fields, mention chips, explicit expand-to-text behavior, and clean prompt-text expansion before sending to pi. Commit(s): pending.
+  - [x] Add backend Snippet discovery, metadata parsing, and pure placeholder expansion primitives for supported Claude and pi Markdown sources. Commit(s): pending.
+  - [x] Add a structured Snippet mention model that keeps file/folder mentions as ordinary textarea `@path` text while Snippet selections render chips, edit arguments, expand to editable text, and resolve before send. Commit(s): pending.
+  - [x] Extend the existing file/folder mention search to include Snippet results with separate result metadata and accept behavior. Commit(s): pending.
+  - [x] Add Snippet argument keyboard progression where `Tab`, `Enter`, and final `Enter` move through inline argument fields and return focus to composer text entry. Commit(s): pending.
+  - [x] Commit a full typed Snippet mention with a space into the structured Snippet mention model instead of requiring picker selection. Commit(s): pending.
+- [x] Persist sent Snippet provenance in product metadata while keeping the agent-facing message as ordinary prompt text. Commit(s): pending.
+  - [x] Store sent-message Snippet provenance metadata with Snippet id, source, path, content hash, arguments, and resolved content while sending only expanded prompt text. Commit(s): pending.
+  - [x] Promote Snippet provenance from message text signatures into explicit durable product metadata. Commit(s): pending.
+  - [x] Render sent Snippet provenance chips from durable message metadata after send-time expansion exists. Commit(s): pending.
+- [x] Keep pi, Claude, Codex, plugin, MCP, and host slash-command expansion disabled so Snippets never grant tools, alter generated agent context, mount commands, or change execution policy.
+  - [x] Keep pi-backed actor sessions on `noPromptTemplates`, empty prompt-template paths, and empty prompt-template overrides. Commit(s): pending.
 
 ## 16. Recovery And Test Coverage
 
 Current product decisions for workspace-runtime restart and crash recovery are specified in `docs/specs/workspace-runtime-recovery.spec.md`.
 
 - [x] Build a POC restart or resume flow that restores multiple open surfaces and panel bindings from durable state. Commit(s): `7f84f06`
-- [ ] Complete one workspace-runtime recovery coordinator with durable scheduler records, transactional claims, per-surface queue, thread report notification, report request recovery, typed queued initial handler starts, title job recovery, Workflows build/link refresh, and backend-owned recovery events/logs; the scheduler and coordinator are in place, with remaining work focused on full app-log projection and broader restart integration coverage.
+- [x] Complete one workspace-runtime recovery coordinator with durable scheduler records, transactional claims, per-surface queue, thread report notification, report request recovery, typed queued initial handler starts, title job recovery, Workflows build/link refresh, and backend-owned recovery events/logs. Commit(s): pending local changes
 - [x] Restore pending request-user-input clarification and waiting state after app restart. Commit(s): `7f84f06`
-- [x] Restore pending handler attention queues and per-surface prompt-lock state after app restart. Commit(s): `7f84f06`
+- [x] Restore pending thread report notifications and per-surface prompt-lock state after app restart. Commit(s): `7f84f06`
 - [x] Add integration tests that exercise the real pi-backed runtime seam for direct work. Commit(s): `b0ee858`
 - [x] Expand integration coverage to pi-backed handler-thread delegation and prompt-only Smithers CLI guidance. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
 - [x] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and panel bindings. Commit(s): `7f84f06`
@@ -341,27 +448,28 @@ Current product decisions for this section are specified in `docs/specs/context-
 
 Current product decisions for this section are specified in `docs/specs/workflow-library.spec.md`.
 
-- [ ] Render the Workflows pane as read-only visibility into the latest successful generated
-  `@svvy/workflows` package.
-- [ ] Show generated `Agents`, `Components`, `Prompts`, and `Workflows` namespace exports with
-  qualified export name, kind, read-only generated code, generated-file link, and source-file link.
-- [ ] For `Agents.*` exports, show the generated task-agent parameter object and provide a primary
-  human navigation action to the corresponding Agents pane record.
-- [ ] Refresh the Workflows pane after successful `svvyx workflows build` and after Agents pane
-  edits that trigger a Workflows build.
-- [ ] Keep the Workflows pane limited to generated `@svvy/workflows` visibility, with no inferred
-  titles, inferred summaries, validation claims beyond build output, source editing, delete actions,
-  or workflow-running controls.
+- [x] Render the Workflows pane as read-only visibility into the latest successful generated
+      `@svvy/workflows` package. Commit(s): pending local changes
+- [x] Show generated `Agents`, `Components`, `Prompts`, and `Workflows` namespace exports with
+      qualified export name, kind, read-only generated code, generated-file link, and source-file link.
+      Commit(s): pending local changes
+- [x] For `Agents.*` exports, show the generated task-agent parameter object and provide a primary
+      human navigation action to the corresponding Agents pane record. Commit(s): pending local changes
+- [x] Refresh the Workflows pane after successful `svvyx workflows build` and after Agents pane
+      edits that trigger a Workflows build. Commit(s): pending local changes
+- [x] Keep the Workflows pane limited to generated `@svvy/workflows` visibility, with no inferred
+      titles, inferred summaries, validation claims beyond build output, source editing, delete actions,
+      or workflow-running controls. Commit(s): pending local changes
 
 ## 19. App Logs Surface
 
 Current product decisions for this section are specified in `docs/specs/app-logs.spec.md`.
 
-- [x] Build a workspace-scoped app log store with structured info, warning, and error entries, monotonic sequence numbers, unread counts, seen state, bounded retention, SQLite persistence, and secret redaction. Commit(s): `dab04ac`.
+- [x] Build a workspace-scoped app log store with structured debug, info, warn, and error entries, monotonic sequence numbers, unread counts, seen state, bounded retention, SQLite persistence, and secret redaction. Commit(s): `dab04ac`.
 - [x] Expose app log read, summary, mark-seen, and live-update contracts through the Bun bridge and renderer runtime without polling. Commit(s): `dab04ac`.
 - [x] Route production product observability through one app logger without depending on Electrobun browser-tools telemetry. Commit(s): `dab04ac`.
 - [x] Emit targeted app logs for app lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers CLI guidance, Workflows build validation, direct tools, `execute_typescript`, artifacts, external editor handoff, and renderer bridge issues. Commit(s): `dab04ac`.
 - [x] Add a `Logs` sidebar button directly above the workflow library entry with compact action-worthy unread badges for warning and error app logs, without surfacing info-only unread logs as sidebar badges. Commit(s): `dab04ac`.
 - [x] Render a dense app logs pane with level filters, source filtering, search, mark-all-read, live tail behavior, expandable details, stack traces, and links to related sessions, threads, commands, and artifacts where available. Commit(s): `dab04ac`.
 - [x] Render the app logs row list with TanStack Virtual, preserving variable-height expanded rows, stable row identity, scroll anchors, older-page loading, Live/Frozen tail behavior, and the `New logs` affordance across filtering, search, expansion, and live updates. Commit(s): `ed7e6ea88e`.
-- [x] Add store, RPC, renderer, sidebar, pane, redaction, and representative integration tests for app logs. Commit(s): `dab04ac`.
+- [x] Add representative mounted/integration coverage for the app logs pane, sidebar badges, and live-update read model. Commit(s): pending local changes

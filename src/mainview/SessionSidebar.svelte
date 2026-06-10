@@ -8,6 +8,7 @@
   import LogsIcon from "@lucide/svelte/icons/logs";
   import WorkflowIcon from "@lucide/svelte/icons/workflow";
   import BotIcon from "@lucide/svelte/icons/bot";
+  import BoxesIcon from "@lucide/svelte/icons/boxes";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import FolderGit2Icon from "@lucide/svelte/icons/folder-git-2";
   import type { ContextBudget } from "../shared/context-budget";
@@ -16,6 +17,7 @@
   import type {
     AppLogSummary,
     WorkspaceBranchInfo,
+    WorkspaceCommandRollup,
     WorkspaceSessionNavigationReadModel,
     WorkspaceSessionNavigationSectionId,
     WorkspaceSessionSummary,
@@ -39,6 +41,7 @@
 
   type SidebarPaneLocation = {
     paneId: string;
+    panelId?: string;
     label: string;
     focused: boolean;
     tone: "neutral" | "waiting" | "error";
@@ -88,7 +91,8 @@
     onOpenCommandPalette?: () => void;
     onOpenWorkflowLibrary?: (event?: MouseEvent) => void;
     onOpenAgents?: (event?: MouseEvent) => void;
-    onOpenPromptLibrary?: (event?: MouseEvent) => void;
+    onOpenExtensions?: (event?: MouseEvent) => void;
+    onOpenSnippets?: (event?: MouseEvent) => void;
     onOpenAppLogs?: (event?: MouseEvent) => void;
     onOpenSettings?: () => void;
     onListWorkspaceBranches?: () => Promise<WorkspaceBranchInfo[]>;
@@ -127,7 +131,8 @@
     onOpenCommandPalette,
     onOpenWorkflowLibrary,
     onOpenAgents,
-    onOpenPromptLibrary,
+    onOpenExtensions,
+    onOpenSnippets,
     onOpenAppLogs,
     onOpenSettings,
     onListWorkspaceBranches,
@@ -184,7 +189,7 @@
   const appLogsDisplayShortcut = getShortcutCompact("surface.logs.open");
   const workflowsDisplayShortcut = getShortcutCompact("surface.workflows.open");
   const agentsDisplayShortcut = getShortcutCompact("surface.agents.open");
-  const contextDisplayShortcut = getShortcutCompact("surface.context.open");
+  const extensionsDisplayShortcut = getShortcutCompact("surface.extensions.open");
   const paneOpenTooltipDetails: { label: string; shortcut?: string; icon: "mouse-left" }[] = [
     { icon: "mouse-left", label: "Replace focused pane" },
     { shortcut: "⌘", icon: "mouse-left", label: "Open in a new pane" },
@@ -473,12 +478,25 @@
     return workflow.status === "running";
   }
 
+  function isCommandWorking(command: WorkspaceCommandRollup): boolean {
+    return command.status === "requested" || command.status === "running";
+  }
+
+  function getCommandTone(command: WorkspaceCommandRollup): "muted" | "waiting" | "error" {
+    if (command.status === "failed") return "error";
+    if (command.status === "requested" || command.status === "running" || command.status === "waiting") {
+      return "waiting";
+    }
+    return "muted";
+  }
+
   function getSubtitleClass(
     subtitle: WorkspaceSidebarRowSubtitle | null,
     working = false,
   ): string {
+    const shouldBlink = working && subtitle?.tone === "muted";
     return `${subtitle ? `sidebar-child-subtitle tone-${subtitle.tone}` : "sidebar-child-subtitle"} ${
-      working ? "blinking" : ""
+      shouldBlink ? "blinking" : ""
     }`.trim();
   }
 
@@ -736,15 +754,41 @@
           {@const threadWorking = isThreadWorking(thread)}
           <button
             type="button"
-            class={`sidebar-child-row handler-row status-${thread.status} ${session.id === activeSessionId && thread.threadId === activeThreadId ? "active" : ""} ${threadPaneLocations.length > 0 ? "open-in-pane" : ""} open-tone-${getPaneTone(threadPaneLocations)} ${threadWorking ? "working" : ""}`.trim()}
+            class={`sidebar-child-row handler-row status-${thread.status} ${session.id === activeSessionId && thread.threadId === activeThreadId ? "active" : ""} ${threadPaneLocations.length > 0 ? "open-in-pane" : ""} ${threadPrimaryPane?.focused ? "focused-in-pane" : ""} open-tone-${getPaneTone(threadPaneLocations)} ${threadWorking ? "working" : ""}`.trim()}
             onclick={(event) => onOpenHandlerThread?.(session.id, thread, event)}
           >
             <span class="sidebar-child-content">
-              <span class="sidebar-child-title">{thread.title}</span>
+              <span class="sidebar-child-title-row">
+                <span class="sidebar-child-title">{thread.title}</span>
+                {#if threadPrimaryPane}
+                  <span
+                    class="sidebar-pane-location"
+                    data-focused={threadPrimaryPane.focused ? "true" : "false"}
+                    title={threadPrimaryPane.focused ? `Focused pane: ${threadPrimaryPane.label}` : `Open pane: ${threadPrimaryPane.label}`}
+                  >
+                    {threadPrimaryPane.label}
+                  </span>
+                {/if}
+              </span>
               {#if thread.subtitle}
                 <span class={getSubtitleClass(thread.subtitle, threadWorking)}>
                   <span>{thread.subtitle.badge}</span>
                   <span>{thread.subtitle.text}</span>
+                </span>
+              {:else if threadWorking && !thread.latestCommandRollup}
+                <span class="sidebar-child-subtitle tone-muted blinking" aria-label="Running">
+                  <span>...</span>
+                </span>
+              {/if}
+              {#if thread.latestCommandRollup}
+                {@const commandWorking = isCommandWorking(thread.latestCommandRollup)}
+                <span
+                  class={`sidebar-child-command tone-${getCommandTone(thread.latestCommandRollup)} ${commandWorking ? "blinking" : ""}`.trim()}
+                  title={`${thread.latestCommandRollup.title}: ${thread.latestCommandRollup.summary}`}
+                >
+                  <CommandIcon size={12} aria-hidden="true" />
+                  <span>{thread.latestCommandRollup.status}</span>
+                  <span>{thread.latestCommandRollup.title}</span>
                 </span>
               {/if}
               {#if threadPrimaryPane?.contextBudget}
@@ -855,7 +899,7 @@
     />
   {/if}
 
-  {#if onOpenWorkflowLibrary || onOpenAgents || onOpenPromptLibrary || onOpenAppLogs}
+  {#if onOpenWorkflowLibrary || onOpenAgents || onOpenExtensions || onOpenSnippets || onOpenAppLogs}
     <div class="sidebar-lower-nav">
       {#if onOpenAppLogs}
         <Tooltip label={appLogUnreadTitle} side="right" block details={paneOpenTooltipDetails}>
@@ -900,21 +944,34 @@
           </button>
         </Tooltip>
       {/if}
-      {#if onOpenPromptLibrary}
-        <Tooltip label="Open context library" side="right" block details={paneOpenTooltipDetails}>
+      {#if onOpenExtensions}
+        <Tooltip label="Open extensions" side="right" block details={paneOpenTooltipDetails}>
           <button
-            class={`sidebar-action-row reference-nav-row ${shortcutAction === "context" ? "shortcut-open" : ""}`.trim()}
+            class={`sidebar-action-row reference-nav-row ${shortcutAction === "extensions" ? "shortcut-open" : ""}`.trim()}
             type="button"
-            aria-label="Open context library"
-            onmouseenter={() => showShortcut("context")}
-            onmouseleave={() => hideShortcut("context")}
-            onfocus={() => showShortcut("context")}
-            onblur={() => hideShortcut("context")}
-            onclick={(event) => onOpenPromptLibrary(event)}
+            aria-label="Open extensions"
+            onmouseenter={() => showShortcut("extensions")}
+            onmouseleave={() => hideShortcut("extensions")}
+            onfocus={() => showShortcut("extensions")}
+            onblur={() => hideShortcut("extensions")}
+            onclick={(event) => onOpenExtensions(event)}
+          >
+            <span class="sidebar-action-icon"><BoxesIcon size={15} aria-hidden="true" strokeWidth={1.9} /></span>
+            <span class="sidebar-action-label">Extensions</span>
+            <Kbd value={extensionsDisplayShortcut} class="sidebar-action-shortcut" />
+          </button>
+        </Tooltip>
+      {/if}
+      {#if onOpenSnippets}
+        <Tooltip label="Open snippets" side="right" block details={paneOpenTooltipDetails}>
+          <button
+            class="sidebar-action-row reference-nav-row"
+            type="button"
+            aria-label="Open snippets"
+            onclick={(event) => onOpenSnippets(event)}
           >
             <span class="sidebar-action-icon"><FileTextIcon size={15} aria-hidden="true" strokeWidth={1.9} /></span>
-            <span class="sidebar-action-label">Context</span>
-            <Kbd value={contextDisplayShortcut} class="sidebar-action-shortcut" />
+            <span class="sidebar-action-label">Snippets</span>
           </button>
         </Tooltip>
       {/if}
@@ -1418,6 +1475,15 @@
     background: color-mix(in oklab, var(--ui-text-tertiary) 42%, transparent);
   }
 
+  .sidebar-child-row.focused-in-pane {
+    border-color: color-mix(in oklab, var(--ui-accent) 34%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-accent) 18%, transparent);
+  }
+
+  .sidebar-child-row.focused-in-pane::before {
+    background: color-mix(in oklab, var(--ui-accent) 68%, transparent);
+  }
+
   .sidebar-child-row.open-tone-waiting:not(.active) {
     border-color: transparent;
     background: color-mix(in oklab, var(--ui-status-waiting-soft) 28%, transparent);
@@ -1452,8 +1518,16 @@
     min-width: 0;
   }
 
+  .sidebar-child-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.34rem;
+    min-width: 0;
+  }
+
   .sidebar-child-title {
     min-width: 0;
+    flex: 1 1 auto;
     overflow: hidden;
     color: inherit;
     font-size: var(--text-xs);
@@ -1467,6 +1541,26 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-weight: 500;
+  }
+
+  .sidebar-pane-location {
+    flex: 0 1 auto;
+    max-width: 5.2rem;
+    overflow: hidden;
+    border-radius: 0.28rem;
+    padding: 0 0.28rem;
+    background: color-mix(in oklab, var(--ui-text-tertiary) 10%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-pane-location[data-focused="true"] {
+    background: color-mix(in oklab, var(--ui-accent) 16%, transparent);
+    color: color-mix(in oklab, var(--ui-accent) 84%, var(--ui-text-primary));
   }
 
   .sidebar-child-subtitle {
@@ -1517,6 +1611,40 @@
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .sidebar-child-command {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.24rem;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 1.25;
+  }
+
+  .sidebar-child-command span:nth-child(2) {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    text-transform: lowercase;
+    white-space: nowrap;
+  }
+
+  .sidebar-child-command span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-child-command.tone-waiting {
+    color: color-mix(in oklab, var(--ui-status-waiting) 76%, var(--ui-text-secondary));
+  }
+
+  .sidebar-child-command.tone-error {
+    color: color-mix(in oklab, var(--ui-danger) 78%, var(--ui-text-secondary));
   }
 
   .sidebar-child-context {
@@ -1668,7 +1796,7 @@
     background: var(--ui-info-soft);
   }
 
-  .log-badge.warning {
+  .log-badge.warn {
     color: var(--ui-warning);
     background: var(--ui-warning-soft);
   }

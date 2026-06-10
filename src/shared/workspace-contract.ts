@@ -1,32 +1,42 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, UserMessage } from "@mariozechner/pi-ai";
 import type {
   AgentDefaults,
   AgentProfileId,
   AgentProfileSettings,
   AgentSettingsState,
   AppPreferences,
+  RequestUserInputSettings,
   ReasoningEffort,
   WorkflowAgentKey,
   WorkflowAgentSettings,
 } from "./agent-settings";
+import type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "./extensions";
+import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type {
-  PromptLibraryActor,
-  CreatePromptLibrarySnapshotRequest,
-  PromptLibraryExternalSource,
-  PromptLibraryGeneratedEntry,
-  PromptLibrarySnapshotSummary,
-  PromptLibraryState,
-  RenamePromptLibrarySnapshotRequest,
-  RestorePromptLibrarySnapshotRequest,
-  UpdatePromptLibraryRequest,
-} from "./prompt-library";
+  GeneratedAgentContextActor,
+  CreateGeneratedAgentContextSnapshotRequest,
+  GeneratedAgentContextExternalSource,
+  GeneratedAgentContextEntry,
+  GeneratedAgentContextSnapshotSummary,
+  GeneratedAgentContextState,
+  RenameGeneratedAgentContextSnapshotRequest,
+  RestoreGeneratedAgentContextSnapshotRequest,
+  UpdateGeneratedAgentContextRequest,
+} from "./generated-agent-context";
+import type {
+  CreateManagedSnippetRequest,
+  DeleteManagedSnippetRequest,
+  ManagedSnippet,
+  SnippetsReadModel,
+  UpdateManagedSnippetRequest,
+} from "./snippets";
 import type { AppMenuAction } from "./shortcut-registry";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export type PromptSurfaceKind = "orchestrator" | "thread";
 
-export type AppLogLevel = "info" | "warning" | "error";
+export type AppLogLevel = "debug" | "info" | "warn" | "error";
 
 export type AppLogSource =
   | "app.lifecycle"
@@ -44,9 +54,8 @@ export type AppLogSource =
   | "workflow.library"
   | "workflow.run"
   | "workflow.task"
-  | "project-ci"
   | "direct-tool"
-  | "execute-typescript"
+  | "execute_typescript"
   | "artifact"
   | "external-editor"
   | "renderer";
@@ -70,6 +79,7 @@ export interface AppLogEntry {
   workflowRunId?: string;
   workflowTaskAttemptId?: string;
   commandId?: string;
+  artifactId?: string;
 }
 
 export interface AppLogSummary {
@@ -77,14 +87,16 @@ export interface AppLogSummary {
   seenSeq: number;
   unread: {
     total: number;
+    debug: number;
     info: number;
-    warning: number;
+    warn: number;
     error: number;
   };
   totals: {
     total: number;
+    debug: number;
     info: number;
-    warning: number;
+    warn: number;
     error: number;
   };
 }
@@ -116,19 +128,8 @@ export interface PromptTarget {
   threadId?: string;
 }
 
-export interface WorkflowInspectorPaneTarget {
-  workspaceSessionId: string;
-  surface: "workflow-inspector";
-  workflowRunId: string;
-}
-
-export interface SavedWorkflowLibraryPaneTarget {
-  surface: "saved-workflow-library";
-}
-
-export interface PromptLibraryPaneTarget {
-  workspaceSessionId?: string;
-  surface: "prompt-library";
+export interface WorkflowsPaneTarget {
+  surface: "workflows";
 }
 
 export interface AppLogsPaneTarget {
@@ -142,6 +143,154 @@ export interface OpenWorkspacePaneTarget {
 
 export interface AgentsPaneTarget {
   surface: "agents";
+  targetAgentProfileId?: string;
+  view?: "profiles" | "generated-context-preview";
+}
+
+export interface ExtensionsPaneTarget {
+  surface: "extensions";
+  view?: "inventory" | "generated-context-preview";
+}
+
+export interface SnippetsPaneTarget {
+  surface: "snippets";
+}
+
+export interface SettingsPaneTarget {
+  surface: "settings";
+}
+
+export type ExtensionCliRequirementReadinessStatus = "available" | "missing" | "unknown";
+
+export interface ExtensionCliRequirementReadiness {
+  id: string;
+  binary: string;
+  package: string | null;
+  required: boolean;
+  defaultVersion: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  status: ExtensionCliRequirementReadinessStatus;
+  updateAvailable: boolean;
+  detectedVersion: string | null;
+  path: string | null;
+  versionCommand: string | null;
+  installCommand: string | null;
+  updateCommand: string | null;
+}
+
+export type ExtensionEnvRequirementReadinessStatus =
+  | "configured"
+  | "defaulted"
+  | "missing"
+  | "optional_missing";
+
+export interface ExtensionEnvRequirementReadiness {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  description: string;
+  status: ExtensionEnvRequirementReadinessStatus;
+}
+
+export interface ExtensionUsageReadiness {
+  actorKind: "orchestrator" | "handler" | "workflow-task";
+  agentProfile: string;
+  state: ExtensionUsageState;
+  configurable: boolean;
+  fixedReason?: string;
+}
+
+export interface ExtensionInventoryIssue {
+  code:
+    | "BUILD_REQUIRED"
+    | "CLI_MISSING"
+    | "CLI_STATUS_UNKNOWN"
+    | "DEPENDENCY_APPROVAL_REQUIRED"
+    | "DEPENDENCY_INSTALL_MISSING"
+    | "EXTENSION_ENV_MISSING"
+    | "EXTERNAL_INSTRUCTION_UNREADABLE"
+    | "NO_CURRENT_BUILD";
+  message: string;
+}
+
+export interface ExtensionInventoryItemReadModel {
+  id: string;
+  category: ExtensionCategory;
+  interface: ExtensionInterfaceKind;
+  title: string;
+  description: string;
+  externalInstruction?: {
+    sourceGroup: GeneratedAgentContextExternalSource["sourceGroup"];
+    rootId?: string;
+    rootLabel?: string;
+    path: string;
+    content: string;
+    contentHash: string;
+    order: number;
+    enabled: boolean;
+    actors: GeneratedAgentContextExternalSource["actors"];
+    readStatus: GeneratedAgentContextExternalSource["readStatus"];
+  };
+  typescriptApiEnabled: boolean;
+  usage: ExtensionUsageReadiness[];
+  requirements: {
+    cliRequirements: ExtensionCliRequirementReadiness[];
+    env: ExtensionEnvRequirementReadiness[];
+  };
+  state: {
+    ready: boolean;
+    issues: ExtensionInventoryIssue[];
+  };
+}
+
+export interface ExtensionChangeCardReadModel {
+  id: string;
+  extensionId: string;
+  kind: "extension_files" | "extension_usage" | "extension_delete";
+  sourceChangeKind: string;
+  createdAt: string;
+  title: string;
+  description: string;
+  revertCommand: string;
+  reversible: true;
+}
+
+export interface ExtensionsInventoryReadModel {
+  extensions: ExtensionInventoryItemReadModel[];
+  reversibleChanges: ExtensionChangeCardReadModel[];
+}
+
+export interface RevertExtensionChangeRequest extends WorkspaceScopedRequest {
+  changeId: string;
+  owningSurface?: {
+    workspaceSessionId: string;
+    surface: PromptSurfaceKind;
+    surfacePiSessionId: string;
+    threadId?: string;
+  };
+}
+
+export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+  value: string;
+}
+
+export interface RemoveExtensionEnvSecretRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+}
+
+export interface SetExtensionEnvOverrideRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+  value: string;
+}
+
+export interface RemoveExtensionEnvOverrideRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
 }
 
 export type StaticInspectorPaneTarget =
@@ -151,16 +300,16 @@ export type StaticInspectorPaneTarget =
       surface: "workflow-task-attempt";
       workflowTaskAttemptId: string;
     }
-  | { workspaceSessionId: string; surface: "artifact"; artifactId: string }
-  | { workspaceSessionId: string; surface: "project-ci-check"; checkResultId: string };
+  | { workspaceSessionId: string; surface: "artifact"; artifactId: string };
 
 export type WorkspacePaneSurfaceTarget =
   | PromptTarget
-  | WorkflowInspectorPaneTarget
-  | SavedWorkflowLibraryPaneTarget
-  | PromptLibraryPaneTarget
+  | WorkflowsPaneTarget
   | AppLogsPaneTarget
   | AgentsPaneTarget
+  | ExtensionsPaneTarget
+  | SnippetsPaneTarget
+  | SettingsPaneTarget
   | OpenWorkspacePaneTarget
   | StaticInspectorPaneTarget;
 
@@ -180,13 +329,15 @@ export interface SendPromptResponse {
   snapshot?: ConversationSurfaceSnapshot;
 }
 
-export type QueuedSurfaceMessageStatus = "queued" | "steering" | "dispatching";
+export type QueuedSurfaceMessageStatus = "queued" | "steering" | "dispatching" | "failed";
 export type QueuedSurfaceMessageKind =
   | "user_message"
-  | "handler_handoff"
-  | "prompt_refresh"
+  | "agent_context_refresh"
   | "initial_handler_start"
-  | "workflow_attention";
+  | "thread_followup"
+  | "report_request"
+  | "thread_report_notification"
+  | "request_user_input_answer";
 
 export interface QueuedSurfaceMessage {
   id: string;
@@ -194,19 +345,62 @@ export interface QueuedSurfaceMessage {
   text: string;
   title?: string;
   summary?: string;
+  agentContextUpdate?: QueuedAgentContextUpdateProjection;
   threadId?: string;
   episodeId?: string;
   sourceCommandId?: string;
   status: QueuedSurfaceMessageStatus;
+  failureError?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type QueuedAgentContextUpdateState = "queued" | "updating" | "out_of_date" | "failed";
+export type AgentContextUpdateTerminalState = "applied" | "cancelled";
+
+export interface QueuedAgentContextUpdateDiff {
+  added: string[];
+  removed: string[];
+}
+
+export interface QueuedAgentContextUpdateProjection {
+  state: QueuedAgentContextUpdateState;
+  requestedRevision: number;
+  currentRevision: number;
+  requestedAt: string;
+  reason?: string;
+  requestedFingerprint?: string;
+  currentFingerprint: string;
+  previousFingerprint: string | null;
+  systemPromptChanged: boolean;
+  loadedExtensionIds: QueuedAgentContextUpdateDiff;
+  availableExtensionIds: QueuedAgentContextUpdateDiff;
+  externalSourceHashes: QueuedAgentContextUpdateDiff;
+}
+
+export interface AgentContextUpdateTerminalProjection extends Omit<
+  QueuedAgentContextUpdateProjection,
+  "state"
+> {
+  state: AgentContextUpdateTerminalState;
+  completedAt: string;
+  queueMessageId?: string;
 }
 
 export interface ComposerDraft {
   text: string;
   attachments: ComposerAttachment[];
+  snippetMentions?: ComposerSnippetMention[];
   updatedAt: string | null;
 }
+
+export interface SvvyUserMessageMetadata {
+  snippetProvenance?: SentSnippetProvenance[];
+}
+
+export type SvvyUserMessage = UserMessage & {
+  svvyMetadata?: SvvyUserMessageMetadata;
+};
 
 export interface QueuedSurfaceMessageRequest {
   target: PromptTarget;
@@ -253,14 +447,21 @@ export interface UpdateComposerDraftRequest {
   draft: {
     text: string;
     attachments: ComposerAttachment[];
+    snippetMentions?: ComposerSnippetMention[];
   };
 }
 
 export interface WorkspaceSyncMessage {
   workspaceId: string;
-  reason: "workspace.updated" | "structured.updated";
+  reason: "workspace.updated" | "structured.updated" | "artifact.open";
   sessions: WorkspaceSessionSummary[];
   navigation: WorkspaceSessionNavigationReadModel;
+  requestUserInputRequests: WorkspaceRequestUserInputRequest[];
+  runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[];
+  artifactOpenRequest?: {
+    workspaceSessionId: string;
+    artifactId: string;
+  };
 }
 
 export interface CancelPromptRequest {
@@ -496,6 +697,14 @@ export interface WorkspaceCommandRollup {
   status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   title: string;
   summary: string;
+  arguments?: unknown | null;
+  facts?: Record<string, unknown> | null;
+  error?: string | null;
+  artifacts?: WorkspaceCommandArtifactLink[];
+  outputEvents?: WorkspaceCommandOutputEvent[];
+  progressEvents?: WorkspaceCommandProgressEvent[];
+  patchSnapshots?: WorkspaceCommandPatchSnapshot[];
+  diagnostics?: WorkspaceCommandDiagnosticSnapshot[];
   childCount: number;
   summaryChildCount: number;
   traceChildCount: number;
@@ -516,6 +725,69 @@ export interface WorkspaceCommandArtifactLink {
   missingFile?: boolean;
 }
 
+export interface WorkspaceCommandOutputEvent {
+  eventId: string;
+  at: string;
+  stream: "stdout" | "stderr";
+  source: string;
+  text: string;
+}
+
+export interface WorkspaceCommandProgressEvent {
+  eventId: string;
+  at: string;
+  source: string;
+  phase?: string;
+  family?: string;
+  command?: string;
+  message?: string;
+  progress?: number;
+  facts?: Record<string, unknown>;
+}
+
+export interface WorkspaceCommandPatchSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  files: WorkspaceCommandPatchFile[];
+}
+
+export interface WorkspaceCommandPatchFile {
+  path: string;
+  changeType: "created" | "deleted" | "modified";
+  additions: number;
+  deletions: number;
+}
+
+export interface WorkspaceCommandDiagnosticSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  stage?: "compile" | "typecheck" | "runtime" | string;
+  diagnostics: WorkspaceCommandDiagnostic[];
+}
+
+export interface WorkspaceCommandDiagnostic {
+  severity?: string;
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+}
+
+export interface WorkspaceProductEvent {
+  eventId: string;
+  at: string;
+  title: string;
+  summary: string;
+  subject: {
+    kind: "session" | "thread";
+    id: string;
+  };
+  details?: Record<string, unknown>;
+}
+
 export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupChild {
   visibility: "trace" | "summary" | "surface";
   facts: Record<string, unknown> | null;
@@ -523,6 +795,10 @@ export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupCh
   updatedAt: string;
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
+  outputEvents: WorkspaceCommandOutputEvent[];
+  progressEvents?: WorkspaceCommandProgressEvent[];
+  patchSnapshots: WorkspaceCommandPatchSnapshot[];
+  diagnostics: WorkspaceCommandDiagnosticSnapshot[];
 }
 
 export interface WorkspaceCommandInspector {
@@ -541,6 +817,10 @@ export interface WorkspaceCommandInspector {
   updatedAt: string;
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
+  outputEvents: WorkspaceCommandOutputEvent[];
+  progressEvents?: WorkspaceCommandProgressEvent[];
+  patchSnapshots: WorkspaceCommandPatchSnapshot[];
+  diagnostics: WorkspaceCommandDiagnosticSnapshot[];
   childCount: number;
   summaryChildCount: number;
   traceChildCount: number;
@@ -565,146 +845,43 @@ export interface WorkspaceHandlerThreadEpisodeSummary {
   createdAt: string;
 }
 
-export interface WorkspaceProjectCiRunSummary {
-  ciRunId: string;
-  workflowRunId: string;
-  workflowId: string;
-  status: "passed" | "failed" | "blocked" | "cancelled";
-  summary: string;
-  updatedAt: string;
-}
+export type WorkspaceWorkflowsGeneratedNamespace =
+  | "Agents"
+  | "Components"
+  | "Prompts"
+  | "Workflows";
 
-export type WorkspaceProjectCiPanelStatus =
-  | "not-configured"
-  | "configured"
-  | "running"
-  | WorkspaceProjectCiRunSummary["status"];
+export type WorkspaceWorkflowsGeneratedKind = "agent" | "component" | "prompt" | "workflow";
 
-export type WorkspaceProjectCiCheckStatus = WorkspaceProjectCiRunSummary["status"] | "skipped";
-
-export interface WorkspaceProjectCiEntrySummary {
-  workflowId: string;
-  label: string;
-  summary: string;
-  sourceScope: "saved" | "artifact";
-  entryPath: string;
-}
-
-export interface WorkspaceProjectCiActiveWorkflowSummary {
-  workflowRunId: string;
-  workflowId: string;
-  entryPath: string | null;
-  threadId: string;
-  threadTitle: string;
-  status: "running" | "waiting";
-  summary: string;
-  updatedAt: string;
-}
-
-export interface WorkspaceProjectCiCheckSummary {
-  checkResultId: string;
-  checkId: string;
-  label: string;
-  kind: string;
-  status: WorkspaceProjectCiCheckStatus;
-  required: boolean;
-  command: string[] | null;
-  exitCode: number | null;
-  summary: string;
-  artifactIds: string[];
-  artifacts: WorkspaceCommandArtifactLink[];
-  startedAt: string | null;
-  finishedAt: string | null;
-  updatedAt: string;
-}
-
-export interface WorkspaceProjectCiRunDetail extends WorkspaceProjectCiRunSummary {
-  threadId: string;
-  threadTitle: string;
-  smithersRunId: string;
-  entryPath: string;
-  startedAt: string;
-  finishedAt: string;
-}
-
-export interface WorkspaceProjectCiStatusPanel {
-  status: WorkspaceProjectCiPanelStatus;
-  summary: string;
-  entries: WorkspaceProjectCiEntrySummary[];
-  activeWorkflowRun: WorkspaceProjectCiActiveWorkflowSummary | null;
-  latestRun: WorkspaceProjectCiRunDetail | null;
-  checks: WorkspaceProjectCiCheckSummary[];
-  checkCounts: Record<WorkspaceProjectCiCheckStatus, number> & {
-    total: number;
-  };
-  updatedAt: string | null;
-}
-
-export type WorkspaceSavedWorkflowLibraryItemKind =
-  | "definition"
-  | "prompt"
-  | "component"
-  | "entry"
-  | "artifact-workflow";
-
-export type WorkspaceSavedWorkflowLibraryItemScope = "saved" | "artifact";
-
-export interface WorkspaceSavedWorkflowLibraryDiagnostic {
-  severity: "error" | "warning";
-  message: string;
-  path?: string;
-  line?: number;
-  column?: number;
-  code?: string;
-}
-
-export interface WorkspaceSavedWorkflowLibraryItem {
+export interface WorkspaceWorkflowsGeneratedExport {
   id: string;
-  kind: WorkspaceSavedWorkflowLibraryItemKind;
-  scope: WorkspaceSavedWorkflowLibraryItemScope;
-  title: string;
-  summary: string;
-  path: string;
-  sourcePath: string | null;
-  sourcePreview: string | null;
-  validationStatus: "valid" | "warning" | "error" | "unknown";
-  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[];
-  workflowId?: string;
-  label?: string;
-  productKind?: string;
-  launchSchema?: string;
-  resultSchema?: string;
-  groupedAssetRefs?: {
-    definitions: string[];
-    prompts: string[];
-    components: string[];
-  };
-  assetPaths?: string[];
-  artifactWorkflowId?: string;
-  entryCount?: number;
-  assetCount?: number;
+  kind: WorkspaceWorkflowsGeneratedKind;
+  namespace: WorkspaceWorkflowsGeneratedNamespace;
+  exportName: string;
+  qualifiedName: string;
+  sourcePath: string;
+  generatedPath: string;
+  generatedCode: string;
+  agentParameters: Record<string, unknown> | null;
+  agentProfileId: string | null;
 }
 
-export interface WorkspaceSavedWorkflowLibraryReadModel {
-  rootPath: string;
-  artifactRootPath: string;
-  items: WorkspaceSavedWorkflowLibraryItem[];
-  counts: Record<WorkspaceSavedWorkflowLibraryItemKind, number>;
-  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[];
-  preferredExternalEditor: AppPreferences["preferredExternalEditor"];
-  customExternalEditorCommand: string;
+export interface WorkspaceWorkflowsGeneratedReadModel {
+  generatedPackagePath: string;
+  items: WorkspaceWorkflowsGeneratedExport[];
+  counts: Record<WorkspaceWorkflowsGeneratedKind, number>;
   updatedAt: string;
-}
-
-export interface DeleteSavedWorkflowLibraryItemRequest {
-  path: string;
 }
 
 export interface OpenWorkspaceSourceInEditorRequest {
   path: string;
 }
 
-export interface OpenPromptLibraryExternalSourceInEditorRequest {
+export interface OpenGeneratedAgentContextExternalSourceInEditorRequest {
+  path: string;
+}
+
+export interface OpenSnippetExternalSourceInEditorRequest {
   path: string;
 }
 
@@ -761,178 +938,20 @@ export interface WorkspaceWorkflowTaskAttemptInspector extends WorkspaceWorkflow
   agentModel: string | null;
   agentEngine: string | null;
   agentResume: string | null;
+  generatedAgentContextFingerprint: string | null;
+  generatedAgentContextBinding: {
+    systemPrompt: string;
+    generatedAgentContextRevision: number;
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+    externalSourceHashes: string[];
+  } | null;
   meta: Record<string, unknown> | null;
   startedAt: string;
   finishedAt: string | null;
   transcript: WorkspaceWorkflowTaskAttemptTranscriptMessage[];
   commandRollups: WorkspaceCommandRollup[];
   artifacts: WorkspaceCommandArtifactLink[];
-}
-
-export type WorkspaceWorkflowInspectorNodeType =
-  | "workflow"
-  | "sequence"
-  | "parallel"
-  | "loop"
-  | "conditional"
-  | "approval"
-  | "task-agent"
-  | "script"
-  | "project-ci-check"
-  | "wait"
-  | "retry"
-  | "terminal-result"
-  | "unknown";
-
-export type WorkspaceWorkflowInspectorNodeStatus =
-  | "pending"
-  | "running"
-  | "waiting"
-  | "retrying"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "skipped";
-
-export type WorkspaceWorkflowInspectorMode =
-  | { kind: "live" }
-  | { kind: "historical"; frameNo: number };
-
-export type WorkspaceWorkflowInspectorRelatedSurfaceTarget =
-  | { kind: "handler-thread"; threadId: string }
-  | { kind: "task-agent"; workflowTaskAttemptId: string }
-  | { kind: "command"; commandId: string }
-  | { kind: "artifact"; artifactId: string }
-  | { kind: "project-ci-check"; checkResultId: string };
-
-export interface WorkspaceWorkflowInspectorNodeDetail {
-  status: WorkspaceWorkflowInspectorNodeStatus;
-  objectiveOrLabel: string;
-  latestOutput: string | null;
-  partialOutput: string | null;
-  relatedArtifacts: WorkspaceCommandArtifactLink[];
-  workflowAgent: string | null;
-  taskAttempt: {
-    workflowTaskAttemptId: string;
-    iteration: number;
-    attempt: number;
-    status: string;
-    responseText: string | null;
-    error: string | null;
-  } | null;
-  command: {
-    commandId: string;
-    toolName: string;
-    status: string;
-    summary: string;
-  } | null;
-  worktree: string | null;
-  timing: {
-    startedAt: string | null;
-    finishedAt: string | null;
-    updatedAt: string | null;
-    elapsedMs: number | null;
-  };
-  waitReason: string | null;
-}
-
-export interface WorkspaceWorkflowInspectorNode {
-  key: string;
-  smithersNodeId: string | null;
-  parentKey: string | null;
-  type: WorkspaceWorkflowInspectorNodeType;
-  label: string;
-  status: WorkspaceWorkflowInspectorNodeStatus;
-  props: Record<string, unknown>;
-  launchArguments?: Record<string, unknown>;
-  task?: {
-    nodeId: string;
-    kind: string;
-    agent?: string;
-    iteration?: number;
-    attempt?: number;
-    workflowTaskAttemptId?: string;
-  };
-  projectCi?: {
-    checkId: string;
-    required: boolean;
-    command: string | null;
-    checkResultId?: string;
-  };
-  timing: {
-    startedAt: string | null;
-    finishedAt: string | null;
-    updatedAt: string | null;
-    elapsedMs: number | null;
-  };
-  waitReason: string | null;
-  latestActivity: string | null;
-  outputPreview: string | null;
-  detail: WorkspaceWorkflowInspectorNodeDetail;
-  hasFailedDescendant: boolean;
-  hasWaitingDescendant: boolean;
-  relatedSurfaceTargets: WorkspaceWorkflowInspectorRelatedSurfaceTarget[];
-  raw: unknown;
-}
-
-export interface WorkspaceWorkflowInspectorLiveUpdate {
-  workflowRunId: string;
-  smithersRunId: string;
-  fromSeq: number | null;
-  lastSeq: number | null;
-  events: unknown[];
-  inspector: WorkspaceWorkflowInspectorReadModel;
-}
-
-export interface WorkspaceWorkflowInspectorFrame {
-  frameNo: number;
-  seq: number | null;
-  createdAt: string | null;
-  label: string;
-}
-
-export interface WorkspaceWorkflowInspectorDetailTab {
-  id: "output" | "diff" | "logs" | "transcript" | "command" | "events" | "raw";
-  label: string;
-  content: unknown;
-  empty: boolean;
-}
-
-export interface WorkspaceWorkflowInspectorReadModel {
-  surfaceId: string;
-  workflowRunId: string;
-  smithersRunId: string;
-  owningSessionId: string;
-  owningThreadId: string;
-  selectedNodeKey: string | null;
-  expandedNodeKeys: string[];
-  mode: WorkspaceWorkflowInspectorMode;
-  runHeader: {
-    svvyStatus: WorkspaceHandlerThreadWorkflowSummary["status"];
-    smithersStatus: string;
-    runId: string;
-    workflowId: string | null;
-    workflowLabel: string;
-    owningHandlerThreadTitle: string;
-    startedAt: string | null;
-    finishedAt: string | null;
-    updatedAt: string | null;
-    heartbeatAt: string | null;
-    lastEventAt: string | null;
-    frameNo: number | null;
-    frameCount: number;
-    lastSeq: number | null;
-  };
-  tree: {
-    nodes: WorkspaceWorkflowInspectorNode[];
-    visibleNodeKeys: string[];
-    searchQuery: string;
-    matchedNodeKeys: string[];
-  };
-  frames: WorkspaceWorkflowInspectorFrame[];
-  selectedNode: WorkspaceWorkflowInspectorNode | null;
-  detailTabs: WorkspaceWorkflowInspectorDetailTab[];
-  rawSnapshot: unknown;
 }
 
 export interface WorkspaceHandlerThreadSummary {
@@ -962,10 +981,8 @@ export interface WorkspaceHandlerThreadSummary {
   workflowTaskAttemptCount?: number;
   episodeCount: number;
   artifactCount: number;
-  ciRunCount: number;
   loadedContextKeys: string[];
   latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
-  latestCiRun: WorkspaceProjectCiRunSummary | null;
   latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
   workflowTaskAttempts?: WorkspaceWorkflowTaskAttemptSummary[];
 }
@@ -999,6 +1016,7 @@ export interface WorkspaceSidebarHandlerThreadRow {
   objective: string;
   status: WorkspaceHandlerThreadSummary["status"];
   subtitle: WorkspaceSidebarRowSubtitle | null;
+  latestCommandRollup: WorkspaceCommandRollup | null;
   updatedAt: string;
   workflows: WorkspaceSidebarWorkflowRow[];
 }
@@ -1037,8 +1055,6 @@ export interface WorkspaceSessionSummary {
     threads: number;
     commands: number;
     episodes: number;
-    ciRuns: number;
-    ciChecks: number;
     workflows: number;
     artifacts: number;
     events: number;
@@ -1052,6 +1068,7 @@ export interface WorkspaceSessionSummary {
   threadIds?: string[];
   sidebarThreads?: WorkspaceSidebarHandlerThreadRow[];
   commandRollups?: WorkspaceCommandRollup[];
+  productEvents?: WorkspaceProductEvent[];
   titleGeneration?: {
     status: SessionTitleGenerationStatus;
     renameLocked: boolean;
@@ -1078,6 +1095,98 @@ export interface WorkspaceSessionNavigationReadModel {
     collapsed: boolean;
     sessions: WorkspaceSessionSummary[];
   };
+}
+
+export type WorkspaceRequestUserInputDelivery = "steer" | "after_turn";
+
+export type WorkspaceRequestUserInputAnswer =
+  | {
+      kind: "option";
+      label: string;
+      text: string;
+    }
+  | {
+      kind: "custom";
+      text: string;
+    };
+
+export interface WorkspaceRequestUserInputOption {
+  optionId: string;
+  ordinal: number;
+  label: string;
+  description: string;
+  recommended: boolean;
+}
+
+export interface WorkspaceRequestUserInputQuestion {
+  questionId: string;
+  ordinal: number;
+  title: string;
+  question: string;
+  defaultAnswer: WorkspaceRequestUserInputAnswer;
+  choices: WorkspaceRequestUserInputOption[];
+  status: "open" | "answered" | "defaulted" | "cancelled";
+}
+
+export interface WorkspaceRequestUserInputTimeout {
+  enabled: boolean;
+  durationMs: number;
+  startedAt: string;
+  pausedAt: string | null;
+  remainingMsWhenPaused: number | null;
+  expiresAt: string | null;
+}
+
+export interface WorkspaceRequestUserInputRequest {
+  requestId: string;
+  workspaceSessionId: string;
+  surfacePiSessionId: string;
+  threadId: string | null;
+  ownerTitle: string;
+  variant: "nonblocking" | "blocking";
+  status: "open" | "completed" | "cancelled" | "expired";
+  createdAt: string;
+  completedAt: string | null;
+  timeout: WorkspaceRequestUserInputTimeout | null;
+  questions: WorkspaceRequestUserInputQuestion[];
+}
+
+export interface WorkspaceRuntimeApprovalRequest {
+  requestId: string;
+  workspaceSessionId: string;
+  surfacePiSessionId: string;
+  threadId: string | null;
+  ownerTitle: string;
+  toolName: "apply_patch" | "exec_command" | "execute_typescript";
+  approvalMode: "auto-review" | "user";
+  cwd: string;
+  command: string | null;
+  commandFamily: string | null;
+  snippetArtifactId: string | null;
+  status: "pending" | "approved" | "denied" | "cancelled";
+  createdAt: string;
+  completedAt: string | null;
+  summary: string;
+}
+
+export interface AnswerRuntimeApprovalRequest {
+  requestId: string;
+  approved: boolean;
+  reason?: string | null;
+}
+
+export interface RequestUserInputAnswerRequest {
+  surfacePiSessionId: string;
+  requestId: string;
+  questionId: string;
+  answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
+  delivery: WorkspaceRequestUserInputDelivery;
+}
+
+export interface SetRequestUserInputTimerPausedRequest {
+  surfacePiSessionId: string;
+  requestId: string;
+  paused: boolean;
 }
 
 export interface WorkspaceArtifactPreview {
@@ -1109,11 +1218,14 @@ export interface ConversationSurfaceSnapshot {
   agentProfileId: AgentProfileId;
   systemPrompt: string;
   resolvedSystemPrompt: string;
-  externalContextSources: PromptLibraryExternalSource[];
+  externalContextSources: GeneratedAgentContextExternalSource[];
+  agentContextUpdate?: AgentContextUpdateTerminalProjection;
   promptBinding?: {
     currentRevision: number;
     boundSystemPrompt: string;
     currentSystemPrompt: string;
+    boundFingerprint: string | null;
+    currentFingerprint: string;
     boundExternalSourceHashes: string[];
     currentExternalSourceHashes: string[];
     stale: boolean;
@@ -1180,6 +1292,8 @@ export interface SurfaceSyncMessage {
 export interface ListSessionsResponse {
   sessions: WorkspaceSessionSummary[];
   navigation: WorkspaceSessionNavigationReadModel;
+  requestUserInputRequests: WorkspaceRequestUserInputRequest[];
+  runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[];
 }
 
 export interface CreateSessionRequest {
@@ -1203,6 +1317,40 @@ export interface ReorderOrchestratorAgentsRequest {
 export interface UpdateWorkflowAgentRequest {
   key: WorkflowAgentKey;
   settings: WorkflowAgentSettings;
+}
+
+export interface AgentContextPreviewRequest {
+  profileId?: AgentProfileId;
+  actor?: "orchestrator" | "handler" | "workflow-task";
+}
+
+export interface AgentContextPreviewResponse {
+  actor: "orchestrator" | "handler" | "workflow-task";
+  profileId: AgentProfileId | WorkflowAgentKey;
+  profileName: string;
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
+  systemPrompt: string;
+}
+
+export interface AgentModelChoice {
+  providerId: string;
+  modelId: string;
+  providerAuthenticated: boolean;
+  authSource: Exclude<AuthKeyType, "none"> | "missing";
+  supportedReasoning: ReasoningEffort[];
+  capabilities: {
+    reasoning: boolean;
+    vision: boolean;
+    toolCalling: boolean;
+  };
+}
+
+export interface AgentModelChoicesResponse {
+  items: AgentModelChoice[];
 }
 
 export interface OpenSessionRequest {
@@ -1250,48 +1398,68 @@ export interface ChatRPCSchema {
         response: AgentSettingsState;
       };
       getAppPreferences: {
-        params: WorkspaceScopedRequest;
+        params: undefined;
         response: AppPreferences;
       };
-      getPromptLibrary: {
+      getGeneratedAgentContext: {
         params: WorkspaceScopedRequest;
-        response: PromptLibraryState;
+        response: GeneratedAgentContextState;
       };
-      getPromptLibraryDefaults: {
+      getGeneratedAgentContextDefaults: {
         params: WorkspaceScopedRequest;
-        response: PromptLibraryState;
+        response: GeneratedAgentContextState;
       };
-      updatePromptLibrary: {
-        params: WorkspaceScoped<UpdatePromptLibraryRequest>;
-        response: PromptLibraryState;
+      updateGeneratedAgentContext: {
+        params: WorkspaceScoped<UpdateGeneratedAgentContextRequest>;
+        response: GeneratedAgentContextState;
       };
-      resetPromptLibrary: {
+      resetGeneratedAgentContext: {
         params: WorkspaceScopedRequest;
-        response: PromptLibraryState;
+        response: GeneratedAgentContextState;
       };
-      listPromptLibrarySnapshots: {
+      listGeneratedAgentContextSnapshots: {
         params: WorkspaceScopedRequest;
-        response: PromptLibrarySnapshotSummary[];
+        response: GeneratedAgentContextSnapshotSummary[];
       };
-      createPromptLibrarySnapshot: {
-        params: WorkspaceScoped<CreatePromptLibrarySnapshotRequest>;
-        response: PromptLibrarySnapshotSummary;
+      createGeneratedAgentContextSnapshot: {
+        params: WorkspaceScoped<CreateGeneratedAgentContextSnapshotRequest>;
+        response: GeneratedAgentContextSnapshotSummary;
       };
-      renamePromptLibrarySnapshot: {
-        params: WorkspaceScoped<RenamePromptLibrarySnapshotRequest>;
-        response: PromptLibrarySnapshotSummary;
+      renameGeneratedAgentContextSnapshot: {
+        params: WorkspaceScoped<RenameGeneratedAgentContextSnapshotRequest>;
+        response: GeneratedAgentContextSnapshotSummary;
       };
-      restorePromptLibrarySnapshot: {
-        params: WorkspaceScoped<RestorePromptLibrarySnapshotRequest>;
-        response: PromptLibraryState;
+      restoreGeneratedAgentContextSnapshot: {
+        params: WorkspaceScoped<RestoreGeneratedAgentContextSnapshotRequest>;
+        response: GeneratedAgentContextState;
       };
-      getPromptLibraryGeneratedEntries: {
+      getGeneratedAgentContextEntries: {
         params: WorkspaceScopedRequest;
-        response: Record<PromptLibraryActor, PromptLibraryGeneratedEntry[]>;
+        response: Record<GeneratedAgentContextActor, GeneratedAgentContextEntry[]>;
       };
-      getPromptLibraryExternalSources: {
+      getGeneratedAgentContextExternalSources: {
         params: WorkspaceScopedRequest;
-        response: PromptLibraryExternalSource[];
+        response: GeneratedAgentContextExternalSource[];
+      };
+      getSnippets: {
+        params: WorkspaceScopedRequest;
+        response: SnippetsReadModel;
+      };
+      createManagedSnippet: {
+        params: WorkspaceScoped<CreateManagedSnippetRequest>;
+        response: ManagedSnippet;
+      };
+      updateManagedSnippet: {
+        params: WorkspaceScoped<UpdateManagedSnippetRequest>;
+        response: ManagedSnippet;
+      };
+      deleteManagedSnippet: {
+        params: WorkspaceScoped<DeleteManagedSnippetRequest>;
+        response: { ok: true };
+      };
+      openSnippetExternalSourceInEditor: {
+        params: WorkspaceScoped<OpenSnippetExternalSourceInEditorRequest>;
+        response: OpenWorkspaceSourceInEditorResponse;
       };
       updateAgentProfile: {
         params: WorkspaceScoped<UpdateAgentProfileRequest>;
@@ -1309,13 +1477,45 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<UpdateWorkflowAgentRequest>;
         response: AgentSettingsState;
       };
+      getAgentContextPreview: {
+        params: WorkspaceScoped<AgentContextPreviewRequest>;
+        response: AgentContextPreviewResponse;
+      };
+      getAgentModelChoices: {
+        params: WorkspaceScopedRequest;
+        response: AgentModelChoicesResponse;
+      };
+      getExtensionsInventory: {
+        params: WorkspaceScopedRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      revertExtensionChange: {
+        params: RevertExtensionChangeRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      setExtensionEnvSecret: {
+        params: SetExtensionEnvSecretRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      removeExtensionEnvSecret: {
+        params: RemoveExtensionEnvSecretRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      setExtensionEnvOverride: {
+        params: SetExtensionEnvOverrideRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      removeExtensionEnvOverride: {
+        params: RemoveExtensionEnvOverrideRequest;
+        response: ExtensionsInventoryReadModel;
+      };
       updateAppPreferences: {
-        params: WorkspaceScoped<AppPreferences>;
+        params: AppPreferences;
         response: AgentSettingsState;
       };
-      ensureWorkflowAgentsComponent: {
-        params: WorkspaceScopedRequest;
-        response: { path: string };
+      updateRequestUserInputSettings: {
+        params: WorkspaceScoped<RequestUserInputSettings>;
+        response: AgentSettingsState;
       };
       getProviderAuthState: {
         params: ProviderAuthStateRequest;
@@ -1327,7 +1527,7 @@ export interface ChatRPCSchema {
       };
       getOpenWorkspaces: {
         params: undefined;
-        response: WorkspaceTabInfo[];
+        response: WorkspaceInfoResponse[];
       };
       getDefaultWorkspace: {
         params: undefined;
@@ -1370,7 +1570,7 @@ export interface ChatRPCSchema {
         response: SwitchWorkspaceBranchResponse;
       };
       getAppLogs: {
-        params: WorkspaceScoped<AppLogQuery> | undefined;
+        params: WorkspaceScoped<AppLogQuery>;
         response: AppLogReadModel;
       };
       getAppLogSummary: {
@@ -1401,20 +1601,16 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<OpenWorkspacePathRequest>;
         response: OpenWorkspacePathResponse;
       };
-      getSavedWorkflowLibrary: {
+      getWorkflowsGenerated: {
         params: WorkspaceScopedRequest;
-        response: WorkspaceSavedWorkflowLibraryReadModel;
-      };
-      deleteSavedWorkflowLibraryItem: {
-        params: WorkspaceScoped<DeleteSavedWorkflowLibraryItemRequest>;
-        response: WorkspaceSavedWorkflowLibraryReadModel;
+        response: WorkspaceWorkflowsGeneratedReadModel;
       };
       openWorkspaceSourceInEditor: {
         params: WorkspaceScoped<OpenWorkspaceSourceInEditorRequest>;
         response: OpenWorkspaceSourceInEditorResponse;
       };
-      openPromptLibraryExternalSourceInEditor: {
-        params: WorkspaceScoped<OpenPromptLibraryExternalSourceInEditorRequest>;
+      openGeneratedAgentContextExternalSourceInEditor: {
+        params: WorkspaceScoped<OpenGeneratedAgentContextExternalSourceInEditorRequest>;
         response: OpenWorkspaceSourceInEditorResponse;
       };
       listSessions: {
@@ -1436,35 +1632,6 @@ export interface ChatRPCSchema {
       getWorkflowTaskAttemptInspector: {
         params: WorkspaceScoped<{ sessionId: string; workflowTaskAttemptId: string }>;
         response: WorkspaceWorkflowTaskAttemptInspector | null;
-      };
-      getWorkflowInspector: {
-        params: WorkspaceScoped<{
-          sessionId: string;
-          workflowRunId: string;
-          selectedNodeKey?: string | null;
-          expandedNodeKeys?: string[];
-          userCollapsedNodeKeys?: string[];
-          searchQuery?: string;
-          mode?: WorkspaceWorkflowInspectorMode;
-        }>;
-        response: WorkspaceWorkflowInspectorReadModel | null;
-      };
-      streamWorkflowInspector: {
-        params: WorkspaceScoped<{
-          sessionId: string;
-          workflowRunId: string;
-          selectedNodeKey?: string | null;
-          expandedNodeKeys?: string[];
-          userCollapsedNodeKeys?: string[];
-          searchQuery?: string;
-          mode?: WorkspaceWorkflowInspectorMode;
-          fromSeq?: number | null;
-        }>;
-        response: WorkspaceWorkflowInspectorLiveUpdate | null;
-      };
-      getProjectCiStatus: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceProjectCiStatusPanel;
       };
       getArtifactPreview: {
         params: WorkspaceScoped<{ sessionId: string; artifactId: string }>;
@@ -1573,6 +1740,18 @@ export interface ChatRPCSchema {
       steerQueuedSurfaceMessage: {
         params: WorkspaceScoped<QueuedSurfaceMessageRequest>;
         response: SurfaceMutationResponse;
+      };
+      answerRequestUserInput: {
+        params: WorkspaceScoped<RequestUserInputAnswerRequest>;
+        response: SurfaceMutationResponse;
+      };
+      answerRuntimeApprovalRequest: {
+        params: WorkspaceScoped<AnswerRuntimeApprovalRequest>;
+        response: SurfaceMutationResponse;
+      };
+      setRequestUserInputTimerPaused: {
+        params: WorkspaceScoped<SetRequestUserInputTimerPausedRequest>;
+        response: WorkspaceMutationResponse;
       };
       queuePromptRefresh: {
         params: WorkspaceScoped<QueuePromptRefreshRequest>;

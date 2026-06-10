@@ -1,18 +1,30 @@
-import type {
-  ReasoningEffort,
-  WorkflowTaskAgentConfig,
-  WorkflowTaskToolName,
-} from "../bun/smithers-runtime/workflow-authoring-contract";
+import type { Agents } from "../bun/smithers-runtime/workflow-authoring-contract";
+import type { ExtensionUsageState } from "./extensions";
 
-export type { ReasoningEffort };
+export type ReasoningEffort = Agents.ReasoningEffort;
 export type AgentProfileKind = "orchestrator" | "special";
 export type AgentProfileSpecialKey = "threadHandler";
 export type AgentProfileId = string;
-export type WorkflowAgentKey = "explorer" | "implementer" | "reviewer";
+export type WorkflowAgentKey = string;
 export type AppAppearance = "system" | "light" | "dark";
 export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
-export type WebProviderId = "tinyfish" | "firecrawl";
-export type WorkflowAgentToolName = WorkflowTaskToolName;
+export type RequestUserInputMode = "nonblocking" | "blocking";
+export type ApprovalMode = "auto-review" | "user" | "full-access";
+export type ExternalInstructionActor = "orchestrator" | "handler" | "workflow-task";
+export type ExternalInstructionGlobalRootKind = "builtin" | "custom";
+export type AmbientAgentResourceHost = "pi" | "codex" | "claude" | "other";
+export type AmbientAgentResourceCategory =
+  | "callableCapabilities"
+  | "runtimeExtensionsAndPackages"
+  | "skills"
+  | "promptTemplates"
+  | "commands"
+  | "hooks"
+  | "uiResources"
+  | "providerModelAdapters"
+  | "credentials"
+  | "executionPolicy"
+  | "runtimeState";
 
 export interface AgentDefaults {
   provider: string;
@@ -29,7 +41,7 @@ export interface AgentProfileSettings extends AgentDefaults {
   kind: AgentProfileKind;
   name: string;
   systemPrompt: string;
-  extensions: string[];
+  extensionUsage: Record<string, ExtensionUsageState>;
   updateFromComposer: boolean;
   builtin: boolean;
   locked: boolean;
@@ -41,24 +53,157 @@ export interface AgentProfileState {
   titleNamer: AgentPromptSettings;
 }
 
-export interface WorkflowAgentSettings extends WorkflowTaskAgentConfig {
-  id: WorkflowAgentKey;
+export interface WorkflowAgentSettings extends Agents.TaskAgentParameters {
+  id: string;
   label: string;
+  extensionUsage: Record<string, ExtensionUsageState>;
 }
 
 export interface AgentSettingsState {
   version: 2;
   agents: AgentProfileState;
   workflowAgents: Record<WorkflowAgentKey, WorkflowAgentSettings>;
+  extensionEnv: ExtensionEnvSettings;
+  requestUserInput: RequestUserInputSettings;
   appPreferences: AppPreferences;
+}
+
+export type ExtensionEnvValues = Record<string, Record<string, string>>;
+
+export interface ExtensionEnvSettings {
+  nonSecretOverrides: ExtensionEnvValues;
+}
+
+export interface RequestUserInputSettings {
+  mode: RequestUserInputMode;
+  blockingTimeout: {
+    enabled: boolean;
+    durationMs: number;
+  };
 }
 
 export interface AppPreferences {
   appAppearance: AppAppearance;
   preferredExternalEditor: PreferredExternalEditor;
   customExternalEditorCommand: string;
-  webProvider: WebProviderId | null;
+  artifactDirectory: string;
+  approvalMode: ApprovalMode;
+  networkAccess: boolean;
+  externalInstructions: ExternalInstructionsSettings;
+  ambientAgentResources: AmbientAgentResourcesSettings;
 }
+
+export const DEFAULT_ARTIFACT_DIRECTORY = "~/.config/svvy/artifacts";
+
+export interface AmbientAgentResourceCategorySetting {
+  enabled: boolean;
+}
+
+export interface AmbientAgentResourceSource {
+  kind: "global" | "workspace" | "path" | "package";
+  id: string;
+  path?: string;
+}
+
+export type AmbientAgentResourceScope =
+  | { kind: "app" }
+  | { kind: "workspace"; workspaceKey: string };
+
+export interface AmbientAgentResourceTarget {
+  actor: ExternalInstructionActor;
+  profileId?: string;
+}
+
+export interface AmbientAgentResourceEnablementRecord {
+  id: string;
+  enabled: boolean;
+  host: AmbientAgentResourceHost;
+  category: AmbientAgentResourceCategory;
+  source: AmbientAgentResourceSource;
+  scope: AmbientAgentResourceScope;
+  targets: AmbientAgentResourceTarget[];
+}
+
+export interface AmbientAgentResourcesSettings {
+  categories: Record<AmbientAgentResourceCategory, AmbientAgentResourceCategorySetting>;
+  enablements: AmbientAgentResourceEnablementRecord[];
+}
+
+export interface ExternalInstructionGlobalRootSetting {
+  id: string;
+  kind: ExternalInstructionGlobalRootKind;
+  label: string;
+  path: string;
+  enabled: boolean;
+}
+
+export interface ExternalInstructionControl {
+  enabled: boolean;
+  actors: ExternalInstructionActor[];
+}
+
+export interface ExternalInstructionsSettings {
+  globalRoots: ExternalInstructionGlobalRootSetting[];
+  globalControls: Record<string, ExternalInstructionControl>;
+  workspaceControls: Record<string, Record<string, ExternalInstructionControl>>;
+}
+
+export const AMBIENT_AGENT_RESOURCE_CATEGORIES = [
+  "callableCapabilities",
+  "runtimeExtensionsAndPackages",
+  "skills",
+  "promptTemplates",
+  "commands",
+  "hooks",
+  "uiResources",
+  "providerModelAdapters",
+  "credentials",
+  "executionPolicy",
+  "runtimeState",
+] as const satisfies readonly AmbientAgentResourceCategory[];
+
+export const DEFAULT_AMBIENT_AGENT_RESOURCES = {
+  categories: Object.fromEntries(
+    AMBIENT_AGENT_RESOURCE_CATEGORIES.map((category) => [category, { enabled: false }]),
+  ) as Record<AmbientAgentResourceCategory, AmbientAgentResourceCategorySetting>,
+  enablements: [],
+} satisfies AmbientAgentResourcesSettings;
+
+export const DEFAULT_EXTERNAL_INSTRUCTION_ACTORS = [
+  "orchestrator",
+  "handler",
+  "workflow-task",
+] as const satisfies readonly ExternalInstructionActor[];
+
+export const DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS = [
+  {
+    id: "pi",
+    kind: "builtin",
+    label: "pi",
+    path: "~/.config/pi",
+    enabled: false,
+  },
+  {
+    id: "codex",
+    kind: "builtin",
+    label: "Codex",
+    path: "~/.codex",
+    enabled: false,
+  },
+  {
+    id: "claude",
+    kind: "builtin",
+    label: "Claude",
+    path: "~/.claude",
+    enabled: false,
+  },
+] as const satisfies readonly ExternalInstructionGlobalRootSetting[];
+
+export const DEFAULT_EXTERNAL_INSTRUCTIONS = {
+  globalRoots: [...DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS],
+  globalControls: {},
+  workspaceControls: {},
+} satisfies ExternalInstructionsSettings;
 
 export const DEFAULT_AGENT_SETTINGS = {
   provider: "zai",
@@ -73,7 +218,7 @@ export const DEFAULT_ORCHESTRATOR_SESSION_PROMPT =
   "You are svvy, the main orchestrator. Own strategy, route bounded delegated work through handler threads, and make final user-facing decisions.";
 
 export const DEFAULT_THREAD_HANDLER_PROMPT =
-  "You are a svvy delegated handler thread. Own the bounded objective, supervise workflow runs when useful, ask for clarification when blocked, and hand durable outcomes back to the orchestrator.";
+  "You are a svvy delegated handler thread. Own the bounded objective, use Smithers through official CLI commands when useful, ask for clarification when blocked, and hand durable outcomes back to the orchestrator.";
 
 export const DEFAULT_NAMER_SESSION_PROMPT = [
   "You generate concise session titles for svvy.",
@@ -113,7 +258,7 @@ export const DEFAULT_AGENT_PROFILES = {
       name: "Default orchestrator",
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-      extensions: [],
+      extensionUsage: {},
       updateFromComposer: false,
       builtin: true,
       locked: true,
@@ -126,7 +271,7 @@ export const DEFAULT_AGENT_PROFILES = {
       name: "Thread handler",
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: DEFAULT_THREAD_HANDLER_PROMPT,
-      extensions: [],
+      extensionUsage: {},
       updateFromComposer: false,
       builtin: true,
       locked: true,
@@ -146,78 +291,28 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     id: "explorer",
     label: "Explorer",
     ...DEFAULT_AGENT_SETTINGS,
-    systemPrompt:
+    instructions:
       "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
-    toolSurface: [
-      "cx_overview",
-      "cx_symbols",
-      "cx_definition",
-      "cx_references",
-      "cx_lang_list",
-      "cx_cache_path",
-      "read",
-      "grep",
-      "find",
-      "ls",
-      "bash",
-      "web_search",
-      "web_fetch",
-      "execute_typescript",
-    ],
+    extensions: [],
+    extensionUsage: {},
   },
   implementer: {
     id: "implementer",
     label: "Implementer",
     ...DEFAULT_AGENT_SETTINGS,
-    systemPrompt:
+    instructions:
       "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
-    toolSurface: [
-      "read",
-      "grep",
-      "find",
-      "ls",
-      "edit",
-      "write",
-      "bash",
-      "cx_overview",
-      "cx_symbols",
-      "cx_definition",
-      "cx_references",
-      "cx_lang_list",
-      "cx_lang_add",
-      "cx_lang_remove",
-      "cx_cache_path",
-      "cx_cache_clean",
-      "artifact_write_text",
-      "artifact_write_json",
-      "artifact_attach_file",
-      "web_search",
-      "web_fetch",
-      "execute_typescript",
-    ],
+    extensions: [],
+    extensionUsage: {},
   },
   reviewer: {
     id: "reviewer",
     label: "Reviewer",
     ...DEFAULT_AGENT_SETTINGS,
-    systemPrompt:
+    instructions:
       "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
-    toolSurface: [
-      "cx_overview",
-      "cx_symbols",
-      "cx_definition",
-      "cx_references",
-      "cx_lang_list",
-      "cx_cache_path",
-      "read",
-      "grep",
-      "find",
-      "ls",
-      "bash",
-      "web_search",
-      "web_fetch",
-      "execute_typescript",
-    ],
+    extensions: [],
+    extensionUsage: {},
   },
 } satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;
 
@@ -225,10 +320,24 @@ export const DEFAULT_AGENT_SETTINGS_STATE = {
   version: 2,
   agents: DEFAULT_AGENT_PROFILES,
   workflowAgents: DEFAULT_WORKFLOW_AGENT_SETTINGS,
+  extensionEnv: {
+    nonSecretOverrides: {},
+  },
+  requestUserInput: {
+    mode: "nonblocking",
+    blockingTimeout: {
+      enabled: true,
+      durationMs: 300_000,
+    },
+  },
   appPreferences: {
     appAppearance: "system",
     preferredExternalEditor: "system",
     customExternalEditorCommand: "",
-    webProvider: null,
+    artifactDirectory: DEFAULT_ARTIFACT_DIRECTORY,
+    approvalMode: "auto-review",
+    networkAccess: true,
+    externalInstructions: DEFAULT_EXTERNAL_INSTRUCTIONS,
+    ambientAgentResources: DEFAULT_AMBIENT_AGENT_RESOURCES,
   },
 } satisfies AgentSettingsState;

@@ -6,7 +6,7 @@ import type {
   AppLogSummary,
 } from "../shared/workspace-contract";
 
-export const APP_LOG_LEVELS: AppLogLevel[] = ["info", "warning", "error"];
+export const APP_LOG_LEVELS: AppLogLevel[] = ["debug", "info", "warn", "error"];
 
 export const APP_LOG_SOURCES: AppLogSource[] = [
   "app.lifecycle",
@@ -24,9 +24,8 @@ export const APP_LOG_SOURCES: AppLogSource[] = [
   "workflow.library",
   "workflow.run",
   "workflow.task",
-  "project-ci",
   "direct-tool",
-  "execute-typescript",
+  "execute_typescript",
   "artifact",
   "external-editor",
   "renderer",
@@ -38,11 +37,11 @@ export function formatAppLogCount(count: number): string {
 
 export function getVisibleAppLogUnreadBadges(
   summary: AppLogSummary | null | undefined,
-): Array<{ level: Extract<AppLogLevel, "warning" | "error">; count: number }> {
+): Array<{ level: Extract<AppLogLevel, "warn" | "error">; count: number }> {
   if (!summary) return [];
   return [
     { level: "error" as const, count: summary.unread.error },
-    { level: "warning" as const, count: summary.unread.warning },
+    { level: "warn" as const, count: summary.unread.warn },
   ].filter((badge) => badge.count > 0);
 }
 
@@ -73,6 +72,7 @@ export function filterAppLogEntries(
       entry.workflowRunId,
       entry.workflowTaskAttemptId,
       entry.commandId,
+      entry.artifactId,
       entry.details ? JSON.stringify(entry.details) : "",
       entry.error?.message ?? "",
     ]

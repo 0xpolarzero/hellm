@@ -61,13 +61,18 @@ Durable scheduler records use:
 
 Current scheduler kinds include:
 
+- `surface_turn_recovery`
+- `queue_drain`
 - `initial_handler_start`
-- `thread_report_notification`
-- `report_request`
-- `request_user_input_answer`
-- `agent_context_refresh`
-- `title_job`
+- `thread_report_notification_delivery`
+- `title_generation`
 - `workflows_build_refresh`
+- `app_log_projection`
+
+Queued surface work such as `report_request`, `request_user_input_answer`, and
+`agent_context_refresh` remains typed queue state. Recovery schedules one `queue_drain` record per
+affected surface and drains those queued item kinds through the ordinary queue runner instead of
+creating separate scheduler kinds for each queue item type.
 
 ## Startup Order
 

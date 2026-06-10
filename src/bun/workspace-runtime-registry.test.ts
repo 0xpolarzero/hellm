@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
@@ -78,6 +86,54 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getRuntime(restored.workspaceId).cwd).toBe(realpathSync.native(cwd));
   });
 
+  it("repairs generated Workflows package links through workspace recovery", async () => {
+    const cwd = tempWorkspace("smithers-link-open");
+    const generatedPackagePath = tempWorkspace("generated-workflows-package");
+    const extensionsGeneratedPackagePath = tempWorkspace("generated-extensions-package");
+    mkdirSync(join(cwd, ".smithers"), { recursive: true });
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+      workflowsExtensionsGeneratedPackagePath: extensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: generatedPackagePath,
+    });
+
+    registry.acquireWorkspace(cwd);
+
+    const workflowsLinkPath = join(cwd, ".smithers", "node_modules", "@svvy", "workflows");
+    const extensionsLinkPath = join(cwd, ".smithers", "node_modules", "@svvy", "extensions");
+    await waitFor(() => existsSync(workflowsLinkPath) && existsSync(extensionsLinkPath));
+
+    expect(lstatSync(workflowsLinkPath).isSymbolicLink()).toBe(true);
+    expect(lstatSync(extensionsLinkPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(workflowsLinkPath)).toBe(generatedPackagePath);
+    expect(readlinkSync(extensionsLinkPath)).toBe(extensionsGeneratedPackagePath);
+
+    const runtime = registry.getActiveRuntime();
+    await waitFor(() =>
+      runtime.appLogStore
+        .query({ sources: ["workflow.library"] })
+        .entries.some(
+          (entry) => entry.message === "Workflows build/link recovery refreshed package links.",
+        ),
+    );
+  });
+
+  it("lists open runtimes without manufacturing visual workspace tab ids", () => {
+    const cwd = tempWorkspace("runtime-list-not-tabs");
+    const registry = createRegistry(cwd);
+
+    const runtime = registry.acquireWorkspace(cwd);
+    const [workspace] = registry.listOpenWorkspaces();
+    if (!workspace) throw new Error("Expected an open workspace runtime.");
+
+    expect(workspace).toMatchObject({
+      workspaceId: runtime.workspaceId,
+      cwd: runtime.cwd,
+      kind: "user",
+    });
+    expect(Object.hasOwn(workspace, "workspaceTabId")).toBeFalse();
+    expect(Object.hasOwn(workspace, "openedAt")).toBeFalse();
+  });
+
   it("uses different stable runtime ids for different canonical cwds", () => {
     const cwd = tempWorkspace("runtime-id");
     const otherCwd = tempWorkspace("other-runtime-id");
@@ -142,13 +198,25 @@ describe("WorkspaceRuntimeRegistry", () => {
     const first = registry.acquireWorkspace(cwd);
     const second = registry.acquireWorkspace(join(cwd, "."));
 
+    expect(first.appLogStore.query({ sources: ["app.lifecycle"] }).entries).toMatchObject([
+      {
+        seq: 1,
+        source: "app.lifecycle",
+        message: "Workspace runtime opened.",
+        details: {
+          workspaceId: first.workspaceId,
+          kind: "user",
+          cwd: first.cwd,
+        },
+      },
+    ]);
+
     first.appLog.info("workspace", "First tab wrote a workspace log.", {
       workspaceSessionId: "session-1",
     });
 
-    expect(second.appLogStore.query().entries).toMatchObject([
+    expect(second.appLogStore.query({ sources: ["workspace"] }).entries).toMatchObject([
       {
-        seq: 1,
         source: "workspace",
         message: "First tab wrote a workspace log.",
       },
@@ -156,13 +224,13 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     second.appLog.warning("workspace", "Second tab wrote another workspace log.");
 
-    expect(first.appLogStore.query().entries.map((entry) => [entry.seq, entry.message])).toEqual([
-      [1, "First tab wrote a workspace log."],
-      [2, "Second tab wrote another workspace log."],
-    ]);
+    expect(
+      first.appLogStore.query({ sources: ["workspace"] }).entries.map((entry) => entry.message),
+    ).toEqual(["First tab wrote a workspace log.", "Second tab wrote another workspace log."]);
     expect(first.appLogStore.summary()).toEqual(second.appLogStore.summary());
-    expect(second.appLogStore.markSeen(2).seenSeq).toBe(2);
-    expect(first.appLogStore.summary().seenSeq).toBe(2);
+    const latestSeq = first.appLogStore.summary().latestSeq;
+    expect(second.appLogStore.markSeen(latestSeq).seenSeq).toBe(latestSeq);
+    expect(first.appLogStore.summary().seenSeq).toBe(latestSeq);
   });
 
   it("broadcasts cwd-scoped app log updates once per shared runtime", () => {
@@ -179,10 +247,76 @@ describe("WorkspaceRuntimeRegistry", () => {
     first.appLog.error("workspace", "Shared runtime log.");
 
     expect(second.workspaceId).toBe(first.workspaceId);
-    expect(updates.map((update) => update.workspaceId)).toEqual([first.workspaceId]);
+    expect(updates.map((update) => update.workspaceId)).toEqual([
+      first.workspaceId,
+      first.workspaceId,
+    ]);
+    expect(updates[0]?.payload.entries[0]?.message).toBe("Workspace runtime opened.");
     expect(
-      updates.every((update) => update.payload.entries[0]?.message === "Shared runtime log."),
+      updates
+        .slice(1)
+        .every((update) => update.payload.entries[0]?.message === "Shared runtime log."),
     ).toBeTrue();
+  });
+
+  it("records lifecycle logs when workspace runtimes open and close", async () => {
+    const cwd = tempWorkspace("lifecycle-app-logs");
+    const updates: Array<{ workspaceId: string; payload: AppLogUpdateMessage }> = [];
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+      onAppLogUpdate: (workspaceId, payload) => {
+        updates.push({ workspaceId, payload });
+      },
+    });
+    const runtime = registry.acquireWorkspace(cwd);
+    const workspaceId = runtime.workspaceId;
+
+    await registry.closeWorkspace(workspaceId);
+
+    expect(updates.map((update) => update.payload.entries[0])).toMatchObject([
+      {
+        source: "app.lifecycle",
+        message: "Workspace runtime opened.",
+        details: {
+          workspaceId,
+          kind: "user",
+          cwd: runtime.cwd,
+        },
+      },
+      {
+        source: "app.lifecycle",
+        message: "Workspace runtime closed.",
+        details: {
+          workspaceId,
+          kind: "user",
+          cwd: runtime.cwd,
+        },
+      },
+    ]);
+    expect(updates.map((update) => update.workspaceId)).toEqual([workspaceId, workspaceId]);
+  });
+
+  it("emits recovery observability logs from durable startup work", async () => {
+    const cwd = tempWorkspace("startup-recovery-log");
+    const registry = createRegistry(cwd);
+    const runtime = registry.acquireWorkspace(cwd);
+
+    await waitFor(() =>
+      runtime.appLogStore
+        .query({ sources: ["app.lifecycle"] })
+        .entries.some((entry) => entry.message === "Workspace recovery work projected."),
+    );
+
+    expect(
+      runtime.appLogStore
+        .query({ sources: ["app.lifecycle"] })
+        .entries.find((entry) => entry.message === "Workspace recovery work projected."),
+    ).toMatchObject({
+      source: "app.lifecycle",
+      details: {
+        recoveryWorkKind: "app_log_projection",
+        idempotencyKey: "[REDACTED]",
+      },
+    });
   });
 
   it("keeps a shared runtime alive until every acquired visual owner is released", async () => {
@@ -254,11 +388,15 @@ function createRegistry(
     openInitialWorkspace?: boolean;
     appDataDir?: string;
     onAppLogUpdate?: ConstructorParameters<typeof WorkspaceRuntimeRegistry>[0]["onAppLogUpdate"];
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
+    workflowsSourceRoot?: string;
   } = {},
 ): WorkspaceRuntimeRegistry {
   const registry = new WorkspaceRuntimeRegistry({
     initialCwd,
     agentDir,
+    workflowsSourceRoot: options.workflowsSourceRoot ?? tempWorkspace("workflows-source"),
     ...options,
   });
   registries.push(registry);
@@ -269,4 +407,13 @@ function tempWorkspace(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), `svvy-${name}-`));
   tempDirs.push(dir);
   return dir;
+}
+
+async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (assertion()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(assertion()).toBe(true);
 }

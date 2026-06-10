@@ -202,7 +202,17 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
   while (Date.now() < deadline) {
     try {
       if (await page.getByRole("button", { name: "Open settings" }).isVisible()) {
-        return;
+        if (
+          (await page.locator('[data-testid="dockview-workbench"]').isVisible()) &&
+          (await page
+            .locator(
+              '.dockview-chat-panel[data-testid="workspace-pane"], [data-testid="open-workspace-panel"]',
+            )
+            .first()
+            .isVisible())
+        ) {
+          return;
+        }
       }
 
       const startupFailed = page.getByText("Startup failed").first();

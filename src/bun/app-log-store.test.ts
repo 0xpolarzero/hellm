@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createAppLogStore } from "./app-log-store";
 
 function clock() {
@@ -12,22 +13,23 @@ function clock() {
 describe("app log store", () => {
   it("allocates monotonic sequences and summarizes unread by level", () => {
     const store = createAppLogStore({ now: clock() });
+    const debug = store.append({ level: "debug", source: "app.lifecycle", message: "debugging" });
     const first = store.append({ level: "info", source: "app.lifecycle", message: "ready" });
-    const second = store.append({ level: "warning", source: "auth.provider", message: "missing" });
+    const second = store.append({ level: "warn", source: "auth.provider", message: "missing" });
     const third = store.append({ level: "error", source: "prompt", message: "failed" });
 
-    expect([first.seq, second.seq, third.seq]).toEqual([1, 2, 3]);
+    expect([debug.seq, first.seq, second.seq, third.seq]).toEqual([1, 2, 3, 4]);
     expect(store.summary()).toMatchObject({
-      latestSeq: 3,
+      latestSeq: 4,
       seenSeq: 0,
-      unread: { total: 3, info: 1, warning: 1, error: 1 },
-      totals: { total: 3, info: 1, warning: 1, error: 1 },
+      unread: { total: 4, debug: 1, info: 1, warn: 1, error: 1 },
+      totals: { total: 4, debug: 1, info: 1, warn: 1, error: 1 },
     });
 
     expect(store.markSeen(2)).toMatchObject({
-      latestSeq: 3,
+      latestSeq: 4,
       seenSeq: 2,
-      unread: { total: 1, info: 0, warning: 0, error: 1 },
+      unread: { total: 2, debug: 0, info: 0, warn: 1, error: 1 },
     });
     store.close();
   });
@@ -36,17 +38,17 @@ describe("app log store", () => {
     const store = createAppLogStore({ now: clock() });
     store.append({ level: "info", source: "workspace", message: "cwd resolved" });
     store.append({
-      level: "warning",
+      level: "warn",
       source: "workflow.library",
       message: "validation diagnostics",
     });
-    store.append({ level: "error", source: "execute-typescript", message: "compile failed" });
+    store.append({ level: "error", source: "execute_typescript", message: "compile failed" });
 
-    expect(store.query({ levels: ["warning"] }).entries.map((entry) => entry.source)).toEqual([
+    expect(store.query({ levels: ["warn"] }).entries.map((entry) => entry.source)).toEqual([
       "workflow.library",
     ]);
     expect(
-      store.query({ sources: ["execute-typescript"] }).entries.map((entry) => entry.level),
+      store.query({ sources: ["execute_typescript"] }).entries.map((entry) => entry.level),
     ).toEqual(["error"]);
     expect(store.query({ query: "diagnostics" }).entries.map((entry) => entry.seq)).toEqual([2]);
     expect(store.query({ afterSeq: 1 }).entries.map((entry) => entry.seq)).toEqual([2, 3]);
@@ -67,11 +69,21 @@ describe("app log store", () => {
       workflowRunId: "run-1",
       workflowTaskAttemptId: "task-1",
       commandId: "cmd-1",
+      artifactId: "artifact-1",
     });
 
-    for (const query of ["session-1", "surface-1", "thread-1", "run-1", "task-1", "cmd-1"]) {
+    for (const query of [
+      "session-1",
+      "surface-1",
+      "thread-1",
+      "run-1",
+      "task-1",
+      "cmd-1",
+      "artifact-1",
+    ]) {
       expect(store.query({ query }).entries.map((entry) => entry.seq)).toEqual([2]);
     }
+    expect(store.query({ query: "artifact-1" }).entries[0]?.artifactId).toBe("artifact-1");
     store.close();
   });
 
@@ -149,6 +161,36 @@ describe("app log store", () => {
     secondStore.close();
   });
 
+  it("keeps out-of-contract persisted levels outside the read model", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-app-logs-invalid-level-"));
+    const databasePath = join(root, "logs.sqlite");
+    const now = clock();
+    createAppLogStore({ databasePath, now }).close();
+
+    const seed = new Database(databasePath);
+    seed
+      .query(
+        `INSERT INTO app_log (
+          id, seq, created_at, level, source, message
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("app-log-1", 1, now(), "warning", "workspace", "old level");
+    seed.close();
+
+    const store = createAppLogStore({ databasePath, now });
+    expect(store.query().entries).toEqual([]);
+    expect(store.summary()).toMatchObject({
+      latestSeq: 1,
+      unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+      totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    });
+
+    const entry = store.append({ level: "info", source: "workspace", message: "new level" });
+    expect(entry.seq).toBe(2);
+    expect(store.query().entries.map((log) => log.message)).toEqual(["new level"]);
+    store.close();
+  });
+
   it("retains bounded history while keeping seq monotonic", () => {
     const store = createAppLogStore({ now: clock(), memoryLimit: 2, persistedLimit: 3 });
     for (let index = 0; index < 5; index += 1) {
@@ -156,7 +198,7 @@ describe("app log store", () => {
     }
 
     expect(store.query({ limit: 10 }).entries.map((entry) => entry.seq)).toEqual([3, 4, 5]);
-    expect(store.append({ level: "warning", source: "workspace", message: "next" }).seq).toBe(6);
+    expect(store.append({ level: "warn", source: "workspace", message: "next" }).seq).toBe(6);
     store.close();
   });
 });

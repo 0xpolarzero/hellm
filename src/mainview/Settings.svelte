@@ -9,54 +9,35 @@
 	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { onMount } from "svelte";
 	import { searchScore } from "./chat-format";
+	import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 	import type { ProviderAuthInfo } from "../shared/workspace-contract";
-	import type {
-		AppAppearance,
-		AppPreferences,
-		PreferredExternalEditor,
-		WebProviderId,
-	} from "../shared/agent-settings";
+	import type { AppAppearance, AppPreferences } from "../shared/agent-settings";
+	import AppPreferencesForm from "./AppPreferencesForm.svelte";
 	import { rpc } from "./rpc";
 	import ProviderApiKeyForm from "./ProviderApiKeyForm.svelte";
 	import Button from "./ui/Button.svelte";
-	import Dialog from "./ui/Dialog.svelte";
 	import Input from "./ui/Input.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { dismissConfirmation } from "./ui/dismiss-confirmation";
 
 	type Props = {
 		workspaceId: string | null;
-		onClose: () => void;
 		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 		onAppAppearanceChanged?: (appearance: AppAppearance) => void;
 	};
 
-	type SettingsSection = "general" | "providers" | "web";
+	type SettingsSection = "general" | "providers";
 
-	const WEB_PROVIDER_OPTIONS: Array<{ id: WebProviderId | null; label: string; summary: string }> = [
-		{ id: null, label: "None", summary: "Do not expose web tools or api.web_* helpers." },
-		{ id: "tinyfish", label: "TinyFish", summary: "TinyFish Search and Fetch with a stored TinyFish API key." },
-		{ id: "firecrawl", label: "Firecrawl", summary: "Firecrawl Search and Scrape with a stored Firecrawl API key." },
-	];
-	const APPEARANCE_OPTIONS: Array<{ value: AppAppearance; label: string; summary: string }> = [
-		{ value: "system", label: "System", summary: "Follow macOS" },
-		{ value: "light", label: "Light", summary: "Always light" },
-		{ value: "dark", label: "Dark", summary: "Always dark" },
-	];
-	const EXTERNAL_EDITOR_OPTIONS: Array<{ value: PreferredExternalEditor; label: string }> = [
-		{ value: "system", label: "System default" },
-		{ value: "code", label: "Visual Studio Code" },
-		{ value: "cursor", label: "Cursor" },
-		{ value: "zed", label: "Zed" },
-		{ value: "sublime", label: "Sublime Text" },
-		{ value: "custom", label: "Custom command" },
-	];
-
-	let { workspaceId, onClose, onProviderAuthChanged, onAppAppearanceChanged }: Props = $props();
+	let {
+		workspaceId,
+		onProviderAuthChanged,
+		onAppAppearanceChanged,
+	}: Props = $props();
 
 	let activeSection = $state<SettingsSection>("general");
 	let providers = $state<ProviderAuthInfo[]>([]);
 	let appPreferences = $state<AppPreferences | null>(null);
+	let externalInstructionSources = $state<GeneratedAgentContextExternalSource[]>([]);
 	let providersLoading = $state(true);
 	let appPreferencesLoading = $state(true);
 	let error = $state<string | null>(null);
@@ -66,7 +47,6 @@
 	let confirmingProviderRemoval = $state<string | null>(null);
 	let oauthLoading = $state<Record<string, boolean>>({});
 	let saveMessage = $state<Record<string, string>>({});
-	let preferencesSaveMessage = $state("");
 
 	async function refreshProviders(options: { showLoading?: boolean } = {}) {
 		if (options.showLoading) providersLoading = true;
@@ -83,12 +63,8 @@
 	async function refreshAppPreferences(options: { showLoading?: boolean } = {}) {
 		if (options.showLoading) appPreferencesLoading = true;
 		appPreferencesError = null;
-		if (!workspaceId) {
-			appPreferencesLoading = false;
-			return;
-		}
 		try {
-			appPreferences = await rpc.request.getAppPreferences({ workspaceId });
+			appPreferences = await rpc.request.getAppPreferences();
 		} catch (err) {
 			appPreferencesError = err instanceof Error ? err.message : "Failed to load app preferences";
 		} finally {
@@ -119,8 +95,26 @@
 			appAppearance: preferences.appAppearance,
 			preferredExternalEditor: preferences.preferredExternalEditor,
 			customExternalEditorCommand: preferences.customExternalEditorCommand,
-			webProvider: preferences.webProvider,
+			artifactDirectory: preferences.artifactDirectory,
+			approvalMode: preferences.approvalMode,
+			networkAccess: preferences.networkAccess,
+			externalInstructions: preferences.externalInstructions,
+			ambientAgentResources: preferences.ambientAgentResources,
 		};
+	}
+
+	async function refreshExternalInstructionSources() {
+		if (!workspaceId) {
+			externalInstructionSources = [];
+			return;
+		}
+		try {
+			externalInstructionSources = await rpc.request.getGeneratedAgentContextExternalSources({
+				workspaceId,
+			});
+		} catch {
+			externalInstructionSources = [];
+		}
 	}
 
 	function providerCredentialLabel(info: ProviderAuthInfo): string {
@@ -138,13 +132,6 @@
 
 	function providerInfo(providerId: string): ProviderAuthInfo | null {
 		return providers.find((provider) => provider.provider === providerId) ?? null;
-	}
-
-	function webProviderReady(providerId: WebProviderId | null): { text: string; tone: "success" | "neutral" | "warning" } {
-		if (!providerId) return { text: "No web tools", tone: "neutral" };
-		const info = providerInfo(providerId);
-		if (info?.hasKey) return { text: "Ready", tone: "success" };
-		return { text: "API key required", tone: "warning" };
 	}
 
 	const filteredProviders = $derived.by(() => {
@@ -194,52 +181,20 @@
 		void Promise.allSettled([
 			refreshProviders({ showLoading: true }),
 			refreshAppPreferences({ showLoading: true }),
+			refreshExternalInstructionSources(),
 		]);
 	});
 
-	async function saveAppPreferences(preferences: AppPreferences) {
-		if (!workspaceId) return;
+	async function saveAppPreferences(preferences: AppPreferences): Promise<AppPreferences> {
 		try {
-			preferencesSaveMessage = "Saving";
-			const nextSettings = await rpc.request.updateAppPreferences({
-				...serializeAppPreferences(preferences),
-				workspaceId,
-			});
+			const nextSettings = await rpc.request.updateAppPreferences(serializeAppPreferences(preferences));
 			appPreferences = serializeAppPreferences(nextSettings.appPreferences);
+			await refreshExternalInstructionSources();
 			onAppAppearanceChanged?.(nextSettings.appPreferences.appAppearance);
-			preferencesSaveMessage = "Saved";
-			setTimeout(() => {
-				if (preferencesSaveMessage === "Saved") {
-					preferencesSaveMessage = "";
-				}
-			}, 1800);
+			return appPreferences;
 		} catch (err) {
-			preferencesSaveMessage = err instanceof Error ? err.message : "Save failed";
+			throw err instanceof Error ? err : new Error("Save failed");
 		}
-	}
-
-	async function setAppAppearance(appearance: AppAppearance) {
-		if (!appPreferences || appPreferences.appAppearance === appearance) return;
-		await saveAppPreferences({
-			...appPreferences,
-			appAppearance: appearance,
-		});
-	}
-
-	async function setPreferredExternalEditor(preferredExternalEditor: PreferredExternalEditor) {
-		if (!appPreferences || appPreferences.preferredExternalEditor === preferredExternalEditor) return;
-		await saveAppPreferences({
-			...appPreferences,
-			preferredExternalEditor,
-		});
-	}
-
-	async function setCustomExternalEditorCommand(customExternalEditorCommand: string) {
-		if (!appPreferences || appPreferences.customExternalEditorCommand === customExternalEditorCommand) return;
-		await saveAppPreferences({
-			...appPreferences,
-			customExternalEditorCommand,
-		});
 	}
 
 	async function handleSaveApiKey(providerId: string, apiKey: string) {
@@ -250,7 +205,9 @@
 			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Saved", 2000);
 		} catch (err) {
-			saveMessage[providerId] = err instanceof Error ? err.message : "Failed";
+			const message = err instanceof Error ? err.message : "Failed";
+			saveMessage[providerId] = message;
+			throw new Error(message, { cause: err });
 		}
 	}
 
@@ -296,14 +253,18 @@
 	}
 </script>
 
-<Dialog
-	title="Settings"
-	eyebrow="Workbench"
-	description="App preferences and credentials stay local. Environment variables override saved keys."
-	width="lg"
-	class="settings-dialog"
-	onClose={onClose}
->
+<section class="settings-pane-shell" data-testid="settings-pane">
+	<header class="settings-pane-header">
+		<div>
+			<p>Workbench</p>
+			<h2>Settings</h2>
+		</div>
+		<span>App preferences and credentials stay local.</span>
+	</header>
+	{@render settingsContent()}
+</section>
+
+{#snippet settingsContent()}
 	<div class="settings-shell">
 		<aside class="settings-nav" aria-label="Settings sections">
 			<p class="settings-nav-label">Sections</p>
@@ -325,15 +286,6 @@
 				<span>Providers</span>
 				<span>{providers.length}</span>
 			</button>
-			<button
-				class={`settings-nav-item ${activeSection === "web" ? "active" : ""}`.trim()}
-				type="button"
-				aria-current={activeSection === "web" ? "page" : undefined}
-				onclick={() => (activeSection = "web")}
-			>
-				<span>Web</span>
-				<span>{appPreferences?.webProvider ?? "none"}</span>
-			</button>
 		</aside>
 
 		<section class="settings-pane">
@@ -345,71 +297,21 @@
 				{:else if !appPreferences}
 					<p class="error">Settings are unavailable for this workspace.</p>
 				{:else}
-					<div class="settings-row-stack">
-						<article class="provider-row general-row">
-							<div class="provider-main general-main">
-								<div class="provider-heading">
-									<span class="provider-name">Appearance</span>
-									<span class="provider-status tone-info">{appPreferences.appAppearance}</span>
-									{#if preferencesSaveMessage}
-										<span class="provider-status">{preferencesSaveMessage}</span>
-									{/if}
-								</div>
-								<p class="provider-meta general-meta">Choose the app color theme.</p>
-							</div>
-							<div class="appearance-options" role="radiogroup" aria-label="Appearance">
-								{#each APPEARANCE_OPTIONS as option (option.value)}
-									<label class={`appearance-option ${appPreferences.appAppearance === option.value ? "selected" : ""}`.trim()}>
-										<input
-											type="radio"
-											name="appAppearance"
-											value={option.value}
-											checked={appPreferences.appAppearance === option.value}
-											disabled={preferencesSaveMessage === "Saving"}
-											onchange={() => void setAppAppearance(option.value)}
-										/>
-										<span>{option.label}</span>
-										<small>{option.summary}</small>
-									</label>
-								{/each}
-							</div>
-						</article>
-						<article class="provider-row general-row">
-							<div class="provider-main general-main">
-								<div class="provider-heading">
-									<span class="provider-name">External Editor</span>
-									<span class="provider-status tone-info">{appPreferences.preferredExternalEditor}</span>
-									{#if preferencesSaveMessage}
-										<span class="provider-status">{preferencesSaveMessage}</span>
-									{/if}
-								</div>
-								<p class="provider-meta general-meta">Choose which editor opens workspace files from product surfaces.</p>
-							</div>
-							<div class="editor-grid">
-								<label class="settings-field">
-									<span>Editor</span>
-									<select
-										value={appPreferences.preferredExternalEditor}
-										disabled={preferencesSaveMessage === "Saving"}
-										onchange={(event) => void setPreferredExternalEditor(event.currentTarget.value as PreferredExternalEditor)}
-									>
-										{#each EXTERNAL_EDITOR_OPTIONS as option (option.value)}
-											<option value={option.value}>{option.label}</option>
-										{/each}
-									</select>
-								</label>
-								<label class="settings-field">
-									<span>Custom command</span>
-									<input
-										value={appPreferences.customExternalEditorCommand}
-										placeholder="editor-command --reuse-window"
-										disabled={appPreferences.preferredExternalEditor !== "custom" || preferencesSaveMessage === "Saving"}
-										onchange={(event) => void setCustomExternalEditorCommand(event.currentTarget.value)}
-									/>
-								</label>
-							</div>
-						</article>
-					</div>
+					<AppPreferencesForm
+						preferences={appPreferences}
+						workspaceKey={workspaceId ?? ""}
+						externalInstructionSources={externalInstructionSources}
+						onOpenExternalInstructionSource={async (path) => {
+							if (!workspaceId) return false;
+							const result =
+								await rpc.request.openGeneratedAgentContextExternalSourceInEditor({
+									workspaceId,
+									path,
+								});
+							return result.opened;
+						}}
+						onSave={saveAppPreferences}
+					/>
 				{/if}
 			{/if}
 			{#if activeSection === "providers"}
@@ -556,129 +458,49 @@
 					</div>
 				{/if}
 			{/if}
-			{#if activeSection === "web"}
-				{#if appPreferencesLoading}
-					<p class="loading">Loading web settings...</p>
-				{:else if appPreferencesError}
-					<p class="error">{appPreferencesError}</p>
-				{:else if !appPreferences}
-					<p class="error">Web settings are unavailable for this workspace.</p>
-				{:else}
-					<div class="settings-section-note">
-						<ShieldIcon aria-hidden="true" size={15} strokeWidth={1.8} />
-						<p>Select TinyFish or Firecrawl and configure an API key. Until a selected provider is ready, svvy exposes no web tools or api.web_* helpers.</p>
-					</div>
-					<div class="settings-row-stack">
-						{#each WEB_PROVIDER_OPTIONS as option (option.id ?? "none")}
-							{@const readiness = webProviderReady(option.id)}
-							{@const info = option.id ? providerInfo(option.id) : null}
-							<article class="provider-row">
-								<div class="provider-main">
-									<div class="provider-heading">
-										<input
-											type="radio"
-											name="web-provider"
-											checked={appPreferences.webProvider === option.id}
-											onchange={() => {
-												appPreferences.webProvider = option.id;
-												void saveAppPreferences(appPreferences);
-											}}
-										/>
-										<span class="provider-name">{option.label}</span>
-										<span class={`provider-status tone-${readiness.tone}`.trim()}>{readiness.text}</span>
-										{#if appPreferences.webProvider === option.id}
-											<span class="provider-status tone-info">Active</span>
-										{/if}
-									</div>
-									<p class="provider-meta">{option.summary}</p>
-									{#if option.id && saveMessage[option.id]}
-										<p class="save-msg">{saveMessage[option.id]}</p>
-									{/if}
-								</div>
-								{#if option.id}
-									<div
-										class="provider-actions"
-										use:dismissConfirmation={{
-											active: confirmingProviderRemoval === option.id,
-											onDismiss: cancelProviderRemovalConfirmation,
-										}}
-									>
-										{#if editingProvider === option.id}
-											<ProviderApiKeyForm
-												placeholder={`Paste ${option.label} API key...`}
-												onSave={(apiKey) => handleSaveApiKey(option.id, apiKey)}
-												onCancel={() => (editingProvider = null)}
-											/>
-										{:else}
-											<Tooltip label={info?.hasKey ? "Change API key" : "Add API key"}>
-												<Button
-													variant="ghost"
-													size="xs"
-													iconOnly
-													class="row-action"
-													aria-label={info?.hasKey ? `Change ${option.label} API key` : `Add ${option.label} API key`}
-													onclick={() => {
-														confirmingProviderRemoval = null;
-														editingProvider = option.id;
-													}}
-												>
-													<KeyIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-												</Button>
-											</Tooltip>
-											{#if info?.hasKey && info.keyType !== "env"}
-												{#if confirmingProviderRemoval === option.id}
-													<Tooltip label="Confirm remove">
-														<Button
-															variant="ghost"
-															size="xs"
-															iconOnly
-															class="row-action action-danger"
-															aria-label={`Confirm removing ${option.label} credentials`}
-															onclick={() => handleRemove(option.id)}
-														>
-															<CheckIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-														</Button>
-													</Tooltip>
-												{:else}
-													<Tooltip label="Remove credentials">
-														<Button
-															variant="ghost"
-															size="xs"
-															iconOnly
-															class="row-action action-danger"
-															aria-label={`Remove ${option.label} credentials`}
-															onclick={() => handleRemove(option.id)}
-														>
-															<Trash2Icon aria-hidden="true" size={12} strokeWidth={1.9} />
-														</Button>
-													</Tooltip>
-												{/if}
-											{/if}
-										{/if}
-									</div>
-								{/if}
-							</article>
-						{/each}
-					</div>
-				{/if}
-			{/if}
 		</section>
 	</div>
-</Dialog>
+{/snippet}
 
 <style>
-	:global(.settings-dialog.ui-dialog-panel) {
-		width: min(96vw, 980px);
-		max-width: 980px;
-		max-height: min(92vh, 64rem);
+	.settings-pane-shell {
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr);
+		gap: 0.72rem;
+		min-height: 0;
+		height: 100%;
+		padding: 0.78rem;
+		background: var(--ui-surface);
+		color: var(--ui-text-primary);
+		overflow: auto;
 	}
 
-	:global(.settings-dialog .ui-dialog-header) {
-		padding-block: 0.76rem 0.62rem;
+	.settings-pane-header {
+		display: flex;
+		align-items: end;
+		justify-content: space-between;
+		gap: 1rem;
+		padding-bottom: 0.62rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 	}
 
-	:global(.settings-dialog .ui-dialog-description) {
-		max-width: 42rem;
+	.settings-pane-header p,
+	.settings-pane-header h2,
+	.settings-pane-header span {
+		margin: 0;
+	}
+
+	.settings-pane-header p,
+	.settings-pane-header span {
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		color: var(--ui-text-secondary);
+	}
+
+	.settings-pane-header h2 {
+		font-size: var(--text-lg);
+		line-height: 1.2;
+		letter-spacing: 0;
 	}
 
 	.settings-shell {
@@ -950,100 +772,6 @@
 		display: block;
 	}
 
-	.appearance-options {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.45rem;
-	}
-
-	.appearance-option {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr);
-		gap: 0.06rem 0.42rem;
-		align-items: center;
-		min-width: 0;
-		padding: 0.5rem 0.58rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 68%, transparent);
-		cursor: pointer;
-		transition:
-			border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
-			background-color 150ms cubic-bezier(0.19, 1, 0.22, 1);
-	}
-
-	.appearance-option:hover {
-		border-color: color-mix(in oklab, var(--ui-border-strong) 82%, transparent);
-		background: var(--ui-hover-bg);
-	}
-
-	.appearance-option.selected {
-		border-color: var(--ui-selected-border);
-		background: var(--ui-selected-bg);
-	}
-
-	.appearance-option input {
-		grid-row: 1 / span 2;
-		accent-color: var(--ui-accent);
-	}
-
-	.appearance-option span,
-	.appearance-option small {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.appearance-option span {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--ui-text-primary);
-	}
-
-	.appearance-option small {
-		font-size: var(--text-xs);
-		color: var(--ui-text-secondary);
-	}
-
-	.editor-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(12rem, 1fr);
-		gap: 0.54rem;
-	}
-
-	.settings-field {
-		display: grid;
-		gap: 0.28rem;
-		min-width: 0;
-	}
-
-	.settings-field span {
-		font-size: var(--text-xs);
-		font-family: var(--font-mono);
-		color: var(--ui-text-secondary);
-	}
-
-	.settings-field select,
-	.settings-field input {
-		width: 100%;
-		min-width: 0;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-sm);
-		padding: 0.38rem 0.48rem;
-		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
-		color: var(--ui-text-primary);
-		font: inherit;
-		font-size: var(--text-sm);
-	}
-
-	.settings-field select:disabled,
-	.settings-field input:disabled {
-		color: var(--ui-text-tertiary);
-		cursor: not-allowed;
-		opacity: 0.72;
-	}
-
 	.provider-meta span {
 		min-width: 0;
 		overflow: hidden;
@@ -1082,14 +810,6 @@
 
 	.provider-actions :global(.action-danger.ui-button:not(.variant-danger)) {
 		color: color-mix(in oklab, var(--ui-danger) 78%, var(--ui-text-primary));
-	}
-
-	.key-input-row {
-		display: flex;
-		align-items: center;
-		gap: 0.24rem;
-		flex-wrap: wrap;
-		justify-content: flex-end;
 	}
 
 	.settings-section-note {
@@ -1156,10 +876,6 @@
 			grid-template-columns: 1fr;
 		}
 
-		.editor-grid {
-			grid-template-columns: 1fr;
-		}
-
 		.agent-meta-grid {
 			grid-template-columns: 1fr;
 		}
@@ -1170,11 +886,6 @@
 			justify-content: flex-start;
 			padding-left: 0;
 			border-left: none;
-		}
-
-		.key-input-row {
-			width: 100%;
-			justify-content: flex-start;
 		}
 
 		:global(.key-input-row .ui-input) {

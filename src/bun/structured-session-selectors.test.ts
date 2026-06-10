@@ -5,8 +5,6 @@ import type {
   StructuredEpisodeRecord,
   StructuredLifecycleEventRecord,
   StructuredPiSessionRecord,
-  StructuredProjectCiCheckResultRecord,
-  StructuredProjectCiRunRecord,
   StructuredSessionSnapshot,
   StructuredThreadContextRecord,
   StructuredThreadRecord,
@@ -18,7 +16,6 @@ import {
   buildStructuredCommandInspector,
   buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
-  buildStructuredProjectCiStatusPanel,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
@@ -36,11 +33,10 @@ type StructuredSessionSnapshotFixture = Omit<
   | "threadContexts"
   | "commands"
   | "episodes"
-  | "ciRuns"
-  | "ciCheckResults"
   | "workflowRuns"
   | "workflowTaskAttempts"
   | "workflowTaskMessages"
+  | "generatedAgentContextBindings"
   | "artifacts"
   | "events"
 > & {
@@ -50,11 +46,12 @@ type StructuredSessionSnapshotFixture = Omit<
   turns?: Partial<StructuredTurnRecord>[];
   commands?: Partial<StructuredCommandRecord>[];
   episodes?: Partial<StructuredEpisodeRecord>[];
-  ciRuns?: Partial<StructuredProjectCiRunRecord>[];
-  ciCheckResults?: Partial<StructuredProjectCiCheckResultRecord>[];
   workflowRuns?: Partial<StructuredWorkflowRunRecord>[];
   workflowTaskAttempts?: Partial<StructuredSessionSnapshot["workflowTaskAttempts"][number]>[];
   workflowTaskMessages?: Partial<StructuredSessionSnapshot["workflowTaskMessages"][number]>[];
+  generatedAgentContextBindings?: Partial<
+    StructuredSessionSnapshot["generatedAgentContextBindings"][number]
+  >[];
   artifacts?: Partial<StructuredArtifactRecord>[];
   events?: Partial<StructuredLifecycleEventRecord>[];
 };
@@ -68,11 +65,10 @@ function createSessionSnapshot(
     turns: overrideTurns,
     commands: overrideCommands,
     episodes: overrideEpisodes,
-    ciRuns: overrideCiRuns,
-    ciCheckResults: overrideCiCheckResults,
     workflowRuns: overrideWorkflowRuns,
     workflowTaskAttempts: overrideWorkflowTaskAttempts,
     workflowTaskMessages: overrideWorkflowTaskMessages,
+    generatedAgentContextBindings: overrideGeneratedAgentContextBindings,
     artifacts: overrideArtifacts,
     events: overrideEvents,
     session: overrideSession,
@@ -103,12 +99,17 @@ function createSessionSnapshot(
         sessionId: "session-selectors",
         turnId: "turn-001",
         parentThreadId: null,
+        threadGroupId: `thread-group-00${index + 1}`,
         surfacePiSessionId: `pi-thread-00${index + 1}`,
         title: "Selector thread",
         objective: "Selector objective",
+        historyMode: "isolated",
+        objectiveState: "active",
         status: "completed" as StructuredThreadStatus,
         wait: null,
         loadedContextKeys: [],
+        loadedExtensionIds: [],
+        availableExtensionIds: [],
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",
         finishedAt: "2026-04-18T07:01:00.000Z",
@@ -148,6 +149,7 @@ function createSessionSnapshot(
         attempts: 1,
         title: "Selector command",
         summary: "Selector command summary",
+        arguments: null,
         facts: null,
         error: null,
         startedAt: "2026-04-18T07:00:30.000Z",
@@ -173,50 +175,6 @@ function createSessionSnapshot(
       return { ...base, ...episode };
     }) ?? [];
 
-  const ciRuns =
-    overrideCiRuns?.map((ciRun, index) => {
-      const base: StructuredProjectCiRunRecord = {
-        id: `ci-run-00${index + 1}`,
-        sessionId: "session-selectors",
-        threadId: "thread-002",
-        workflowRunId: "workflow-001",
-        smithersRunId: `smithers-ci-run-${index + 1}`,
-        workflowId: "project_ci",
-        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-        status: "passed",
-        summary: "Project CI summary",
-        createdAt: "2026-04-18T07:01:30.000Z",
-        updatedAt: "2026-04-18T07:02:00.000Z",
-        startedAt: "2026-04-18T07:01:30.000Z",
-        finishedAt: "2026-04-18T07:02:00.000Z",
-      };
-      return { ...base, ...ciRun };
-    }) ?? [];
-
-  const ciCheckResults =
-    overrideCiCheckResults?.map((ciCheckResult, index) => {
-      const base: StructuredProjectCiCheckResultRecord = {
-        id: `ci-check-00${index + 1}`,
-        sessionId: "session-selectors",
-        ciRunId: "ci-run-001",
-        workflowRunId: "workflow-001",
-        checkId: "test",
-        label: "Tests",
-        kind: "test",
-        status: "passed",
-        required: true,
-        command: ["bun", "test"],
-        exitCode: 0,
-        summary: "Tests passed.",
-        artifactIds: [],
-        startedAt: "2026-04-18T07:01:30.000Z",
-        finishedAt: "2026-04-18T07:02:00.000Z",
-        createdAt: "2026-04-18T07:01:30.000Z",
-        updatedAt: "2026-04-18T07:02:00.000Z",
-      };
-      return { ...base, ...ciCheckResult };
-    }) ?? [];
-
   const workflowRuns =
     overrideWorkflowRuns?.map((workflowRun, index) => {
       const base: StructuredWorkflowRunRecord = {
@@ -235,8 +193,6 @@ function createSessionSnapshot(
         continuedFromRunIds: [],
         activeDescendantRunId: null,
         lastEventSeq: -1,
-        pendingAttentionSeq: null,
-        lastAttentionSeq: null,
         heartbeatAt: null,
         summary: "Workflow summary",
         startedAt: "2026-04-18T07:02:30.000Z",
@@ -274,6 +230,7 @@ function createSessionSnapshot(
         agentModel: "gpt-5.4",
         agentEngine: "pi",
         agentResume: "/tmp/task-agent-session",
+        generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
         meta: null,
         startedAt: "2026-04-18T07:02:30.000Z",
         updatedAt: "2026-04-18T07:03:00.000Z",
@@ -297,6 +254,30 @@ function createSessionSnapshot(
       return { ...base, ...workflowTaskMessage };
     }) ?? [];
 
+  const generatedAgentContextBindings =
+    overrideGeneratedAgentContextBindings?.map((binding, index) => {
+      const base: StructuredSessionSnapshot["generatedAgentContextBindings"][number] = {
+        id: `generated-context-binding-00${index + 1}`,
+        surfacePiSessionId: "pi-task-agent-001",
+        ownerKind: "workflow-task-attempt",
+        ownerId: "workflow-task-attempt-001",
+        actorKind: "workflow-task",
+        aggregateCacheKey: "workflow-task-aggregate-001",
+        systemPrompt: "Use the bound workflow task context.",
+        svvyxGuidance: "",
+        commandsDts: "declare const workflowTask: true;",
+        nativeToolSchemasJson: "{}",
+        generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+        generatedAgentContextRevision: 1,
+        loadedExtensionIds: ["base-workflow-task"],
+        availableExtensionIds: [],
+        externalSourceHashes: [],
+        createdAt: "2026-04-18T07:02:30.000Z",
+        updatedAt: "2026-04-18T07:02:30.000Z",
+      };
+      return { ...base, ...binding };
+    }) ?? [];
+
   const artifacts =
     overrideArtifacts?.map((artifact, index) => {
       const base: StructuredArtifactRecord = {
@@ -309,8 +290,12 @@ function createSessionSnapshot(
         kind: "text",
         name: `artifact-${index + 1}.md`,
         path: undefined,
-        content: "artifact content",
+        mimeType: "text/markdown",
+        bytes: 0,
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        immutable: false,
         createdAt: "2026-04-18T07:01:30.000Z",
+        deletedAt: null,
       };
       return { ...base, ...artifact };
     }) ?? [];
@@ -361,11 +346,11 @@ function createSessionSnapshot(
     threadContexts,
     commands,
     episodes,
-    ciRuns,
-    ciCheckResults,
     workflowRuns,
     workflowTaskAttempts,
     workflowTaskMessages,
+    generatedAgentContextBindings,
+    requestUserInputRequests: [],
     artifacts,
     events,
     ...rest,
@@ -480,8 +465,8 @@ describe("structured session selectors", () => {
         },
         {
           id: "thread-002",
-          title: "Project CI objective",
-          objective: "Project CI body",
+          title: "Repair objective",
+          objective: "Repair body",
           status: "troubleshooting",
           startedAt: "2026-04-18T10:00:30.000Z",
           updatedAt: "2026-04-18T10:02:00.000Z",
@@ -505,7 +490,7 @@ describe("structured session selectors", () => {
         {
           id: "command-002",
           parentCommandId: "command-001",
-          toolName: "api.read",
+          toolName: "extensions.artifacts.run",
           visibility: "trace",
           title: "Read docs/prd.md",
           summary: "Loaded docs/prd.md.",
@@ -530,31 +515,6 @@ describe("structured session selectors", () => {
           kind: "workflow",
           summary: "Workflow episode summary",
           createdAt: "2026-04-18T10:03:30.000Z",
-        },
-      ],
-      ciRuns: [
-        {
-          id: "ci-run-001",
-          threadId: "thread-002",
-          workflowRunId: "workflow-002",
-          status: "failed",
-          summary: "Project CI failed",
-          updatedAt: "2026-04-18T10:02:00.000Z",
-          finishedAt: "2026-04-18T10:02:00.000Z",
-        },
-      ],
-      ciCheckResults: [
-        {
-          id: "ci-check-001",
-          ciRunId: "ci-run-001",
-          workflowRunId: "workflow-002",
-          checkId: "test",
-          label: "Tests",
-          status: "failed",
-          exitCode: 1,
-          summary: "Regression test failed.",
-          updatedAt: "2026-04-18T10:02:00.000Z",
-          finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
       workflowRuns: [
@@ -592,8 +552,6 @@ describe("structured session selectors", () => {
         threads: 3,
         commands: 2,
         episodes: 2,
-        ciRuns: 1,
-        ciChecks: 1,
         workflows: 1,
         artifacts: 1,
         events: 1,
@@ -605,7 +563,7 @@ describe("structured session selectors", () => {
         troubleshooting: ["thread-002"],
       },
       threadIds: ["thread-001", "thread-002", "thread-003"],
-      latestEpisodePreview: "Workflow episode summary",
+      latestEpisodePreview: null,
       latestWorkflowRunSummary: "Workflow waiting for clarification",
       sidebarThreads: [
         {
@@ -614,21 +572,52 @@ describe("structured session selectors", () => {
           title: "Direct objective",
           objective: "Direct body",
           status: "completed",
-          subtitle: null,
+          subtitle: {
+            badge: "text",
+            text: "Direct summary",
+            tone: "muted",
+          },
+          latestCommandRollup: {
+            commandId: "command-001",
+            threadId: "thread-001",
+            workflowRunId: null,
+            workflowTaskAttemptId: null,
+            toolName: "execute_typescript",
+            visibility: "summary",
+            status: "succeeded",
+            title: "Inspect docs",
+            summary: "Read 2 files and created 1 artifact.",
+            arguments: null,
+            facts: {
+              artifactsCreated: 1,
+              repoReads: 2,
+            },
+            error: null,
+            artifacts: [],
+            outputEvents: [],
+            patchSnapshots: [],
+            diagnostics: [],
+            childCount: 1,
+            summaryChildCount: 0,
+            traceChildCount: 1,
+            summaryChildren: [],
+            updatedAt: "2026-04-18T10:01:00.000Z",
+          },
           updatedAt: "2026-04-18T10:01:00.000Z",
           workflows: [],
         },
         {
           threadId: "thread-002",
           surfacePiSessionId: "pi-thread-003",
-          title: "Project CI objective",
-          objective: "Project CI body",
+          title: "Repair objective",
+          objective: "Repair body",
           status: "troubleshooting",
           subtitle: {
             badge: "workflow",
             text: "troubleshooting",
             tone: "muted",
           },
+          latestCommandRollup: null,
           updatedAt: "2026-04-18T10:02:00.000Z",
           workflows: [],
         },
@@ -643,6 +632,7 @@ describe("structured session selectors", () => {
             text: "Need clarification",
             tone: "waiting",
           },
+          latestCommandRollup: null,
           updatedAt: "2026-04-18T10:03:00.000Z",
           workflows: [
             {
@@ -670,6 +660,25 @@ describe("structured session selectors", () => {
           status: "succeeded",
           title: "Inspect docs",
           summary: "Read 2 files and created 1 artifact.",
+          arguments: null,
+          facts: {
+            artifactsCreated: 1,
+            repoReads: 2,
+          },
+          error: null,
+          artifacts: [
+            {
+              artifactId: "artifact-001",
+              kind: "text",
+              name: "artifact-1.md",
+              createdAt: "2026-04-18T10:01:30.000Z",
+              sourceCommandId: "command-001",
+              producerLabel: "Inspect docs",
+            },
+          ],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
           childCount: 1,
           summaryChildCount: 0,
           traceChildCount: 1,
@@ -677,6 +686,7 @@ describe("structured session selectors", () => {
           updatedAt: "2026-04-18T10:01:00.000Z",
         },
       ],
+      productEvents: [],
     });
 
     const summary = buildStructuredSessionSummaryProjection(snapshot);
@@ -685,7 +695,7 @@ describe("structured session selectors", () => {
       title: "Selector Session",
       sessionStatus: "idle",
       status: "idle",
-      preview: "Workflow episode summary",
+      preview: "Selector turn",
       updatedAt: "2026-04-18T10:03:30.000Z",
       isPinned: false,
       pinnedAt: null,
@@ -694,7 +704,7 @@ describe("structured session selectors", () => {
       counts: view.counts,
       wait: snapshot.session.wait,
       threadIds: view.threadIds,
-      latestEpisodePreview: "Workflow episode summary",
+      latestEpisodePreview: null,
       latestWorkflowRunSummary: "Workflow waiting for clarification",
     });
   });
@@ -720,7 +730,7 @@ describe("structured session selectors", () => {
         {
           id: "command-summary-child",
           parentCommandId: "command-parent",
-          toolName: "artifact_write_text",
+          toolName: "exec_command",
           visibility: "summary",
           title: "Create summary.md",
           summary: "Created summary.md.",
@@ -803,13 +813,16 @@ describe("structured session selectors", () => {
           missingFile: true,
         },
       ],
+      outputEvents: [],
+      patchSnapshots: [],
+      diagnostics: [],
       childCount: 2,
       summaryChildCount: 1,
       traceChildCount: 1,
       summaryChildren: [
         {
           commandId: "command-summary-child",
-          toolName: "artifact_write_text",
+          toolName: "exec_command",
           status: "succeeded",
           title: "Create summary.md",
           summary: "Created summary.md.",
@@ -834,6 +847,9 @@ describe("structured session selectors", () => {
               missingFile: true,
             },
           ],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
         },
       ],
       traceChildren: [
@@ -853,188 +869,557 @@ describe("structured session selectors", () => {
           updatedAt: "2026-04-18T10:00:20.000Z",
           finishedAt: "2026-04-18T10:00:20.000Z",
           artifacts: [],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
         },
       ],
     });
   });
 
-  it("builds Project CI status panel states from declared entries and structured CI records", () => {
-    const entries = [
+  it("recovers command output events in the command inspector read model", () => {
+    const snapshot = createSessionSnapshot({
+      commands: [
+        {
+          id: "command-output",
+          toolName: "exec_command",
+          visibility: "summary",
+          title: "Run tests",
+          summary: "Tests failed.",
+          arguments: {
+            cmd: "bun test",
+          },
+          facts: {
+            exitCode: 1,
+          },
+          threadId: "thread-001",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "event-stdout",
+          at: "2026-04-18T10:01:00.000Z",
+          kind: "command.output",
+          subject: {
+            kind: "command",
+            id: "command-output",
+          },
+          data: {
+            stream: "stdout",
+            source: "final-result",
+            text: "1 pass\n",
+          },
+        },
+        {
+          id: "event-stderr",
+          at: "2026-04-18T10:01:01.000Z",
+          kind: "command.output",
+          subject: {
+            kind: "command",
+            id: "command-output",
+          },
+          data: {
+            stream: "stderr",
+            source: "final-result",
+            text: "1 fail\n",
+          },
+        },
+        {
+          id: "event-ignored",
+          at: "2026-04-18T10:01:02.000Z",
+          kind: "command.output",
+          subject: {
+            kind: "command",
+            id: "command-output",
+          },
+          data: {
+            stream: "progress",
+            source: "final-result",
+            text: "not exposed by this slice",
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot).commandRollups[0]).toMatchObject({
+      commandId: "command-output",
+      arguments: {
+        cmd: "bun test",
+      },
+      facts: {
+        exitCode: 1,
+      },
+      error: null,
+      artifacts: [],
+      outputEvents: [
+        {
+          eventId: "event-stdout",
+          stream: "stdout",
+          source: "final-result",
+          text: "1 pass\n",
+        },
+        {
+          eventId: "event-stderr",
+          stream: "stderr",
+          source: "final-result",
+          text: "1 fail\n",
+        },
+      ],
+    });
+
+    const inspector = buildStructuredCommandInspector(snapshot, "command-output");
+
+    expect(inspector?.outputEvents).toEqual([
       {
-        workflowId: "project_ci",
-        label: "Project CI",
-        summary: "Runs Project CI checks.",
-        sourceScope: "saved" as const,
-        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+        eventId: "event-stdout",
+        at: "2026-04-18T10:01:00.000Z",
+        stream: "stdout",
+        source: "final-result",
+        text: "1 pass\n",
       },
-    ];
-
-    expect(buildStructuredProjectCiStatusPanel({ session: null, entries: [] })).toMatchObject({
-      status: "not-configured",
-      summary: "No Project CI entry has been configured.",
-      entries: [],
-      checks: [],
-    });
-
-    expect(buildStructuredProjectCiStatusPanel({ session: null, entries })).toMatchObject({
-      status: "configured",
-      summary: "Ready to run Project CI.",
-      entries,
-      checks: [],
-    });
-
-    const lookalikeRunningSnapshot = createSessionSnapshot({
-      workflowRuns: [
-        {
-          id: "workflow-ci-lookalike",
-          workflowName: "project_ci",
-          savedEntryId: "project_ci",
-          entryPath: ".svvy/workflows/entries/non-ci/project-ci.tsx",
-          status: "running",
-          summary: "A non-CI workflow happens to share the CI workflow id.",
-          updatedAt: "2026-04-18T10:03:00.000Z",
-        },
-      ],
-    });
-
-    expect(
-      buildStructuredProjectCiStatusPanel({ session: lookalikeRunningSnapshot, entries }),
-    ).toMatchObject({
-      status: "configured",
-      summary: "Ready to run Project CI.",
-      activeWorkflowRun: null,
-      latestRun: null,
-      checks: [],
-    });
-
-    const runningSnapshot = createSessionSnapshot({
-      threads: [
-        {
-          id: "thread-ci",
-          surfacePiSessionId: "pi-thread-ci",
-          title: "Project CI Handler",
-          status: "running-workflow",
-        },
-      ],
-      workflowRuns: [
-        {
-          id: "workflow-ci-running",
-          threadId: "thread-ci",
-          workflowName: "project_ci",
-          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-          status: "running",
-          summary: "Project CI is running.",
-          updatedAt: "2026-04-18T10:04:00.000Z",
-        },
-      ],
-    });
-
-    expect(
-      buildStructuredProjectCiStatusPanel({ session: runningSnapshot, entries }),
-    ).toMatchObject({
-      status: "running",
-      summary: "Project CI is running.",
-      activeWorkflowRun: {
-        workflowRunId: "workflow-ci-running",
-        workflowId: "project_ci",
-        threadId: "thread-ci",
-        threadTitle: "Project CI Handler",
-      },
-      latestRun: null,
-      checks: [],
-    });
-
-    const waitingSnapshot = createSessionSnapshot({
-      threads: [
-        {
-          id: "thread-ci",
-          surfacePiSessionId: "pi-thread-ci",
-          title: "Project CI Handler",
-          status: "running-workflow",
-        },
-      ],
-      workflowRuns: [
-        {
-          id: "workflow-ci-waiting",
-          threadId: "thread-ci",
-          workflowName: "project_ci",
-          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-          status: "waiting",
-          summary: "Project CI is waiting for required input.",
-          updatedAt: "2026-04-18T10:04:30.000Z",
-        },
-      ],
-    });
-
-    expect(
-      buildStructuredProjectCiStatusPanel({ session: waitingSnapshot, entries }),
-    ).toMatchObject({
-      status: "blocked",
-      summary: "Project CI is waiting for required input.",
-      activeWorkflowRun: {
-        workflowRunId: "workflow-ci-waiting",
-        status: "waiting",
-      },
-      latestRun: null,
-      checks: [],
-    });
-
-    const passedSnapshot = createSessionSnapshot({
-      threads: [
-        {
-          id: "thread-ci",
-          surfacePiSessionId: "pi-thread-ci",
-          title: "Project CI Handler",
-          status: "completed",
-        },
-      ],
-      ciRuns: [
-        {
-          id: "ci-run-latest",
-          threadId: "thread-ci",
-          workflowRunId: "workflow-ci",
-          workflowId: "project_ci",
-          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
-          status: "passed",
-          summary: "Project CI passed.",
-          updatedAt: "2026-04-18T10:05:00.000Z",
-        },
-      ],
-      ciCheckResults: [
-        {
-          id: "ci-check-typecheck",
-          ciRunId: "ci-run-latest",
-          checkId: "typecheck",
-          label: "Typecheck",
-          kind: "typecheck",
-          status: "passed",
-          command: ["bun", "run", "typecheck"],
-          exitCode: 0,
-          summary: "Typecheck passed.",
-        },
-      ],
-    });
-
-    expect(buildStructuredProjectCiStatusPanel({ session: passedSnapshot, entries })).toMatchObject(
       {
-        status: "passed",
-        summary: "Project CI passed.",
-        latestRun: {
-          ciRunId: "ci-run-latest",
-          threadId: "thread-ci",
-          threadTitle: "Project CI Handler",
-        },
-        checks: [
-          {
-            checkResultId: "ci-check-typecheck",
-            checkId: "typecheck",
-            label: "Typecheck",
-            command: ["bun", "run", "typecheck"],
+        eventId: "event-stderr",
+        at: "2026-04-18T10:01:01.000Z",
+        stream: "stderr",
+        source: "final-result",
+        text: "1 fail\n",
+      },
+    ]);
+  });
+
+  it("recovers command progress events in rollups and the command inspector", () => {
+    const snapshot = createSessionSnapshot({
+      commands: [
+        {
+          id: "command-progress",
+          toolName: "exec_command",
+          visibility: "summary",
+          title: "List workflows",
+          summary: "Listed workflow exports.",
+          arguments: {
+            cmd: "svvyx workflows list --json",
+          },
+          facts: {
             exitCode: 0,
+          },
+          threadId: "thread-001",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "event-started",
+          at: "2026-04-18T10:01:00.000Z",
+          kind: "command.progress",
+          subject: {
+            kind: "command",
+            id: "command-progress",
+          },
+          data: {
+            command: "svvyx workflows list --json",
+            family: "workflows",
+            phase: "started",
+            source: "svvyx-dispatch",
+            progress: -1,
+          },
+        },
+        {
+          id: "event-succeeded",
+          at: "2026-04-18T10:01:01.000Z",
+          kind: "command.progress",
+          subject: {
+            kind: "command",
+            id: "command-progress",
+          },
+          data: {
+            command: "svvyx workflows list --json",
+            family: "workflows",
+            phase: "succeeded",
+            source: "svvyx-dispatch",
+            progress: 2,
+            facts: {
+              workflowExportCount: 1,
+            },
+          },
+        },
+        {
+          id: "event-ignored",
+          at: "2026-04-18T10:01:02.000Z",
+          kind: "command.progress",
+          subject: {
+            kind: "command",
+            id: "other-command",
+          },
+          data: {
+            phase: "started",
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot).commandRollups[0]).toMatchObject({
+      commandId: "command-progress",
+      progressEvents: [
+        {
+          eventId: "event-started",
+          at: "2026-04-18T10:01:00.000Z",
+          source: "svvyx-dispatch",
+          phase: "started",
+          family: "workflows",
+          command: "svvyx workflows list --json",
+          progress: 0,
+        },
+        {
+          eventId: "event-succeeded",
+          at: "2026-04-18T10:01:01.000Z",
+          source: "svvyx-dispatch",
+          phase: "succeeded",
+          family: "workflows",
+          command: "svvyx workflows list --json",
+          progress: 1,
+          facts: {
+            workflowExportCount: 1,
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredCommandInspector(snapshot, "command-progress")?.progressEvents).toEqual([
+      {
+        eventId: "event-started",
+        at: "2026-04-18T10:01:00.000Z",
+        source: "svvyx-dispatch",
+        phase: "started",
+        family: "workflows",
+        command: "svvyx workflows list --json",
+        progress: 0,
+      },
+      {
+        eventId: "event-succeeded",
+        at: "2026-04-18T10:01:01.000Z",
+        source: "svvyx-dispatch",
+        phase: "succeeded",
+        family: "workflows",
+        command: "svvyx workflows list --json",
+        progress: 1,
+        facts: {
+          workflowExportCount: 1,
+        },
+      },
+    ]);
+  });
+
+  it("recovers command diagnostics in the command inspector read model", () => {
+    const snapshot = createSessionSnapshot({
+      commands: [
+        {
+          id: "command-diagnostics",
+          turnId: "turn-001",
+          threadId: null,
+          toolName: "execute_typescript",
+          executor: "orchestrator",
+          visibility: "summary",
+          status: "failed",
+          title: "Run execute_typescript",
+          summary: "Type error",
+          facts: {
+            diagnosticsCount: 1,
+          },
+          updatedAt: "2026-04-18T10:01:02.000Z",
+          finishedAt: "2026-04-18T10:01:02.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "event-diagnostics",
+          sessionId: "session-001",
+          at: "2026-04-18T10:01:01.000Z",
+          kind: "command.diagnostics",
+          subject: {
+            kind: "command",
+            id: "command-diagnostics",
+          },
+          data: {
+            source: "execute_typescript",
+            stage: "typecheck",
+            diagnostics: [
+              {
+                severity: "error",
+                message: "Type mismatch",
+                file: "execute-typescript.ts",
+                line: 1,
+                column: 7,
+                code: "2322",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot).commandRollups[0]).toMatchObject({
+      commandId: "command-diagnostics",
+      diagnostics: [
+        {
+          eventId: "event-diagnostics",
+          stage: "typecheck",
+          source: "execute_typescript",
+          diagnostics: [
+            {
+              severity: "error",
+              message: "Type mismatch",
+              file: "execute-typescript.ts",
+              line: 1,
+              column: 7,
+              code: "2322",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(buildStructuredCommandInspector(snapshot, "command-diagnostics")?.diagnostics).toEqual([
+      {
+        eventId: "event-diagnostics",
+        at: "2026-04-18T10:01:01.000Z",
+        source: "execute_typescript",
+        stage: "typecheck",
+        diagnostics: [
+          {
+            severity: "error",
+            message: "Type mismatch",
+            file: "execute-typescript.ts",
+            line: 1,
+            column: 7,
+            code: "2322",
           },
         ],
       },
-    );
+    ]);
+  });
+
+  it("projects durable extension revert product events into the session view", () => {
+    const snapshot = createSessionSnapshot({
+      events: [
+        {
+          id: "event-extension-revert",
+          at: "2026-06-10T10:01:00.000Z",
+          kind: "Extension change reverted",
+          subject: {
+            kind: "thread",
+            id: "thread-001",
+          },
+          data: {
+            title: "Extension change reverted",
+            summary: "User reverted extension extension_files chg_abc_123 for linear.",
+            changeId: "chg_abc_123",
+            extensionId: "linear",
+            surface: "thread",
+            surfacePiSessionId: "pi-thread-001",
+            threadId: "thread-001",
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot).productEvents).toEqual([
+      {
+        eventId: "event-extension-revert",
+        at: "2026-06-10T10:01:00.000Z",
+        title: "Extension change reverted",
+        summary: "User reverted extension extension_files chg_abc_123 for linear.",
+        subject: {
+          kind: "thread",
+          id: "thread-001",
+        },
+        details: {
+          title: "Extension change reverted",
+          summary: "User reverted extension extension_files chg_abc_123 for linear.",
+          changeId: "chg_abc_123",
+          extensionId: "linear",
+          surface: "thread",
+          surfacePiSessionId: "pi-thread-001",
+          threadId: "thread-001",
+        },
+      },
+    ]);
+  });
+
+  it("projects durable agent context update terminal product events into the session view", () => {
+    const snapshot = createSessionSnapshot({
+      events: [
+        {
+          id: "event-context-applied",
+          at: "2026-06-10T10:02:00.000Z",
+          kind: "Agent context update applied",
+          subject: {
+            kind: "session",
+            id: "session-001",
+          },
+          data: {
+            title: "Agent context update applied",
+            summary: "Agent context update applied: r3->r4, 2 changes.",
+            state: "applied",
+            surface: "orchestrator",
+            surfacePiSessionId: "session-001",
+            queueMessageId: "sqm-context-001",
+            requestedRevision: 3,
+            currentRevision: 4,
+            systemPromptChanged: true,
+            loadedExtensionIds: {
+              added: ["linear"],
+              removed: [],
+            },
+          },
+        },
+        {
+          id: "event-context-cancelled",
+          at: "2026-06-10T10:03:00.000Z",
+          kind: "Agent context update cancelled",
+          subject: {
+            kind: "thread",
+            id: "thread-001",
+          },
+          data: {
+            title: "Agent context update cancelled",
+            summary: "Agent context update cancelled: r3->r4.",
+            state: "cancelled",
+            surface: "thread",
+            surfacePiSessionId: "pi-thread-001",
+            threadId: "thread-001",
+            queueMessageId: "sqm-context-002",
+            requestedRevision: 3,
+            currentRevision: 4,
+          },
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot).productEvents).toEqual([
+      expect.objectContaining({
+        eventId: "event-context-applied",
+        title: "Agent context update applied",
+        summary: "Agent context update applied: r3->r4, 2 changes.",
+        subject: {
+          kind: "session",
+          id: "session-001",
+        },
+        details: expect.objectContaining({
+          state: "applied",
+          queueMessageId: "sqm-context-001",
+          loadedExtensionIds: {
+            added: ["linear"],
+            removed: [],
+          },
+        }),
+      }),
+      expect.objectContaining({
+        eventId: "event-context-cancelled",
+        title: "Agent context update cancelled",
+        summary: "Agent context update cancelled: r3->r4.",
+        subject: {
+          kind: "thread",
+          id: "thread-001",
+        },
+        details: expect.objectContaining({
+          state: "cancelled",
+          queueMessageId: "sqm-context-002",
+        }),
+      }),
+    ]);
+  });
+
+  it("projects apply_patch final facts through the command inspector read model", () => {
+    const snapshot = createSessionSnapshot({
+      turns: [{ id: "turn-001", turnDecision: "apply_patch" }],
+      threads: [{ id: "thread-001", turnId: "turn-001" }],
+      commands: [
+        {
+          id: "command-apply-patch",
+          turnId: "turn-001",
+          threadId: "thread-001",
+          toolName: "apply_patch",
+          executor: "orchestrator",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Run apply_patch",
+          summary: "Patch applied successfully.",
+          facts: {
+            changedFiles: ["src/mainview/WorkflowsPane.svelte"],
+            createdFiles: [],
+            deletedFiles: [],
+            errors: [],
+          },
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "event-patch-snapshot",
+          sessionId: "session-001",
+          at: "2026-04-18T10:01:59.000Z",
+          kind: "command.patch_snapshot",
+          subject: {
+            kind: "command",
+            id: "command-apply-patch",
+          },
+          data: {
+            source: "accepted-arguments",
+            files: [
+              {
+                path: "src/mainview/WorkflowsPane.svelte",
+                changeType: "modified",
+                additions: 2,
+                deletions: 1,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const inspector = buildStructuredCommandInspector(snapshot, "command-apply-patch");
+
+    expect(inspector).toMatchObject({
+      commandId: "command-apply-patch",
+      toolName: "apply_patch",
+      visibility: "summary",
+      status: "succeeded",
+      summary: "Patch applied successfully.",
+      facts: {
+        changedFiles: ["src/mainview/WorkflowsPane.svelte"],
+        createdFiles: [],
+        deletedFiles: [],
+        errors: [],
+      },
+      patchSnapshots: [
+        {
+          eventId: "event-patch-snapshot",
+          at: "2026-04-18T10:01:59.000Z",
+          source: "accepted-arguments",
+          files: [
+            {
+              path: "src/mainview/WorkflowsPane.svelte",
+              changeType: "modified",
+              additions: 2,
+              deletions: 1,
+            },
+          ],
+        },
+      ],
+      childCount: 0,
+      summaryChildren: [],
+      traceChildren: [],
+    });
+  });
+
+  it("does not expose a Project CI status panel selector", async () => {
+    const selectors = await import("./structured-session-selectors");
+    expect("buildStructuredProjectCiStatusPanel" in selectors).toBe(false);
   });
 
   it("projects delegated handler-thread summaries and inspector detail without pulling in orchestrator-local threads", () => {
@@ -1080,7 +1465,7 @@ describe("structured session selectors", () => {
           id: "command-handler-child",
           threadId: "thread-handler",
           parentCommandId: "command-handler-parent",
-          toolName: "artifact_write_text",
+          toolName: "exec_command",
           visibility: "summary",
           title: "Write parser test",
           summary: "Created parser regression coverage.",
@@ -1119,35 +1504,10 @@ describe("structured session selectors", () => {
         {
           id: "workflow-handler-2",
           threadId: "thread-handler",
-          workflowName: "project_ci",
+          workflowName: "regression_workflow",
           status: "completed",
-          summary: "Project CI passed after adding regression coverage.",
+          summary: "Regression workflow passed after adding coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
-        },
-      ],
-      ciRuns: [
-        {
-          id: "ci-run-handler-1",
-          threadId: "thread-handler",
-          workflowRunId: "workflow-handler-2",
-          workflowId: "project_ci",
-          status: "passed",
-          summary: "Project CI passed.",
-          updatedAt: "2026-04-18T10:04:10.000Z",
-          finishedAt: "2026-04-18T10:04:10.000Z",
-        },
-      ],
-      ciCheckResults: [
-        {
-          id: "ci-check-handler-1",
-          ciRunId: "ci-run-handler-1",
-          workflowRunId: "workflow-handler-2",
-          checkId: "regression",
-          label: "Regression coverage",
-          status: "passed",
-          summary: "Regression coverage passed.",
-          updatedAt: "2026-04-18T10:04:10.000Z",
-          finishedAt: "2026-04-18T10:04:10.000Z",
         },
       ],
       artifacts: [
@@ -1179,23 +1539,46 @@ describe("structured session selectors", () => {
         workflowTaskAttemptCount: 0,
         episodeCount: 2,
         artifactCount: 1,
-        ciRunCount: 1,
         loadedContextKeys: ["ci"],
+        latestCommandRollup: {
+          commandId: "command-handler-parent",
+          threadId: "thread-handler",
+          workflowRunId: null,
+          workflowTaskAttemptId: null,
+          toolName: "execute_typescript",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Patch parser transitions",
+          summary: "Updated parser transitions and wrote a regression test.",
+          arguments: null,
+          facts: null,
+          error: null,
+          artifacts: [],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
+          childCount: 1,
+          summaryChildCount: 1,
+          traceChildCount: 0,
+          summaryChildren: [
+            {
+              commandId: "command-handler-child",
+              toolName: "exec_command",
+              status: "succeeded",
+              title: "Write parser test",
+              summary: "Created parser regression coverage.",
+              error: null,
+            },
+          ],
+          updatedAt: "2026-04-18T10:03:20.000Z",
+        },
         latestWorkflowRun: {
           workflowRunId: "workflow-handler-2",
-          workflowName: "project_ci",
+          workflowName: "regression_workflow",
           status: "completed",
-          summary: "Project CI passed after adding regression coverage.",
+          summary: "Regression workflow passed after adding coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
           artifacts: [],
-        },
-        latestCiRun: {
-          ciRunId: "ci-run-handler-1",
-          workflowRunId: "workflow-handler-2",
-          workflowId: "project_ci",
-          status: "passed",
-          summary: "Project CI passed.",
-          updatedAt: "2026-04-18T10:04:10.000Z",
         },
         latestEpisode: {
           episodeId: "episode-handler-2",
@@ -1222,23 +1605,46 @@ describe("structured session selectors", () => {
       workflowTaskAttemptCount: 0,
       episodeCount: 2,
       artifactCount: 1,
-      ciRunCount: 1,
       loadedContextKeys: ["ci"],
+      latestCommandRollup: {
+        commandId: "command-handler-parent",
+        threadId: "thread-handler",
+        workflowRunId: null,
+        workflowTaskAttemptId: null,
+        toolName: "execute_typescript",
+        visibility: "summary",
+        status: "succeeded",
+        title: "Patch parser transitions",
+        summary: "Updated parser transitions and wrote a regression test.",
+        arguments: null,
+        facts: null,
+        error: null,
+        artifacts: [],
+        outputEvents: [],
+        patchSnapshots: [],
+        diagnostics: [],
+        childCount: 1,
+        summaryChildCount: 1,
+        traceChildCount: 0,
+        summaryChildren: [
+          {
+            commandId: "command-handler-child",
+            toolName: "exec_command",
+            status: "succeeded",
+            title: "Write parser test",
+            summary: "Created parser regression coverage.",
+            error: null,
+          },
+        ],
+        updatedAt: "2026-04-18T10:03:20.000Z",
+      },
       latestWorkflowRun: {
         workflowRunId: "workflow-handler-2",
-        workflowName: "project_ci",
+        workflowName: "regression_workflow",
         status: "completed",
-        summary: "Project CI passed after adding regression coverage.",
+        summary: "Regression workflow passed after adding coverage.",
         updatedAt: "2026-04-18T10:04:10.000Z",
         artifacts: [],
-      },
-      latestCiRun: {
-        ciRunId: "ci-run-handler-1",
-        workflowRunId: "workflow-handler-2",
-        workflowId: "project_ci",
-        status: "passed",
-        summary: "Project CI passed.",
-        updatedAt: "2026-04-18T10:04:10.000Z",
       },
       latestEpisode: {
         episodeId: "episode-handler-2",
@@ -1258,13 +1664,20 @@ describe("structured session selectors", () => {
           status: "succeeded",
           title: "Patch parser transitions",
           summary: "Updated parser transitions and wrote a regression test.",
+          arguments: null,
+          facts: null,
+          error: null,
+          artifacts: [],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
           childCount: 1,
           summaryChildCount: 1,
           traceChildCount: 0,
           summaryChildren: [
             {
               commandId: "command-handler-child",
-              toolName: "artifact_write_text",
+              toolName: "exec_command",
               status: "succeeded",
               title: "Write parser test",
               summary: "Created parser regression coverage.",
@@ -1277,9 +1690,9 @@ describe("structured session selectors", () => {
       workflowRuns: [
         {
           workflowRunId: "workflow-handler-2",
-          workflowName: "project_ci",
+          workflowName: "regression_workflow",
           status: "completed",
-          summary: "Project CI passed after adding regression coverage.",
+          summary: "Regression workflow passed after adding coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
           artifacts: [],
         },
@@ -1383,7 +1796,7 @@ describe("structured session selectors", () => {
     });
   });
 
-  it("keeps workflow and CI summaries out of the parent preview and exposes them on child rows", () => {
+  it("keeps workflow summaries out of the parent preview and exposes them on child rows", () => {
     const workflowSnapshot = createSessionSnapshot({
       session: {
         id: "session-workflow-preview",
@@ -1430,6 +1843,16 @@ describe("structured session selectors", () => {
         orchestratorPiSessionId: "session-episode-preview",
         wait: null,
       },
+      threads: [
+        {
+          id: "thread-400",
+          title: "Completed handler",
+          objective: "Report delegated work.",
+          status: "completed",
+          surfacePiSessionId: "pi-thread-400",
+          updatedAt: "2026-04-18T10:04:00.000Z",
+        },
+      ],
       workflowRuns: [],
       episodes: [
         {
@@ -1440,42 +1863,15 @@ describe("structured session selectors", () => {
           createdAt: "2026-04-18T10:04:00.000Z",
         },
       ],
-      ciRuns: [
-        {
-          id: "ci-run-400",
-          threadId: "thread-401",
-          workflowRunId: "workflow-401",
-          summary: "Older Project CI summary",
-          updatedAt: "2026-04-18T10:02:00.000Z",
-          finishedAt: "2026-04-18T10:02:00.000Z",
-        },
-      ],
     });
     const episodeSummary = buildStructuredSessionSummaryProjection(episodeSnapshot);
-    expect(episodeSummary.preview).toBe("Handler completed successfully.");
-    expect(episodeSummary.latestEpisodePreview).toBe("Handler completed successfully.");
-
-    const ciSnapshot = createSessionSnapshot({
-      session: {
-        id: "session-ci-preview",
-        orchestratorPiSessionId: "session-ci-preview",
-        wait: null,
-      },
-      workflowRuns: [],
-      episodes: [],
-      ciRuns: [
-        {
-          id: "ci-run-401",
-          threadId: "thread-401",
-          workflowRunId: "workflow-401",
-          summary: "Project CI passed.",
-          updatedAt: "2026-04-18T10:05:00.000Z",
-          finishedAt: "2026-04-18T10:05:00.000Z",
-        },
-      ],
+    expect(episodeSummary.preview).toBe("");
+    expect(episodeSummary.latestEpisodePreview).toBeNull();
+    expect(buildStructuredSessionView(episodeSnapshot).sidebarThreads[0]?.subtitle).toEqual({
+      badge: "text",
+      text: "Handler completed successfully.",
+      tone: "muted",
     });
-    const ciSummary = buildStructuredSessionSummaryProjection(ciSnapshot);
-    expect(ciSummary.preview).toBe("");
 
     const waitingSnapshot = createSessionSnapshot({
       session: {
@@ -1558,6 +1954,129 @@ describe("structured session selectors", () => {
     });
   });
 
+  it("exposes active handler commands on child rows without changing the parent preview", () => {
+    const snapshot = createSessionSnapshot({
+      session: {
+        id: "session-handler-command",
+        orchestratorPiSessionId: "session-handler-command",
+        wait: null,
+      },
+      turns: [
+        {
+          id: "turn-handler-command",
+          sessionId: "session-handler-command",
+          surfacePiSessionId: "pi-thread-command",
+          threadId: "thread-command",
+        },
+      ],
+      threads: [
+        {
+          id: "thread-command",
+          title: "Command handler",
+          objective: "Run handler commands.",
+          status: "running-handler",
+          surfacePiSessionId: "pi-thread-command",
+          updatedAt: "2026-04-18T10:08:00.000Z",
+        },
+      ],
+      commands: [
+        {
+          id: "command-complete",
+          sessionId: "session-handler-command",
+          turnId: "turn-handler-command",
+          threadId: "thread-command",
+          surfacePiSessionId: "pi-thread-command",
+          executor: "handler",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Completed command",
+          summary: "Completed command summary.",
+          updatedAt: "2026-04-18T10:08:00.000Z",
+        },
+        {
+          id: "command-running",
+          sessionId: "session-handler-command",
+          turnId: "turn-handler-command",
+          threadId: "thread-command",
+          surfacePiSessionId: "pi-thread-command",
+          executor: "handler",
+          visibility: "summary",
+          status: "running",
+          title: "Running command",
+          summary: "Running command summary.",
+          updatedAt: "2026-04-18T10:07:00.000Z",
+        },
+      ],
+    });
+
+    const summary = buildStructuredSessionSummaryProjection(snapshot);
+    const view = buildStructuredSessionView(snapshot);
+
+    expect(summary.preview).toBe("");
+    expect(view.sidebarThreads[0]?.latestCommandRollup).toMatchObject({
+      commandId: "command-running",
+      status: "running",
+      title: "Running command",
+      summary: "Running command summary.",
+    });
+    expect(view.sidebarThreads[0]?.subtitle).toBeNull();
+  });
+
+  it("uses the latest handler episode as the child-row delegated summary fallback", () => {
+    const snapshot = createSessionSnapshot({
+      session: {
+        id: "session-handler-episode",
+        orchestratorPiSessionId: "session-handler-episode",
+        wait: null,
+      },
+      turns: [
+        {
+          id: "turn-handler-episode",
+          sessionId: "session-handler-episode",
+          surfacePiSessionId: "pi-thread-episode",
+          threadId: "thread-episode",
+        },
+      ],
+      threads: [
+        {
+          id: "thread-episode",
+          title: "Episode handler",
+          objective: "Summarize delegated work.",
+          status: "completed",
+          surfacePiSessionId: "pi-thread-episode",
+          updatedAt: "2026-04-18T10:10:00.000Z",
+        },
+      ],
+      episodes: [
+        {
+          id: "episode-older",
+          sessionId: "session-handler-episode",
+          threadId: "thread-episode",
+          sourceCommandId: null,
+          summary: "Older delegated summary.",
+          createdAt: "2026-04-18T10:09:00.000Z",
+        },
+        {
+          id: "episode-newer",
+          sessionId: "session-handler-episode",
+          threadId: "thread-episode",
+          sourceCommandId: null,
+          summary: "Latest delegated summary.",
+          createdAt: "2026-04-18T10:10:00.000Z",
+        },
+      ],
+    });
+
+    const view = buildStructuredSessionView(snapshot);
+
+    expect(view.sidebarThreads[0]?.subtitle).toEqual({
+      badge: "text",
+      text: "Latest delegated summary.",
+      tone: "muted",
+    });
+    expect(view.sidebarThreads[0]?.latestCommandRollup).toBeNull();
+  });
+
   it("falls back to the latest turn request instead of repeating the session title", () => {
     const snapshot = createSessionSnapshot({
       turns: [
@@ -1607,8 +2126,6 @@ describe("structured session selectors", () => {
       threads: [],
       commands: [],
       episodes: [],
-      ciRuns: [],
-      ciCheckResults: [],
       workflowRuns: [],
       artifacts: [],
       events: [],
@@ -1689,6 +2206,18 @@ describe("structured session selectors", () => {
           responseText: '{"status":"completed"}',
           agentResume: "/tmp/task-agent-session.json",
           updatedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      generatedAgentContextBindings: [
+        {
+          ownerId: "workflow-task-attempt-1",
+          surfacePiSessionId: "pi-task-agent-001",
+          systemPrompt: "Use the historical workflow task prompt.",
+          generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+          generatedAgentContextRevision: 7,
+          loadedExtensionIds: ["base-workflow-task", "shell"],
+          availableExtensionIds: ["github"],
+          externalSourceHashes: ["AGENTS.md:initial:true"],
         },
       ],
       workflowTaskMessages: [
@@ -1783,6 +2312,14 @@ describe("structured session selectors", () => {
       agentModel: "gpt-5.4",
       agentEngine: "pi",
       agentResume: "/tmp/task-agent-session.json",
+      generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+      generatedAgentContextBinding: {
+        systemPrompt: "Use the historical workflow task prompt.",
+        generatedAgentContextRevision: 7,
+        loadedExtensionIds: ["base-workflow-task", "shell"],
+        availableExtensionIds: ["github"],
+        externalSourceHashes: ["AGENTS.md:initial:true"],
+      },
       meta: null,
       startedAt: "2026-04-18T07:02:30.000Z",
       finishedAt: "2026-04-18T07:03:00.000Z",
@@ -1813,6 +2350,13 @@ describe("structured session selectors", () => {
           status: "succeeded",
           title: "Run task execute_typescript",
           summary: "Generated the workflow proof file.",
+          arguments: null,
+          facts: null,
+          error: null,
+          artifacts: [],
+          outputEvents: [],
+          patchSnapshots: [],
+          diagnostics: [],
           childCount: 1,
           summaryChildCount: 1,
           traceChildCount: 0,

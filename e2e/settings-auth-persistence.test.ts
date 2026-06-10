@@ -43,21 +43,31 @@ function noAuthEnv(overrides: Record<string, string> = {}): Record<string, strin
   };
 }
 
-function providerRow(page: SvvyApp["page"], providerId: string) {
-  return page.locator(".provider-row").filter({
-    has: page.getByText(providerId, { exact: true }),
-  });
+async function providerRow(page: SvvyApp["page"], providerId: string) {
+  const rows = page.locator(".provider-row");
+  const count = await rows.count();
+
+  for (let index = 0; index < count; index += 1) {
+    const row = rows.nth(index);
+    const name = (await row.locator(".provider-name").textContent())?.trim() ?? "";
+    if (name === providerId) {
+      return row;
+    }
+  }
+
+  throw new Error(`Could not find provider row for "${providerId}".`);
 }
 
 async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).first().click();
-  await page.getByRole("dialog").waitFor({ state: "visible" });
+  await page.getByTestId("settings-pane").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Providers" }).click();
+  await page.locator(".settings-search").waitFor({ state: "visible" });
 }
 
 async function providerStatus(page: SvvyApp["page"], providerId: string): Promise<string> {
-  return (
-    (await providerRow(page, providerId).locator(".provider-status").textContent())?.trim() ?? ""
-  );
+  const row = await providerRow(page, providerId);
+  return (await row.locator(".provider-status").textContent())?.trim() ?? "";
 }
 
 test("saving an API key writes auth.json", async () => {
@@ -68,10 +78,12 @@ test("saving an API key writes auth.json", async () => {
     const authFile = getTestAuthFile(homeDir);
     expect(existsSync(authFile)).toBe(false);
 
-    const openaiRow = providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "Add API key" }).first().click();
+    const openaiRow = await providerRow(page, "openai");
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).first().click({
+      force: true,
+    });
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("persisted-openai-key");
-    await openaiRow.getByRole("button", { name: "Save" }).first().click();
+    await openaiRow.getByRole("button", { name: "Save" }).first().click({ force: true });
 
     await page.getByText("Saved").waitFor({ state: "visible" });
     expect(await providerStatus(page, "openai")).toBe("API key");

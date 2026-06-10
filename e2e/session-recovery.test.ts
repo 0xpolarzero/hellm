@@ -28,7 +28,7 @@ async function withHomeDir<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
 async function waitForShell(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
   await page.locator(".session-sidebar").waitFor({ state: "visible" });
-  await page.locator(".workspace-main-title").waitFor({ state: "visible" });
+  await page.locator("[data-testid=active-surface-title]").waitFor({ state: "visible" });
 }
 
 async function sessionTitles(page: SvvyApp["page"]): Promise<string[]> {
@@ -48,35 +48,18 @@ async function expectBootState(
   expected: {
     activeTitle: string;
     titles: string[];
+    surfaceTitle?: string;
   },
 ): Promise<void> {
   await waitForShell(page);
-  expect(await page.locator(".workspace-main-title").textContent()).toBe(expected.activeTitle);
+  expect(await page.locator("[data-testid=active-surface-title]").textContent()).toBe(
+    expected.surfaceTitle ?? expected.activeTitle,
+  );
   expect(await page.locator(".session-item").count()).toBe(expected.titles.length);
   expect(await sessionTitles(page)).toEqual(expected.titles);
   expect(await page.locator('.session-item [aria-current="true"] strong').textContent()).toBe(
     expected.activeTitle,
   );
-}
-
-async function openSessionActions(page: SvvyApp["page"], title: string): Promise<void> {
-  await page.getByRole("button", { name: `Session actions for ${title}` }).click({ force: true });
-}
-
-async function renameSession(
-  page: SvvyApp["page"],
-  title: string,
-  nextTitle: string,
-): Promise<void> {
-  await openSessionActions(page, title);
-  await page.getByRole("button", { name: "Rename" }).click();
-  const dialog = page.getByRole("dialog", { name: "Rename Session" });
-  await dialog.waitFor({ state: "visible" });
-  await dialog.locator('input[placeholder="Session title"]').fill(nextTitle);
-  await dialog.getByRole("button", { name: "Save" }).click();
-  await page.getByRole("button", { name: `Session actions for ${nextTitle}` }).waitFor({
-    state: "visible",
-  });
 }
 
 async function writeCorruptedSessionFile(
@@ -100,17 +83,19 @@ test("a corrupted session file does not crash boot and falls back to a fresh ses
       },
       async ({ page }) => {
         await expectBootState(page, {
-          titles: ["New Session"],
-          activeTitle: "New Session",
+          titles: ["New orchestrator"],
+          activeTitle: "New orchestrator",
+          surfaceTitle: "New orchestrator",
         });
-        expect(await page.locator(".session-branch").count()).toBe(0);
+        expect(await page.locator('[aria-label="Forked session"]').count()).toBe(0);
       },
     );
 
     await withSvvyApp({ homeDir }, async ({ page }) => {
       await expectBootState(page, {
-        titles: ["New Session"],
-        activeTitle: "New Session",
+        titles: ["New orchestrator"],
+        activeTitle: "New orchestrator",
+        surfaceTitle: "New orchestrator",
       });
     });
   });
@@ -119,7 +104,6 @@ test("a corrupted session file does not crash boot and falls back to a fresh ses
 test("an orphaned forked session still opens, stays labeled as a fork, and remains usable after relaunch", async () => {
   await withHomeDir(async (homeDir) => {
     const orphanTitle = "Orphaned Fork";
-    const recoveredTitle = "Recovered Fork";
 
     await withSvvyApp(
       {
@@ -157,23 +141,16 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
           titles: [orphanTitle],
           activeTitle: orphanTitle,
         });
-        expect(await page.locator(".session-branch").count()).toBe(1);
-
-        await renameSession(page, orphanTitle, recoveredTitle);
-        await expectBootState(page, {
-          titles: [recoveredTitle],
-          activeTitle: recoveredTitle,
-        });
-        expect(await page.locator(".session-branch").count()).toBe(1);
+        expect(await page.locator('[aria-label="Forked session"]').count()).toBe(1);
       },
     );
 
     await withSvvyApp({ homeDir }, async ({ page }) => {
       await expectBootState(page, {
-        titles: [recoveredTitle],
-        activeTitle: recoveredTitle,
+        titles: [orphanTitle],
+        activeTitle: orphanTitle,
       });
-      expect(await page.locator(".session-branch").count()).toBe(1);
+      expect(await page.locator('[aria-label="Forked session"]').count()).toBe(1);
     });
   });
 });

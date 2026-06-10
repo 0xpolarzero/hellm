@@ -1,13 +1,11 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ToolCall, ToolResultMessage, Usage } from "@mariozechner/pi-ai";
-import { parseArtifactsParams, type ArtifactsParams } from "./artifacts";
 import { getLatestAssistantUsage } from "./context-budget";
 
 export interface ProjectedToolCall {
   id: string;
   name: string;
   argumentsValue: ToolCall["arguments"];
-  artifactParams?: ArtifactsParams;
   attempt: number;
   totalAttempts: number;
 }
@@ -15,7 +13,6 @@ export interface ProjectedToolCall {
 export interface ConversationProjection {
   visibleMessages: AgentMessage[];
   toolCallsById: Map<string, ProjectedToolCall>;
-  artifactResultTextById: Map<string, string>;
   toolResultsById: Map<string, ToolResultMessage>;
   usage: Usage;
   latestContextUsage: Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null;
@@ -62,14 +59,6 @@ function addUsage(total: Usage, usage: Usage): void {
   total.cost.total += usage.cost.total;
 }
 
-function toolResultText(message: ToolResultMessage): string {
-  return message.content
-    .filter((block): block is { type: "text"; text: string } => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-}
-
 function countToolCalls(message: AssistantMessage | null | undefined): number {
   if (!message) return 0;
   return message.content.filter((block) => block.type === "toolCall").length;
@@ -82,7 +71,6 @@ function retryKey(chainId: number, toolName: string): string {
 export function projectConversation(messages: AgentMessage[]): ConversationProjection {
   const visibleMessages: AgentMessage[] = [];
   const toolCallsById = new Map<string, ProjectedToolCall>();
-  const artifactResultTextById = new Map<string, string>();
   const toolResultsById = new Map<string, ToolResultMessage>();
   const usage = createUsage();
   const retryAttemptByKey = new Map<string, number>();
@@ -130,14 +118,10 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
         retryKeyByToolCallId.set(block.id, key);
         retryTotalByKey.set(key, attempt);
         toolNamesSeenInMessage.add(block.name);
-        const artifactParams =
-          block.name === "artifacts" ? parseArtifactsParams(block.arguments) : undefined;
-
         toolCallsById.set(block.id, {
           id: block.id,
           name: block.name,
           argumentsValue: block.arguments,
-          artifactParams: artifactParams ?? undefined,
           attempt,
           totalAttempts: 1,
         });
@@ -154,10 +138,6 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
       visibleMessages.push(message);
       lastActivity = message.timestamp;
       toolResultsById.set(message.toolCallId, message);
-
-      if (message.toolName === "artifacts") {
-        artifactResultTextById.set(message.toolCallId, toolResultText(message));
-      }
     }
   }
 
@@ -170,7 +150,6 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
   return {
     visibleMessages,
     toolCallsById,
-    artifactResultTextById,
     toolResultsById,
     usage,
     latestContextUsage: getLatestAssistantUsage(messages),

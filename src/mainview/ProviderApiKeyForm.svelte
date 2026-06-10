@@ -25,6 +25,7 @@
 	}));
 
 	const formState = form.useStore();
+	const hasUnsavedChanges = $derived(formState.current.isDirty);
 
 	function submit() {
 		void form.handleSubmit().catch((error) => {
@@ -50,7 +51,7 @@
 		variant="primary"
 		size="xs"
 		onclick={submit}
-		disabled={!formState.current.canSubmit || formState.current.isSubmitting}
+		disabled={!formState.current.canSubmit || !hasUnsavedChanges || formState.current.isSubmitting}
 	>
 		{formState.current.isSubmitting ? "Saving" : "Save"}
 	</Button>

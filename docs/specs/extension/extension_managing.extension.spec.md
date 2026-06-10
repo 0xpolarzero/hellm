@@ -34,10 +34,10 @@ callable belongs to
 
 Default usage state:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | available |
-| Handler | available |
+| Actor kind          | State       |
+| ------------------- | ----------- |
+| Orchestrator        | available   |
+| Handler             | available   |
 | Workflow task agent | unavailable |
 
 It is available rather than default-loaded for ordinary orchestrators and handlers because most
@@ -417,8 +417,13 @@ Generated agent context aggregates use a real lightweight cache:
 - cache hits must validate the indexed blob exists and matches the blob manifest before use
 - cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
   `blobs/<aggregate-cache-key>/`
-- session bindings store only the aggregate cache key and can regenerate the aggregate when the cache
-  entry is missing
+- session, handler-thread, and workflow task-attempt generated-context bindings store the aggregate
+  cache key plus the exact generated aggregate payload they received: `prompt.md`,
+  `svvyx-guidance.md`, `commands.d.ts`, `native-tool-schemas.json`, the generated context
+  fingerprint, loaded and available extension ids, and external source hashes
+- bindings use the aggregate cache key for traceability and cache reuse, but historical inspection
+  uses the durable bound payload; if a cache entry is missing, new/current aggregate generation can
+  regenerate it from current source inputs without changing older bound payloads
 - aggregate cache deletion is always safe; it must never be treated as deleting product history
 - aggregate cache pruning is based only on cache mechanics and must not encode product semantics; the
   v1 default cache budget is 256 MiB total under `generated/aggregates/blobs/`, with entries unused
@@ -452,19 +457,19 @@ surface.
 
 Revertability:
 
-| Change kind | Revert behavior |
-| --- | --- |
-| Agent `apply_patch` touching app-owned extension files | Revert the whole recorded change, not individual files. |
-| `instructions add`, `instructions remove`, `instructions rename`, `instructions reorder` | Restore the previous full instruction file set and filenames recorded by that lifecycle change. |
-| `instructions configure` | Restore the previous instruction-file config recorded by that lifecycle change. |
-| `set-usage` | Restore the previous usage state for that extension/profile pair. |
-| `reset` | Restore the pre-reset files and usage/product state recorded by that reset change. |
-| `delete` | Restore the extension directory from app-managed trash and restore its registry state. |
-| `create` | No revert affordance; the UI may show Delete for the created extension. |
-| `build` | No user-facing rollback or activation command. Build status may be shown as indicators only; the current build is replaced atomically after success. |
-| Dependency install | No rollback promise. Reverting source, manifest, or package changes can make dependency identities disappear for future builds, but package caches, Bun lifecycle-script effects, and installed artifacts are not reverted. |
-| Secret entry, update, or removal | Not agent-readable and not part of Extension Managing revert. |
-| External shell side effects | Not reverted by Extension Managing. |
+| Change kind                                                                              | Revert behavior                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent `apply_patch` touching app-owned extension files                                   | Revert the whole recorded change, not individual files.                                                                                                                                                                     |
+| `instructions add`, `instructions remove`, `instructions rename`, `instructions reorder` | Restore the previous full instruction file set and filenames recorded by that lifecycle change.                                                                                                                             |
+| `instructions configure`                                                                 | Restore the previous instruction-file config recorded by that lifecycle change.                                                                                                                                             |
+| `set-usage`                                                                              | Restore the previous usage state for that extension/profile pair.                                                                                                                                                           |
+| `reset`                                                                                  | Restore the pre-reset files and usage/product state recorded by that reset change.                                                                                                                                          |
+| `delete`                                                                                 | Restore the extension directory from app-managed trash and restore its registry state.                                                                                                                                      |
+| `create`                                                                                 | No revert affordance; the UI may show Delete for the created extension.                                                                                                                                                     |
+| `build`                                                                                  | No user-facing rollback or activation command. Build status may be shown as indicators only; the current build is replaced atomically after success.                                                                        |
+| Dependency install                                                                       | No rollback promise. Reverting source, manifest, or package changes can make dependency identities disappear for future builds, but package caches, Bun lifecycle-script effects, and installed artifacts are not reverted. |
+| Secret entry, update, or removal                                                         | Not agent-readable and not part of Extension Managing revert.                                                                                                                                                               |
+| External shell side effects                                                              | Not reverted by Extension Managing.                                                                                                                                                                                         |
 
 File-level revert rules:
 
@@ -574,7 +579,7 @@ svvyx extension command source is an Incur CLI module.
 The module should default-export the CLI:
 
 ```ts
-export default cli
+export default cli;
 ```
 
 Do not call `cli.serve()` from the extension module. svvy invokes the default-exported CLI through
@@ -1241,16 +1246,16 @@ contract.
 
 Common lifecycle error codes:
 
-| Code | Meaning |
-| --- | --- |
-| `INSTRUCTIONS_NOT_EDITABLE` | The target extension has no editable app-owned instruction storage for the requested instruction-file lifecycle command. |
-| `EXTERNAL_INSTRUCTION_READONLY` | The target is an `external_instruction` record whose source file is outside Extension Managing ownership. |
-| `INVALID_INSTRUCTION_FILENAME` | A requested instruction basename is not an accepted Markdown basename under `instructions/full/`. |
-| `INSTRUCTION_FILE_EXISTS` | A requested target basename already exists. |
-| `INSTRUCTION_FILE_NOT_FOUND` | A requested source basename is not a current full instruction file. |
-| `INVALID_INSTRUCTION_CONFIG` | A requested instruction-file config value is not valid for the setting being changed. |
-| `INVALID_INSTRUCTION_ORDER` | A reorder request omitted, duplicated, or named an unknown full instruction file. |
-| `INSTRUCTION_RENAME_COLLISION` | A lifecycle command cannot complete without a case-sensitive or case-insensitive filename collision. |
+| Code                            | Meaning                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `INSTRUCTIONS_NOT_EDITABLE`     | The target extension has no editable app-owned instruction storage for the requested instruction-file lifecycle command. |
+| `EXTERNAL_INSTRUCTION_READONLY` | The target is an `external_instruction` record whose source file is outside Extension Managing ownership.                |
+| `INVALID_INSTRUCTION_FILENAME`  | A requested instruction basename is not an accepted Markdown basename under `instructions/full/`.                        |
+| `INSTRUCTION_FILE_EXISTS`       | A requested target basename already exists.                                                                              |
+| `INSTRUCTION_FILE_NOT_FOUND`    | A requested source basename is not a current full instruction file.                                                      |
+| `INVALID_INSTRUCTION_CONFIG`    | A requested instruction-file config value is not valid for the setting being changed.                                    |
+| `INVALID_INSTRUCTION_ORDER`     | A reorder request omitted, duplicated, or named an unknown full instruction file.                                        |
+| `INSTRUCTION_RENAME_COLLISION`  | A lifecycle command cannot complete without a case-sensitive or case-insensitive filename collision.                     |
 
 ## `inspect`
 
@@ -1262,10 +1267,10 @@ svvyx extensions inspect <id> --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                   |
+| --------- | -------- | ----------------------------- |
+| `<id>`    | yes      | Stable extension id.          |
+| `--json`  | no       | Return machine-readable JSON. |
 
 JSON shape:
 
@@ -1671,14 +1676,14 @@ svvyx extensions create \
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `--id` | yes | Stable extension id. |
-| `--title` | yes | User-facing title. |
-| `--description` | yes | Short user-facing description. |
-| `--interface` | yes | `instructions` or `svvyx`. `native_tool` is reserved for app-owned builtin extensions and cannot be created through Extension Managing. |
-| `--typescript-api` | no | Boolean. Defaults to `false`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter          | Required | Description                                                                                                                             |
+| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--id`             | yes      | Stable extension id.                                                                                                                    |
+| `--title`          | yes      | User-facing title.                                                                                                                      |
+| `--description`    | yes      | Short user-facing description.                                                                                                          |
+| `--interface`      | yes      | `instructions` or `svvyx`. `native_tool` is reserved for app-owned builtin extensions and cannot be created through Extension Managing. |
+| `--typescript-api` | no       | Boolean. Defaults to `false`.                                                                                                           |
+| `--json`           | no       | Return machine-readable JSON.                                                                                                           |
 
 `--id` must satisfy the architecture-wide extension id rules in
 `docs/specs/extensions-and-tools.spec.md`. It must not collide with a builtin extension, existing
@@ -1829,11 +1834,11 @@ svvyx extensions instructions add <id> --name 020-domain-guide.md --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--name` | yes | New Markdown basename under `instructions/full/`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                                       |
+| --------- | -------- | ------------------------------------------------- |
+| `<id>`    | yes      | Stable extension id.                              |
+| `--name`  | yes      | New Markdown basename under `instructions/full/`. |
+| `--json`  | no       | Return machine-readable JSON.                     |
 
 Result:
 
@@ -1874,12 +1879,12 @@ svvyx extensions instructions rename <id> --from 020-domain-guide.md --to 030-do
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--from` | yes | Existing Markdown basename under `instructions/full/`. |
-| `--to` | yes | New Markdown basename under `instructions/full/`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                                            |
+| --------- | -------- | ------------------------------------------------------ |
+| `<id>`    | yes      | Stable extension id.                                   |
+| `--from`  | yes      | Existing Markdown basename under `instructions/full/`. |
+| `--to`    | yes      | New Markdown basename under `instructions/full/`.      |
+| `--json`  | no       | Return machine-readable JSON.                          |
 
 Result:
 
@@ -1918,11 +1923,11 @@ svvyx extensions instructions remove <id> --name 030-domain-guide.md --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--name` | yes | Existing Markdown basename under `instructions/full/`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                                            |
+| --------- | -------- | ------------------------------------------------------ |
+| `<id>`    | yes      | Stable extension id.                                   |
+| `--name`  | yes      | Existing Markdown basename under `instructions/full/`. |
+| `--json`  | no       | Return machine-readable JSON.                          |
 
 Result:
 
@@ -1964,11 +1969,11 @@ svvyx extensions instructions reorder <id> \
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--file` | yes | Repeat once for every current full instruction basename, in desired order. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                                                                |
+| --------- | -------- | -------------------------------------------------------------------------- |
+| `<id>`    | yes      | Stable extension id.                                                       |
+| `--file`  | yes      | Repeat once for every current full instruction basename, in desired order. |
+| `--json`  | no       | Return machine-readable JSON.                                              |
 
 Result:
 
@@ -2043,12 +2048,12 @@ svvyx extensions instructions configure <id> \
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--file` | yes | Existing Markdown basename under `instructions/full/`. |
-| `--bypassed` | yes | Exact boolean string `true` or `false`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter    | Required | Description                                            |
+| ------------ | -------- | ------------------------------------------------------ |
+| `<id>`       | yes      | Stable extension id.                                   |
+| `--file`     | yes      | Existing Markdown basename under `instructions/full/`. |
+| `--bypassed` | yes      | Exact boolean string `true` or `false`.                |
+| `--json`     | no       | Return machine-readable JSON.                          |
 
 Result when the value changes:
 
@@ -2132,10 +2137,10 @@ svvyx extensions build <id> --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                   |
+| --------- | -------- | ----------------------------- |
+| `<id>`    | yes      | Stable extension id.          |
+| `--json`  | no       | Return machine-readable JSON. |
 
 Successful builds always activate the new generated extension context for future extension
 resolution. There is no separate user-facing activation command and no user-facing build rollback
@@ -2533,12 +2538,12 @@ svvyx extensions set-usage \
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `--extension` | yes | Stable extension id. |
-| `--agent-profile` | yes | Agent profile id. |
-| `--state` | yes | `default_loaded`, `available`, or `unavailable`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter         | Required | Description                                      |
+| ----------------- | -------- | ------------------------------------------------ |
+| `--extension`     | yes      | Stable extension id.                             |
+| `--agent-profile` | yes      | Agent profile id.                                |
+| `--state`         | yes      | `default_loaded`, `available`, or `unavailable`. |
+| `--json`          | no       | Return machine-readable JSON.                    |
 
 Example output:
 
@@ -2579,11 +2584,11 @@ svvyx extensions reset <id> --scope instructions --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--scope` | yes | `metadata`, `instructions`, `source`, `usage`, or `all`. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                                              |
+| --------- | -------- | -------------------------------------------------------- |
+| `<id>`    | yes      | Stable extension id.                                     |
+| `--scope` | yes      | `metadata`, `instructions`, `source`, `usage`, or `all`. |
+| `--json`  | no       | Return machine-readable JSON.                            |
 
 For `--scope instructions`, reset applies to the complete instruction source set:
 
@@ -2639,10 +2644,10 @@ svvyx extensions delete <id> --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<id>` | yes | Stable extension id. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter | Required | Description                   |
+| --------- | -------- | ----------------------------- |
+| `<id>`    | yes      | Stable extension id.          |
+| `--json`  | no       | Return machine-readable JSON. |
 
 Example output:
 
@@ -2682,10 +2687,10 @@ svvyx extensions revert <change-id> --json
 
 Parameters:
 
-| Parameter | Required | Description |
-| --- | --- | --- |
-| `<change-id>` | yes | Previous reversible Extension Managing or extension-file change id. |
-| `--json` | no | Return machine-readable JSON. |
+| Parameter     | Required | Description                                                         |
+| ------------- | -------- | ------------------------------------------------------------------- |
+| `<change-id>` | yes      | Previous reversible Extension Managing or extension-file change id. |
+| `--json`      | no       | Return machine-readable JSON.                                       |
 
 Usage revert example:
 

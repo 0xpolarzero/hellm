@@ -19,12 +19,12 @@ export interface PaneLocalState {
 export type DockviewPanelChromeKind =
   | "orchestrator"
   | "handler-thread"
-  | "workflow-inspector"
   | "artifact"
-  | "project-ci"
-  | "saved-workflow-library"
-  | "prompt-library"
+  | "workflows"
   | "agents"
+  | "extensions"
+  | "snippets"
+  | "settings"
   | "app-logs"
   | "open-workspace"
   | "command"
@@ -47,10 +47,52 @@ export interface DockviewPanelRestoreState {
   lastKnownLocationLabel: string | null;
 }
 
-export interface DockviewPanelPlacementState {
-  referencePanelId: string;
-  direction: DockviewSplitDirection;
-  size?: number;
+export type DockviewPanelPlacementState =
+  | {
+      kind: "split";
+      referencePanelId: string;
+      direction: DockviewSplitDirection;
+      size?: number;
+    }
+  | {
+      kind: "tab";
+      groupId: string;
+      index?: number;
+    }
+  | {
+      kind: "edge";
+      direction: DockviewSplitDirection;
+      size?: number;
+    }
+  | {
+      kind: "floating";
+      box?: { x: number; y: number; width: number; height: number };
+    }
+  | {
+      kind: "popout";
+      box?: { left: number; top: number; width: number; height: number };
+    };
+
+type DockviewFloatingPlacementBox = Extract<
+  DockviewPanelPlacementState,
+  { kind: "floating" }
+>["box"];
+type DockviewPopoutPlacementBox = Extract<DockviewPanelPlacementState, { kind: "popout" }>["box"];
+
+export type DockviewPaneLocationKind = "tab" | "edge" | "floating" | "popout";
+
+export interface DockviewOpenPaneLocation {
+  paneId: string;
+  panelId: string;
+  label: string;
+  focused: boolean;
+  kind: DockviewPaneLocationKind;
+}
+
+export interface DockviewTabGroupPlacementTarget {
+  groupId: string;
+  label: string;
+  panelIds: string[];
 }
 
 export interface WorkspaceDockviewPanelState {
@@ -70,18 +112,7 @@ export interface CompactThreadSurfaceState {
   density: PaneLocalState["timelineDensity"];
 }
 
-export interface CompactWorkflowRunSurfaceState {
-  kind: "compact-workflow-run";
-  workspaceSessionId: string;
-  threadId: string;
-  workflowRunId: string;
-  panelId: string | null;
-  density: PaneLocalState["timelineDensity"];
-}
-
-export type CompactWorkspaceSurfaceState =
-  | CompactThreadSurfaceState
-  | CompactWorkflowRunSurfaceState;
+export type CompactWorkspaceSurfaceState = CompactThreadSurfaceState;
 
 export interface WorkspaceDockviewLayoutState {
   dockview: SerializedDockview | null;
@@ -152,14 +183,16 @@ export function createPanelChrome(
         "handler-thread",
         true,
       );
-    case "workflow-inspector":
-      return chrome("Workflow Inspector", binding.workflowRunId, "workflow-inspector", true);
-    case "saved-workflow-library":
-      return chrome("Workflows", ".svvy/workflows", "saved-workflow-library", true);
-    case "prompt-library":
-      return chrome("Context", "instructions", "prompt-library", true);
+    case "workflows":
+      return chrome("Workflows", "@svvy/workflows", "workflows", true);
     case "agents":
       return chrome("Agents", "profiles", "agents", true);
+    case "extensions":
+      return chrome("Extensions", "inventory", "extensions", true);
+    case "snippets":
+      return chrome("Snippets", "prompt macros", "snippets", true);
+    case "settings":
+      return chrome("Settings", "preferences", "settings", true);
     case "app-logs":
       return chrome("Logs", "workspace", "app-logs", true);
     case "open-workspace":
@@ -175,8 +208,6 @@ export function createPanelChrome(
       );
     case "artifact":
       return chrome("Artifact", binding.artifactId, "artifact", true);
-    case "project-ci-check":
-      return chrome("Project CI Check", binding.checkResultId, "project-ci", true);
   }
 }
 
@@ -194,6 +225,39 @@ export function createDockviewPanelState(
     restore: {
       unavailableReason: null,
       lastKnownLocationLabel: null,
+    },
+  };
+}
+
+export function createUnavailableDockviewPanelState(
+  panelId: string,
+  input: {
+    reason: string;
+    lastKnownLocationLabel?: string | null;
+    localState?: PaneLocalState;
+    placement?: DockviewPanelPlacementState | null;
+    title?: string | null;
+  },
+): WorkspaceDockviewPanelState {
+  return {
+    panelId,
+    binding: null,
+    localState: input.localState
+      ? structuredClone(input.localState)
+      : createDefaultPaneLocalState(),
+    chrome: {
+      title: "Surface unavailable",
+      subtitle: input.title ?? null,
+      icon: null,
+      kind: "unavailable",
+      closable: true,
+      floatable: true,
+      popoutable: false,
+    },
+    placement: input.placement ? { ...input.placement } : null,
+    restore: {
+      unavailableReason: input.reason,
+      lastKnownLocationLabel: input.lastKnownLocationLabel ?? null,
     },
   };
 }
@@ -226,18 +290,36 @@ export function normalizePaneLayout(
 
   const panels = rawPanels.flatMap((panel) => {
     const next = panel as Partial<WorkspaceDockviewPanelState>;
-    if (!next.binding) {
-      return [];
-    }
-    const binding = normalizePaneBinding(next.binding);
-    if (!binding) {
-      return [];
-    }
     const localState = {
       ...createDefaultPaneLocalState(),
       scroll: next.localState?.scroll ?? null,
       timelineDensity: next.localState?.timelineDensity === "compact" ? "compact" : "comfortable",
     } satisfies PaneLocalState;
+    const placement = normalizePlacement(next.placement);
+    const restore = {
+      unavailableReason: null,
+      lastKnownLocationLabel: null,
+      ...next.restore,
+    } satisfies DockviewPanelRestoreState;
+
+    if (!next.binding) {
+      if (next.chrome?.kind !== "unavailable" && !restore.unavailableReason) {
+        return [];
+      }
+      return [
+        createUnavailableDockviewPanelState(String(next.panelId ?? createPanelId()), {
+          reason: restore.unavailableReason ?? "The restored surface is unavailable.",
+          lastKnownLocationLabel: restore.lastKnownLocationLabel,
+          localState,
+          placement,
+          title: next.chrome?.subtitle ?? null,
+        }),
+      ];
+    }
+    const binding = normalizePaneBinding(next.binding);
+    if (!binding) {
+      return [];
+    }
     return [
       {
         panelId: String(next.panelId ?? createPanelId()),
@@ -247,12 +329,8 @@ export function normalizePaneLayout(
           ...createPanelChrome(binding),
           ...next.chrome,
         },
-        placement: normalizePlacement(next.placement),
-        restore: {
-          unavailableReason: null,
-          lastKnownLocationLabel: null,
-          ...next.restore,
-        },
+        placement,
+        restore,
       },
     ];
   });
@@ -273,11 +351,46 @@ export function normalizePaneLayout(
     dockview,
     panels,
     compactSurfaces: Array.isArray(layout.compactSurfaces)
-      ? layout.compactSurfaces.map((surface) => ({ ...surface }))
+      ? layout.compactSurfaces.flatMap(normalizeCompactSurfaceState)
       : [],
     focusedPanelId,
     updatedAt: now,
   };
+}
+
+function normalizeCompactSurfaceState(value: unknown): CompactWorkspaceSurfaceState[] {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const surface = value as Partial<CompactWorkspaceSurfaceState>;
+  const panelId =
+    surface.panelId === null || typeof surface.panelId === "string" ? surface.panelId : null;
+  const density =
+    surface.density === "compact" || surface.density === "comfortable" ? surface.density : null;
+  if (!density) {
+    return [];
+  }
+
+  switch (surface.kind) {
+    case "compact-thread":
+      return typeof surface.workspaceSessionId === "string" &&
+        surface.workspaceSessionId.length > 0 &&
+        typeof surface.threadId === "string" &&
+        surface.threadId.length > 0
+        ? [
+            {
+              kind: "compact-thread",
+              workspaceSessionId: surface.workspaceSessionId,
+              threadId: surface.threadId,
+              panelId,
+              density,
+            },
+          ]
+        : [];
+    default:
+      return [];
+  }
 }
 
 function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null {
@@ -309,17 +422,6 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
             surface: "thread",
             surfacePiSessionId: binding.surfacePiSessionId,
             threadId: binding.threadId,
-          } satisfies WorkspacePaneSurfaceTarget)
-        : null;
-    case "workflow-inspector":
-      return typeof binding.workspaceSessionId === "string" &&
-        binding.workspaceSessionId.length > 0 &&
-        typeof binding.workflowRunId === "string" &&
-        binding.workflowRunId.length > 0
-        ? ({
-            workspaceSessionId: binding.workspaceSessionId,
-            surface: "workflow-inspector",
-            workflowRunId: binding.workflowRunId,
           } satisfies WorkspacePaneSurfaceTarget)
         : null;
     case "command":
@@ -355,25 +457,19 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
             artifactId: binding.artifactId,
           } satisfies WorkspacePaneSurfaceTarget)
         : null;
-    case "project-ci-check":
-      return typeof binding.workspaceSessionId === "string" &&
-        binding.workspaceSessionId.length > 0 &&
-        typeof binding.checkResultId === "string" &&
-        binding.checkResultId.length > 0
-        ? ({
-            workspaceSessionId: binding.workspaceSessionId,
-            surface: "project-ci-check",
-            checkResultId: binding.checkResultId,
-          } satisfies WorkspacePaneSurfaceTarget)
-        : null;
-    case "saved-workflow-library":
-      return { surface: "saved-workflow-library" };
-    case "prompt-library":
-      return typeof binding.workspaceSessionId === "string" && binding.workspaceSessionId.length > 0
-        ? { surface: "prompt-library", workspaceSessionId: binding.workspaceSessionId }
-        : { surface: "prompt-library" };
+    case "workflows":
+      return { surface: "workflows" };
     case "agents":
-      return { surface: "agents" };
+      return typeof binding.targetAgentProfileId === "string" &&
+        binding.targetAgentProfileId.length > 0
+        ? { surface: "agents", targetAgentProfileId: binding.targetAgentProfileId }
+        : { surface: "agents" };
+    case "extensions":
+      return { surface: "extensions" };
+    case "snippets":
+      return { surface: "snippets" };
+    case "settings":
+      return { surface: "settings" };
     case "app-logs":
       return typeof binding.workspaceSessionId === "string" && binding.workspaceSessionId.length > 0
         ? { surface: "app-logs", workspaceSessionId: binding.workspaceSessionId }
@@ -394,7 +490,15 @@ export function bindPane(
     ...layout,
     panels: layout.panels.map((panel) =>
       panel.panelId === panelId
-        ? { ...panel, binding: binding ? { ...binding } : null, chrome: createPanelChrome(binding) }
+        ? {
+            ...panel,
+            binding: binding ? { ...binding } : null,
+            chrome: createPanelChrome(binding),
+            restore: {
+              unavailableReason: null,
+              lastKnownLocationLabel: null,
+            },
+          }
         : panel,
     ),
     focusedPanelId: panelId,
@@ -470,6 +574,7 @@ export function splitPane(
   }
   const binding = { ...source.binding };
   return addDockviewPanel(layout, binding, options.nextPaneId ?? createPanelId(), {
+    kind: "split",
     referencePanelId: panelId,
     direction,
     size: options.size,
@@ -481,6 +586,38 @@ export function closePane(
   panelId: string,
 ): WorkspaceDockviewLayoutState {
   return removeDockviewPanel(layout, panelId);
+}
+
+export function markDockviewPanelUnavailable(
+  layout: WorkspaceDockviewLayoutState,
+  panelId: string,
+  reason: string,
+): WorkspaceDockviewLayoutState {
+  let changed = false;
+  const panels = layout.panels.map((panel) => {
+    if (panel.panelId !== panelId) {
+      return panel;
+    }
+    changed = true;
+    return createUnavailableDockviewPanelState(panel.panelId, {
+      reason,
+      lastKnownLocationLabel: panel.restore?.lastKnownLocationLabel ?? null,
+      localState: panel.localState,
+      placement: panel.placement ?? null,
+      title: panel.chrome?.title ?? null,
+    });
+  });
+  if (!changed) {
+    return layout;
+  }
+  return touch({
+    ...layout,
+    panels,
+    focusedPanelId:
+      layout.focusedPanelId && panels.some((panel) => panel.panelId === layout.focusedPanelId)
+        ? layout.focusedPanelId
+        : (panels[0]?.panelId ?? null),
+  });
 }
 
 export function setDockviewSerializedLayout(
@@ -499,16 +636,205 @@ export function setDockviewSerializedLayout(
 export function getOpenPaneLocations(
   layout: WorkspaceDockviewLayoutState,
   predicate: (binding: WorkspacePaneSurfaceTarget) => boolean,
-): { paneId: string; panelId: string; label: string; focused: boolean }[] {
+): DockviewOpenPaneLocation[] {
+  const dockviewLocations = getDockviewPaneLocationLabels(layout);
   return layout.panels
     .filter((panel) => panel.binding && predicate(panel.binding))
     .map((panel, index) => ({
       paneId: panel.panelId,
       panelId: panel.panelId,
+      ...(dockviewLocations.get(panel.panelId) ?? getFallbackPaneLocation(panel, index)),
       label:
-        panel.restore?.lastKnownLocationLabel ?? (index === 0 ? "Docked" : `Docked ${index + 1}`),
+        panel.restore?.lastKnownLocationLabel ??
+        dockviewLocations.get(panel.panelId)?.label ??
+        getFallbackPaneLocation(panel, index).label,
       focused: panel.panelId === layout.focusedPanelId,
     }));
+}
+
+export function getDockviewTabGroupPlacementTargets(
+  layout: WorkspaceDockviewLayoutState,
+): DockviewTabGroupPlacementTarget[] {
+  if (!layout.dockview) return [];
+  const knownPanelIds = new Set(layout.panels.map((panel) => panel.panelId));
+  return collectGridGroups(layout.dockview.grid?.root)
+    .map((group) => ({
+      groupId: group.groupId,
+      panelIds: group.panelIds.filter((panelId) => knownPanelIds.has(panelId)),
+    }))
+    .filter((group) => group.panelIds.length > 0)
+    .map((group, index) => ({
+      ...group,
+      label: formatPaneLocationLabel("tab", index + 1),
+    }));
+}
+
+function getDockviewPaneLocationLabels(
+  layout: WorkspaceDockviewLayoutState,
+): Map<string, { label: string; kind: DockviewPaneLocationKind }> {
+  const locations = new Map<string, { label: string; kind: DockviewPaneLocationKind }>();
+  if (!layout.dockview) return locations;
+
+  let gridGroupIndex = 0;
+  collectGridGroupLocations(layout.dockview.grid?.root, () => {
+    gridGroupIndex += 1;
+    return gridGroupIndex;
+  }).forEach((location, panelId) => locations.set(panelId, location));
+
+  for (const [groupIndex, group] of (layout.dockview.floatingGroups ?? []).entries()) {
+    collectGroupViewLocations(
+      group.data,
+      "floating",
+      formatPaneLocationLabel("floating", groupIndex + 1),
+    ).forEach((location, panelId) => locations.set(panelId, location));
+  }
+
+  for (const [groupIndex, group] of (layout.dockview.popoutGroups ?? []).entries()) {
+    collectGroupViewLocations(
+      group.data,
+      "popout",
+      formatPaneLocationLabel("popout", groupIndex + 1),
+    ).forEach((location, panelId) => locations.set(panelId, location));
+  }
+
+  const edgeGroups = layout.dockview.edgeGroups;
+  if (edgeGroups) {
+    for (const position of ["top", "right", "bottom", "left"] as const) {
+      const edgeGroup = edgeGroups[position];
+      if (!edgeGroup) continue;
+      for (const panelId of collectViewsFromUnknown(edgeGroup.group)) {
+        locations.set(panelId, {
+          kind: "edge",
+          label: `Edge ${position}`,
+        });
+      }
+    }
+  }
+
+  return locations;
+}
+
+function collectGridGroupLocations(
+  node: unknown,
+  nextGroupIndex: () => number,
+): Map<string, { label: string; kind: DockviewPaneLocationKind }> {
+  const locations = new Map<string, { label: string; kind: DockviewPaneLocationKind }>();
+  if (!node || typeof node !== "object") return locations;
+  const value = node as { type?: unknown; data?: unknown };
+  if (value.type === "leaf") {
+    const groupIndex = nextGroupIndex();
+    collectGroupViewLocations(
+      value.data,
+      "tab",
+      formatPaneLocationLabel("tab", groupIndex),
+    ).forEach((location, panelId) => locations.set(panelId, location));
+    return locations;
+  }
+  if (value.type === "branch" && Array.isArray(value.data)) {
+    for (const child of value.data) {
+      collectGridGroupLocations(child, nextGroupIndex).forEach((location, panelId) =>
+        locations.set(panelId, location),
+      );
+    }
+  }
+  return locations;
+}
+
+function collectGridGroups(node: unknown): Array<{ groupId: string; panelIds: string[] }> {
+  if (!node || typeof node !== "object") return [];
+  const value = node as { type?: unknown; data?: unknown };
+  if (value.type === "leaf") {
+    const group = value.data as { id?: unknown } | null;
+    const groupId = typeof group?.id === "string" ? group.id : null;
+    const panelIds = collectViewsFromUnknown(value.data);
+    return groupId && panelIds.length > 0 ? [{ groupId, panelIds }] : [];
+  }
+  if (value.type === "branch" && Array.isArray(value.data)) {
+    return value.data.flatMap((child) => collectGridGroups(child));
+  }
+  return [];
+}
+
+function collectGroupViewLocations(
+  group: unknown,
+  kind: DockviewPaneLocationKind,
+  baseLabel: string,
+): Map<string, { label: string; kind: DockviewPaneLocationKind }> {
+  const locations = new Map<string, { label: string; kind: DockviewPaneLocationKind }>();
+  const views = collectViewsFromUnknown(group);
+  for (const [index, panelId] of views.entries()) {
+    locations.set(panelId, {
+      kind,
+      label: views.length > 1 ? `${baseLabel}, tab ${index + 1}` : baseLabel,
+    });
+  }
+  return locations;
+}
+
+function collectViewsFromUnknown(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const candidate = value as { views?: unknown; data?: unknown; group?: unknown };
+  if (Array.isArray(candidate.views)) {
+    return candidate.views.filter((view): view is string => typeof view === "string");
+  }
+  if (candidate.data) {
+    return collectViewsFromUnknown(candidate.data);
+  }
+  if (candidate.group) {
+    return collectViewsFromUnknown(candidate.group);
+  }
+  return [];
+}
+
+function getFallbackPaneLocation(
+  panel: WorkspaceDockviewPanelState,
+  index: number,
+): { label: string; kind: DockviewPaneLocationKind } {
+  if (panel.placement) {
+    switch (panel.placement.kind) {
+      case "split":
+        return { kind: "tab", label: `Split ${panel.placement.direction}` };
+      case "tab":
+        return { kind: "tab", label: formatPaneLocationLabel("tab", 1) };
+      case "edge":
+        return {
+          kind: "edge",
+          label: `Edge ${formatSplitDirectionLabel(panel.placement.direction)}`,
+        };
+      case "floating":
+        return { kind: "floating", label: "Floating" };
+      case "popout":
+        return { kind: "popout", label: "Popout" };
+    }
+  }
+  return {
+    kind: "tab",
+    label: index === 0 ? "Tab" : `Tab ${index + 1}`,
+  };
+}
+
+function formatSplitDirectionLabel(direction: DockviewSplitDirection): string {
+  switch (direction) {
+    case "above":
+      return "top";
+    case "below":
+      return "bottom";
+    default:
+      return direction;
+  }
+}
+
+function formatPaneLocationLabel(kind: DockviewPaneLocationKind, groupIndex: number): string {
+  switch (kind) {
+    case "floating":
+      return groupIndex === 1 ? "Floating" : `Floating ${groupIndex}`;
+    case "popout":
+      return groupIndex === 1 ? "Popout" : `Popout ${groupIndex}`;
+    case "edge":
+      return groupIndex === 1 ? "Edge" : `Edge ${groupIndex}`;
+    case "tab":
+      return groupIndex === 1 ? "Tab" : `Tab group ${groupIndex}`;
+  }
 }
 
 export function createPanelId(): string {
@@ -546,18 +872,80 @@ function normalizePlacement(value: unknown): DockviewPanelPlacementState | null 
   if (!value || typeof value !== "object") {
     return null;
   }
-  const candidate = value as Partial<DockviewPanelPlacementState>;
-  if (
-    typeof candidate.referencePanelId !== "string" ||
-    !["left", "right", "above", "below"].includes(String(candidate.direction))
-  ) {
-    return null;
-  }
-  return {
-    referencePanelId: candidate.referencePanelId,
-    direction: candidate.direction as DockviewSplitDirection,
-    size: typeof candidate.size === "number" ? candidate.size : undefined,
+  const candidate = value as {
+    kind?: unknown;
+    referencePanelId?: unknown;
+    groupId?: unknown;
+    direction?: unknown;
+    size?: unknown;
+    index?: unknown;
+    box?: unknown;
   };
+  if (
+    (candidate.kind === "split" || candidate.kind === undefined) &&
+    typeof candidate.referencePanelId === "string" &&
+    isSplitDirection(candidate.direction)
+  ) {
+    return {
+      kind: "split",
+      referencePanelId: candidate.referencePanelId,
+      direction: candidate.direction,
+      size: typeof candidate.size === "number" ? candidate.size : undefined,
+    };
+  }
+  if (candidate.kind === "tab" && typeof candidate.groupId === "string") {
+    return {
+      kind: "tab",
+      groupId: candidate.groupId,
+      index: typeof candidate.index === "number" ? candidate.index : undefined,
+    };
+  }
+  if (candidate.kind === "edge" && isSplitDirection(candidate.direction)) {
+    return {
+      kind: "edge",
+      direction: candidate.direction,
+      size: typeof candidate.size === "number" ? candidate.size : undefined,
+    };
+  }
+  if (candidate.kind === "floating") {
+    return {
+      kind: "floating",
+      box: normalizeFloatingBox(candidate.box),
+    };
+  }
+  if (candidate.kind === "popout") {
+    return {
+      kind: "popout",
+      box: normalizePopoutBox(candidate.box),
+    };
+  }
+  return null;
+}
+
+function isSplitDirection(value: unknown): value is DockviewSplitDirection {
+  return value === "left" || value === "right" || value === "above" || value === "below";
+}
+
+function normalizeFloatingBox(value: unknown): DockviewFloatingPlacementBox {
+  if (!value || typeof value !== "object") return undefined;
+  const box = value as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+  return typeof box.x === "number" &&
+    typeof box.y === "number" &&
+    typeof box.width === "number" &&
+    typeof box.height === "number"
+    ? { x: box.x, y: box.y, width: box.width, height: box.height }
+    : undefined;
+}
+
+function normalizePopoutBox(value: unknown): DockviewPopoutPlacementBox {
+  if (!value || typeof value !== "object") return undefined;
+  const box = value as { left?: unknown; top?: unknown; width?: unknown; height?: unknown };
+  return typeof box.left === "number" &&
+    typeof box.top === "number" &&
+    typeof box.width === "number" &&
+    typeof box.height === "number"
+    ? { left: box.left, top: box.top, width: box.width, height: box.height }
+    : undefined;
 }
 
 function isSerializedDockview(value: unknown): value is SerializedDockview {

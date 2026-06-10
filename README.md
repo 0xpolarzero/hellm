@@ -18,12 +18,12 @@ That keeps product-level reasoning in one place and implementation detail in the
 
 `svvy` uses separate agent surfaces with deliberately different context and tools:
 
-- **Orchestrator** owns strategy, routing, and final user-facing decisions. It can inspect and edit the repo with direct tools, use `execute_typescript` for typed batching, start handler threads with `thread.start`, and wait. It knows handlers can run workflows, but it does not receive `smithers.*` workflow tools.
-- **Handler threads** own one delegated objective. They get the same direct repo tools plus workflow-library tools, `request_context`, `smithers.*` workflow supervision tools, `wait`, and `thread.handoff`. They can run, inspect, repair, resume, or cancel workflow runs, then hand a durable episode back to the orchestrator.
-- **Workflow task agents** run inside a single Smithers task attempt. They receive only task-local repo/artifact tools plus `execute_typescript`, and they do not get orchestrator, handler, wait, or `smithers.*` control tools.
+- **Orchestrator** owns strategy, routing, and final user-facing decisions. It can inspect and edit the repo with Shell and Apply Patch, use `execute_typescript` for typed loaded-extension composition, start handler threads with `thread_start({ threads: [...] })`, and wait. It knows handlers can use Smithers through Shell, but it does not receive Smithers wrapper tools.
+- **Handler threads** own one delegated objective. They get the same repo tools plus Shell guidance for official Smithers CLI workflow work and report durable results back to the orchestrator.
+- **Workflow task agents** run inside a single Smithers task attempt. They receive task-local repo and artifact guidance plus `execute_typescript`, and they do not get orchestrator or handler controls.
 - **Namer** is a tiny no-tool agent that turns the first session prompt or handler objective into a short title.
 
-Prompt context is loaded through the pi system-prompt channel, with actor-specific generated instructions and generated tool/API contracts. Durable surface context, such as recent handoffs or the current handler objective, is reconstructed into the prompt body only when needed. Optional context packs are explicit and persisted on the handler thread; today `ci` can be preloaded with `thread.start({ context: ["ci"] })` or requested later with `request_context({ keys: ["ci"] })`.
+Prompt context is loaded through the pi system-prompt channel, with actor-specific generated instructions and generated tool/API contracts. Durable surface context, such as recent handoffs or the current handler objective, is reconstructed into the prompt body only when needed. No optional prompt context keys are part of the current product surface.
 
 ## Docs
 

@@ -3,12 +3,18 @@
   import type {
     WorkspaceArtifactPreview,
     WorkspaceCommandInspector,
-    WorkspaceProjectCiCheckSummary,
     StaticInspectorPaneTarget,
     WorkspaceWorkflowTaskAttemptInspector,
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
-  import { getCommandInspectorSections, getWorkspaceCommandStatusPresentation } from "./command-inspector";
+  import {
+    getCommandDiagnosticSections,
+    getCommandInspectorSections,
+    getCommandOutputSections,
+    getCommandPatchSections,
+    getCommandProgressSections,
+    getWorkspaceCommandStatusPresentation,
+  } from "./command-inspector";
   import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import Badge from "./ui/Badge.svelte";
 
@@ -41,12 +47,6 @@
       } else if (target.surface === "artifact") {
         title = "Artifact";
         content = await runtime.getArtifactPreview(target.artifactId, target.workspaceSessionId);
-      } else {
-        title = "Project CI Check";
-        const status = await runtime.getProjectCiStatus(target.workspaceSessionId);
-        content =
-          status.latestRun?.checks.find((check) => check.checkResultId === target.checkResultId) ??
-          { checkResultId: target.checkResultId, message: "Project CI check was not found." };
       }
     } catch (caught) {
       error = caught instanceof Error ? caught.message : "Unable to load inspector.";
@@ -78,16 +78,21 @@
     return Boolean(value) && typeof value === "object" && "artifactId" in value && "missingFile" in value;
   }
 
-  function isProjectCiCheck(value: unknown): value is WorkspaceProjectCiCheckSummary {
-    return Boolean(value) && typeof value === "object" && "checkResultId" in value && "checkId" in value;
-  }
-
   function commandTone(status: WorkspaceCommandInspector["status"]) {
     return getWorkspaceCommandStatusPresentation(status).tone;
   }
 
   function commandLabel(status: WorkspaceCommandInspector["status"]) {
     return getWorkspaceCommandStatusPresentation(status).label;
+  }
+
+  function childProgressSummary(child: WorkspaceCommandInspector["summaryChildren"][number]): string | null {
+    const latest = child.progressEvents?.at(-1);
+    if (!latest) {
+      return null;
+    }
+    const detail = latest.message || [latest.family, latest.command].filter(Boolean).join(" · ");
+    return [latest.phase ? `[${latest.phase}]` : "[progress]", detail].filter(Boolean).join(" ");
   }
 
   function artifactPreviewMode(artifact: WorkspaceArtifactPreview): "html" | "metadata" | "text" {
@@ -156,6 +161,30 @@
     {#if content.error}
       <p class="callout danger">{content.error}</p>
     {/if}
+    {#each getCommandDiagnosticSections(content) as section (section.id)}
+      <section class="inspector-section">
+        <h4>{section.title}</h4>
+        <div class="command-diagnostics">
+          {#each section.snapshots as snapshot (snapshot.eventId)}
+            <article class="command-diagnostic-snapshot">
+              <div>
+                <span>{snapshot.source}{snapshot.stage ? ` · ${snapshot.stage}` : ""}</span>
+                <time datetime={snapshot.at}>{snapshot.at}</time>
+              </div>
+              {#each snapshot.diagnostics as diagnostic, index (`${snapshot.eventId}:${index}`)}
+                <p>
+                  <strong>{diagnostic.severity ?? "diagnostic"}</strong>
+                  <span>{diagnostic.message}</span>
+                  {#if diagnostic.file}
+                    <code>{diagnostic.file}{diagnostic.line ? `:${diagnostic.line}` : ""}{diagnostic.column ? `:${diagnostic.column}` : ""}</code>
+                  {/if}
+                </p>
+              {/each}
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
     {#if content.artifacts.length > 0}
       <section class="inspector-section">
         <h4>Artifacts</h4>
@@ -170,6 +199,68 @@
         {/each}
       </section>
     {/if}
+    {#each getCommandPatchSections(content) as section (section.id)}
+      <section class="inspector-section">
+        <h4>{section.title}</h4>
+        <div class="patch-snapshots">
+          {#each section.snapshots as snapshot (snapshot.eventId)}
+            <article class="patch-snapshot">
+              <div>
+                <span>{snapshot.source}</span>
+                <time datetime={snapshot.at}>{snapshot.at}</time>
+              </div>
+              {#each snapshot.files as file (file.path)}
+                <p>
+                  <strong>{file.changeType}</strong>
+                  <code>{file.path}</code>
+                  <span>+{file.additions} / -{file.deletions}</span>
+                </p>
+              {/each}
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
+    {#each getCommandProgressSections(content) as section (section.id)}
+      <section class="inspector-section">
+        <h4>{section.title}</h4>
+        <div class="command-progress-events">
+          {#each section.events as event (event.eventId)}
+            <article class="command-progress-event">
+              <div>
+                <span>{event.source}{event.phase ? ` · ${event.phase}` : ""}</span>
+                <time datetime={event.at}>{event.at}</time>
+              </div>
+              <p>
+                {event.message || [event.family, event.command].filter(Boolean).join(" · ") || "Command progress"}
+              </p>
+              {#if event.progress !== undefined}
+                <progress max="1" value={event.progress}></progress>
+              {/if}
+              {#if event.facts}
+                <pre>{formatContent(event.facts)}</pre>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
+    {#each getCommandOutputSections(content) as section (section.id)}
+      <section class="inspector-section">
+        <h4>{section.title}</h4>
+        <div class="command-output-events">
+          {#each section.events as event (event.eventId)}
+            <article class={`command-output-event ${event.stream}`}>
+              <div>
+                <span>{event.source}</span>
+                <time datetime={event.at}>{event.at}</time>
+              </div>
+              <pre>{event.text}</pre>
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
     {#each getCommandInspectorSections(content) as section (section.id)}
       <section class="inspector-section">
         <h4>{section.title}</h4>
@@ -178,6 +269,9 @@
             <div>
               <strong>{child.title}</strong>
               <span>{child.toolName}</span>
+              {#if childProgressSummary(child)}
+                <span class="child-progress">{childProgressSummary(child)}</span>
+              {/if}
             </div>
             <Badge tone={commandTone(child.status)}>{commandLabel(child.status)}</Badge>
           </article>
@@ -245,26 +339,6 @@
         <pre>{formatContent(content)}</pre>
       </section>
     {/if}
-  {:else if isProjectCiCheck(content)}
-    <article class="inspector-summary">
-      <div>
-        <strong>{content.label}</strong>
-        <p>{content.summary}</p>
-      </div>
-      <Badge tone={content.status === "passed" ? "success" : content.status === "failed" ? "danger" : "warning"}>
-        {content.status}
-      </Badge>
-    </article>
-    <div class="metadata-grid">
-      <span>Kind</span>
-      <code>{content.kind}</code>
-      <span>Required</span>
-      <code>{content.required ? "yes" : "no"}</code>
-      {#if content.command}
-        <span>Command</span>
-        <code>{content.command.join(" ")}</code>
-      {/if}
-    </div>
   {:else}
     <pre>{formatContent(content)}</pre>
   {/if}
@@ -363,6 +437,11 @@
     line-height: 1.45;
   }
 
+  .child-row .child-progress {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+  }
+
   .metadata-grid {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
@@ -408,6 +487,217 @@
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-code) 92%, transparent);
     font-size: var(--text-sm);
+  }
+
+  .command-output-events {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .command-progress-events {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .command-diagnostics {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .command-diagnostic-snapshot {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-warning) 30%, var(--ui-border-soft));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .command-diagnostic-snapshot > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .command-diagnostic-snapshot > div span,
+  .command-diagnostic-snapshot > div time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .command-diagnostic-snapshot p {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.55rem;
+    align-items: start;
+    min-width: 0;
+    margin: 0;
+    padding: 0.42rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 38%, transparent);
+    color: var(--ui-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .command-diagnostic-snapshot p:last-child {
+    border-bottom: 0;
+  }
+
+  .command-diagnostic-snapshot code {
+    grid-column: 2;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .patch-snapshots {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .patch-snapshot {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .patch-snapshot > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .patch-snapshot p {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+    gap: 0.55rem;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    padding: 0.42rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 38%, transparent);
+    color: var(--ui-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .patch-snapshot p:last-child {
+    border-bottom: 0;
+  }
+
+  .patch-snapshot code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .command-output-event {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .command-output-event > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .command-output-event > div span,
+  .command-output-event > div time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .command-output-event.stderr {
+    border-color: color-mix(in oklab, var(--ui-warning) 30%, var(--ui-border-soft));
+  }
+
+  .command-output-event pre {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .command-progress-event {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-accent) 28%, var(--ui-border-soft));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .command-progress-event > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .command-progress-event > div span,
+  .command-progress-event > div time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .command-progress-event p {
+    margin: 0;
+    padding: 0.58rem 0.65rem;
+    color: var(--ui-text-primary);
+    font-size: var(--text-sm);
+  }
+
+  .command-progress-event progress {
+    width: calc(100% - 1.3rem);
+    margin: 0 0.65rem 0.58rem;
+  }
+
+  .command-progress-event pre {
+    border: 0;
+    border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    border-radius: 0;
+    background: transparent;
   }
 
   .diff-viewer {

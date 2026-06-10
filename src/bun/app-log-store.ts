@@ -15,6 +15,7 @@ const DEFAULT_MEMORY_LIMIT = 2_000;
 const DEFAULT_PERSISTED_LIMIT = 10_000;
 const DEFAULT_RETENTION_DAYS = 7;
 const REDACTED = "[REDACTED]";
+const VALID_LEVEL_CLAUSE = "level IN ('debug', 'info', 'warn', 'error')";
 const SECRET_KEY_PATTERN =
   /(api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|auth|authorization|cookie|secret|password|token|key)/i;
 const HIGH_ENTROPY_CONTEXT_PATTERN =
@@ -42,7 +43,7 @@ export interface AppLogStore {
 }
 
 export interface AppendAppLogEntry {
-  level: AppLogLevel | "warn";
+  level: AppLogLevel;
   source: AppLogSource;
   message: string;
   details?: Record<string, unknown>;
@@ -53,6 +54,7 @@ export interface AppendAppLogEntry {
   workflowRunId?: string;
   workflowTaskAttemptId?: string;
   commandId?: string;
+  artifactId?: string;
 }
 
 type AppLogRow = {
@@ -70,6 +72,7 @@ type AppLogRow = {
   workflow_run_id: string | null;
   workflow_task_attempt_id: string | null;
   command_id: string | null;
+  artifact_id: string | null;
 };
 
 export function createAppLogStore(options: CreateAppLogStoreOptions = {}): AppLogStore {
@@ -109,7 +112,6 @@ class SqliteAppLogStore implements AppLogStore {
   }
 
   append(input: AppendAppLogEntry): AppLogEntry {
-    const level = input.level === "warn" ? "warning" : input.level;
     const createdAt = this.now();
     const seq = this.latestSeq + 1;
     const error = normalizeError(input.error);
@@ -117,7 +119,7 @@ class SqliteAppLogStore implements AppLogStore {
       id: `app-log-${seq}`,
       seq,
       createdAt,
-      level,
+      level: input.level,
       source: input.source,
       message: redactString(input.message),
       ...(input.details
@@ -132,6 +134,7 @@ class SqliteAppLogStore implements AppLogStore {
         ? { workflowTaskAttemptId: input.workflowTaskAttemptId }
         : {}),
       ...(input.commandId ? { commandId: input.commandId } : {}),
+      ...(input.artifactId ? { artifactId: input.artifactId } : {}),
     };
 
     this.db
@@ -139,8 +142,8 @@ class SqliteAppLogStore implements AppLogStore {
         `INSERT INTO app_log (
           id, seq, created_at, level, source, message, details_json, error_json,
           workspace_session_id, surface_pi_session_id, thread_id, workflow_run_id,
-          workflow_task_attempt_id, command_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          workflow_task_attempt_id, command_id, artifact_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.id,
@@ -157,6 +160,7 @@ class SqliteAppLogStore implements AppLogStore {
         entry.workflowRunId ?? null,
         entry.workflowTaskAttemptId ?? null,
         entry.commandId ?? null,
+        entry.artifactId ?? null,
       );
 
     this.latestSeq = seq;
@@ -183,24 +187,29 @@ class SqliteAppLogStore implements AppLogStore {
       .query(
         `SELECT
           COUNT(*) AS total,
+          SUM(CASE WHEN level = 'debug' THEN 1 ELSE 0 END) AS debug,
           SUM(CASE WHEN level = 'info' THEN 1 ELSE 0 END) AS info,
-          SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END) AS warning,
+          SUM(CASE WHEN level = 'warn' THEN 1 ELSE 0 END) AS warn,
           SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error,
           SUM(CASE WHEN seq > ? THEN 1 ELSE 0 END) AS unread_total,
+          SUM(CASE WHEN seq > ? AND level = 'debug' THEN 1 ELSE 0 END) AS unread_debug,
           SUM(CASE WHEN seq > ? AND level = 'info' THEN 1 ELSE 0 END) AS unread_info,
-          SUM(CASE WHEN seq > ? AND level = 'warning' THEN 1 ELSE 0 END) AS unread_warning,
+          SUM(CASE WHEN seq > ? AND level = 'warn' THEN 1 ELSE 0 END) AS unread_warn,
           SUM(CASE WHEN seq > ? AND level = 'error' THEN 1 ELSE 0 END) AS unread_error,
           COALESCE(MAX(seq), 0) AS latest_seq
-        FROM app_log`,
+        FROM app_log
+        WHERE ${VALID_LEVEL_CLAUSE}`,
       )
-      .get(this.seenSeq, this.seenSeq, this.seenSeq, this.seenSeq) as {
+      .get(this.seenSeq, this.seenSeq, this.seenSeq, this.seenSeq, this.seenSeq) as {
       total: number | null;
+      debug: number | null;
       info: number | null;
-      warning: number | null;
+      warn: number | null;
       error: number | null;
       unread_total: number | null;
+      unread_debug: number | null;
       unread_info: number | null;
-      unread_warning: number | null;
+      unread_warn: number | null;
       unread_error: number | null;
       latest_seq: number | null;
     };
@@ -212,14 +221,16 @@ class SqliteAppLogStore implements AppLogStore {
       seenSeq: this.seenSeq,
       unread: {
         total: rows.unread_total ?? 0,
+        debug: rows.unread_debug ?? 0,
         info: rows.unread_info ?? 0,
-        warning: rows.unread_warning ?? 0,
+        warn: rows.unread_warn ?? 0,
         error: rows.unread_error ?? 0,
       },
       totals: {
         total: rows.total ?? 0,
+        debug: rows.debug ?? 0,
         info: rows.info ?? 0,
-        warning: rows.warning ?? 0,
+        warn: rows.warn ?? 0,
         error: rows.error ?? 0,
       },
     };
@@ -254,7 +265,7 @@ class SqliteAppLogStore implements AppLogStore {
   }
 
   private queryEntries(query: AppLogQuery, limit: number): AppLogEntry[] {
-    const clauses: string[] = [];
+    const clauses: string[] = [VALID_LEVEL_CLAUSE];
     const params: Array<string | number> = [];
     if (query.afterSeq !== undefined) {
       clauses.push("seq > ?");
@@ -285,16 +296,16 @@ class SqliteAppLogStore implements AppLogStore {
           OR LOWER(COALESCE(workflow_run_id, '')) LIKE ?
           OR LOWER(COALESCE(workflow_task_attempt_id, '')) LIKE ?
           OR LOWER(COALESCE(command_id, '')) LIKE ?
+          OR LOWER(COALESCE(artifact_id, '')) LIKE ?
           OR LOWER(COALESCE(details_json, '')) LIKE ?
           OR LOWER(COALESCE(error_json, '')) LIKE ?
         )`,
       );
       const like = `%${textQuery}%`;
-      params.push(like, like, like, like, like, like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like, like, like, like, like, like);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.db
-      .query(`SELECT * FROM app_log ${where} ORDER BY seq DESC LIMIT ?`)
+      .query(`SELECT * FROM app_log WHERE ${clauses.join(" AND ")} ORDER BY seq DESC LIMIT ?`)
       .all(...params, limit) as AppLogRow[];
     return rows.toReversed().map(rowToEntry);
   }
@@ -315,7 +326,7 @@ class SqliteAppLogStore implements AppLogStore {
 
   private loadRing(): AppLogEntry[] {
     const rows = this.db
-      .query(`SELECT * FROM app_log ORDER BY seq DESC LIMIT ?`)
+      .query(`SELECT * FROM app_log WHERE ${VALID_LEVEL_CLAUSE} ORDER BY seq DESC LIMIT ?`)
       .all(this.memoryLimit) as AppLogRow[];
     return rows.toReversed().map(rowToEntry);
   }
@@ -365,7 +376,8 @@ function initializeSchema(db: Database): void {
       thread_id TEXT,
       workflow_run_id TEXT,
       workflow_task_attempt_id TEXT,
-      command_id TEXT
+      command_id TEXT,
+      artifact_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS app_log_state (
@@ -400,6 +412,7 @@ function rowToEntry(row: AppLogRow): AppLogEntry {
       ? { workflowTaskAttemptId: row.workflow_task_attempt_id }
       : {}),
     ...(row.command_id ? { commandId: row.command_id } : {}),
+    ...(row.artifact_id ? { artifactId: row.artifact_id } : {}),
   };
 }
 

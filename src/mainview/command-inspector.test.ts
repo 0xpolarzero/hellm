@@ -4,7 +4,11 @@ import type {
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
 import {
+  getCommandDiagnosticSections,
   getCommandInspectorSections,
+  getCommandOutputSections,
+  getCommandPatchSections,
+  getCommandProgressSections,
   getVisibleCommandRollups,
   getWorkspaceCommandStatusPresentation,
 } from "./command-inspector";
@@ -43,7 +47,7 @@ function createSessionSummary(): WorkspaceSessionSummary {
         summaryChildren: [
           {
             commandId: "command-summary-child",
-            toolName: "artifact_write_text",
+            toolName: "exec_command",
             status: "succeeded",
             title: "Create summary.md",
             summary: "Created summary.md.",
@@ -75,13 +79,75 @@ function createInspector(): WorkspaceCommandInspector {
     updatedAt: "2026-04-10T10:05:00.000Z",
     finishedAt: "2026-04-10T10:05:00.000Z",
     artifacts: [],
+    outputEvents: [
+      {
+        eventId: "event-stdout",
+        at: "2026-04-10T10:04:00.000Z",
+        stream: "stdout",
+        source: "final-result",
+        text: "ok\n",
+      },
+      {
+        eventId: "event-stderr",
+        at: "2026-04-10T10:04:01.000Z",
+        stream: "stderr",
+        source: "final-result",
+        text: "warning\n",
+      },
+    ],
+    progressEvents: [
+      {
+        eventId: "event-progress",
+        at: "2026-04-10T10:03:30.000Z",
+        source: "svvyx-dispatch",
+        phase: "succeeded",
+        family: "workflows",
+        command: "svvyx workflows list --json",
+        facts: {
+          workflowExportCount: 1,
+        },
+      },
+    ],
+    patchSnapshots: [
+      {
+        eventId: "event-patch",
+        at: "2026-04-10T10:03:00.000Z",
+        source: "accepted-arguments",
+        files: [
+          {
+            path: "docs/summary.md",
+            changeType: "created",
+            additions: 8,
+            deletions: 0,
+          },
+        ],
+      },
+    ],
+    diagnostics: [
+      {
+        eventId: "event-diagnostics",
+        at: "2026-04-10T10:02:30.000Z",
+        source: "execute_typescript",
+        stage: "typecheck",
+        diagnostics: [
+          {
+            severity: "error",
+            message: "Property missing",
+            file: "execute-typescript.ts",
+            line: 3,
+            column: 12,
+            code: "2339",
+          },
+        ],
+      },
+    ],
     childCount: 2,
     summaryChildCount: 1,
     traceChildCount: 1,
     summaryChildren: [
       {
         commandId: "command-summary-child",
-        toolName: "artifact_write_text",
+        toolName: "exec_command",
         visibility: "summary",
         status: "succeeded",
         title: "Create summary.md",
@@ -94,6 +160,19 @@ function createInspector(): WorkspaceCommandInspector {
         updatedAt: "2026-04-10T10:02:00.000Z",
         finishedAt: "2026-04-10T10:02:00.000Z",
         artifacts: [],
+        outputEvents: [],
+        progressEvents: [
+          {
+            eventId: "event-child-progress",
+            at: "2026-04-10T10:01:30.000Z",
+            source: "svvyx-dispatch",
+            phase: "started",
+            family: "artifacts",
+            command: "svvyx artifacts list --json",
+          },
+        ],
+        patchSnapshots: [],
+        diagnostics: [],
       },
     ],
     traceChildren: [
@@ -112,6 +191,9 @@ function createInspector(): WorkspaceCommandInspector {
         updatedAt: "2026-04-10T10:00:40.000Z",
         finishedAt: "2026-04-10T10:00:40.000Z",
         artifacts: [],
+        outputEvents: [],
+        patchSnapshots: [],
+        diagnostics: [],
       },
     ],
   };
@@ -163,6 +245,20 @@ describe("command inspector helpers", () => {
     ]);
   });
 
+  it("preserves child command progress in inspector sections", () => {
+    expect(getCommandInspectorSections(createInspector())[0]?.children[0]).toMatchObject({
+      commandId: "command-summary-child",
+      progressEvents: [
+        {
+          eventId: "event-child-progress",
+          phase: "started",
+          family: "artifacts",
+          command: "svvyx artifacts list --json",
+        },
+      ],
+    });
+  });
+
   it("maps command status into stable UI copy", () => {
     expect(getWorkspaceCommandStatusPresentation("succeeded")).toEqual({
       label: "Succeeded",
@@ -176,5 +272,109 @@ describe("command inspector helpers", () => {
       label: "Waiting",
       tone: "info",
     });
+  });
+
+  it("groups recovered command output by stream", () => {
+    expect(getCommandOutputSections(createInspector())).toEqual([
+      {
+        id: "stdout",
+        title: "Stdout",
+        events: [
+          {
+            eventId: "event-stdout",
+            at: "2026-04-10T10:04:00.000Z",
+            stream: "stdout",
+            source: "final-result",
+            text: "ok\n",
+          },
+        ],
+      },
+      {
+        id: "stderr",
+        title: "Stderr",
+        events: [
+          {
+            eventId: "event-stderr",
+            at: "2026-04-10T10:04:01.000Z",
+            stream: "stderr",
+            source: "final-result",
+            text: "warning\n",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("groups recovered command progress", () => {
+    expect(getCommandProgressSections(createInspector())).toEqual([
+      {
+        id: "progress",
+        title: "Progress",
+        events: [
+          {
+            eventId: "event-progress",
+            at: "2026-04-10T10:03:30.000Z",
+            source: "svvyx-dispatch",
+            phase: "succeeded",
+            family: "workflows",
+            command: "svvyx workflows list --json",
+            facts: {
+              workflowExportCount: 1,
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("groups recovered patch snapshots", () => {
+    expect(getCommandPatchSections(createInspector())).toEqual([
+      {
+        id: "patch",
+        title: "Patch preview",
+        snapshots: [
+          {
+            eventId: "event-patch",
+            at: "2026-04-10T10:03:00.000Z",
+            source: "accepted-arguments",
+            files: [
+              {
+                path: "docs/summary.md",
+                changeType: "created",
+                additions: 8,
+                deletions: 0,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("groups recovered diagnostics", () => {
+    expect(getCommandDiagnosticSections(createInspector())).toEqual([
+      {
+        id: "diagnostics",
+        title: "Diagnostics",
+        snapshots: [
+          {
+            eventId: "event-diagnostics",
+            at: "2026-04-10T10:02:30.000Z",
+            source: "execute_typescript",
+            stage: "typecheck",
+            diagnostics: [
+              {
+                severity: "error",
+                message: "Property missing",
+                file: "execute-typescript.ts",
+                line: 3,
+                column: 12,
+                code: "2339",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
   });
 });

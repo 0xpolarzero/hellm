@@ -1,12 +1,13 @@
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import {
   getModel,
   getProviders,
+  getSupportedThinkingLevels,
   type AssistantMessage,
   type AssistantMessageEvent,
   type ImageContent,
@@ -31,6 +32,7 @@ import type {
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
+  QueuedAgentContextUpdateProjection,
   QueuedSurfaceMessage,
   SurfaceStreamPatch,
   SurfaceStreamPatchInput,
@@ -38,33 +40,40 @@ import type {
   UpdateComposerDraftRequest,
   WorkspaceMutationResponse,
   WorkspaceArtifactPreview,
+  WorkspaceRequestUserInputRequest,
+  WorkspaceRuntimeApprovalRequest,
+  RequestUserInputAnswerRequest,
+  SetRequestUserInputTimerPausedRequest,
   WorkspaceSessionNavigationReadModel,
-  WorkspaceProjectCiStatusPanel,
   WorkspaceSyncMessage,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
-  WorkspaceWorkflowInspectorMode,
-  WorkspaceWorkflowInspectorReadModel,
+  AgentContextPreviewRequest,
+  AgentContextPreviewResponse,
 } from "../shared/workspace-contract";
 import type {
-  PromptLibraryActor,
-  PromptLibraryExternalSource,
-  PromptLibraryGeneratedEntry,
-  PromptLibrarySnapshotSummary,
-  PromptLibraryState,
-} from "../shared/prompt-library";
-import { buildWorkflowInspectorReadModel } from "../shared/workflow-inspector";
+  GeneratedAgentContextActor,
+  GeneratedAgentContextExternalSource,
+  GeneratedAgentContextEntry,
+  GeneratedAgentContextSnapshotSummary,
+  GeneratedAgentContextState,
+} from "../shared/generated-agent-context";
+import { getGeneratedAgentContextContentKey } from "../shared/generated-agent-context";
 import {
   DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_THREAD_HANDLER_PROFILE_ID,
+  type AgentSettingsState,
+  type AppPreferences,
   type AgentProfileId,
   type AgentProfileSettings,
   type AgentPromptSettings,
+  type RequestUserInputSettings,
+  type WorkflowAgentKey,
 } from "../shared/agent-settings";
 import {
   projectWorkspaceSessionSummary,
@@ -74,7 +83,6 @@ import {
   buildStructuredCommandInspector,
   buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
-  buildStructuredProjectCiStatusPanel,
   buildStructuredArtifactLink,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
@@ -88,46 +96,73 @@ import {
 } from "./prompt-execution-context";
 import {
   createStructuredSessionStateStore,
+  type StructuredRequestUserInputAnswer,
   type StructuredSessionSnapshot,
   type StructuredWaitState,
+  type StructuredRecoveryWorkRecord,
   type StructuredSessionStateStore,
-  type StructuredEpisodeKind,
   type StructuredSurfaceQueuedMessageRecord,
 } from "./structured-session-state";
+import type { AppLoggerEvent } from "./app-logger";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
-import { createWaitTool } from "./wait-tool";
+import {
+  createListExtensionsTool,
+  createLoadExtensionTool,
+  type LoadExtensionDetails,
+} from "./extension-tools";
+import { createRequestUserInputTool, RequestUserInputRuntime } from "./request-user-input-tool";
 import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { createStartThreadTool } from "./thread-start-tool";
-import { createResumeThreadTool } from "./thread-resume-tool";
+import { createThreadReportTool, type ThreadReportNotificationRequest } from "./thread-report-tool";
 import {
-  createThreadHandoffTool,
-  type ThreadHandoffAcceptance,
-  type ThreadHandoffRequest,
-} from "./thread-handoff-tool";
+  createThreadFollowupTool,
+  createThreadRequestReportTool,
+} from "./thread-orchestration-tools";
 import {
-  buildPromptLibraryGeneratedEntries,
+  buildGeneratedAgentContextEntries,
   buildSystemPrompt,
-  createDefaultPromptLibraryState,
+  createDefaultGeneratedAgentContextState,
 } from "./default-system-prompt";
+import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
+import {
+  createExtensionContextFingerprints,
+  createExternalInstructionsFingerprint,
+  createGeneratedAgentContextAggregateCache,
+  extensionsRootForAgentDir,
+  type GeneratedAgentContextAggregateOutputs,
+  type GeneratedAgentContextAggregateResult,
+  GENERATED_AGENT_CONTEXT_AGGREGATE_FORMAT_VERSION,
+} from "./generated-agent-context-aggregate-cache";
 import type { SvvyActorKind } from "./actor-capabilities";
-import { createSmithersTools } from "./smithers-tools";
-import { createCxTools } from "./cx-tools";
-import { SmithersRuntimeManager } from "./smithers-runtime/manager";
-import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
-import { createRequestContextTool } from "./request-context-tool";
-import { getOptionalPromptContext, type OptionalPromptContextKey } from "./prompt-contexts";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
-import { createListToolsTool } from "./list-tools-tool";
-import { createWebProvider } from "./web-runtime/provider-registry";
-import { createPromptLibraryStore, type PromptLibraryStore } from "./prompt-library-store";
+import type { RuntimeApprovalBoundary } from "./approval-boundary";
+import { RuntimeApprovalRequestRuntime } from "./runtime-approval-boundary";
+import { resolveActorExtensionState } from "../shared/extensions";
+import { resolveExtensionRecords, type ResolvedExtensionRecord } from "./svvyx-extensions-command";
+import { discoverExternalInstructionSources } from "./external-instructions";
+import {
+  createGeneratedAgentContextStore,
+  type GeneratedAgentContextStore,
+} from "./generated-agent-context-store";
+import { buildSnippetsReadModel, discoverSnippets } from "./snippet-library";
+import { createSnippetStore, type SnippetStore } from "./snippet-store";
+import type {
+  CreateManagedSnippetRequest,
+  DeleteManagedSnippetRequest,
+  ManagedSnippet,
+  SnippetsReadModel,
+  UpdateManagedSnippetRequest,
+} from "../shared/snippets";
 import {
   createThreadCurrentTool,
-  createThreadHandoffsTool,
+  createThreadEpisodesTool,
+  createThreadGroupTool,
   createThreadListTool,
 } from "./runtime-state-tools";
 import { WorkspaceRecoveryCoordinator } from "./workspace-recovery-coordinator";
+import { ensureWorkflowsPackageLinks } from "./smithers-runtime/workflow-library";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -178,8 +213,14 @@ interface ManagedSession {
   thinkingLevel: ThinkingLevel;
   agentProfileId: AgentProfileId;
   systemPrompt: string;
-  promptLibraryRevision: number;
-  externalContextSources: PromptLibraryExternalSource[];
+  generatedAgentContextAggregateKey: string;
+  generatedAgentContextAggregate: GeneratedAgentContextAggregateOutputs;
+  generatedAgentContextFingerprint: string;
+  generatedAgentContextRevision: number;
+  externalContextSources: GeneratedAgentContextExternalSource[];
+  externalSourceHashes: string[];
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
   session: AgentSession;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
@@ -228,34 +269,54 @@ export interface EditCommittedUserMessageOptions {
   onEvent?: (event: AssistantMessageEvent) => void;
 }
 
-interface HandlerHandoffQueuePayload {
+interface ThreadReportNotificationQueuePayload {
   threadId: string;
   sourceCommandId: string;
   turnId: string;
-  title: string;
   summary: string;
-  body: string;
-  kind: StructuredEpisodeKind;
+  episodeId: string;
+  outcome: "succeeded" | "failed" | "cancelled" | null;
 }
 
-interface PromptRefreshQueuePayload {
+interface AgentContextRefreshQueuePayload {
   requestedRevision: number;
   requestedAt: string;
+  reason?: string;
+  currentFingerprint?: string;
 }
 
 interface InitialHandlerStartQueuePayload {
   threadId: string;
+  parentSessionFile: string | null;
   requestedAt: string;
 }
 
-interface WorkflowAttentionQueuePayload {
-  sessionId: string;
+interface ReportRequestQueuePayload {
   threadId: string;
-  workflowRunId: string;
-  smithersRunId: string;
-  workflowId: string;
-  summary: string;
-  reason: string;
+  sourceCommandId: string;
+  request: string;
+}
+
+interface ThreadFollowupQueuePayload {
+  threadId: string;
+  sourceCommandId: string;
+  message: string;
+  activate: boolean;
+}
+
+interface RequestUserInputAnswerQueuePayload {
+  requestId: string;
+  questionId: string;
+  answerId: string;
+  delivery: "steer" | "after_turn";
+}
+
+interface RequestUserInputAnswerDeliveryPayload {
+  type: "request_user_input.answer";
+  title: string;
+  question: string;
+  originalAnswer: StructuredRequestUserInputAnswer;
+  userAnswer: StructuredRequestUserInputAnswer;
 }
 
 interface CreateManagedSessionOptions {
@@ -265,9 +326,34 @@ interface CreateManagedSessionOptions {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   systemPrompt: string;
-  promptLibraryRevision?: number;
+  generatedAgentContextAggregateKey?: string;
+  generatedAgentContextAggregate?: GeneratedAgentContextAggregateOutputs;
+  generatedAgentContextFingerprint?: string;
+  generatedAgentContextRevision?: number;
   agentProfileId?: AgentProfileId;
+  profileLoadedExtensionIds?: readonly string[];
+  loadedExtensionIds?: readonly string[];
+  availableExtensionIds?: readonly string[];
+  externalContextSources?: readonly GeneratedAgentContextExternalSource[];
+  externalSourceHashes?: readonly string[];
+  onExtensionLoaded?: (input: {
+    extensionId: string;
+    refreshedContext: LoadExtensionDetails["refreshedContext"];
+    runtime: PromptExecutionContext;
+  }) =>
+    | Promise<LoadExtensionDetails["refreshedContext"] | void>
+    | LoadExtensionDetails["refreshedContext"]
+    | void;
   onRequestContextLoaded?: (surfacePiSessionId: string) => void;
+  onWorkflowsGeneratedPackageChanged?: (
+    event: WorkflowsGeneratedPackageLogEvent,
+  ) => void | Promise<void>;
+  onAppLog?: (event: AppLoggerEvent) => void;
+  readOpenWorkspaceCwds?: () => readonly string[];
+  requestUserInputRuntime?: RequestUserInputRuntime;
+  openArtifact?: (input: { sessionId: string; artifactId: string }) => boolean | Promise<boolean>;
+  approvalBoundary?: RuntimeApprovalBoundary;
+  extensionsRoot?: string;
 }
 
 interface VisibleStreamState {
@@ -286,6 +372,10 @@ function messageTimestampMs(timestamp: string | number): number {
   return Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0;
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export type TitleGenerationLogEvent =
   | {
       level: "info";
@@ -300,22 +390,41 @@ export type TitleGenerationLogEvent =
       error: string;
     };
 
+export type WorkflowsGeneratedPackageLogEvent = {
+  reason: "svvyx-workflows-build" | "svvyx-workflows-save";
+  commandFacts: Record<string, unknown>;
+};
+
+type WorkspaceRecoveryOptions = {
+  workflowsExtensionsGeneratedPackagePath?: string;
+  workflowsGeneratedPackagePath?: string;
+  workflowsSourceRoot?: string;
+};
+
 export class WorkspaceSessionCatalog {
   private readonly managedSurfaces = new Map<string, ManagedSession>();
   private readonly structuredSessionStore: StructuredSessionStateStore;
-  private readonly smithersRuntimeManager: SmithersRuntimeManager;
   private readonly recoveryCoordinator: WorkspaceRecoveryCoordinator;
   private readonly agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
-  private readonly promptLibraryStore: PromptLibraryStore;
-  private readonly restoredWorkflowSupervisionSessionIds = new Set<string>();
-  private readonly workflowSupervisionRestoreTasks = new Map<string, Promise<void>>();
-  private durableWorkflowSupervisionRestoreStarted = false;
-  private durableWorkflowSupervisionRestoreTask: Promise<void> | null = null;
+  private readonly generatedAgentContextStore: GeneratedAgentContextStore;
+  private readonly generatedAgentContextAggregateCache: ReturnType<
+    typeof createGeneratedAgentContextAggregateCache
+  >;
+  private readonly snippetStore: SnippetStore;
+  private readonly extensionsRoot: string;
+  private readonly requestUserInputRuntime = new RequestUserInputRuntime();
+  private readonly runtimeApprovalRuntime: RuntimeApprovalRequestRuntime;
+  private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
   private focusedSurfacePiSessionId: string | null = null;
   private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
   private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
   private titleGenerationLogListener: ((event: TitleGenerationLogEvent) => void) | null = null;
+  private workflowsGeneratedPackageLogListener:
+    | ((event: WorkflowsGeneratedPackageLogEvent) => void)
+    | null = null;
+  private appLogListener: ((event: AppLoggerEvent) => void) | null = null;
+  private openWorkspaceCwdsReader: (() => readonly string[]) | null = null;
 
   constructor(
     private readonly cwd: string,
@@ -323,62 +432,45 @@ export class WorkspaceSessionCatalog {
     private readonly sessionDir: string = getSvvySessionDir(cwd, agentDir),
     private readonly namerSessionDir: string = join(sessionDir, "namer"),
     private readonly workspaceId: string = cwd,
+    private readonly recoveryOptions: WorkspaceRecoveryOptions = {},
+    approvalBoundary?: RuntimeApprovalBoundary,
   ) {
+    this.extensionsRoot = extensionsRootForAgentDir(this.agentDir);
     const workspaceLabel = basename(this.cwd) || "workspace";
+    this.agentSettingsStore = createAgentSettingsStore({
+      cwd: this.cwd,
+      agentDir: this.agentDir,
+      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
+    });
     this.structuredSessionStore = createStructuredSessionStateStore({
       workspace: {
         id: this.workspaceId,
         label: workspaceLabel,
         cwd: this.cwd,
+        artifactDir: resolveConfiguredArtifactDirectory(
+          this.agentSettingsStore.getState().appPreferences.artifactDirectory,
+          this.cwd,
+        ),
       },
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
-    this.agentSettingsStore = createAgentSettingsStore({
-      cwd: this.cwd,
-      agentDir: this.agentDir,
+    this.runtimeApprovalRuntime = new RuntimeApprovalRequestRuntime(this.structuredSessionStore);
+    this.approvalBoundary = approvalBoundary ?? this.runtimeApprovalRuntime.createBoundary();
+    this.requestUserInputRuntime.setSettings(this.agentSettingsStore.getState().requestUserInput);
+    this.requestUserInputRuntime.setRequestUpdatedListener(() => {
+      void this.emitWorkspaceSync("structured.updated");
     });
-    this.promptLibraryStore = createPromptLibraryStore({
+    this.generatedAgentContextStore = createGeneratedAgentContextStore({
       agentDir: this.sessionDir,
     });
-    this.promptLibraryStore.getState();
-    this.agentSettingsStore.ensureWorkflowAgentsComponent();
-    this.smithersRuntimeManager = new SmithersRuntimeManager({
-      cwd: this.cwd,
-      agentDir: this.agentDir,
-      store: this.structuredSessionStore,
-      getTaskAgentDefaults: () => ({
-        provider: DEFAULT_AGENT_SETTINGS.provider,
-        model: DEFAULT_AGENT_SETTINGS.model,
-        reasoningEffort: DEFAULT_AGENT_SETTINGS.reasoningEffort,
-        promptLibraryState: this.promptLibraryStore.getState(),
-      }),
-      onStructuredStateChanged: async (sessionId) => {
-        await this.emitStructuredStateSync(sessionId);
-      },
-      onHandlerAttention: async (event) => {
-        this.recoveryCoordinator.enqueue({
-          kind: "workflow_attention",
-          ownerScope: {
-            kind: "workflow_run",
-            workflowRunId: event.workflowRunId,
-            smithersRunId: event.smithersRunId,
-          },
-          idempotencyKey: `workflow_attention:${event.workflowRunId}:${event.reason}`,
-          orderingKey: `workflow:${event.workflowRunId}`,
-          priority: 5,
-          payloadJson: {
-            sessionId: event.sessionId,
-            threadId: event.threadId,
-            workflowRunId: event.workflowRunId,
-          },
-        });
-        return await this.resumeHandlerAfterWorkflowAttention(event);
-      },
+    this.generatedAgentContextAggregateCache = createGeneratedAgentContextAggregateCache({
+      extensionsRoot: this.extensionsRoot,
+    });
+    this.generatedAgentContextStore.getState();
+    this.snippetStore = createSnippetStore({
+      agentDir: this.sessionDir,
     });
     this.recoveryCoordinator = new WorkspaceRecoveryCoordinator(this.structuredSessionStore, {
-      bootstrapSmithers: async () => {
-        await this.restoreDurableWorkflowSupervision();
-      },
       recoverSurfaceTurn: async (surfacePiSessionId) => {
         this.recoverInterruptedSurfaceTurn(surfacePiSessionId);
       },
@@ -388,8 +480,8 @@ export class WorkspaceSessionCatalog {
       startInitialHandler: async (input) => {
         await this.startInitialHandlerThreadPrompt(input);
       },
-      resolveHandlerHandoff: async (queuedItemId) => {
-        this.recoverHandlerHandoffResolution(queuedItemId);
+      recoverThreadReportNotification: async (queuedItemId) => {
+        this.recoverThreadReportNotificationDelivery(queuedItemId);
       },
       generateTitle: async (owner) => {
         if (owner.sessionId) {
@@ -400,25 +492,37 @@ export class WorkspaceSessionCatalog {
           await this.runThreadTitleGenerationJob(owner.threadId);
         }
       },
-      projectWorkflowAttention: async (input) => {
-        if (input.sessionId) {
-          await this.smithersRuntimeManager.deliverPendingHandlerAttention(
-            input.sessionId,
-            input.threadId,
-          );
-        }
+      projectRecoveryLog: async (work) => {
+        this.emitRecoveryProjectionLog(work);
       },
-      projectCi: async (input) => {
-        if (input.sessionId) {
-          await this.smithersRuntimeManager.restoreSessionSupervision(input.sessionId, {
-            emitAttention: false,
-          });
-        }
+      refreshWorkflowsBuild: async (work) => {
+        this.refreshWorkflowsBuildLinks(work);
       },
-      projectRecoveryLog: async () => {},
       resolveSurfaceTarget: (surfacePiSessionId) =>
         this.resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId),
     });
+    this.recoveryCoordinator.enqueue({
+      kind: "workflows_build_refresh",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: `workflows_build_refresh:${this.workspaceId}`,
+      orderingKey: `workspace:${this.workspaceId}`,
+      priority: 5,
+      payloadJson: {
+        extensionsGeneratedPackagePath:
+          this.recoveryOptions.workflowsExtensionsGeneratedPackagePath ?? null,
+        generatedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath ?? null,
+      },
+    });
+    this.recoveryCoordinator.enqueue({
+      kind: "app_log_projection",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: `app_log_projection:${this.workspaceId}:startup`,
+      orderingKey: `workspace:${this.workspaceId}`,
+      orderingSeq: 100,
+      priority: 95,
+      payloadJson: { reason: "startup" },
+    });
+    this.requestUserInputRuntime.restoreOpenBlockingRequests(this.structuredSessionStore);
     this.recoveryCoordinator.seedFromDurableState();
     this.recoveryCoordinator.start();
   }
@@ -430,11 +534,17 @@ export class WorkspaceSessionCatalog {
   async dispose(): Promise<void> {
     this.closed = true;
     this.recoveryCoordinator.close();
+    for (const request of this.structuredSessionStore.listOpenRuntimeApprovalRequests()) {
+      this.runtimeApprovalRuntime.cancelOpenRequestsForSurface(
+        request.surfacePiSessionId,
+        "Workspace runtime disposed.",
+      );
+    }
+    this.requestUserInputRuntime.dispose();
     for (const session of this.managedSurfaces.values()) {
       session.session.dispose();
     }
     this.managedSurfaces.clear();
-    await this.smithersRuntimeManager.close();
     this.structuredSessionStore.close();
   }
 
@@ -450,149 +560,232 @@ export class WorkspaceSessionCatalog {
     this.titleGenerationLogListener = listener;
   }
 
-  scheduleDurableWorkflowSupervisionRestore(): void {
-    if (this.closed) {
-      return;
-    }
-    this.recoveryCoordinator.enqueue({
-      kind: "smithers_bootstrap",
-      ownerScope: { kind: "workspace" },
-      idempotencyKey: `smithers_bootstrap:${this.workspaceId}`,
-      orderingKey: `workspace:${this.workspaceId}:smithers`,
-      priority: 0,
-    });
-    this.recoveryCoordinator.wake();
+  setWorkflowsGeneratedPackageLogListener(
+    listener: ((event: WorkflowsGeneratedPackageLogEvent) => void) | null,
+  ): void {
+    this.workflowsGeneratedPackageLogListener = listener;
   }
 
-  async restoreDurableWorkflowSupervision(): Promise<void> {
-    if (this.closed) {
-      return;
-    }
-    if (this.durableWorkflowSupervisionRestoreTask) {
-      await this.durableWorkflowSupervisionRestoreTask;
-      return;
-    }
-    if (this.durableWorkflowSupervisionRestoreStarted) {
-      return;
-    }
-
-    this.durableWorkflowSupervisionRestoreStarted = true;
-    this.durableWorkflowSupervisionRestoreTask = (async () => {
-      for (const snapshot of this.structuredSessionStore.listSessionStates()) {
-        if (this.closed) {
-          return;
-        }
-        if (!hasRestorableWorkflowSupervision(snapshot)) {
-          continue;
-        }
-        try {
-          await this.restoreWorkflowSupervisionForSession(snapshot.session.id);
-        } catch (error) {
-          if (!this.closed) {
-            console.error(
-              `Failed to restore workflow supervision for session ${snapshot.session.id}:`,
-              error,
-            );
-          }
-        }
-      }
-    })();
-
-    try {
-      await this.durableWorkflowSupervisionRestoreTask;
-    } finally {
-      this.durableWorkflowSupervisionRestoreTask = null;
-    }
+  setAppLogListener(listener: ((event: AppLoggerEvent) => void) | null): void {
+    this.appLogListener = listener;
   }
 
-  getPromptLibraryState(): PromptLibraryState {
-    return this.promptLibraryStore.getState();
+  setOpenWorkspaceCwdsReader(listener: (() => readonly string[]) | null): void {
+    this.openWorkspaceCwdsReader = listener;
   }
 
-  getDefaultPromptLibraryState(): PromptLibraryState {
-    return createDefaultPromptLibraryState();
+  getGeneratedAgentContextState(): GeneratedAgentContextState {
+    return this.generatedAgentContextStore.getState();
   }
 
-  updatePromptLibraryState(state: PromptLibraryState): PromptLibraryState {
-    const next = this.promptLibraryStore.updateState(state);
+  getDefaultGeneratedAgentContextState(): GeneratedAgentContextState {
+    return createDefaultGeneratedAgentContextState();
+  }
+
+  updateGeneratedAgentContextState(state: GeneratedAgentContextState): GeneratedAgentContextState {
+    const next = this.generatedAgentContextStore.updateState(state);
     void this.emitOpenSurfacePromptBindingUpdates();
     return next;
   }
 
-  resetPromptLibraryState(): PromptLibraryState {
-    const next = this.promptLibraryStore.resetState();
+  updateRequestUserInputSettings(settings: RequestUserInputSettings): AgentSettingsState {
+    const next = this.agentSettingsStore.setRequestUserInput(settings);
+    this.requestUserInputRuntime.setSettings(next.requestUserInput);
     void this.emitOpenSurfacePromptBindingUpdates();
     return next;
   }
 
-  listPromptLibrarySnapshots(): PromptLibrarySnapshotSummary[] {
-    return this.promptLibraryStore.listSnapshots();
+  updateAppPreferences(preferences: AppPreferences): AgentSettingsState {
+    const next = this.agentSettingsStore.setAppPreferences(preferences);
+    void this.emitOpenSurfacePromptBindingUpdates();
+    void this.queueOpenSurfacePromptRefreshes("app_preferences_changed");
+    return next;
   }
 
-  createPromptLibrarySnapshot(name: string): PromptLibrarySnapshotSummary {
-    return this.promptLibraryStore.createSnapshot(name);
+  async notifyAppPreferencesChanged(): Promise<void> {
+    await this.emitOpenSurfacePromptBindingUpdates();
+    await this.queueOpenSurfacePromptRefreshes("app_preferences_changed");
   }
 
-  renamePromptLibrarySnapshot(snapshotId: string, name: string): PromptLibrarySnapshotSummary {
-    return this.promptLibraryStore.renameSnapshot(snapshotId, name);
-  }
-
-  restorePromptLibrarySnapshot(snapshotId: string): PromptLibraryState {
-    const next = this.promptLibraryStore.restoreSnapshot(snapshotId);
+  resetGeneratedAgentContextState(): GeneratedAgentContextState {
+    const next = this.generatedAgentContextStore.resetState();
     void this.emitOpenSurfacePromptBindingUpdates();
     return next;
   }
 
-  getPromptLibraryGeneratedEntries() {
-    const state = this.promptLibraryStore.getState();
-    const webProvider = this.createActiveWebProvider();
-    const materialize = (actor: PromptLibraryActor, entries: PromptLibraryGeneratedEntry[]) =>
-      entries.map((entry) => this.materializeGeneratedPromptEntry(actor, entry));
+  listGeneratedAgentContextSnapshots(): GeneratedAgentContextSnapshotSummary[] {
+    return this.generatedAgentContextStore.listSnapshots();
+  }
+
+  createGeneratedAgentContextSnapshot(name: string): GeneratedAgentContextSnapshotSummary {
+    return this.generatedAgentContextStore.createSnapshot(name);
+  }
+
+  renameGeneratedAgentContextSnapshot(
+    snapshotId: string,
+    name: string,
+  ): GeneratedAgentContextSnapshotSummary {
+    return this.generatedAgentContextStore.renameSnapshot(snapshotId, name);
+  }
+
+  restoreGeneratedAgentContextSnapshot(snapshotId: string): GeneratedAgentContextState {
+    const next = this.generatedAgentContextStore.restoreSnapshot(snapshotId);
+    void this.emitOpenSurfacePromptBindingUpdates();
+    return next;
+  }
+
+  getGeneratedAgentContextEntries() {
+    const state = this.generatedAgentContextStore.getState();
+    const materialize = (
+      actor: GeneratedAgentContextActor,
+      entries: GeneratedAgentContextEntry[],
+    ) => entries.map((entry) => this.materializeGeneratedPromptEntry(actor, entry));
     return {
       orchestrator: materialize(
         "orchestrator",
-        buildPromptLibraryGeneratedEntries("orchestrator", state, { webProvider }),
+        buildGeneratedAgentContextEntries("orchestrator", state),
       ),
-      handler: materialize(
-        "handler",
-        buildPromptLibraryGeneratedEntries("handler", state, { webProvider }),
-      ),
+      handler: materialize("handler", buildGeneratedAgentContextEntries("handler", state)),
       "workflow-task": materialize(
         "workflow-task",
-        buildPromptLibraryGeneratedEntries("workflow-task", state, { webProvider }),
+        buildGeneratedAgentContextEntries("workflow-task", state),
       ),
     };
   }
 
-  async getPromptLibraryExternalSources(): Promise<PromptLibraryExternalSource[]> {
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: this.cwd,
-      agentDir: this.agentDir,
-      settingsManager: SettingsManager.create(this.cwd, this.agentDir),
-      systemPromptOverride: () => this.buildPromptFromLibrary("orchestrator"),
-      appendSystemPromptOverride: () => [],
+  async getAgentContextPreview(
+    request: AgentContextPreviewRequest = {},
+  ): Promise<AgentContextPreviewResponse> {
+    const actor = request.actor ?? "orchestrator";
+    const settings = this.agentSettingsStore.getState();
+    const externalInstructionSources = await this.buildCurrentExternalContextSources();
+    if (actor === "handler") {
+      const profile = settings.agents.special.threadHandler;
+      const extensionState = resolveActorExtensionState({
+        actor: "handler",
+        profileExtensionUsage: profile.extensionUsage,
+      });
+      const basePrompt = this.buildPromptFromLibrary("handler", {
+        ...extensionState,
+        externalInstructionSources,
+      });
+      const suffix = profile.systemPrompt.trim();
+      return {
+        actor,
+        profileId: profile.id,
+        profileName: profile.name,
+        provider: profile.provider,
+        model: profile.model,
+        reasoningEffort: profile.reasoningEffort,
+        loadedExtensionIds: extensionState.loadedExtensionIds,
+        availableExtensionIds: extensionState.availableExtensionIds,
+        systemPrompt: suffix
+          ? `${basePrompt}\n\n## Handler Profile Override\n${suffix}`
+          : basePrompt,
+      };
+    }
+    if (actor === "workflow-task") {
+      const profile =
+        request.profileId && request.profileId in settings.workflowAgents
+          ? settings.workflowAgents[request.profileId as WorkflowAgentKey]
+          : (settings.workflowAgents.explorer ?? Object.values(settings.workflowAgents)[0]);
+      if (!profile) {
+        throw new Error("No workflow task-agent profile is available.");
+      }
+      const extensionState = resolveActorExtensionState({
+        actor: "workflow-task",
+        profileExtensionUsage: profile.extensionUsage,
+      });
+      return {
+        actor,
+        profileId: profile.id,
+        profileName: profile.label,
+        provider: profile.provider,
+        model: profile.model,
+        reasoningEffort: profile.reasoningEffort,
+        loadedExtensionIds: extensionState.loadedExtensionIds,
+        availableExtensionIds: extensionState.availableExtensionIds,
+        systemPrompt: this.buildPromptFromLibrary("workflow-task", {
+          ...extensionState,
+          externalInstructionSources,
+        }),
+      };
+    }
+    const profile =
+      settings.agents.orchestrators.find((candidate) => candidate.id === request.profileId) ??
+      settings.agents.orchestrators.find(
+        (candidate) => candidate.id === DEFAULT_ORCHESTRATOR_PROFILE_ID,
+      ) ??
+      settings.agents.orchestrators[0];
+    if (!profile) {
+      throw new Error("No orchestrator agent profile is configured.");
+    }
+    const extensionState = resolveActorExtensionState({
+      actor: "orchestrator",
+      profileExtensionUsage: profile.extensionUsage,
     });
-    await resourceLoader.reload();
-    return buildExternalContextSources(resourceLoader);
+    return {
+      actor,
+      profileId: profile.id,
+      profileName: profile.name,
+      provider: profile.provider,
+      model: profile.model,
+      reasoningEffort: profile.reasoningEffort,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      systemPrompt: this.buildOrchestratorSystemPrompt(
+        profile,
+        extensionState,
+        externalInstructionSources,
+      ),
+    };
   }
 
-  private async buildCurrentExternalContextSources(): Promise<PromptLibraryExternalSource[]> {
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: this.cwd,
-      agentDir: this.agentDir,
-      settingsManager: SettingsManager.create(this.cwd, this.agentDir),
-      systemPromptOverride: () => this.buildPromptFromLibrary("orchestrator"),
-      appendSystemPromptOverride: () => [],
+  getExtensionsRoot(): string {
+    return this.extensionsRoot;
+  }
+
+  async getGeneratedAgentContextExternalSources(): Promise<GeneratedAgentContextExternalSource[]> {
+    return this.buildCurrentExternalContextSources();
+  }
+
+  getSnippets(): SnippetsReadModel {
+    return buildSnippetsReadModel({
+      managed: this.snippetStore.listManaged(),
+      discovered: discoverSnippets({
+        homeDir: homedir(),
+        workspaceDir: this.cwd,
+      }),
     });
-    await resourceLoader.reload();
-    return buildExternalContextSources(resourceLoader);
+  }
+
+  createManagedSnippet(input: CreateManagedSnippetRequest): ManagedSnippet {
+    return this.snippetStore.createManaged(input);
+  }
+
+  updateManagedSnippet(input: UpdateManagedSnippetRequest): ManagedSnippet {
+    return this.snippetStore.updateManaged(input);
+  }
+
+  deleteManagedSnippet(input: DeleteManagedSnippetRequest): void {
+    this.snippetStore.deleteManaged(input);
+  }
+
+  private async buildCurrentExternalContextSources(): Promise<
+    GeneratedAgentContextExternalSource[]
+  > {
+    return discoverExternalInstructionSources({
+      cwd: this.cwd,
+      settings: this.agentSettingsStore.getState().appPreferences.externalInstructions,
+      workspaceKey: this.cwd,
+    });
   }
 
   private materializeGeneratedPromptEntry(
-    actor: PromptLibraryActor,
-    entry: PromptLibraryGeneratedEntry,
-  ): PromptLibraryGeneratedEntry {
-    const relativePath = join(".svvy", "generated", "context-library", actor, `${entry.id}.md`);
+    actor: GeneratedAgentContextActor,
+    entry: GeneratedAgentContextEntry,
+  ): GeneratedAgentContextEntry {
+    const relativePath = join(".svvy", "generated", "agent-context", actor, `${entry.id}.md`);
     const absolutePath = join(this.cwd, relativePath);
     mkdirSync(dirname(absolutePath), { recursive: true });
     writeFileSync(
@@ -619,13 +812,23 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  buildOrchestratorSystemPrompt(settings: Pick<AgentPromptSettings, "systemPrompt">): string {
-    return buildOrchestratorProfileSystemPrompt(
-      settings,
-      this.promptLibraryStore.getState(),
-      this.cwd,
-      this.createActiveWebProvider(),
-    );
+  buildOrchestratorSystemPrompt(
+    settings: Pick<AgentProfileSettings, "systemPrompt" | "extensionUsage">,
+    extensionState = resolveActorExtensionState({
+      actor: "orchestrator",
+      profileExtensionUsage: settings.extensionUsage,
+    }),
+    externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
+  ): string {
+    const suffix = settings.systemPrompt.trim();
+    return this.buildPromptFromLibrary("orchestrator", {
+      ...extensionState,
+      externalInstructionSources,
+      profileSection:
+        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
+          ? undefined
+          : { title: "Orchestrator Profile", body: suffix },
+    });
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
@@ -638,6 +841,8 @@ export class WorkspaceSessionCatalog {
         ...navigation.archived.sessions,
       ],
       navigation,
+      requestUserInputRequests: this.buildWorkspaceRequestUserInputRequests(),
+      runtimeApprovalRequests: this.buildWorkspaceRuntimeApprovalRequests(),
     };
   }
 
@@ -769,167 +974,6 @@ export class WorkspaceSessionCatalog {
     return inspector;
   }
 
-  async getWorkflowInspector(input: {
-    sessionId: string;
-    workflowRunId: string;
-    selectedNodeKey?: string | null;
-    expandedNodeKeys?: string[];
-    userCollapsedNodeKeys?: string[];
-    searchQuery?: string;
-    mode?: WorkspaceWorkflowInspectorMode;
-  }): Promise<WorkspaceWorkflowInspectorReadModel> {
-    const snapshot = await this.getDerivedStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-    const workflowRun = snapshot.workflowRuns.find((entry) => entry.id === input.workflowRunId);
-    if (!workflowRun) {
-      throw new Error(`Workflow run not found: ${input.workflowRunId}`);
-    }
-
-    const smithersSnapshot = await this.smithersRuntimeManager.getDevToolsSnapshot({
-      runId: workflowRun.smithersRunId,
-      frameNo: input.mode?.kind === "historical" ? input.mode.frameNo : undefined,
-    });
-    const frames = await this.smithersRuntimeManager
-      .listFrames({ runId: workflowRun.smithersRunId, limit: 250 })
-      .catch(() => []);
-    const events = await this.smithersRuntimeManager
-      .getRunEvents({ runId: workflowRun.smithersRunId, limit: 500 })
-      .catch(() => []);
-    const selectedNodeId =
-      typeof input.selectedNodeKey === "string" ? input.selectedNodeKey.split("/").at(-1) : null;
-    const nodeDetail = selectedNodeId
-      ? await this.smithersRuntimeManager
-          .getNodeDetail({ runId: workflowRun.smithersRunId, nodeId: selectedNodeId })
-          .catch(() => null)
-      : null;
-    const command = snapshot.commands.find((entry) => entry.id === workflowRun.commandId);
-    const launchInput = command?.facts?.launchInput ?? command?.facts?.input ?? null;
-
-    return buildWorkflowInspectorReadModel({
-      sessionId: input.sessionId,
-      workflowRun: {
-        ...workflowRun,
-        input: launchInput,
-      },
-      thread: snapshot.threads.find((entry) => entry.id === workflowRun.threadId) ?? null,
-      snapshot: smithersSnapshot,
-      frames,
-      events,
-      nodeDetail,
-      artifacts: snapshot.artifacts
-        .filter((artifact) => artifact.workflowRunId === workflowRun.id)
-        .map((artifact) => buildStructuredArtifactLink(snapshot, artifact)),
-      taskAttempts: snapshot.workflowTaskAttempts
-        .filter((attempt) => attempt.workflowRunId === workflowRun.id)
-        .map((attempt) => ({
-          workflowTaskAttemptId: attempt.id,
-          workflowRunId: attempt.workflowRunId,
-          nodeId: attempt.nodeId,
-          kind: attempt.kind,
-          status: attempt.status,
-          iteration: attempt.iteration,
-          attempt: attempt.attempt,
-          title: attempt.title,
-          summary: attempt.summary,
-          responseText: attempt.responseText,
-          error: attempt.error,
-          jjCwd: attempt.jjCwd,
-          agentId: attempt.agentId,
-          agentModel: attempt.agentModel,
-        })),
-      commands: snapshot.commands
-        .filter((entry) => entry.workflowRunId === workflowRun.id)
-        .map((entry) => ({
-          commandId: entry.id,
-          workflowRunId: entry.workflowRunId,
-          workflowTaskAttemptId: entry.workflowTaskAttemptId,
-          title: entry.title,
-          summary: entry.summary,
-          toolName: entry.toolName,
-          status: entry.status,
-        })),
-      ciChecks: snapshot.ciCheckResults
-        .filter((entry) => entry.workflowRunId === workflowRun.id)
-        .map((entry) => ({
-          checkResultId: entry.id,
-          checkId: entry.checkId,
-          label: entry.label,
-          required: entry.required,
-          command: entry.command,
-          status: entry.status,
-        })),
-      selectedNodeKey: input.selectedNodeKey,
-      expandedNodeKeys: input.expandedNodeKeys,
-      userCollapsedNodeKeys: input.userCollapsedNodeKeys,
-      searchQuery: input.searchQuery,
-      mode: input.mode,
-    });
-  }
-
-  async streamWorkflowInspector(input: {
-    sessionId: string;
-    workflowRunId: string;
-    selectedNodeKey?: string | null;
-    expandedNodeKeys?: string[];
-    userCollapsedNodeKeys?: string[];
-    searchQuery?: string;
-    mode?: WorkspaceWorkflowInspectorMode;
-    fromSeq?: number | null;
-  }) {
-    const snapshot = this.getStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-    const workflowRun = snapshot.workflowRuns.find((entry) => entry.id === input.workflowRunId);
-    if (!workflowRun) {
-      throw new Error(`Workflow run not found: ${input.workflowRunId}`);
-    }
-    const stream =
-      input.mode?.kind === "live"
-        ? await this.smithersRuntimeManager.streamDevTools({
-            runId: workflowRun.smithersRunId,
-            afterSeq: input.fromSeq ?? workflowRun.lastEventSeq ?? undefined,
-            timeoutMs: 1500,
-            maxEvents: 100,
-            pollIntervalMs: 100,
-          })
-        : {
-            runId: workflowRun.smithersRunId,
-            afterSeq: input.fromSeq ?? null,
-            lastSeq: input.fromSeq ?? null,
-            events: [],
-          };
-    const inspector = await this.getWorkflowInspector(input);
-    return {
-      workflowRunId: input.workflowRunId,
-      smithersRunId: workflowRun.smithersRunId,
-      fromSeq: stream.afterSeq,
-      lastSeq: stream.lastSeq,
-      events: stream.events,
-      inspector,
-    };
-  }
-
-  async getProjectCiStatus(input: { sessionId: string }): Promise<WorkspaceProjectCiStatusPanel> {
-    await this.smithersRuntimeManager.refreshWorkflowRegistry();
-    const entries = this.smithersRuntimeManager
-      .listWorkflows({ productKind: "project-ci" })
-      .map((entry) => ({
-        workflowId: entry.workflowId,
-        label: entry.label,
-        summary: entry.summary,
-        sourceScope: entry.sourceScope,
-        entryPath: entry.entryPath,
-      }));
-
-    return buildStructuredProjectCiStatusPanel({
-      session: await this.getDerivedStructuredSnapshot(input.sessionId),
-      entries,
-    });
-  }
-
   async getArtifactPreview(input: {
     sessionId: string;
     artifactId: string;
@@ -947,7 +991,7 @@ export class WorkspaceSessionCatalog {
     const link = buildStructuredArtifactLink(snapshot, artifact);
     const path = artifact.path;
     const pathContent = path && existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    const content = artifact.content ?? pathContent ?? "";
+    const content = pathContent ?? "";
 
     return {
       artifactId: artifact.id,
@@ -1070,6 +1114,20 @@ export class WorkspaceSessionCatalog {
     }
     const agentProfileSettings =
       defaults.agentProfileSettings ?? this.resolveOrchestratorAgentProfile(agentProfileId);
+    const extensionState = resolveActorExtensionState({
+      actor: "orchestrator",
+      profileExtensionUsage: agentProfileSettings.extensionUsage,
+    });
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const suffix = agentProfileSettings.systemPrompt.trim();
+    const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
+      ...extensionState,
+      externalInstructionSources: externalContextSources,
+      profileSection:
+        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
+          ? undefined
+          : { title: "Orchestrator Profile", body: suffix },
+    });
 
     const session = await this.createManagedSurfaceRecord({
       sessionManager,
@@ -1077,12 +1135,17 @@ export class WorkspaceSessionCatalog {
       provider: defaults.provider,
       model: defaults.model,
       thinkingLevel: defaults.thinkingLevel,
-      systemPrompt: this.buildOrchestratorSystemPrompt(agentProfileSettings),
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextAggregateKey: aggregate.cacheKey,
+      generatedAgentContextAggregate: aggregate.outputs,
       agentProfileId,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
-    this.syncStructuredPiSessionFromOrchestratorSession(session);
+    this.syncGeneratedAgentContextBindingForTarget(target, session);
     this.persistManagedSessionSnapshot(session);
     await this.emitWorkspaceSync("workspace.updated");
     return this.buildSurfaceSnapshot(session, target);
@@ -1095,7 +1158,6 @@ export class WorkspaceSessionCatalog {
   async openSurface(target: PromptTarget): Promise<ConversationSurfaceSnapshot> {
     this.assertValidPromptTarget(target);
     const session = await this.retainManagedSurface(target);
-    await this.restoreWorkflowSupervisionIfTracked(target.workspaceSessionId);
     const snapshot = await this.buildSurfaceSnapshot(session, target, {
       refreshExternalSources: true,
     });
@@ -1164,10 +1226,34 @@ export class WorkspaceSessionCatalog {
       forkedSessionManager.appendSessionInfo(request.title);
     }
 
+    const sourceAgentProfile = this.resolveOrchestratorAgentProfile(
+      (this.managedSurfaces.get(request.sessionId)?.agentProfileId ??
+        defaults.agentProfileId ??
+        DEFAULT_ORCHESTRATOR_PROFILE_ID) as AgentProfileId,
+    );
+    const extensionState = resolveActorExtensionState({
+      actor: "orchestrator",
+      profileExtensionUsage: sourceAgentProfile.extensionUsage,
+    });
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const suffix = sourceAgentProfile.systemPrompt.trim();
+    const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
+      ...extensionState,
+      externalInstructionSources: externalContextSources,
+      profileSection:
+        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
+          ? undefined
+          : { title: "Orchestrator Profile", body: suffix },
+    });
     const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
       actorKind: "orchestrator",
-      systemPrompt: this.buildPromptFromLibrary("orchestrator"),
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextAggregateKey: aggregate.cacheKey,
+      generatedAgentContextAggregate: aggregate.outputs,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
@@ -1222,6 +1308,7 @@ export class WorkspaceSessionCatalog {
       threadId: options.target.threadId ?? null,
       text: "",
       attachments: [],
+      snippetMentions: [],
     });
     const started = await this.drainNextQueuedSurfacePrompt(options.target, {
       awaitPrompt: false,
@@ -1256,6 +1343,7 @@ export class WorkspaceSessionCatalog {
       threadId: input.target.threadId ?? null,
       text: input.draft.text,
       attachments: input.draft.attachments,
+      snippetMentions: input.draft.snippetMentions ?? [],
     });
     await this.emitWorkspaceSync("structured.updated");
     return { ok: true, target: structuredClone(input.target) };
@@ -1265,12 +1353,17 @@ export class WorkspaceSessionCatalog {
     options: EditCommittedUserMessageOptions,
   ): Promise<SendAgentPromptResult> {
     this.assertValidPromptTarget(options.target);
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(options.target, {
+      externalInstructionSources: externalContextSources,
+    });
     const session = await this.loadManagedSurface(
       options.target.surfacePiSessionId,
       getActorKindForTarget(options.target),
-      this.buildSystemPromptForTarget(options.target),
+      aggregate.outputs.prompt,
+      externalContextSources,
+      aggregate,
     );
-    await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
     if (session.activePrompt) {
       throw new Error("Wait for the current turn to finish before editing an earlier message.");
     }
@@ -1302,6 +1395,14 @@ export class WorkspaceSessionCatalog {
       surfacePiSessionId: options.target.surfacePiSessionId,
     })) {
       if (queued.status === "queued" || queued.status === "steering") {
+        if (queued.kind === "agent_context_refresh") {
+          this.recordAgentContextUpdateTerminalEvent({
+            state: "cancelled",
+            target: options.target,
+            queued,
+            session,
+          });
+        }
         this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
       }
     }
@@ -1335,7 +1436,15 @@ export class WorkspaceSessionCatalog {
     queuedMessageId: string;
   }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
-    this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
+    const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
+    if (queued.kind === "agent_context_refresh") {
+      this.recordAgentContextUpdateTerminalEvent({
+        state: "cancelled",
+        target: input.target,
+        queued,
+        session: this.managedSurfaces.get(input.target.surfacePiSessionId) ?? null,
+      });
+    }
     this.structuredSessionStore.cancelSurfaceMessage({ id: input.queuedMessageId });
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, target: structuredClone(input.target), snapshot };
@@ -1348,20 +1457,25 @@ export class WorkspaceSessionCatalog {
     const queuedMessages = this.structuredSessionStore.listQueuedSurfaceMessages({
       surfacePiSessionId: input.target.surfacePiSessionId,
     });
-    const existing = queuedMessages.find((message) => message.kind === "prompt_refresh");
-    if (!existing) {
+    const existing = queuedMessages.find((message) => message.kind === "agent_context_refresh");
+    if (existing?.status === "failed") {
+      this.structuredSessionStore.markSurfaceMessageQueued({
+        id: existing.id,
+        position: "front",
+      });
+    } else if (!existing) {
       this.structuredSessionStore.enqueueSurfaceMessage({
         sessionId: input.target.workspaceSessionId,
         surfacePiSessionId: input.target.surfacePiSessionId,
         threadId: input.target.threadId ?? null,
-        kind: "prompt_refresh",
-        idempotencyKey: `prompt_refresh:${input.target.surfacePiSessionId}:${this.promptLibraryStore.getState().revision}`,
+        kind: "agent_context_refresh",
+        idempotencyKey: `agent_context_refresh:${input.target.surfacePiSessionId}:${this.generatedAgentContextStore.getState().revision}`,
         messageJson: "{}",
         payloadJson: JSON.stringify({
-          requestedRevision: this.promptLibraryStore.getState().revision,
+          requestedRevision: this.generatedAgentContextStore.getState().revision,
           requestedAt: new Date().toISOString(),
-        } satisfies PromptRefreshQueuePayload),
-        requestSummary: "Update instructions",
+        } satisfies AgentContextRefreshQueuePayload),
+        requestSummary: "Update agent context",
         position: "front",
       });
     }
@@ -1389,7 +1503,7 @@ export class WorkspaceSessionCatalog {
     if (queued.kind !== "user_message") {
       throw new Error("Only queued user messages can be restored to the composer.");
     }
-    const text = this.getQueuedMessageText(queued.messageJson);
+    const text = this.getQueuedMessageText(queued.messageJson) || queued.requestSummary;
     this.structuredSessionStore.cancelSurfaceMessage({ id: input.queuedMessageId });
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, text, snapshot };
@@ -1420,7 +1534,7 @@ export class WorkspaceSessionCatalog {
   }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
     const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
-    if (queued.kind === "prompt_refresh") {
+    if (queued.kind === "agent_context_refresh") {
       throw new Error("Queued context updates cannot be steered.");
     }
     this.structuredSessionStore.markSurfaceMessageQueued({
@@ -1432,6 +1546,127 @@ export class WorkspaceSessionCatalog {
     return { ok: true, target: structuredClone(input.target), snapshot };
   }
 
+  async answerRequestUserInput(
+    input: RequestUserInputAnswerRequest,
+  ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
+    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
+      throw new Error("Request user input answer does not belong to the target surface.");
+    }
+    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
+    if (target.workspaceSessionId !== request.sessionId) {
+      throw new Error("Request user input request is not bound to a known workspace session.");
+    }
+    const answered = this.structuredSessionStore.answerRequestUserInput({
+      sessionId: target.workspaceSessionId,
+      surfacePiSessionId: target.surfacePiSessionId,
+      requestId: input.requestId,
+      questionId: input.questionId,
+      answer: input.answer,
+      delivery: input.delivery,
+    });
+    if (!answered.queuedMessage) {
+      this.requestUserInputRuntime.resolveBlockingRequest(
+        this.structuredSessionStore,
+        input.requestId,
+      );
+      await this.emitWorkspaceSync("structured.updated");
+      return { ok: true, target: structuredClone(target) };
+    }
+    const snapshot = await this.emitQueuedSurfaceUpdate(target);
+    this.wakeSurfaceQueue(target);
+    return { ok: true, target: structuredClone(target), snapshot };
+  }
+
+  async answerRuntimeApprovalRequest(input: {
+    approved: boolean;
+    reason?: string | null;
+    requestId: string;
+  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+    const request = this.runtimeApprovalRuntime.answer(input);
+    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
+    const session = this.managedSurfaces.get(target.surfacePiSessionId);
+    if (!session) {
+      await this.emitWorkspaceSync("structured.updated");
+      return { ok: true, target };
+    }
+    await this.emitSurfaceSync({
+      session,
+      reason: "surface.updated",
+      target,
+    });
+    await this.emitWorkspaceSync("structured.updated");
+    return {
+      ok: true,
+      target,
+      snapshot: await this.buildSurfaceSnapshot(session, target),
+    };
+  }
+
+  async setRequestUserInputTimerPaused(
+    input: SetRequestUserInputTimerPausedRequest,
+  ): Promise<{ ok: boolean }> {
+    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
+    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
+      throw new Error("Request user input timer does not belong to the target surface.");
+    }
+    this.requestUserInputRuntime.setBlockingTimerPaused(
+      this.structuredSessionStore,
+      input.requestId,
+      input.paused,
+    );
+    await this.emitWorkspaceSync("structured.updated");
+    return { ok: true };
+  }
+
+  async recordExtensionRevertProductEvent(input: {
+    target: PromptTarget;
+    changeId: string;
+    revertChangeId?: string | null;
+    extensionId?: string | null;
+    resultKind?: string | null;
+    autoBuildStatus?: string | null;
+  }): Promise<boolean> {
+    const resolvedTarget = this.tryResolvePromptTargetForSurfacePiSessionId(
+      input.target.surfacePiSessionId,
+    );
+    if (
+      !resolvedTarget ||
+      resolvedTarget.workspaceSessionId !== input.target.workspaceSessionId ||
+      resolvedTarget.surface !== input.target.surface ||
+      resolvedTarget.threadId !== input.target.threadId
+    ) {
+      return false;
+    }
+
+    const extensionLabel = input.extensionId ? ` for ${input.extensionId}` : "";
+    const summary = `User reverted extension ${input.resultKind ?? "change"} ${input.changeId}${extensionLabel}.`;
+    this.structuredSessionStore.recordLifecycleEvent({
+      sessionId: resolvedTarget.workspaceSessionId,
+      kind: "Extension change reverted",
+      subjectKind:
+        resolvedTarget.surface === "thread" && resolvedTarget.threadId ? "thread" : "session",
+      subjectId:
+        resolvedTarget.surface === "thread" && resolvedTarget.threadId
+          ? resolvedTarget.threadId
+          : resolvedTarget.workspaceSessionId,
+      data: {
+        surface: resolvedTarget.surface,
+        surfacePiSessionId: resolvedTarget.surfacePiSessionId,
+        ...(resolvedTarget.threadId ? { threadId: resolvedTarget.threadId } : {}),
+        title: "Extension change reverted",
+        summary,
+        changeId: input.changeId,
+        ...(input.revertChangeId ? { revertChangeId: input.revertChangeId } : {}),
+        ...(input.extensionId ? { extensionId: input.extensionId } : {}),
+        ...(input.resultKind ? { resultKind: input.resultKind } : {}),
+        ...(input.autoBuildStatus ? { autoBuildStatus: input.autoBuildStatus } : {}),
+      },
+    });
+    await this.emitWorkspaceSync("structured.updated");
+    return true;
+  }
+
   async cancelPrompt(target: PromptTarget): Promise<void> {
     const session = this.managedSurfaces.get(target.surfacePiSessionId);
     if (!session?.activePrompt) {
@@ -1439,8 +1674,18 @@ export class WorkspaceSessionCatalog {
     }
 
     session.abortRequested = true;
+    this.requestUserInputRuntime.cancelBlockingRequestsForSurface(
+      this.structuredSessionStore,
+      target.surfacePiSessionId,
+      "Prompt cancelled.",
+    );
+    this.runtimeApprovalRuntime.cancelOpenRequestsForSurface(
+      target.surfacePiSessionId,
+      "Prompt cancelled.",
+    );
     this.restorePiQueuedMessagesToSurface(session, target);
     await this.emitQueuedSurfaceUpdate(target);
+    await this.emitWorkspaceSync("structured.updated");
     await session.session.abort();
   }
 
@@ -1452,8 +1697,18 @@ export class WorkspaceSessionCatalog {
     const target = this.resolvePromptTargetForSurfacePiSessionId(session.sessionId);
     const activePromptDone = session.activePromptDone;
     session.abortRequested = true;
+    this.requestUserInputRuntime.cancelBlockingRequestsForSurface(
+      this.structuredSessionStore,
+      target.surfacePiSessionId,
+      "Prompt cancelled.",
+    );
+    this.runtimeApprovalRuntime.cancelOpenRequestsForSurface(
+      target.surfacePiSessionId,
+      "Prompt cancelled.",
+    );
     this.restorePiQueuedMessagesToSurface(session, target);
     await this.emitQueuedSurfaceUpdate(target);
+    await this.emitWorkspaceSync("structured.updated");
     await session.session.abort();
     await activePromptDone?.catch((error) => {
       console.error("Failed to settle prompt before deleting session:", error);
@@ -1470,12 +1725,21 @@ export class WorkspaceSessionCatalog {
       return { ok: false, target: structuredClone(target) };
     }
 
+    const resolvedModel = resolveRegisteredModel(session.modelRegistry, provider, model);
+    const supportedThinkingLevels = resolvedModel ? getSupportedThinkingLevels(resolvedModel) : [];
+    const thinkingLevel = supportedThinkingLevels.includes(session.thinkingLevel)
+      ? session.thinkingLevel
+      : supportedThinkingLevels.includes("medium")
+        ? "medium"
+        : (supportedThinkingLevels[0] ?? "off");
     session.provider = provider;
     session.model = model;
+    session.thinkingLevel = thinkingLevel;
     session.recreateOnNextPrompt = true;
     const profileChanged = this.updateOrchestratorProfileFromComposer(target, session, {
       provider,
       model,
+      reasoningEffort: thinkingLevel,
     });
 
     if (session.activePrompt) {
@@ -1487,9 +1751,9 @@ export class WorkspaceSessionCatalog {
 
     try {
       syncAuthStorage(session.authStorage);
-      const resolvedModel = resolveRegisteredModel(session.modelRegistry, provider, model);
       if (resolvedModel) {
         await session.session.setModel(resolvedModel);
+        session.session.setThinkingLevel(thinkingLevel);
         session.recreateOnNextPrompt = false;
         this.syncManagedState(session);
         if (target.surface === "orchestrator") {
@@ -1575,20 +1839,31 @@ export class WorkspaceSessionCatalog {
     options: SendAgentPromptOptions,
   ): Promise<ManagedSession> {
     const actorKind = getActorKindForTarget(options.target);
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(options.target, {
+      externalInstructionSources: externalContextSources,
+    });
     const session = await this.loadManagedSurface(
       options.target.surfacePiSessionId,
       actorKind,
-      this.buildSystemPromptForTarget(options.target),
+      aggregate.outputs.prompt,
+      externalContextSources,
+      aggregate,
     );
-    await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
     return this.prepareManagedSession(session, options);
   }
 
   private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(target, {
+      externalInstructionSources: externalContextSources,
+    });
     const session = await this.loadManagedSurface(
       target.surfacePiSessionId,
       getActorKindForTarget(target),
-      this.buildSystemPromptForTarget(target),
+      aggregate.outputs.prompt,
+      externalContextSources,
+      aggregate,
     );
     session.retainCount += 1;
     return session;
@@ -1598,6 +1873,8 @@ export class WorkspaceSessionCatalog {
     surfacePiSessionId: string,
     actorKind: SvvyActorKind,
     systemPrompt = this.buildPromptFromLibrary(actorKind),
+    externalContextSources: readonly GeneratedAgentContextExternalSource[] = [],
+    aggregate?: GeneratedAgentContextAggregateResult,
   ): Promise<ManagedSession> {
     const existing = this.managedSurfaces.get(surfacePiSessionId);
     if (existing) {
@@ -1607,22 +1884,55 @@ export class WorkspaceSessionCatalog {
       return this.recreateManagedSurface(existing, {
         actorKind,
         systemPrompt,
+        generatedAgentContextAggregateKey: aggregate?.cacheKey,
+        generatedAgentContextAggregate: aggregate?.outputs,
+        externalContextSources: [...externalContextSources],
       });
     }
 
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
     const threadAgentSettings = this.resolveThreadProfileSettings(surfacePiSessionId);
+    const surfaceExtensionState = this.resolveSurfaceExtensionState(surfacePiSessionId);
+    const storedGeneratedAgentContextFingerprint =
+      this.resolveStoredGeneratedAgentContextFingerprint(surfacePiSessionId);
+    const storedGeneratedAgentContextBinding = storedGeneratedAgentContextFingerprint
+      ? this.structuredSessionStore.getGeneratedAgentContextBinding({
+          surfacePiSessionId,
+          generatedAgentContextFingerprint: storedGeneratedAgentContextFingerprint,
+        })
+      : null;
     return this.createManagedSurfaceRecord({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       actorKind,
       provider: threadAgentSettings?.provider,
       model: threadAgentSettings?.model,
       thinkingLevel: threadAgentSettings?.reasoningEffort,
-      systemPrompt,
+      systemPrompt: storedGeneratedAgentContextBinding?.systemPrompt ?? systemPrompt,
+      generatedAgentContextAggregateKey:
+        storedGeneratedAgentContextBinding?.aggregateCacheKey ?? aggregate?.cacheKey,
+      generatedAgentContextAggregate: storedGeneratedAgentContextBinding
+        ? {
+            prompt: storedGeneratedAgentContextBinding.systemPrompt,
+            svvyxGuidance: storedGeneratedAgentContextBinding.svvyxGuidance,
+            commandsDts: storedGeneratedAgentContextBinding.commandsDts,
+            nativeToolSchemasJson: storedGeneratedAgentContextBinding.nativeToolSchemasJson,
+          }
+        : aggregate?.outputs,
       agentProfileId:
         actorKind === "handler"
           ? DEFAULT_THREAD_HANDLER_PROFILE_ID
           : DEFAULT_ORCHESTRATOR_PROFILE_ID,
+      loadedExtensionIds:
+        surfaceExtensionState?.loadedExtensionIds ??
+        storedGeneratedAgentContextBinding?.loadedExtensionIds,
+      availableExtensionIds:
+        surfaceExtensionState?.availableExtensionIds ??
+        storedGeneratedAgentContextBinding?.availableExtensionIds,
+      generatedAgentContextFingerprint: storedGeneratedAgentContextFingerprint ?? undefined,
+      generatedAgentContextRevision:
+        storedGeneratedAgentContextBinding?.generatedAgentContextRevision,
+      externalSourceHashes: storedGeneratedAgentContextBinding?.externalSourceHashes,
+      externalContextSources,
     });
   }
 
@@ -1647,20 +1957,30 @@ export class WorkspaceSessionCatalog {
     >,
   ): Promise<ManagedSession> {
     const actorKind = getActorKindForTarget(options.target);
-    const resolvedSystemPrompt = this.buildSystemPromptForTarget(options.target);
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(options.target, {
+      externalInstructionSources: externalContextSources,
+    });
+    const resolvedSystemPrompt = aggregate.outputs.prompt;
     if (
       session.actorKind !== actorKind ||
       session.provider !== options.provider ||
       session.model !== options.model ||
+      session.systemPrompt !== resolvedSystemPrompt ||
       session.recreateOnNextPrompt
     ) {
-      return this.recreateManagedSurface(session, {
+      const recreated = await this.recreateManagedSurface(session, {
         actorKind,
         provider: options.provider,
         model: options.model,
         thinkingLevel: options.thinkingLevel,
         systemPrompt: resolvedSystemPrompt,
+        generatedAgentContextAggregateKey: aggregate.cacheKey,
+        generatedAgentContextAggregate: aggregate.outputs,
+        externalContextSources,
       });
+      this.syncGeneratedAgentContextBindingForTarget(options.target, recreated);
+      return recreated;
     }
 
     if (session.thinkingLevel !== options.thinkingLevel) {
@@ -1681,8 +2001,14 @@ export class WorkspaceSessionCatalog {
         | "model"
         | "thinkingLevel"
         | "systemPrompt"
-        | "promptLibraryRevision"
+        | "generatedAgentContextAggregateKey"
+        | "generatedAgentContextAggregate"
+        | "generatedAgentContextRevision"
         | "agentProfileId"
+        | "loadedExtensionIds"
+        | "availableExtensionIds"
+        | "externalContextSources"
+        | "externalSourceHashes"
       >
     >,
   ): Promise<ManagedSession> {
@@ -1692,8 +2018,22 @@ export class WorkspaceSessionCatalog {
     const model = overrides.model ?? session.model;
     const thinkingLevel = overrides.thinkingLevel ?? session.thinkingLevel;
     const systemPrompt = overrides.systemPrompt ?? session.systemPrompt;
-    const promptLibraryRevision = overrides.promptLibraryRevision ?? session.promptLibraryRevision;
+    const generatedAgentContextAggregateKey =
+      overrides.generatedAgentContextAggregateKey ?? session.generatedAgentContextAggregateKey;
+    const generatedAgentContextAggregate =
+      overrides.generatedAgentContextAggregate ?? session.generatedAgentContextAggregate;
+    const generatedAgentContextRevision =
+      overrides.generatedAgentContextRevision ?? session.generatedAgentContextRevision;
     const agentProfileId = overrides.agentProfileId ?? session.agentProfileId;
+    const loadedExtensionIds = overrides.loadedExtensionIds ?? session.loadedExtensionIds;
+    const availableExtensionIds = overrides.availableExtensionIds ?? session.availableExtensionIds;
+    const externalContextSources =
+      overrides.externalContextSources ?? session.externalContextSources;
+    const boundExternalSourceHashes =
+      overrides.externalSourceHashes ??
+      (overrides.externalContextSources
+        ? externalSourceHashes(externalContextSources).toSorted()
+        : session.externalSourceHashes);
 
     session.session.dispose();
     const nextSession = await createManagedSession({
@@ -1703,15 +2043,30 @@ export class WorkspaceSessionCatalog {
       model,
       thinkingLevel,
       systemPrompt,
-      promptLibraryRevision,
+      generatedAgentContextAggregateKey,
+      generatedAgentContextAggregate,
+      generatedAgentContextRevision,
       agentProfileId,
+      loadedExtensionIds,
+      availableExtensionIds,
+      externalContextSources,
+      externalSourceHashes: boundExternalSourceHashes,
       agentDir: this.agentDir,
+      agentSettingsStore: this.agentSettingsStore,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
-      resumeHandlerThread: this.resumeHandlerThread.bind(this),
-      awaitThreadHandoffAcceptance: this.awaitThreadHandoffAcceptance.bind(this),
+      queueThreadFollowup: this.queueThreadFollowup.bind(this),
+      queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
+      queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
+      onExtensionLoaded: this.applyLoadedExtensionContext.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      smithersRuntimeManager: this.smithersRuntimeManager,
+      requestUserInputRuntime: this.requestUserInputRuntime,
+      openArtifact: this.openArtifactFromRuntime.bind(this),
+      onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
+      onAppLog: this.emitAppLog.bind(this),
+      readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
+      approvalBoundary: this.approvalBoundary,
+      extensionsRoot: this.extensionsRoot,
     });
     nextSession.retainCount = session.retainCount;
     this.managedSurfaces.set(nextSession.sessionId, nextSession);
@@ -1722,18 +2077,132 @@ export class WorkspaceSessionCatalog {
     session: ManagedSession,
     target: PromptTarget,
   ): Promise<ManagedSession> {
+    const previousBinding = {
+      systemPrompt: session.systemPrompt,
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      loadedExtensionIds: [...session.loadedExtensionIds],
+      availableExtensionIds: [...session.availableExtensionIds],
+      externalSourceHashes: [...session.externalSourceHashes],
+    };
+    const extensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
+      includeManagedLoadedExtensions: false,
+    });
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(target, {
+      extensionState,
+      externalInstructionSources: externalContextSources,
+    });
     const refreshed = await this.recreateManagedSurface(session, {
       actorKind: getActorKindForTarget(target),
-      systemPrompt: this.buildSystemPromptForTarget(target),
-      promptLibraryRevision: this.promptLibraryStore.getState().revision,
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextAggregateKey: aggregate.cacheKey,
+      generatedAgentContextAggregate: aggregate.outputs,
+      generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
     });
     refreshed.recreateOnNextPrompt = false;
     this.syncManagedState(refreshed);
-    if (target.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(refreshed);
-    }
+    this.syncGeneratedAgentContextBindingForTarget(target, refreshed);
+    this.recordAgentContextUpdatedEvent(target, previousBinding, refreshed);
     this.persistManagedSessionSnapshot(refreshed);
     return refreshed;
+  }
+
+  private async applyLoadedExtensionContext(input: {
+    extensionId: string;
+    refreshedContext: LoadExtensionDetails["refreshedContext"];
+    runtime: PromptExecutionContext;
+  }): Promise<LoadExtensionDetails["refreshedContext"]> {
+    const session = this.managedSurfaces.get(input.runtime.surfacePiSessionId);
+    if (!session) {
+      return input.refreshedContext;
+    }
+    const target: PromptTarget =
+      input.runtime.surfaceKind === "handler" && input.runtime.surfaceThreadId
+        ? {
+            workspaceSessionId: input.runtime.sessionId,
+            surface: "thread",
+            surfacePiSessionId: input.runtime.surfacePiSessionId,
+            threadId: input.runtime.surfaceThreadId,
+          }
+        : {
+            workspaceSessionId: input.runtime.sessionId,
+            surface: "orchestrator",
+            surfacePiSessionId: input.runtime.surfacePiSessionId,
+          };
+    const previousBinding = {
+      systemPrompt: session.systemPrompt,
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      loadedExtensionIds: [...session.loadedExtensionIds],
+      availableExtensionIds: [...session.availableExtensionIds],
+      externalSourceHashes: [...session.externalSourceHashes],
+    };
+    const loadedExtensionIds = [...(input.runtime.loadedExtensionIds ?? [])].toSorted();
+    const availableExtensionIds = [...(input.runtime.availableExtensionIds ?? [])].toSorted();
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(target, {
+      extensionState: {
+        loadedExtensionIds,
+        availableExtensionIds,
+      },
+      externalInstructionSources: externalContextSources,
+    });
+    const generatedAgentContextFingerprint = createGeneratedAgentContextFingerprint({
+      systemPrompt: aggregate.outputs.prompt,
+      loadedExtensionIds,
+      availableExtensionIds,
+      externalContextSources,
+    });
+
+    session.systemPrompt = aggregate.outputs.prompt;
+    session.generatedAgentContextAggregateKey = aggregate.cacheKey;
+    session.generatedAgentContextAggregate = aggregate.outputs;
+    session.generatedAgentContextRevision = this.generatedAgentContextStore.getState().revision;
+    session.loadedExtensionIds = loadedExtensionIds;
+    session.availableExtensionIds = availableExtensionIds;
+    session.externalContextSources = [...externalContextSources];
+    session.externalSourceHashes = externalSourceHashes(externalContextSources).toSorted();
+    session.generatedAgentContextFingerprint = generatedAgentContextFingerprint;
+    session.recreateOnNextPrompt = true;
+
+    input.runtime.systemPrompt = aggregate.outputs.prompt;
+    input.runtime.generatedAgentContextFingerprint = generatedAgentContextFingerprint;
+    input.runtime.loadedExtensionIds = loadedExtensionIds;
+    input.runtime.availableExtensionIds = availableExtensionIds;
+    input.runtime.externalInstructionSources = [...externalContextSources];
+
+    if (target.surface === "thread" && target.threadId) {
+      this.structuredSessionStore.updateThread({
+        threadId: target.threadId,
+        loadedExtensionIds,
+        availableExtensionIds,
+      });
+    } else if (target.surface === "orchestrator") {
+      this.structuredSessionStore.updatePiSessionExtensionState({
+        sessionId: target.workspaceSessionId,
+        loadedExtensionIds,
+        availableExtensionIds,
+      });
+    }
+    this.syncGeneratedAgentContextBindingForTarget(target, session);
+    this.recordAgentContextUpdatedEvent(target, previousBinding, session);
+    this.persistManagedSessionSnapshot(session);
+    await this.emitSurfaceSync({
+      session,
+      reason: "surface.updated",
+      target,
+    });
+    await this.emitWorkspaceSync("structured.updated");
+
+    return {
+      ...input.refreshedContext,
+      actor: target.surface === "thread" ? "handler" : "orchestrator",
+      loadedExtensionIds,
+      availableExtensionIds,
+      systemPrompt: aggregate.outputs.prompt,
+    };
   }
 
   private async createManagedSurfaceRecord(
@@ -1741,15 +2210,25 @@ export class WorkspaceSessionCatalog {
   ): Promise<ManagedSession> {
     const session = await createManagedSession({
       ...options,
-      promptLibraryRevision:
-        options.promptLibraryRevision ?? this.promptLibraryStore.getState().revision,
+      generatedAgentContextRevision:
+        options.generatedAgentContextRevision ??
+        this.generatedAgentContextStore.getState().revision,
       agentDir: this.agentDir,
+      agentSettingsStore: this.agentSettingsStore,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
-      resumeHandlerThread: this.resumeHandlerThread.bind(this),
-      awaitThreadHandoffAcceptance: this.awaitThreadHandoffAcceptance.bind(this),
+      queueThreadFollowup: this.queueThreadFollowup.bind(this),
+      queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
+      queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
+      onExtensionLoaded: this.applyLoadedExtensionContext.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      smithersRuntimeManager: this.smithersRuntimeManager,
+      requestUserInputRuntime: this.requestUserInputRuntime,
+      openArtifact: this.openArtifactFromRuntime.bind(this),
+      onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
+      onAppLog: this.emitAppLog.bind(this),
+      readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
+      approvalBoundary: this.approvalBoundary,
+      extensionsRoot: this.extensionsRoot,
     });
     this.managedSurfaces.set(session.sessionId, session);
     return session;
@@ -1849,6 +2328,7 @@ export class WorkspaceSessionCatalog {
       : session.externalContextSources;
     const activeTurn = session.activePrompt ? this.getActiveRunningTurnForSurface(target) : null;
     const messages = structuredClone(session.session.agent.state.messages);
+    const promptBinding = this.buildPromptBinding(session, target, currentExternalSources);
     return {
       target: structuredClone(target),
       provider: session.provider,
@@ -1858,12 +2338,13 @@ export class WorkspaceSessionCatalog {
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
       externalContextSources: structuredClone(session.externalContextSources),
-      promptBinding: this.buildPromptBinding(session, target, currentExternalSources),
+      agentContextUpdate: this.buildSurfaceAgentContextUpdateTerminalProjection(target),
+      promptBinding,
       messages,
       pendingUserMessage: session.pendingUserMessage
         ? structuredClone(session.pendingUserMessage.message)
         : null,
-      queuedMessages: this.buildQueuedSurfaceMessages(target.surfacePiSessionId),
+      queuedMessages: this.buildQueuedSurfaceMessages(target, session, promptBinding),
       composerDraft: this.buildComposerDraft(target.surfacePiSessionId),
       streamMessage: session.activeStreamMessage
         ? structuredClone(session.activeStreamMessage)
@@ -1881,6 +2362,7 @@ export class WorkspaceSessionCatalog {
     return {
       text: draft?.text ?? "",
       attachments: draft?.attachments ? structuredClone(draft.attachments) : [],
+      snippetMentions: draft?.snippetMentions ? structuredClone(draft.snippetMentions) : [],
       updatedAt: draft?.updatedAt ?? null,
     };
   }
@@ -1968,70 +2450,322 @@ export class WorkspaceSessionCatalog {
     return timings;
   }
 
-  private buildQueuedSurfaceMessages(surfacePiSessionId: string): QueuedSurfaceMessage[] {
+  private buildQueuedSurfaceMessages(
+    target: PromptTarget,
+    session?: ManagedSession,
+    promptBinding?: ConversationSurfaceSnapshot["promptBinding"],
+  ): QueuedSurfaceMessage[] {
     return this.structuredSessionStore
-      .listQueuedSurfaceMessages({ surfacePiSessionId })
-      .filter((message) => message.status !== "dispatching")
+      .listQueuedSurfaceMessages({ surfacePiSessionId: target.surfacePiSessionId })
+      .filter(
+        (message) => message.status !== "dispatching" || message.kind === "agent_context_refresh",
+      )
       .map((message) => {
         const payload =
-          message.kind === "handler_handoff" ? this.parseHandlerHandoffQueuePayload(message) : null;
-        const promptRefreshPayload =
-          message.kind === "prompt_refresh" ? this.parsePromptRefreshQueuePayload(message) : null;
-        const workflowAttentionPayload =
-          message.kind === "workflow_attention"
-            ? this.parseWorkflowAttentionQueuePayload(message)
+          message.kind === "thread_report_notification"
+            ? this.parseThreadReportNotificationQueuePayload(message)
             : null;
+        const promptRefreshPayload =
+          message.kind === "agent_context_refresh"
+            ? this.parseAgentContextRefreshQueuePayload(message)
+            : null;
+        const followupPayload =
+          message.kind === "thread_followup" ? this.parseThreadFollowupQueuePayload(message) : null;
+        const reportRequestPayload =
+          message.kind === "report_request" ? this.parseReportRequestQueuePayload(message) : null;
+        const requestUserInputAnswerPayload =
+          message.kind === "request_user_input_answer"
+            ? this.parseRequestUserInputAnswerQueuePayload(message)
+            : null;
+        const agentContextUpdate =
+          promptRefreshPayload && session && promptBinding
+            ? this.buildQueuedAgentContextUpdateProjection(
+                message,
+                promptRefreshPayload,
+                target,
+                session,
+                promptBinding,
+              )
+            : undefined;
         return {
           id: message.id,
           kind: message.kind,
           text: promptRefreshPayload
-            ? "Update instructions"
+            ? "Update agent context"
             : message.kind === "initial_handler_start"
               ? "Start handler thread"
-              : workflowAttentionPayload
-                ? `Workflow attention: ${workflowAttentionPayload.summary}`
-                : payload
-                  ? `Handler handoff: ${payload.summary}`
-                  : this.getQueuedMessageText(message.messageJson),
-          title: payload?.title,
+              : followupPayload
+                ? followupPayload.message
+                : reportRequestPayload
+                  ? `Report requested: ${reportRequestPayload.request}`
+                  : requestUserInputAnswerPayload
+                    ? this.getQueuedMessageText(message.messageJson)
+                    : payload
+                      ? `Thread report: ${payload.summary}`
+                      : this.getQueuedMessageText(message.messageJson) || message.requestSummary,
+          title: payload
+            ? "Thread report"
+            : requestUserInputAnswerPayload
+              ? "User answer"
+              : undefined,
           summary: promptRefreshPayload
-            ? `Context revision ${promptRefreshPayload.requestedRevision}`
-            : workflowAttentionPayload?.summary
-              ? workflowAttentionPayload.summary
-              : payload?.summary,
+            ? formatQueuedAgentContextUpdateSummary(agentContextUpdate)
+            : followupPayload?.message
+              ? followupPayload.message
+              : reportRequestPayload?.request
+                ? reportRequestPayload.request
+                : requestUserInputAnswerPayload
+                  ? this.getQueuedMessageText(message.messageJson)
+                  : payload?.summary,
+          agentContextUpdate,
           threadId:
             payload?.threadId ??
-            workflowAttentionPayload?.threadId ??
+            followupPayload?.threadId ??
+            reportRequestPayload?.threadId ??
             message.threadId ??
             undefined,
           sourceCommandId: payload?.sourceCommandId,
           status:
-            message.status === "dispatching"
-              ? "dispatching"
-              : message.status === "steering"
-                ? "steering"
-                : "queued",
+            message.status === "failed"
+              ? "failed"
+              : message.status === "dispatching"
+                ? "dispatching"
+                : message.status === "steering"
+                  ? "steering"
+                  : "queued",
+          failureError: message.failureError ?? undefined,
           createdAt: message.createdAt,
           updatedAt: message.updatedAt,
         };
       });
   }
 
-  private parseHandlerHandoffQueuePayload(
+  private buildQueuedAgentContextUpdateProjection(
     message: StructuredSurfaceQueuedMessageRecord,
-  ): HandlerHandoffQueuePayload | null {
+    payload: AgentContextRefreshQueuePayload,
+    target: PromptTarget,
+    session: ManagedSession,
+    promptBinding: NonNullable<ConversationSurfaceSnapshot["promptBinding"]>,
+  ): QueuedAgentContextUpdateProjection {
+    const boundContext = this.structuredSessionStore.getGeneratedAgentContextBinding({
+      surfacePiSessionId: session.sessionId,
+      generatedAgentContextFingerprint: promptBinding.boundFingerprint,
+    });
+    const requestedFingerprint = payload.currentFingerprint;
+    const currentFingerprint = promptBinding.currentFingerprint;
+    const currentRevision = this.generatedAgentContextStore.getState().revision;
+    const outOfDate =
+      (requestedFingerprint !== undefined && requestedFingerprint !== currentFingerprint) ||
+      payload.requestedRevision < currentRevision;
+    const state: QueuedAgentContextUpdateProjection["state"] =
+      message.status === "failed"
+        ? "failed"
+        : message.status === "dispatching"
+          ? "updating"
+          : outOfDate
+            ? "out_of_date"
+            : "queued";
+    const currentExtensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
+      includeManagedLoadedExtensions: false,
+    });
+
+    return {
+      state,
+      requestedRevision: payload.requestedRevision,
+      currentRevision,
+      requestedAt: payload.requestedAt,
+      ...(payload.reason ? { reason: payload.reason } : {}),
+      ...(requestedFingerprint ? { requestedFingerprint } : {}),
+      currentFingerprint,
+      previousFingerprint: promptBinding.boundFingerprint,
+      systemPromptChanged: promptBinding.boundSystemPrompt !== promptBinding.currentSystemPrompt,
+      loadedExtensionIds: diffStringSet(
+        boundContext?.loadedExtensionIds ?? [],
+        currentExtensionState.loadedExtensionIds,
+      ),
+      availableExtensionIds: diffStringSet(
+        boundContext?.availableExtensionIds ?? [],
+        currentExtensionState.availableExtensionIds,
+      ),
+      externalSourceHashes: diffStringSet(
+        promptBinding.boundExternalSourceHashes,
+        promptBinding.currentExternalSourceHashes,
+      ),
+    };
+  }
+
+  private buildAgentContextUpdateEventData(input: {
+    state: "applied" | "cancelled";
+    target: PromptTarget;
+    queued: StructuredSurfaceQueuedMessageRecord;
+    session: ManagedSession | null;
+  }): Record<string, unknown> {
+    const payload = this.parseAgentContextRefreshQueuePayload(input.queued);
+    const promptBinding = input.session
+      ? this.buildPromptBinding(input.session, input.target, input.session.externalContextSources)
+      : undefined;
+    const update =
+      payload && input.session && promptBinding
+        ? this.buildQueuedAgentContextUpdateProjection(
+            input.queued,
+            payload,
+            input.target,
+            input.session,
+            promptBinding,
+          )
+        : null;
+    const stateLabel = input.state === "applied" ? "applied" : "cancelled";
+    const currentRevision =
+      update?.currentRevision ?? this.generatedAgentContextStore.getState().revision;
+    const requestedRevision =
+      update?.requestedRevision ?? payload?.requestedRevision ?? currentRevision;
+    const changeCount = update
+      ? [
+          update.systemPromptChanged ? 1 : 0,
+          update.loadedExtensionIds.added.length,
+          update.loadedExtensionIds.removed.length,
+          update.availableExtensionIds.added.length,
+          update.availableExtensionIds.removed.length,
+          update.externalSourceHashes.added.length,
+          update.externalSourceHashes.removed.length,
+        ].reduce((sum, count) => sum + count, 0)
+      : 0;
+    return {
+      title:
+        input.state === "applied"
+          ? "Agent context update applied"
+          : "Agent context update cancelled",
+      summary: `Agent context update ${stateLabel}: r${requestedRevision}->r${currentRevision}${
+        changeCount > 0 ? `, ${changeCount} ${changeCount === 1 ? "change" : "changes"}` : ""
+      }.`,
+      state: input.state,
+      surface: input.target.surface,
+      surfacePiSessionId: input.target.surfacePiSessionId,
+      ...(input.target.threadId ? { threadId: input.target.threadId } : {}),
+      queueMessageId: input.queued.id,
+      requestedRevision,
+      currentRevision,
+      requestedAt: update?.requestedAt ?? payload?.requestedAt ?? input.queued.createdAt,
+      ...(update?.reason
+        ? { reason: update.reason }
+        : payload?.reason
+          ? { reason: payload.reason }
+          : {}),
+      ...(update?.requestedFingerprint
+        ? { requestedFingerprint: update.requestedFingerprint }
+        : payload?.currentFingerprint
+          ? { requestedFingerprint: payload.currentFingerprint }
+          : {}),
+      ...(update?.currentFingerprint ? { currentFingerprint: update.currentFingerprint } : {}),
+      previousFingerprint: update?.previousFingerprint ?? promptBinding?.boundFingerprint ?? null,
+      systemPromptChanged: update?.systemPromptChanged ?? false,
+      loadedExtensionIds: update?.loadedExtensionIds ?? { added: [], removed: [] },
+      availableExtensionIds: update?.availableExtensionIds ?? { added: [], removed: [] },
+      externalSourceHashes: update?.externalSourceHashes ?? { added: [], removed: [] },
+    };
+  }
+
+  private recordAgentContextUpdateTerminalEvent(input: {
+    state: "applied" | "cancelled";
+    target: PromptTarget;
+    queued: StructuredSurfaceQueuedMessageRecord;
+    session: ManagedSession | null;
+  }): void {
+    const data = this.buildAgentContextUpdateEventData(input);
+    this.structuredSessionStore.recordLifecycleEvent({
+      sessionId: input.target.workspaceSessionId,
+      kind:
+        input.state === "applied"
+          ? "Agent context update applied"
+          : "Agent context update cancelled",
+      subjectKind:
+        input.target.surface === "thread" && input.target.threadId ? "thread" : "session",
+      subjectId:
+        input.target.surface === "thread" && input.target.threadId
+          ? input.target.threadId
+          : input.target.workspaceSessionId,
+      data,
+    });
+  }
+
+  private buildSurfaceAgentContextUpdateTerminalProjection(
+    target: PromptTarget,
+  ): ConversationSurfaceSnapshot["agentContextUpdate"] {
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+    const event = snapshot?.events
+      .filter(
+        (candidate) =>
+          (candidate.kind === "Agent context update applied" ||
+            candidate.kind === "Agent context update cancelled") &&
+          candidate.data?.surfacePiSessionId === target.surfacePiSessionId,
+      )
+      .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+    if (!event) {
+      return undefined;
+    }
+    const data = event.data ?? {};
+    const state =
+      event.kind === "Agent context update applied"
+        ? "applied"
+        : event.kind === "Agent context update cancelled"
+          ? "cancelled"
+          : null;
+    const requestedRevision = Number(data.requestedRevision);
+    const currentRevision = Number(data.currentRevision);
+    const requestedAt = typeof data.requestedAt === "string" ? data.requestedAt : event.at;
+    const currentFingerprint =
+      typeof data.currentFingerprint === "string" ? data.currentFingerprint : "";
+    if (!state || !Number.isFinite(requestedRevision) || !Number.isFinite(currentRevision)) {
+      return undefined;
+    }
+    const readDiff = (value: unknown): { added: string[]; removed: string[] } => {
+      if (!isObjectRecord(value)) {
+        return { added: [], removed: [] };
+      }
+      return {
+        added: Array.isArray(value.added)
+          ? value.added.filter((item): item is string => typeof item === "string")
+          : [],
+        removed: Array.isArray(value.removed)
+          ? value.removed.filter((item): item is string => typeof item === "string")
+          : [],
+      };
+    };
+    return {
+      state,
+      completedAt: event.at,
+      ...(typeof data.queueMessageId === "string" ? { queueMessageId: data.queueMessageId } : {}),
+      requestedRevision,
+      currentRevision,
+      requestedAt,
+      ...(typeof data.reason === "string" ? { reason: data.reason } : {}),
+      ...(typeof data.requestedFingerprint === "string"
+        ? { requestedFingerprint: data.requestedFingerprint }
+        : {}),
+      currentFingerprint,
+      previousFingerprint:
+        typeof data.previousFingerprint === "string" ? data.previousFingerprint : null,
+      systemPromptChanged: data.systemPromptChanged === true,
+      loadedExtensionIds: readDiff(data.loadedExtensionIds),
+      availableExtensionIds: readDiff(data.availableExtensionIds),
+      externalSourceHashes: readDiff(data.externalSourceHashes),
+    };
+  }
+
+  private parseThreadReportNotificationQueuePayload(
+    message: StructuredSurfaceQueuedMessageRecord,
+  ): ThreadReportNotificationQueuePayload | null {
     if (!message.payloadJson) {
       return null;
     }
     try {
-      const payload = JSON.parse(message.payloadJson) as HandlerHandoffQueuePayload;
+      const payload = JSON.parse(message.payloadJson) as ThreadReportNotificationQueuePayload;
       if (
         typeof payload.threadId !== "string" ||
         typeof payload.sourceCommandId !== "string" ||
         typeof payload.turnId !== "string" ||
-        typeof payload.title !== "string" ||
         typeof payload.summary !== "string" ||
-        typeof payload.body !== "string"
+        typeof payload.episodeId !== "string"
       ) {
         return null;
       }
@@ -2041,14 +2775,14 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private parsePromptRefreshQueuePayload(
+  private parseAgentContextRefreshQueuePayload(
     message: StructuredSurfaceQueuedMessageRecord,
-  ): PromptRefreshQueuePayload | null {
+  ): AgentContextRefreshQueuePayload | null {
     if (!message.payloadJson) {
       return null;
     }
     try {
-      const payload = JSON.parse(message.payloadJson) as PromptRefreshQueuePayload;
+      const payload = JSON.parse(message.payloadJson) as AgentContextRefreshQueuePayload;
       if (
         typeof payload.requestedRevision !== "number" ||
         typeof payload.requestedAt !== "string"
@@ -2061,22 +2795,62 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private parseWorkflowAttentionQueuePayload(
+  private parseThreadFollowupQueuePayload(
     message: StructuredSurfaceQueuedMessageRecord,
-  ): WorkflowAttentionQueuePayload | null {
+  ): ThreadFollowupQueuePayload | null {
     if (!message.payloadJson) {
       return null;
     }
     try {
-      const payload = JSON.parse(message.payloadJson) as WorkflowAttentionQueuePayload;
+      const payload = JSON.parse(message.payloadJson) as ThreadFollowupQueuePayload;
       if (
-        typeof payload.sessionId !== "string" ||
         typeof payload.threadId !== "string" ||
-        typeof payload.workflowRunId !== "string" ||
-        typeof payload.smithersRunId !== "string" ||
-        typeof payload.workflowId !== "string" ||
-        typeof payload.summary !== "string" ||
-        typeof payload.reason !== "string"
+        typeof payload.sourceCommandId !== "string" ||
+        typeof payload.message !== "string" ||
+        typeof payload.activate !== "boolean"
+      ) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseReportRequestQueuePayload(
+    message: StructuredSurfaceQueuedMessageRecord,
+  ): ReportRequestQueuePayload | null {
+    if (!message.payloadJson) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(message.payloadJson) as ReportRequestQueuePayload;
+      if (
+        typeof payload.threadId !== "string" ||
+        typeof payload.sourceCommandId !== "string" ||
+        typeof payload.request !== "string"
+      ) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseRequestUserInputAnswerQueuePayload(
+    message: StructuredSurfaceQueuedMessageRecord,
+  ): RequestUserInputAnswerQueuePayload | null {
+    if (!message.payloadJson) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(message.payloadJson) as RequestUserInputAnswerQueuePayload;
+      if (
+        typeof payload.requestId !== "string" ||
+        typeof payload.questionId !== "string" ||
+        typeof payload.answerId !== "string" ||
+        (payload.delivery !== "steer" && payload.delivery !== "after_turn")
       ) {
         return null;
       }
@@ -2092,79 +2866,89 @@ export class WorkspaceSessionCatalog {
     if (!thread) {
       throw new Error(`Queued initial handler start ${message.id} has no handler thread.`);
     }
-    return buildInitialHandlerThreadPrompt(thread);
+    const payload = parseInitialHandlerStartQueuePayload(message);
+    return buildInitialHandlerThreadPrompt(thread, payload?.parentSessionFile ?? null);
   }
 
-  private buildWorkflowAttentionQueuedPrompt(
+  private buildThreadFollowupQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
+    const payload = this.parseThreadFollowupQueuePayload(message);
+    if (!payload) {
+      throw new Error(`Queued thread follow-up ${message.id} has malformed payload.`);
+    }
+    return payload.message;
+  }
+
+  private buildReportRequestQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
+    const payload = this.parseReportRequestQueuePayload(message);
+    if (!payload) {
+      throw new Error(`Queued report request ${message.id} has malformed payload.`);
+    }
+    return [
+      "System event: The orchestrator requested an explicit thread_report update.",
+      `Report request: ${payload.request}`,
+      "Respond by calling thread_report with an intermediate update unless the objective is ready to conclude.",
+    ].join("\n");
+  }
+
+  private buildRequestUserInputAnswerQueuedPrompt(
     message: StructuredSurfaceQueuedMessageRecord,
   ): string {
-    const payload = this.parseWorkflowAttentionQueuePayload(message);
+    if (!this.parseRequestUserInputAnswerQueuePayload(message)) {
+      throw new Error(`Queued request_user_input answer ${message.id} has malformed payload.`);
+    }
+    const payload = this.parseRequestUserInputAnswerDeliveryPayload(message.messageJson);
     if (!payload) {
-      throw new Error(`Queued workflow attention ${message.id} has malformed payload.`);
+      throw new Error(`Queued request_user_input answer ${message.id} has malformed message.`);
     }
-    const snapshot = this.getStructuredSnapshot(payload.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === payload.threadId) ?? null;
-    if (!snapshot || !thread) {
-      throw new Error(`Queued workflow attention ${message.id} has no handler thread.`);
-    }
-    return buildHandlerWorkflowAttentionPrompt({
-      thread,
-      workflowRun:
-        snapshot.workflowRuns.find((workflowRun) => workflowRun.id === payload.workflowRunId) ??
-        null,
-      reason: payload.reason,
-      summary: payload.summary,
-      workflowId: payload.workflowId,
-      smithersRunId: payload.smithersRunId,
-    });
+    return JSON.stringify(payload, null, 2);
   }
 
-  private buildHandlerHandoffQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
-    const payload = this.parseHandlerHandoffQueuePayload(message);
-    if (!payload) {
-      throw new Error(`Queued handler handoff ${message.id} has malformed payload.`);
+  private async failQueuedSurfaceDelivery(
+    target: PromptTarget,
+    queued: StructuredSurfaceQueuedMessageRecord,
+    error: unknown,
+  ): Promise<never> {
+    const failureError =
+      error instanceof Error ? error.message : "Queued surface message delivery failed.";
+    try {
+      this.structuredSessionStore.markSurfaceMessageFailed({ id: queued.id, failureError });
+      await this.emitQueuedSurfaceUpdate(target);
+    } finally {
+      await this.releaseManagedSurface(target.surfacePiSessionId);
     }
-    const snapshot = this.getStructuredSnapshot(message.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === payload.threadId) ?? null;
-    return buildOrchestratorHandoffResumePrompt(thread, payload.summary);
+    throw error;
   }
 
-  private acceptHandlerHandoffQueueItem(
+  private parseRequestUserInputAnswerDeliveryPayload(
+    messageJson: string,
+  ): RequestUserInputAnswerDeliveryPayload | null {
+    try {
+      const payload = JSON.parse(messageJson) as RequestUserInputAnswerDeliveryPayload;
+      if (
+        payload.type !== "request_user_input.answer" ||
+        typeof payload.title !== "string" ||
+        typeof payload.question !== "string" ||
+        !isRequestUserInputAnswerPayload(payload.originalAnswer) ||
+        !isRequestUserInputAnswerPayload(payload.userAnswer)
+      ) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private buildThreadReportNotificationQueuedPrompt(
     message: StructuredSurfaceQueuedMessageRecord,
-  ): ThreadHandoffAcceptance {
-    const payload = this.parseHandlerHandoffQueuePayload(message);
+  ): string {
+    const payload = this.parseThreadReportNotificationQueuePayload(message);
     if (!payload) {
-      throw new Error(`Queued handler handoff ${message.id} has malformed payload.`);
+      throw new Error(`Queued thread report notification ${message.id} has malformed payload.`);
     }
-
     const snapshot = this.getStructuredSnapshot(message.sessionId);
-    const existingEpisode =
-      snapshot?.episodes.find((episode) => episode.sourceCommandId === payload.sourceCommandId) ??
-      null;
-    const episode =
-      existingEpisode ??
-      (() => {
-        this.structuredSessionStore.updateThread({
-          threadId: payload.threadId,
-          status: "completed",
-          wait: null,
-        });
-        return this.structuredSessionStore.createEpisode({
-          threadId: payload.threadId,
-          sourceCommandId: payload.sourceCommandId,
-          kind: payload.kind,
-          title: payload.title,
-          summary: payload.summary,
-          body: payload.body,
-        });
-      })();
-    const acceptance: ThreadHandoffAcceptance = {
-      episodeId: episode.id,
-      kind: episode.kind,
-      title: episode.title,
-      summary: episode.summary,
-    };
-    return acceptance;
+    const thread = snapshot?.threads.find((entry) => entry.id === payload.threadId) ?? null;
+    return buildOrchestratorThreadReportPrompt(thread, payload.summary, payload.outcome);
   }
 
   private getQueuedMessageText(messageJson: string): string {
@@ -2219,11 +3003,57 @@ export class WorkspaceSessionCatalog {
         session,
         reason: "surface.updated",
         target: this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
+        refreshExternalSources: true,
       });
     }
   }
 
+  private async queueOpenSurfacePromptRefreshes(reason: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    const currentExternalSources = await this.buildCurrentExternalContextSources();
+    for (const session of this.managedSurfaces.values()) {
+      const target = this.resolvePromptTargetForSurfacePiSessionId(session.sessionId);
+      const binding = this.buildPromptBinding(session, target, currentExternalSources);
+      if (!binding.stale) {
+        continue;
+      }
+      const existing = this.structuredSessionStore
+        .listQueuedSurfaceMessages({
+          surfacePiSessionId: target.surfacePiSessionId,
+        })
+        .find((message) => message.kind === "agent_context_refresh");
+      if (existing?.status === "failed") {
+        this.structuredSessionStore.markSurfaceMessageQueued({
+          id: existing.id,
+          position: "front",
+        });
+      } else if (!existing) {
+        this.structuredSessionStore.enqueueSurfaceMessage({
+          sessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          kind: "agent_context_refresh",
+          idempotencyKey: `agent_context_refresh:${target.surfacePiSessionId}:${reason}:${binding.currentFingerprint}`,
+          messageJson: "{}",
+          payloadJson: JSON.stringify({
+            reason,
+            currentFingerprint: binding.currentFingerprint,
+            requestedRevision: this.generatedAgentContextStore.getState().revision,
+            requestedAt: new Date().toISOString(),
+          } satisfies AgentContextRefreshQueuePayload),
+          requestSummary: "Update agent context",
+          position: "front",
+        });
+      }
+      await this.emitQueuedSurfaceUpdate(target);
+      this.wakeSurfaceQueue(target);
+    }
+  }
+
   private async emitSurfaceSync(input: {
+    refreshExternalSources?: boolean;
     session: ManagedSession;
     reason: SurfaceSyncMessage["reason"];
     target: PromptTarget;
@@ -2237,7 +3067,9 @@ export class WorkspaceSessionCatalog {
         workspaceId: this.workspaceId,
         reason: input.reason,
         target: structuredClone(input.target),
-        snapshot: await this.buildSurfaceSnapshot(input.session, input.target),
+        snapshot: await this.buildSurfaceSnapshot(input.session, input.target, {
+          refreshExternalSources: input.refreshExternalSources === true,
+        }),
       });
     } catch (error) {
       console.error("Failed to emit surface sync payload:", error);
@@ -2269,45 +3101,121 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async emitStructuredStateSync(sessionId: string): Promise<void> {
-    await this.emitWorkspaceSync("structured.updated");
-    const orchestratorSurface = this.managedSurfaces.get(sessionId);
-    if (!orchestratorSurface) {
-      return;
-    }
-    try {
-      await this.emitSurfaceSync({
-        reason: "surface.updated",
-        session: orchestratorSurface,
-        target: this.buildOrchestratorPromptTarget(sessionId),
-      });
-    } catch (error) {
-      console.error(`Failed to emit structured surface sync for ${sessionId}:`, error);
-    }
+  private async openArtifactFromRuntime(input: {
+    sessionId: string;
+    artifactId: string;
+  }): Promise<boolean> {
+    return this.emitWorkspaceSync("artifact.open", {
+      artifactOpenRequest: {
+        workspaceSessionId: input.sessionId,
+        artifactId: input.artifactId,
+      },
+    });
   }
 
-  private async emitWorkspaceSync(reason: WorkspaceSyncMessage["reason"]): Promise<void> {
+  private async emitWorkspaceSync(
+    reason: WorkspaceSyncMessage["reason"],
+    extra: Pick<WorkspaceSyncMessage, "artifactOpenRequest"> = {},
+  ): Promise<boolean> {
     if (this.closed || !this.workspaceSyncListener) {
-      return;
+      return false;
     }
 
     try {
       const payload = await this.listSessions();
       if (this.closed) {
-        return;
+        return false;
       }
       this.workspaceSyncListener({
         workspaceId: this.workspaceId,
         reason,
         sessions: payload.sessions,
         navigation: payload.navigation,
+        requestUserInputRequests: this.buildWorkspaceRequestUserInputRequests(),
+        runtimeApprovalRequests: this.buildWorkspaceRuntimeApprovalRequests(),
+        ...extra,
       });
+      return true;
     } catch (error) {
       if (this.closed) {
-        return;
+        return false;
       }
       console.error("Failed to emit workspace sync payload:", error);
+      return false;
     }
+  }
+
+  private buildWorkspaceRequestUserInputRequests(): WorkspaceRequestUserInputRequest[] {
+    return this.structuredSessionStore
+      .listSessionStates()
+      .flatMap((snapshot) =>
+        snapshot.requestUserInputRequests
+          .filter((request) => request.status === "open" || request.status === "completed")
+          .map((request) => {
+            const thread = request.threadId
+              ? (snapshot.threads.find((candidate) => candidate.id === request.threadId) ?? null)
+              : null;
+            return {
+              requestId: request.requestId,
+              workspaceSessionId: request.sessionId,
+              surfacePiSessionId: request.surfacePiSessionId,
+              threadId: request.threadId,
+              ownerTitle: thread?.title ?? snapshot.pi.title,
+              variant: request.variant,
+              status: request.status,
+              createdAt: request.createdAt,
+              completedAt: request.completedAt,
+              timeout: request.timeout ? { ...request.timeout } : null,
+              questions: request.questions.map((question) => ({
+                questionId: question.questionId,
+                ordinal: question.ordinal,
+                title: question.title,
+                question: question.question,
+                defaultAnswer: structuredClone(question.defaultAnswer),
+                choices: question.choices.map((choice) => ({ ...choice })),
+                status: question.status,
+              })),
+            };
+          }),
+      )
+      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  private buildWorkspaceRuntimeApprovalRequests(): WorkspaceRuntimeApprovalRequest[] {
+    return this.structuredSessionStore
+      .listSessionStates()
+      .flatMap((snapshot) =>
+        (snapshot.runtimeApprovalRequests ?? [])
+          .filter((request) => request.status === "pending")
+          .map((request) => {
+            const thread = request.threadId
+              ? (snapshot.threads.find((candidate) => candidate.id === request.threadId) ?? null)
+              : null;
+            return {
+              requestId: request.requestId,
+              workspaceSessionId: request.sessionId,
+              surfacePiSessionId: request.surfacePiSessionId,
+              threadId: request.threadId,
+              ownerTitle: thread?.title ?? snapshot.pi.title,
+              toolName: request.toolName,
+              approvalMode: request.approvalMode,
+              cwd: request.cwd,
+              command: request.command,
+              commandFamily: request.commandFamily,
+              snippetArtifactId: request.snippetArtifactId,
+              status: request.status,
+              createdAt: request.createdAt,
+              completedAt: request.completedAt,
+              summary:
+                request.toolName === "exec_command" && request.command
+                  ? `Run command: ${request.command}`
+                  : request.toolName === "apply_patch"
+                    ? "Apply patch"
+                    : "Run TypeScript",
+            };
+          }),
+      )
+      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   private async emitSurfaceClosed(target: PromptTarget): Promise<void> {
@@ -2319,39 +3227,6 @@ export class WorkspaceSessionCatalog {
       reason: "surface.closed",
       target: structuredClone(target),
     });
-  }
-
-  private async restoreWorkflowSupervisionIfTracked(sessionId: string): Promise<void> {
-    const snapshot = this.getStructuredSnapshot(sessionId);
-    if (!snapshot || !hasRestorableWorkflowSupervision(snapshot)) {
-      return;
-    }
-    await this.restoreWorkflowSupervisionForSession(sessionId);
-  }
-
-  private async restoreWorkflowSupervisionForSession(sessionId: string): Promise<void> {
-    if (this.closed || this.restoredWorkflowSupervisionSessionIds.has(sessionId)) {
-      return;
-    }
-    const existingTask = this.workflowSupervisionRestoreTasks.get(sessionId);
-    if (existingTask) {
-      await existingTask;
-      return;
-    }
-
-    const task = (async () => {
-      await this.smithersRuntimeManager.restoreSessionSupervision(sessionId);
-      if (!this.closed) {
-        this.restoredWorkflowSupervisionSessionIds.add(sessionId);
-      }
-    })();
-    this.workflowSupervisionRestoreTasks.set(sessionId, task);
-
-    try {
-      await task;
-    } finally {
-      this.workflowSupervisionRestoreTasks.delete(sessionId);
-    }
   }
 
   private recoverInterruptedSurfaceTurn(surfacePiSessionId: string): void {
@@ -2390,17 +3265,17 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private recoverHandlerHandoffResolution(queuedItemId: string): void {
+  private recoverThreadReportNotificationDelivery(queuedItemId: string): void {
     let queued: StructuredSurfaceQueuedMessageRecord;
     try {
       queued = this.structuredSessionStore.getSurfaceQueuedMessage({ id: queuedItemId });
     } catch {
       return;
     }
-    if (queued.kind !== "handler_handoff" || queued.status === "delivered") {
+    if (queued.kind !== "thread_report_notification" || queued.status === "delivered") {
       return;
     }
-    if (!this.parseHandlerHandoffQueuePayload(queued)) {
+    if (!this.parseThreadReportNotificationQueuePayload(queued)) {
       this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
       return;
     }
@@ -2417,29 +3292,14 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  private buildSystemPromptForTarget(target: PromptTarget): string {
-    if (target.surface !== "thread" || !target.threadId) {
-      const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-      const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
-      const settings = this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
-      return buildOrchestratorProfileSystemPrompt(
-        settings,
-        this.promptLibraryStore.getState(),
-        this.cwd,
-        this.createActiveWebProvider(),
-      );
-    }
-
-    const thread =
-      this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
-        (candidate) => candidate.id === target.threadId,
-      ) ?? null;
-    const basePrompt = this.buildPromptFromLibrary("handler", {
-      loadedContextKeys: thread?.loadedContextKeys ?? [],
-    });
-    const agentSettings = this.resolveThreadProfileSettings(target.surfacePiSessionId);
-    const suffix = agentSettings?.systemPrompt.trim();
-    return suffix ? `${basePrompt}\n\n## Handler Profile Override\n${suffix}` : basePrompt;
+  private buildSystemPromptForTarget(
+    target: PromptTarget,
+    options: {
+      extensionState?: { loadedExtensionIds: string[]; availableExtensionIds: string[] };
+      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    } = {},
+  ): string {
+    return this.buildAggregateForTarget(target, options).outputs.prompt;
   }
 
   private resolveOrchestratorAgentProfile(profileId: AgentProfileId): AgentProfileSettings {
@@ -2470,46 +3330,362 @@ export class WorkspaceSessionCatalog {
     return null;
   }
 
-  private createActiveWebProvider() {
-    const webProvider = this.agentSettingsStore.getState().appPreferences.webProvider;
-    return createWebProvider(
-      { provider: webProvider },
-      {
-        tinyfishApiKey: resolveApiKey("tinyfish"),
-        firecrawlApiKey: resolveApiKey("firecrawl"),
+  private resolveSurfaceExtensionState(
+    surfacePiSessionId: string,
+  ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } | null {
+    for (const session of this.structuredSessionStore.listSessionStates()) {
+      if (session.session.id === surfacePiSessionId) {
+        if (session.pi.loadedExtensionIds && session.pi.availableExtensionIds) {
+          return {
+            loadedExtensionIds: session.pi.loadedExtensionIds,
+            availableExtensionIds: session.pi.availableExtensionIds,
+          };
+        }
+        return null;
+      }
+      const thread = session.threads.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (thread) {
+        return {
+          loadedExtensionIds: thread.loadedExtensionIds,
+          availableExtensionIds: thread.availableExtensionIds,
+        };
+      }
+    }
+    return null;
+  }
+
+  private resolveStoredGeneratedAgentContextFingerprint(surfacePiSessionId: string): string | null {
+    for (const session of this.structuredSessionStore.listSessionStates()) {
+      if (session.session.id === surfacePiSessionId) {
+        return session.pi.generatedAgentContextFingerprint ?? null;
+      }
+      const thread = session.threads.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (thread) {
+        return thread.generatedAgentContextFingerprint ?? null;
+      }
+    }
+    return null;
+  }
+
+  private syncGeneratedAgentContextBindingForTarget(
+    target: PromptTarget,
+    session: ManagedSession,
+  ): void {
+    this.structuredSessionStore.upsertGeneratedAgentContextBinding({
+      surfacePiSessionId: session.sessionId,
+      ownerKind: target.surface === "thread" && target.threadId ? "thread" : "session",
+      ownerId:
+        target.surface === "thread" && target.threadId
+          ? target.threadId
+          : target.workspaceSessionId,
+      actorKind: target.surface === "thread" ? "handler" : "orchestrator",
+      aggregateCacheKey: session.generatedAgentContextAggregateKey,
+      systemPrompt: session.systemPrompt,
+      svvyxGuidance: session.generatedAgentContextAggregate.svvyxGuidance,
+      commandsDts: session.generatedAgentContextAggregate.commandsDts,
+      nativeToolSchemasJson: session.generatedAgentContextAggregate.nativeToolSchemasJson,
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      generatedAgentContextRevision: session.generatedAgentContextRevision,
+      loadedExtensionIds: session.loadedExtensionIds,
+      availableExtensionIds: session.availableExtensionIds,
+      externalSourceHashes: session.externalSourceHashes,
+    });
+    if (target.surface === "orchestrator") {
+      this.syncStructuredPiSessionFromOrchestratorSession(session);
+      return;
+    }
+    if (!target.threadId) {
+      return;
+    }
+    this.structuredSessionStore.updateThread({
+      threadId: target.threadId,
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+    });
+  }
+
+  private recordAgentContextUpdatedEvent(
+    target: PromptTarget,
+    previous: {
+      systemPrompt: string;
+      generatedAgentContextFingerprint: string | null;
+      loadedExtensionIds: string[];
+      availableExtensionIds: string[];
+      externalSourceHashes: string[];
+    },
+    refreshed: ManagedSession,
+  ): void {
+    if (previous.generatedAgentContextFingerprint === refreshed.generatedAgentContextFingerprint) {
+      return;
+    }
+
+    this.structuredSessionStore.recordLifecycleEvent({
+      sessionId: target.workspaceSessionId,
+      kind: "Agent context updated",
+      subjectKind: target.surface === "thread" && target.threadId ? "thread" : "session",
+      subjectId:
+        target.surface === "thread" && target.threadId
+          ? target.threadId
+          : target.workspaceSessionId,
+      data: {
+        surface: target.surface,
+        surfacePiSessionId: target.surfacePiSessionId,
+        previousFingerprint: previous.generatedAgentContextFingerprint,
+        currentFingerprint: refreshed.generatedAgentContextFingerprint,
+        systemPromptChanged: previous.systemPrompt !== refreshed.systemPrompt,
+        loadedExtensionIds: diffStringSet(
+          previous.loadedExtensionIds,
+          refreshed.loadedExtensionIds,
+        ),
+        availableExtensionIds: diffStringSet(
+          previous.availableExtensionIds,
+          refreshed.availableExtensionIds,
+        ),
+        externalSourceHashes: diffStringSet(
+          previous.externalSourceHashes,
+          refreshed.externalSourceHashes,
+        ),
       },
-    );
+    });
+  }
+
+  private resolveCurrentExtensionStateForTarget(
+    target: PromptTarget,
+    managed: ManagedSession | null,
+    options: {
+      includeManagedLoadedExtensions?: boolean;
+    } = {},
+  ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
+    if (target.surface === "thread" && target.threadId) {
+      const thread =
+        this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
+          (candidate) => candidate.id === target.threadId,
+        ) ?? null;
+      return {
+        loadedExtensionIds: thread?.loadedExtensionIds ?? managed?.loadedExtensionIds ?? [],
+        availableExtensionIds:
+          thread?.availableExtensionIds ?? managed?.availableExtensionIds ?? [],
+      };
+    }
+
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+    const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
+    const currentProfile =
+      this.agentSettingsStore
+        .getState()
+        .agents.orchestrators.find((agent) => agent.id === profileId) ??
+      this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
+    const current = resolveActorExtensionState({
+      actor: "orchestrator",
+      profileExtensionUsage: currentProfile.extensionUsage,
+    });
+    const sessionLoadedExtensionIds =
+      managed?.loadedExtensionIds ?? snapshot?.pi.loadedExtensionIds ?? [];
+    const sessionAvailableExtensionIds =
+      managed?.availableExtensionIds ?? snapshot?.pi.availableExtensionIds ?? [];
+    if (options.includeManagedLoadedExtensions === false) {
+      const baselineProfile = this.resolveOrchestratorProfileSettingsFromSnapshot(
+        snapshot,
+        profileId,
+      );
+      const baseline = resolveActorExtensionState({
+        actor: "orchestrator",
+        profileExtensionUsage: baselineProfile.extensionUsage,
+      });
+      const baselineLoaded = new Set(baseline.loadedExtensionIds);
+      const dynamicallyLoaded = sessionLoadedExtensionIds.filter((id) => !baselineLoaded.has(id));
+      if (dynamicallyLoaded.length === 0) {
+        return current;
+      }
+      const loaded = new Set([...current.loadedExtensionIds, ...dynamicallyLoaded]);
+      return {
+        loadedExtensionIds: [...loaded].toSorted(),
+        availableExtensionIds: current.availableExtensionIds
+          .filter((id) => !loaded.has(id))
+          .toSorted(),
+      };
+    }
+    if (sessionLoadedExtensionIds.length === 0) {
+      return current;
+    }
+    const loaded = new Set([...current.loadedExtensionIds, ...sessionLoadedExtensionIds]);
+    const available = new Set([...current.availableExtensionIds, ...sessionAvailableExtensionIds]);
+    return {
+      loadedExtensionIds: [...loaded].toSorted(),
+      availableExtensionIds: [...available].filter((id) => !loaded.has(id)).toSorted(),
+    };
   }
 
   private buildPromptFromLibrary(
     actor: SvvyActorKind,
-    options: { loadedContextKeys?: readonly string[] } = {},
+    options: {
+      loadedContextKeys?: readonly string[];
+      loadedExtensionIds?: readonly string[];
+      availableExtensionIds?: readonly string[];
+      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+      profileSection?: { title: string; body: string };
+    } = {},
   ): string {
-    return buildSystemPrompt(actor, {
+    return this.buildPromptAggregateFromLibrary(actor, options).outputs.prompt;
+  }
+
+  private buildPromptAggregateFromLibrary(
+    actor: SvvyActorKind,
+    options: {
+      loadedContextKeys?: readonly string[];
+      loadedExtensionIds?: readonly string[];
+      availableExtensionIds?: readonly string[];
+      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+      profileSection?: { title: string; body: string };
+    } = {},
+  ): GeneratedAgentContextAggregateResult {
+    const loadedExtensionIds = options.loadedExtensionIds ?? [];
+    const availableExtensionIds = options.availableExtensionIds ?? [];
+    const loadedExtensionRecords = resolveExtensionRecords(loadedExtensionIds, this.extensionsRoot);
+    const availableExtensionRecords = resolveExtensionRecords(
+      availableExtensionIds,
+      this.extensionsRoot,
+    );
+    const generatedAgentContextState = this.generatedAgentContextStore.getState();
+    const requestUserInputSettings = this.agentSettingsStore.getState().requestUserInput;
+    const prompt = buildSystemPrompt(actor, {
       ...options,
-      promptLibraryState: this.promptLibraryStore.getState(),
+      loadedExtensionRecords,
+      availableExtensionRecords,
+      extensionsRoot: this.extensionsRoot,
+      generatedAgentContextState,
       workspaceKey: this.cwd,
-      webProvider: this.createActiveWebProvider(),
+      requestUserInputSettings,
+    });
+    const profileSection = options.profileSection?.body.trim()
+      ? {
+          title: options.profileSection.title.trim(),
+          body: options.profileSection.body.trim(),
+        }
+      : undefined;
+    const resolvedPrompt = profileSection
+      ? `${prompt}\n\n## ${profileSection.title}\n${profileSection.body}`
+      : prompt;
+    return this.generatedAgentContextAggregateCache.getOrCreate(
+      {
+        actorKind: actor,
+        loadedExtensionIds,
+        availableExtensionIds,
+        loadedContextKeys: options.loadedContextKeys ?? [],
+        extensionContextFingerprints: createExtensionContextFingerprints([
+          ...loadedExtensionRecords,
+          ...availableExtensionRecords,
+        ]),
+        generatedAgentContextContentKey: getGeneratedAgentContextContentKey(
+          generatedAgentContextState,
+        ),
+        agentContextFormatVersion: GENERATED_AGENT_CONTEXT_AGGREGATE_FORMAT_VERSION,
+        externalInstructionsFingerprint: createExternalInstructionsFingerprint(
+          options.externalInstructionSources ?? [],
+        ),
+        promptSettingsFingerprint: createPromptSettingsFingerprint({
+          requestUserInputSettings,
+          profileSection,
+        }),
+        workspaceKey: this.cwd,
+      },
+      () => ({
+        prompt: resolvedPrompt,
+        svvyxGuidance: buildGeneratedSvvyxGuidance(loadedExtensionRecords),
+        commandsDts: buildExecuteTypescriptApiDeclaration(actor, {
+          extensionsRoot: this.extensionsRoot,
+          loadedExtensionIds,
+          loadedExtensionRecords,
+        }),
+        nativeToolSchemasJson: buildNativeToolSchemasJson(loadedExtensionRecords),
+      }),
+    );
+  }
+
+  private buildAggregateForTarget(
+    target: PromptTarget,
+    options: {
+      extensionState?: { loadedExtensionIds: string[]; availableExtensionIds: string[] };
+      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    } = {},
+  ): GeneratedAgentContextAggregateResult {
+    if (target.surface !== "thread" || !target.threadId) {
+      const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+      const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
+      const settings = this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
+      const extensionState =
+        options.extensionState ??
+        this.resolveCurrentExtensionStateForTarget(
+          target,
+          this.managedSurfaces.get(target.surfacePiSessionId) ?? null,
+        );
+      const suffix = settings.systemPrompt.trim();
+      return this.buildPromptAggregateFromLibrary("orchestrator", {
+        ...extensionState,
+        externalInstructionSources: options.externalInstructionSources ?? [],
+        profileSection:
+          !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
+            ? undefined
+            : { title: "Orchestrator Profile", body: suffix },
+      });
+    }
+
+    const thread =
+      this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
+        (candidate) => candidate.id === target.threadId,
+      ) ?? null;
+    const agentSettings = this.resolveThreadProfileSettings(target.surfacePiSessionId);
+    const suffix = agentSettings?.systemPrompt.trim();
+    return this.buildPromptAggregateFromLibrary("handler", {
+      loadedContextKeys: thread?.loadedContextKeys ?? [],
+      loadedExtensionIds: options.extensionState?.loadedExtensionIds ?? thread?.loadedExtensionIds,
+      availableExtensionIds:
+        options.extensionState?.availableExtensionIds ?? thread?.availableExtensionIds,
+      externalInstructionSources: options.externalInstructionSources ?? [],
+      profileSection: suffix ? { title: "Handler Profile Override", body: suffix } : undefined,
     });
   }
 
   private buildPromptBinding(
     session: ManagedSession,
     target: PromptTarget,
-    currentExternalSources: readonly PromptLibraryExternalSource[],
+    currentExternalSources: readonly GeneratedAgentContextExternalSource[],
   ) {
-    const currentState = this.promptLibraryStore.getState();
-    const currentSystemPrompt = this.buildSystemPromptForTarget(target);
+    const currentState = this.generatedAgentContextStore.getState();
+    const currentExtensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
+      includeManagedLoadedExtensions: false,
+    });
+    const currentSystemPrompt = this.buildSystemPromptForTarget(target, {
+      extensionState: currentExtensionState,
+      externalInstructionSources: currentExternalSources,
+    });
     const currentExternalSourceHashes = externalSourceHashes(currentExternalSources);
-    const boundExternalSourceHashes = externalSourceHashes(session.externalContextSources);
+    const boundExternalSourceHashes = session.externalSourceHashes;
+    const currentFingerprint = createGeneratedAgentContextFingerprint({
+      systemPrompt: currentSystemPrompt,
+      loadedExtensionIds: currentExtensionState.loadedExtensionIds,
+      availableExtensionIds: currentExtensionState.availableExtensionIds,
+      externalContextSources: currentExternalSources,
+    });
     return {
       currentRevision: currentState.revision,
       boundSystemPrompt: session.systemPrompt,
       currentSystemPrompt,
+      boundFingerprint: session.generatedAgentContextFingerprint,
+      currentFingerprint,
       boundExternalSourceHashes,
       currentExternalSourceHashes,
       stale:
+        session.generatedAgentContextFingerprint !== currentFingerprint ||
         session.systemPrompt !== currentSystemPrompt ||
+        !sameStringList(session.loadedExtensionIds, currentExtensionState.loadedExtensionIds) ||
+        !sameStringList(
+          session.availableExtensionIds,
+          currentExtensionState.availableExtensionIds,
+        ) ||
         !sameStringList(boundExternalSourceHashes, currentExternalSourceHashes),
     };
   }
@@ -2517,7 +3693,7 @@ export class WorkspaceSessionCatalog {
   private resolveOrchestratorProfileSettingsFromSnapshot(
     snapshot: StructuredSessionSnapshot | null | undefined,
     key: AgentProfileId,
-  ): AgentPromptSettings {
+  ): AgentProfileSettings {
     const current =
       this.agentSettingsStore.getState().agents.orchestrators.find((agent) => agent.id === key) ??
       this.agentSettingsStore.getState().agents.orchestrators[0];
@@ -2529,9 +3705,16 @@ export class WorkspaceSessionCatalog {
       return current;
     }
     try {
-      const parsed = JSON.parse(json) as AgentPromptSettings;
-      if (parsed.provider && parsed.model && parsed.reasoningEffort) {
-        return parsed;
+      const parsed = JSON.parse(json) as Partial<AgentProfileSettings>;
+      if (parsed.provider && parsed.model && parsed.reasoningEffort && parsed.systemPrompt) {
+        return {
+          ...current,
+          ...parsed,
+          extensionUsage:
+            parsed.extensionUsage && typeof parsed.extensionUsage === "object"
+              ? parsed.extensionUsage
+              : current.extensionUsage,
+        };
       }
     } catch {
       return current;
@@ -2540,6 +3723,16 @@ export class WorkspaceSessionCatalog {
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
+    const target = this.tryResolvePromptTargetForSurfacePiSessionId(surfacePiSessionId);
+    if (target) {
+      return target;
+    }
+    return this.buildOrchestratorPromptTarget(surfacePiSessionId);
+  }
+
+  private tryResolvePromptTargetForSurfacePiSessionId(
+    surfacePiSessionId: string,
+  ): PromptTarget | null {
     for (const session of this.structuredSessionStore.listSessionStates()) {
       const thread = session.threads.find(
         (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
@@ -2554,7 +3747,10 @@ export class WorkspaceSessionCatalog {
       }
     }
 
-    return this.buildOrchestratorPromptTarget(surfacePiSessionId);
+    const session = this.structuredSessionStore
+      .listSessionStates()
+      .find((candidate) => candidate.session.id === surfacePiSessionId);
+    return session ? this.buildOrchestratorPromptTarget(surfacePiSessionId) : null;
   }
 
   private assertValidPromptTarget(target: PromptTarget): void {
@@ -2625,6 +3821,9 @@ export class WorkspaceSessionCatalog {
         orchestratorAgentProfileJson:
           snapshot?.pi.orchestratorAgentProfileJson ??
           JSON.stringify(this.resolveOrchestratorAgentProfile(DEFAULT_ORCHESTRATOR_PROFILE_ID)),
+        generatedAgentContextFingerprint: snapshot?.pi.generatedAgentContextFingerprint ?? null,
+        loadedExtensionIds: snapshot?.pi.loadedExtensionIds,
+        availableExtensionIds: snapshot?.pi.availableExtensionIds,
         titleNamerAgentJson:
           snapshot?.pi.titleNamerAgentJson ??
           JSON.stringify(this.agentSettingsStore.getState().agents.titleNamer),
@@ -2657,6 +3856,9 @@ export class WorkspaceSessionCatalog {
       reasoningEffort: session.thinkingLevel,
       orchestratorAgentProfileId: session.agentProfileId,
       orchestratorAgentProfileJson: JSON.stringify(profile),
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      loadedExtensionIds: session.loadedExtensionIds,
+      availableExtensionIds: session.availableExtensionIds,
       titleNamerAgentJson: JSON.stringify(state.agents.titleNamer),
       messageCount: summary.messageCount,
       status: summary.status,
@@ -2728,33 +3930,30 @@ export class WorkspaceSessionCatalog {
     return { target: structuredClone(options.target), queuedMessageId: queued.id };
   }
 
-  private async awaitThreadHandoffAcceptance(
-    request: ThreadHandoffRequest,
-  ): Promise<ThreadHandoffAcceptance> {
+  private async queueThreadReportNotification(
+    request: ThreadReportNotificationRequest,
+  ): Promise<void> {
     const orchestratorTarget = this.buildOrchestratorPromptTarget(request.runtime.sessionId);
-    const payload: HandlerHandoffQueuePayload = {
+    const payload: ThreadReportNotificationQueuePayload = {
       threadId: request.runtime.surfaceThreadId,
       sourceCommandId: request.commandId,
       turnId: request.runtime.turnId,
-      title: request.title,
-      summary: request.summary,
-      body: request.body,
-      kind: request.kind,
+      summary: request.episode.summary,
+      episodeId: request.episode.id,
+      outcome: request.outcome,
     };
-    const queued = this.structuredSessionStore.enqueueSurfaceMessage({
+    this.structuredSessionStore.enqueueSurfaceMessage({
       sessionId: orchestratorTarget.workspaceSessionId,
       surfacePiSessionId: orchestratorTarget.surfacePiSessionId,
-      kind: "handler_handoff",
-      idempotencyKey: `handler_handoff:${request.commandId}`,
+      kind: "thread_report_notification",
+      idempotencyKey: `thread_report_notification:${request.episode.id}`,
       messageJson: "{}",
       payloadJson: JSON.stringify(payload),
-      requestSummary: request.summary,
+      requestSummary: request.episode.summary,
     });
 
-    const acceptance = this.acceptHandlerHandoffQueueItem(queued);
     void this.emitQueuedSurfaceUpdate(orchestratorTarget);
     this.wakeSurfaceQueue(orchestratorTarget);
-    return acceptance;
   }
 
   private restorePiQueuedMessagesToSurface(session: ManagedSession, target: PromptTarget): void {
@@ -2819,14 +4018,18 @@ export class WorkspaceSessionCatalog {
     }
   }
 
+  private requireStructuredSnapshot(sessionId: string): StructuredSessionSnapshot {
+    const snapshot = this.getStructuredSnapshot(sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${sessionId}`);
+    }
+    return snapshot;
+  }
+
   private async getDerivedStructuredSnapshot(
     sessionId: string,
   ): Promise<StructuredSessionSnapshot | null> {
-    try {
-      return await this.smithersRuntimeManager.getDerivedSessionSnapshot(sessionId);
-    } catch {
-      return null;
-    }
+    return this.getStructuredSnapshot(sessionId);
   }
 
   private async decorateSummaryWithStructuredProjection(
@@ -2897,6 +4100,7 @@ export class WorkspaceSessionCatalog {
       threadIds: structuredSummary.threadIds,
       sidebarThreads: view.sidebarThreads,
       commandRollups: view.commandRollups.length > 0 ? view.commandRollups : undefined,
+      productEvents: view.productEvents.length > 0 ? view.productEvents : undefined,
     };
   }
 
@@ -2977,6 +4181,11 @@ export class WorkspaceSessionCatalog {
         threadWasTerminalAtStart: targetThread
           ? isTerminalThreadStatus(targetThread.status)
           : false,
+        loadedExtensionIds: targetThread?.loadedExtensionIds ?? session.loadedExtensionIds,
+        availableExtensionIds: targetThread?.availableExtensionIds ?? session.availableExtensionIds,
+        externalInstructionSources: session.externalContextSources,
+        systemPrompt: session.systemPrompt,
+        generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
         queuedMessageId: options.queuedMessageId ?? null,
       });
     } catch (error) {
@@ -3014,23 +4223,24 @@ export class WorkspaceSessionCatalog {
     turnId: string;
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
+    threadGroupId?: string | null;
     objective: string;
-    contextKeys: OptionalPromptContextKey[];
-    agentProfileSettings: AgentPromptSettings | null;
+    historyMode?: "isolated" | "forked";
+    extensions?: Record<string, "default_loaded" | "available" | "unavailable"> | null;
+    agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
     autoStart?: boolean;
   }) {
     const initialTitle = input.objective.trim();
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
     const threadSessionManager = SessionManager.create(this.cwd, this.threadSurfaceDir);
-    threadSessionManager.newSession({
-      parentSession: parentSessionFile,
-    });
+    threadSessionManager.newSession();
     threadSessionManager.appendSessionInfo(initialTitle);
     persistSessionManagerSnapshot(threadSessionManager);
     const defaultThreadHandler = this.agentSettingsStore.getState().agents.special.threadHandler;
     const threadAgentSettings = input.agentProfileSettings
       ? {
+          extensionUsage: input.agentProfileSettings.extensionUsage,
           provider: input.agentProfileSettings.provider,
           model: input.agentProfileSettings.model,
           reasoningEffort: input.agentProfileSettings.reasoningEffort,
@@ -3039,25 +4249,65 @@ export class WorkspaceSessionCatalog {
         }
       : defaultThreadHandler;
 
+    const extensionState = resolveThreadExtensionState(
+      threadAgentSettings.extensionUsage,
+      input.extensions ?? null,
+    );
     const thread = this.structuredSessionStore.createThread({
       turnId: input.turnId,
       parentThreadId: input.parentThreadId,
+      threadGroupId: input.threadGroupId ?? null,
       surfacePiSessionId: threadSessionManager.getSessionId(),
       title: initialTitle,
       objective: input.objective,
+      historyMode: input.historyMode ?? "isolated",
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
       agentProfileJson: JSON.stringify(threadAgentSettings),
     });
-    for (const key of input.contextKeys) {
-      const context = getOptionalPromptContext(key);
-      this.structuredSessionStore.loadThreadContext({
-        threadId: thread.id,
-        contextKey: context.key,
-        contextVersion: context.version,
-        loadedByCommandId: input.loadedByCommandId,
-      });
-    }
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const threadTarget: PromptTarget = {
+      workspaceSessionId: input.sessionId,
+      surface: "thread",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+    };
+    const threadAggregate = this.buildAggregateForTarget(threadTarget, {
+      externalInstructionSources: externalContextSources,
+    });
+    const threadSystemPrompt = threadAggregate.outputs.prompt;
+    const threadGeneratedAgentContextFingerprint = createGeneratedAgentContextFingerprint({
+      systemPrompt: threadSystemPrompt,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
+    });
+    this.structuredSessionStore.updateThread({
+      threadId: thread.id,
+      generatedAgentContextFingerprint: threadGeneratedAgentContextFingerprint,
+    });
+    this.structuredSessionStore.upsertGeneratedAgentContextBinding({
+      surfacePiSessionId: thread.surfacePiSessionId,
+      ownerKind: "thread",
+      ownerId: thread.id,
+      actorKind: "handler",
+      aggregateCacheKey: threadAggregate.cacheKey,
+      systemPrompt: threadSystemPrompt,
+      svvyxGuidance: threadAggregate.outputs.svvyxGuidance,
+      commandsDts: threadAggregate.outputs.commandsDts,
+      nativeToolSchemasJson: threadAggregate.outputs.nativeToolSchemasJson,
+      generatedAgentContextFingerprint: threadGeneratedAgentContextFingerprint,
+      generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalSourceHashes: externalSourceHashes(externalContextSources).toSorted(),
+    });
     if (input.autoStart !== false) {
-      this.enqueueInitialHandlerThreadPrompt({ sessionId: input.sessionId, threadId: thread.id });
+      this.enqueueInitialHandlerThreadPrompt({
+        sessionId: input.sessionId,
+        threadId: thread.id,
+        parentSessionFile: input.historyMode === "forked" ? parentSessionFile : null,
+      });
     }
     this.recoveryCoordinator.enqueue({
       kind: "title_generation",
@@ -3071,53 +4321,110 @@ export class WorkspaceSessionCatalog {
     return this.structuredSessionStore.getThreadDetail(thread.id).thread;
   }
 
-  private async resumeHandlerThread(input: {
-    sessionId: string;
-    turnId: string;
-    threadId: string;
+  private async queueThreadFollowup(input: {
+    runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+    commandId: string;
+    threadIds: string[] | null;
+    threadGroupId: string | null;
     message: string;
-    resumedByCommandId: string;
-  }): Promise<{ threadId: string; surfacePiSessionId: string; queuedMessageId: string }> {
-    const snapshot = this.getStructuredSnapshot(input.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
-    if (!snapshot || !thread) {
+    activate: boolean;
+  }) {
+    const snapshot = this.requireStructuredSnapshot(input.runtime.sessionId);
+    const threads = resolveThreadTargets(snapshot, {
+      threadIds: input.threadIds,
+      threadGroupId: input.threadGroupId,
+    });
+    const queuedThreads = [];
+    for (const thread of threads) {
+      if (thread.objectiveState === "concluded") {
+        if (!input.activate) {
+          throw new Error(
+            `thread_followup requires activate: true for concluded handler thread ${thread.id}.`,
+          );
+        }
+        this.structuredSessionStore.updateThread({
+          threadId: thread.id,
+          objectiveState: "active",
+          status: "running-handler",
+          wait: null,
+        });
+      }
+      const target: PromptTarget = {
+        workspaceSessionId: input.runtime.sessionId,
+        surface: "thread",
+        surfacePiSessionId: thread.surfacePiSessionId,
+        threadId: thread.id,
+      };
+      const payload: ThreadFollowupQueuePayload = {
+        threadId: thread.id,
+        sourceCommandId: input.commandId,
+        message: input.message,
+        activate: input.activate,
+      };
+      const queued = this.structuredSessionStore.enqueueSurfaceMessage({
+        sessionId: input.runtime.sessionId,
+        surfacePiSessionId: thread.surfacePiSessionId,
+        threadId: thread.id,
+        kind: "thread_followup",
+        idempotencyKey: `thread_followup:${input.commandId}:${thread.id}`,
+        messageJson: "{}",
+        payloadJson: JSON.stringify(payload),
+        requestSummary: summarizePromptForTurn(input.message),
+      });
+      await this.emitQueuedSurfaceUpdate(target);
+      this.wakeSurfaceQueue(target);
+      const refreshed = this.requireStructuredSnapshot(input.runtime.sessionId).threads.find(
+        (entry) => entry.id === thread.id,
+      );
+      queuedThreads.push({
+        threadId: thread.id,
+        surfacePiSessionId: thread.surfacePiSessionId,
+        objectiveState: refreshed?.objectiveState ?? thread.objectiveState,
+        queuedMessageId: queued.id,
+      });
+    }
+    return {
+      threadGroupId: input.threadGroupId ?? threads[0]?.threadGroupId ?? null,
+      threads: queuedThreads,
+    };
+  }
+
+  private async queueThreadReportRequest(input: {
+    runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+    commandId: string;
+    threadId: string;
+    request: string | null;
+  }) {
+    const snapshot = this.requireStructuredSnapshot(input.runtime.sessionId);
+    const thread = snapshot.threads.find((entry) => entry.id === input.threadId) ?? null;
+    if (!thread) {
       throw new Error(`Delegated handler thread not found: ${input.threadId}`);
     }
-    if (thread.status !== "completed") {
-      throw new Error(`thread_resume can only resume completed handler threads.`);
+    if (thread.objectiveState === "concluded") {
+      throw new Error(`thread_request_report cannot target concluded handler thread ${thread.id}.`);
     }
-
-    this.structuredSessionStore.updateThread({
+    const request = input.request ?? "Please provide a concise thread_report update.";
+    const payload: ReportRequestQueuePayload = {
       threadId: thread.id,
-      status: "running-handler",
-      wait: null,
+      sourceCommandId: input.commandId,
+      request,
+    };
+    const queued = this.structuredSessionStore.enqueueSurfaceMessage({
+      sessionId: input.runtime.sessionId,
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      kind: "report_request",
+      idempotencyKey: `report_request:${input.commandId}:${thread.id}`,
+      messageJson: "{}",
+      payloadJson: JSON.stringify(payload),
+      requestSummary: request,
     });
-    this.structuredSessionStore.recordLifecycleEvent({
-      sessionId: input.sessionId,
-      kind: "thread_resumed",
-      subjectKind: "thread",
-      subjectId: thread.id,
-      data: {
-        resumedByCommandId: input.resumedByCommandId,
-        turnId: input.turnId,
-      },
-    });
-
     const target: PromptTarget = {
-      workspaceSessionId: input.sessionId,
+      workspaceSessionId: input.runtime.sessionId,
       surface: "thread",
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
     };
-    const message = createSyntheticUserMessage(input.message);
-    const queued = this.structuredSessionStore.enqueueSurfaceMessage({
-      sessionId: input.sessionId,
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-      idempotencyKey: `thread_resume:${input.resumedByCommandId}`,
-      messageJson: JSON.stringify(message),
-      requestSummary: summarizePromptForTurn(input.message),
-    });
     await this.emitQueuedSurfaceUpdate(target);
     this.wakeSurfaceQueue(target);
     return {
@@ -3155,7 +4462,11 @@ export class WorkspaceSessionCatalog {
     this.wakeSurfaceQueue(target);
   }
 
-  private enqueueInitialHandlerThreadPrompt(input: { sessionId: string; threadId: string }): void {
+  private enqueueInitialHandlerThreadPrompt(input: {
+    sessionId: string;
+    threadId: string;
+    parentSessionFile?: string | null;
+  }): void {
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
     if (!snapshot || !thread || thread.status !== "running-handler") {
@@ -3173,6 +4484,7 @@ export class WorkspaceSessionCatalog {
       messageJson: "{}",
       payloadJson: JSON.stringify({
         threadId: thread.id,
+        parentSessionFile: input.parentSessionFile ?? null,
         requestedAt: new Date().toISOString(),
       } satisfies InitialHandlerStartQueuePayload),
       requestSummary: summarizePromptForTurn(thread.objective),
@@ -3342,11 +4654,13 @@ export class WorkspaceSessionCatalog {
       systemPrompt: settings.systemPrompt.trim(),
       agentProfileId: "title-namer",
       agentDir: this.agentDir,
+      agentSettingsStore: this.agentSettingsStore,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
-      resumeHandlerThread: this.resumeHandlerThread.bind(this),
-      awaitThreadHandoffAcceptance: this.awaitThreadHandoffAcceptance.bind(this),
-      smithersRuntimeManager: this.smithersRuntimeManager,
+      queueThreadFollowup: this.queueThreadFollowup.bind(this),
+      queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
+      queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
+      extensionsRoot: this.extensionsRoot,
     });
     try {
       syncAuthStorage(namer.authStorage);
@@ -3377,6 +4691,79 @@ export class WorkspaceSessionCatalog {
     this.titleGenerationLogListener?.(event);
   }
 
+  private emitWorkflowsGeneratedPackageLog(event: WorkflowsGeneratedPackageLogEvent): void {
+    this.workflowsGeneratedPackageLogListener?.(event);
+  }
+
+  private emitAppLog(event: AppLoggerEvent): void {
+    this.appLogListener?.(event);
+  }
+
+  private emitRecoveryProjectionLog(work: StructuredRecoveryWorkRecord): void {
+    this.emitAppLog({
+      level: "info",
+      source: "app.lifecycle",
+      message: "Workspace recovery work projected.",
+      details: {
+        recoveryWorkId: work.id,
+        recoveryWorkKind: work.kind,
+        recoveryWorkAttempts: work.attempts,
+        idempotencyKey: work.idempotencyKey,
+      },
+    });
+  }
+
+  private refreshWorkflowsBuildLinks(work: StructuredRecoveryWorkRecord): void {
+    const payload = isObjectRecord(work.payloadJson) ? work.payloadJson : {};
+    const generatedPackagePath =
+      typeof payload.generatedPackagePath === "string"
+        ? payload.generatedPackagePath
+        : this.recoveryOptions.workflowsGeneratedPackagePath;
+    const extensionsGeneratedPackagePath =
+      typeof payload.extensionsGeneratedPackagePath === "string"
+        ? payload.extensionsGeneratedPackagePath
+        : this.recoveryOptions.workflowsExtensionsGeneratedPackagePath;
+    try {
+      const linked = ensureWorkflowsPackageLinks({
+        extensionsGeneratedPackagePath,
+        generatedPackagePath,
+        workspaceCwd: this.cwd,
+      });
+      this.emitAppLog({
+        level: "info",
+        source: "workflow.library",
+        message: linked
+          ? "Workflows build/link recovery refreshed package links."
+          : "Workflows build/link recovery checked package links.",
+        details: {
+          recoveryWorkId: work.id,
+          idempotencyKey: work.idempotencyKey,
+          linked,
+          ...(generatedPackagePath ? { generatedPackagePath } : {}),
+          ...(extensionsGeneratedPackagePath ? { extensionsGeneratedPackagePath } : {}),
+        },
+      });
+    } catch (error) {
+      this.emitAppLog({
+        level: "error",
+        source: "workflow.library",
+        message: "Workflows build/link recovery failed.",
+        error,
+        details: {
+          recoveryWorkId: work.id,
+          idempotencyKey: work.idempotencyKey,
+          ...(generatedPackagePath ? { generatedPackagePath } : {}),
+          ...(extensionsGeneratedPackagePath ? { extensionsGeneratedPackagePath } : {}),
+        },
+      });
+      throw error;
+    }
+  }
+
+  private readOpenWorkspaceCwds(): readonly string[] {
+    return this.openWorkspaceCwdsReader?.() ?? [this.cwd];
+  }
+
   private async runAgentPrompt(
     session: ManagedSession,
     options: SendAgentPromptOptions,
@@ -3387,6 +4774,7 @@ export class WorkspaceSessionCatalog {
       ? createToolExecutionCommandTracker({
           store: this.structuredSessionStore,
           promptContext,
+          onAppLog: this.emitAppLog.bind(this),
         })
       : null;
     const onEvent = options.onEvent ?? (() => {});
@@ -3394,8 +4782,17 @@ export class WorkspaceSessionCatalog {
     const displayUserMessage = getLatestUserMessage(options.messages);
     let queuedMessageDelivered = false;
     const getQueuedMessageDeliveryText = (queued: StructuredSurfaceQueuedMessageRecord): string => {
-      if (queued.kind === "handler_handoff") {
-        return this.buildHandlerHandoffQueuedPrompt(queued);
+      if (queued.kind === "thread_report_notification") {
+        return this.buildThreadReportNotificationQueuedPrompt(queued);
+      }
+      if (queued.kind === "thread_followup") {
+        return this.buildThreadFollowupQueuedPrompt(queued);
+      }
+      if (queued.kind === "report_request") {
+        return this.buildReportRequestQueuedPrompt(queued);
+      }
+      if (queued.kind === "request_user_input_answer") {
+        return this.buildRequestUserInputAnswerQueuedPrompt(queued);
       }
       return this.getQueuedMessageText(queued.messageJson);
     };
@@ -3412,9 +4809,6 @@ export class WorkspaceSessionCatalog {
       if (!steering) {
         return false;
       }
-      if (steering.kind === "handler_handoff") {
-        this.acceptHandlerHandoffQueueItem(steering);
-      }
       this.structuredSessionStore.markSurfaceMessageDelivered({ id: steering.id });
       return true;
     };
@@ -3427,12 +4821,6 @@ export class WorkspaceSessionCatalog {
         return false;
       }
       if (promptContext?.queuedMessageId && !queuedMessageDelivered) {
-        const queued = this.structuredSessionStore.getSurfaceQueuedMessage({
-          id: promptContext.queuedMessageId,
-        });
-        if (queued.kind === "handler_handoff") {
-          this.acceptHandlerHandoffQueueItem(queued);
-        }
         this.structuredSessionStore.markSurfaceMessageDelivered({
           id: promptContext.queuedMessageId,
         });
@@ -3583,6 +4971,7 @@ export class WorkspaceSessionCatalog {
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
         session.recreateOnNextPrompt = false;
+        this.syncManagedExtensionStateFromPromptContext(session, promptContext);
         this.completePromptExecution(promptContext, visibleMessage);
       } catch (error) {
         const reason = session.abortRequested ? "aborted" : "error";
@@ -3612,6 +5001,7 @@ export class WorkspaceSessionCatalog {
         session.provider = options.provider;
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
+        this.syncManagedExtensionStateFromPromptContext(session, promptContext);
         this.failPromptExecution(promptContext, failure);
       } finally {
         unsubscribe();
@@ -3644,25 +5034,13 @@ export class WorkspaceSessionCatalog {
           }
         }
         this.syncManagedState(session);
-        if (options.target.surface === "orchestrator") {
-          this.syncStructuredPiSessionFromOrchestratorSession(session);
-        }
+        this.syncGeneratedAgentContextBindingForTarget(options.target, session);
         await this.emitSurfaceSync({
           session,
           reason: "prompt.settled",
           target: options.target,
         });
         await this.emitWorkspaceSync("workspace.updated");
-        if (
-          promptContext?.surfaceKind === "handler" &&
-          !promptContext.suppressPendingWorkflowAttentionDelivery &&
-          this.shouldDeliverPendingHandlerAttention(promptContext)
-        ) {
-          await this.smithersRuntimeManager.deliverPendingHandlerAttention(
-            promptContext.sessionId,
-            promptContext.rootThreadId ?? undefined,
-          );
-        }
         if (!suppressQueuedDrain) {
           this.wakeSurfaceQueue(options.target);
         }
@@ -3673,28 +5051,15 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private shouldDeliverPendingHandlerAttention(promptContext: PromptExecutionContext): boolean {
-    if (!promptContext.rootThreadId) {
-      return false;
+  private syncManagedExtensionStateFromPromptContext(
+    session: ManagedSession,
+    promptContext: PromptExecutionContext | null,
+  ): void {
+    if (!promptContext) {
+      return;
     }
-
-    if (this.closed) {
-      return false;
-    }
-
-    try {
-      const snapshot = this.structuredSessionStore.getSessionState(promptContext.sessionId);
-      const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId) ?? null;
-      if (turn?.turnDecision === "thread_handoff") {
-        return false;
-      }
-
-      const thread =
-        snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId) ?? null;
-      return thread?.status !== "completed";
-    } catch {
-      return false;
-    }
+    session.loadedExtensionIds = [...(promptContext.loadedExtensionIds ?? [])].toSorted();
+    session.availableExtensionIds = [...(promptContext.availableExtensionIds ?? [])].toSorted();
   }
 
   private wakeSurfaceQueue(target: PromptTarget): void {
@@ -3759,10 +5124,27 @@ export class WorkspaceSessionCatalog {
       return false;
     }
 
-    if (queued.kind === "prompt_refresh") {
+    if (queued.kind === "agent_context_refresh") {
       try {
+        const appliedEventData = this.buildAgentContextUpdateEventData({
+          state: "applied",
+          target: currentTarget,
+          queued,
+          session,
+        });
         const refreshed = await this.refreshManagedSurfacePromptBinding(session, currentTarget);
         this.structuredSessionStore.markSurfaceMessageDelivered({ id: queued.id });
+        this.structuredSessionStore.recordLifecycleEvent({
+          sessionId: currentTarget.workspaceSessionId,
+          kind: "Agent context update applied",
+          subjectKind:
+            currentTarget.surface === "thread" && currentTarget.threadId ? "thread" : "session",
+          subjectId:
+            currentTarget.surface === "thread" && currentTarget.threadId
+              ? currentTarget.threadId
+              : currentTarget.workspaceSessionId,
+          data: appliedEventData,
+        });
         await this.emitSurfaceSync({
           session: refreshed,
           reason: "surface.updated",
@@ -3771,10 +5153,9 @@ export class WorkspaceSessionCatalog {
         await this.emitWorkspaceSync("structured.updated");
         return true;
       } catch (error) {
-        this.structuredSessionStore.markSurfaceMessageQueued({
-          id: queued.id,
-          position: "front",
-        });
+        const failureError =
+          error instanceof Error ? error.message : "Queued agent context refresh failed.";
+        this.structuredSessionStore.markSurfaceMessageFailed({ id: queued.id, failureError });
         await this.emitQueuedSurfaceUpdate(currentTarget);
         throw error;
       } finally {
@@ -3783,14 +5164,12 @@ export class WorkspaceSessionCatalog {
     }
 
     let message: Message;
-    if (queued.kind === "handler_handoff") {
+    if (queued.kind === "thread_report_notification") {
       try {
-        const prompt = this.buildHandlerHandoffQueuedPrompt(queued);
+        const prompt = this.buildThreadReportNotificationQueuedPrompt(queued);
         message = createSyntheticUserMessage(prompt);
       } catch (error) {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-        await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
-        throw error;
+        return this.failQueuedSurfaceDelivery(currentTarget, queued, error);
       }
     } else if (queued.kind === "initial_handler_start") {
       try {
@@ -3802,33 +5181,51 @@ export class WorkspaceSessionCatalog {
         }
         message = createSyntheticUserMessage(this.buildInitialHandlerQueuedPrompt(queued));
       } catch (error) {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-        await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
-        throw error;
+        return this.failQueuedSurfaceDelivery(currentTarget, queued, error);
       }
-    } else if (queued.kind === "workflow_attention") {
+    } else if (queued.kind === "thread_followup") {
       try {
-        const payload = this.parseWorkflowAttentionQueuePayload(queued);
-        const snapshot = payload ? this.getStructuredSnapshot(payload.sessionId) : null;
+        const payload = this.parseThreadFollowupQueuePayload(queued);
+        const snapshot = this.getStructuredSnapshot(currentTarget.workspaceSessionId);
         const thread = snapshot?.threads.find((entry) => entry.id === payload?.threadId) ?? null;
-        if (!thread || thread.status === "completed") {
+        if (!thread || thread.objectiveState === "concluded") {
           this.structuredSessionStore.markSurfaceMessageDelivered({ id: queued.id });
           await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
           return true;
         }
-        message = createSyntheticUserMessage(this.buildWorkflowAttentionQueuedPrompt(queued));
+        message = createSyntheticUserMessage(this.buildThreadFollowupQueuedPrompt(queued));
       } catch (error) {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-        await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
-        throw error;
+        return this.failQueuedSurfaceDelivery(currentTarget, queued, error);
+      }
+    } else if (queued.kind === "report_request") {
+      try {
+        const payload = this.parseReportRequestQueuePayload(queued);
+        const snapshot = this.getStructuredSnapshot(currentTarget.workspaceSessionId);
+        const thread = snapshot?.threads.find((entry) => entry.id === payload?.threadId) ?? null;
+        if (!thread || thread.objectiveState === "concluded") {
+          this.structuredSessionStore.markSurfaceMessageDelivered({ id: queued.id });
+          await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
+          return true;
+        }
+        message = createSyntheticUserMessage(this.buildReportRequestQueuedPrompt(queued));
+      } catch (error) {
+        return this.failQueuedSurfaceDelivery(currentTarget, queued, error);
+      }
+    } else if (queued.kind === "request_user_input_answer") {
+      try {
+        message = createSyntheticUserMessage(this.buildRequestUserInputAnswerQueuedPrompt(queued));
+      } catch (error) {
+        return this.failQueuedSurfaceDelivery(currentTarget, queued, error);
       }
     } else {
       try {
         message = JSON.parse(queued.messageJson) as Message;
-      } catch {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-        await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
-        throw new Error(`Queued surface message ${queued.id} could not be parsed.`);
+      } catch (error) {
+        return this.failQueuedSurfaceDelivery(
+          currentTarget,
+          queued,
+          new Error(`Queued surface message ${queued.id} could not be parsed.`, { cause: error }),
+        );
       }
     }
 
@@ -3850,7 +5247,10 @@ export class WorkspaceSessionCatalog {
         queuedMessageId: queued.id,
       };
       const promptExecution = this.createPromptExecutionContext(session, promptOptions);
-      if (queued.kind === "workflow_attention" && promptExecution) {
+      if (
+        (queued.kind === "thread_followup" || queued.kind === "report_request") &&
+        promptExecution
+      ) {
         promptExecution.suppressPendingWorkflowAttentionDelivery = true;
       }
       this.setPendingUserMessage(session, promptExecution, message);
@@ -3887,54 +5287,6 @@ export class WorkspaceSessionCatalog {
       await promptDone;
       return !session.lastPromptSuppressedQueueDrain && !session.lastPromptRestoredQueueItem;
     }
-    return true;
-  }
-
-  private async resumeHandlerAfterWorkflowAttention(input: {
-    sessionId: string;
-    threadId: string;
-    workflowRunId: string;
-    smithersRunId: string;
-    workflowId: string;
-    summary: string;
-    reason: string;
-  }): Promise<boolean> {
-    return this.enqueueWorkflowAttentionPrompt(input);
-  }
-
-  private enqueueWorkflowAttentionPrompt(input: {
-    sessionId: string;
-    threadId: string;
-    workflowRunId: string;
-    smithersRunId: string;
-    workflowId: string;
-    summary: string;
-    reason: string;
-  }): boolean {
-    const snapshot = this.getStructuredSnapshot(input.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
-    if (!snapshot || !thread || thread.status === "completed") {
-      return false;
-    }
-
-    const target: PromptTarget = {
-      workspaceSessionId: input.sessionId,
-      surface: "thread",
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-    };
-    this.structuredSessionStore.enqueueSurfaceMessage({
-      sessionId: input.sessionId,
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-      kind: "workflow_attention",
-      idempotencyKey: `workflow_attention:${input.workflowRunId}:${input.reason}`,
-      messageJson: "{}",
-      payloadJson: JSON.stringify(input satisfies WorkflowAttentionQueuePayload),
-      requestSummary: input.summary,
-    });
-    void this.emitQueuedSurfaceUpdate(target);
-    this.wakeSurfaceQueue(target);
     return true;
   }
 
@@ -4012,7 +5364,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId) ?? null;
-    if (!turn || turn.turnDecision === "thread_handoff" || turn.status !== "completed") {
+    if (!turn || turn.status !== "completed") {
       return;
     }
 
@@ -4116,128 +5468,150 @@ export class WorkspaceSessionCatalog {
 async function createManagedSession(
   options: CreateManagedSessionOptions & {
     agentDir: string;
+    agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
     structuredSessionStore: StructuredSessionStateStore;
     createHandlerThread: WorkspaceSessionCatalog["createHandlerThread"];
-    resumeHandlerThread: WorkspaceSessionCatalog["resumeHandlerThread"];
-    awaitThreadHandoffAcceptance: WorkspaceSessionCatalog["awaitThreadHandoffAcceptance"];
-    smithersRuntimeManager: SmithersRuntimeManager;
+    queueThreadFollowup: WorkspaceSessionCatalog["queueThreadFollowup"];
+    queueThreadReportRequest: WorkspaceSessionCatalog["queueThreadReportRequest"];
+    queueThreadReportNotification: WorkspaceSessionCatalog["queueThreadReportNotification"];
   },
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
 
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
-  let sessionForListTools: AgentSession | null = null;
   const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
     current: null,
   };
-  const webProvider = createWebProvider(
-    {
-      provider: createAgentSettingsStore({
-        cwd: options.sessionManager.getCwd(),
-        agentDir: options.agentDir,
-      }).getState().appPreferences.webProvider,
-    },
-    {
-      tinyfishApiKey: resolveApiKey("tinyfish"),
-      firecrawlApiKey: resolveApiKey("firecrawl"),
-    },
-  );
+  const extensionState =
+    options.loadedExtensionIds && options.availableExtensionIds
+      ? {
+          loadedExtensionIds: [...options.loadedExtensionIds].toSorted(),
+          availableExtensionIds: [...options.availableExtensionIds].toSorted(),
+        }
+      : options.actorKind === "namer"
+        ? { loadedExtensionIds: [], availableExtensionIds: [] }
+        : resolveActorExtensionState({
+            actor: options.actorKind,
+            profileLoadedExtensionIds: options.profileLoadedExtensionIds,
+          });
   const executeTypescriptTool = createExecuteTypescriptTool({
     cwd: options.sessionManager.getCwd(),
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    webProvider,
+    openArtifact: options.openArtifact,
+    onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
+    onAppLog: options.onAppLog,
+    agentSettingsStore: options.agentSettingsStore,
+    approvalMode: () => options.agentSettingsStore.getState().appPreferences.approvalMode,
+    approvalBoundary: options.approvalBoundary,
+    extensionsEnvValues: () =>
+      options.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
+    workflowsWorkspaceCwds: options.readOpenWorkspaceCwds,
+  });
+  const listExtensionsTool = createListExtensionsTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+    extensionsRoot: options.extensionsRoot,
+  });
+  const loadExtensionTool = createLoadExtensionTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+    onContextRefreshed: options.onExtensionLoaded,
+    extensionsRoot: options.extensionsRoot,
+  });
+  const requestUserInputTool = createRequestUserInputTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+    requestUserInputRuntime: options.requestUserInputRuntime,
   });
   const directTools = createSvvyDirectTools({
     cwd: options.sessionManager.getCwd(),
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
-    webProvider,
+    agentSettingsStore: options.agentSettingsStore,
+    approvalMode: () => options.agentSettingsStore.getState().appPreferences.approvalMode,
+    approvalBoundary: options.approvalBoundary,
+    networkAccess: () => options.agentSettingsStore.getState().appPreferences.networkAccess,
+    openArtifact: options.openArtifact,
+    onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
+    onAppLog: options.onAppLog,
+    workflowsWorkspaceCwds: options.readOpenWorkspaceCwds,
   });
-  const listUnresolvedWorkflowRuns = (input: { sessionId: string; threadId: string }) =>
-    options.smithersRuntimeManager.listUnresolvedWorkflowRunsForThread(input);
   const threadListTool = createThreadListTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    listUnresolvedWorkflowRuns,
   });
-  const threadHandoffsTool = createThreadHandoffsTool({
+  const threadEpisodesTool = createThreadEpisodesTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
   });
   const threadCurrentTool = createThreadCurrentTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    listUnresolvedWorkflowRuns,
   });
-  const sharedWorkTools = [
-    createListToolsTool({
-      getSession: () => sessionForListTools,
-    }),
-    threadListTool,
-    threadHandoffsTool,
-    ...createCxTools({ cwd: options.sessionManager.getCwd() }),
-    ...directTools.codingTools,
-    ...directTools.artifactTools,
-    ...directTools.webTools,
-    executeTypescriptTool,
-  ] as const;
-  const waitTool = createWaitTool({
+  const threadGroupTool = createThreadGroupTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
   });
-  const threadHandoffTool = createThreadHandoffTool({
+  const threadReportTool = createThreadReportTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    listUnresolvedWorkflowRuns,
-    awaitHandoffAcceptance: options.awaitThreadHandoffAcceptance,
+    queueThreadReportNotification: options.queueThreadReportNotification,
   });
-  const requestContextTool = createRequestContextTool({
+  const threadFollowupTool = createThreadFollowupTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
-    onContextLoaded: ({ surfacePiSessionId }) => {
-      options.onRequestContextLoaded?.(surfacePiSessionId);
+    bridge: {
+      queueThreadFollowup: options.queueThreadFollowup,
+      queueThreadReportRequest: options.queueThreadReportRequest,
     },
   });
-  const buildHandlerTools = () =>
-    [
-      ...sharedWorkTools,
-      ...directTools.workflowTools,
-      threadCurrentTool,
-      requestContextTool,
-      threadHandoffTool,
-      ...createSmithersTools({
-        runtime: promptExecutionRuntime,
-        store: options.structuredSessionStore,
-        manager: options.smithersRuntimeManager,
-      }),
-      waitTool,
-    ] as const;
+  const threadRequestReportTool = createThreadRequestReportTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+    bridge: {
+      queueThreadFollowup: options.queueThreadFollowup,
+      queueThreadReportRequest: options.queueThreadReportRequest,
+    },
+  });
+  const sharedWorkTools = [
+    listExtensionsTool,
+    loadExtensionTool,
+    ...directTools.codingTools,
+    executeTypescriptTool,
+  ] as const;
+  const loadedExtensions = new Set(extensionState.loadedExtensionIds);
+  const sharedInteractiveTools = loadedExtensions.has("request-user-input")
+    ? ([...sharedWorkTools, requestUserInputTool] as const)
+    : sharedWorkTools;
+  const orchestratorThreadTools = loadedExtensions.has("thread-orchestration")
+    ? ([
+        threadListTool,
+        threadEpisodesTool,
+        createStartThreadTool({
+          runtime: promptExecutionRuntime,
+          store: options.structuredSessionStore,
+          bridge: {
+            createHandlerThread: options.createHandlerThread,
+          },
+          onAppLog: options.onAppLog,
+        }),
+        threadFollowupTool,
+        threadRequestReportTool,
+      ] as const)
+    : ([] as const);
+  const handlerThreadTools = loadedExtensions.has("thread-handling")
+    ? ([threadCurrentTool, threadGroupTool, threadReportTool, threadEpisodesTool] as const)
+    : ([] as const);
   const tools =
     options.actorKind === "namer"
       ? ([] as const)
       : options.actorKind === "orchestrator"
-        ? ([
-            ...sharedWorkTools,
-            createStartThreadTool({
-              runtime: promptExecutionRuntime,
-              store: options.structuredSessionStore,
-              bridge: {
-                createHandlerThread: options.createHandlerThread,
-              },
-            }),
-            createResumeThreadTool({
-              runtime: promptExecutionRuntime,
-              store: options.structuredSessionStore,
-              bridge: {
-                resumeHandlerThread: options.resumeHandlerThread,
-              },
-            }),
-            waitTool,
-          ] as const)
-        : buildHandlerTools();
+        ? ([...sharedInteractiveTools, ...orchestratorThreadTools] as const)
+        : options.actorKind === "handler"
+          ? ([...sharedInteractiveTools, ...handlerThreadTools] as const)
+          : sharedWorkTools;
   const customTools = createCustomToolDefinitions(tools);
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
@@ -4253,11 +5627,47 @@ async function createManagedSession(
     cwd: options.sessionManager.getCwd(),
     agentDir: options.agentDir,
     settingsManager,
+    additionalExtensionPaths: [],
+    additionalSkillPaths: [],
+    additionalPromptTemplatePaths: [],
+    additionalThemePaths: [],
+    extensionFactories: [],
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     systemPromptOverride: () => options.systemPrompt,
     appendSystemPromptOverride: () => [],
+    extensionsOverride: (base) => ({ ...base, extensions: [], errors: [] }),
+    skillsOverride: () => ({ skills: [], diagnostics: [] }),
+    promptsOverride: () => ({ prompts: [], diagnostics: [] }),
+    themesOverride: () => ({ themes: [], diagnostics: [] }),
+    agentsFilesOverride: () => ({ agentsFiles: [] }),
   });
   await resourceLoader.reload();
-  const externalContextSources = buildExternalContextSources(resourceLoader);
+  const externalContextSources = structuredClone(options.externalContextSources ?? []);
+  const boundExternalSourceHashes =
+    options.externalSourceHashes?.length && options.externalSourceHashes.length > 0
+      ? [...options.externalSourceHashes].toSorted()
+      : externalSourceHashes(externalContextSources).toSorted();
+  const generatedAgentContextAggregate: GeneratedAgentContextAggregateOutputs =
+    options.generatedAgentContextAggregate ?? {
+      prompt: options.systemPrompt,
+      svvyxGuidance: "",
+      commandsDts: "",
+      nativeToolSchemasJson: "{}",
+    };
+  const generatedAgentContextAggregateKey =
+    options.generatedAgentContextAggregateKey ??
+    createHash("sha256").update(generatedAgentContextAggregate.prompt).digest("hex");
+  const generatedAgentContextFingerprint =
+    options.generatedAgentContextFingerprint ??
+    createGeneratedAgentContextFingerprint({
+      systemPrompt: options.systemPrompt,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
+    });
   const restoredDefaults = resolveRestoredSessionDefaults(options.sessionManager, {
     provider: options.provider,
     model: options.model,
@@ -4285,7 +5695,6 @@ async function createManagedSession(
     customTools,
     resourceLoader,
   });
-  sessionForListTools = session;
   const activeModel = session.agent.state.model ?? resolvedModel;
 
   const managedSession: ManagedSession = {
@@ -4296,8 +5705,14 @@ async function createManagedSession(
     thinkingLevel: restoredDefaults.thinkingLevel,
     agentProfileId: options.agentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID,
     systemPrompt: options.systemPrompt,
-    promptLibraryRevision: options.promptLibraryRevision ?? 1,
-    externalContextSources,
+    generatedAgentContextAggregateKey,
+    generatedAgentContextAggregate,
+    generatedAgentContextFingerprint,
+    generatedAgentContextRevision: options.generatedAgentContextRevision ?? 1,
+    externalContextSources: [...externalContextSources],
+    externalSourceHashes: boundExternalSourceHashes,
+    loadedExtensionIds: extensionState.loadedExtensionIds,
+    availableExtensionIds: extensionState.availableExtensionIds,
     session,
     authStorage,
     modelRegistry,
@@ -4329,23 +5744,6 @@ function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefi
   }));
 }
 
-function buildOrchestratorProfileSystemPrompt(
-  settings: { systemPrompt: string },
-  promptLibraryState: PromptLibraryState,
-  workspaceKey: string,
-  webProvider?: ReturnType<typeof createWebProvider>,
-): string {
-  const suffix = settings.systemPrompt.trim();
-  if (!suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT) {
-    return buildSystemPrompt("orchestrator", { promptLibraryState, workspaceKey, webProvider });
-  }
-  return `${buildSystemPrompt("orchestrator", {
-    promptLibraryState,
-    workspaceKey,
-    webProvider,
-  })}\n\n## Orchestrator Profile\n${suffix}`;
-}
-
 function countVisibleMessages(messages: AgentMessage[]): number {
   return messages.filter(
     (message) =>
@@ -4364,35 +5762,136 @@ function getResolvedSystemPrompt(session: ManagedSession): string {
   return resolved && resolved.length > 0 ? resolved : session.systemPrompt;
 }
 
-function buildExternalContextSources(input: {
-  getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
-}): PromptLibraryExternalSource[] {
-  return input.getAgentsFiles().agentsFiles.map((source, index) => {
-    const normalizedPath = source.path.replaceAll("\\", "/");
-    const fileName = normalizedPath.split("/").at(-1);
-    const kind = fileName === "CLAUDE.md" ? "CLAUDE.md" : "AGENTS.md";
-    return {
-      id: `${index}:${normalizedPath}`,
-      kind,
-      title: kind,
-      path: source.path,
-      content: source.content,
-      contentHash: hashContent(source.content),
-      order: index,
-    };
-  });
+function buildGeneratedSvvyxGuidance(records: readonly ResolvedExtensionRecord[]): string {
+  const svvyxRecords = records.filter((record) => record.interface === "svvyx");
+  if (svvyxRecords.length === 0) {
+    return "No loaded svvyx extension command guidance.";
+  }
+  return svvyxRecords
+    .map((record) =>
+      [
+        `Loaded svvyx extension: ${record.title}`,
+        `Extension id: ${record.id}`,
+        record.description,
+        record.minimalLoadingHint,
+      ]
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n\n");
 }
 
-function externalSourceHashes(sources: readonly PromptLibraryExternalSource[]): string[] {
-  return sources.map((source) => `${source.path}:${source.contentHash}`);
+function buildNativeToolSchemasJson(records: readonly ResolvedExtensionRecord[]): string {
+  return `${JSON.stringify(
+    {
+      nativeTools: records
+        .filter((record) => record.interface === "native_tool")
+        .map((record) => ({
+          id: record.id,
+          title: record.title,
+          description: record.description,
+          category: record.category,
+        }))
+        .toSorted((left, right) => left.id.localeCompare(right.id)),
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function createPromptSettingsFingerprint(input: {
+  requestUserInputSettings: RequestUserInputSettings;
+  profileSection?: { title: string; body: string };
+}): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function externalSourceHashes(sources: readonly GeneratedAgentContextExternalSource[]): string[] {
+  return sources.map((source) =>
+    JSON.stringify({
+      actors: [...source.actors].toSorted(),
+      contentHash: source.contentHash,
+      enabled: source.enabled,
+      path: source.path,
+      readStatus: source.readStatus.status,
+      rootId: source.rootId ?? null,
+      sourceGroup: source.sourceGroup,
+    }),
+  );
+}
+
+function createGeneratedAgentContextFingerprint(input: {
+  systemPrompt: string;
+  loadedExtensionIds: readonly string[];
+  availableExtensionIds: readonly string[];
+  externalContextSources: readonly GeneratedAgentContextExternalSource[];
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        systemPrompt: input.systemPrompt,
+        loadedExtensionIds: [...input.loadedExtensionIds].toSorted(),
+        availableExtensionIds: [...input.availableExtensionIds].toSorted(),
+        externalSourceHashes: externalSourceHashes(input.externalContextSources).toSorted(),
+      }),
+    )
+    .digest("hex");
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function hashContent(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
+function diffStringSet(
+  previous: readonly string[],
+  current: readonly string[],
+): { added: string[]; removed: string[] } {
+  const previousSet = new Set(previous);
+  const currentSet = new Set(current);
+  return {
+    added: current.filter((value) => !previousSet.has(value)).toSorted(),
+    removed: previous.filter((value) => !currentSet.has(value)).toSorted(),
+  };
+}
+
+function formatQueuedAgentContextUpdateSummary(
+  update: QueuedAgentContextUpdateProjection | undefined,
+): string {
+  if (!update) {
+    return "Context update";
+  }
+  const groups: string[] = [];
+  if (update.systemPromptChanged) {
+    groups.push("system prompt");
+  }
+  const loadedChanges =
+    update.loadedExtensionIds.added.length + update.loadedExtensionIds.removed.length;
+  if (loadedChanges > 0) {
+    groups.push(`${loadedChanges} loaded extension ${loadedChanges === 1 ? "change" : "changes"}`);
+  }
+  const availableChanges =
+    update.availableExtensionIds.added.length + update.availableExtensionIds.removed.length;
+  if (availableChanges > 0) {
+    groups.push(
+      `${availableChanges} available extension ${availableChanges === 1 ? "change" : "changes"}`,
+    );
+  }
+  const externalChanges =
+    update.externalSourceHashes.added.length + update.externalSourceHashes.removed.length;
+  if (externalChanges > 0) {
+    groups.push(
+      `${externalChanges} external source ${externalChanges === 1 ? "change" : "changes"}`,
+    );
+  }
+  const summary = groups.length > 0 ? groups.join(", ") : "fingerprint refresh";
+  if (update.state === "out_of_date") {
+    return `Out-of-date context update: ${summary}`;
+  }
+  if (update.state === "updating") {
+    return `Updating context: ${summary}`;
+  }
+  return `Context update: ${summary}`;
 }
 
 function flattenUserMessageContent(content: Message["content"]): string {
@@ -4420,6 +5919,22 @@ function createSyntheticUserMessage(text: string): Message {
     timestamp: Date.now(),
     content: [{ type: "text", text }],
   };
+}
+
+function isRequestUserInputAnswerPayload(
+  value: unknown,
+): value is StructuredRequestUserInputAnswer {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const answer = value as Partial<StructuredRequestUserInputAnswer>;
+  if (answer.kind === "option") {
+    return typeof answer.label === "string" && typeof answer.text === "string";
+  }
+  if (answer.kind === "custom") {
+    return typeof answer.text === "string";
+  }
+  return false;
 }
 
 function getLatestUserPromptText(messages: readonly Message[]): string | null {
@@ -4501,35 +6016,141 @@ function inferRootEpisodeKind(promptText: string): PromptExecutionContext["rootE
     : "change";
 }
 
-function buildOrchestratorHandoffResumePrompt(
+function buildOrchestratorThreadReportPrompt(
   _thread: StructuredSessionSnapshot["threads"][number] | null,
   summary: string,
+  outcome: "succeeded" | "failed" | "cancelled" | null,
 ): string {
   return [
-    "System event: A handler thread emitted a durable handoff.",
-    `Handoff summary: ${summary}`,
-    "Use thread_list and thread_handoffs if durable delegated-thread state matters, then decide the next orchestrator action.",
-  ].join("\n");
-}
-
-function buildHandlerWorkflowAttentionPrompt(_input: {
-  thread: StructuredSessionSnapshot["threads"][number];
-  workflowRun: StructuredSessionSnapshot["workflowRuns"][number] | null;
-  reason: string;
-  summary: string;
-  workflowId: string;
-  smithersRunId: string;
-}): string {
-  return [
-    "System event: A supervised Smithers workflow now requires handler attention.",
-    "Use thread_current for current handler state and active workflow run ids, then inspect workflow details with smithers_* tools and decide the next handler action.",
+    outcome
+      ? `System event: A handler thread concluded with outcome ${outcome}.`
+      : "System event: A handler thread emitted a durable report update.",
+    `Report summary: ${summary}`,
+    "Use thread_list and thread_episodes if durable delegated-thread state matters, then decide the next orchestrator action.",
   ].join("\n");
 }
 
 function buildInitialHandlerThreadPrompt(
   thread: StructuredSessionSnapshot["threads"][number],
+  parentSessionFile: string | null = null,
 ): string {
-  return thread.objective.trim();
+  const objective = thread.objective.trim();
+  if (thread.historyMode !== "forked" || !parentSessionFile) {
+    return objective;
+  }
+  const history = buildForkedHandlerHistoryBlock(parentSessionFile);
+  if (!history) {
+    return objective;
+  }
+  return [
+    objective,
+    "",
+    "<inherited_history>",
+    history,
+    "</inherited_history>",
+    "",
+    "Use the inherited history only as bounded background for this delegated objective.",
+  ].join("\n");
+}
+
+function parseInitialHandlerStartQueuePayload(
+  message: StructuredSurfaceQueuedMessageRecord,
+): InitialHandlerStartQueuePayload | null {
+  if (!message.payloadJson) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(message.payloadJson) as Partial<InitialHandlerStartQueuePayload>;
+    if (typeof payload.threadId !== "string") {
+      return null;
+    }
+    return {
+      threadId: payload.threadId,
+      parentSessionFile:
+        typeof payload.parentSessionFile === "string" ? payload.parentSessionFile : null,
+      requestedAt: typeof payload.requestedAt === "string" ? payload.requestedAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildForkedHandlerHistoryBlock(parentSessionFile: string): string | null {
+  try {
+    const sessionManager = SessionManager.open(parentSessionFile, dirname(parentSessionFile));
+    const messages = sessionManager
+      .buildSessionContext()
+      .messages.filter((message) => message.role === "user" || message.role === "assistant")
+      .slice(-12);
+    const lines = messages
+      .map((message, index) => {
+        const text = readMessageText(message).trim();
+        if (!text) {
+          return null;
+        }
+        return `${index + 1}. orchestrator ${message.role}: ${text}`;
+      })
+      .filter((line): line is string => Boolean(line));
+    return lines.length > 0 ? lines.join("\n\n") : null;
+  } catch {
+    return null;
+  }
+}
+
+function readMessageText(message: AgentMessage): string {
+  if (!("content" in message)) {
+    return "";
+  }
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  return message.content
+    .map((part) => {
+      if ("text" in part && typeof part.text === "string") {
+        return part.text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resolveThreadTargets(
+  snapshot: StructuredSessionSnapshot,
+  input: { threadIds: string[] | null; threadGroupId: string | null },
+): StructuredSessionSnapshot["threads"] {
+  if (input.threadGroupId) {
+    const threads = snapshot.threads.filter(
+      (thread) => thread.threadGroupId === input.threadGroupId,
+    );
+    if (threads.length === 0) {
+      throw new Error(`Thread group not found: ${input.threadGroupId}`);
+    }
+    return threads;
+  }
+  const requestedIds = input.threadIds ?? [];
+  const threads = requestedIds.map((threadId) => {
+    const thread = snapshot.threads.find((entry) => entry.id === threadId) ?? null;
+    if (!thread) {
+      throw new Error(`Delegated handler thread not found: ${threadId}`);
+    }
+    return thread;
+  });
+  if (threads.length === 0) {
+    throw new Error("At least one handler thread target is required.");
+  }
+  return threads;
+}
+
+function resolveThreadExtensionState(
+  profileExtensionUsage: Record<string, "default_loaded" | "available" | "unavailable">,
+  overrides: Record<string, "default_loaded" | "available" | "unavailable"> | null,
+): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
+  return resolveActorExtensionState({
+    actor: "handler",
+    profileExtensionUsage,
+    overrides,
+  });
 }
 
 function projectWorkspaceWait(
@@ -4587,11 +6208,11 @@ function inferPendingTurnDecision(input: {
   wait?: StructuredWaitState | null;
 }): Exclude<StructuredSessionSnapshot["turns"][number]["turnDecision"], "pending"> {
   if (input.wait) {
-    return "wait";
+    return "request_user_input";
   }
 
   if (looksLikeClarificationReply(input.assistantText)) {
-    return "clarify";
+    return "request_user_input";
   }
 
   return "reply";
@@ -5101,23 +6722,15 @@ function persistSessionManagerSnapshot(sessionManager: SessionManager): void {
   writeFileSync(sessionFile, `${lines.join("\n")}\n`);
 }
 
-function hasRestorableWorkflowSupervision(snapshot: StructuredSessionSnapshot): boolean {
-  return snapshot.workflowRuns.some(
-    (workflowRun) =>
-      !isTerminalStructuredWorkflowStatus(workflowRun.status) ||
-      workflowRun.pendingAttentionSeq !== null,
-  );
-}
-
-function isTerminalStructuredWorkflowStatus(
-  status: StructuredSessionSnapshot["workflowRuns"][number]["status"],
-): boolean {
-  return (
-    status === "continued" ||
-    status === "completed" ||
-    status === "failed" ||
-    status === "cancelled"
-  );
+function resolveConfiguredArtifactDirectory(input: string, cwd: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") {
+    return homedir();
+  }
+  if (trimmed.startsWith("~/")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed);
 }
 
 function messageToPlainText(message: Message): string {

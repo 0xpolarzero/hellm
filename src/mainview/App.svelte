@@ -5,7 +5,6 @@
 	import { createChatRuntime, type ChatRuntime } from "./chat-runtime";
 	import { createChatStorage, type ChatStorage } from "./chat-storage";
 	import { rpc } from "./rpc";
-	import Settings from "./Settings.svelte";
 	import { applyAppAppearance } from "./theme";
 	import StatusCard from "./ui/StatusCard.svelte";
 	import type { WorkspaceTabStripItem } from "./WorkspaceTabStrip.svelte";
@@ -29,13 +28,20 @@
 		unsubscribe: () => void;
 	};
 
+	type DetachedWorkspaceRuntime = {
+		workspaceId: string;
+		runtime: ChatRuntime;
+		unsubscribe: () => void;
+	};
+
 	const storage: ChatStorage = createChatStorage();
 	let tabs = $state<OpenWorkspaceTab[]>([]);
+	const detachedRuntimes = new Map<string, DetachedWorkspaceRuntime>();
 	let bootstrapError = $state<string | null>(null);
 	let openingError = $state<string | null>(null);
+	let restoreErrorsByWorkspaceTabId = $state<Record<string, string>>({});
 	let restoring = $state(true);
 	let openingWorkspace = $state(false);
-	let showSettings = $state(false);
 	let knownWorkspaces = $state<WorkspaceTabInfo[]>([]);
 	let disposed = false;
 	let disposeAppearanceSync: (() => void) | null = null;
@@ -43,6 +49,10 @@
 	let activeWorkspaceTabId = $state<string | null>(null);
 	const activeTab = $derived(
 		tabs.find((tab) => tab.workspace.workspaceTabId === activeWorkspaceTabId) ?? null,
+	);
+	const activeOpenWorkspaceError = $derived(
+		openingError ??
+			(activeWorkspaceTabId ? restoreErrorsByWorkspaceTabId[activeWorkspaceTabId] ?? null : null),
 	);
 	const workspaceTabItems = $derived<WorkspaceTabStripItem[]>(
 		tabs.map((tab) => ({ workspace: tab.workspace, counts: tab.counts })),
@@ -103,27 +113,14 @@
 			.catch((error) => console.error("Failed to persist app workspace tabs:", error));
 	}
 
-	function openSettings() {
-		if (showSettings) return;
-		setTimeout(() => {
-			if (!disposed) {
-				showSettings = true;
-			}
-		}, 0);
-	}
-
 	function setAppAppearance(appearance: AppAppearance) {
 		disposeAppearanceSync?.();
 		disposeAppearanceSync = applyAppAppearance(appearance);
 	}
 
 	async function refreshAppAppearance() {
-		if (!activeTab) {
-			setAppAppearance("system");
-			return;
-		}
 		try {
-			const preferences = await rpc.request.getAppPreferences({ workspaceId: activeTab.workspace.workspaceId });
+			const preferences = await rpc.request.getAppPreferences();
 			setAppAppearance(preferences.appAppearance);
 		} catch (error) {
 			console.error("Failed to load app appearance:", error);
@@ -137,7 +134,8 @@
 	): Promise<OpenWorkspaceTab> {
 		const workspaceTab = toWorkspaceTabInfo(workspace, new Date().toISOString(), workspaceTabId);
 		let tab: OpenWorkspaceTab;
-		const runtime = await createChatRuntime(
+		let runtime: ChatRuntime;
+		runtime = await createChatRuntime(
 			{
 				workspaceInfo: workspaceTab,
 				workspaceTabId: workspaceTab.workspaceTabId,
@@ -154,7 +152,7 @@
 					void syncOpenWorkspaceLayouts(workspaceTab.workspaceId, state, tab);
 				},
 				onMissingProviderAccess: () => {
-					openSettings();
+					void runtime.openSurface({ surface: "settings" }, { kind: "focused-panel" });
 				},
 			},
 			undefined,
@@ -202,6 +200,54 @@
 		await persistWorkspaceTabs();
 	}
 
+	function hasVisibleWorkspaceReference(workspaceId: string): boolean {
+		return tabs.some((candidate) => candidate.workspace.workspaceId === workspaceId);
+	}
+
+	function releaseDetachedWorkspaceRuntime(workspaceId: string): void {
+		const retained = detachedRuntimes.get(workspaceId);
+		if (!retained) return;
+		detachedRuntimes.delete(workspaceId);
+		retained.unsubscribe();
+		retained.runtime.dispose();
+		void rpc.request
+			.closeWorkspace({ workspaceId })
+			.catch((error) => console.error("Failed to close retained workspace:", error));
+	}
+
+	function retainDetachedWorkspaceRuntime(tab: OpenWorkspaceTab): void {
+		if (detachedRuntimes.has(tab.workspace.workspaceId)) return;
+		if (summarizeWorkspace(tab.runtime).running <= 0) {
+			tab.runtime.dispose();
+			void rpc.request
+				.closeWorkspace({ workspaceId: tab.workspace.workspaceId })
+				.catch((error) => console.error("Failed to close workspace:", error));
+			return;
+		}
+		const unsubscribe = tab.runtime.subscribe(() => {
+			if (summarizeWorkspace(tab.runtime).running <= 0) {
+				releaseDetachedWorkspaceRuntime(tab.workspace.workspaceId);
+			}
+		});
+		detachedRuntimes.set(tab.workspace.workspaceId, {
+			workspaceId: tab.workspace.workspaceId,
+			runtime: tab.runtime,
+			unsubscribe,
+		});
+	}
+
+	function releaseVisualWorkspaceTab(tab: OpenWorkspaceTab): void {
+		tab.unsubscribe();
+		if (tab.counts.running > 0 && !hasVisibleWorkspaceReference(tab.workspace.workspaceId)) {
+			retainDetachedWorkspaceRuntime(tab);
+			return;
+		}
+		tab.runtime.dispose();
+		void rpc.request
+			.closeWorkspace({ workspaceId: tab.workspace.workspaceId })
+			.catch((error) => console.error("Failed to close workspace:", error));
+	}
+
 	async function restoreWorkspaceTabs() {
 		try {
 			const restoreState = await rpc.request.getAppWorkspaceTabs().catch((error) => {
@@ -221,11 +267,17 @@
 							? await rpc.request.getDefaultWorkspace()
 							: (await rpc.request.openWorkspace({ cwd: savedTab.cwd, workspaceTabId: savedTab.workspaceTabId })).workspace;
 					if (!workspaceInfo) {
-						continue;
+						throw new Error("Workspace did not resolve.");
 					}
 					restoredTabs.push(await createWorkspaceTab(toWorkspaceTabInfo(workspaceInfo, savedTab.openedAt, savedTab.workspaceTabId), savedTab.workspaceTabId));
 				} catch (error) {
+					if (savedTab.kind === "default") throw error;
 					console.error("Failed to restore workspace tab:", error);
+					const reason = error instanceof Error ? error.message : "Unable to open workspace.";
+					restoreErrorsByWorkspaceTabId = {
+						...restoreErrorsByWorkspaceTabId,
+						[savedTab.workspaceTabId]: `Unable to restore ${savedTab.workspaceLabel}: ${reason}`,
+					};
 					const fallback = await rpc.request.getDefaultWorkspace();
 					restoredTabs.push(await createWorkspaceTab(toWorkspaceTabInfo(fallback, savedTab.openedAt, savedTab.workspaceTabId), savedTab.workspaceTabId));
 				}
@@ -300,6 +352,9 @@
 				return;
 			}
 			knownWorkspaces = mergeKnownWorkspaces(knownWorkspaces, [tab.workspace]);
+			const { [tab.workspace.workspaceTabId]: _clearedRestoreError, ...remainingRestoreErrors } =
+				restoreErrorsByWorkspaceTabId;
+			restoreErrorsByWorkspaceTabId = remainingRestoreErrors;
 			if (placement === "new-tab" || !activeWorkspaceTabId) {
 				const activeIndex = tabs.findIndex((candidate) => candidate.workspace.workspaceTabId === activeWorkspaceTabId);
 				tabs = [
@@ -312,11 +367,7 @@
 				tabs = tabs.map((candidate) =>
 					candidate.workspace.workspaceTabId === activeWorkspaceTabId ? tab : candidate,
 				);
-				oldTab?.unsubscribe();
-				oldTab?.runtime.dispose();
-				if (oldTab) {
-					void rpc.request.closeWorkspace({ workspaceId: oldTab.workspace.workspaceId });
-				}
+				if (oldTab) releaseVisualWorkspaceTab(oldTab);
 			}
 			await setActiveWorkspace(tab.workspace.workspaceTabId);
 			bootstrapError = null;
@@ -342,6 +393,9 @@
 	async function closeWorkspaceTab(workspaceTabId: string) {
 		const tab = tabs.find((candidate) => candidate.workspace.workspaceTabId === workspaceTabId);
 		if (!tab) return;
+		const { [workspaceTabId]: _clearedRestoreError, ...remainingRestoreErrors } =
+			restoreErrorsByWorkspaceTabId;
+		restoreErrorsByWorkspaceTabId = remainingRestoreErrors;
 		const index = tabs.indexOf(tab);
 		if (tabs.length === 1) {
 			const defaultInfo = await rpc.request.getDefaultWorkspace();
@@ -353,13 +407,7 @@
 			}
 			tabs = [replacementTab];
 			activeWorkspaceTabId = replacementTab.workspace.workspaceTabId;
-			tab.unsubscribe();
-			tab.runtime.dispose();
-			try {
-				await rpc.request.closeWorkspace({ workspaceId: tab.workspace.workspaceId });
-			} catch (error) {
-				console.error("Failed to close workspace:", error);
-			}
+			releaseVisualWorkspaceTab(tab);
 			await setActiveWorkspace(replacementTab.workspace.workspaceTabId);
 			return;
 		}
@@ -371,15 +419,9 @@
 					remainingTabs[index - 1]?.workspace.workspaceTabId ??
 					null)
 				: activeWorkspaceTabId;
-		tab.unsubscribe();
-		tab.runtime.dispose();
 		tabs = remainingTabs;
 		activeWorkspaceTabId = nextActiveTabId;
-		try {
-			await rpc.request.closeWorkspace({ workspaceId: tab.workspace.workspaceId });
-		} catch (error) {
-			console.error("Failed to close workspace:", error);
-		}
+		releaseVisualWorkspaceTab(tab);
 		if (closingActiveTab) {
 			await setActiveWorkspace(nextActiveTabId);
 			return;
@@ -412,6 +454,11 @@
 				tab.unsubscribe();
 				tab.runtime.dispose();
 			}
+			for (const retained of detachedRuntimes.values()) {
+				retained.unsubscribe();
+				retained.runtime.dispose();
+			}
+			detachedRuntimes.clear();
 			tabs = [];
 			activeWorkspaceTabId = null;
 		};
@@ -434,12 +481,12 @@
 						{#key `${activeTab.workspace.workspaceTabId}:${activeTab.workspace.workspaceId}`}
 							<ChatWorkspace
 								runtime={activeTab.runtime}
-								shortcutsEnabled={!showSettings}
-								onOpenSettings={openSettings}
+								onProviderAuthChanged={handleProviderAuthChanged}
+								onAppAppearanceChanged={setAppAppearance}
 								workspaceTabs={workspaceTabItems}
 								{activeWorkspaceTabId}
 								{openingWorkspace}
-								openWorkspaceError={openingError}
+								openWorkspaceError={activeOpenWorkspaceError}
 								{knownWorkspaces}
 								onSelectWorkspace={(workspaceTabId) => void setActiveWorkspace(workspaceTabId)}
 								onCloseWorkspace={(workspaceTabId) => void closeWorkspaceTab(workspaceTabId)}
@@ -462,15 +509,6 @@
 		</div>
 	</div>
 </HotkeysProvider>
-
-{#if showSettings}
-	<Settings
-		workspaceId={activeTab?.workspace.workspaceId ?? null}
-		onClose={() => (showSettings = false)}
-		onProviderAuthChanged={handleProviderAuthChanged}
-		onAppAppearanceChanged={setAppAppearance}
-	/>
-{/if}
 
 <style>
 	.app-shell {

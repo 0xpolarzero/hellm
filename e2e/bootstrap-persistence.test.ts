@@ -2,7 +2,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import { escapeForRegExp, launchSvvyApp, createHomeDir } from "./harness";
+import { launchSvvyApp, createHomeDir } from "./harness";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(90_000);
@@ -51,16 +51,16 @@ async function sessionTitles(page: Awaited<ReturnType<typeof launchSvvyApp>>["pa
 
 async function expectWorkspaceChrome(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"]) {
   const branch = currentGitBranch();
-  const workspaceLabel = await text(page, ".sidebar-header-copy h2");
+  const workspaceLabel = await text(
+    page,
+    ".sidebar-footer .workspace-path, .sidebar-footer .workspace-path-static",
+  );
 
   expect(await text(page, ".workspace-titlebar-title")).toBe("svvy");
   expect(workspaceLabel).not.toBe("");
 
-  const sidebarContext = await text(page, ".sidebar-context");
-  expect(sidebarContext).toContain("sessions");
-  if (branch) {
-    expect(sidebarContext).toContain(branch);
-  }
+  const sidebarContext = await text(page, ".sidebar-sections");
+  expect(sidebarContext).toContain("Sessions");
 
   return { branch, workspaceLabel };
 }
@@ -70,11 +70,14 @@ async function expectBootState(
   expected: {
     titles: string[];
     activeTitle: string;
+    surfaceTitle?: string;
   },
 ) {
   expect(await page.locator(".session-item").count()).toBe(expected.titles.length);
   expect(await sessionTitles(page)).toEqual(expected.titles);
-  expect(await text(page, ".workspace-main-title")).toBe(expected.activeTitle);
+  expect(await text(page, "[data-testid=active-surface-title]")).toBe(
+    expected.surfaceTitle ?? expected.activeTitle,
+  );
   expect(await text(page, '.session-item [aria-current="true"] strong')).toBe(expected.activeTitle);
 }
 
@@ -85,12 +88,13 @@ test("a clean isolated home dir boots the shell and creates one session", async 
       const chrome = await expectWorkspaceChrome(app.page);
       expect(chrome.workspaceLabel).not.toBe("");
       await expectBootState(app.page, {
-        titles: ["New Session"],
-        activeTitle: "New Session",
+        titles: ["New orchestrator"],
+        activeTitle: "New orchestrator",
+        surfaceTitle: "New orchestrator",
       });
 
-      const sidebarContext = await text(app.page, ".sidebar-context");
-      expect(sidebarContext).toContain("1 sessions");
+      const sidebarContext = await text(app.page, ".sidebar-sections");
+      expect(sidebarContext).toContain("Sessions 1");
       expect(await app.page.locator(".session-item [aria-current='true']").count()).toBe(1);
     } finally {
       await app.close();
@@ -145,8 +149,8 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
         activeTitle: "Forked child",
       });
 
-      const sidebarContext = await text(app.page, ".sidebar-context");
-      expect(sidebarContext).toContain("3 sessions");
+      const sidebarContext = await text(app.page, ".sidebar-sections");
+      expect(sidebarContext).toContain("Sessions 3");
       expect(await app.page.locator(".session-item").nth(0).textContent()).toContain("Fork");
       expect(await app.page.locator(".session-status").count()).toBe(0);
       expect(await app.page.locator(".session-item").nth(2).textContent()).not.toContain("Fork");
@@ -154,77 +158,14 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
         "Forked child",
       );
       expect(
-        await app.page.locator(".session-item").nth(0).locator(".session-branch").textContent(),
-      ).toBe("Fork");
+        await app.page
+          .locator(".session-item")
+          .nth(0)
+          .locator('[aria-label="Forked session"]')
+          .count(),
+      ).toBe(1);
     } finally {
       await app.close();
-    }
-  });
-});
-
-test("renaming a session persists across relaunch on the same home dir", async () => {
-  await withHomeDir(async (homeDir) => {
-    await seedSessions(
-      homeDir,
-      [
-        {
-          key: "rename-me",
-          title: "Original session",
-          messages: [
-            userMessage("Rename this session", Date.now() - 1_000),
-            assistantTextMessage("Ready to rename.", { timestamp: Date.now() - 999 }),
-          ],
-        },
-      ],
-      getAppWorkspaceDir(),
-    );
-
-    const renamedTitle = `Renamed for persistence ${Date.now()}`;
-
-    const firstLaunch = await launchSvvyApp({ homeDir });
-    try {
-      const chrome = await expectWorkspaceChrome(firstLaunch.page);
-      expect(chrome.workspaceLabel).not.toBe("");
-      await expectBootState(firstLaunch.page, {
-        titles: ["Original session"],
-        activeTitle: "Original session",
-      });
-
-      const firstSession = firstLaunch.page.locator(".session-item").first();
-      await firstSession
-        .getByRole("button", { name: /Session actions for/ })
-        .click({ force: true });
-      await firstSession.locator(".session-menu").waitFor({ state: "visible" });
-      await firstSession
-        .locator(".session-menu")
-        .getByRole("button", { name: "Rename" })
-        .click({ force: true });
-
-      const dialog = firstLaunch.page.getByRole("dialog", { name: "Rename Session" });
-      await dialog.waitFor({ state: "visible" });
-      await dialog.locator('input[placeholder="Session title"]').fill(renamedTitle);
-      await dialog.getByRole("button", { name: "Save" }).click();
-
-      await firstLaunch.page
-        .getByRole("button", {
-          name: new RegExp(`^Session actions for ${escapeForRegExp(renamedTitle)}$`),
-        })
-        .waitFor({ state: "visible" });
-      expect(await text(firstLaunch.page, ".workspace-main-title")).toBe(renamedTitle);
-    } finally {
-      await firstLaunch.close();
-    }
-
-    const secondLaunch = await launchSvvyApp({ homeDir });
-    try {
-      const chrome = await expectWorkspaceChrome(secondLaunch.page);
-      expect(chrome.workspaceLabel).not.toBe("");
-      await expectBootState(secondLaunch.page, {
-        titles: [renamedTitle],
-        activeTitle: renamedTitle,
-      });
-    } finally {
-      await secondLaunch.close();
     }
   });
 });

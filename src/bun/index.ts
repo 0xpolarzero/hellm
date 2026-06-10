@@ -23,6 +23,7 @@ import type {
   ComposerAttachment,
   ComposerMentionKind,
   ImportComposerAttachmentInput,
+  OpenWorkspaceRequest,
   ProviderAuthInfo,
   SendPromptRequest,
   SendPromptResponse,
@@ -50,19 +51,31 @@ import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import { getSvvyAgentDir, type SessionDefaults } from "./session-catalog";
 import {
-  deleteSavedWorkflowLibraryPath,
-  readSavedWorkflowLibraryReadModel,
+  buildWorkflowsGeneratedPackage,
+  getWorkflowsSourceRoot,
+  readWorkflowsGeneratedReadModel,
 } from "./smithers-runtime/workflow-library";
+import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
 import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
 import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
+import {
+  assertExtensionEnvOverrideTarget,
+  assertExtensionEnvSecretTarget,
+  assertExtensionEnvWriteValue,
+  readBuiltinExtensionsInventory,
+  runSvvyxExtensionsCommand,
+} from "./svvyx-extensions-command";
+import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
+import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
+const extensionEnvSecretStore = createMacOsKeychainExtensionEnvSecretStore();
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const ENV_FILES = [".env.local", ".env"];
@@ -94,6 +107,16 @@ const NATIVE_TRAFFIC_LIGHT_POSITION = {
   leading: 18,
   top: 13,
 } as const;
+
+function workflowsBuildFailedError(diagnostics: unknown[]): Error {
+  const error = new Error("Workflows build failed.") as Error & {
+    code: "build_failed";
+    diagnostics: unknown[];
+  };
+  error.code = "build_failed";
+  error.diagnostics = diagnostics;
+  return error;
+}
 
 function appMenuItem(action: AppMenuAction): {
   label: string;
@@ -421,6 +444,24 @@ function resolveSafeWorkspacePath(
   return absolutePath;
 }
 
+function resolveSafeWorkspaceOrWorkflowsPath(
+  runtime: WorkspaceRuntime,
+  inputPath: string,
+): string | null {
+  const normalizedPath = inputPath.trim();
+  if (!normalizedPath) return null;
+  if (!normalizedPath.startsWith("/")) {
+    return resolveSafeWorkspacePath(runtime, normalizedPath);
+  }
+
+  const absolutePath = resolve(normalizedPath);
+  const workflowsRoot = resolve(getWorkflowsSourceRoot());
+  if (absolutePath !== workflowsRoot && !absolutePath.startsWith(`${workflowsRoot}${sep}`)) {
+    return null;
+  }
+  return absolutePath;
+}
+
 function getWorkspacePathKind(absolutePath: string): ComposerMentionKind | "missing" {
   try {
     const stats = statSync(absolutePath);
@@ -594,7 +635,7 @@ function openPathInPreferredEditor(
 }
 
 function listProviderAuthSummaries(): ProviderAuthInfo[] {
-  const providerIds = [...getProviders(), "tinyfish", "firecrawl"];
+  const providerIds = getProviders();
   return providerIds.map((provider) => {
     const state = resolveAuthState(provider);
     return {
@@ -627,19 +668,49 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
       recordDevBrowserToolsError("app", message, source, details, error);
       return;
     }
-    recordDevBrowserToolsLog(level === "warning" ? "warn" : level, message, source, details);
+    recordDevBrowserToolsLog(level, message, source, details);
   },
   onAppLogUpdate: (workspaceId, payload) => {
-    rpc.send.sendAppLogUpdate({
-      ...payload,
-      workspaceId,
-    });
+    try {
+      rpc.send.sendAppLogUpdate({
+        ...payload,
+        workspaceId,
+      });
+    } catch (error) {
+      recordDevBrowserToolsError(
+        "rpc",
+        "Unable to send app log update to the main view.",
+        "rpc",
+        { workspaceId },
+        error,
+      );
+    }
   },
   onWorkspaceSync: (_workspaceId, payload) => {
-    rpc.send.sendWorkspaceSync(payload);
+    try {
+      rpc.send.sendWorkspaceSync(payload);
+    } catch (error) {
+      recordDevBrowserToolsError(
+        "rpc",
+        "Unable to send workspace sync to the main view.",
+        "rpc",
+        {},
+        error,
+      );
+    }
   },
   onSurfaceSync: (_workspaceId, payload) => {
-    rpc.send.sendSurfaceSync(payload);
+    try {
+      rpc.send.sendSurfaceSync(payload);
+    } catch (error) {
+      recordDevBrowserToolsError(
+        "rpc",
+        "Unable to send surface sync to the main view.",
+        "rpc",
+        {},
+        error,
+      );
+    }
   },
 });
 
@@ -654,7 +725,7 @@ function recordAppRuntimeLog(
     recordDevBrowserToolsLog(level === "warning" ? "warn" : level, message, source, details);
     return;
   }
-  runtime.appLog[level](mapRuntimeLogSource(source), message, details);
+  runtime.appLog[level](mapAppRuntimeLogSource(source), message, details);
 }
 
 function recordAppRuntimeError(
@@ -669,20 +740,12 @@ function recordAppRuntimeError(
     recordDevBrowserToolsError(kind === "rpc" ? "rpc" : "app", message, source, details, error);
     return;
   }
-  runtime.appLog.error(mapRuntimeLogSource(source, kind), message, error, details);
-}
-
-function mapRuntimeLogSource(source: string, kind?: string) {
-  if (source.includes("auth") || source.includes("oauth")) return "auth.provider" as const;
-  if (source.includes("sendPrompt")) return "prompt" as const;
-  if (source.includes("session")) return "session" as const;
-  if (source.includes("surface")) return "surface" as const;
-  if (source.includes("workflow")) return "workflow.library" as const;
-  if (source.includes("editor")) return "external-editor" as const;
-  if (source.includes("dev-browser-tools")) return "app.bridge" as const;
-  if (source.includes("settings")) return "settings" as const;
-  if (kind === "rpc" || source.includes("rpc")) return "app.rpc" as const;
-  return "app.lifecycle" as const;
+  runtime.appLog.error(
+    mapAppRuntimeLogSource(source, kind === "rpc" ? "rpc" : "app"),
+    message,
+    error,
+    details,
+  );
 }
 
 function getWorkspaceRuntime(input: Parameters<typeof getWorkspaceRuntimeForRequest>[1]) {
@@ -706,74 +769,300 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       getAgentSettings: async (input) => {
         return getWorkspaceRuntime(input).agentSettingsStore.getState();
       },
-      getAppPreferences: async (input) => {
-        return getWorkspaceRuntime(input).agentSettingsStore.getState().appPreferences;
+      getAgentContextPreview: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getAgentContextPreview(stripWorkspaceId(input));
       },
-      getPromptLibrary: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getPromptLibraryState();
+      getAgentModelChoices: async () => {
+        return {
+          items: readDefaultModelCatalog().map((choice) => ({
+            providerId: choice.providerId,
+            modelId: choice.modelId,
+            providerAuthenticated: choice.providerAuthenticated,
+            authSource: choice.authSource,
+            supportedReasoning: choice.supportedReasoning,
+            capabilities: choice.capabilities,
+          })),
+        };
       },
-      getPromptLibraryDefaults: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getDefaultPromptLibraryState();
+      getExtensionsInventory: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
       },
-      updatePromptLibrary: async (input) => {
+      revertExtensionChange: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        if (!/^chg_[a-z0-9]+_[a-f0-9-]+$/i.test(input.changeId)) {
+          throw new Error(`Invalid extension change id: ${input.changeId}`);
+        }
+        const result = await runSvvyxExtensionsCommand({
+          agentSettingsStore: runtime.agentSettingsStore,
+          command: `svvyx extensions revert ${input.changeId} --json`,
+          envSecretStore: extensionEnvSecretStore,
+        });
+        const output = result.output as {
+          changeId?: unknown;
+          result?: {
+            autoBuild?: { status?: unknown } | null;
+            extensionId?: unknown;
+            kind?: unknown;
+          };
+        };
+        const revertChangeId = typeof output.changeId === "string" ? output.changeId : null;
+        const extensionId =
+          typeof output.result?.extensionId === "string" ? output.result.extensionId : null;
+        const resultKind = typeof output.result?.kind === "string" ? output.result.kind : null;
+        const autoBuildStatus =
+          typeof output.result?.autoBuild?.status === "string"
+            ? output.result.autoBuild.status
+            : null;
+        const recordedConversationEvent = input.owningSurface
+          ? await runtime.catalog.recordExtensionRevertProductEvent({
+              target: input.owningSurface,
+              changeId: input.changeId,
+              revertChangeId,
+              extensionId,
+              resultKind,
+              autoBuildStatus,
+            })
+          : false;
+        runtime.appLog.info("settings", "Extension change reverted from UI.", {
+          changeId: input.changeId,
+          revertChangeId,
+          extensionId,
+          resultKind,
+          autoBuildStatus,
+          recordedConversationEvent,
+        });
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
+      },
+      setExtensionEnvSecret: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { extensionId, name, value } = input;
+        assertExtensionEnvSecretTarget({ extensionId, name });
+        assertExtensionEnvWriteValue(value);
+        extensionEnvSecretStore.set({ extensionId, name }, value);
+        runtime.appLog.info("settings", "Extension env secret updated.", {
+          extensionId,
+          envName: name,
+        });
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
+      },
+      removeExtensionEnvSecret: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { extensionId, name } = input;
+        assertExtensionEnvSecretTarget({ extensionId, name });
+        extensionEnvSecretStore.remove({ extensionId, name });
+        runtime.appLog.info("settings", "Extension env secret removed.", {
+          extensionId,
+          envName: name,
+        });
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
+      },
+      setExtensionEnvOverride: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { extensionId, name, value } = input;
+        assertExtensionEnvOverrideTarget({ extensionId, name });
+        assertExtensionEnvWriteValue(value);
+        const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
+        runtime.agentSettingsStore.setExtensionEnv({
+          nonSecretOverrides: {
+            ...current,
+            [extensionId]: {
+              ...current[extensionId],
+              [name]: value,
+            },
+          },
+        });
+        runtime.appLog.info("settings", "Extension env override updated.", {
+          extensionId,
+          envName: name,
+        });
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
+      },
+      removeExtensionEnvOverride: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { extensionId, name } = input;
+        assertExtensionEnvOverrideTarget({ extensionId, name });
+        const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
+        const extensionOverrides = { ...current[extensionId] };
+        delete extensionOverrides[name];
+        const next = { ...current, [extensionId]: extensionOverrides };
+        if (Object.keys(extensionOverrides).length === 0) {
+          delete next[extensionId];
+        }
+        runtime.agentSettingsStore.setExtensionEnv({ nonSecretOverrides: next });
+        runtime.appLog.info("settings", "Extension env override removed.", {
+          extensionId,
+          envName: name,
+        });
+        return readBuiltinExtensionsInventory({
+          agentSettingsStore: runtime.agentSettingsStore,
+          envSecretStore: extensionEnvSecretStore,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          externalInstructionSources:
+            await runtime.catalog.getGeneratedAgentContextExternalSources(),
+          includeUserExtensions: true,
+        });
+      },
+      getAppPreferences: async () => {
+        return workspaceRuntimeRegistry.getDefaultWorkspace().agentSettingsStore.getState()
+          .appPreferences;
+      },
+      getGeneratedAgentContext: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextState();
+      },
+      getGeneratedAgentContextDefaults: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getDefaultGeneratedAgentContextState();
+      },
+      updateGeneratedAgentContext: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { state } = input;
-        const next = runtime.catalog.updatePromptLibraryState(state);
-        runtime.appLog.info("settings", "Prompt library updated.", {
+        const next = runtime.catalog.updateGeneratedAgentContextState(state);
+        runtime.appLog.info("settings", "Generated agent context updated.", {
           revision: next.revision,
         });
         return next;
       },
-      resetPromptLibrary: async (input) => {
+      resetGeneratedAgentContext: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const next = runtime.catalog.resetPromptLibraryState();
-        runtime.appLog.info("settings", "Prompt library reset.", {
+        const next = runtime.catalog.resetGeneratedAgentContextState();
+        runtime.appLog.info("settings", "Generated agent context reset.", {
           revision: next.revision,
         });
         return next;
       },
-      listPromptLibrarySnapshots: async (input) => {
-        return getWorkspaceRuntime(input).catalog.listPromptLibrarySnapshots();
+      listGeneratedAgentContextSnapshots: async (input) => {
+        return getWorkspaceRuntime(input).catalog.listGeneratedAgentContextSnapshots();
       },
-      createPromptLibrarySnapshot: async (input) => {
+      createGeneratedAgentContextSnapshot: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { name } = input;
-        const snapshot = runtime.catalog.createPromptLibrarySnapshot(name);
-        runtime.appLog.info("settings", "Prompt library snapshot created.", {
+        const snapshot = runtime.catalog.createGeneratedAgentContextSnapshot(name);
+        runtime.appLog.info("settings", "Generated agent context snapshot created.", {
           snapshotId: snapshot.id,
           name: snapshot.name,
         });
         return snapshot;
       },
-      renamePromptLibrarySnapshot: async (input) => {
+      renameGeneratedAgentContextSnapshot: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { snapshotId, name } = input;
-        const snapshot = runtime.catalog.renamePromptLibrarySnapshot(snapshotId, name);
-        runtime.appLog.info("settings", "Prompt library snapshot renamed.", {
+        const snapshot = runtime.catalog.renameGeneratedAgentContextSnapshot(snapshotId, name);
+        runtime.appLog.info("settings", "Generated agent context snapshot renamed.", {
           snapshotId: snapshot.id,
           name: snapshot.name,
         });
         return snapshot;
       },
-      restorePromptLibrarySnapshot: async (input) => {
+      restoreGeneratedAgentContextSnapshot: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { snapshotId } = input;
-        const next = runtime.catalog.restorePromptLibrarySnapshot(snapshotId);
-        runtime.appLog.info("settings", "Prompt library snapshot loaded.", {
+        const next = runtime.catalog.restoreGeneratedAgentContextSnapshot(snapshotId);
+        runtime.appLog.info("settings", "Generated agent context snapshot loaded.", {
           snapshotId,
           revision: next.revision,
         });
         return next;
       },
-      getPromptLibraryGeneratedEntries: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getPromptLibraryGeneratedEntries();
+      getGeneratedAgentContextEntries: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextEntries();
       },
-      getPromptLibraryExternalSources: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getPromptLibraryExternalSources();
+      getGeneratedAgentContextExternalSources: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
+      },
+      getSnippets: async (input) => {
+        return getWorkspaceRuntime(input).catalog.getSnippets();
+      },
+      createManagedSnippet: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const snippet = runtime.catalog.createManagedSnippet(input);
+        runtime.appLog.info("settings", "Snippet created.", {
+          snippetId: snippet.id,
+          title: snippet.title,
+        });
+        return snippet;
+      },
+      updateManagedSnippet: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const snippet = runtime.catalog.updateManagedSnippet(input);
+        runtime.appLog.info("settings", "Snippet updated.", {
+          snippetId: snippet.id,
+          title: snippet.title,
+        });
+        return snippet;
+      },
+      deleteManagedSnippet: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        runtime.catalog.deleteManagedSnippet(input);
+        runtime.appLog.info("settings", "Snippet deleted.", {
+          snippetId: input.snippetId,
+        });
+        return { ok: true as const };
+      },
+      openSnippetExternalSourceInEditor: (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const snippet = runtime.catalog
+          .getSnippets()
+          .discovered.find((candidate) => candidate.path === input.path);
+        if (!snippet) {
+          runtime.appLog.warning("external-editor", "Snippet source file is not discoverable.", {
+            path: input.path,
+          });
+          throw new Error(`Snippet source file is not discoverable: ${input.path}`);
+        }
+        const result = openPathInPreferredEditor(runtime, snippet.path);
+        runtime.appLog.info("external-editor", "Snippet source opened in external editor.", {
+          path: snippet.path,
+          editor: result.editor,
+          opened: result.opened,
+        });
+        return { ...result, path: snippet.path };
       },
       updateAgentProfile: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { profile } = input;
+        assertAgentModelSelection(
+          {
+            providerId: profile.provider,
+            modelId: profile.model,
+            reasoningEffort: profile.reasoningEffort,
+          },
+          readDefaultModelCatalog(),
+        );
         resolvedDefaults = null;
         runtime.appLog.info("settings", "Agent profile updated.", { profileId: profile.id });
         return runtime.agentSettingsStore.setAgentProfile(profile);
@@ -793,22 +1082,94 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       updateWorkflowAgent: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { key, settings } = input;
+        const modelCatalog = readDefaultModelCatalog();
+        assertAgentModelSelection(
+          {
+            providerId: settings.provider,
+            modelId: settings.model,
+            reasoningEffort: settings.reasoningEffort,
+          },
+          modelCatalog,
+        );
+        const previous = runtime.agentSettingsStore.getState().workflowAgents[key] ?? null;
+        const next = runtime.agentSettingsStore.setWorkflowAgent(key, settings);
         runtime.appLog.info("settings", "Workflow agent settings updated.", { key });
-        return runtime.agentSettingsStore.setWorkflowAgent(key, settings);
+        try {
+          const build = await buildWorkflowsGeneratedPackage({
+            modelCatalog,
+            workspaceCwds: workspaceRuntimeRegistry
+              .listOpenWorkspaces()
+              .map((workspace) => workspace.cwd),
+          });
+          if (build.ok) {
+            runtime.appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
+              reason: "workflow-agent-settings",
+              workflowDiagnosticCount: build.diagnostics.length,
+              workflowExportCount: build.items.length,
+              workflowLinkedWorkspaceCount: build.linkedWorkspaces.length,
+            });
+          } else {
+            runtime.appLog.warning(
+              "workflow.library",
+              "Workflow agent settings rejected because Workflows build failed.",
+              {
+                reason: "workflow-agent-settings",
+                workflowDiagnosticCount: build.diagnostics.length,
+              },
+            );
+            if (previous) {
+              runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+            } else {
+              runtime.agentSettingsStore.deleteWorkflowAgent(key);
+            }
+            throw workflowsBuildFailedError(build.diagnostics);
+          }
+        } catch (error) {
+          if ((error as { code?: string }).code === "build_failed") {
+            throw error;
+          }
+          if (previous) {
+            runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+          } else {
+            runtime.agentSettingsStore.deleteWorkflowAgent(key);
+          }
+          runtime.appLog.error(
+            "workflow.library",
+            "Workflow agent settings rejected because Workflows build errored.",
+            error,
+            { reason: "workflow-agent-settings" },
+          );
+          throw error;
+        }
+        return next;
       },
-      updateAppPreferences: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const preferences = stripWorkspaceId(input);
-        runtime.appLog.info("settings", "App preferences updated.", {
+      updateAppPreferences: async (preferences) => {
+        const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
+        runtime?.appLog.info("settings", "App preferences updated.", {
           appAppearance: preferences.appAppearance,
           preferredExternalEditor: preferences.preferredExternalEditor,
         });
-        return runtime.agentSettingsStore.setAppPreferences(preferences);
+        const defaultRuntime = workspaceRuntimeRegistry.getDefaultWorkspace();
+        const next = defaultRuntime.catalog.updateAppPreferences(preferences);
+        for (const workspace of workspaceRuntimeRegistry.listOpenWorkspaces()) {
+          if (workspace.workspaceId === defaultRuntime.workspaceId) {
+            continue;
+          }
+          await workspaceRuntimeRegistry
+            .getRuntime(workspace.workspaceId)
+            .catalog.notifyAppPreferencesChanged();
+        }
+        return next;
       },
-      ensureWorkflowAgentsComponent: async (input) => {
-        return {
-          path: getWorkspaceRuntime(input).agentSettingsStore.ensureWorkflowAgentsComponent(),
-        };
+      updateRequestUserInputSettings: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const settings = stripWorkspaceId(input);
+        runtime.appLog.info("settings", "Request User Input settings updated.", {
+          mode: settings.mode,
+          timeoutEnabled: settings.blockingTimeout.enabled,
+          timeoutDurationMs: settings.blockingTimeout.durationMs,
+        });
+        return runtime.catalog.updateRequestUserInputSettings(settings);
       },
       getProviderAuthState: async ({
         providerId,
@@ -818,7 +1179,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const defaults = getDefaultAgentSettings();
         return createAuthState(providerId || defaults.provider);
       },
-      openWorkspace: async ({ cwd }) => {
+      openWorkspace: async (input: OpenWorkspaceRequest = {}) => {
+        const { cwd } = input;
         const selectedCwd =
           cwd ??
           (
@@ -896,10 +1258,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
       },
       getAppLogs: (query) => {
-        const runtime = query
-          ? getWorkspaceRuntime(query)
-          : workspaceRuntimeRegistry.getActiveRuntime();
-        return runtime.appLogStore.query(query ? stripWorkspaceId(query) : undefined);
+        return getWorkspaceRuntime(query).appLogStore.query(stripWorkspaceId(query));
       },
       getAppLogSummary: (input) => getWorkspaceRuntime(input).appLogStore.summary(),
       markAppLogsSeen: ({ workspaceId, throughSeq }) =>
@@ -964,35 +1323,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         }
         return { opened, kind };
       },
-      getSavedWorkflowLibrary: async (input) => {
+      getWorkflowsGenerated: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const state = runtime.agentSettingsStore.getState();
-        runtime.appLog.info("workflow.library", "Saved workflow library read.");
-        return await readSavedWorkflowLibraryReadModel(runtime.cwd, state.appPreferences);
-      },
-      deleteSavedWorkflowLibraryItem: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { path } = input;
-        const state = runtime.agentSettingsStore.getState();
-        try {
-          const result = await deleteSavedWorkflowLibraryPath(
-            runtime.cwd,
-            path,
-            state.appPreferences,
-          );
-          runtime.appLog.info("workflow.library", "Saved workflow library item deleted.", { path });
-          return result;
-        } catch (error) {
-          runtime.appLog.error("workflow.library", "Saved workflow deletion failed.", error, {
-            path,
-          });
-          throw error;
-        }
+        runtime.appLog.info("workflow.library", "Generated Workflows metadata read.");
+        return await readWorkflowsGeneratedReadModel();
       },
       openWorkspaceSourceInEditor: (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { path } = input;
-        const absolutePath = resolveSafeWorkspacePath(runtime, path);
+        const absolutePath = resolveSafeWorkspaceOrWorkflowsPath(runtime, path);
         if (!absolutePath || getWorkspacePathKind(absolutePath) === "missing") {
           runtime.appLog.warning("external-editor", "Workspace source file does not exist.", {
             path,
@@ -1007,9 +1346,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return { ...result, path };
       },
-      openPromptLibraryExternalSourceInEditor: async (input) => {
+      openGeneratedAgentContextExternalSourceInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const sources = await runtime.catalog.getPromptLibraryExternalSources();
+        const sources = await runtime.catalog.getGeneratedAgentContextExternalSources();
         const source = sources.find((candidate) => candidate.path === input.path);
         if (!source || getWorkspacePathKind(source.path) === "missing") {
           runtime.appLog.warning("external-editor", "Prompt standards source does not exist.", {
@@ -1056,21 +1395,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return await getWorkspaceRuntime(input).catalog.getWorkflowTaskAttemptInspector({
           sessionId,
           workflowTaskAttemptId,
-        });
-      },
-      getWorkflowInspector: async (input) => {
-        return await getWorkspaceRuntime(input).catalog.getWorkflowInspector(
-          stripWorkspaceId(input),
-        );
-      },
-      streamWorkflowInspector: async (input) => {
-        return await getWorkspaceRuntime(input).catalog.streamWorkflowInspector(
-          stripWorkspaceId(input),
-        );
-      },
-      getProjectCiStatus: async (input) => {
-        return await getWorkspaceRuntime(input).catalog.getProjectCiStatus({
-          sessionId: input.sessionId,
         });
       },
       getArtifactPreview: async (input) => {
@@ -1563,6 +1887,36 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return result;
       },
+      answerRequestUserInput: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const result = await runtime.catalog.answerRequestUserInput(input);
+        runtime.appLog.info("prompt", "Request user input answered.", {
+          surfacePiSessionId: input.surfacePiSessionId,
+          requestId: input.requestId,
+          questionId: input.questionId,
+          delivery: input.delivery,
+        });
+        return result;
+      },
+      answerRuntimeApprovalRequest: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const result = await runtime.catalog.answerRuntimeApprovalRequest(input);
+        runtime.appLog.info("direct-tool", "Runtime approval request answered.", {
+          requestId: input.requestId,
+          approved: input.approved,
+        });
+        return result;
+      },
+      setRequestUserInputTimerPaused: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const result = await runtime.catalog.setRequestUserInputTimerPaused(input);
+        runtime.appLog.info("prompt", "Request user input timer updated.", {
+          surfacePiSessionId: input.surfacePiSessionId,
+          requestId: input.requestId,
+          paused: input.paused,
+        });
+        return result;
+      },
       queuePromptRefresh: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const result = await runtime.catalog.queuePromptRefresh(input);
@@ -1683,6 +2037,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           return { ok: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          workspaceRuntimeRegistry
+            .getActiveRuntimeOrNull()
+            ?.appLog.warning("auth.provider", "Provider OAuth failed.", { providerId, message });
           recordAppRuntimeError("rpc", message, "bun.oauth", { providerId }, error);
           return {
             ok: false,
@@ -1754,8 +2111,9 @@ const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
       appMenuItem("sidebar.toggle"),
       { type: "separator" },
       appMenuItem("surface.logs.open"),
+      appMenuItem("surface.agents.open"),
+      appMenuItem("surface.extensions.open"),
       appMenuItem("surface.workflows.open"),
-      appMenuItem("surface.context.open"),
     ],
   },
   {
@@ -1818,6 +2176,15 @@ if (appChannel === "dev") {
         sessions: [],
       },
     mainWindow,
+  }).catch((error) => {
+    recordAppRuntimeError(
+      "app",
+      "svvy dev browser tools bridge failed to mount.",
+      "dev-browser-tools",
+      {},
+      error,
+    );
+    throw error;
   });
   devBrowserToolsRecorder = mountedDevBrowserToolsBridge;
 

@@ -2,6 +2,7 @@ import type { ToolResultMessage } from "@mariozechner/pi-ai";
 import type {
   WorkspaceCommandRollup,
   WorkspaceHandlerThreadSummary,
+  WorkspaceProductEvent,
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
 
@@ -50,12 +51,17 @@ export type TranscriptSemanticBlock =
       command: WorkspaceCommandRollup;
     }
   | {
+      kind: "product-event";
+      key: string;
+      event: WorkspaceProductEvent;
+    }
+  | {
       kind: "thread";
       key: string;
       thread: WorkspaceHandlerThreadSummary;
     }
   | {
-      kind: "handoff-episode";
+      kind: "thread-episode";
       key: string;
       thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "title">;
       episode: NonNullable<WorkspaceHandlerThreadSummary["latestEpisode"]>;
@@ -110,6 +116,14 @@ export function buildTranscriptSemanticBlocks(
     });
   }
 
+  for (const event of input.session?.productEvents ?? []) {
+    blocks.push({
+      kind: "product-event",
+      key: `product-event:${event.eventId}`,
+      event,
+    });
+  }
+
   for (const thread of input.handlerThreads ?? []) {
     blocks.push({
       kind: "thread",
@@ -119,7 +133,7 @@ export function buildTranscriptSemanticBlocks(
 
     if (thread.latestEpisode) {
       blocks.push({
-        kind: "handoff-episode",
+        kind: "thread-episode",
         key: `episode:${thread.threadId}:${thread.latestEpisode.episodeId}`,
         thread: {
           threadId: thread.threadId,

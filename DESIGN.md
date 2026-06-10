@@ -46,7 +46,7 @@ Neutral context budget should be visually quiet, not celebratory green. Orange m
 
 ## Status Semantics
 
-Use these color mappings consistently across sessions, surfaces, handler threads, workflow runs, commands, waits, Project CI, provider auth, and context pressure:
+Use these color mappings consistently across sessions, surfaces, handler threads, workflow runs, commands, waits, provider auth, and context pressure:
 
 - Running, active, streaming, retrying, primary progress: orange, with pulse only while live.
 - Completed, verified, connected, passed, clean: emerald/success.

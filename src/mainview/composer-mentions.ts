@@ -1,3 +1,11 @@
+import {
+  createComposerSnippetMention,
+  createUniqueSnippetToken,
+  resolveSnippetMentionsInText,
+  type ComposerSnippetMention,
+  type SentSnippetProvenance,
+  type SnippetRecord,
+} from "../shared/snippets";
 import type { ComposerMentionKind, WorkspacePathIndexEntry } from "../shared/workspace-contract";
 
 export type { ComposerMentionKind, WorkspacePathIndexEntry };
@@ -9,10 +17,24 @@ export interface MentionQuery {
 }
 
 export interface MentionPickerResult extends WorkspacePathIndexEntry {
+  type: "path";
   id: string;
   basename: string;
   disambiguation: string;
 }
+
+export interface SnippetMentionPickerResult {
+  type: "snippet";
+  id: string;
+  snippet: SnippetRecord;
+  basename: string;
+  disambiguation: string;
+}
+
+export type ComposerMentionPickerResult = MentionPickerResult | SnippetMentionPickerResult;
+export type SnippetArgumentKeyboardTarget =
+  | { kind: "argument"; argumentIndex: number }
+  | { kind: "composer" };
 
 const TOKEN_BOUNDARY = /[\s([{"'`]/;
 const QUERY_BOUNDARY = /[\s)]/;
@@ -59,6 +81,46 @@ export function searchMentionPaths(
   return addDisambiguation(scored.slice(0, limit).map((entry) => entry.entry));
 }
 
+export function searchComposerMentionResults(input: {
+  paths: readonly WorkspacePathIndexEntry[];
+  snippets: readonly SnippetRecord[];
+  query: string;
+  limit?: number;
+}): ComposerMentionPickerResult[] {
+  const limit = input.limit ?? 12;
+  const pathResults = searchMentionPaths(input.paths, input.query, limit);
+  const snippetResults = searchMentionSnippets(input.snippets, input.query, limit);
+  return [...pathResults, ...snippetResults]
+    .toSorted((left, right) => compareMentionPickerResults(left, right))
+    .slice(0, limit);
+}
+
+export function searchMentionSnippets(
+  snippets: readonly SnippetRecord[],
+  query: string,
+  limit = 12,
+): SnippetMentionPickerResult[] {
+  const normalizedQuery = normalizeQuery(query);
+  return snippets
+    .map((snippet) => scoreSnippet(snippet, normalizedQuery))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .toSorted(
+      (left, right) =>
+        left.score - right.score || left.snippet.title.localeCompare(right.snippet.title),
+    )
+    .slice(0, limit)
+    .map(({ snippet }) => ({
+      type: "snippet",
+      id: `snippet:${snippet.id}`,
+      snippet,
+      basename: snippet.title,
+      disambiguation:
+        snippet.metadata.description ??
+        snippet.metadata.argumentHint ??
+        ("path" in snippet ? snippet.path : "svvy snippet"),
+    }));
+}
+
 export function selectMentionPath(
   value: string,
   query: MentionQuery,
@@ -72,8 +134,152 @@ export function selectMentionPath(
   return { draft, caret };
 }
 
-export function serializeComposerDraft(value: string): string {
-  return value.trim();
+export function selectMentionSnippet(
+  value: string,
+  query: MentionQuery,
+  snippet: SnippetRecord,
+  existingMentions: readonly ComposerSnippetMention[] = [],
+): {
+  draft: string;
+  caret: number;
+  mention: ComposerSnippetMention;
+} {
+  const token = createUniqueSnippetToken(snippet.title, value, existingMentions);
+  const needsSpace = value[query.end] && !/[\s.,;:!?)]/.test(value[query.end] ?? "");
+  const replacement = `${token}${needsSpace ? " " : ""}`;
+  const draft = `${value.slice(0, query.start)}${replacement}${value.slice(query.end)}`;
+  return {
+    draft,
+    caret: query.start + replacement.length,
+    mention: createComposerSnippetMention(snippet, token),
+  };
+}
+
+export function commitTypedSnippetMention(input: {
+  value: string;
+  caret: number;
+  snippets: readonly SnippetRecord[];
+  existingMentions?: readonly ComposerSnippetMention[];
+}): { draft: string; caret: number; mention: ComposerSnippetMention } | null {
+  const existingMentions = input.existingMentions ?? [];
+  const trailingWhitespace = /\s+$/.exec(input.value.slice(0, input.caret))?.[0] ?? "";
+  if (!trailingWhitespace) return null;
+  const tokenEnd = input.caret - trailingWhitespace.length;
+  const candidates = input.snippets
+    .map((snippet) => ({ snippet, token: `@${snippet.title}` }))
+    .filter(({ token }) => tokenEnd >= token.length)
+    .toSorted((left, right) => right.token.length - left.token.length);
+
+  for (const { snippet, token } of candidates) {
+    const tokenStart = tokenEnd - token.length;
+    if (input.value.slice(tokenStart, tokenEnd) !== token) continue;
+    const before = tokenStart === 0 ? "" : (input.value[tokenStart - 1] ?? "");
+    if (before && !TOKEN_BOUNDARY.test(before)) continue;
+    if (existingMentions.some((mention) => mention.token === token)) {
+      const valueWithoutTypedToken = `${input.value.slice(0, tokenStart)}${input.value.slice(tokenEnd)}`;
+      const uniqueToken = createUniqueSnippetToken(
+        snippet.title,
+        valueWithoutTypedToken,
+        existingMentions,
+      );
+      const draft = `${input.value.slice(0, tokenStart)}${uniqueToken}${input.value.slice(tokenEnd)}`;
+      return {
+        draft,
+        caret: tokenStart + uniqueToken.length + trailingWhitespace.length,
+        mention: createComposerSnippetMention(snippet, uniqueToken),
+      };
+    }
+    return {
+      draft: input.value,
+      caret: input.caret,
+      mention: createComposerSnippetMention(snippet, token),
+    };
+  }
+  return null;
+}
+
+export function nextSnippetArgumentKeyboardTarget(input: {
+  key: string;
+  argumentIndex: number;
+  argumentCount: number;
+  shiftKey?: boolean;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+}): SnippetArgumentKeyboardTarget | null {
+  if (
+    input.argumentCount <= 0 ||
+    input.shiftKey ||
+    input.altKey ||
+    input.ctrlKey ||
+    input.metaKey ||
+    (input.key !== "Tab" && input.key !== "Enter")
+  ) {
+    return null;
+  }
+  const nextIndex = input.argumentIndex + 1;
+  if (nextIndex < input.argumentCount) {
+    return { kind: "argument", argumentIndex: nextIndex };
+  }
+  return { kind: "composer" };
+}
+
+export function caretAfterSnippetMentionToken(
+  value: string,
+  mention: Pick<ComposerSnippetMention, "token">,
+): number {
+  const tokenIndex = value.indexOf(mention.token);
+  if (tokenIndex < 0) return value.length;
+  const tokenEnd = tokenIndex + mention.token.length;
+  const trailingWhitespace = /^\s+/.exec(value.slice(tokenEnd))?.[0] ?? "";
+  return tokenEnd + trailingWhitespace.length;
+}
+
+export function expandComposerSnippetMention(
+  value: string,
+  mention: ComposerSnippetMention,
+): { draft: string; caret: number } {
+  const tokenIndex = value.indexOf(mention.token);
+  const resolvedText = resolveSnippetMentionsInText(mention.token, [mention]).text;
+  if (tokenIndex < 0) {
+    const prefix = value.trimEnd();
+    const separator = prefix ? "\n\n" : "";
+    const draft = `${prefix}${separator}${resolvedText}`;
+    return { draft, caret: draft.length };
+  }
+  const draft = `${value.slice(0, tokenIndex)}${resolvedText}${value.slice(
+    tokenIndex + mention.token.length,
+  )}`;
+  return { draft, caret: tokenIndex + resolvedText.length };
+}
+
+export function removeComposerSnippetMentionToken(
+  value: string,
+  mention: Pick<ComposerSnippetMention, "token">,
+): { draft: string; caret: number } {
+  const tokenIndex = value.indexOf(mention.token);
+  if (tokenIndex < 0) return { draft: value, caret: value.length };
+  const before = value.slice(0, tokenIndex);
+  const after = value.slice(tokenIndex + mention.token.length);
+  const shouldTrimPreviousSpace =
+    before.endsWith(" ") && (after.startsWith(" ") || /^[.,;:!?)]/.test(after));
+  const shouldTrimNextSpace =
+    !shouldTrimPreviousSpace && after.startsWith(" ") && (before === "" || /\s$/.test(before));
+  const nextBefore = shouldTrimPreviousSpace ? before.slice(0, -1) : before;
+  const nextAfter = shouldTrimNextSpace ? after.slice(1) : after;
+  const draft = `${nextBefore}${nextAfter}`;
+  return { draft, caret: nextBefore.length };
+}
+
+export function serializeComposerDraft(
+  value: string,
+  snippetMentions: readonly ComposerSnippetMention[] = [],
+): { text: string; snippetProvenance: SentSnippetProvenance[] } {
+  const resolved = resolveSnippetMentionsInText(value, snippetMentions);
+  return {
+    text: resolved.text.trim(),
+    snippetProvenance: resolved.provenance,
+  };
 }
 
 export interface TranscriptMentionSegment {
@@ -158,11 +364,53 @@ function addDisambiguation(entries: WorkspacePathIndexEntry[]): MentionPickerRes
     const parent = dirname(entry.workspaceRelativePath);
     return {
       ...entry,
+      type: "path",
       id: `${entry.kind}:${entry.workspaceRelativePath}`,
       basename: name,
       disambiguation: counts.get(name) && counts.get(name)! > 1 ? parent : parent ? parent : "",
     };
   });
+}
+
+function compareMentionPickerResults(
+  left: ComposerMentionPickerResult,
+  right: ComposerMentionPickerResult,
+): number {
+  if (left.type !== right.type) return left.type === "snippet" ? -1 : 1;
+  return left.basename.localeCompare(right.basename) || left.id.localeCompare(right.id);
+}
+
+function scoreSnippet(
+  snippet: SnippetRecord,
+  normalizedQuery: string,
+): { snippet: SnippetRecord; score: number } | null {
+  const title = snippet.title.toLowerCase();
+  const description = snippet.metadata.description?.toLowerCase() ?? "";
+  const argumentHint = snippet.metadata.argumentHint?.toLowerCase() ?? "";
+  const path = "path" in snippet ? snippet.path.toLowerCase() : "";
+  if (!normalizedQuery) {
+    return { snippet, score: snippet.source === "svvy" ? -8 : 0 };
+  }
+  const titleIndex = title.indexOf(normalizedQuery);
+  const descriptionIndex = description.indexOf(normalizedQuery);
+  const argumentIndex = argumentHint.indexOf(normalizedQuery);
+  const pathIndex = path.indexOf(normalizedQuery);
+  if (titleIndex < 0 && descriptionIndex < 0 && argumentIndex < 0 && pathIndex < 0) return null;
+  const exactTitleBonus = title === normalizedQuery ? -90 : 0;
+  const titlePrefixBonus = title.startsWith(normalizedQuery) ? -55 : 0;
+  const sourceBonus = snippet.source === "svvy" ? -6 : 0;
+  const matchPosition =
+    titleIndex >= 0
+      ? titleIndex
+      : descriptionIndex >= 0
+        ? descriptionIndex + 16
+        : argumentIndex >= 0
+          ? argumentIndex + 24
+          : pathIndex + 32;
+  return {
+    snippet,
+    score: exactTitleBonus + titlePrefixBonus + sourceBonus + matchPosition + title.length / 100,
+  };
 }
 
 function comparePathEntries(left: WorkspacePathIndexEntry, right: WorkspacePathIndexEntry): number {

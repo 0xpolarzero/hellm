@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import {
   createThreadCurrentTool,
-  createThreadHandoffsTool,
+  createThreadEpisodesTool,
+  createThreadGroupTool,
   createThreadListTool,
 } from "./runtime-state-tools";
 import { createStructuredSessionStateStore } from "./structured-session-state";
@@ -23,7 +24,7 @@ afterEach(() => {
 
 describe("thread state tools", () => {
   it("fails thread_current outside a handler and returns compact current handler state inside a handler", async () => {
-    const { runtime, store, thread, workflow } = createRuntimeFixture();
+    const { runtime, store, thread } = createRuntimeFixture();
     const tool = createThreadCurrentTool({ runtime, store });
 
     runtime.current = {
@@ -38,6 +39,14 @@ describe("thread state tools", () => {
         (error) => (error as Error).message,
       ),
     ).resolves.toContain("handler thread");
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_current",
+        status: "failed",
+        arguments: {},
+        error: "thread_current can only run from a handler thread.",
+      }),
+    );
 
     runtime.current = {
       ...runtime.current!,
@@ -48,47 +57,66 @@ describe("thread state tools", () => {
     const result = await tool.execute("tool-call-2", {});
 
     expect(result.details).toEqual({
-      id: thread.id,
+      threadId: thread.id,
+      threadGroupId: thread.threadGroupId,
+      workspaceSessionId: thread.sessionId,
+      surfacePiSessionId: thread.surfacePiSessionId,
       title: "Investigate Runtime Tools",
       objective: "Inspect runtime state without prompt stuffing.",
+      objectiveState: "active",
       status: "waiting",
       wait: {
         kind: "external",
         reason: "Waiting for workflow signal.",
         resumeWhen: "Signal arrives.",
       },
-      loadedContextKeys: ["ci"],
-      activeWorkflowRunIds: [workflow.smithersRunId],
-      latestHandoff: {
+      pendingReportRequests: [],
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["web"],
+      latestEpisode: {
         id: expect.any(String),
-        title: "Prior handoff",
+        title: "Prior report",
         summary: "Earlier thread result.",
         createdAt: expect.any(String),
       },
     });
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_current",
+        status: "succeeded",
+        arguments: {},
+        facts: expect.objectContaining({
+          threadId: thread.id,
+          threadGroupId: thread.threadGroupId,
+        }),
+      }),
+    );
   });
 
   it("lists compact delegated thread rows without transcripts, counts, or workflow summaries", async () => {
-    const { runtime, store, thread, workflow } = createRuntimeFixture();
+    const { runtime, store, thread } = createRuntimeFixture();
     const tool = createThreadListTool({ runtime, store });
 
     const result = await tool.execute("tool-call-1", { status: ["waiting"], limit: 5 });
 
     expect(result.details.threads).toEqual([
       {
-        id: thread.id,
+        threadId: thread.id,
+        threadGroupId: thread.threadGroupId,
+        workspaceSessionId: thread.sessionId,
+        surfacePiSessionId: thread.surfacePiSessionId,
         title: "Investigate Runtime Tools",
         objective: "Inspect runtime state without prompt stuffing.",
+        objectiveState: "active",
         status: "waiting",
         wait: {
           kind: "external",
           reason: "Waiting for workflow signal.",
           resumeWhen: "Signal arrives.",
         },
-        activeWorkflowRunIds: [workflow.smithersRunId],
-        latestHandoff: {
+        latestEpisode: {
           id: expect.any(String),
-          title: "Prior handoff",
+          title: "Prior report",
           summary: "Earlier thread result.",
           createdAt: expect.any(String),
         },
@@ -97,24 +125,113 @@ describe("thread state tools", () => {
     expect(JSON.stringify(result.details)).not.toContain("message");
     expect(JSON.stringify(result.details)).not.toContain("workflow summary");
     expect(JSON.stringify(result.details)).not.toContain("commandCount");
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_list",
+        status: "succeeded",
+        arguments: {
+          status: ["waiting"],
+          limit: 5,
+        },
+        facts: {
+          threads: [
+            expect.objectContaining({
+              threadId: thread.id,
+              threadGroupId: thread.threadGroupId,
+            }),
+          ],
+        },
+      }),
+    );
   });
 
-  it("reads handoff episode bodies and defaults to the current handler thread", async () => {
-    const { runtime, store, episode } = createRuntimeFixture();
-    const tool = createThreadHandoffsTool({ runtime, store });
+  it("reads episode bodies and defaults to the current handler thread", async () => {
+    const { runtime, store, thread, episode } = createRuntimeFixture();
+    const tool = createThreadEpisodesTool({ runtime, store });
 
     const result = await tool.execute("tool-call-1", {});
 
-    expect(result.details.handoffs).toEqual([
+    expect(result.details.episodes).toEqual([
       {
         id: episode.id,
         threadId: episode.threadId,
-        title: "Prior handoff",
+        title: "Prior report",
         summary: "Earlier thread result.",
-        body: "Full durable handoff body.",
+        body: "Full durable report body.",
         createdAt: episode.createdAt,
       },
     ]);
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_episodes",
+        status: "succeeded",
+        arguments: {
+          limit: 10,
+        },
+        facts: {
+          episodes: [
+            expect.objectContaining({
+              id: episode.id,
+              threadId: episode.threadId,
+            }),
+          ],
+        },
+      }),
+    );
+  });
+
+  it("records failed command facts for invalid episode filters", async () => {
+    const { runtime, store, thread } = createRuntimeFixture();
+    const tool = createThreadEpisodesTool({ runtime, store });
+
+    await expect(
+      tool.execute("tool-call-invalid-episodes", {
+        threadId: thread.id,
+        threadGroupId: thread.threadGroupId,
+      }),
+    ).rejects.toThrow("thread_episodes accepts threadId or threadGroupId, not both.");
+
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_episodes",
+        status: "failed",
+        arguments: {
+          threadId: thread.id,
+          threadGroupId: thread.threadGroupId,
+          limit: 10,
+        },
+        error: "thread_episodes accepts threadId or threadGroupId, not both.",
+      }),
+    );
+  });
+
+  it("reads current handler group topology without sharing transcripts", async () => {
+    const { runtime, store, thread } = createRuntimeFixture();
+    const tool = createThreadGroupTool({ runtime, store });
+
+    const result = await tool.execute("tool-call-group", {});
+
+    expect(result.details.threadGroupId).toBe(thread.threadGroupId);
+    expect(result.details.currentThreadId).toBe(thread.id);
+    expect(result.details.threads).toEqual([
+      expect.objectContaining({
+        threadId: thread.id,
+        threadGroupId: thread.threadGroupId,
+        objectiveState: "active",
+      }),
+    ]);
+    expect(JSON.stringify(result.details)).not.toContain("Full durable report body");
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_group",
+        status: "succeeded",
+        arguments: {},
+        facts: expect.objectContaining({
+          threadGroupId: thread.threadGroupId,
+          currentThreadId: thread.id,
+        }),
+      }),
+    );
   });
 });
 
@@ -153,6 +270,8 @@ function createRuntimeFixture() {
     surfacePiSessionId: handlerSurfaceId,
     title: "Investigate Runtime Tools",
     objective: "Inspect runtime state without prompt stuffing.",
+    loadedExtensionIds: ["shell"],
+    availableExtensionIds: ["web"],
   });
   const context = store.loadThreadContext({
     threadId: thread.id,
@@ -164,11 +283,11 @@ function createRuntimeFixture() {
     turnId: turn.id,
     surfacePiSessionId: handlerSurfaceId,
     threadId: thread.id,
-    toolName: "smithers_run_workflow",
-    executor: "smithers",
+    toolName: "exec_command",
+    executor: "handler",
     visibility: "surface",
-    title: "Run workflow",
-    summary: "workflow summary should not leak",
+    title: "Run Smithers CLI",
+    summary: "smithers command summary should not leak",
   });
   store.startCommand(command.id);
   const workflow = store.recordWorkflow({
@@ -199,9 +318,9 @@ function createRuntimeFixture() {
   const episode = store.createEpisode({
     threadId: thread.id,
     sourceCommandId: command.id,
-    title: "Prior handoff",
+    title: "Prior report",
     summary: "Earlier thread result.",
-    body: "Full durable handoff body.",
+    body: "Full durable report body.",
   });
   store.updateThread({
     threadId: thread.id,

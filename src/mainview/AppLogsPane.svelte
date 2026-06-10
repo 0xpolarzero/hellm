@@ -39,8 +39,9 @@
 
   const LEVEL_FILTERS: Array<{ level: AppLogLevel | "all"; label: string; shortLabel: string }> = [
     { level: "all", label: "All levels", shortLabel: "All" },
+    { level: "debug", label: "Debug logs", shortLabel: "Debug" },
     { level: "info", label: "Info logs", shortLabel: "Info" },
-    { level: "warning", label: "Warning logs", shortLabel: "Warnings" },
+    { level: "warn", label: "Warning logs", shortLabel: "Warnings" },
     { level: "error", label: "Error logs", shortLabel: "Errors" },
   ];
 
@@ -97,7 +98,7 @@
 
   function levelTone(level: AppLogLevel): "info" | "warning" | "danger" {
     if (level === "error") return "danger";
-    if (level === "warning") return "warning";
+    if (level === "warn") return "warning";
     return "info";
   }
 
@@ -117,7 +118,7 @@
   type RelatedLogTarget = {
     label: string;
     value: string;
-    action?: "session" | "workflow-run" | "workflow-task" | "command";
+    action?: "session" | "workflow-task" | "command" | "artifact";
   };
 
   function relatedIds(entry: AppLogEntry): RelatedLogTarget[] {
@@ -127,11 +128,7 @@
         : null,
       entry.surfacePiSessionId ? { label: "surface", value: entry.surfacePiSessionId } : null,
       entry.threadId ? { label: "thread", value: entry.threadId } : null,
-      entry.workflowRunId && entry.workspaceSessionId
-        ? { label: "workflow", value: entry.workflowRunId, action: "workflow-run" }
-        : entry.workflowRunId
-          ? { label: "workflow", value: entry.workflowRunId }
-          : null,
+      entry.workflowRunId ? { label: "workflow", value: entry.workflowRunId } : null,
       entry.workflowTaskAttemptId && entry.workspaceSessionId
         ? { label: "task", value: entry.workflowTaskAttemptId, action: "workflow-task" }
         : entry.workflowTaskAttemptId
@@ -142,21 +139,17 @@
         : entry.commandId
           ? { label: "command", value: entry.commandId }
           : null,
+      entry.artifactId && entry.workspaceSessionId
+        ? { label: "artifact", value: entry.artifactId, action: "artifact" }
+        : entry.artifactId
+          ? { label: "artifact", value: entry.artifactId }
+          : null,
     ].filter((item): item is RelatedLogTarget => !!item);
   }
 
   async function openRelated(entry: AppLogEntry, target: RelatedLogTarget) {
     if (target.action === "session") {
       await runtime.openSession(target.value, { kind: "new-panel", direction: "right" });
-    } else if (target.action === "workflow-run" && entry.workspaceSessionId) {
-      await runtime.openSurface(
-        {
-          workspaceSessionId: entry.workspaceSessionId,
-          surface: "workflow-inspector",
-          workflowRunId: target.value,
-        },
-        { kind: "new-panel", direction: "right" },
-      );
     } else if (target.action === "workflow-task" && entry.workspaceSessionId) {
       await runtime.openSurface(
         {
@@ -169,6 +162,11 @@
     } else if (target.action === "command" && entry.workspaceSessionId) {
       await runtime.openSurface(
         { workspaceSessionId: entry.workspaceSessionId, surface: "command", commandId: target.value },
+        { kind: "new-panel", direction: "right" },
+      );
+    } else if (target.action === "artifact" && entry.workspaceSessionId) {
+      await runtime.openSurface(
+        { workspaceSessionId: entry.workspaceSessionId, surface: "artifact", artifactId: target.value },
         { kind: "new-panel", direction: "right" },
       );
     }
@@ -869,7 +867,11 @@
     color: var(--ui-info);
   }
 
-  .severity-warning .severity-dot {
+  .severity-debug .severity-dot {
+    color: var(--ui-text-tertiary);
+  }
+
+  .severity-warn .severity-dot {
     color: var(--ui-warning);
   }
 
@@ -877,7 +879,7 @@
     color: var(--ui-danger);
   }
 
-  .severity-warning.active {
+  .severity-warn.active {
     border-color: color-mix(in oklab, var(--ui-warning) 42%, var(--ui-border-soft));
     background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
   }
