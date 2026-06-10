@@ -56,7 +56,8 @@ export function createThreadReportTool(options: {
       const threadId = runtime.surfaceThreadId;
       const summary = params.summary.trim();
       const details = params.details?.trim() || summary;
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId,

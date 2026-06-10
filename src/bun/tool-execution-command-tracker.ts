@@ -41,6 +41,7 @@ export function createToolExecutionCommandTracker(options: {
   store: StructuredSessionStateStore;
   promptContext: PromptExecutionContext;
   onAppLog?: (event: AppLoggerEvent) => void;
+  onReusedStreamingToolCall?: (toolCallId: string) => void;
 }): ToolExecutionCommandTracker {
   const commandIdByToolCallId = new Map<string, string>();
   const toolNameByCommandId = new Map<string, string>();
@@ -62,34 +63,44 @@ export function createToolExecutionCommandTracker(options: {
           onlyIfPending: true,
         });
       }
-      const command = options.store.createCommand({
-        turnId: options.promptContext.turnId,
-        threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
-        toolName,
-        executor: inferExecutor(toolName, options.promptContext),
-        visibility: inferVisibility(toolName),
-        title: inferTitle(toolName),
-        summary: summarizeToolArguments(toolName, args),
-        arguments: args,
-        facts: { toolCallId: input.toolCallId },
-      });
-      options.store.startCommand(command.id);
+
+      let commandId: string;
+      const existingStreaming = options.store.findCommandByToolCallId(input.toolCallId);
+      if (existingStreaming) {
+        commandId = existingStreaming.id;
+        options.store.updateCommandArguments(commandId, args);
+        options.onReusedStreamingToolCall?.(input.toolCallId);
+      } else {
+        const command = options.store.createCommand({
+          turnId: options.promptContext.turnId,
+          threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
+          toolName,
+          executor: inferExecutor(toolName, options.promptContext),
+          visibility: inferVisibility(toolName),
+          title: inferTitle(toolName),
+          summary: summarizeToolArguments(toolName, args),
+          arguments: args,
+          facts: { toolCallId: input.toolCallId },
+        });
+        commandId = command.id;
+      }
+      options.store.startCommand(commandId);
       recordCommandStartEvents({
         args,
-        commandId: command.id,
+        commandId,
         sessionId: options.promptContext.sessionId,
         store: options.store,
         toolName,
       });
-      commandIdByToolCallId.set(input.toolCallId, command.id);
-      toolNameByCommandId.set(command.id, toolName);
+      commandIdByToolCallId.set(input.toolCallId, commandId);
+      toolNameByCommandId.set(commandId, toolName);
       const source = directToolLogSource(toolName, args);
-      logSourceByCommandId.set(command.id, source);
+      logSourceByCommandId.set(commandId, source);
       options.onAppLog?.({
         level: "info",
         source,
         message: directToolLogMessage(source, "started"),
-        details: directToolLogDetails(options.promptContext, command.id, toolName),
+        details: directToolLogDetails(options.promptContext, commandId, toolName),
       });
     },
 

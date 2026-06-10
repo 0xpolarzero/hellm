@@ -65,6 +65,7 @@ export type StructuredCommandExecutor =
   | "runtime";
 export type StructuredCommandVisibility = "trace" | "summary" | "surface";
 export type StructuredCommandStatus =
+  | "streaming"
   | "requested"
   | "running"
   | "waiting"
@@ -763,7 +764,26 @@ export interface StructuredSessionStateStore {
     arguments?: unknown;
     facts?: Record<string, unknown> | null;
     attempts?: number;
+    status?: StructuredCommandStatus;
   }): StructuredCommandRecord;
+  findCommandByToolCallId(toolCallId: string): StructuredCommandRecord | null;
+  createOrReuseStreamingCommand(input: {
+    toolCallId: string;
+    turnId?: string | null;
+    workflowTaskAttemptId?: string | null;
+    surfacePiSessionId?: string;
+    threadId?: string | null;
+    workflowRunId?: string | null;
+    parentCommandId?: string | null;
+    toolName: string;
+    executor: StructuredCommandExecutor;
+    visibility: StructuredCommandVisibility;
+    title: string;
+    summary: string;
+    arguments?: unknown;
+    facts?: Record<string, unknown> | null;
+  }): StructuredCommandRecord;
+  updateCommandArguments(commandId: string, args: unknown): StructuredCommandRecord;
   startCommand(commandId: string): StructuredCommandRecord;
   finishCommand(input: {
     commandId: string;
@@ -2721,6 +2741,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     arguments?: unknown;
     facts?: Record<string, unknown> | null;
     attempts?: number;
+    status?: StructuredCommandStatus;
   }): StructuredCommandRecord {
     const workflowTaskAttempt = input.workflowTaskAttemptId
       ? this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId)
@@ -2791,7 +2812,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.toolName,
         input.executor,
         input.visibility,
-        "requested",
+        input.status ?? "requested",
         input.attempts ?? 1,
         input.title,
         input.summary,
@@ -2809,6 +2830,68 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       at: timestamp,
     });
 
+    return this.mustFindCommandRecord(commandId);
+  }
+
+  findCommandByToolCallId(toolCallId: string): StructuredCommandRecord | null {
+    const rows = this.db
+      .query(
+        `SELECT * FROM command WHERE json_extract(facts_json, '$.toolCallId') = ? ORDER BY updated_at DESC LIMIT 1`,
+      )
+      .all(toolCallId) as CommandRow[];
+    if (rows.length === 0) return null;
+    return this.mapCommand(rows[0]!);
+  }
+
+  createOrReuseStreamingCommand(input: {
+    toolCallId: string;
+    turnId?: string | null;
+    workflowTaskAttemptId?: string | null;
+    surfacePiSessionId?: string;
+    threadId?: string | null;
+    workflowRunId?: string | null;
+    parentCommandId?: string | null;
+    toolName: string;
+    executor: StructuredCommandExecutor;
+    visibility: StructuredCommandVisibility;
+    title: string;
+    summary: string;
+    arguments?: unknown;
+    facts?: Record<string, unknown> | null;
+  }): StructuredCommandRecord {
+    const existing = this.findCommandByToolCallId(input.toolCallId);
+    if (existing) {
+      if (input.arguments !== undefined) {
+        this.updateCommandArguments(existing.id, input.arguments);
+      }
+      const updatedFacts = { ...existing.facts, ...input.facts };
+      this.db
+        .query(
+          `UPDATE command SET facts_json = ?, summary = ?, title = ?, visibility = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          toJson(updatedFacts),
+          input.summary ?? existing.summary,
+          input.title ?? existing.title,
+          input.visibility ?? existing.visibility,
+          this.now(),
+          existing.id,
+        );
+      return this.mustFindCommandRecord(existing.id);
+    }
+    return this.createCommand({
+      ...input,
+      facts: { ...input.facts, toolCallId: input.toolCallId },
+    });
+  }
+
+  updateCommandArguments(commandId: string, args: unknown): StructuredCommandRecord {
+    const existing = this.mustFindCommandRow(commandId);
+    const timestamp = this.now();
+    this.db
+      .query(`UPDATE command SET arguments_json = ?, updated_at = ? WHERE id = ?`)
+      .run(args === undefined ? null : toJson(args), timestamp, commandId);
+    void existing;
     return this.mustFindCommandRecord(commandId);
   }
 

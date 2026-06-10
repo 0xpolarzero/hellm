@@ -125,6 +125,7 @@ export function createThreadCurrentTool(options: {
         recordReadOnlyToolCommand({
           store: options.store,
           runtime,
+          toolCallId: _toolCallId,
           toolName: THREAD_CURRENT_TOOL_NAME,
           title: "Inspect current handler thread",
           summary: "Inspect current handler thread.",
@@ -172,6 +173,7 @@ export function createThreadListTool(options: {
         recordReadOnlyToolCommand({
           store: options.store,
           runtime,
+          toolCallId: _toolCallId,
           toolName: THREAD_LIST_TOOL_NAME,
           title: "List handler threads",
           summary: `List ${threads.length} handler threads.`,
@@ -205,6 +207,7 @@ export function createThreadEpisodesTool(options: {
         recordReadOnlyToolCommand({
           store: options.store,
           runtime,
+          toolCallId: _toolCallId,
           toolName: THREAD_EPISODES_TOOL_NAME,
           title: "Read thread episodes",
           summary: "Read thread episodes.",
@@ -284,6 +287,7 @@ export function createThreadGroupTool(options: {
         recordReadOnlyToolCommand({
           store: options.store,
           runtime,
+          toolCallId: _toolCallId,
           toolName: THREAD_GROUP_TOOL_NAME,
           title: "Inspect handler thread group",
           summary: "Inspect handler thread group.",
@@ -318,6 +322,7 @@ export function createThreadGroupTool(options: {
 function recordReadOnlyToolCommand<T extends Record<string, unknown>>(input: {
   store: StructuredSessionStateStore;
   runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+  toolCallId: string;
   toolName: string;
   title: string;
   summary: string;
@@ -332,7 +337,8 @@ function recordReadOnlyToolCommand<T extends Record<string, unknown>>(input: {
       onlyIfPending: true,
     });
   }
-  const command = input.store.createCommand({
+  const command = input.store.createOrReuseStreamingCommand({
+    toolCallId: input.toolCallId,
     turnId: input.runtime.turnId,
     surfacePiSessionId: input.runtime.surfacePiSessionId,
     threadId: input.runtime.surfaceKind === "handler" ? input.runtime.surfaceThreadId : null,

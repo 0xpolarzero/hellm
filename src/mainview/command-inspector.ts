@@ -61,6 +61,8 @@ export function getWorkspaceCommandStatusPresentation(
       return { label: "Failed", tone: "danger" };
     case "running":
       return { label: "Running", tone: "warning" };
+    case "streaming":
+      return { label: "Streaming", tone: "warning" };
     case "waiting":
       return { label: "Waiting", tone: "info" };
     case "cancelled":

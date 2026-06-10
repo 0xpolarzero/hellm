@@ -681,7 +681,7 @@ export type SessionTitleGenerationStatus =
 export interface WorkspaceCommandRollupChild {
   commandId: string;
   toolName: string;
-  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  status: "streaming" | "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   title: string;
   summary: string;
   error: string | null;
@@ -694,7 +694,7 @@ export interface WorkspaceCommandRollup {
   workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: "summary" | "surface";
-  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  status: "streaming" | "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   title: string;
   summary: string;
   arguments?: unknown | null;
@@ -808,7 +808,7 @@ export interface WorkspaceCommandInspector {
   workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: "trace" | "summary" | "surface";
-  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  status: "streaming" | "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   title: string;
   summary: string;
   facts: Record<string, unknown> | null;

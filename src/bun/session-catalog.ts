@@ -113,6 +113,7 @@ import {
 import { createRequestUserInputTool, RequestUserInputRuntime } from "./request-user-input-tool";
 import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
+import { createStreamingCommandTracker } from "./streaming-command-tracker";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadReportTool, type ThreadReportNotificationRequest } from "./thread-report-tool";
 import {
@@ -4770,11 +4771,19 @@ export class WorkspaceSessionCatalog {
     promptContext: PromptExecutionContext | null,
   ): Promise<void> {
     session.promptExecutionRuntime.current = promptContext;
+    const streamingCommandTracker = promptContext
+      ? createStreamingCommandTracker({
+          store: this.structuredSessionStore,
+          promptContext,
+        })
+      : null;
     const toolCommandTracker = promptContext
       ? createToolExecutionCommandTracker({
           store: this.structuredSessionStore,
           promptContext,
           onAppLog: this.emitAppLog.bind(this),
+          onReusedStreamingToolCall: (toolCallId) =>
+            streamingCommandTracker?.releaseToolCall(toolCallId),
         })
       : null;
     const onEvent = options.onEvent ?? (() => {});
@@ -4851,6 +4860,7 @@ export class WorkspaceSessionCatalog {
         event.type === "toolcall_end"
       ) {
         session.activeStreamMessage = structuredClone(event.partial);
+        forwardToolcallEventToStreamingTracker(streamingCommandTracker, event);
         const patch = surfaceStreamPatchFromAssistantEvent(event);
         if (patch) {
           this.emitSurfaceStreamPatch({
@@ -4975,9 +4985,15 @@ export class WorkspaceSessionCatalog {
         this.completePromptExecution(promptContext, visibleMessage);
       } catch (error) {
         const reason = session.abortRequested ? "aborted" : "error";
+        const finishStatus = reason === "aborted" ? ("cancelled" as const) : ("failed" as const);
+        const finishError = error instanceof Error ? error.message : "pi prompt failed.";
+        streamingCommandTracker?.finishDanglingStreamingCommands({
+          status: finishStatus,
+          error: finishError,
+        });
         toolCommandTracker?.finishDanglingCommands({
-          status: reason === "aborted" ? "cancelled" : "failed",
-          error: error instanceof Error ? error.message : "pi prompt failed.",
+          status: finishStatus,
+          error: finishError,
         });
         finishOpenVisibleBlocks(streamState, publishPromptEvent);
         const failure = finalizeVisibleAssistantMessage(
@@ -5005,6 +5021,10 @@ export class WorkspaceSessionCatalog {
         this.failPromptExecution(promptContext, failure);
       } finally {
         unsubscribe();
+        streamingCommandTracker?.finishDanglingStreamingCommands({
+          status: "cancelled",
+          error: "Prompt execution ended before the tool run finished.",
+        });
         toolCommandTracker?.finishDanglingCommands({
           status: "cancelled",
           error: "Prompt execution ended before the tool run finished.",
@@ -6546,6 +6566,52 @@ function surfaceStreamPatchFromAssistantEvent(
     case "done":
     case "error":
       return null;
+  }
+}
+
+function forwardToolcallEventToStreamingTracker(
+  tracker: import("./streaming-command-tracker").StreamingCommandTracker | null,
+  event: AssistantMessageEvent,
+): void {
+  if (!tracker) return;
+  if (event.type === "toolcall_start") {
+    const toolCall = event.partial.content[event.contentIndex];
+    if (!toolCall || toolCall.type !== "toolCall") return;
+    tracker.handleToolcallStart({
+      contentIndex: event.contentIndex,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      partialArguments:
+        typeof toolCall.arguments === "object" && toolCall.arguments !== null
+          ? (toolCall.arguments as Record<string, unknown>)
+          : {},
+      partial: event.partial,
+    });
+  } else if (event.type === "toolcall_delta") {
+    const toolCall = event.partial.content[event.contentIndex];
+    if (!toolCall || toolCall.type !== "toolCall") return;
+    tracker.handleToolcallDelta({
+      contentIndex: event.contentIndex,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      delta: event.delta,
+      partialArguments:
+        typeof toolCall.arguments === "object" && toolCall.arguments !== null
+          ? (toolCall.arguments as Record<string, unknown>)
+          : {},
+      partial: event.partial,
+    });
+  } else if (event.type === "toolcall_end") {
+    tracker.handleToolcallEnd({
+      contentIndex: event.contentIndex,
+      toolCallId: event.toolCall.id,
+      toolName: event.toolCall.name,
+      arguments:
+        typeof event.toolCall.arguments === "object" && event.toolCall.arguments !== null
+          ? (event.toolCall.arguments as Record<string, unknown>)
+          : {},
+      partial: event.partial,
+    });
   }
 }
 

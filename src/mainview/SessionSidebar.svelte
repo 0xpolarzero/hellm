@@ -479,12 +479,12 @@
   }
 
   function isCommandWorking(command: WorkspaceCommandRollup): boolean {
-    return command.status === "requested" || command.status === "running";
+    return command.status === "streaming" || command.status === "requested" || command.status === "running";
   }
 
   function getCommandTone(command: WorkspaceCommandRollup): "muted" | "waiting" | "error" {
     if (command.status === "failed") return "error";
-    if (command.status === "requested" || command.status === "running" || command.status === "waiting") {
+    if (command.status === "streaming" || command.status === "requested" || command.status === "running" || command.status === "waiting") {
       return "waiting";
     }
     return "muted";

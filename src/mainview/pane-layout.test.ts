@@ -948,7 +948,7 @@ describe("pane layout source contracts", () => {
     expect(sessionSidebarSource).toContain("sidebar-child-command");
     expect(sessionSidebarSource).toContain("function isCommandWorking");
     expect(sessionSidebarSource).toContain(
-      'return command.status === "requested" || command.status === "running";',
+      'return command.status === "streaming" || command.status === "requested" || command.status === "running";',
     );
     expect(sessionSidebarSource).toContain(
       "{:else if threadWorking && !thread.latestCommandRollup}",

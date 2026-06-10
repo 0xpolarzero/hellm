@@ -272,6 +272,10 @@ describe("command inspector helpers", () => {
       label: "Waiting",
       tone: "info",
     });
+    expect(getWorkspaceCommandStatusPresentation("streaming")).toEqual({
+      label: "Streaming",
+      tone: "warning",
+    });
   });
 
   it("groups recovered command output by stream", () => {

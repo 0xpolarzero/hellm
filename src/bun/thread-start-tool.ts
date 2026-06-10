@@ -104,7 +104,8 @@ export function createStartThreadTool(options: {
       const emptyObjective = requestedThreads.find((thread) => !thread.objective);
       let threadGroupId = params.threadGroupId?.trim() || null;
       const summary = requestedThreads.map((thread) => thread.objective).join("; ");
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.rootThreadId ?? null,

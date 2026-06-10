@@ -407,7 +407,7 @@
 		if (status === "failed" || status === "cancelled") return "failed";
 		if (status === "blocked" || status === "troubleshooting") return "blocked";
 		if (status === "waiting" || status === "requested") return "waiting";
-		if (status === "running" || status === "running-handler" || status === "running-workflow" || status === "continued") return "running";
+		if (status === "streaming" || status === "running" || status === "running-handler" || status === "running-workflow" || status === "continued") return "running";
 		return "idle";
 	}
 

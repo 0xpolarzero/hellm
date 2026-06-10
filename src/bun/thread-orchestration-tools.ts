@@ -86,7 +86,8 @@ export function createThreadFollowupTool(options: {
         decision: "thread_followup",
         onlyIfPending: true,
       });
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.rootThreadId ?? null,
@@ -178,7 +179,8 @@ export function createThreadRequestReportTool(options: {
         decision: "thread_request_report",
         onlyIfPending: true,
       });
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.rootThreadId ?? null,

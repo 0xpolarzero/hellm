@@ -327,7 +327,8 @@ export async function runExecuteTypescript(input: {
   approvalMode?: ApprovalMode | (() => ApprovalMode);
   toolCallId: string;
 }): Promise<ExecuteTypescriptResult> {
-  const parentCommand = input.store.createCommand({
+  const parentCommand = input.store.createOrReuseStreamingCommand({
+    toolCallId: input.toolCallId,
     turnId: input.context.turnId ?? null,
     workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
     surfacePiSessionId: input.context.surfacePiSessionId,

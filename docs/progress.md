@@ -39,7 +39,8 @@ How to use this file:
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
 - [x] Build a POC Codex-like live tool projection stream for one surface on the current pi seams, covering tool item start, accepted argument snapshots, command output deltas, structured file-change patch snapshots, approval or wait state, final command facts, and renderer recovery after reload. Commit(s): pending local changes
-  - [ ] Follow-up: add true pre-runtime partial argument/source streaming once pi exposes incremental tool-call argument events; do not invent fake streaming callbacks in `svvy`.
+  - [x] Follow-up: add pre-runtime generic-direct-tool argument streaming for `exec_command` and `apply_patch` once pi exposes incremental tool-call argument events; do not invent fake streaming callbacks in `svvy`. Commit(s): pending local changes
+  - [ ] Follow-up: extend pre-runtime streaming to `execute_typescript` source, native-control objective/report/question arguments, in-progress `apply_patch` patch previews, and approval-state live updates.
 - [x] Persist and render live tool projection across native direct tools, thread-control tools,
       extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
       `svvyx ...`, and prompt-only CLI usage such as Smithers without introducing a workflow-specific

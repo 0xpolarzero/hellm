@@ -61,7 +61,8 @@ export function createListExtensionsTool(options: {
         decision: LIST_EXTENSIONS_TOOL_NAME,
         onlyIfPending: true,
       });
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
@@ -145,7 +146,8 @@ export function createLoadExtensionTool(options: {
         decision: "load_extension",
         onlyIfPending: true,
       });
-      const command = options.store.createCommand({
+      const command = options.store.createOrReuseStreamingCommand({
+        toolCallId: _toolCallId,
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
