@@ -68,6 +68,7 @@ binding they actually have.
 ## Local Incur Facts
 
 The local Incur reference is `/Users/polarzero/code/wevm/incur`.
+The packaged app consumes Incur from `github:wevm/incur#db1f8c0a62b6de45ab361ffead522b4323d5bc77` (`wevm/incur` PR #14). That commit is required because it includes committed `dist` package artifacts, so `svvy` can install the GitHub dependency directly without running an Incur install-time build.
 
 The runtime design relies on these observed Incur facts:
 
