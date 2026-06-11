@@ -15,6 +15,7 @@ use codex_core_api::Arg0DispatchPaths;
 use codex_core_api::AskForApproval;
 use codex_core_api::AuthCredentialsStoreMode;
 use codex_core_api::AuthManager;
+use codex_core_api::AutoCompactTokenLimitScope;
 use codex_core_api::CodexThread;
 use codex_core_api::Config;
 use codex_core_api::ConfigLayerStack;
@@ -115,7 +116,8 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     )?;
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let environment_manager = Arc::new(
-        EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
+        EnvironmentManager::from_codex_home(config.codex_home.clone(), Some(local_runtime_paths))
+            .await?,
     );
     let installation_id = resolve_installation_id(&config.codex_home).await?;
     let thread_manager = ThreadManager::new(
@@ -168,6 +170,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
         model_provider_id,
         model_provider,
         personality: None,
@@ -175,6 +178,8 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
             Constrained::allow_any(AskForApproval::Never),
             Constrained::allow_any(PermissionProfile::read_only()),
         )?,
+        explicit_permission_profile_mode: false,
+        custom_permission_profiles: Vec::new(),
         approvals_reviewer: ApprovalsReviewer::User,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         hide_agent_reasoning: false,
@@ -233,6 +238,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         codex_home,
         history: History::default(),
         ephemeral: true,
+        extra_config: None,
         file_opener: UriBasedFileOpener::VsCode,
         codex_self_exe: arg0_paths.codex_self_exe,
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe,
@@ -245,7 +251,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         model_catalog: None,
         model_verbosity: None,
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
-        apps_mcp_path_override: None,
+        apps_mcp_product_sku: None,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_ws_base_url: None,
         experimental_realtime_ws_model: None,
@@ -259,13 +265,14 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         forced_login_method: None,
         web_search_mode: Constrained::allow_any(WebSearchMode::Disabled),
         web_search_config: None,
+        experimental_request_user_input_enabled: true,
+        code_mode: Default::default(),
         use_experimental_unified_exec_tool: false,
         background_terminal_max_timeout: 300_000,
         ghost_snapshot: GhostSnapshotConfig::default(),
         multi_agent_v2: MultiAgentV2Config::default(),
         features: Default::default(),
         suppress_unstable_features_warning: false,
-        active_profile: None,
         active_project: ProjectConfig { trust_level: None },
         notices: Notice::default(),
         check_for_update_on_startup: false,
@@ -289,9 +296,10 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
                 text: prompt,
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
         })
         .await
         .context("submit user input")?;
@@ -318,6 +326,7 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
             | EventMsg::CollabCloseEnd(_)
             | EventMsg::CollabResumeBegin(_)
             | EventMsg::CollabResumeEnd(_)
+            | EventMsg::SubAgentActivity(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::PlanDelta(_)
             | EventMsg::ReasoningContentDelta(_)

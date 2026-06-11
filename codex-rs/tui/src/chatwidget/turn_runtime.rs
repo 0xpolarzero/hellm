@@ -89,9 +89,9 @@ impl ChatWidget {
         // source only when no earlier item-level event (AgentMessageItem, plan
         // commit, review output) already recorded markdown for this turn. This
         // prevents the final summary from overwriting a more specific source.
-        let sanitized_last_agent_message = last_agent_message
-            .as_deref()
-            .map(|message| parse_assistant_markdown(message).visible_markdown);
+        let sanitized_last_agent_message = last_agent_message.as_deref().map(|message| {
+            parse_assistant_markdown(message, self.config.cwd.as_path()).visible_markdown
+        });
         if let Some(message) = sanitized_last_agent_message
             .as_ref()
             .filter(|message| !message.is_empty())
@@ -317,6 +317,7 @@ impl ChatWidget {
         self.stream_controller = None;
         self.plan_stream_controller = None;
         self.status_state.pending_status_indicator_restore = false;
+        self.clear_cancel_edit();
         self.request_status_line_branch_refresh();
         self.request_status_line_git_summary_refresh();
         self.maybe_show_pending_rate_limit_prompt();
@@ -339,6 +340,7 @@ impl ChatWidget {
 
     pub(super) fn on_error(&mut self, message: String) {
         self.input_queue.submit_pending_steers_after_interrupt = false;
+        self.flush_answer_stream_with_separator();
         self.finalize_turn();
         self.add_to_history(history_cell::new_error_event(message));
         self.set_ambient_pet_notification(
