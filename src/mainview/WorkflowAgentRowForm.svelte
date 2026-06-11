@@ -3,7 +3,6 @@
 	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
 	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
 	import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
-	import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
 	import LockIcon from "@lucide/svelte/icons/lock";
 	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { createForm } from "@tanstack/svelte-form";
@@ -37,7 +36,6 @@
 		onConfirmDelete: () => void;
 		onDuplicate: () => void;
 		onOpenExtension: (extensionId: string) => void;
-		onOpenSource: () => void;
 		onRequestDelete: () => void;
 		onSave: (agent: WorkflowAgentSettings) => Promise<WorkflowAgentSettings>;
 		onSetExtensionUsage: (
@@ -60,7 +58,6 @@
 		onConfirmDelete,
 		onDuplicate,
 		onOpenExtension,
-		onOpenSource,
 		onRequestDelete,
 		onSave,
 		onSetExtensionUsage,
@@ -298,17 +295,6 @@
 				onDismiss: onCancelDelete,
 			}}
 		>
-			<Tooltip label={`Open ${agent.id}.agent.json`}>
-				<button
-					type="button"
-					class="agent-icon-button"
-					aria-label={`Open ${agent.label} JSON source`}
-					disabled={disabled}
-					onclick={onOpenSource}
-				>
-					<ExternalLinkIcon size={13} aria-hidden="true" />
-				</button>
-			</Tooltip>
 			<Tooltip label="Duplicate workflow agent">
 				<button
 					type="button"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
@@ -7,6 +8,7 @@
     type AgentProfileId,
     type AgentProfileSettings,
     type AgentSettingsState,
+    type PreferredExternalEditor,
     type WorkflowAgentKey,
     type WorkflowAgentSettings,
   } from "../shared/agent-settings";
@@ -28,6 +30,7 @@
   } from "./agents-pane-extension-usage";
   import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
   import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
+  import Tooltip from "./ui/Tooltip.svelte";
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
 
   type Props = {
@@ -86,6 +89,21 @@
     Object.values(settings?.workflowAgents ?? {}).toSorted((left, right) =>
       left.label.localeCompare(right.label) || left.id.localeCompare(right.id),
     ),
+  );
+  const externalEditorLabelById = {
+    system: "system default editor",
+    code: "Visual Studio Code",
+    cursor: "Cursor",
+    zed: "Zed",
+    sublime: "Sublime Text",
+    custom: "custom editor",
+  } satisfies Record<PreferredExternalEditor, string>;
+  const workflowAgentSourceTooltip = $derived(
+    `Open in ${
+      externalEditorLabelById[
+        settings?.appPreferences.preferredExternalEditor ?? "system"
+      ]
+    }`,
   );
 
   async function loadSettings() {
@@ -868,7 +886,6 @@
     onDuplicate={() => void createWorkflowAgent(agent)}
     onSave={saveWorkflowAgent}
     onOpenExtension={openExtension}
-    onOpenSource={() => void openWorkflowAgentSource(agent)}
     onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
     onSetExtensionUsage={(extensionId, state) =>
       setWorkflowAgentExtensionUsage(agent, extensionId, state)}
@@ -876,7 +893,17 @@
   />
   <div class="workflow-source-note">
     <span>{agent.id}.agent.json</span>
-    <span>Generates Agents.{agent.id}</span>
+    <Tooltip label={workflowAgentSourceTooltip}>
+      <button
+        type="button"
+        class="workflow-source-button"
+        aria-label={`${workflowAgentSourceTooltip}: ${agent.id}.agent.json`}
+        disabled={savingWorkflowAgentKey === agent.id || deletingWorkflowAgentKey === agent.id}
+        onclick={() => void openWorkflowAgentSource(agent)}
+      >
+        <ExternalLinkIcon size={12} aria-hidden="true" />
+      </button>
+    </Tooltip>
   </div>
   {#if expanded}
     {@const previewKey = contextPreviewKey("workflow-task", agent.id)}
@@ -1313,8 +1340,8 @@
   .workflow-source-note {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
+    justify-content: flex-end;
+    gap: 0.36rem;
     min-width: 0;
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
@@ -1327,6 +1354,36 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .workflow-source-button {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 1.24rem;
+    height: 1.24rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+  }
+
+  .workflow-source-button:hover,
+  .workflow-source-button:focus-visible {
+    outline: none;
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .workflow-source-button:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .workflow-source-button:disabled {
+    cursor: default;
+    opacity: 0.36;
   }
 
   .agent-profile-expanded {
