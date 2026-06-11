@@ -1,5 +1,7 @@
 import type { ElectrobunConfig } from "electrobun";
 
+const createDmg = process.env.SVVY_SKIP_DMG !== "1";
+
 export default {
   app: {
     name: "svvy",
@@ -41,6 +43,7 @@ export default {
     watchIgnore: ["dist/**"],
     mac: {
       bundleCEF: false,
+      createDmg,
     },
     linux: {
       bundleCEF: false,
