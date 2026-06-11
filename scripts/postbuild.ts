@@ -25,6 +25,7 @@ const nativeWindowControlsLibrary = join(
   "native",
   "libSvvyWindowControls.dylib",
 );
+const nativeSandboxHelper = join(projectRoot, "build", "native", "svvy-sandbox-helper");
 
 function ensureNativeWindowControlsLibrary(): void {
   if (process.platform !== "darwin") return;
@@ -58,10 +59,41 @@ function copyNativeWindowControlsLibrary(): void {
   cpSync(nativeWindowControlsLibrary, join(appContentsDir, "MacOS", "libSvvyWindowControls.dylib"));
 }
 
+function ensureNativeSandboxHelper(): void {
+  if (process.platform !== "darwin") return;
+
+  const result = spawnSync(
+    process.execPath,
+    [join(projectRoot, "scripts", "build-native-sandbox-helper.ts")],
+    {
+      cwd: projectRoot,
+      stdio: "inherit",
+    },
+  );
+
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+function copyNativeSandboxHelper(): void {
+  if (process.platform !== "darwin") return;
+
+  ensureNativeSandboxHelper();
+  if (!existsSync(nativeSandboxHelper)) {
+    console.error(`postbuild: missing native sandbox helper at ${nativeSandboxHelper}`);
+    process.exit(1);
+  }
+
+  const appContentsDir = join(appCodeDir, "..", "..");
+  cpSync(nativeSandboxHelper, join(appContentsDir, "MacOS", "svvy-sandbox-helper"));
+}
+
 if (buildEnv === "dev") {
   mkdirSync(appCodeDir, { recursive: true });
   symlinkSync(nodeModulesSource, nodeModulesDest, "dir");
   copyNativeWindowControlsLibrary();
+  copyNativeSandboxHelper();
   console.log("postbuild: linked repo node_modules into dev bundle");
   process.exit(0);
 }
@@ -158,4 +190,5 @@ while (pendingPackages.length > 0) {
 }
 
 copyNativeWindowControlsLibrary();
+copyNativeSandboxHelper();
 console.log(`postbuild: copied ${copied} packages to bundle`);

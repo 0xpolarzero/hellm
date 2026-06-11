@@ -1139,7 +1139,7 @@ describe("extension loading tools", () => {
     expect(refreshed.availableExtensionIds).toEqual([]);
   });
 
-  it("refreshes actor-local prompts with custom-root user svvyx declarations after loading", async () => {
+  it("refreshes actor-local prompts while hiding custom-root user svvyx generated clients after loading", async () => {
     const extensionsRoot = mkdtempSync(join(tmpdir(), "svvy-user-extension-types-"));
     try {
       const sourceRoot = join(extensionsRoot, "sources", "user", "linear");
@@ -1220,17 +1220,23 @@ describe("extension loading tools", () => {
         { extensionId: "linear" },
       );
 
+      expect(result.details.refreshedContext).toMatchObject({
+        actor: "orchestrator",
+        loadedExtensionIds: ["execute-typescript", "linear"],
+        availableExtensionIds: [],
+      });
       expect(result.details.refreshedContext.executeTypescriptDeclaration).toContain(
-        "linear: LinearExtensionClient",
+        "interface LoadedExtensionsClient",
       );
-      expect(result.details.refreshedContext.systemPrompt).toContain(
-        "linear: LinearExtensionClient",
-      );
-      expect(result.details.refreshedContext.systemPrompt).toContain('"issues.list"');
+      expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain("linear");
       expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain(
-        "staleGeneratedFile",
+        "LinearExtensionClient",
+      );
+      expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain(
+        '"issues.list"',
       );
       expect(result.details.refreshedContext.systemPrompt).not.toContain("staleGeneratedFile");
+      expect(result.details.refreshedContext.systemPrompt).not.toContain("LinearExtensionClient");
     } finally {
       rmSync(extensionsRoot, { recursive: true, force: true });
     }

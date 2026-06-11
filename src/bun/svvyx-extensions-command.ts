@@ -188,10 +188,6 @@ export type SvvyxExtensionsCommandResult = {
   commandFacts: Record<string, unknown>;
 };
 
-export function isSvvyxExtensionsCommand(command: string): boolean {
-  return /^svvyx\s+extensions(?:\s|$)/.test(command.trim());
-}
-
 export async function runSvvyxExtensionsCommand(input: {
   agentSettingsStore?: AgentSettingsStore;
   buildRoot?: string;

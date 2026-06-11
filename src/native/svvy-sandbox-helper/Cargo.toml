@@ -1,0 +1,8 @@
+[package]
+name = "svvy-sandbox-helper"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "svvy-sandbox-helper"
+path = "src/main.rs"

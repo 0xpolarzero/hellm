@@ -355,6 +355,10 @@ interface CreateManagedSessionOptions {
   openArtifact?: (input: { sessionId: string; artifactId: string }) => boolean | Promise<boolean>;
   approvalBoundary?: RuntimeApprovalBoundary;
   extensionsRoot?: string;
+  managedSandbox?: boolean | (() => boolean);
+  workflowsExtensionsGeneratedPackagePath?: string;
+  workflowsGeneratedPackagePath?: string;
+  workflowsSourceRoot?: string;
 }
 
 interface VisibleStreamState {
@@ -435,6 +439,7 @@ export class WorkspaceSessionCatalog {
     private readonly workspaceId: string = cwd,
     private readonly recoveryOptions: WorkspaceRecoveryOptions = {},
     approvalBoundary?: RuntimeApprovalBoundary,
+    private readonly managedSandbox: boolean | (() => boolean) | undefined = undefined,
   ) {
     this.extensionsRoot = extensionsRootForAgentDir(this.agentDir);
     const workspaceLabel = basename(this.cwd) || "workspace";
@@ -2066,8 +2071,13 @@ export class WorkspaceSessionCatalog {
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
       readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
+      managedSandbox: this.managedSandbox,
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
+      workflowsExtensionsGeneratedPackagePath:
+        this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
+      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
     });
     nextSession.retainCount = session.retainCount;
     this.managedSurfaces.set(nextSession.sessionId, nextSession);
@@ -2217,6 +2227,7 @@ export class WorkspaceSessionCatalog {
       agentDir: this.agentDir,
       agentSettingsStore: this.agentSettingsStore,
       structuredSessionStore: this.structuredSessionStore,
+      managedSandbox: this.managedSandbox,
       createHandlerThread: this.createHandlerThread.bind(this),
       queueThreadFollowup: this.queueThreadFollowup.bind(this),
       queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
@@ -2230,6 +2241,10 @@ export class WorkspaceSessionCatalog {
       readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
+      workflowsExtensionsGeneratedPackagePath:
+        this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
+      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
     });
     this.managedSurfaces.set(session.sessionId, session);
     return session;
@@ -4662,6 +4677,11 @@ export class WorkspaceSessionCatalog {
       queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
       queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
       extensionsRoot: this.extensionsRoot,
+      managedSandbox: this.managedSandbox,
+      workflowsExtensionsGeneratedPackagePath:
+        this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
+      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
     });
     try {
       syncAuthStorage(namer.authStorage);
@@ -5525,6 +5545,12 @@ async function createManagedSession(
     agentSettingsStore: options.agentSettingsStore,
     approvalMode: () => options.agentSettingsStore.getState().appPreferences.approvalMode,
     approvalBoundary: options.approvalBoundary,
+    networkAccess: () => options.agentSettingsStore.getState().appPreferences.networkAccess,
+    managedSandbox: options.managedSandbox,
+    workflowsExtensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
+    workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
+    workflowsSourceRoot: options.workflowsSourceRoot,
+    extensionsRoot: options.extensionsRoot,
     extensionsEnvValues: () =>
       options.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
     workflowsWorkspaceCwds: options.readOpenWorkspaceCwds,
@@ -5553,6 +5579,7 @@ async function createManagedSession(
     approvalMode: () => options.agentSettingsStore.getState().appPreferences.approvalMode,
     approvalBoundary: options.approvalBoundary,
     networkAccess: () => options.agentSettingsStore.getState().appPreferences.networkAccess,
+    managedSandbox: options.managedSandbox,
     openArtifact: options.openArtifact,
     onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
     onAppLog: options.onAppLog,

@@ -131,6 +131,14 @@ function createWorkspaceSessionCatalog(
   agentDir: string,
   sessionDir: string,
   approvalBoundary?: RuntimeApprovalBoundary,
+  managedSandbox: boolean | (() => boolean) = false,
+  recoveryOptions: {
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
+    workflowsSourceRoot?: string;
+  } = {
+    workflowsSourceRoot: join(agentDir, "..", "workflows"),
+  },
 ): WorkspaceSessionCatalog {
   return new WorkspaceSessionCatalog(
     cwd,
@@ -138,10 +146,9 @@ function createWorkspaceSessionCatalog(
     sessionDir,
     undefined,
     undefined,
-    {
-      workflowsSourceRoot: join(agentDir, "..", "workflows"),
-    },
+    recoveryOptions,
     approvalBoundary,
+    managedSandbox,
   );
 }
 
@@ -662,6 +669,148 @@ describe("WorkspaceSessionCatalog", () => {
           typescriptCode: "console.log('should not run');",
         },
       ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("passes app sandbox and network settings into session-created execute_typescript", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const settingsStore = createAgentSettingsStore({
+      cwd,
+      agentDir,
+      workflowsSourceRoot: join(agentDir, "..", "workflows"),
+    });
+    settingsStore.setAppPreferences({
+      ...settingsStore.getState().appPreferences,
+      artifactDirectory: join(agentDir, "artifacts"),
+      networkAccess: false,
+    });
+    let managedSandboxReads = 0;
+    const catalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      () => ({ approved: true }),
+      () => {
+        managedSandboxReads += 1;
+        return false;
+      },
+    );
+
+    try {
+      const created = await catalog.createSession({ title: "Execute Settings" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run execute_typescript with app execution settings",
+      });
+      managed.promptExecutionRuntime.current = createPromptExecutionContext({
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        rootThreadId: null,
+        promptText: "Run execute_typescript with app execution settings",
+      });
+
+      const result = await getCustomTool(managed, "execute_typescript").execute(
+        "tool-call-session-ts-settings",
+        {
+          typescriptCode: "return { ok: true };",
+        },
+      );
+      expect(result).toMatchObject({
+        details: {
+          success: true,
+          result: { ok: true },
+        },
+      });
+
+      expect(managedSandboxReads).toBeGreaterThan(0);
+      expect(store.getSessionState(created.target.workspaceSessionId).commands[0]).toMatchObject({
+        toolName: "execute_typescript",
+        status: "succeeded",
+        facts: {
+          managedSandbox: false,
+          networkAccess: false,
+        },
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("wires generated package paths into session-created execute_typescript imports", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const settingsStore = createAgentSettingsStore({
+      cwd,
+      agentDir,
+      workflowsSourceRoot: join(agentDir, "..", "workflows"),
+    });
+    settingsStore.setAppPreferences({
+      ...settingsStore.getState().appPreferences,
+      artifactDirectory: join(agentDir, "artifacts"),
+    });
+    const workflowsPackagePath = join(agentDir, "generated-workflows-package");
+    mkdirSync(workflowsPackagePath, { recursive: true });
+    writeFileSync(
+      join(workflowsPackagePath, "package.json"),
+      JSON.stringify({ name: "@svvy/workflows", main: "index.ts" }, null, 2),
+    );
+    writeFileSync(
+      join(workflowsPackagePath, "index.ts"),
+      [
+        'export const Agents = Object.freeze({ reviewer: "reviewer" });',
+        "export const Components = Object.freeze({});",
+        "export const Prompts = Object.freeze({});",
+        "export const Workflows = Object.freeze({});",
+        "",
+      ].join("\n"),
+    );
+    const catalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      () => ({ approved: true }),
+      false,
+      {
+        workflowsGeneratedPackagePath: workflowsPackagePath,
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      },
+    );
+
+    try {
+      const created = await catalog.createSession({ title: "Execute Imports" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run execute_typescript with generated imports",
+      });
+      managed.promptExecutionRuntime.current = createPromptExecutionContext({
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        rootThreadId: null,
+        promptText: "Run execute_typescript with generated imports",
+      });
+
+      const result = await getCustomTool(managed, "execute_typescript").execute(
+        "tool-call-session-ts-imports",
+        {
+          typescriptCode:
+            'import { Agents } from "@svvy/workflows";\nreturn Object.keys(Agents as object);',
+        },
+      );
+      expect(result).toMatchObject({
+        details: {
+          success: true,
+          result: ["reviewer"],
+        },
+      });
     } finally {
       await catalog.dispose();
     }

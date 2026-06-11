@@ -746,7 +746,8 @@ Generated-client calls:
   shell dispatch
 - create child command records under the parent `execute_typescript` command
 - expose only the per-loaded-extension client under `extensions.artifacts`; do not expose
-  `MemoryClient`, local actions, or a broad all-extension Incur client
+  generic Incur transports, local actions, generated-client internals, or a broad all-extension
+  Incur client
 
 ## Preview And UX
 

@@ -707,8 +707,8 @@ Resolved `svvy` execution policy:
 
 - normal direct tool execution uses the Codex-like `exec_command`, `write_stdin`, and `apply_patch`
   surface defined in `docs/specs/extensions-and-tools.spec.md`
-- on macOS, managed filesystem sandboxing uses `/usr/bin/sandbox-exec` with vendored or ported Codex
-  Seatbelt policy generation and SBPL templates packaged with the app
+- on macOS, managed filesystem sandboxing uses an app-owned Codex-derived native helper that applies
+  Codex permission-profile and filesystem policy semantics through `/usr/bin/sandbox-exec`
 - the default managed filesystem policy follows Codex workspace-write semantics: broad reads, writes
   to workspace roots and configured writable roots, writes to `/tmp` and `$TMPDIR` unless excluded,
   and protected metadata carveouts such as `.git`, `.agents`, and `.codex`

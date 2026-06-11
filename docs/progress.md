@@ -42,9 +42,9 @@ How to use this file:
   - [x] Follow-up: add pre-runtime generic-direct-tool argument streaming for `exec_command` and `apply_patch` once pi exposes incremental tool-call argument events; do not invent fake streaming callbacks in `svvy`. Commit(s): pending local changes
   - [ ] Follow-up: extend pre-runtime streaming to `execute_typescript` source, native-control objective/report/question arguments, in-progress `apply_patch` patch previews, and approval-state live updates.
 - [x] Persist and render live tool projection across native direct tools, thread-control tools,
-      extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
-      `svvyx ...`, and prompt-only CLI usage such as Smithers without introducing a workflow-specific
-      rendering or recovery path. Commit(s): pending local changes
+      extension loading, `execute_typescript`, command-family Shell surfaces such as current
+      `svvyx ...` output, and prompt-only CLI usage such as Smithers without introducing a
+      workflow-specific rendering or recovery path. Commit(s): pending local changes
   - [x] Preserve `svvyx workflows ...` failure command facts in the thrown `exec_command` JSON payload and persist those facts on the ordinary failed command record through the generic command tracker. Commit(s): pending
   - [x] Persist running command records for direct tools at execution start and waiting command records for native control tools that pause for user input. Commit(s): pending
   - [x] Persist final command-family `exec_command` stdout/stderr or JSON output as durable command-subject output events through the ordinary command tracker, and settle structured `{ ok: false }` `svvyx` results as failed command records. Commit(s): pending
@@ -70,8 +70,8 @@ How to use this file:
 - [x] Expose the resolved `execute_typescript` runtime surface with no global `svvy` client and no injected `api` object. Commit(s): pending local changes
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
 - [x] Route the top-level `execute_typescript` action through the same approval-boundary path as other approval-gated native actions before executing submitted code. Commit(s): pending local changes
-- [x] Make the top-level `execute_typescript` approval hook use the shared mode-aware runtime approval request shape, persist source before review, and bypass the boundary in `approvalMode: "full-access"`. Commit(s): pending local changes
-- [x] Add an injectable runtime approval-boundary seam before direct `exec_command`, intercepted `svvyx ...` command-family dispatch, and `apply_patch`, with `approvalMode: "full-access"` bypassing that seam. Commit(s): pending local changes
+- [x] Make the top-level `execute_typescript` approval hook use the shared mode-aware runtime approval request shape, persist source before review, and omit the boundary in `approvalMode: "full-access"`. Commit(s): pending local changes
+- [x] Add an injectable runtime approval-boundary seam before direct `exec_command`, current app-owned `svvyx ...` command-family dispatch, and `apply_patch`, with `approvalMode: "full-access"` omitting that seam. Commit(s): pending local changes
 - [x] Pass the injected mode-aware approval-boundary seam into session-created direct tools and top-level `execute_typescript`, with managed-session denial coverage for Shell and TypeScript tool calls. Commit(s): pending local changes
 - [x] Connect the injected approval-boundary seam to app-owned automatic review and actor-local user approval requests, with durable runtime approval records, pending user approval projection, and approve/deny RPC/UI actions. Commit(s): pending local changes
 - [x] Settle denied and cancelled runtime approval requests by clearing wait state, resolving the blocked tool call without running it, and recording cancelled command facts. Commit(s): pending local changes
@@ -82,25 +82,54 @@ How to use this file:
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while Smithers workflow operations use official CLI commands through Shell. Commit(s): `a02bd48`
-- [x] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients through schema-backed current-build command semantics, while keeping `MemoryClient` and local Incur actions unexposed to snippets. Commit(s): pending local changes
+- [x] Expose builtin Artifacts and Workflows generated clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients through schema-backed command semantics, while keeping local Incur actions and generated-client internals unexposed to snippets. Commit(s): pending local changes
   - [x] Extract current-build Incur command manifests during successful user `svvyx` builds and generate TypeScript declaration files from those command maps for loaded extension clients. Commit(s): pending
-  - [x] Invoke generated user clients through schema-backed Incur input/output semantics, including output controls and the non-streaming `Run.Result` envelope, instead of the temporary insertion-order argv adapter. Commit(s): pending
-  - [x] Move generated user clients from the current CLI-backed transport to the packaged public Incur memory-client path from `github:wevm/incur#db1f8c0a62b6de45ab361ffead522b4323d5bc77`, including rich `Client.ClientError` metadata and recursive exact secret redaction while keeping MemoryClient and local actions internal. Commit(s): pending local changes
+  - [x] Keep user `svvyx` generated clients hidden from `execute_typescript` declarations and unavailable at runtime until sandboxed generated-client execution exists, while builtin Artifacts and Workflows generated clients remain available. Commit(s): pending local changes
+  - [ ] Add sandboxed execution for user `svvyx` generated clients through schema-backed Incur input/output semantics, output controls, the non-streaming `Run.Result` envelope, the packaged public Incur client path from `github:wevm/incur#db1f8c0a62b6de45ab361ffead522b4323d5bc77`, rich `Client.ClientError` metadata, recursive exact secret redaction, and hidden generated-client internals.
   - [ ] Follow-up: add streaming response projection and CTA command runner tests once the product has a proven svvy-side child-command recording path for `Run.StreamResponse` and `Cta.run()` executions.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Vendor a Codex-derived native Rust sandbox helper that preserves Codex filesystem policy
-      semantics for `Read`, `Write`, and `None` entries, most-specific path precedence, writable roots
-      with read-only subpaths, protected metadata carveouts, macOS Seatbelt generation through
-      `/usr/bin/sandbox-exec`, and fail-closed behavior when carveouts cannot be enforced.
-  - [x] Generate a parameterized macOS Seatbelt profile artifact from the managed filesystem policy,
-        covering writable-root write allowance, read-only subpath exclusions, protected metadata regex
-        carveouts, network denial, and unrestricted/full-access omission. Commit(s): pending
-  - [x] Maintain a tested internal managed filesystem policy model for `Read`, `Write`, and `None`
-        entries, most-specific and equal-specific precedence, workspace-write roots, `/tmp` and
-        `$TMPDIR` writable roots, full-access bypass, and protected `.git`, `.agents`, and `.codex`
-        metadata carveouts; apply that policy to `apply_patch` target validation before invoking the
-        patch subprocess. Commit(s): pending
-  - [ ] Package native sandbox verification through an app-owned helper/test seam so unit tests do not depend on launching nested raw `sandbox-exec` from the Codex-hosted test process.
+- [x] Package an app-owned Codex-derived native sandbox helper that owns ordinary `exec_command`
+      subprocess sandboxing and `apply_patch` file effects through macOS Seatbelt
+      `/usr/bin/sandbox-exec`, with `Read`/`Write`/`None` entries, most-specific path precedence,
+      equal-specific `None > Write > Read` precedence, default read access, cwd/project-root
+      writable roots, explicit writable roots, read-only subpaths, protected `.git`, `.agents`, and
+      `.codex` metadata carveouts, network allow/deny, full-access sandbox omission, sandbox-denial
+      reporting, and fail-closed helper setup. Commit(s): pending local changes
+  - [x] Keep TypeScript responsible for product policy assembly, approval integration, command
+        projection, and tests on the ordinary `exec_command` and `apply_patch` paths, with actual
+        subprocess/file effects routed through the native helper when managed sandboxing is active.
+        Commit(s): pending local changes
+  - [ ] Follow-up: delete or demote remaining TypeScript Seatbelt profile generation,
+        command-string write heuristics, and post-run protected-write cleanup where the native
+        helper now owns execution, while preserving product-specific generated-output and artifact
+        projection validation that is not filesystem or network sandbox enforcement.
+  - [ ] Implement Codex permission-profile compilation and runtime policy transforms in the native
+        helper, including symbolic roots such as `:root`, `:project_roots`, `:tmpdir`, and
+        `:slash_tmp`; deny-read path and glob entries with fail-closed invalid-glob handling;
+        additional-permission normalization, merge, and intersection; executor-required
+        runtime-readable roots; and managed-network denial/approval behavior. Generated TypeScript
+        declarations may describe these contracts, but must not become the enforcement model.
+  - [x] Route all agent Shell usage of `svvyx ...` command families through the ordinary Shell
+        `exec_command` path to the real app-owned Incur CLI, preserving the same approval, sandbox,
+        command facts, output streaming, and projection path as other shell commands.
+    - [x] Route app-owned Artifacts `svvyx artifacts create`, `inspect`, `list`, and `delete`
+          through a subprocess `svvyx` entrypoint that reopens durable structured SQLite state and
+          returns compatible JSON stdout plus command facts. Commit(s): pending local changes
+    - [x] Route `svvyx artifacts open` through the real app-owned CLI path with the required live-app
+          callback behavior for inspector-pane opening. Commit(s): pending local changes
+    - [x] Route `svvyx workflows`, `svvyx extensions`, and user/runtime `svvyx <extension-id> ...`
+          dispatch through the real app-owned `svvyx` CLI process with explicit app-owned writable
+          roots, env/secret injection, generated-package change signals, and dependency-approval
+          context. Commit(s): pending local changes
+  - [x] Preserve Codex approval/escalation flow: compute approval before sandbox selection; approval
+        permits starting the action but does not imply unsandboxed execution; execpolicy allow
+        omits sandboxing only when every parsed command segment is explicitly allowed; explicit
+        escalation/full-access omits the sandbox only when policy permits it; denied-read
+        restrictions keep execution sandboxed; sandbox denial never triggers a silent unsandboxed
+        retry. Commit(s): pending local changes
+  - [x] Package native sandbox verification through an app-owned helper/test seam so unit tests
+        exercise the helper contract instead of launching raw nested `sandbox-exec` from the
+        Codex-hosted unit-test process. Commit(s): pending local changes
 - [x] Grant the active session artifact directory as a writable root while treating that session's
       `immutable/` artifact child as a read-only subpath, without granting broad writable access to the
       configured artifact root or to artifacts owned by other sessions. Commit(s): pending local changes
@@ -110,7 +139,7 @@ How to use this file:
       `--kind`, implicit extension, inline content, or OS file-flag immutability. Commit(s): pending local changes
 - [x] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`. Commit(s): pending local changes
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
-- [x] Persist normalized child-command facts for user-generated `extensions["<id>"].run(...)` calls backed by current user `svvyx` builds while the parent `execute_typescript` attempt remains the main semantic unit; builtin Artifacts and Workflows generated clients already record child commands. Commit(s): pending local changes
+- [x] Keep user-generated `extensions["<id>"].run(...)` clients unavailable in `execute_typescript` until sandboxed generated-client execution exists; builtin Artifacts and Workflows generated clients record normalized parent-linked child command facts while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): pending local changes
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
 ## 2A. Prompt-Only TinyFish Web Extension
@@ -350,7 +379,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Seed builtin extension records for base actor instructions, code navigation, prompt-only Smithers guidance, Workflows source-library commands, workflow task boundaries, Web, Git, GitHub, Artifacts, and Request User Input, with per-agent usage states, non-deletable builtin rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
 - [x] Create app-owned user extension skeletons through `svvyx extensions create`, with `instructions` and `svvyx` interfaces, neutral instruction files, an Incur default-export source skeleton for `svvyx`, manifest-backed inspect/build visibility under the same app-owned root, initial draft/build-required state, and rejection for builtin, reserved, manifest-collision, duplicate, invalid, and native-tool targets. Commit(s): pending local changes
-- [x] Manage user extension full instruction files through `svvyx extensions instructions add`, `rename`, `remove`, `reorder`, and `configure`, with app-owned file/config-only mutations, lexicographic file ordering, bypass config stored in the editable manifest, deterministic reorder prefix renames, before/after lifecycle change records, focused validation, and dirty build state that leaves the current successful build active until the next successful build. Commit(s): pending local changes
+- [x] Manage user extension full instruction files through `svvyx extensions instructions add`, `rename`, `remove`, `reorder`, and `configure`, with app-owned file/config-only mutations, lexicographic file ordering, skip config stored in the editable manifest, deterministic reorder prefix renames, before/after lifecycle change records, focused validation, and dirty build state that leaves the current successful build active until the next successful build. Commit(s): pending local changes
 - [x] Revert recorded instruction lifecycle changes through `svvyx extensions revert <change-id> --json`, with exact current-state conflict detection, `extension_files` `revertedChangeId`/`changeId` output, reverted file facts including manifest-only config changes, a follow-up change record for the revert, and an immediate same-build-path auto-build projection that reports success, blocked build errors, or durable dependency approval pauses. Commit(s): pending local changes
 - [x] Delete user extensions through `svvyx extensions delete <id> --json` by recording an app-global reversible delete change before moving app-owned source into trash, rejecting builtin deletes, blocking stale `svvyx` runtime dispatch for deleted current builds, and restoring deleted source through `svvyx extensions revert <change-id> --json` with active-source collision and build-required handling. Commit(s): pending local changes
 - [x] Manage local Extension Managing snapshots through `svvyx extensions snapshots list/save/rename/delete --json`, with path-free snapshot summaries, app-generated ids, source/package/registry-state payload capture, and exclusion of generated outputs, build outputs, `node_modules`, and unsafe path/token-bearing package files. Commit(s): pending local changes
@@ -361,14 +390,14 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Project builtin extension CLI readiness into the Extensions pane from the same Extension Managing inspect/build readiness facts, including missing, unknown, available, detected/current/default/latest versions, update-available status, and install/update command facts without renderer-side CLI probing. Commit(s): pending local changes
 - [x] Project reversible Extension Managing change cards into the Extensions pane from the same lifecycle, usage, and delete change records used by `svvyx extensions revert <change-id> --json`, with UI-triggered reverts routed through Bun and refreshed from authoritative inventory state. Commit(s): pending local changes
 - [x] Dispatch built user `svvyx` extensions through app-owned `exec_command` routing that resolves current build manifests, validates exact installed dependency package artifacts before runtime invocation, imports bundled default-exported Incur CLIs, rejects non-standalone shell-control invocations, invokes `cli.serve` with unchanged extension argv and invocation-local env, redacts returned secret env values, reports structured runtime errors with readiness or command-failure facts, and returns dispatcher command facts without treating extension usage state as a shell-level command block. Commit(s): pending local changes
-- [x] Extract Incur command manifests during successful user `svvyx` extension builds, persist them in current build metadata, and reject malformed command-manifest current builds before runtime dispatch or generated declaration consumption. Commit(s): pending local changes
+- [x] Extract Incur command manifests during successful user `svvyx` extension builds, persist them in current build metadata, and reject malformed command-manifest current builds before runtime dispatch or future generated declaration consumption. Commit(s): pending local changes
 - [x] Manage orchestrator and `threadHandler` profile extension usage through `svvyx extensions set-usage`, with persistent tri-state profile usage, fixed always-loaded Extension Loading, app-global reversible usage change records, exact usage-revert conflict detection, profile-backed inspect usage output, and queued `agent_context_refresh` work for affected surfaces without directly mutating the caller's current binding. Commit(s): pending local changes
 - [x] Rebuild builtin instruction-overlay resets through the same Extension build path used by explicit builds, surfacing successful or blocked auto-build projections in reset output and command facts. Commit(s): pending local changes
 - [x] Load local Extension Managing snapshots through `svvyx extensions snapshots load <snapshot-id> --json` by restoring app-owned source/config/package state, removing live source entries absent from the snapshot, excluding package `node_modules`, immediately attempting restored extension builds through the normal build path, and creating or reusing durable dependency approval requests with `blockedOperation: "snapshot_load"` before promotion when unapproved dependency identities are present. Commit(s): pending local changes
 - [x] Preserve local Extension Managing snapshot secret state through app-managed secret storage on snapshot save/load/delete, report only coarse `hasSecretState` and restore status, and keep raw secret values plus internal snapshot secret storage ids out of command output and snapshot files. Commit(s): pending local changes
 - [x] Queue `agent_context_refresh` for existing orchestrator and handler surfaces impacted by successful Extension Managing snapshot load, and drop removed user extensions from their stored loaded/available extension ids before refresh. Commit(s): pending local changes
 - [x] Keep existing current builds intact when snapshot-loaded replacement source fails to bundle, report a structured blocked build result, and skip loaded-session refresh for the failed replacement. Commit(s): pending local changes
-- [x] Complete the `svvyx` runtime surface with packaged executable availability, full Extension-build-owned `@svvy/extensions` generation, dependency-approved package resolution, generated TypeScript declarations from extracted Incur command manifests, schema-backed generated user extension clients in `execute_typescript`, workflow-agent tri-state extension usage for `set-usage`, and live projection/recovery coverage. Commit(s): pending local changes
+- [x] Complete the `svvyx` runtime surface with packaged executable availability, full Extension-build-owned `@svvy/extensions` generation, dependency-approved package resolution, extracted Incur command manifests for future user generated clients, hidden/unavailable user generated clients in `execute_typescript` until sandboxed execution exists, workflow-agent tri-state extension usage for `set-usage`, and live projection/recovery coverage. Commit(s): pending local changes
 - [x] Extend Extension Managing lifecycle to conversation-owned UI revert events backed by durable session/thread lifecycle records and transcript semantic projection. Commit(s): pending
 - [x] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart. Commit(s): pending local changes
   - [x] Persist local Extension Managing snapshot save/list/rename/delete metadata and payloads, plus actor surface loaded/available extension ids and generated context fingerprints. Commit(s): pending

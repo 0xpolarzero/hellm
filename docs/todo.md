@@ -12,9 +12,11 @@ Status: adopted in resolved execution-policy design.
 
 Decision: host command execution through `exec_command`, `svvyx ...` through `exec_command`,
 `apply_patch`, and workflow task-agent direct tools use the Codex-like execution policy defined in
-`docs/specs/extensions-and-tools.spec.md`: macOS managed sandboxing through `/usr/bin/sandbox-exec`
-with vendored or ported Codex Seatbelt policy generation, default-on `networkAccess`, and approval
-modes `auto-review`, `user`, and `full-access`.
+`docs/specs/extensions-and-tools.spec.md`: macOS managed sandboxing through an app-owned
+Codex-derived native helper that applies Codex permission-profile semantics through
+`/usr/bin/sandbox-exec`, default-on `networkAccess`, and approval modes `auto-review`, `user`, and
+`full-access` where approval decides whether an action starts and sandboxing constrains approved
+filesystem and network effects.
 
 Follow-up: implement the shared runtime policy and exact confinement strategy for arbitrary
 `execute_typescript` snippets that do not go through generated loaded-extension clients. The

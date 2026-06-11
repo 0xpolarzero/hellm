@@ -44,10 +44,6 @@ export type SvvyxArtifactOpenHandler = (input: {
   artifactId: string;
 }) => boolean | Promise<boolean>;
 
-export function isSvvyxArtifactsCommand(command: string): boolean {
-  return /^svvyx\s+artifacts(?:\s|$)/.test(command.trim());
-}
-
 export async function runSvvyxArtifactsCommand(input: {
   cwd: string;
   command: string;

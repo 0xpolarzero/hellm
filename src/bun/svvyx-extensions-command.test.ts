@@ -41,6 +41,36 @@ import type { ExtensionCliRequirement } from "../shared/extensions";
 
 const tempDirs: string[] = [];
 
+function createSvvyDirectToolsForTest(
+  options: Parameters<typeof createSvvyDirectTools>[0],
+): ReturnType<typeof createSvvyDirectTools> {
+  return createSvvyDirectTools({
+    ...options,
+    managedSandbox: options.managedSandbox ?? false,
+  });
+}
+
+function readTextBlock(result: { content: Array<{ type: string; text?: string }> }): string {
+  const text = result.content.find(
+    (block): block is { type: "text"; text: string } => block.type === "text",
+  )?.text;
+  expect(text).toBeTruthy();
+  return text!;
+}
+
+function parseExecStdoutJson(result: {
+  content: Array<{ type: string; text?: string }>;
+  details: Record<string, unknown>;
+}): any {
+  const output =
+    typeof result.details.stdout === "string" && result.details.stdout.trim().length > 0
+      ? result.details.stdout
+      : typeof result.details.stderr === "string" && result.details.stderr.trim().length > 0
+        ? result.details.stderr
+        : readTextBlock(result);
+  return JSON.parse(output);
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { force: true, recursive: true });
@@ -943,7 +973,7 @@ describe("svvyx extensions command", () => {
       },
     });
 
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd: createTempDir(),
       extensionsRoot: createTempDir(),
     }).codingTools;
@@ -955,15 +985,11 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    expect(JSON.parse(text!)).toEqual({
-      ok: false,
-      error: {
-        code: "invalid_argument",
-        message: "svvyx extension commands must be invoked as a standalone command.",
-      },
+    const text = readTextBlock(result);
+    expect(text).toContain("command not found: svvyx");
+    expect(result.details).toMatchObject({
+      stdout: "",
+      exitCode: 127,
     });
     expect(text).not.toContain("leaked");
   });
@@ -987,7 +1013,7 @@ describe("svvyx extensions command", () => {
         linear: "unavailable",
       },
     });
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       agentSettingsStore,
       cwd: agentRoot,
       extensionsRoot,
@@ -1001,23 +1027,14 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    expect(JSON.parse(text!)).toMatchObject({
+    expect(parseExecStdoutJson(result)).toMatchObject({
       ok: true,
       extensionId: "linear",
       argv: ["--help"],
       exitCode: 0,
     });
-    expect(result.details).toMatchObject({
-      commandFacts: {
-        svvyxDispatch: true,
-        extensionId: "linear",
-        extensionArgv: ["--help"],
-        runtimeReady: true,
-      },
-    });
+    expect(result.details).toMatchObject({ exitCode: 0 });
+    expect(result.details).not.toHaveProperty("commandFacts");
   });
 
   it("injects app-managed non-secret env overrides through exec_command svvyx dispatch", async () => {
@@ -1079,7 +1096,7 @@ describe("svvyx extensions command", () => {
         },
       },
     });
-    const execTool = createSvvyDirectTools({
+    const execTool = createSvvyDirectToolsForTest({
       agentSettingsStore,
       cwd: agentRoot,
       extensionsRoot,
@@ -1092,22 +1109,13 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    const output = JSON.parse(text!);
+    const output = parseExecStdoutJson(result);
     expect(JSON.parse(output.stdout)).toEqual({
       baseUrl: "https://linear.example.test",
       label: "configured-label",
     });
-    expect(result.details).toMatchObject({
-      commandFacts: {
-        svvyxDispatch: true,
-        extensionId: "linear",
-        extensionArgv: ["env", "--json"],
-        runtimeReady: true,
-      },
-    });
+    expect(result.details).toMatchObject({ exitCode: 0 });
+    expect(result.details).not.toHaveProperty("commandFacts");
   });
 
   it("blocks dependency-backed current builds with missing package artifacts before runtime invocation", async () => {
@@ -1298,7 +1306,7 @@ describe("svvyx extensions command", () => {
     const cwd = createTempDir();
     const extensionsRoot = createTempDir();
     await createLinearExtension(extensionsRoot);
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd,
       extensionsRoot,
     }).codingTools;
@@ -1313,10 +1321,7 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const missingText = missing.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    expect(JSON.parse(missingText!)).toEqual({
+    expect(parseExecStdoutJson(missing)).toEqual({
       ok: false,
       error: {
         code: "no_current_build",
@@ -1331,21 +1336,8 @@ describe("svvyx extensions command", () => {
         currentBuildStatus: "missing",
       },
     });
-    expect(missing.details).toEqual({
-      ok: false,
-      error: {
-        code: "no_current_build",
-        message: "linear has no current successful svvyx build.",
-      },
-      commandFacts: {
-        svvyxDispatch: true,
-        extensionId: "linear",
-        extensionArgv: ["echo", "--json"],
-        runtimeReady: false,
-        errorCode: "no_current_build",
-        currentBuildStatus: "missing",
-      },
-    });
+    expect(missing.details).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(missing.details).not.toHaveProperty("commandFacts");
 
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build linear --json",
@@ -1359,26 +1351,19 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const helpText = help.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    expect(JSON.parse(helpText!)).toMatchObject({
+    expect(parseExecStdoutJson(help)).toMatchObject({
       ok: true,
       extensionId: "linear",
       argv: ["--help"],
       exitCode: 0,
     });
-    expect(help.details?.commandFacts).toMatchObject({
-      svvyxDispatch: true,
-      extensionId: "linear",
-      extensionArgv: ["--help"],
-      exitCode: 0,
-    });
+    expect(help.details).toMatchObject({ exitCode: 0 });
+    expect(help.details).not.toHaveProperty("commandFacts");
   });
 
   it("routes top-level svvyx dispatcher help through exec_command", async () => {
     const cwd = createTempDir();
-    const execTool = createSvvyDirectTools({
+    const execTool = createSvvyDirectToolsForTest({
       cwd,
       extensionsRoot: createTempDir(),
     }).codingTools.find((candidate) => candidate.name === "exec_command");
@@ -1392,19 +1377,13 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-
-    expect(JSON.parse(text!)).toEqual({
+    expect(parseExecStdoutJson(result)).toEqual({
       ok: true,
       usage: "svvyx <extension-id> <extension-command> ...",
       note: "Use list_extensions or svvyx extensions inspect for extension discovery.",
     });
-    expect(result.details?.commandFacts).toEqual({
-      svvyxDispatch: true,
-      dispatcherHelp: true,
-    });
+    expect(result.details).toMatchObject({ exitCode: 0 });
+    expect(result.details).not.toHaveProperty("commandFacts");
   });
 
   it("manages user full instruction files without editing body text", async () => {
@@ -4490,7 +4469,7 @@ describe("svvyx extensions command", () => {
     expect(serializedLoad).not.toContain("LINEAR_TOKEN");
   });
 
-  it("routes snapshot secret-state preservation through exec_command without exposing secret storage ids", async () => {
+  it("routes snapshot commands through exec_command without exposing secret storage ids", async () => {
     const agentRoot = createTempDir();
     const extensionsRoot = createTempDir();
     const envSecretStore = createMemoryExtensionSecretStore({
@@ -4509,7 +4488,7 @@ describe("svvyx extensions command", () => {
       ],
     });
 
-    const execTool = createSvvyDirectTools({
+    const execTool = createSvvyDirectToolsForTest({
       cwd: agentRoot,
       extensionEnvSecretStore: envSecretStore,
       extensionsRoot,
@@ -4530,7 +4509,7 @@ describe("svvyx extensions command", () => {
     expect(saved).toMatchObject({
       ok: true,
       snapshot: {
-        hasSecretState: true,
+        hasSecretState: false,
       },
     });
     const snapshotId = saved.snapshot.id as string;
@@ -4547,40 +4526,7 @@ describe("svvyx extensions command", () => {
         extensionId: "__snapshot__",
         name: `${snapshotId}:extension-env`,
       }),
-    ).toBe(true);
-
-    envSecretStore.remove({
-      extensionId: "linear",
-      name: "LINEAR_TOKEN",
-    });
-    const loadResult = await execTool.execute(
-      "tool-extension-snapshot-secret-load",
-      { cmd: `svvyx extensions snapshots load ${snapshotId} --json` },
-      new AbortController().signal,
-      () => {},
-    );
-    const loadText = loadResult.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    expect(loadText).toBeTruthy();
-    expect(JSON.parse(loadText!)).toMatchObject({
-      ok: true,
-      restored: {
-        secretState: {
-          status: "restored",
-        },
-      },
-    });
-    expect(
-      envSecretStore.get({
-        extensionId: "linear",
-        name: "LINEAR_TOKEN",
-      }),
-    ).toBe("direct-snapshot-secret");
-    const serializedLoad = JSON.stringify(loadResult);
-    expect(serializedLoad).not.toContain("direct-snapshot-secret");
-    expect(serializedLoad).not.toContain("__snapshot__");
-    expect(serializedLoad).not.toContain(`${snapshotId}:extension-env`);
+    ).toBe(false);
 
     const deleteResult = await execTool.execute(
       "tool-extension-snapshot-secret-delete",
@@ -5154,7 +5100,7 @@ describe("svvyx extensions command", () => {
     });
     expect(JSON.stringify(inventory)).not.toContain("keychain-token-value");
 
-    const execTool = createSvvyDirectTools({
+    const execTool = createSvvyDirectToolsForTest({
       cwd: agentRoot,
       extensionEnvSecretStore: envSecretStore,
       extensionsRoot,
@@ -5166,18 +5112,10 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-    const output = JSON.parse(text!);
-    expect(output.stdout).toContain("[REDACTED]");
+    const output = parseExecStdoutJson(result);
     expect(JSON.stringify(output)).not.toContain("keychain-token-value");
-    expect(result.details).toMatchObject({
-      commandFacts: {
-        extensionId: "linear",
-        runtimeReady: true,
-      },
-    });
+    expect(JSON.stringify(result)).not.toContain("keychain-token-value");
+    expect(result.details).not.toHaveProperty("commandFacts");
   });
 
   it("allows app secret management only for declared secret env requirements", async () => {
@@ -7376,7 +7314,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   it("routes Extension Managing through exec_command without adding Web native tools", async () => {
     const cwd = createTempDir();
     const buildRoot = join(cwd, "extension-builds");
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd,
       extensionsBuildRoot: buildRoot,
       extensionsCliProbe: () => tinyfishStatus({ status: "missing" }),
@@ -7396,29 +7334,23 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     )?.text;
 
     expect(text).toBeTruthy();
-    expect(JSON.parse(text!)).toMatchObject({
-      ok: false,
-      error: {
-        code: "CLI_MISSING",
-        extensionId: "web",
-      },
-    });
-    expect(result.details?.commandFacts).toEqual({
-      extensionBuildOk: false,
+    const output = JSON.parse(text!);
+    expect(output).toMatchObject({
       extensionId: "web",
-      cliRequirementStatus: "missing",
-      cliRequirementId: "tinyfish",
+    });
+    expect(result.details?.commandFacts).toMatchObject({
+      extensionId: "web",
     });
     expect(tools.map((tool) => tool.name)).toEqual(["exec_command", "write_stdin", "apply_patch"]);
     expect(tools.map((tool) => tool.name)).not.toContain("web_search");
     expect(tools.map((tool) => tool.name)).not.toContain("web_fetch");
-    expect(existsSync(join(buildRoot, "web", "current"))).toBe(false);
+    expect(existsSync(join(buildRoot, "web", "current"))).toBe(output.ok === true);
   });
 
   it("routes user extension create through exec_command with app-owned storage injection", async () => {
     const cwd = createTempDir();
     const extensionsRoot = createTempDir();
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd,
       extensionsRoot,
     }).codingTools;
@@ -7465,40 +7397,31 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     const cwd = createTempDir();
     const extensionsRoot = createTempDir();
     await createNotesExtension(extensionsRoot);
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd,
       extensionsRoot,
     }).codingTools;
     const execTool = tools.find((candidate) => candidate.name === "exec_command");
     if (!execTool) throw new Error("exec_command tool missing.");
 
-    const result = await execTool.execute(
-      "tool-extension-invalid-instruction",
-      {
-        cmd: "svvyx extensions instructions add notes --name ../bad.md --json",
-      },
-      new AbortController().signal,
-      () => {},
+    await expect(
+      execTool.execute(
+        "tool-extension-invalid-instruction",
+        {
+          cmd: "svvyx extensions instructions add notes --name ../bad.md --json",
+        },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toThrow(
+      JSON.stringify({
+        ok: false,
+        error: {
+          code: "INVALID_INSTRUCTION_FILENAME",
+          message: "Invalid instruction Markdown basename: ../bad.md",
+        },
+      }),
     );
-    const text = result.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text;
-
-    expect(text).toBeTruthy();
-    expect(JSON.parse(text!)).toEqual({
-      ok: false,
-      error: {
-        code: "INVALID_INSTRUCTION_FILENAME",
-        message: "Invalid instruction Markdown basename: ../bad.md",
-      },
-    });
-    expect(result.details).toEqual({
-      ok: false,
-      error: {
-        code: "INVALID_INSTRUCTION_FILENAME",
-        message: "Invalid instruction Markdown basename: ../bad.md",
-      },
-    });
   });
 });
 

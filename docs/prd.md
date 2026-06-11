@@ -116,7 +116,7 @@ Ambient coding-agent resources are default-off unless explicitly enabled through
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
-Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, and extension usage selections. Base actor prompts are builtin instruction-only extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default agent profile. Extensions contain builtin, user, and external_instruction records with ordered full loaded instruction source files, per-file bypass config for skipping selected instruction files without deleting or hiding them, minimal loading hints, generated previews, and category-specific reset/delete behavior. The ordered full instruction files are an editing convenience; generated actor contexts receive one concatenated loaded instruction block per loaded extension from that extension's non-bypassed full instruction files, including loaded base instruction extensions. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
+Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, and extension usage selections. Base actor prompts are builtin instruction-only extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default agent profile. Extensions contain builtin, user, and external_instruction records with ordered full loaded instruction source files, per-file skip config for selected instruction files that should remain visible but not load, minimal loading hints, generated previews, and category-specific reset/delete behavior. The ordered full instruction files are an editing convenience; generated actor contexts receive one concatenated loaded instruction block per loaded extension from that extension's non-skipped full instruction files, including loaded base instruction extensions. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
 
 The default actor-specific generated context split is:
 
@@ -272,7 +272,9 @@ agents. The cx extension declares an exact CLI requirement and a reusable instal
 If the `cx` binary is missing or the installed version does not match the declared version,
 extension build fails with an ordinary structured error. Agents may then run the concrete install
 command returned by inspect/build through `exec_command` when that is appropriate for the user's
-request; that command uses the normal execution-policy, sandbox, network, and approval-mode flow.
+request; that command is submitted as ordinary `exec_command`: runtime approval is evaluated first
+according to `approvalMode`, and an approved subprocess runs under the managed filesystem and network
+sandbox policy unless `approvalMode` is `full-access`.
 
 `execute_typescript` is available when typed control flow is the right unit of work.
 
@@ -290,16 +292,20 @@ That includes:
 
 Inside `execute_typescript`, the runtime exposes an actor-specific generated `extensions` object.
 
-`extensions` contains only loaded TypeScript-enabled `svvyx` extensions that are callable by the
-current actor. If the actor has loaded extensions `a`, `b`, and `d`, the generated declarations and
-instructions include only `extensions.a`, `extensions.b`, and `extensions.d` plus those extensions'
-command types and command-specific guidance. There is no global `svvy` client and no broad injected
-`api` helper surface.
+`extensions` contains only loaded TypeScript-enabled builtin clients that are callable by the
+current actor, such as Artifacts and Workflows. User `svvyx` generated clients are hidden and
+unavailable until sandboxed generated-client execution exists. If the actor has loaded builtin
+clients `artifacts` and `workflows`, the generated declarations and instructions include only
+`extensions.artifacts` and `extensions.workflows` plus those clients' command types and
+command-specific guidance. There is no global `svvy` client and no broad injected `api` helper
+surface.
 
 Generated extension clients use the Incur-compatible shape
 `extensions.<extensionId>.run(commandId, input)`. Agents may import public types and errors from
-`incur/client`, including `Client.ClientError`, inside snippets. `MemoryClient` is internal plumbing
-used by the app to invoke current extension builds and is not exposed to agent-authored snippets.
+`incur/client`, including `Client.ClientError`, inside snippets. The emitted generated clients are
+real TypeScript clients backed by app-owned generated packages; they are not rewritten into shell
+`svvyx` calls in docs or prompts, and they do not expose local Incur actions or current-build
+internals to agent-authored snippets.
 
 The default orchestrator `execute_typescript` extension set does not include the Workflows generated client,
 Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the
@@ -309,7 +315,11 @@ The default workflow task-agent `execute_typescript` extension set includes only
 extension clients. It does not include Workflows source-library clients, Smithers runtime control, or
 handler/orchestrator control clients.
 
-File edits use `apply_patch`.
+File edits use `apply_patch`. The patch target set is validated against the managed filesystem policy
+before file effects begin, and the file effects must run through the same Codex-derived sandbox-aware
+filesystem execution model as Shell subprocesses rather than relying on TypeScript preflight plus an
+unsandboxed host patch process. The policy includes read-only subpaths, protected metadata carveouts,
+generated-output boundaries, and the explicit `full-access` sandbox omission.
 
 Every submitted snippet is persisted as a file-backed artifact in the configured artifact directory,
 and the runtime must compile or typecheck the snippet before execution.
@@ -317,10 +327,18 @@ and the runtime must compile or typecheck the snippet before execution.
 Structured diagnostics must be produced, and invalid snippets must not run.
 
 The top-level `execute_typescript` tool call goes through the same approval-boundary flow as other
-approval-gated native actions before the snippet runs. Generated extension-client calls inside an
-approved snippet are recorded as child commands and enforce extension readiness, env injection,
-redaction, product-state validation, and failure semantics, but they are not the first approval gate
-for arbitrary TypeScript execution.
+approval-gated native actions before the snippet runtime starts, and that approved runtime is then
+constrained by the same managed filesystem and network sandbox policy as other direct execution
+surfaces unless full-access policy omits sandboxing. TypeScript code may assemble execution policy,
+launch approved and sandboxed runtime work, validate product contracts, call generated Incur clients,
+and project results. It must not be described as enforcing filesystem or network sandbox policy with
+TypeScript-only validation, cleanup, or compensation substitutes. Generated extension-client calls
+inside an approved snippet are recorded as child commands and enforce extension readiness, env
+injection, redaction, product-state validation, and failure semantics, but they are not the first
+approval gate for arbitrary TypeScript execution.
+
+The approval boundary is not the sandbox. Approval allows or denies starting the tool action;
+sandbox policy constrains filesystem and network effects after execution begins.
 
 Live rendering for `execute_typescript` follows the shared tool projection model: the source argument
 may stream into a code preview, the persisted source artifact and typecheck diagnostics are runtime
@@ -378,6 +396,10 @@ The execution setting `networkAccess` defaults to true. When `networkAccess` is 
 extension is disabled through normal extension binding, which means TinyFish prompt guidance is not
 included for orchestrators, handler threads, or workflow task agents.
 
+Ordinary Shell `exec_command` remains available when `networkAccess` is false, but approved
+subprocesses run with network egress denied by the managed sandbox unless `approvalMode` is
+`full-access`, where the OS sandbox profile is omitted.
+
 The orchestrator may provide per-handler creation-time extension overrides when the delegated
 objective should begin with a non-default extension state. `thread_start` owns that creation-time
 override on each `threads[]` item and starts normal handler threads with the default handler runtime
@@ -387,9 +409,9 @@ and output are defined in `docs/specs/extension/thread_managing.extension.spec.m
 
 Smithers and Workflows are different from native control tools.
 
-Smithers is prompt-only official CLI guidance. It adds no native tools and no generated TypeScript client. Agents use Smithers by running official Smithers CLI commands through Shell.
+Smithers is prompt-only official CLI guidance. It adds no native tools and no generated TypeScript client. Agents use Smithers by running official Smithers CLI commands through Shell as ordinary `exec_command` command-family work.
 
-Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. It exposes `list`, `save`, `build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
+Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. Agents access it by running `svvyx workflows ...` through Shell as ordinary `exec_command` command-family work, or through loaded generated `execute_typescript` clients when available. It exposes `list`, `save`, `build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
 
 The default orchestrator context should know that workflow action normally belongs in a delegated handler thread, but ordinary orchestrator profiles do not default-load Smithers or Workflows. The default handler context knows that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as product behavior.
 
@@ -524,20 +546,37 @@ full-access modes.
 In practice that means:
 
 - normal trusted local coding work proceeds without turning every command into a user approval prompt
-- all `exec_command`, `svvyx ...`, and `apply_patch` boundary decisions are enforced by the runtime, not by model memory
+- all `exec_command`, `svvyx ...`, `apply_patch`, and `execute_typescript` boundary decisions are
+  enforced by the runtime, not by model memory
 - `approvalMode: "auto-review"` routes approval-boundary requests to the automatic reviewer
 - `approvalMode: "user"` blocks the exact tool call on an actor-local user approval request
-- `approvalMode: "full-access"` disables the approval boundary and managed filesystem sandbox
-- macOS managed sandboxing uses `/usr/bin/sandbox-exec` with a packaged Codex-derived native sandbox
-  helper that preserves Codex filesystem policy semantics, including writable roots with read-only
-  subpaths
+- `approvalMode: "full-access"` omits the approval boundary and managed OS sandbox
+  enforcement for direct tools; if `networkAccess` is false, Web prompt guidance stays disabled, but
+  Shell egress denial depends on the omitted sandbox profile and is not enforced for full-access
+- approval and sandboxing remain separate: approval decides whether a tool action may start, while
+  the sandbox decides where that approved subprocess may read, write, and use network access
+- `svvyx` is a real app-owned CLI that uses Incur; agent Shell usage of `svvyx ...` happens only as
+  ordinary `exec_command` input to that CLI and projects through the same Shell command model as
+  other subprocess work
+- `execute_typescript` is a TypeScript composition tool; builtin Artifacts and Workflows generated
+  clients are available through typed TypeScript clients, user `svvyx` generated clients remain
+  unavailable until sandboxed generated-client execution exists, and the whole TypeScript runtime is
+  launched through the same approval and sandbox execution lane as other direct execution surfaces
+- macOS managed sandboxing uses a packaged, app-owned Codex-derived native helper that applies
+  Codex filesystem policy semantics through `/usr/bin/sandbox-exec`, including `Read`, `Write`, and
+  `None` entries, most-specific path precedence, equal-specific `None > Write > Read` precedence,
+  writable roots with read-only subpaths, protected `.git`, `.agents`, and `.codex` metadata
+  carveouts, default read access, explicit writable roots for the workspace, active artifact mutable
+  directory, `/tmp`, and `$TMPDIR`, and fail-closed profile generation
+- Codex-style sandbox denial must be reported as sandbox denial; `svvy` must not silently retry
+  without sandboxing unless the active approval mode explicitly permits full-access/escalation
 - `networkAccess` defaults to true; disabling it restricts network access and disables the Web extension
 - extension package dependency installation remains an explicit user-confirmation flow because it
   can download and execute third-party code
 - extension-declared CLI install or update commands are ordinary `exec_command` calls after a
   missing or unknown required CLI requirement is reported, or after the UI/agent chooses to update an
-  available CLI from its detected version; approval-mode and auto-review decide whether the concrete
-  shell command can proceed
+  available CLI from its detected version; `approvalMode` decides whether auto-review, user approval,
+  or full-access handling applies before the concrete shell command can proceed
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
 - delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals remain Smithers workflow state
 
@@ -792,7 +831,8 @@ Extensions own:
 - ordered full loaded instruction source files that generate one loaded instruction block
 - minimal available instructions
 - native tool, svvyx, or instructions-only interface
-- generated TypeScript client declarations when enabled
+- generated TypeScript client declarations for emitted builtin clients; user client declarations
+  remain disabled until sandboxed generated-client execution exists
 - env and dependency readiness
 - category-appropriate reset/delete behavior
 - read-only usage views showing which agents use the extension
@@ -803,7 +843,7 @@ commands defined in `docs/specs/extension/artifacts.extension.spec.md`.
 
 External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the Extensions pane as a distinct read-only category, use the same per-agent usage states as other extensions, show path/content/order in generated-context previews, and provide an open-external-file action. Resetting an external instruction record changes only `svvy` settings or metadata overlays; it never overwrites the external file.
 
-Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
+Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, emitted generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
 
 New top-level sessions, handler threads, and workflow task agents always use the latest context-ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. When the current context-ready generated context fingerprint differs from the bound fingerprint, `svvy` automatically queues or applies `agent_context_refresh` work labelled `Update agent context`. If the surface is idle, the update is claimed before the next prompt-bearing item runs. If the surface is active, the update is visible in the queue until it applies at the next safe `refreshRunContext` boundary or before the next prompt-bearing item. On success, the affected session records `Agent context updated` with details of what changed. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
 
@@ -1116,7 +1156,7 @@ Shell action controls that expose command-palette, quick-open, New orchestrator,
 
 When the shared palette is in command mode and the text after `>` does not match an existing command
 or action, pressing Enter creates a New orchestrator session and uses the text after `>` as the
-initial prompt. That prompt enters the normal orchestrator turn model; it does not bypass system
+initial prompt. That prompt enters the normal orchestrator turn model; it does not skip system
 prompt loading, prompt history, structured turn state, or live surface runtime ownership. Text
 entered without the leading `>` remains quick-open search text and does not create prompt sessions.
 

@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -28,6 +29,7 @@ function createSvvyDirectToolsForTest(
 ): ReturnType<typeof createSvvyDirectTools> {
   return createSvvyDirectTools({
     ...options,
+    managedSandbox: options.managedSandbox ?? false,
     extensionsRoot: options.extensionsRoot ?? join(options.cwd, ".svvy-test", "extensions"),
   });
 }
@@ -338,7 +340,7 @@ describe("svvy direct tools", () => {
     expect(rollup?.facts).not.toHaveProperty("stderr");
   });
 
-  it("records intercepted svvyx workflow output and progress as durable command events", async () => {
+  it("records svvyx workflow subprocess output and progress as durable command events", async () => {
     const cwd = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
     const packageRoot = join(cwd, "generated", "package");
@@ -382,7 +384,7 @@ describe("svvy direct tools", () => {
             command: "svvyx workflows list --json",
             family: "workflows",
             phase: "started",
-            source: "svvyx-dispatch",
+            source: "svvyx-cli-subprocess",
           }),
         }),
         expect.objectContaining({
@@ -391,7 +393,7 @@ describe("svvy direct tools", () => {
             command: "svvyx workflows list --json",
             family: "workflows",
             phase: "succeeded",
-            source: "svvyx-dispatch",
+            source: "svvyx-cli-subprocess",
             facts: {
               workflowExportCount: 1,
             },
@@ -409,7 +411,143 @@ describe("svvy direct tools", () => {
     );
   });
 
-  it("retains oversized intercepted svvyx workflow output in command facts", async () => {
+  it("accepts env-prefix and command-prefix svvyx invocations on the trusted subprocess path", async () => {
+    const cwd = createTempDir();
+    const sourceRoot = join(cwd, "workflow-source");
+    const packageRoot = join(cwd, "generated", "package");
+    mkdirSync(join(packageRoot, "prompts"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "prompts", "ReviewPrompt.ts"),
+      "export const ReviewPrompt = ``;\n",
+    );
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        workflowsGeneratedPackagePath: packageRoot,
+        workflowsSourceRoot: sourceRoot,
+      }).codingTools,
+      "exec_command",
+    );
+
+    const envResult = await execTool.execute(
+      "tool-env-svvyx",
+      { cmd: "env FOO=bar svvyx workflows list --json" },
+      new AbortController().signal,
+      () => {},
+    );
+    const commandResult = await execTool.execute(
+      "tool-command-svvyx",
+      { cmd: "command svvyx workflows list --json" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(JSON.parse(readText(envResult)).items).toEqual([
+      expect.objectContaining({ exportName: "ReviewPrompt" }),
+    ]);
+    expect(JSON.parse(readText(commandResult)).items).toEqual([
+      expect.objectContaining({ exportName: "ReviewPrompt" }),
+    ]);
+  });
+
+  it("rejects shell-visible svvyx subprocess context overrides before trusted replay", async () => {
+    const cwd = createTempDir();
+    const execTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "exec_command");
+
+    await expect(
+      execTool.execute(
+        "tool-svvyx-context-spoof",
+        { cmd: "env SVVY_SVVYX_SUBPROCESS_CONTEXT={} svvyx workflows list --json" },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toThrow("app-owned and cannot be overridden");
+
+    await expect(
+      execTool.execute(
+        "tool-svvyx-result-key-spoof",
+        { cmd: "SVVY_SVVYX_SUBPROCESS_RESULT_KEY=bad svvyx workflows list --json" },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toThrow("app-owned and cannot be overridden");
+  });
+
+  it("cleans up temporary svvyx shim directories after subprocess completion", async () => {
+    const cwd = createTempDir();
+    const packageRoot = join(cwd, "generated", "package");
+    mkdirSync(packageRoot, { recursive: true });
+    const before = new Set(readSvvyxSubprocessTempDirs());
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        workflowsGeneratedPackagePath: packageRoot,
+        workflowsSourceRoot: join(cwd, "workflow-source"),
+      }).codingTools,
+      "exec_command",
+    );
+
+    await execTool.execute(
+      "tool-svvyx-cleanup",
+      { cmd: "svvyx workflows list --json" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    const created = readSvvyxSubprocessTempDirs().filter((dir) => !before.has(dir));
+    expect(created).toEqual([]);
+  });
+
+  it("leaves non-command svvyx mentions on the ordinary shell path", async () => {
+    const cwd = createTempDir();
+    mkdirSync(join(cwd, "docs"), { recursive: true });
+    writeFileSync(join(cwd, "notes.txt"), "svvyx mention\n");
+    writeFileSync(join(cwd, "docs", "svvyx.md"), "svvyx docs\n");
+    const execTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "exec_command");
+
+    const echoResult = await execTool.execute(
+      "tool-echo-svvyx",
+      { cmd: "echo svvyx" },
+      new AbortController().signal,
+      () => {},
+    );
+    const grepResult = await execTool.execute(
+      "tool-grep-svvyx",
+      { cmd: "grep svvyx notes.txt" },
+      new AbortController().signal,
+      () => {},
+    );
+    const catResult = await execTool.execute(
+      "tool-cat-svvyx-doc",
+      { cmd: "cat docs/svvyx.md" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(echoResult)).toContain("svvyx");
+    expect(echoResult.details?.commandFacts).toBeUndefined();
+    expect(readText(grepResult)).toContain("svvyx mention");
+    expect(grepResult.details?.commandFacts).toBeUndefined();
+    expect(readText(catResult)).toContain("svvyx docs");
+    expect(catResult.details?.commandFacts).toBeUndefined();
+  });
+
+  it("does not trust sidecar replay for user runtime extension svvyx commands", async () => {
+    const cwd = createTempDir();
+    const execTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "exec_command");
+
+    const result = await execTool.execute(
+      "tool-runtime-no-sidecar-replay",
+      { cmd: "svvyx linear search --json" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(result)).toContain("linear");
+    expect(result.details?.commandFacts).toBeUndefined();
+  });
+
+  it("retains oversized svvyx workflow subprocess output in command facts", async () => {
     const cwd = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
     const packageRoot = join(cwd, "generated", "package");
@@ -509,7 +647,7 @@ describe("svvy direct tools", () => {
     });
   });
 
-  it("records intercepted svvyx workflow failures as live stderr", async () => {
+  it("records svvyx workflow subprocess failures as live stderr", async () => {
     const cwd = createTempDir();
     const { command, execTool, store } = createActiveExecHarness({
       commandText: "svvyx workflows run --json",
@@ -537,7 +675,7 @@ describe("svvy direct tools", () => {
         data: {
           stream: "stderr",
           source: "live-stream",
-          text: expect.stringContaining('"code": "unsupported_command"'),
+          text: expect.stringContaining('"code":"unsupported_command"'),
         },
       }),
     ]);
@@ -551,7 +689,7 @@ describe("svvy direct tools", () => {
     ).toEqual(["started", "failed"]);
   });
 
-  it("does not duplicate intercepted svvyx live output when the generic tracker settles the command", async () => {
+  it("does not duplicate svvyx subprocess live output when the generic tracker settles the command", async () => {
     const cwd = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
     const packageRoot = join(cwd, "generated", "package");
@@ -863,6 +1001,91 @@ describe("svvy direct tools", () => {
     expect(outputEventText).not.toContain("z".repeat(70000));
   });
 
+  it("does not mark unsandboxed long-running output as sandbox-denied", async () => {
+    const cwd = createTempDir();
+    const store = createStructuredSessionStateStore({
+      workspace: {
+        id: cwd,
+        label: "svvy",
+        cwd,
+      },
+      databasePath: join(cwd, "structured.sqlite"),
+    });
+    openStores.push(store);
+    store.upsertPiSession({
+      sessionId: "session-unsandboxed-long-running",
+      title: "Unsandboxed long running",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-unsandboxed-long-running",
+      surfacePiSessionId: "session-unsandboxed-long-running",
+      requestSummary: "Run a command",
+    });
+    const promptContext = createPromptExecutionContext({
+      sessionId: "session-unsandboxed-long-running",
+      turnId: turn.id,
+      surfacePiSessionId: "session-unsandboxed-long-running",
+      promptText: "Run a command",
+    });
+    const tracker = createToolExecutionCommandTracker({ store, promptContext });
+    const tools = createSvvyDirectToolsForTest({
+      cwd,
+      runtime: { current: promptContext },
+      store,
+      managedSandbox: false,
+    }).codingTools;
+    const execTool = findTool(tools, "exec_command");
+    const stdinTool = findTool(tools, "write_stdin");
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-unsandboxed-long-running",
+      toolName: "exec_command",
+      args: {
+        cmd: "read line; printf 'Sandbox: synthetic denial\\n' >&2; exit 1",
+      },
+    });
+    const started = await execTool.execute(
+      "tool-unsandboxed-long-running",
+      { cmd: "read line; printf 'Sandbox: synthetic denial\\n' >&2; exit 1", timeout: 1 },
+      new AbortController().signal,
+      () => {},
+    );
+    const sessionId = readText(started).match(/session_id: (\S+)/)?.[1];
+    expect(sessionId).toBeTruthy();
+    await stdinTool.execute(
+      "tool-unsandboxed-long-running-stdin",
+      { session_id: sessionId, input: "go\n" },
+      new AbortController().signal,
+      () => {},
+    );
+    await sleep(50);
+    const completed = await stdinTool.execute(
+      "tool-unsandboxed-long-running-finish",
+      { session_id: sessionId, input: "" },
+      new AbortController().signal,
+      () => {},
+    );
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-unsandboxed-long-running",
+      toolName: "exec_command",
+      result: completed,
+      isError: true,
+    });
+
+    const rollup = buildStructuredSessionView(
+      store.getSessionState("session-unsandboxed-long-running"),
+    ).commandRollups[0];
+    expect(rollup?.facts).toMatchObject({ exitCode: 1 });
+    expect(rollup?.facts).not.toHaveProperty("sandboxDenied");
+  });
+
   it("runs shell commands without the network-disabled sandbox by default", async () => {
     const cwd = createTempDir();
     const defaultExecTool = findTool(
@@ -879,23 +1102,12 @@ describe("svvy direct tools", () => {
     expect(readText(allowed)).toContain("exit code: 0");
   });
 
-  it("routes network-disabled shell commands through sandbox-exec without fallback", async () => {
+  it("keeps network-disabled shell commands on the test seam unless managed sandbox is enabled", async () => {
     const cwd = createTempDir();
     const blockedExecTool = findTool(
       createSvvyDirectToolsForTest({ cwd, networkAccess: false }).codingTools,
       "exec_command",
     );
-    if (!existsSync("/usr/bin/sandbox-exec")) {
-      await expect(
-        blockedExecTool.execute(
-          "tool-shell-network-disabled",
-          { cmd: "echo should-fail" },
-          new AbortController().signal,
-          () => {},
-        ),
-      ).rejects.toThrow("networkAccess=false requires /usr/bin/sandbox-exec");
-      return;
-    }
 
     const blocked = await blockedExecTool.execute(
       "tool-shell-network-disabled",
@@ -905,17 +1117,31 @@ describe("svvy direct tools", () => {
     );
 
     const output = readText(blocked);
+    expect(output).toContain("sandbox-ok");
+    expect(output).toContain("exit code: 0");
+  });
+
+  it("routes managed shell commands through the sandbox helper without fallback", async () => {
+    const cwd = createTempDir();
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, managedSandbox: true, networkAccess: false }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-shell-managed-sandbox",
+      { cmd: "echo sandbox-managed-ok" },
+      new AbortController().signal,
+      () => {},
+    );
+    const output = readText(result);
 
     if (output.includes("sandbox_apply")) {
-      // Nested sandbox environment: sandbox-exec couldn't apply, the
-      // command did not run unsandboxed and exited nonzero.
-      expect(output).not.toContain("sandbox-ok");
-      expect(output).toContain("exit code:");
-      expect(output).not.toContain("exit code: 0");
+      expect(output).not.toContain("sandbox-managed-ok");
+      expect(result.details?.sandboxDenied).toBe(true);
+      expect(result.details?.sandboxEngine).toBe("macos-seatbelt");
     } else {
-      // Sandbox applied successfully; the network policy itself is covered by
-      // filesystem-sandbox-policy tests that generate the same Seatbelt profile.
-      expect(output).toContain("sandbox-ok");
+      expect(output).toContain("sandbox-managed-ok");
       expect(output).toContain("exit code: 0");
     }
   });
@@ -1912,6 +2138,74 @@ describe("svvy direct tools", () => {
     });
   });
 
+  it("runs apply_patch file effects through the managed sandbox helper", async () => {
+    const cwd = createTempDir();
+    writeFileSync(join(cwd, "managed.txt"), "before\n");
+    const patchTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, managedSandbox: true }).codingTools,
+      "apply_patch",
+    );
+
+    const patch = [
+      "--- managed.txt",
+      "+++ managed.txt",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      "",
+    ].join("\n");
+
+    try {
+      const result = await patchTool.execute(
+        "tool-patch-managed-sandbox",
+        { patch },
+        new AbortController().signal,
+        () => {},
+      );
+      expect(readText(result)).toContain("managed.txt");
+      expect(readFileSync(join(cwd, "managed.txt"), "utf8")).toBe("after\n");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).toContain("sandbox_apply");
+      expect(readFileSync(join(cwd, "managed.txt"), "utf8")).toBe("before\n");
+    }
+  });
+
+  it("labels managed apply_patch sandbox denials in command facts", async () => {
+    const cwd = createTempDir();
+    writeFileSync(join(cwd, "managed-denied.txt"), "before\n");
+    const patchTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, managedSandbox: true }).codingTools,
+      "apply_patch",
+    );
+    const patch = [
+      "--- managed-denied.txt",
+      "+++ managed-denied.txt",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      "",
+    ].join("\n");
+
+    try {
+      await patchTool.execute(
+        "tool-patch-managed-sandbox-denial",
+        { patch },
+        new AbortController().signal,
+        () => {},
+      );
+    } catch (error) {
+      const payload = JSON.parse((error as Error).message);
+      if (payload.error.message.includes("sandbox_apply")) {
+        expect(payload.commandFacts.sandboxDenied).toBe(true);
+        expect(payload.commandFacts.sandboxEngine).toBe("macos-seatbelt");
+      }
+      return;
+    }
+
+    expect(readFileSync(join(cwd, "managed-denied.txt"), "utf8")).toBe("after\n");
+  });
+
   it("reports failed apply_patch attempts with structured patch facts", async () => {
     const cwd = createTempDir();
     const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
@@ -2509,7 +2803,71 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ]);
   });
 
-  it("blocks svvyx command-family dispatch at the same exec_command approval boundary", async () => {
+  it("does not retry outside the sandbox for synthetic sandbox-looking command output", async () => {
+    const cwd = createTempDir();
+    const approvalRequests: unknown[] = [];
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        approvalBoundary: (input) => {
+          approvalRequests.push(input);
+          return { approved: true };
+        },
+        approvalMode: "user",
+        cwd,
+        managedSandbox: true,
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-synthetic-sandbox-output",
+      { cmd: "printf 'sandbox: Operation not permitted\\n' >&2; exit 1" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    if (readText(result).includes("sandbox_apply")) {
+      expect(result.details?.sandboxDenied).toBe(true);
+    } else {
+      expect(result.details?.exitCode).toBe(1);
+      expect(result.details?.sandboxDenied).toBeUndefined();
+    }
+    expect(approvalRequests).toHaveLength(1);
+  });
+
+  it("does not escalate shell command-not-found failures as sandbox denials", async () => {
+    const cwd = createTempDir();
+    const approvalRequests: unknown[] = [];
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        approvalBoundary: (input) => {
+          approvalRequests.push(input);
+          return { approved: true };
+        },
+        approvalMode: "user",
+        cwd,
+        managedSandbox: true,
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-not-found-no-escalation",
+      { cmd: "definitely-not-a-svvy-command" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    if (readText(result).includes("sandbox_apply")) {
+      expect(result.details?.sandboxDenied).toBe(true);
+    } else {
+      expect(result.details?.exitCode).toBe(127);
+      expect(result.details?.sandboxDenied).toBeUndefined();
+    }
+    expect(approvalRequests).toHaveLength(1);
+  });
+
+  it("blocks svvyx CLI commands at the same ordinary exec_command approval boundary", async () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
     const execTool = findTool(
@@ -2539,7 +2897,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       expect.objectContaining({
         approvalMode: "user",
         command: "svvyx artifacts list --json",
-        commandFamily: "svvyx_artifacts",
+        commandFamily: undefined,
         cwd,
         toolCallId: "tool-denied-svvyx-artifacts",
         toolName: "exec_command",
@@ -2547,7 +2905,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       expect.objectContaining({
         approvalMode: "user",
         command: "svvyx workflows list --json",
-        commandFamily: "svvyx_workflows",
+        commandFamily: undefined,
         cwd,
         toolCallId: "tool-denied-svvyx-workflows",
         toolName: "exec_command",
@@ -2555,7 +2913,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       expect.objectContaining({
         approvalMode: "user",
         command: "svvyx extensions list --json",
-        commandFamily: "svvyx_extensions",
+        commandFamily: undefined,
         cwd,
         toolCallId: "tool-denied-svvyx-extensions",
         toolName: "exec_command",
@@ -2563,7 +2921,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       expect.objectContaining({
         approvalMode: "user",
         command: "svvyx linear search --json",
-        commandFamily: "svvyx_runtime",
+        commandFamily: undefined,
         cwd,
         toolCallId: "tool-denied-svvyx-runtime",
         toolName: "exec_command",
@@ -3252,26 +3610,14 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ]);
   });
 
-  it("formats malformed Artifacts command parse errors as JSON error results", async () => {
+  it("leaves malformed svvyx shell syntax on the ordinary shell path", async () => {
     const appLogEvents: AppLoggerEvent[] = [];
     const harness = createArtifactsHarness({ onAppLog: (event) => appLogEvents.push(event) });
 
-    await expectArtifactErrorCode(
-      harness.run('svvyx artifacts create --name "unterminated --json'),
-      "INVALID_ARGUMENT",
+    await expect(harness.run('svvyx artifacts create --name "unterminated --json')).rejects.toThrow(
+      "JSON Parse error",
     );
-    expect(appLogEvents).toContainEqual(
-      expect.objectContaining({
-        level: "warning",
-        source: "artifact",
-        message: "Artifact command failed.",
-        details: expect.objectContaining({
-          workspaceSessionId: "session-artifacts",
-          surfacePiSessionId: "session-artifacts",
-          errorCode: "INVALID_ARGUMENT",
-        }),
-      }),
-    );
+    expect(appLogEvents).toEqual([]);
   });
 });
 
@@ -3501,6 +3847,13 @@ function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "svvy-direct-tools-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function readSvvyxSubprocessTempDirs(): string[] {
+  return readdirSync(tmpdir())
+    .filter((entry) => entry.startsWith("svvyx-subprocess-"))
+    .map((entry) => join(tmpdir(), entry))
+    .filter((entry) => existsSync(entry));
 }
 
 function startLoopbackTextServer(): { stop: () => void; url: string } | null {

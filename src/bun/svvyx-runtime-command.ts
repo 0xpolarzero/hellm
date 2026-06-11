@@ -35,21 +35,6 @@ export type SvvyxRuntimeCommandResult = {
   commandFacts: Record<string, unknown>;
 };
 
-export function isSvvyxRuntimeCommand(command: string): boolean {
-  const words = splitCommandLine(command);
-  if (words[0] !== "svvyx") {
-    return false;
-  }
-  const extensionId = words[1];
-  if (!extensionId) {
-    return true;
-  }
-  if (extensionId === "--help" || extensionId === "-h") {
-    return true;
-  }
-  return !extensionId.startsWith("--") && !builtinSvvyxNamespaces.has(extensionId);
-}
-
 export async function runSvvyxRuntimeCommand(input: {
   command: string;
   envSecretStore?: ExtensionEnvSecretStore;

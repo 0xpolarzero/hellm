@@ -33,7 +33,7 @@ Related specs:
 
 ## Product Decision
 
-`svvyx` is one stable app-owned shell dispatcher.
+`svvyx` is one stable app-owned CLI backed by Incur.
 
 The dispatcher command shape is:
 
@@ -46,7 +46,9 @@ capability boundary. The extension binding still matters, but it matters for gen
 
 - loaded extensions contribute full instructions
 - loaded `svvyx` extensions contribute command guidance
-- loaded `svvyx` extensions with TypeScript API enabled contribute generated TypeScript clients
+- builtin `svvyx` extensions with TypeScript API enabled contribute generated TypeScript clients
+- user `svvyx` generated TypeScript clients are hidden until sandboxed generated-client execution
+  exists
 - available extensions contribute minimal loading guidance only
 - unavailable extensions contribute nothing
 
@@ -55,6 +57,10 @@ shell command is not the security boundary because ordinary shell execution can 
 commands under the configured execution policy. The useful product boundary is that agents only
 receive prompt guidance, generated docs, and generated TypeScript declarations for the extension
 binding they actually have.
+
+Agent Shell usage of `svvyx ...` happens strictly through `exec_command`. There is no parent-process
+command-family dispatch, parent-owned Shell shortcut, or second command model that lets an agent call
+a `svvyx` command family outside ordinary Shell execution.
 
 `svvyx` must still enforce normal runtime safety for the command it dispatches:
 
@@ -80,9 +86,8 @@ The runtime design relies on these observed Incur facts:
   `process.env`
 - command-level env schemas are parsed into the command handler context as `c.env`
 - CLI-level env schemas are parsed into middleware context as `c.env`
-- `MemoryClient.create(cli, { env })` supports the same explicit env-source model for in-process
-  typed client calls
-- direct reads from `process.env` bypass `serve({ env })` and `MemoryClient.create(cli, { env })`
+- generated TypeScript clients can use an explicit env-source model for typed client calls
+- direct reads from `process.env` ignore Incur's explicit env source
 
 Because of that last point, `svvy` extension invocation supports injected extension env only through
 Incur env declarations and `c.env`. Direct `process.env.<NAME>` reads are unsupported for app-managed
@@ -98,8 +103,9 @@ environment.
 
 Build validation must fail when the source entry cannot be imported as a default Incur CLI. Build
 validation must also reject normal self-serving entrypoints, such as obvious top-level `.serve()`
-calls, because self-serving modules can execute commands during build import and bypass `svvy`'s
-dispatcher/env wrapper. This is an authoring-contract validation, not a hostile-code sandbox.
+calls, because self-serving modules can execute commands during build import instead of through
+`svvy`'s dispatcher/env wrapper. This is an authoring-contract validation, not a hostile-code
+sandbox.
 Editable extension code is still trusted in v1.
 
 A successful build writes temporary output under:
@@ -128,7 +134,7 @@ editable source files as activation state. At minimum, the current build records
 - dependency/build validation metadata needed to reject stale or corrupt builds
 
 Current build files must not contain raw env values, secret previews, secret hashes, keychain ids,
-storage paths, generated aggregate cache keys, build ids, build timestamps, or user-facing rollback
+storage paths, generated aggregate cache keys, build ids, build timestamps, or user-facing restore
 state.
 
 Failed, blocked, or cancelled builds must not replace `current/`. The previously current extension
@@ -207,31 +213,35 @@ the Extensions pane or app settings; they must never ask the user to paste secre
 Generated TypeScript clients are a typed composition surface inside `execute_typescript`. They are
 not a second shell dispatcher and not a separate approval surface. The top-level
 `execute_typescript` tool call goes through the normal approval-boundary path before the snippet
-runs.
+runtime starts, and the approved runtime then runs under the managed filesystem and network sandbox
+policy unless full-access policy omits sandboxing.
 
-For a loaded `svvyx` extension with TypeScript API enabled, generated clients should use the same
-current build and the same Incur command contracts as shell dispatch. The implementation should
-import the current build's default Incur CLI and use Incur's memory client or equivalent in-process
-client path with the same explicit extension env source:
+For a loaded builtin `svvyx` extension with TypeScript API enabled, generated clients use the same
+generated command contracts as shell dispatch. The implementation calls through the generated
+TypeScript client runtime with the same explicit extension env source:
 
 ```text
-extensions.linear.run("issues.list", { options: { status: "open" } })
-  -> generated client for loaded extension "linear"
-  -> import linear current build CLI
-  -> MemoryClient.create(cli, { env: extensionEnv("linear") })
-  -> run the Incur command "issues.list"
+extensions.artifacts.run("inspect", { args: { artifactId: "art_123" } })
+  -> generated client for loaded builtin extension "artifacts"
+  -> provide extensionEnv("artifacts") as the explicit Incur env source
+  -> run the Incur command "inspect" inside the approved/sandboxed execute_typescript runtime
   -> record a child command under the parent execute_typescript command
 ```
 
-Generated client calls must apply the same readiness checks, env injection rules, redaction, command
-fact recording, and failure semantics as `svvyx` shell dispatch. Agent-facing TypeScript sees only
-per-loaded-extension Incur-compatible command clients under `extensions.<extension-id>`, not a broad
-generic all-extension client.
+Generated clients must not be rewritten as shell `svvyx` calls in docs, generated declarations, or
+agent prompts. The Shell path and TypeScript path share command contracts, readiness checks,
+redaction, env injection, command facts, and child-command projection, but they do not share a
+parent-process Shell dispatcher.
 
-`MemoryClient` is internal plumbing for generated clients. Agent-authored snippets must not
-construct `MemoryClient`, import extension current-build files, or use MemoryClient local actions.
-The exposed `extensions.<extension-id>` object must remove local Incur client actions such as local
-Skills or MCP setup actions. The only cross-extension abstraction is the `extensions` wrapper.
+Builtin generated client calls must apply the same readiness checks, env injection rules,
+redaction, command fact recording, and failure semantics as `svvyx` shell dispatch. Agent-facing
+TypeScript sees only emitted builtin Incur-compatible command clients under
+`extensions.<extension-id>`, not user extension clients or a broad generic all-extension client.
+
+Agent-authored snippets must not construct generic Incur transports, import extension current-build
+files, or use local Incur actions. The exposed `extensions.<extension-id>` object must remove local
+Incur client actions such as local Skills or MCP setup actions. The only cross-extension abstraction
+is the `extensions` wrapper.
 
 Generated client declarations must preserve Incur command semantics:
 
@@ -251,13 +261,13 @@ built extension by id from a shell command.
 The model-visible operation remains `exec_command` for shell use and `execute_typescript` for typed
 composition.
 
-Every `svvyx` invocation runs inside a concrete `svvy` runtime context. Before dispatching to the
-extension CLI or generated in-process client, the app-owned dispatcher must attach the current
-session, surface, thread, parent command, child command, and
-actor binding facts that are already known to the runtime. These context facts are trusted product
-state inputs, not shell arguments and not prompt text. Extensions that create product records, such
-as Artifacts, must derive ownership and linkage from this dispatcher context rather than accepting
-agent-supplied owner ids.
+Every shell `svvyx ...` invocation runs inside a concrete `svvy` runtime context. Before the stable
+`svvyx` executable dispatches to the extension CLI, it must receive the current session, surface,
+thread, parent command, and actor binding facts from trusted product state rather than from shell
+arguments or prompt text. Generated `execute_typescript` clients use the same trusted context source
+when they create child command records, but they are not a second shell dispatcher. Extensions that
+create product records, such as Artifacts, must derive ownership and linkage from this dispatcher
+context rather than accepting agent-supplied owner ids.
 
 When `exec_command` runs a command whose argv begins with `svvyx`, `svvy` should parse the command
 well enough to attach best-effort structured facts:
@@ -272,8 +282,8 @@ well enough to attach best-effort structured facts:
 - readiness or env errors when invocation is blocked before the extension CLI runs
 
 These facts are UI and audit metadata. They do not create a separate model-facing tool kind named
-`svvyx_command`, do not bypass shell approval policy, and do not make shell parsing a source of
-semantic truth for arbitrary commands.
+`svvyx_command`, do not avoid shell approval policy for Shell usage, and do not make shell parsing a
+source of semantic truth for arbitrary commands.
 
 Generated TypeScript client calls create child command records under the parent `execute_typescript`
 command. Those child records use the same extension id, command path, readiness, redaction, and
@@ -303,9 +313,11 @@ refresh failures.
 
 Generated agent context remains actor-specific.
 
-Loaded `svvyx` extensions contribute command guidance and generated TypeScript declarations based on
-their current successful build. Available extensions contribute only minimal load guidance.
-Unavailable extensions contribute nothing.
+Loaded `svvyx` extensions contribute command guidance based on their current successful build.
+Builtin `svvyx` extensions may also contribute emitted generated TypeScript declarations. User
+`svvyx` generated TypeScript declarations remain hidden until sandboxed generated-client execution
+exists. Available extensions contribute only minimal load guidance. Unavailable extensions
+contribute nothing.
 
 The stable shell dispatcher does not change that rule. The fact that `svvyx <extension-id> ...` may
 technically dispatch a built extension from a shell does not justify including that extension's full
@@ -313,8 +325,8 @@ instructions, command docs, schemas, or generated clients in an actor context wh
 available or unavailable.
 
 When a successful extension build changes actor-facing command contracts, instructions, env
-declaration metadata, or generated TypeScript declarations, the normal extension context fingerprint
-and generated agent context refresh pipeline applies.
+declaration metadata, or emitted generated TypeScript declarations, the normal extension context
+fingerprint and generated agent context refresh pipeline applies.
 
 ## Runtime Boundary
 
@@ -336,7 +348,7 @@ only under `extensions.<id>` or `extensions["<id>"]`. The runtime boundary exclu
 Build-time self-serve rejection can combine static and dynamic checks:
 
 - parse source to reject obvious top-level `.serve()` calls in the extension entry
-- import the source entry in a guarded build process and verify that the default export is an Incur
+- import the source entry in an isolated build process and verify that the default export is an Incur
   CLI
 - make the generated runtime wrapper the only place that calls `cli.serve(...)`
 

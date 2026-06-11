@@ -174,6 +174,7 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("api.web_*");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("api.workflow_*");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Use TinyFish through ordinary Shell commands");
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("bash-backed inspection");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Loaded extension: cx semantic code navigation.");
     expect(DEFAULT_SYSTEM_PROMPT).toContain(CX_SKILL_INSTRUCTIONS.trim());
     expect(DEFAULT_SYSTEM_PROMPT).toContain("`cx overview`");
@@ -202,7 +203,7 @@ describe("default system prompt", () => {
     expect(buildExecuteTypescriptApiDeclaration("workflow-task")).not.toContain("list_assets(");
   });
 
-  it("embeds loaded user svvyx generated declarations in actor context", () => {
+  it("omits loaded user svvyx generated declarations from actor context", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-prompt-extension-types-"));
     try {
       const currentRoot = join(root, "builds", "extensions", "linear", "current");
@@ -254,8 +255,8 @@ describe("default system prompt", () => {
         loadedExtensionRecords: [loadedRecord],
       });
 
-      expect(prompt).toContain("linear: LinearExtensionClient");
-      expect(prompt).toContain('"issues.list"');
+      expect(prompt).not.toContain("linear: LinearExtensionClient");
+      expect(prompt).not.toContain('"issues.list"');
       expect(prompt).not.toContain("staleGeneratedFile");
     } finally {
       rmSync(root, { recursive: true, force: true });

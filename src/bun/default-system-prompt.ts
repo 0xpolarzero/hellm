@@ -38,8 +38,8 @@ import type {
 export function buildExecuteTypescriptBasePromptSection(actor: SvvyActorKind): string {
   const compositionUses =
     actor === "handler"
-      ? "batching, looping, filtering, aggregation, bash-backed inspection, or artifact evidence"
-      : "batching, looping, filtering, aggregation, bash-backed inspection, or artifact evidence";
+      ? "batching, looping, filtering, aggregation, or structured extension-client composition"
+      : "batching, looping, filtering, aggregation, or structured extension-client composition";
   return [
     "Loaded native extension: Execute TypeScript.",
     "",
@@ -65,6 +65,8 @@ export function buildExecuteTypescriptPromptSection(
     extensionsRoot?: string;
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
   } = {},
 ): string {
   return [
@@ -76,6 +78,8 @@ export function buildExecuteTypescriptPromptSection(
       extensionsRoot: options.extensionsRoot,
       loadedExtensionIds: options.loadedExtensionIds,
       loadedExtensionRecords: options.loadedExtensionRecords,
+      workflowsExtensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
     }),
     "```",
   ].join("\n");

@@ -1,35 +1,33 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
+  chmodSync,
   lstatSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
-  existsSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import {
-  buildMacOsSeatbeltProfile,
   buildManagedWorkspaceWriteFileSystemPolicy,
   canWriteFileSystemPath,
   unrestrictedFileSystemPolicy,
   type FileSystemSandboxPolicy,
 } from "./filesystem-sandbox-policy";
-import {
-  createMacOsKeychainExtensionEnvSecretStore,
-  type ExtensionEnvSecretStore,
-} from "./extension-env-secret-store";
+import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
+import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import { getWorkflowsGeneratedPackagePath } from "./smithers-runtime/workflow-library";
 import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-package";
 import type {
@@ -37,31 +35,11 @@ import type {
   StructuredCommandRecord,
   StructuredSessionStateStore,
 } from "./structured-session-state";
-import {
-  formatSvvyxArtifactsError,
-  isSvvyxArtifactsCommand,
-  runSvvyxArtifactsCommand,
-  type SvvyxArtifactOpenHandler,
-} from "./svvyx-artifacts-command";
-import {
-  formatSvvyxExtensionsError,
-  isSvvyxExtensionsCommand,
-  runSvvyxExtensionsCommand,
-  type SvvyxExtensionsCliProbe,
-} from "./svvyx-extensions-command";
-import {
-  formatSvvyxRuntimeError,
-  isSvvyxRuntimeCommand,
-  runSvvyxRuntimeCommand,
-  type SvvyxRuntimeEnvValues,
-} from "./svvyx-runtime-command";
-import {
-  formatSvvyxWorkflowsError,
-  isSvvyxWorkflowsCommand,
-  runSvvyxWorkflowsCommand,
-  type SvvyxWorkflowsModelCatalogReader,
-} from "./svvyx-workflows-command";
-import type { ApprovalMode } from "../shared/agent-settings";
+import type { SvvyxArtifactOpenHandler } from "./svvyx-artifacts-command";
+import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
+import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
+import type { SvvyxWorkflowsModelCatalogReader } from "./svvyx-workflows-command";
+import type { AgentSettingsState, ApprovalMode } from "../shared/agent-settings";
 
 type RunningCommandSession = {
   process: ChildProcessWithoutNullStreams;
@@ -69,6 +47,7 @@ type RunningCommandSession = {
   stderr: string[];
   exitCode: number | null;
   exitSignal: NodeJS.Signals | null;
+  managedSandbox: boolean;
   protectedWriteSnapshot: ProtectedWriteSnapshot;
   liveProjection: LiveCommandProjection | null;
 };
@@ -77,6 +56,7 @@ type LiveCommandProjection = {
   store: StructuredSessionStateStore;
   sessionId: string;
   commandId: string;
+  managedSandbox: boolean;
   outputEventBytes: Record<"stderr" | "stdout", number>;
   outputEventRetainedStreams: Set<"stderr" | "stdout">;
 };
@@ -112,11 +92,6 @@ const runningCommandSessions = new Map<string, RunningCommandSession>();
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES = 64 * 1024;
 const RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE = "Output exceeded the live event retention limit.";
-const NETWORK_DISABLED_SANDBOX_PROFILE = buildMacOsSeatbeltProfile(
-  unrestrictedFileSystemPolicy(),
-  "/",
-  { networkAccess: false },
-).profile;
 const WORKFLOWS_GENERATED_DIRECT_EDIT_MESSAGE =
   "Generated Workflows output, workspace @svvy/workflows/@svvy/extensions package links, internal Extension files, and immutable or non-active-session Artifacts are read-only. Edit Workflows source, Extension source/manifest/package.json, or the active session's mutable artifact files through the intended command path instead.";
 const MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE =
@@ -144,6 +119,7 @@ type DirectToolOptions = {
   agentSettingsStore?: AgentSettingsStore;
   approvalBoundary?: DirectToolApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
+  managedSandbox?: boolean | (() => boolean);
   networkAccess?: boolean | (() => boolean);
   onAppLog?: (event: AppLoggerEvent) => void;
 };
@@ -153,12 +129,6 @@ type DirectToolSet = {
 };
 
 export type DirectToolApprovalBoundary = RuntimeApprovalBoundary;
-
-type DirectToolCommandFamily =
-  | "svvyx_artifacts"
-  | "svvyx_extensions"
-  | "svvyx_runtime"
-  | "svvyx_workflows";
 
 export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet {
   return {
@@ -203,6 +173,7 @@ function createWriteStdinTool(): AgentTool<any> {
           stderr: session.stderr.join(""),
           exitCode: session.exitCode,
           exitSignal: session.exitSignal,
+          managedSandbox: session.managedSandbox,
         });
         return {
           content: [
@@ -266,21 +237,46 @@ function createApplyPatchTool(options: DirectToolOptions): AgentTool<any> {
         toolCallId,
         toolName: "apply_patch",
       });
-      const result = spawnSync("patch", ["-p0", "--forward"], {
+      const patchCommandInput = {
         cwd: options.cwd,
-        input: params.patch,
-        encoding: "utf8",
-      });
+        fileSystemPolicy: directToolFileSystemPolicy(options),
+        managedSandbox:
+          resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
+        patch: params.patch,
+      };
+      let result = spawnPatchCommand(patchCommandInput);
+      let resultManagedSandbox = patchCommandInput.managedSandbox;
+      if (isEscalatableSandboxDeniedPatchResult(result, patchCommandInput.managedSandbox)) {
+        await assertSandboxEscalationApproved({
+          options,
+          patch: params.patch,
+          result,
+          toolCallId,
+          toolName: "apply_patch",
+        });
+        result = spawnPatchCommand({ ...patchCommandInput, managedSandbox: false });
+        resultManagedSandbox = false;
+      }
       const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
       if (result.status !== 0) {
         const message = output || `apply_patch failed with exit code ${result.status ?? "null"}.`;
+        const stderr = typeof result.stderr === "string" ? result.stderr : String(result.stderr);
+        const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout);
         throw new Error(
           JSON.stringify({
             error: {
               code: "apply_patch_failed",
               message,
             },
-            commandFacts: parseApplyPatchCommandFacts(params.patch, [message]),
+            commandFacts: {
+              ...parseApplyPatchCommandFacts(params.patch, [message]),
+              ...sandboxDenialFacts({
+                exitCode: result.status,
+                managedSandbox: resultManagedSandbox,
+                stderr,
+                stdout,
+              }),
+            },
           }),
         );
       }
@@ -395,7 +391,7 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
       await assertDirectToolApproved({
         command: params.cmd,
         commandCwd,
-        commandFamily: directToolCommandFamily(params.cmd),
+        commandFamily: undefined,
         options,
         toolCallId,
         toolName: "exec_command",
@@ -415,326 +411,46 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
               store: options.store,
               sessionId: activeCommand.sessionId,
               commandId: activeCommand.id,
+              managedSandbox:
+                resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
               outputEventBytes: { stderr: 0, stdout: 0 },
               outputEventRetainedStreams: new Set<"stderr" | "stdout">(),
             }
           : null;
-      if (isSvvyxArtifactsCommand(params.cmd)) {
-        const runtime = options.runtime?.current;
-        if (!runtime || !options.store) {
-          throw new Error(
-            JSON.stringify(
-              formatSvvyxArtifactsError(
-                new Error("Artifacts commands can only run during an active prompt."),
-              ),
-            ),
-          );
-        }
-        const sourceCommand = activeCommand;
-        if (!sourceCommand) {
-          throw new Error(
-            JSON.stringify(
-              formatSvvyxArtifactsError(
-                new Error("Artifacts command is missing its source command record."),
-              ),
-            ),
-          );
-        }
-        recordSvvyxCommandProgress(activeLiveProjection, {
-          command: params.cmd,
-          family: "artifacts",
-          phase: "started",
-        });
-        try {
-          const result = await runSvvyxArtifactsCommand({
-            cwd: commandCwd,
-            command: params.cmd,
-            runtime,
-            store: options.store,
-            sourceCommand,
-            openArtifact: options.openArtifact,
-            onAppLog: options.onAppLog,
-          });
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "artifacts",
-            phase: "succeeded",
-            facts: result.commandFacts,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            result.output,
-            "stdout",
-          );
-          const commandFacts = commandFactsWithRetainedOutputArtifacts(
-            result.commandFacts,
-            retainedOutputArtifacts,
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(result.output, null, 2) }],
-            details: {
-              ...(isRecord(result.output) ? result.output : { result: result.output }),
-              commandFacts,
-            },
-          };
-        } catch (error) {
-          const output = formatSvvyxArtifactsError(error);
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "artifacts",
-            phase: "failed",
-            facts: isRecord(output) ? output : null,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            output,
-            "stderr",
-          );
-          throw new Error(
-            JSON.stringify({
-              ...output,
-              ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
-            }),
-            {
-              cause: error,
-            },
-          );
-        }
-      }
-      if (isSvvyxWorkflowsCommand(params.cmd)) {
-        const workflowRuntime = options.runtime?.current;
-        const workflowSourceCommand = workflowRuntime ? activeCommand : null;
-        recordSvvyxCommandProgress(activeLiveProjection, {
-          command: params.cmd,
-          family: "workflows",
-          phase: "started",
-        });
-        try {
-          const result = await runSvvyxWorkflowsCommand({
-            agentSettingsStore: options.agentSettingsStore,
-            command: params.cmd,
-            cwd: commandCwd,
-            envSecretStore: resolveExtensionEnvSecretStore(options),
-            extensionsBuildRoot: options.extensionsBuildRoot,
-            extensionsCliProbe: options.extensionsCliProbe,
-            extensionsRoot: options.extensionsRoot,
-            extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
-            generatedPackagePath: options.workflowsGeneratedPackagePath,
-            readModelCatalog: options.workflowsModelCatalog,
-            sourceRoot: options.workflowsSourceRoot,
-            workspaceCwd: options.cwd,
-            workspaceCwds: options.workflowsWorkspaceCwds?.(),
-          });
-          if (result.commandFacts.workflowBuildOk === true) {
-            options.onAppLog?.({
-              level: "info",
-              source: "workflow.library",
-              message: "Workflows build validation passed.",
-              details: workflowLogDetails(params.cmd, workflowRuntime, workflowSourceCommand?.id, {
-                ...pickWorkflowLogFacts(result.commandFacts),
-              }),
-            });
-            await options.onWorkflowsGeneratedPackageChanged?.({
-              reason:
-                typeof result.commandFacts.workflowSavedExportName === "string"
-                  ? "svvyx-workflows-save"
-                  : "svvyx-workflows-build",
-              commandFacts: result.commandFacts,
-            });
-          }
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "workflows",
-            phase: "succeeded",
-            facts: result.commandFacts,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            result.output,
-            "stdout",
-          );
-          const commandFacts = commandFactsWithRetainedOutputArtifacts(
-            result.commandFacts,
-            retainedOutputArtifacts,
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(result.output, null, 2) }],
-            details: {
-              ...(isRecord(result.output) ? result.output : { result: result.output }),
-              commandFacts,
-            },
-          };
-        } catch (error) {
-          const output = formatSvvyxWorkflowsError(error);
-          const commandFacts = workflowErrorCommandFacts(params.cmd, output);
-          options.onAppLog?.({
-            level: "warning",
-            source: "workflow.library",
-            message: "Workflows build validation failed.",
-            details: workflowLogDetails(params.cmd, workflowRuntime, workflowSourceCommand?.id, {
-              errorCode: output.error.code,
-              errorMessage: output.error.message,
-              ...(output.error.diagnostics
-                ? { workflowDiagnosticCount: output.error.diagnostics.length }
-                : {}),
-            }),
-          });
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "workflows",
-            phase: "failed",
-            facts: commandFacts,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            { ...output, commandFacts },
-            "stderr",
-          );
-          const retainedCommandFacts = commandFactsWithRetainedOutputArtifacts(
-            commandFacts,
-            retainedOutputArtifacts,
-          );
-          throw new Error(JSON.stringify({ ...output, commandFacts: retainedCommandFacts }), {
-            cause: error,
-          });
-        }
-      }
-      if (isSvvyxExtensionsCommand(params.cmd)) {
-        recordSvvyxCommandProgress(activeLiveProjection, {
-          command: params.cmd,
-          family: "extensions",
-          phase: "started",
-        });
-        try {
-          const result = await runSvvyxExtensionsCommand({
-            agentSettingsStore: options.agentSettingsStore,
-            buildRoot: options.extensionsBuildRoot,
-            cliProbe: options.extensionsCliProbe,
-            command: params.cmd,
-            cwd: commandCwd,
-            envSecretStore: resolveExtensionEnvSecretStore(options),
-            externalInstructionSources: options.runtime?.current?.externalInstructionSources ?? [],
-            extensionsRoot: options.extensionsRoot,
-            structuredSessionStore: options.store,
-          });
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "extensions",
-            phase: "succeeded",
-            facts: result.commandFacts,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            result.output,
-            "stdout",
-          );
-          const commandFacts = commandFactsWithRetainedOutputArtifacts(
-            result.commandFacts,
-            retainedOutputArtifacts,
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(result.output, null, 2) }],
-            details: {
-              ...(isRecord(result.output) ? result.output : { result: result.output }),
-              commandFacts,
-            },
-          };
-        } catch (error) {
-          const output = formatSvvyxExtensionsError(error);
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "extensions",
-            phase: "failed",
-            facts: isRecord(output) ? output : null,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            output,
-            "stderr",
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-            details: {
-              ...output,
-              ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
-            },
-          };
-        }
-      }
-      if (isSvvyxRuntimeCommand(params.cmd)) {
-        recordSvvyxCommandProgress(activeLiveProjection, {
-          command: params.cmd,
-          family: "runtime",
-          phase: "started",
-        });
-        try {
-          const result = await runSvvyxRuntimeCommand({
-            command: params.cmd,
-            envSecretStore: resolveExtensionEnvSecretStore(options),
-            envValues: resolveExtensionsEnvValues(options),
-            extensionsRoot: options.extensionsRoot,
-          });
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "runtime",
-            phase:
-              result.output && isRecord(result.output) && result.output.ok === false
-                ? "failed"
-                : "succeeded",
-            facts: result.commandFacts,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            result.output,
-            result.output && isRecord(result.output) && result.output.ok === false
-              ? "stderr"
-              : "stdout",
-          );
-          const commandFacts = commandFactsWithRetainedOutputArtifacts(
-            result.commandFacts,
-            retainedOutputArtifacts,
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(result.output, null, 2) }],
-            details: {
-              ...(isRecord(result.output) ? result.output : { result: result.output }),
-              commandFacts,
-            },
-          };
-        } catch (error) {
-          const output = formatSvvyxRuntimeError(error);
-          recordSvvyxCommandProgress(activeLiveProjection, {
-            command: params.cmd,
-            family: "runtime",
-            phase: "failed",
-            facts: isRecord(output) ? output : null,
-          });
-          const retainedOutputArtifacts = recordSvvyxCommandOutput(
-            activeLiveProjection,
-            output,
-            "stderr",
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-            details: {
-              ...output,
-              ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
-            },
-          };
-        }
-      }
-      return await runExecCommand({
+      const svvyxSubprocess = prepareSvvyxSubprocess({
+        activeCommand,
+        command: params.cmd,
+        commandCwd,
+        options,
+      });
+      const execInput = {
         cwd: commandCwd,
         cmd: params.cmd,
+        env: svvyxSubprocess?.env,
+        fileSystemPolicy: svvyxSubprocess
+          ? svvyxSubprocessFileSystemPolicy(options)
+          : directToolFileSystemPolicy(options),
+        managedSandbox:
+          resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
         networkAccess: resolveNetworkAccess(options),
-        protectedWriteRoots: protectedDirectEditRoots(options),
-        protectedWriteAllowedRoots: protectedDirectEditAllowedRoots(options),
+        protectedWriteRoots: svvyxSubprocess ? [] : protectedDirectEditRoots(options),
+        protectedWriteAllowedRoots: svvyxSubprocess ? [] : protectedDirectEditAllowedRoots(options),
         timeoutMs:
           typeof params.timeout === "number"
             ? Math.max(1, params.timeout) * 1000
             : DEFAULT_COMMAND_TIMEOUT_MS,
         signal,
         liveProjection: activeLiveProjection,
+      };
+      const result = await runExecCommandWithSandboxEscalation({
+        input: execInput,
+        options,
+        toolCallId,
+      });
+      return await finalizeSvvyxSubprocessResult({
+        options,
+        result,
+        svvyxSubprocess,
       });
     },
   };
@@ -756,8 +472,403 @@ function resolveExtensionsEnvValues(options: DirectToolOptions): SvvyxRuntimeEnv
   return values;
 }
 
-function resolveExtensionEnvSecretStore(options: DirectToolOptions): ExtensionEnvSecretStore {
-  return options.extensionEnvSecretStore ?? createMacOsKeychainExtensionEnvSecretStore();
+type PreparedSvvyxSubprocess = {
+  env: NodeJS.ProcessEnv;
+  replaySidecar: boolean;
+  resultKey: string;
+  resultPath: string;
+  shimDir: string;
+};
+
+type SvvyxSubprocessAppAction = {
+  kind: "artifact.open";
+  artifactId: string;
+  sessionId: string;
+};
+
+type SvvyxSubprocessSidecar = {
+  agentSettingsState?: AgentSettingsState;
+  appActions: SvvyxSubprocessAppAction[];
+  appLogEvents: AppLoggerEvent[];
+  commandFacts?: Record<string, unknown>;
+  ok: boolean;
+};
+
+type SignedSvvyxSubprocessSidecar = {
+  payload?: unknown;
+  signature?: unknown;
+};
+
+function prepareSvvyxSubprocess(input: {
+  activeCommand: Pick<StructuredCommandRecord, "id"> | null;
+  command: string;
+  commandCwd: string;
+  options: DirectToolOptions;
+}): PreparedSvvyxSubprocess | null {
+  const invocation = classifySvvyxShellInvocation(input.command);
+  if (invocation.kind === "none") {
+    return null;
+  }
+  if (invocation.kind === "invalid") {
+    throw new Error(invocation.message);
+  }
+  const shim = createSvvyxSubprocessShim();
+  const resultPath = join(shim.dir, `svvyx-result-${randomUUID()}.json`);
+  const resultKey = randomBytes(32).toString("base64url");
+  const runtime = input.options.runtime?.current ?? null;
+  let workspace: unknown = null;
+  if (runtime && input.options.store) {
+    try {
+      workspace = input.options.store.getSessionState(runtime.sessionId).workspace;
+    } catch {
+      workspace = null;
+    }
+  }
+  const context = {
+    agentSettingsState: input.options.agentSettingsStore?.getState() ?? null,
+    canRequestArtifactOpen: input.options.openArtifact !== undefined,
+    cwd: input.commandCwd,
+    databasePath: input.options.store?.databasePath ?? null,
+    // This env-visible context is intentionally non-secret. Extension secret values are never
+    // serialized here; svvyx subprocesses read secrets through the app-owned secret store only.
+    extensionEnvValues: resolveExtensionsEnvValues(input.options),
+    extensionsBuildRoot: input.options.extensionsBuildRoot,
+    extensionsGeneratedPackagePath: input.options.workflowsExtensionsGeneratedPackagePath,
+    extensionsRoot: input.options.extensionsRoot,
+    externalInstructionSources: runtime?.externalInstructionSources ?? [],
+    resultPath,
+    runtime,
+    sourceCommandId: input.activeCommand?.id ?? null,
+    workflowModelCatalog: input.options.workflowsModelCatalog?.() ?? null,
+    workflowsGeneratedPackagePath: input.options.workflowsGeneratedPackagePath,
+    workflowsSourceRoot: input.options.workflowsSourceRoot,
+    workflowsWorkspaceCwds: input.options.workflowsWorkspaceCwds?.() ?? null,
+    workspace,
+    workspaceCwd: input.options.cwd,
+  };
+  return {
+    env: {
+      PATH: `${shim.dir}:${process.env.PATH ?? ""}`,
+      SVVY_SVVYX_SUBPROCESS_CONTEXT: JSON.stringify(context),
+      SVVY_SVVYX_SUBPROCESS_RESULT_KEY: resultKey,
+    },
+    replaySidecar: invocation.replaySidecar,
+    resultKey,
+    resultPath,
+    shimDir: shim.dir,
+  };
+}
+
+type SvvyxShellInvocation =
+  | { kind: "none" }
+  | { kind: "trusted"; replaySidecar: boolean }
+  | { kind: "invalid"; message: string };
+
+function classifySvvyxShellInvocation(command: string): SvvyxShellInvocation {
+  const trimmed = command.trim();
+  const words = splitSimpleShellWords(trimmed);
+  if (!words) {
+    return { kind: "none" };
+  }
+  let index = 0;
+  if (words[index] === "env") {
+    index += 1;
+    while (index < words.length && isShellEnvAssignment(words[index]!)) {
+      const envName = words[index]!.slice(0, words[index]!.indexOf("="));
+      if (envName.startsWith("SVVY_SVVYX_SUBPROCESS_")) {
+        return {
+          kind: "invalid",
+          message: "svvyx subprocess environment variables are app-owned and cannot be overridden.",
+        };
+      }
+      index += 1;
+    }
+  } else {
+    while (index < words.length && isShellEnvAssignment(words[index]!)) {
+      const envName = words[index]!.slice(0, words[index]!.indexOf("="));
+      if (envName.startsWith("SVVY_SVVYX_SUBPROCESS_")) {
+        return {
+          kind: "invalid",
+          message: "svvyx subprocess environment variables are app-owned and cannot be overridden.",
+        };
+      }
+      index += 1;
+    }
+  }
+  if (words[index] === "command") {
+    index += 1;
+  }
+  if (words[index] !== "svvyx") {
+    return { kind: "none" };
+  }
+  return { kind: "trusted", replaySidecar: isTrustedSvvyxSidecarNamespace(words[index + 1]) };
+}
+
+function isTrustedSvvyxSidecarNamespace(namespace: string | undefined): boolean {
+  return namespace === "artifacts" || namespace === "extensions" || namespace === "workflows";
+}
+
+function isShellEnvAssignment(word: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+}
+
+function splitSimpleShellWords(command: string): string[] | null {
+  const words: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else if (quote === '"' && char === "\\") {
+        index += 1;
+        if (index >= command.length) return null;
+        current += command[index]!;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        words.push(current);
+        current = "";
+      }
+      continue;
+    }
+    if (";&|<>()`".includes(char)) {
+      return null;
+    }
+    if (char === "\\") {
+      index += 1;
+      if (index >= command.length) return null;
+      current += command[index]!;
+      continue;
+    }
+    current += char;
+  }
+  if (quote) {
+    return null;
+  }
+  if (current.length > 0) {
+    words.push(current);
+  }
+  return words.length > 0 ? words : null;
+}
+
+async function finalizeSvvyxSubprocessResult(input: {
+  options: DirectToolOptions;
+  result: { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+  svvyxSubprocess: PreparedSvvyxSubprocess | null;
+}): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+  if (!input.svvyxSubprocess) {
+    return input.result;
+  }
+  try {
+    if (!input.svvyxSubprocess.replaySidecar) {
+      return input.result;
+    }
+    const sidecar = readSvvyxSubprocessResult(
+      input.svvyxSubprocess.resultPath,
+      input.svvyxSubprocess.resultKey,
+    );
+    replaySvvyxSubprocessAppLogEvents(input.options, sidecar.appLogEvents);
+    await replaySvvyxSubprocessAppActions(input.options, sidecar.appActions);
+    replaySvvyxSubprocessAgentSettings(input.options, sidecar.agentSettingsState);
+    const retainedOutputArtifacts = Array.isArray(input.result.details.retainedOutputArtifacts)
+      ? { retainedOutputArtifacts: input.result.details.retainedOutputArtifacts }
+      : {};
+    const commandFacts: Record<string, unknown> | undefined =
+      sidecar.commandFacts || Object.keys(retainedOutputArtifacts).length > 0
+        ? {
+            ...sidecar.commandFacts,
+            ...retainedOutputArtifacts,
+          }
+        : undefined;
+    if (commandFacts?.workflowBuildOk === true) {
+      await input.options.onWorkflowsGeneratedPackageChanged?.({
+        reason:
+          typeof commandFacts.workflowSavedExportName === "string"
+            ? "svvyx-workflows-save"
+            : "svvyx-workflows-build",
+        commandFacts,
+      });
+    }
+    const details = {
+      ...input.result.details,
+      ...(commandFacts ? { commandFacts } : {}),
+    };
+    if (sidecar.ok === false) {
+      const stderr =
+        typeof input.result.details.stderr === "string" ? input.result.details.stderr : "";
+      throw new Error(
+        (stderr || stripCommandExitTrailer(readTextContent(input.result))).trim() ||
+          "svvyx command failed.",
+      );
+    }
+    const stdout =
+      typeof input.result.details.stdout === "string"
+        ? input.result.details.stdout
+        : stripCommandExitTrailer(readTextContent(input.result));
+    return {
+      ...input.result,
+      content: stdout ? [{ type: "text", text: stdout.trimEnd() }] : input.result.content,
+      details,
+    };
+  } finally {
+    rmSync(input.svvyxSubprocess.shimDir, { force: true, recursive: true });
+  }
+}
+
+function createSvvyxSubprocessShim(): { dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), "svvyx-subprocess-"));
+  const shimPath = join(dir, "svvyx");
+  const entrypoint = join(import.meta.dir, "svvyx-subprocess.ts");
+  writeFileSync(
+    shimPath,
+    [
+      "#!/bin/sh",
+      `exec ${shellSingleQuote(process.execPath)} ${shellSingleQuote(entrypoint)} "$@"`,
+    ].join("\n") + "\n",
+  );
+  chmodSync(shimPath, 0o755);
+  return { dir };
+}
+
+function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubprocessSidecar {
+  try {
+    const signed = JSON.parse(readFileSync(path, "utf8")) as SignedSvvyxSubprocessSidecar;
+    if (!isValidSvvyxSubprocessSignature(signed, resultKey)) {
+      return { appActions: [], appLogEvents: [], ok: false };
+    }
+    const parsed = signed.payload;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { appActions: [], appLogEvents: [], ok: false };
+    }
+    const appActions = Array.isArray((parsed as { appActions?: unknown }).appActions)
+      ? (parsed as { appActions: SvvyxSubprocessAppAction[] }).appActions
+      : [];
+    const appLogEvents = Array.isArray((parsed as { appLogEvents?: unknown }).appLogEvents)
+      ? (parsed as { appLogEvents: AppLoggerEvent[] }).appLogEvents
+      : [];
+    const commandFacts = (parsed as { commandFacts?: unknown }).commandFacts;
+    const agentSettingsState = (parsed as { agentSettingsState?: unknown }).agentSettingsState;
+    return {
+      appActions,
+      appLogEvents,
+      ...(agentSettingsState && typeof agentSettingsState === "object"
+        ? { agentSettingsState: agentSettingsState as AgentSettingsState }
+        : {}),
+      ...(commandFacts && typeof commandFacts === "object" && !Array.isArray(commandFacts)
+        ? { commandFacts: commandFacts as Record<string, unknown> }
+        : {}),
+      ok: (parsed as { ok?: unknown }).ok === true,
+    };
+  } catch {
+    return { appActions: [], appLogEvents: [], ok: false };
+  }
+}
+
+function isValidSvvyxSubprocessSignature(
+  signed: SignedSvvyxSubprocessSidecar,
+  resultKey: string,
+): boolean {
+  if (!signed || typeof signed !== "object") {
+    return false;
+  }
+  if (typeof signed.signature !== "string") {
+    return false;
+  }
+  const payloadJson = JSON.stringify(signed.payload);
+  const expected = createHmac("sha256", resultKey).update(payloadJson).digest("base64url");
+  const actualBuffer = Buffer.from(signed.signature);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+}
+
+function replaySvvyxSubprocessAppLogEvents(
+  options: DirectToolOptions,
+  events: AppLoggerEvent[],
+): void {
+  for (const event of events) {
+    options.onAppLog?.(event);
+  }
+}
+
+async function replaySvvyxSubprocessAppActions(
+  options: DirectToolOptions,
+  actions: SvvyxSubprocessAppAction[],
+): Promise<void> {
+  for (const action of actions) {
+    if (action.kind === "artifact.open") {
+      const opened = await options.openArtifact?.({
+        sessionId: action.sessionId,
+        artifactId: action.artifactId,
+      });
+      if (!opened) {
+        throw new Error(
+          JSON.stringify({
+            error: {
+              code: "UI_UNAVAILABLE",
+              message: "Artifact inspector UI is not attached to this command runtime.",
+              id: action.artifactId,
+            },
+          }),
+        );
+      }
+    }
+  }
+}
+
+function replaySvvyxSubprocessAgentSettings(
+  options: DirectToolOptions,
+  nextState: AgentSettingsState | undefined,
+): void {
+  const store = options.agentSettingsStore;
+  if (!store || !nextState) {
+    return;
+  }
+  const current = store.getState();
+  store.setExtensionEnv(nextState.extensionEnv);
+  store.setRequestUserInput(nextState.requestUserInput);
+  store.setAppPreferences(nextState.appPreferences);
+  store.setAgentProfile(nextState.agents.special.threadHandler);
+  for (const profile of nextState.agents.orchestrators) {
+    store.setAgentProfile(profile);
+  }
+  for (const profile of current.agents.orchestrators) {
+    if (!profile.locked && !nextState.agents.orchestrators.some((next) => next.id === profile.id)) {
+      store.deleteAgentProfile(profile.id);
+    }
+  }
+  store.reorderOrchestratorProfiles(nextState.agents.orchestrators.map((profile) => profile.id));
+  for (const [key, settings] of Object.entries(nextState.workflowAgents)) {
+    store.setWorkflowAgent(key, settings);
+  }
+  for (const key of Object.keys(current.workflowAgents)) {
+    if (!Object.prototype.hasOwnProperty.call(nextState.workflowAgents, key)) {
+      store.deleteWorkflowAgent(key);
+    }
+  }
+}
+
+function readTextContent(result: { content: { type: "text"; text: string }[] }): string {
+  return result.content.map((block) => block.text).join("\n");
+}
+
+function stripCommandExitTrailer(text: string): string {
+  return text.replace(/\nexit code: 0\s*$/, "");
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function assertPatchDoesNotEditWorkflowsGeneratedOutput(
@@ -783,72 +894,10 @@ function assertPatchRespectsManagedFilesystemPolicy(
   }
 }
 
-function pickWorkflowLogFacts(facts: Record<string, unknown>): Record<string, unknown> {
-  const details: Record<string, unknown> = {};
-  for (const key of [
-    "workflowBuildOk",
-    "workflowDiagnosticCount",
-    "workflowExportCount",
-    "workflowLinkedWorkspaceCount",
-    "workflowSavedExportName",
-    "workflowSavedKind",
-    "workflowSourcePath",
-  ]) {
-    const value = facts[key];
-    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-      details[key] = value;
-    }
-  }
-  return details;
-}
-
-function workflowLogDetails(
-  command: string,
-  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]> | null | undefined,
-  commandId: string | undefined,
-  facts: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    ...(runtime
-      ? {
-          workspaceSessionId: runtime.sessionId,
-          surfacePiSessionId: runtime.surfacePiSessionId,
-          ...(runtime.surfaceThreadId ? { threadId: runtime.surfaceThreadId } : {}),
-        }
-      : {}),
-    ...(commandId ? { commandId } : {}),
-    command,
-    ...facts,
-  };
-}
-
-function workflowErrorCommandFacts(
-  command: string,
-  output: ReturnType<typeof formatSvvyxWorkflowsError>,
-): Record<string, unknown> {
-  const words = splitCommandPreview(command);
-  const workflowCommand = words[2];
-  return {
-    svvyxDispatch: true,
-    extensionId: "workflows",
-    extensionArgv: words.slice(2),
-    ...(workflowCommand ? { workflowCommand } : {}),
-    workflowBuildOk: false,
-    errorCode: output.error.code,
-    ...(output.error.diagnostics
-      ? { workflowDiagnosticCount: output.error.diagnostics.length }
-      : {}),
-  };
-}
-
-function splitCommandPreview(command: string): string[] {
-  return command.trim().split(/\s+/).filter(Boolean);
-}
-
 async function assertDirectToolApproved(input: {
   command?: string;
   commandCwd?: string;
-  commandFamily?: DirectToolCommandFamily;
+  commandFamily?: string;
   options: DirectToolOptions;
   patch?: string;
   toolCallId: string;
@@ -872,20 +921,61 @@ async function assertDirectToolApproved(input: {
   }
 }
 
-function directToolCommandFamily(command: string): DirectToolCommandFamily | undefined {
-  if (isSvvyxArtifactsCommand(command)) {
-    return "svvyx_artifacts";
+async function assertSandboxEscalationApproved(input: {
+  command?: string;
+  commandCwd?: string;
+  options: DirectToolOptions;
+  patch?: string;
+  result:
+    | ReturnType<typeof spawnSync>
+    | { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+  toolCallId: string;
+  toolName: "apply_patch" | "exec_command";
+}): Promise<void> {
+  const approvalMode = resolveApprovalMode(input.options);
+  if (approvalMode === "full-access") {
+    return;
   }
-  if (isSvvyxExtensionsCommand(command)) {
-    return "svvyx_extensions";
+  if (!input.options.approvalBoundary) {
+    throw new Error("Unsandboxed retry after sandbox denial requires approval.");
   }
-  if (isSvvyxWorkflowsCommand(command)) {
-    return "svvyx_workflows";
+  const approval = await input.options.approvalBoundary({
+    approvalMode,
+    command: input.command,
+    context: {
+      reason: "sandbox_denial_escalation",
+      sandboxDenied: true,
+      result: sandboxEscalationResultContext(input.result),
+    },
+    cwd: input.commandCwd ?? input.options.cwd,
+    patch: input.patch,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+  });
+  if (approval.approved === false) {
+    throw new Error(approval.reason?.trim() || "Unsandboxed retry was not approved.");
   }
-  if (isSvvyxRuntimeCommand(command)) {
-    return "svvyx_runtime";
+}
+
+function sandboxEscalationResultContext(
+  result:
+    | ReturnType<typeof spawnSync>
+    | { content: { type: "text"; text: string }[]; details: Record<string, unknown> },
+): Record<string, unknown> {
+  if ("details" in result) {
+    return {
+      exitCode: result.details.exitCode,
+      exitSignal: result.details.exitSignal,
+      stderr: result.details.stderr,
+      stdout: result.details.stdout,
+    };
   }
-  return undefined;
+  return {
+    exitCode: result.status,
+    exitSignal: result.signal,
+    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
+    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
+  };
 }
 
 function assertCommandDoesNotEditWorkflowsGeneratedOutput(input: {
@@ -893,7 +983,7 @@ function assertCommandDoesNotEditWorkflowsGeneratedOutput(input: {
   commandCwd: string;
   options: WorkflowsGeneratedProtectionOptions;
 }): void {
-  if (isSvvyxWorkflowsCommand(input.command) || isSvvyxExtensionsCommand(input.command)) {
+  if (/^svvyx\s+(?:workflows|extensions)(?:\s|$)/.test(input.command.trim())) {
     return;
   }
   if (
@@ -998,6 +1088,31 @@ function directToolFileSystemPolicy(
       ...directEditPolicy.allowedRoots,
     ],
     readOnlyRoots: [...directEditPolicy.protectedRoots, ...directEditPolicy.alwaysProtectedRoots],
+    includeSlashTmp: true,
+    tmpdir: process.env.TMPDIR ?? null,
+  });
+}
+
+function svvyxSubprocessFileSystemPolicy(
+  options: WorkflowsGeneratedProtectionOptions,
+): FileSystemSandboxPolicy {
+  if (resolveApprovalMode(options) === "full-access") {
+    return unrestrictedFileSystemPolicy();
+  }
+  const extensionsRoot = resolvePath(options.extensionsRoot ?? defaultExtensionsRoot());
+  const artifactPolicy = protectedArtifactDirectEditPolicy(options);
+  return buildManagedWorkspaceWriteFileSystemPolicy({
+    cwd: options.cwd,
+    writableRoots: [
+      ...(options.workflowsSourceRoot ? [resolvePath(options.workflowsSourceRoot)] : []),
+      resolvePath(options.workflowsGeneratedPackagePath ?? getWorkflowsGeneratedPackagePath()),
+      effectiveExtensionsGeneratedPackagePath({
+        extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
+        generatedPackagePath: options.workflowsGeneratedPackagePath,
+      }),
+      extensionsRoot,
+      ...artifactPolicy.allowedRoots,
+    ],
     includeSlashTmp: true,
     tmpdir: process.env.TMPDIR ?? null,
   });
@@ -1156,6 +1271,9 @@ function isPathInside(root: string, path: string): boolean {
 async function runExecCommand(input: {
   cwd: string;
   cmd: string;
+  env?: NodeJS.ProcessEnv;
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
   networkAccess: boolean;
   protectedWriteRoots: readonly string[];
   protectedWriteAllowedRoots: readonly string[];
@@ -1170,6 +1288,9 @@ async function runExecCommand(input: {
   const child = spawnShellCommand({
     cwd: input.cwd,
     cmd: input.cmd,
+    env: input.env,
+    fileSystemPolicy: input.fileSystemPolicy,
+    managedSandbox: input.managedSandbox,
     networkAccess: input.networkAccess,
   });
   const session: RunningCommandSession = {
@@ -1178,6 +1299,7 @@ async function runExecCommand(input: {
     stderr: [],
     exitCode: null,
     exitSignal: null,
+    managedSandbox: input.managedSandbox,
     protectedWriteSnapshot,
     liveProjection: input.liveProjection ?? null,
   };
@@ -1228,6 +1350,12 @@ async function runExecCommand(input: {
             stderr,
             stdout,
           }),
+          ...sandboxDenialFacts({
+            exitCode: session.exitCode,
+            managedSandbox: input.managedSandbox,
+            stderr,
+            stdout,
+          }),
           exitCode: session.exitCode,
           exitSignal: session.exitSignal,
           ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
@@ -1249,6 +1377,35 @@ async function runExecCommand(input: {
   } finally {
     input.signal?.removeEventListener("abort", abortHandler);
   }
+}
+
+async function runExecCommandWithSandboxEscalation(input: {
+  input: Parameters<typeof runExecCommand>[0];
+  options: DirectToolOptions;
+  toolCallId: string;
+}): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+  const result = await runExecCommand(input.input);
+  if (
+    result.details.running === true ||
+    result.details.sandboxDenied !== true ||
+    isSandboxHelperBootstrapFailure(
+      `${String(result.details.stdout ?? "")}\n${String(result.details.stderr ?? "")}`,
+    )
+  ) {
+    return result;
+  }
+  await assertSandboxEscalationApproved({
+    command: input.input.cmd,
+    commandCwd: input.input.cwd,
+    options: input.options,
+    result,
+    toolCallId: input.toolCallId,
+    toolName: "exec_command",
+  });
+  return await runExecCommand({
+    ...input.input,
+    managedSandbox: false,
+  });
 }
 
 function recordLiveCommandOutput(
@@ -1381,52 +1538,6 @@ function commandOutputFactStreams(input: {
   };
 }
 
-function recordSvvyxCommandOutput(
-  liveProjection: LiveCommandProjection | null,
-  output: unknown,
-  stream: "stdout" | "stderr",
-): RetainedCommandOutputArtifact[] {
-  const text = JSON.stringify(output, null, 2);
-  recordLiveCommandOutput(liveProjection, stream, text);
-  return retainCommandOutputArtifacts(liveProjection, { [stream]: text });
-}
-
-function commandFactsWithRetainedOutputArtifacts(
-  commandFacts: Record<string, unknown>,
-  retainedOutputArtifacts: RetainedCommandOutputArtifact[],
-): Record<string, unknown> {
-  return retainedOutputArtifacts.length > 0
-    ? { ...commandFacts, retainedOutputArtifacts }
-    : commandFacts;
-}
-
-function recordSvvyxCommandProgress(
-  liveProjection: LiveCommandProjection | null,
-  input: {
-    command: string;
-    facts?: Record<string, unknown> | null;
-    family: "artifacts" | "extensions" | "runtime" | "workflows";
-    phase: "started" | "succeeded" | "failed";
-  },
-): void {
-  if (!liveProjection) {
-    return;
-  }
-  liveProjection.store.recordLifecycleEvent({
-    sessionId: liveProjection.sessionId,
-    kind: "command.progress",
-    subjectKind: "command",
-    subjectId: liveProjection.commandId,
-    data: {
-      command: input.command,
-      family: input.family,
-      phase: input.phase,
-      source: "svvyx-dispatch",
-      ...(input.facts ? { facts: input.facts } : {}),
-    },
-  });
-}
-
 function finishLiveCommandProjection(
   liveProjection: LiveCommandProjection | null,
   result: {
@@ -1434,6 +1545,7 @@ function finishLiveCommandProjection(
     stderr: string;
     exitCode: number | null;
     exitSignal: NodeJS.Signals | null;
+    managedSandbox?: boolean;
   },
 ): void {
   if (!liveProjection) {
@@ -1456,6 +1568,12 @@ function finishLiveCommandProjection(
         stderr: result.stderr,
         stdout: result.stdout,
       }),
+      ...sandboxDenialFacts({
+        exitCode: result.exitCode,
+        managedSandbox: result.managedSandbox ?? liveProjection.managedSandbox,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      }),
       exitCode: result.exitCode,
       exitSignal: result.exitSignal,
       ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
@@ -1469,28 +1587,130 @@ function finishLiveCommandProjection(
   });
 }
 
+function sandboxDenialFacts(input: {
+  exitCode: number | null;
+  managedSandbox: boolean;
+  stderr: string;
+  stdout: string;
+}): Record<string, unknown> {
+  if (!isSandboxDenialOutput(input)) {
+    return {};
+  }
+  return {
+    sandboxDenied: true,
+    sandboxEngine: "macos-seatbelt",
+  };
+}
+
+function isSandboxDenialOutput(input: {
+  exitCode: number | null;
+  managedSandbox: boolean;
+  stderr: string;
+  stdout: string;
+}): boolean {
+  if (!input.managedSandbox || input.exitCode === 0 || input.exitCode === 127) {
+    return false;
+  }
+  const combined = `${input.stdout}\n${input.stderr}`;
+  const normalized = combined.toLowerCase();
+  if (!hasSandboxHelperOriginMarker(combined)) {
+    return false;
+  }
+  if (/\b(command not found|parse error|syntax error)\b/.test(normalized)) {
+    return false;
+  }
+  return (
+    normalized.includes("sandbox-exec: sandbox_apply:") ||
+    normalized.includes("operation not permitted") ||
+    normalized.includes("permission denied") ||
+    normalized.includes("read-only file system") ||
+    normalized.includes("failed to write file") ||
+    normalized.includes("deny(")
+  );
+}
+
+function isSandboxHelperBootstrapFailure(output: string): boolean {
+  return output.toLowerCase().includes("sandbox-exec: sandbox_apply:");
+}
+
+function hasSandboxHelperOriginMarker(output: string): boolean {
+  return output.includes("sandbox-exec:") || /^Sandbox:/m.test(output);
+}
+
 function spawnShellCommand(input: {
   cwd: string;
   cmd: string;
+  env?: NodeJS.ProcessEnv;
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
   networkAccess: boolean;
 }): ChildProcessWithoutNullStreams {
   const shell = getShell();
-  if (input.networkAccess) {
+  const env = { ...process.env, ...input.env };
+  if (!input.managedSandbox) {
     return spawn(shell, ["-lc", input.cmd], {
       cwd: input.cwd,
-      env: process.env,
+      env,
     });
   }
-  if (!existsSync("/usr/bin/sandbox-exec")) {
-    throw new Error("networkAccess=false requires /usr/bin/sandbox-exec to restrict networking.");
-  }
   return spawn(
-    "/usr/bin/sandbox-exec",
-    ["-p", NETWORK_DISABLED_SANDBOX_PROFILE, shell, "-lc", input.cmd],
+    resolveSandboxHelperPath(),
+    buildSandboxHelperArgs({
+      command: [shell, "-lc", input.cmd],
+      cwd: input.cwd,
+      fileSystemPolicy: input.fileSystemPolicy,
+      networkAccess: input.networkAccess,
+    }),
     {
       cwd: input.cwd,
-      env: process.env,
+      env,
     },
+  );
+}
+
+function spawnPatchCommand(input: {
+  cwd: string;
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
+  patch: string;
+}): ReturnType<typeof spawnSync> {
+  const command = ["patch", "-p0", "--forward"] as const;
+  if (!input.managedSandbox) {
+    return spawnSync("patch", command.slice(1), {
+      cwd: input.cwd,
+      input: input.patch,
+      encoding: "utf8",
+    });
+  }
+  return spawnSync(
+    resolveSandboxHelperPath(),
+    buildSandboxHelperArgs({
+      command,
+      cwd: input.cwd,
+      fileSystemPolicy: input.fileSystemPolicy,
+      networkAccess: false,
+    }),
+    {
+      cwd: input.cwd,
+      input: input.patch,
+      encoding: "utf8",
+    },
+  );
+}
+
+function isEscalatableSandboxDeniedPatchResult(
+  result: ReturnType<typeof spawnSync>,
+  managedSandbox: boolean,
+): boolean {
+  const stderr = typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? "");
+  const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? "");
+  return (
+    isSandboxDenialOutput({
+      exitCode: result.status,
+      managedSandbox,
+      stderr,
+      stdout,
+    }) && !isSandboxHelperBootstrapFailure(`${stdout}\n${stderr}`)
   );
 }
 
@@ -1499,6 +1719,13 @@ function resolveNetworkAccess(options: DirectToolOptions): boolean {
     return options.networkAccess() !== false;
   }
   return options.networkAccess !== false;
+}
+
+function resolveManagedSandbox(options: DirectToolOptions): boolean {
+  if (typeof options.managedSandbox === "function") {
+    return options.managedSandbox() !== false;
+  }
+  return options.managedSandbox !== false;
 }
 
 function resolveApprovalMode(options: Pick<DirectToolOptions, "approvalMode">): ApprovalMode {
@@ -1709,10 +1936,6 @@ function formatCommandOutput(input: {
     parts.push(`exit code: ${input.exitCode}`);
   }
   return parts.filter(Boolean).join("\n");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function findActiveExecCommand(input: {

@@ -1,13 +1,6 @@
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
 import type { SvvyActorKind } from "./actor-capabilities";
-import {
-  buildUserSvvyxTypescriptDeclaration,
-  isSvvyxCommandManifest,
-  type SvvyxCommandManifest,
-} from "./svvyx-typescript-declarations";
 import { resolveActorExtensionState } from "../shared/extensions";
 import type { ExtensionRecord } from "../shared/extensions";
 
@@ -165,17 +158,71 @@ interface LoadedExtensionsClient {
 }
 `.trim();
 
+const EXECUTE_TYPESCRIPT_IMPORT_MODULE_DECLARATIONS = `
+declare module "incur/client" {
+  export namespace Client {
+    class ClientError extends Error {
+      name: string;
+      shortMessage: string;
+      details?: string;
+      code: string | undefined;
+      data: unknown | undefined;
+      error: unknown | undefined;
+      fieldErrors: unknown[] | undefined;
+      meta: IncurRpcMeta | undefined;
+      retryable: boolean | undefined;
+      status: number | undefined;
+    }
+  }
+
+  export const Resources: Record<string, unknown>;
+  export const Run: Record<string, unknown>;
+}
+
+declare module "incur" {
+  export const Cli: unknown;
+  export const z: unknown;
+}
+`.trim();
+
+const SVVY_EXTENSIONS_IMPORT_MODULE_DECLARATION = `
+declare module "@svvy/extensions" {
+  export const Extensions: unknown;
+  export type ExtensionId = string;
+}
+`.trim();
+
+const SVVY_WORKFLOWS_IMPORT_MODULE_DECLARATION = `
+declare module "@svvy/workflows" {
+  export const Agents: unknown;
+  export const Components: unknown;
+  export const Prompts: unknown;
+  export const Workflows: unknown;
+}
+`.trim();
+
 export function buildExecuteTypescriptApiDeclaration(
   actor: SvvyActorKind,
   options: {
     extensionsRoot?: string;
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
   } = {},
 ): string {
   const loadedExtensionIds =
     options.loadedExtensionIds ?? resolveActorExtensionState({ actor }).loadedExtensionIds;
-  const sections = [EXECUTE_TYPESCRIPT_API_DECLARATION.trim()];
+  const sections = [
+    EXECUTE_TYPESCRIPT_API_DECLARATION.trim(),
+    EXECUTE_TYPESCRIPT_IMPORT_MODULE_DECLARATIONS,
+  ];
+  if (generatedPackageAvailable(options.workflowsExtensionsGeneratedPackagePath)) {
+    sections.push(SVVY_EXTENSIONS_IMPORT_MODULE_DECLARATION);
+  }
+  if (generatedPackageAvailable(options.workflowsGeneratedPackagePath)) {
+    sections.push(SVVY_WORKFLOWS_IMPORT_MODULE_DECLARATION);
+  }
   if (loadedExtensionIds.includes("artifacts")) {
     sections.push(ARTIFACTS_CLIENT_DECLARATION);
   }
@@ -197,83 +244,10 @@ function buildLoadedUserExtensionDeclarations(input: {
   loadedExtensionIds: readonly string[];
   loadedExtensionRecords: readonly ExtensionRecord[];
 }): string[] {
-  if (input.loadedExtensionRecords.length === 0) {
-    return [];
-  }
-  const loaded = new Set(input.loadedExtensionIds);
-  const root = resolveExtensionsRoot(input.extensionsRoot);
-  const declarations: string[] = [];
-  const seen = new Set<string>();
-  for (const record of input.loadedExtensionRecords) {
-    if (
-      seen.has(record.id) ||
-      !loaded.has(record.id) ||
-      record.category !== "user" ||
-      record.interface !== "svvyx" ||
-      !record.typescriptApiEnabled ||
-      !isSafeUserExtensionId(record.id)
-    ) {
-      continue;
-    }
-    const commandManifest = readMatchingCurrentBuildCommandManifest(root, record.id);
-    if (!commandManifest) {
-      continue;
-    }
-    seen.add(record.id);
-    declarations.push(
-      buildUserSvvyxTypescriptDeclaration({
-        commandManifest,
-        extensionId: record.id,
-      }).trim(),
-    );
-  }
-  return declarations;
+  void input;
+  return [];
 }
 
-function isSafeUserExtensionId(extensionId: string): boolean {
-  return /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(extensionId);
-}
-
-function readMatchingCurrentBuildCommandManifest(
-  extensionsRoot: string,
-  extensionId: string,
-): SvvyxCommandManifest | null {
-  const manifestPath = join(
-    extensionsRoot,
-    "builds",
-    "extensions",
-    extensionId,
-    "current",
-    "manifest.json",
-  );
-  if (!existsSync(manifestPath)) {
-    return null;
-  }
-  try {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-    if (
-      manifest.schemaVersion === 1 &&
-      manifest.extensionId === extensionId &&
-      manifest.interface === "svvyx" &&
-      typeof manifest.module === "string" &&
-      manifest.typescriptTypes ===
-        expectedUserSvvyxTypescriptTypesPath(extensionsRoot, extensionId) &&
-      isSvvyxCommandManifest(manifest.commandManifest) &&
-      Array.isArray(manifest.env) &&
-      Array.isArray(manifest.dependencies)
-    ) {
-      return manifest.commandManifest;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function expectedUserSvvyxTypescriptTypesPath(extensionsRoot: string, extensionId: string): string {
-  return join(extensionsRoot, "generated", "extensions", extensionId, "types.d.ts");
-}
-
-function resolveExtensionsRoot(extensionsRoot: string | undefined): string {
-  return resolve(extensionsRoot ?? join(homedir(), ".config", "svvy", "extensions"));
+function generatedPackageAvailable(packagePath: string | undefined): boolean {
+  return Boolean(packagePath && existsSync(packagePath));
 }

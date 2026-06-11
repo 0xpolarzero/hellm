@@ -2,7 +2,11 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { Client } from "incur/client";
 import type { Static } from "typebox";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename } from "node:path";
+import { join } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
 import type { SvvyActorKind } from "./actor-capabilities";
@@ -11,12 +15,17 @@ import type { AppLoggerEvent } from "./app-logger";
 import { redactAppLogValue } from "./app-log-store";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import type { SvvyConsole } from "./execute-typescript-api-contract";
+import {
+  buildManagedWorkspaceWriteFileSystemPolicy,
+  unrestrictedFileSystemPolicy,
+  type FileSystemSandboxPolicy,
+} from "./filesystem-sandbox-policy";
 import {
   createMacOsKeychainExtensionEnvSecretStore,
   type ExtensionEnvSecretStore,
 } from "./extension-env-secret-store";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
 import type {
   StructuredCommandRecord,
   StructuredCommandExecutor,
@@ -37,11 +46,7 @@ import {
   type SvvyxWorkflowsModelCatalogReader,
 } from "./svvyx-workflows-command";
 import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
-import {
-  formatSvvyxRuntimeError,
-  runSvvyxRuntimeGeneratedClientCommand,
-  type SvvyxRuntimeEnvValues,
-} from "./svvyx-runtime-command";
+import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
 import { resolveExtensionRecords } from "./svvyx-extensions-command";
 import { resolveActorExtensionState } from "../shared/extensions";
 import type { ApprovalMode } from "../shared/agent-settings";
@@ -96,14 +101,37 @@ const SOURCE_FILE = "execute-typescript.ts";
 const DIAGNOSTICS_FILE = "execute-typescript.diagnostics.json";
 const LOGS_FILE = "execute-typescript.logs.log";
 const WRAPPER_PREFIX =
-  "export default async function __svvy(extensions: LoadedExtensionsClient, console: SvvyConsole, __svvyIncurClient: IncurClientModule) {";
+  "export default async function __svvy(extensions: LoadedExtensionsClient, console: SvvyConsole, __svvyAllowedModules: Record<string, Record<string, unknown>>) {";
 const WRAPPER_SUFFIX = "}";
 const WRAPPER_LINE_OFFSET = 1;
 const INCUR_CLIENT_MODULE = "incur/client";
 const ALLOWED_INCUR_CLIENT_IMPORTS = new Set(["Client", "Resources", "Run"]);
+const INCUR_MODULE = "incur";
+const ALLOWED_INCUR_IMPORTS = new Set(["Cli", "z"]);
+const SVVY_EXTENSIONS_MODULE = "@svvy/extensions";
+const ALLOWED_SVVY_EXTENSIONS_IMPORTS = new Set(["Extensions"]);
+const SVVY_WORKFLOWS_MODULE = "@svvy/workflows";
+const ALLOWED_SVVY_WORKFLOWS_IMPORTS = new Set(["Agents", "Components", "Prompts", "Workflows"]);
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
 const EXECUTE_TYPESCRIPT_SECRET_KEY_PATTERN =
   /(^|[-_])(api[-_]?key|access[-_]?token|refresh[-_]?token|auth|authorization|cookie|secret|password|token|credential)([-_]|$)/i;
+const EXECUTE_TYPESCRIPT_RUNTIME_ENV_ALLOWLIST = [
+  "BUN_INSTALL",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TMP",
+  "TMPDIR",
+  "TEMP",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+] as const;
 
 export type ExecuteTypescriptContext = {
   sessionId: string;
@@ -119,6 +147,15 @@ export type ExecuteTypescriptContext = {
 };
 
 type CapturedConsoleLevel = "log" | "info" | "warn" | "error";
+
+export type ExecuteTypescriptRuntimeProcessSpawner = (input: {
+  command: readonly string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
+  networkAccess: boolean;
+}) => ChildProcessWithoutNullStreams;
 
 type ExecuteTypescriptToolOptions = {
   cwd: string;
@@ -144,6 +181,9 @@ type ExecuteTypescriptToolOptions = {
   onAppLog?: (event: AppLoggerEvent) => void;
   approvalBoundary?: ExecuteTypescriptApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
+  managedSandbox?: boolean | (() => boolean);
+  networkAccess?: boolean | (() => boolean);
+  runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
 };
 
 export type ExecuteTypescriptApprovalBoundary = RuntimeApprovalBoundary;
@@ -201,6 +241,9 @@ type IncurClientImportBinding = {
   importedName: string;
   localName: string;
 };
+type GeneratedModuleImportBinding = IncurClientImportBinding & {
+  moduleName: string;
+};
 
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
 
@@ -256,6 +299,9 @@ export function createExecuteTypescriptTool(
         onAppLog: options.onAppLog,
         approvalBoundary: options.approvalBoundary,
         approvalMode: options.approvalMode,
+        managedSandbox: options.managedSandbox,
+        networkAccess: options.networkAccess,
+        runtimeProcessSpawner: options.runtimeProcessSpawner,
         toolCallId: _toolCallId,
       });
 
@@ -322,6 +368,9 @@ export async function runExecuteTypescript(input: {
   onAppLog?: (event: AppLoggerEvent) => void;
   approvalBoundary?: ExecuteTypescriptApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
+  managedSandbox?: boolean | (() => boolean);
+  networkAccess?: boolean | (() => boolean);
+  runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
   toolCallId: string;
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createOrReuseStreamingCommand({
@@ -418,6 +467,8 @@ export async function runExecuteTypescript(input: {
   const preflight = compileAndTypecheck(input.typescriptCode, {
     context: input.context,
     extensionsRoot: input.extensionsRoot,
+    workflowsExtensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
+    workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
   });
   if (preflight.errors.length > 0) {
     const diagnosticsArtifact = input.store.createArtifact({
@@ -476,8 +527,33 @@ export async function runExecuteTypescript(input: {
   const logs: string[] = [];
   const childCommandFacts: Array<{ status: StructuredCommandStatus }> = [];
   const incurClientModule = createIncurClientModule();
+  const runtimeSandbox = resolveExecuteTypescriptRuntimeSandbox(input, approvalMode);
+  const extensions = createExecuteTypescriptExtensions({
+    cwd: input.cwd,
+    store: input.store,
+    context: input.context,
+    parentCommand,
+    childCommandFacts,
+    incurClientModule,
+    openArtifact: input.openArtifact,
+    onWorkflowsGeneratedPackageChanged: input.onWorkflowsGeneratedPackageChanged,
+    workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
+    extensionsRoot: input.extensionsRoot,
+    workflowsModelCatalog: input.workflowsModelCatalog,
+    workflowsSourceRoot: input.workflowsSourceRoot,
+    workflowsWorkspaceCwds: input.workflowsWorkspaceCwds,
+    agentSettingsStore: input.agentSettingsStore,
+    env: input.env,
+    extensionsBuildRoot: input.extensionsBuildRoot,
+    extensionsCliProbe: input.extensionsCliProbe,
+    extensionEnvSecretStore: input.extensionEnvSecretStore,
+    extensionsEnvValues: input.extensionsEnvValues,
+    onAppLog: input.onAppLog,
+  });
   try {
-    const resultValue = await runCompiledSnippet(preflight.javascript, {
+    const resultValue = await runCompiledSnippetInRuntimeProcess(preflight.javascript, {
+      cwd: input.cwd,
+      signal: input.signal,
       logs,
       onConsoleLine: (line) => {
         recordExecuteTypescriptOutputEvent({
@@ -488,28 +564,14 @@ export async function runExecuteTypescript(input: {
         });
       },
       incurClientModule,
-      extensions: createExecuteTypescriptExtensions({
-        cwd: input.cwd,
-        store: input.store,
-        context: input.context,
-        parentCommand,
-        childCommandFacts,
-        incurClientModule,
-        openArtifact: input.openArtifact,
-        onWorkflowsGeneratedPackageChanged: input.onWorkflowsGeneratedPackageChanged,
-        workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
-        extensionsRoot: input.extensionsRoot,
-        workflowsModelCatalog: input.workflowsModelCatalog,
-        workflowsSourceRoot: input.workflowsSourceRoot,
-        workflowsWorkspaceCwds: input.workflowsWorkspaceCwds,
-        agentSettingsStore: input.agentSettingsStore,
-        env: input.env,
-        extensionsBuildRoot: input.extensionsBuildRoot,
-        extensionsCliProbe: input.extensionsCliProbe,
-        extensionEnvSecretStore: input.extensionEnvSecretStore,
-        extensionsEnvValues: input.extensionsEnvValues,
-        onAppLog: input.onAppLog,
-      }),
+      extensions,
+      runtimeProcessSpawner: input.runtimeProcessSpawner,
+      runtimeExtensionIds: Object.keys(extensions),
+      runtimeModulePaths: {
+        [SVVY_EXTENSIONS_MODULE]: input.workflowsExtensionsGeneratedPackagePath,
+        [SVVY_WORKFLOWS_MODULE]: input.workflowsGeneratedPackagePath,
+      },
+      runtimeSandbox,
     });
     const redactedResultValue = redactExecuteTypescriptValue(resultValue);
     const logsArtifact =
@@ -531,7 +593,10 @@ export async function runExecuteTypescript(input: {
       commandId: parentCommand.id,
       status: "succeeded",
       summary: parentRollup.summary ?? summarizeResult(redactedResultValue),
-      facts: parentRollup.facts,
+      facts: {
+        ...parentRollup.facts,
+        ...executeTypescriptSandboxFacts(runtimeSandbox),
+      },
     });
     input.onAppLog?.({
       level: "info",
@@ -579,7 +644,10 @@ export async function runExecuteTypescript(input: {
       commandId: parentCommand.id,
       status: "failed",
       summary: message,
-      facts: parentRollup.facts,
+      facts: {
+        ...parentRollup.facts,
+        ...executeTypescriptSandboxFacts(runtimeSandbox),
+      },
       error: message,
     });
     input.onAppLog?.({
@@ -622,11 +690,70 @@ function resolveExecuteTypescriptApprovalMode(input: {
   return input.approvalMode ?? "auto-review";
 }
 
+function resolveExecuteTypescriptRuntimeSandbox(
+  input: {
+    cwd: string;
+    managedSandbox?: boolean | (() => boolean);
+    networkAccess?: boolean | (() => boolean);
+  },
+  approvalMode: ApprovalMode,
+): {
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
+  networkAccess: boolean;
+} {
+  const fullAccess = approvalMode === "full-access";
+  return {
+    fileSystemPolicy: fullAccess
+      ? unrestrictedFileSystemPolicy()
+      : buildManagedWorkspaceWriteFileSystemPolicy({
+          cwd: input.cwd,
+          includeSlashTmp: true,
+          tmpdir: process.env.TMPDIR ?? null,
+        }),
+    managedSandbox: fullAccess ? false : resolveExecuteTypescriptManagedSandbox(input),
+    networkAccess: fullAccess ? true : resolveExecuteTypescriptNetworkAccess(input),
+  };
+}
+
+function resolveExecuteTypescriptManagedSandbox(input: {
+  managedSandbox?: boolean | (() => boolean);
+}): boolean {
+  if (typeof input.managedSandbox === "function") {
+    return input.managedSandbox() !== false;
+  }
+  return input.managedSandbox !== false;
+}
+
+function resolveExecuteTypescriptNetworkAccess(input: {
+  networkAccess?: boolean | (() => boolean);
+}): boolean {
+  if (typeof input.networkAccess === "function") {
+    return input.networkAccess() !== false;
+  }
+  return input.networkAccess !== false;
+}
+
+function executeTypescriptSandboxFacts(input: {
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
+  networkAccess: boolean;
+}): Record<string, unknown> {
+  return {
+    managedSandbox: input.managedSandbox,
+    networkAccess: input.networkAccess,
+    fileSystemPolicyKind: input.fileSystemPolicy.kind,
+    fileSystemPolicyEntryCount: input.fileSystemPolicy.entries.length,
+  };
+}
+
 function compileAndTypecheck(
   typescriptCode: string,
   input: {
     context: Pick<ExecuteTypescriptContext, "actor" | "loadedExtensionIds">;
     extensionsRoot?: string;
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
   },
 ): {
   javascript: string;
@@ -634,7 +761,10 @@ function compileAndTypecheck(
   warnings: StructuredDiagnostic[];
   stage: "compile" | "typecheck";
 } {
-  const prepared = prepareTypescriptSnippet(typescriptCode);
+  const prepared = prepareTypescriptSnippet(typescriptCode, {
+    [SVVY_EXTENSIONS_MODULE]: input.workflowsExtensionsGeneratedPackagePath,
+    [SVVY_WORKFLOWS_MODULE]: input.workflowsGeneratedPackagePath,
+  });
   const context = input.context;
   if (prepared.error) {
     return {
@@ -646,8 +776,9 @@ function compileAndTypecheck(
   }
   const wrappedSource = [
     WRAPPER_PREFIX,
-    ...prepared.incurClientImportBindings.map(
-      (binding) => `const ${binding.localName} = __svvyIncurClient.${binding.importedName};`,
+    ...prepared.moduleImportBindings.map(
+      (binding) =>
+        `const ${binding.localName} = __svvyAllowedModules[${JSON.stringify(binding.moduleName)}].${binding.importedName} as typeof import(${JSON.stringify(binding.moduleName)})[${JSON.stringify(binding.importedName)}];`,
     ),
     prepared.typescriptCode,
     WRAPPER_SUFFIX,
@@ -672,6 +803,8 @@ function compileAndTypecheck(
           context.loadedExtensionIds ?? [],
           input.extensionsRoot,
         ),
+        workflowsExtensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
+        workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
       }),
     ],
   ]);
@@ -733,59 +866,123 @@ function compileAndTypecheck(
   };
 }
 
-function prepareTypescriptSnippet(typescriptCode: string): {
+function prepareTypescriptSnippet(
+  typescriptCode: string,
+  generatedPackagePaths: Record<string, string | undefined>,
+): {
   typescriptCode: string;
-  incurClientImportBindings: IncurClientImportBinding[];
+  moduleImportBindings: GeneratedModuleImportBinding[];
   error?: StructuredDiagnostic;
 } {
-  const incurClientImportBindings: IncurClientImportBinding[] = [];
+  const moduleImportBindings: GeneratedModuleImportBinding[] = [];
   const localNames = new Set<string>();
-  const importPattern = /^\s*import\s*\{([^}]+)\}\s*from\s*["']incur\/client["'];?\s*$/gm;
+  let firstError: StructuredDiagnostic | undefined;
+  const importPattern = /^\s*import\s+(type\s+)?\{([^}]+)\}\s*from\s*["']([^"']+)["'];?\s*$/gm;
   const rewrittenCode = typescriptCode.replace(
     importPattern,
-    (statement, importList: string, offset: number) => {
+    (
+      statement,
+      typeOnly: string | undefined,
+      importList: string,
+      moduleName: string,
+      offset: number,
+    ) => {
       const line = lineNumberAtOffset(typescriptCode, offset);
-      const parsed = parseIncurClientImportList(importList, localNames);
-      if (!parsed.success) {
-        incurClientImportBindings.splice(0, incurClientImportBindings.length);
-        incurClientImportBindings.push({
-          importedName: "__invalid__",
-          localName: String(line),
-        });
+      const modulePolicy = allowedImportPolicy(moduleName, generatedPackagePaths);
+      if (!modulePolicy) {
+        firstError ??= {
+          severity: "error",
+          message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+          file: basename(SOURCE_FILE),
+          line,
+          column: 1,
+          code: "svvy-import",
+        };
         return statement;
       }
-      incurClientImportBindings.push(...parsed.bindings);
+      if (modulePolicy.available === false) {
+        firstError ??= {
+          severity: "error",
+          message: `Import "${moduleName}" is not available in this execute_typescript context.`,
+          file: basename(SOURCE_FILE),
+          line,
+          column: 1,
+          code: "svvy-import-unavailable",
+        };
+        return statement;
+      }
+      const parsed = parseGeneratedModuleImportList(
+        importList,
+        localNames,
+        modulePolicy.allowedNames,
+      );
+      if (!parsed.success) {
+        firstError ??= {
+          severity: "error",
+          message: `Only named imports ${[...modulePolicy.allowedNames].join(", ")} are supported from "${moduleName}".`,
+          file: basename(SOURCE_FILE),
+          line,
+          column: 1,
+          code: "svvy-import",
+        };
+        return statement;
+      }
+      if (!typeOnly) {
+        moduleImportBindings.push(
+          ...parsed.bindings.map((binding) => ({ ...binding, moduleName })),
+        );
+      }
       return "";
     },
   );
 
-  const invalid = incurClientImportBindings.find(
-    (binding) => binding.importedName === "__invalid__",
-  );
-  if (invalid) {
+  if (firstError) {
     return {
       typescriptCode,
-      incurClientImportBindings: [],
-      error: {
-        severity: "error",
-        message: `Only named imports Client, Resources, and Run are supported from "${INCUR_CLIENT_MODULE}".`,
-        file: basename(SOURCE_FILE),
-        line: Number(invalid.localName),
-        column: 1,
-        code: "svvy-incur-import",
-      },
+      moduleImportBindings: [],
+      error: firstError,
     };
   }
 
   return {
     typescriptCode: rewrittenCode,
-    incurClientImportBindings,
+    moduleImportBindings,
   };
 }
 
-function parseIncurClientImportList(
+function allowedImportPolicy(
+  moduleName: string,
+  generatedPackagePaths: Record<string, string | undefined>,
+): { allowedNames: ReadonlySet<string>; available: boolean } | null {
+  if (moduleName === INCUR_CLIENT_MODULE) {
+    return { allowedNames: ALLOWED_INCUR_CLIENT_IMPORTS, available: true };
+  }
+  if (moduleName === INCUR_MODULE) {
+    return { allowedNames: ALLOWED_INCUR_IMPORTS, available: true };
+  }
+  if (moduleName === SVVY_EXTENSIONS_MODULE) {
+    return {
+      allowedNames: ALLOWED_SVVY_EXTENSIONS_IMPORTS,
+      available: generatedPackageAvailable(generatedPackagePaths[moduleName]),
+    };
+  }
+  if (moduleName === SVVY_WORKFLOWS_MODULE) {
+    return {
+      allowedNames: ALLOWED_SVVY_WORKFLOWS_IMPORTS,
+      available: generatedPackageAvailable(generatedPackagePaths[moduleName]),
+    };
+  }
+  return null;
+}
+
+function generatedPackageAvailable(packagePath: string | undefined): boolean {
+  return Boolean(packagePath && existsSync(packagePath));
+}
+
+function parseGeneratedModuleImportList(
   importList: string,
   localNames: Set<string>,
+  allowedNames: ReadonlySet<string>,
 ): { success: true; bindings: IncurClientImportBinding[] } | { success: false } {
   const bindings: IncurClientImportBinding[] = [];
   for (const rawSpecifier of importList.split(",")) {
@@ -803,7 +1000,7 @@ function parseIncurClientImportList(
     }
     const localName = match[2] ?? importedName;
     if (
-      !ALLOWED_INCUR_CLIENT_IMPORTS.has(importedName) ||
+      !allowedNames.has(importedName) ||
       !IDENTIFIER_PATTERN.test(localName) ||
       localNames.has(localName)
     ) {
@@ -846,41 +1043,457 @@ function mapDiagnostic(diagnostic: ts.Diagnostic): StructuredDiagnostic {
   };
 }
 
-async function runCompiledSnippet(
+type ExecuteTypescriptRuntimeToHostMessage =
+  | {
+      type: "console";
+      level: CapturedConsoleLevel;
+      args: unknown[];
+    }
+  | {
+      type: "extensionRun";
+      requestId: number;
+      extensionId: string;
+      commandId: string;
+      input?: GeneratedUserClientInput | { options?: Record<string, unknown> };
+    }
+  | {
+      type: "result";
+      value?: unknown;
+    }
+  | {
+      type: "error";
+      error: {
+        message: string;
+        name?: string;
+        stack?: string;
+      };
+    };
+
+type ExecuteTypescriptHostToRuntimeMessage =
+  | {
+      type: "extensionResult";
+      requestId: number;
+      value?: unknown;
+    }
+  | {
+      type: "extensionError";
+      requestId: number;
+      error: {
+        message: string;
+        name?: string;
+        code?: string;
+        data?: unknown;
+        fieldErrors?: unknown;
+      };
+    };
+
+async function runCompiledSnippetInRuntimeProcess(
   javascript: string,
   runtime: {
+    cwd: string;
+    signal?: AbortSignal;
     logs: string[];
     onConsoleLine?: (line: string) => void;
     extensions: ExecuteTypescriptExtensions;
     incurClientModule: IncurClientModuleRuntime;
+    runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
+    runtimeExtensionIds: readonly string[];
+    runtimeModulePaths: Record<string, string | undefined>;
+    runtimeSandbox: {
+      fileSystemPolicy: FileSystemSandboxPolicy;
+      managedSandbox: boolean;
+      networkAccess: boolean;
+    };
   },
 ): Promise<unknown> {
-  type CompiledSnippetModuleExports = {
-    default?: (
-      extensions: ExecuteTypescriptExtensions,
-      console: SvvyConsole,
-      incurClient: IncurClientModuleRuntime,
-    ) => Promise<unknown>;
+  const runtimeDir = mkdtempSync(join(tmpdir(), "svvy-execute-typescript-runtime-"));
+  const runtimePath = join(runtimeDir, "runtime.js");
+  writeFileSync(
+    runtimePath,
+    buildExecuteTypescriptRuntimeProcessSource({
+      javascript,
+      runtimeExtensionIds: runtime.runtimeExtensionIds,
+      runtimeModulePaths: runtime.runtimeModulePaths,
+    }),
+  );
+  const child = spawnExecuteTypescriptRuntimeProcess({
+    cwd: runtime.cwd,
+    env: buildExecuteTypescriptRuntimeEnv(process.env),
+    fileSystemPolicy: runtime.runtimeSandbox.fileSystemPolicy,
+    managedSandbox: runtime.runtimeSandbox.managedSandbox,
+    networkAccess: runtime.runtimeSandbox.networkAccess,
+    runtimeProcessSpawner: runtime.runtimeProcessSpawner,
+    runtimePath,
+  });
+  const sendResponse = (message: ExecuteTypescriptHostToRuntimeMessage) => {
+    if (!child.stdin.writable) {
+      throw new Error("execute_typescript runtime is not accepting extension responses.");
+    }
+    child.stdin.write(`${JSON.stringify(message)}\n`);
   };
-  type CompiledSnippetModule = {
-    exports: CompiledSnippetModuleExports;
-  };
-  const module: CompiledSnippetModule = {
-    exports: {},
-  };
-  const execute = new Function("module", "exports", javascript) as (
-    module: CompiledSnippetModule,
-    exports: CompiledSnippetModuleExports,
-  ) => void;
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const messagePromises: Promise<void>[] = [];
+  let stdoutBuffer = "";
+  let resultSettled = false;
+  let resultValue: unknown;
+  let runtimeError: Error | null = null;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    const text = String(chunk);
+    stdout.push(text);
+    stdoutBuffer += text;
+    let newlineIndex = stdoutBuffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = stdoutBuffer.slice(0, newlineIndex);
+      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+      if (line.trim().length > 0) {
+        const messagePromise = handleExecuteTypescriptRuntimeMessage(line, runtime, sendResponse)
+          .then((messageResult) => {
+            if (messageResult.kind === "result") {
+              resultSettled = true;
+              resultValue = messageResult.value;
+            } else if (messageResult.kind === "error") {
+              resultSettled = true;
+              runtimeError = messageResult.error;
+            }
+          })
+          .catch((error) => {
+            resultSettled = true;
+            runtimeError =
+              error instanceof Error ? error : new Error("execute_typescript runtime failed.");
+          });
+        messagePromises.push(messagePromise);
+      }
+      newlineIndex = stdoutBuffer.indexOf("\n");
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr.push(String(chunk));
+  });
+  const abortHandler = () => child.kill();
+  runtime.signal?.addEventListener("abort", abortHandler, { once: true });
+  try {
+    const exit = await waitForExecuteTypescriptRuntimeProcess(child);
+    await Promise.all(messagePromises);
+    if (stdoutBuffer.trim().length > 0) {
+      const messageResult = await handleExecuteTypescriptRuntimeMessage(
+        stdoutBuffer,
+        runtime,
+        sendResponse,
+      );
+      if (messageResult.kind === "result") {
+        resultSettled = true;
+        resultValue = messageResult.value;
+      } else if (messageResult.kind === "error") {
+        resultSettled = true;
+        runtimeError = messageResult.error;
+      }
+    }
+    if (runtimeError) {
+      throw runtimeError;
+    }
+    if (!resultSettled) {
+      const errorText = stderr.join("").trim() || stdout.join("").trim();
+      throw new Error(
+        errorText ||
+          `execute_typescript runtime exited without a result (${formatRuntimeExit(exit)}).`,
+      );
+    }
+    if (exit.signal !== null || (exit.code !== null && exit.code !== 0)) {
+      throw new Error(
+        stderr.join("").trim() ||
+          `execute_typescript runtime failed with ${formatRuntimeExit(exit)}.`,
+      );
+    }
+    return resultValue;
+  } finally {
+    runtime.signal?.removeEventListener("abort", abortHandler);
+    rmSync(runtimeDir, { force: true, recursive: true });
+  }
+}
+
+async function handleExecuteTypescriptRuntimeMessage(
+  line: string,
+  runtime: {
+    logs: string[];
+    onConsoleLine?: (line: string) => void;
+    extensions: ExecuteTypescriptExtensions;
+  },
+  sendResponse: (message: ExecuteTypescriptHostToRuntimeMessage) => void,
+): Promise<
+  { kind: "pending" } | { kind: "result"; value: unknown } | { kind: "error"; error: Error }
+> {
+  let message: ExecuteTypescriptRuntimeToHostMessage;
+  try {
+    message = JSON.parse(line) as ExecuteTypescriptRuntimeToHostMessage;
+  } catch {
+    throw new Error(`execute_typescript runtime emitted invalid protocol output: ${line}`);
+  }
+  if (message.type === "console") {
+    const capturedLine = appendCapturedConsoleLine(runtime.logs, message.level, ...message.args);
+    if (capturedLine) {
+      runtime.onConsoleLine?.(capturedLine);
+    }
+    return { kind: "pending" };
+  }
+  if (message.type === "extensionRun") {
+    await handleExecuteTypescriptExtensionRunMessage(message, runtime.extensions, sendResponse);
+    return { kind: "pending" };
+  }
+  if (message.type === "result") {
+    return { kind: "result", value: message.value };
+  }
+  if (message.type === "error") {
+    const error = new Error(message.error.message);
+    error.name = message.error.name ?? "Error";
+    if (message.error.stack) {
+      error.stack = message.error.stack;
+    }
+    return { kind: "error", error };
+  }
+  throw new Error("execute_typescript runtime emitted an unsupported protocol message.");
+}
+
+async function handleExecuteTypescriptExtensionRunMessage(
+  message: Extract<ExecuteTypescriptRuntimeToHostMessage, { type: "extensionRun" }>,
+  extensions: ExecuteTypescriptExtensions,
+  sendResponse: (message: ExecuteTypescriptHostToRuntimeMessage) => void,
+): Promise<void> {
+  const client = extensions[message.extensionId];
+  if (!client) {
+    sendResponse({
+      type: "extensionError",
+      requestId: message.requestId,
+      error: {
+        message: `Extension is not loaded for execute_typescript: ${message.extensionId}`,
+        name: "Incur.ClientError",
+        code: "extension_not_loaded",
+      },
+    });
+    return;
+  }
+  try {
+    const value = await client.run(message.commandId, message.input as never);
+    sendResponse({ type: "extensionResult", requestId: message.requestId, value });
+  } catch (error) {
+    const clientError = error as {
+      code?: string;
+      data?: unknown;
+      fieldErrors?: unknown;
+      message?: string;
+      name?: string;
+    };
+    sendResponse({
+      type: "extensionError",
+      requestId: message.requestId,
+      error: {
+        message: clientError.message ?? "Extension command failed.",
+        name: clientError.name,
+        code: clientError.code,
+        data: clientError.data,
+        fieldErrors: clientError.fieldErrors,
+      },
+    });
+  }
+}
+
+function spawnExecuteTypescriptRuntimeProcess(input: {
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  fileSystemPolicy: FileSystemSandboxPolicy;
+  managedSandbox: boolean;
+  networkAccess: boolean;
+  runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
+  runtimePath: string;
+}): ChildProcessWithoutNullStreams {
+  const env = input.env ?? {};
+  const command = [process.execPath, input.runtimePath];
+  if (input.runtimeProcessSpawner) {
+    return input.runtimeProcessSpawner({
+      command,
+      cwd: input.cwd,
+      env,
+      fileSystemPolicy: input.fileSystemPolicy,
+      managedSandbox: input.managedSandbox,
+      networkAccess: input.networkAccess,
+    });
+  }
+  const child = input.managedSandbox
+    ? spawn(
+        resolveSandboxHelperPath(),
+        buildSandboxHelperArgs({
+          command,
+          cwd: input.cwd,
+          fileSystemPolicy: input.fileSystemPolicy,
+          networkAccess: input.networkAccess,
+        }),
+        { cwd: input.cwd, env },
+      )
+    : spawn(command[0]!, command.slice(1), { cwd: input.cwd, env });
+  return child;
+}
+
+function buildExecuteTypescriptRuntimeEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of EXECUTE_TYPESCRIPT_RUNTIME_ENV_ALLOWLIST) {
+    const value = source[key];
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+function waitForExecuteTypescriptRuntimeProcess(
+  child: ChildProcessWithoutNullStreams,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+}
+
+function formatRuntimeExit(exit: { code: number | null; signal: NodeJS.Signals | null }): string {
+  return exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`;
+}
+
+function buildExecuteTypescriptRuntimeProcessSource(input: {
+  javascript: string;
+  runtimeExtensionIds: readonly string[];
+  runtimeModulePaths: Record<string, string | undefined>;
+}): string {
+  return `
+const compiledJavascript = ${JSON.stringify(input.javascript)};
+const runtimeExtensionIds = ${JSON.stringify([...new Set(input.runtimeExtensionIds)])};
+const runtimeModulePaths = ${JSON.stringify(input.runtimeModulePaths)};
+let nextRequestId = 1;
+const pending = new Map();
+let stdinBuffer = "";
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function sendFinal(message, code) {
+  process.stdout.write(JSON.stringify(message) + "\\n", () => process.exit(code));
+}
+
+function createClientError(error) {
+  return new ClientError(error?.message || "Extension command failed.", {
+    code: error?.code,
+    data: error?.data,
+    fieldErrors: error?.fieldErrors,
+  });
+}
+
+class ClientError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = "Incur.ClientError";
+    this.code = options.code;
+    this.data = options.data;
+    this.fieldErrors = options.fieldErrors;
+  }
+}
+
+function runtimeConsole(level) {
+  return (...args) => send({ type: "console", level, args });
+}
+
+function extensionClient(extensionId) {
+  return Object.freeze({
+    run(commandId, input) {
+      const requestId = nextRequestId++;
+      send({ type: "extensionRun", requestId, extensionId, commandId, input });
+      return new Promise((resolve, reject) => {
+        pending.set(requestId, { resolve, reject });
+      });
+    },
+  });
+}
+
+function buildExtensions() {
+  const extensions = {};
+  for (const extensionId of runtimeExtensionIds) {
+    extensions[extensionId] = extensionClient(extensionId);
+  }
+  return Object.freeze(extensions);
+}
+
+function optionalModuleFromPath(moduleName) {
+  const modulePath = runtimeModulePaths[moduleName];
+  if (!modulePath) return Object.freeze({});
+  if (!require("node:fs").existsSync(modulePath)) return Object.freeze({});
+  return Object.freeze({ ...require(modulePath) });
+}
+
+function buildAllowedModules() {
+  return Object.freeze({
+    "incur/client": Object.freeze({
+      Client: Object.freeze({ ClientError }),
+      Resources: Object.freeze({}),
+      Run: Object.freeze({}),
+    }),
+    "incur": Object.freeze({ ...require("incur") }),
+    "@svvy/extensions": optionalModuleFromPath("@svvy/extensions"),
+    "@svvy/workflows": optionalModuleFromPath("@svvy/workflows"),
+  });
+}
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  stdinBuffer += String(chunk);
+  let newlineIndex = stdinBuffer.indexOf("\\n");
+  while (newlineIndex >= 0) {
+    const line = stdinBuffer.slice(0, newlineIndex);
+    stdinBuffer = stdinBuffer.slice(newlineIndex + 1);
+    if (line.trim()) {
+      const message = JSON.parse(line);
+      const request = pending.get(message.requestId);
+      if (request) {
+        pending.delete(message.requestId);
+        if (message.type === "extensionResult") {
+          request.resolve(message.value);
+        } else {
+          request.reject(createClientError(message.error));
+        }
+      }
+    }
+    newlineIndex = stdinBuffer.indexOf("\\n");
+  }
+});
+
+(async () => {
+  const module = { exports: {} };
+  const execute = new Function("module", "exports", compiledJavascript);
   execute(module, module.exports);
   if (typeof module.exports.default !== "function") {
     throw new Error("execute_typescript did not produce an executable function.");
   }
-  return await module.exports.default(
-    runtime.extensions,
-    createCapturedConsole(runtime.logs, runtime.onConsoleLine),
-    runtime.incurClientModule,
+  const value = await module.exports.default(
+    buildExtensions(),
+    Object.freeze({
+      log: runtimeConsole("log"),
+      info: runtimeConsole("info"),
+      warn: runtimeConsole("warn"),
+      error: runtimeConsole("error"),
+    }),
+    buildAllowedModules(),
   );
+  sendFinal({ type: "result", value }, 0);
+})().catch((error) => {
+  sendFinal({
+    type: "error",
+    error: {
+      message: error instanceof Error ? error.message : String(error),
+      name: error instanceof Error ? error.name : undefined,
+      stack: error instanceof Error ? error.stack : undefined,
+    },
+  }, 1);
+});
+`;
 }
 
 function createIncurClientModule(): IncurClientModuleRuntime {
@@ -922,28 +1535,6 @@ function createExecuteTypescriptExtensions(input: {
   const loadedExtensionIds = effectiveLoadedExtensionIds(input.context);
 
   const extensions: ExecuteTypescriptExtensions = {};
-  const userExtensionRecords = resolveExtensionRecords(loadedExtensionIds, input.extensionsRoot);
-  const seenUserExtensionIds = new Set<string>();
-  for (const record of userExtensionRecords) {
-    if (
-      record.category !== "user" ||
-      record.interface !== "svvyx" ||
-      !record.typescriptApiEnabled ||
-      !loadedExtensionIds.includes(record.id) ||
-      !isSafeUserExtensionId(record.id) ||
-      record.id === "artifacts" ||
-      record.id === "workflows" ||
-      seenUserExtensionIds.has(record.id)
-    ) {
-      continue;
-    }
-    seenUserExtensionIds.add(record.id);
-    extensions[record.id] = createUserSvvyxGeneratedClient({
-      ...input,
-      extensionId: record.id,
-    });
-  }
-
   if (loadedExtensionIds.includes("artifacts")) {
     extensions.artifacts = Object.freeze({
       run: async (
@@ -1178,110 +1769,6 @@ function createExecuteTypescriptExtensions(input: {
   return Object.freeze(extensions);
 }
 
-function createUserSvvyxGeneratedClient(input: {
-  cwd: string;
-  store: StructuredSessionStateStore;
-  context: ExecuteTypescriptContext;
-  parentCommand: Pick<StructuredCommandRecord, "id">;
-  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
-  incurClientModule: IncurClientModuleRuntime;
-  extensionId: string;
-  extensionsRoot?: string;
-  extensionEnvSecretStore?: ExtensionEnvSecretStore;
-  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
-}): GeneratedUserExtensionClient {
-  return Object.freeze({
-    run: async (commandId: string, rawInput: GeneratedUserClientInput = {}): Promise<unknown> => {
-      const trimmedCommandId = commandId.trim();
-      const toolName = `extensions.${input.extensionId}.run`;
-      const childCommand = input.store.createCommand({
-        turnId: input.context.turnId ?? null,
-        workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-        surfacePiSessionId: input.context.surfacePiSessionId,
-        threadId: input.context.threadId,
-        workflowRunId: input.context.workflowRunId ?? null,
-        parentCommandId: input.parentCommand.id,
-        toolName,
-        executor: input.context.executor ?? "orchestrator",
-        visibility: input.context.visibility ?? "summary",
-        title: `Run ${toolName}`,
-        summary: `${input.extensionId}.${trimmedCommandId}`,
-        arguments: {
-          commandId: trimmedCommandId,
-          input: redactExecuteTypescriptValue(rawInput),
-        },
-        facts: {
-          extensionId: input.extensionId,
-          commandId: trimmedCommandId,
-        },
-      });
-      input.store.startCommand(childCommand.id);
-      try {
-        const result = await runSvvyxRuntimeGeneratedClientCommand({
-          commandId: trimmedCommandId,
-          clientInput: rawInput,
-          envSecretStore: resolveExecuteTypescriptExtensionEnvSecretStore(input),
-          envValues: resolveExecuteTypescriptExtensionsEnvValues(input),
-          extensionId: input.extensionId,
-          extensionsRoot: input.extensionsRoot,
-        });
-        input.store.finishCommand({
-          commandId: childCommand.id,
-          status: "succeeded",
-          summary: summarizeResult(isRecord(result) && result.ok === true ? result.data : result),
-          facts: {
-            extensionId: input.extensionId,
-            commandId: trimmedCommandId,
-            runtimeReady: true,
-          },
-        });
-        input.childCommandFacts.push({ status: "succeeded" });
-        return result;
-      } catch (error) {
-        const ClientError = input.incurClientModule.Client.ClientError;
-        if (error instanceof ClientError) {
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "failed",
-            summary: error.message,
-            facts: {
-              extensionId: input.extensionId,
-              commandId: trimmedCommandId,
-              errorCode: error.code ?? "extension_command_failed",
-              ...(error.data ? { errorData: error.data } : {}),
-              ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
-            },
-            error: JSON.stringify({
-              error: {
-                message: error.message,
-                code: error.code,
-                ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
-              },
-            }),
-          });
-          input.childCommandFacts.push({ status: "failed" });
-          throw error;
-        }
-        const formatted = formatSvvyxRuntimeError(error);
-        input.store.finishCommand({
-          commandId: childCommand.id,
-          status: "failed",
-          summary: formatted.error.message,
-          facts: {
-            extensionId: input.extensionId,
-            commandId: trimmedCommandId,
-            errorCode: formatted.error.code,
-            ...formatted.commandFacts,
-          },
-          error: JSON.stringify(formatted),
-        });
-        input.childCommandFacts.push({ status: "failed" });
-        throw new ClientError(formatted.error.message);
-      }
-    },
-  });
-}
-
 function artifactsRuntimeContext(context: ExecuteTypescriptContext): SvvyxArtifactsRuntimeContext {
   return {
     sessionId: context.sessionId,
@@ -1343,18 +1830,6 @@ function resolveExecuteTypescriptExtensionEnvSecretStore(input: {
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
 }): ExtensionEnvSecretStore {
   return input.extensionEnvSecretStore ?? createMacOsKeychainExtensionEnvSecretStore();
-}
-
-function resolveExecuteTypescriptExtensionsEnvValues(input: {
-  extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
-}): SvvyxRuntimeEnvValues {
-  return typeof input.extensionsEnvValues === "function"
-    ? input.extensionsEnvValues()
-    : (input.extensionsEnvValues ?? {});
-}
-
-function isSafeUserExtensionId(extensionId: string): boolean {
-  return /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(extensionId);
 }
 
 function normalizeArtifactsClientOperation(
@@ -1566,21 +2041,6 @@ function invalidWorkflowsClientInput(message: string): Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function createCapturedConsole(logs: string[], onLine?: (line: string) => void): SvvyConsole {
-  const append = (level: CapturedConsoleLevel, ...args: unknown[]) => {
-    const line = appendCapturedConsoleLine(logs, level, ...args);
-    if (line) {
-      onLine?.(line);
-    }
-  };
-  return {
-    log: (...args) => append("log", ...args),
-    info: (...args) => append("info", ...args),
-    warn: (...args) => append("warn", ...args),
-    error: (...args) => append("error", ...args),
-  };
 }
 
 function formatConsoleValue(value: unknown): string {

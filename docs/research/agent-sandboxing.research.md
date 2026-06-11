@@ -127,7 +127,7 @@ Sources:
 
 ### Codex CLI and Codex app
 
-Codex CLI documents platform-specific sandboxing and explicit sandbox escalation when a command needs broader access. OpenAI also states that the Codex app uses the same native system-level sandboxing model.
+Codex CLI documents platform-specific sandboxing and explicit escalation requests when a command needs broader access. Approval and sandbox enforcement are separate controls: approval decides whether an action may start, while the sandbox constrains filesystem and network effects after execution begins. An approved escalation may broaden or bypass the sandbox only when host policy permits it. OpenAI also states that the Codex app uses the same native system-level sandboxing model.
 
 Important signals:
 
@@ -625,7 +625,7 @@ Prefer:
 
 - one writable workspace root
 - explicit additional writable directories
-- protected paths requiring approval
+- protected paths denied or requiring host-owned approval according to product policy
 
 Avoid broad ambient write privileges across the host.
 
@@ -747,7 +747,9 @@ Suggested classes:
 2. `local_workspace_write`
    - local OS sandbox
    - write only inside task root or worktree root
-   - protected files require approval
+   - protected paths are denied or require host-owned approval according to product policy; approval
+     should not silently override protected metadata carveouts unless an explicit full-access mode is
+     active
    - egress filtered by allowlist
 3. `remote_bootstrap`
    - remote ephemeral sandbox

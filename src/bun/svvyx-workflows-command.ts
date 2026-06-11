@@ -95,10 +95,6 @@ export function assertAgentModelSelection(
   return modelChoice;
 }
 
-export function isSvvyxWorkflowsCommand(command: string): boolean {
-  return /^svvyx\s+workflows(?:\s|$)/.test(command.trim());
-}
-
 export async function runSvvyxWorkflowsCommand(input: {
   agentSettingsStore?: AgentSettingsStore;
   command: string;

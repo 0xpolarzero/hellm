@@ -30,62 +30,22 @@ export namespace Run {
     tokenCount?: number;
     tokenLimit?: number;
     tokenOffset?: number;
-    next?: () => Promise<Result<unknown, unknown> | undefined>;
   }
 
-  export type Result<TData = unknown, TCommands = unknown> = {
+  export type Result<TData = unknown> = {
     ok: true;
     data: TData;
     output: Output;
     meta: {
       commandFacts: Record<string, unknown>;
-      commands?: TCommands;
       [key: string]: unknown;
     };
   };
 }
 
-export interface IncurFieldError {
-  code?: string;
-  missing?: boolean;
-  path: string;
-  expected: string;
-  received: string;
-  message: string;
-}
-
-export interface IncurRpcError {
-  code: string;
-  fieldErrors?: IncurFieldError[];
-  message: string;
-  retryable?: boolean;
-}
-
 export interface IncurRpcMeta {
   command: string;
-  cta?: unknown;
   duration: string;
-}
-
-export interface ClientError extends Error {
-  name: string;
-  shortMessage: string;
-  details?: string;
-  code: string | undefined;
-  data: unknown | undefined;
-  error: IncurRpcError | undefined;
-  fieldErrors: IncurFieldError[] | undefined;
-  meta: IncurRpcMeta | undefined;
-  retryable: boolean | undefined;
-  status: number | undefined;
-}
-
-export interface IncurClientModule {
-  Client: {
-    ClientError: new (message: string, options?: Record<string, unknown>) => ClientError;
-  };
-  Resources: Record<string, unknown>;
-  Run: Record<string, unknown>;
 }
 
 export declare const extensions: LoadedExtensionsClient;

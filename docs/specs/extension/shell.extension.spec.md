@@ -85,7 +85,8 @@ content is:
 
 ## svvyx Extension CLIs
 
-Loaded `svvyx` extensions are ordinary shell commands. Run them with `exec_command`:
+`svvyx` is a real app-owned CLI backed by Incur. Loaded `svvyx` extensions are ordinary shell
+commands from the agent's perspective. Run them with `exec_command`:
 
 ```ts
 exec_command({
@@ -94,7 +95,8 @@ exec_command({
 })
 ```
 
-`svvyx` extensions are invoked only as ordinary `exec_command` shell commands.
+Agent Shell usage of `svvyx ...` happens strictly through `exec_command`. There is no parent
+process command-family dispatch, parent-owned Shell shortcut, or second command model.
 
 Use the specific loaded extension instructions for domain command names and examples. Use this
 generic guidance for common Incur CLI behavior.

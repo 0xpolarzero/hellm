@@ -42,7 +42,8 @@ owned by the Shell and Apply Patch native extensions.
 The generated TypeScript clients exposed to a submitted program are derived from the current actor's
 loaded extension set:
 
-- loaded `svvyx` extensions may contribute generated clients when TypeScript API is enabled
+- builtin app-owned `svvyx` extensions may contribute generated clients when TypeScript API is enabled
+- user `svvyx` generated clients are not emitted until sandboxed generated-client execution exists
 - available-but-not-loaded extensions contribute no generated client
 - unavailable extensions contribute no generated client and no awareness
 
@@ -63,7 +64,7 @@ that capability through generated `execute_typescript` clients.
 The submitted program may run ordinary TypeScript after the top-level `execute_typescript` action
 passes the same approval-boundary flow as other approval-gated native actions.
 
-Loaded-extension clients are the preferred surface because they provide:
+Builtin loaded-extension clients are the preferred surface because they provide:
 
 - typed inputs and outputs
 - extension-scoped documentation
@@ -79,9 +80,10 @@ automatic reviewer; in `approvalMode: "user"`, they block on user approval; in
 settings.
 
 Generated extension-client calls inside an approved `execute_typescript` run are not a separate
-approval surface. They still create child command records and must enforce readiness, env injection,
-redaction, product-state validation, and command failure semantics from the underlying extension
-contract.
+approval surface. Builtin Artifacts and Workflows clients create child command records and enforce
+readiness, env injection, redaction, product-state validation, and command failure semantics from
+the underlying extension contract. User `svvyx` generated clients remain unavailable until their
+execution can run inside the same sandboxed generated-client runtime.
 
 Arbitrary TypeScript side effects that do not go through generated clients are opaque. `svvy` should
 record the submitted source, lifecycle, console output, return value, thrown error, and any observed
@@ -113,12 +115,13 @@ declare const console: SvvyConsole;
 
 There is no global `svvy` client and no broad injected `api` object.
 
-`LoadedExtensionsClient` contains only loaded `svvyx` extensions that opted into TypeScript API
-generation. If the current actor has loaded TypeScript-enabled extensions `a`, `b`, and
-`workflows`, the generated declaration contains string-literal properties `extensions.a`,
-`extensions.b`, and `extensions.workflows`, plus only those extensions' command map types. It
-must not contain `extensions.c`, command types for unavailable extensions, or docs for
-available-but-not-loaded extensions.
+`LoadedExtensionsClient` contains only currently callable TypeScript clients. In v1 this means the
+native app-owned clients such as `artifacts` and `workflows`; user generated extension clients are
+not emitted until their code can execute inside the `execute_typescript` sandbox. If a current actor
+has loaded callable TypeScript clients `artifacts` and `workflows`, the generated declaration
+contains only `extensions.artifacts` and `extensions.workflows`, plus only those clients' command map
+types. It must not contain user extension placeholders, unavailable extensions, docs for
+available-but-not-loaded extensions, or fail-closed runnable user client examples.
 
 Each generated extension client is an Incur-compatible per-extension command client:
 
@@ -134,10 +137,9 @@ Command ids are the extension's Incur command paths. Inputs use Incur `args`, `o
 controls. Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `output`, and
 `meta`.
 
-The declaration generator must include command map types for each loaded TypeScript-enabled
-extension. The exact emitted names are implementation details, but they must be scoped to the
-available generated declaration block and must be usable with `Run` helper types from
-`incur/client`.
+The declaration generator must include command map types for each loaded callable TypeScript client.
+The exact emitted names are implementation details, but they must be scoped to the available
+generated declaration block and must be usable with `Run` helper types from `incur/client`.
 
 `incur/client` is an app-provided import available to snippets for public Incur client types and
 errors:
@@ -189,16 +191,24 @@ is the only extension-command abstraction available inside snippets.
 ## Runtime Rules
 
 - The top-level `execute_typescript` tool call goes through the same approval-boundary path as other
-  approval-gated native actions before the snippet runs.
+  approval-gated native actions before the snippet runtime starts.
+- The approved snippet runtime then runs under the managed filesystem and network sandbox policy
+  for the current session unless full-access policy omits sandboxing.
+- TypeScript may assemble execution policy, launch approved and sandboxed runtime work, validate
+  product contracts, call generated clients, and project results. It must not be described as the
+  filesystem or network sandbox enforcement layer.
 - TypeScript is checked before execution when the runtime can do so reliably.
 - Typecheck failure stops execution before generated client calls run.
 - Runtime failure records the thrown error and preserves any child command facts already emitted.
 - Generated client calls create child command records under the parent `execute_typescript` command.
-- Generated clients for Incur-backed `svvyx` extensions resolve the same current build as shell
-  dispatch and call the default-exported Incur CLI through `MemoryClient.create(cli, { env })` or an
-  equivalent in-process explicit-env client path.
-- `MemoryClient` is internal plumbing. It must not appear in the agent-authored snippet examples for
-  generated extension clients, and MemoryClient local actions must not be exposed on
+- Builtin generated clients resolve the same generated command contracts as shell dispatch and call
+  through the generated TypeScript client runtime with the same explicit extension env source.
+- User `svvyx` generated clients are hidden from declarations and unavailable at runtime until
+  sandboxed generated-client execution exists.
+- Generated clients are not shell `svvyx` wrappers. Do not document or generate them as shell calls.
+  They are typed TypeScript clients whose parent `execute_typescript` process has already entered the
+  approval and sandbox execution lane.
+- Local Incur actions and generated-client internals must not be exposed on
   `extensions.<extensionId>`.
 - Static imports from `incur/client` must typecheck and execute. Extension implementation files,
   current build paths, and generated extension internals must not be importable by agent-authored
@@ -345,15 +355,15 @@ env injection, artifacts, or other product-state capture.
 
 ### `020-incur-typescript-clients.md`
 
-This file owns generic usage of generated Incur-compatible clients for loaded `svvyx` extensions.
-Its canonical content is:
+This file owns generic usage of generated Incur-compatible clients for loaded builtin `svvyx`
+extensions. Its canonical content is:
 
 ````md
 # Incur TypeScript Clients
 
-Use this guidance when TypeScript code inside `execute_typescript` needs to call a loaded `svvyx`
-extension programmatically. Use shell commands when the operation is a one-shot CLI call or ordinary
-repository inspection.
+Use this guidance when TypeScript code inside `execute_typescript` needs to call a loaded builtin
+`svvyx` extension programmatically. Use shell commands when the operation is a one-shot CLI call or
+ordinary repository inspection.
 
 The public Incur client types and errors live in `incur/client`:
 
@@ -367,50 +377,31 @@ handle `Client.ClientError`.
 ## Loaded Extension Clients
 
 `execute_typescript` exposes an actor-scoped `extensions` object. It contains only loaded
-TypeScript-enabled `svvyx` extensions available to the current actor.
+TypeScript-enabled builtin clients available to the current actor.
 
-If the current actor has loaded TypeScript-enabled extensions `artifacts`, `linear`, and `jira`,
-then only those clients exist:
+If the current actor has loaded callable TypeScript clients `artifacts` and `workflows`, then only
+those clients exist:
 
 ```ts
 extensions.artifacts;
-extensions.linear;
-extensions.jira;
+extensions.workflows;
 ```
 
 Available-but-not-loaded extensions and unavailable extensions do not appear in `extensions` and do
-not contribute command types, examples, or docs.
+not contribute command types, examples, or docs. User generated extension clients are unavailable in
+v1 and likewise do not appear in `extensions`.
 
 There is no global `svvy` client and no injected `api` object.
 
-Do not construct `MemoryClient`, `HttpClient`, `Client.create()`, transports, or extension
-implementation imports inside snippets. The app owns the generated clients and injects extension env
-internally.
+Do not construct transports, generic Incur clients, or extension implementation imports inside
+snippets. The app owns the generated clients and injects extension env internally.
 
 ## Command Maps And Command IDs
 
-Each generated extension client is typed from that extension's Incur command map. Command IDs are full
-Incur command paths such as `"project status"`, `"logs tail"`, or `"create"`.
+Each generated extension client is typed from that extension's Incur command map. Command IDs are
+full Incur command paths such as `"create"`, `"inspect"`, `"list"`, or `"models list"`.
 
-Command map entries have this shape:
-
-```ts
-type Commands = {
-  "project status": {
-    args: { projectId: string };
-    options: {};
-    output: { status: "ok" | "blocked" };
-  };
-  "logs tail": {
-    args: { service: string };
-    options: {};
-    output: { line: string };
-    stream: true;
-  };
-};
-```
-
-The actual command maps are generated for the loaded extensions available to this actor.
+The actual command maps are generated only for the builtin clients available to this actor.
 
 ## Running Commands
 
@@ -419,9 +410,8 @@ command surface. `args` are positional arguments, `options` are named flags, and
 mirror global Incur CLI flags.
 
 ```ts
-const report = await extensions.acme.run("project report", {
-  args: { projectId: "proj_web_2026" },
-  options: { includeClosed: false },
+const report = await extensions.workflows.run("list", {
+  options: { kind: "workflow" },
 
   // Equivalent to --filter-output. This changes result.data, so data is typed unknown.
   selection: ["summary", "items[0:3]", "nextCursor"],
@@ -437,20 +427,20 @@ The returned value for non-streaming commands is `Run.Result<data, Commands>`:
 
 ```ts
 console.log(report);
-/// Run.Result<unknown, AcmeCommands>
+/// Run.Result<unknown, WorkflowsCommands>
 // {
 //   ok: true,
 //   data: {
-//     summary: 'Website refresh is on track',
+//     summary: 'Available workflow exports',
 //     items: [
-//       { id: 'task_1', title: 'Finalize copy', status: 'done' },
-//       { id: 'task_2', title: 'QA checkout flow', status: 'blocked' },
-//       { id: 'task_3', title: 'Publish launch checklist', status: 'open' },
+//       { exportName: 'releaseChecklist', qualifiedName: 'Workflows.releaseChecklist' },
+//       { exportName: 'triageIssue', qualifiedName: 'Workflows.triageIssue' },
+//       { exportName: 'summarizeDiff', qualifiedName: 'Workflows.summarizeDiff' },
 //     ],
-//     nextCursor: 'task_4',
+//     nextCursor: 'workflow_4',
 //   },
 //   output: {
-//     text: '## Website refresh is on track\n\n- done: Finalize copy\n- blocked: QA checkout flow',
+//     text: '## Available workflow exports\n\n- Workflows.releaseChecklist\n- Workflows.triageIssue',
 //     format: 'md',
 //     tokenCount: 37,
 //     tokenLimit: 128,
@@ -458,146 +448,69 @@ console.log(report);
 //     next: [Function],
 //   },
 //   meta: {
-//     command: 'project report',
+//     command: 'list',
 //     duration: '18ms',
-//     cta: {
-//       commands: [
-//         {
-//           command: 'project unblock',
-//           cliCommand: 'project unblock task_2',
-//           description: 'Unblock the blocked checkout QA task.',
-//           args: { taskId: 'task_2' },
-//           options: {},
-//           raw: { command: 'project unblock', args: { taskId: 'task_2' } },
-//           run: [Function],
-//         },
-//       ],
-//     },
 //   },
 // }
 ```
 
 Because `selection` changes the shape of `data`, selected results are typed as `unknown`.
 
-If `output.next` exists, fetch the next rendered output page for the same command:
-
-```ts
-const nextPage = await report.output?.next?.();
-
-console.log(nextPage);
-/// Run.Result<unknown, AcmeCommands> | undefined
-// {
-//   ok: true,
-//   data: { ... },
-//   output: {
-//     text: '- open: Publish launch checklist',
-//     format: 'md',
-//     tokenCount: 37,
-//     tokenLimit: 128,
-//     tokenOffset: 128,
-//   },
-//   meta: { command: 'project report', duration: '12ms' },
-// }
-```
-
 Input is strict. Required `args` and `options` make the input object required; unknown commands and
 extra keys are rejected by TypeScript when the command map is known.
 
 ```ts
-await extensions.acme.run("project status", {
-  args: { projectId: "proj_web_2026" },
+await extensions.artifacts.run("create", {
+  options: { name: "notes.md" },
 });
 
 // Type error: unknown command.
-await extensions.acme.run("project missing");
+await extensions.artifacts.run("missing");
 
-// Type error: missing required args.
-await extensions.acme.run("project status");
+// Type error: missing required options.
+await extensions.artifacts.run("create");
 ```
 
 If an extension client has default output selection, result data is conservative `unknown`. Clear it
 for a call with `selection: undefined` to recover the full output type:
 
 ```ts
-const selected = await extensions.acme.run("project report", {
-  args: { projectId: "proj_web_2026" },
+const selected = await extensions.workflows.run("list", {
+  options: { kind: "workflow" },
 });
 // selected.data is unknown when the generated client applies default selection.
 
-const full = await extensions.acme.run("project report", {
-  args: { projectId: "proj_web_2026" },
+const full = await extensions.workflows.run("list", {
+  options: { kind: "workflow" },
   selection: undefined,
 });
 
 console.log(full);
-/// Run.Result<ProjectReport, AcmeCommands>
+/// Run.Result<WorkflowList, WorkflowsCommands>
 // {
 //   ok: true,
 //   data: {
-//     summary: 'Website refresh is on track',
+//     summary: 'Available workflow exports',
 //     items: [
-//       { id: 'task_1', title: 'Finalize copy', status: 'done' },
-//       { id: 'task_2', title: 'QA checkout flow', status: 'blocked' },
-//       { id: 'task_3', title: 'Publish launch checklist', status: 'open' },
+//       { exportName: 'releaseChecklist', qualifiedName: 'Workflows.releaseChecklist' },
+//       { exportName: 'triageIssue', qualifiedName: 'Workflows.triageIssue' },
+//       { exportName: 'summarizeDiff', qualifiedName: 'Workflows.summarizeDiff' },
 //     ],
-//     nextCursor: 'task_4',
+//     nextCursor: 'workflow_4',
 //   },
 //   output: {
-//     text: 'summary: Website refresh is on track\nitems[3]{id,title,status}: ...',
+//     text: 'summary: Available workflow exports\nitems[3]{exportName,qualifiedName}: ...',
 //     format: 'toon',
 //   },
-//   meta: { command: 'project report', duration: '18ms' },
+//   meta: { command: 'list', duration: '18ms' },
 // }
 ```
 
 ## CTAs
 
-Commands can return CTAs in `meta.cta`. Client CTAs are runnable:
-
-```ts
-const cta = report.meta.cta?.commands[0];
-
-console.log(cta);
-/// Run.Cta<AcmeCommands> | undefined
-// {
-//   command: 'project unblock',
-//   cliCommand: 'project unblock task_2',
-//   description: 'Unblock the blocked checkout QA task.',
-//   args: { taskId: 'task_2' },
-//   options: {},
-//   raw: {
-//     command: 'project unblock',
-//     args: { taskId: 'task_2' },
-//     options: {},
-//     description: 'Unblock the blocked checkout QA task.',
-//   },
-//   run: [Function],
-// }
-
-if (cta) {
-  const result = await cta.run({
-    outputFormat: "toon",
-  });
-
-  console.log(result);
-  /// Run.Result<unknown, AcmeCommands>
-  // {
-  //   ok: true,
-  //   data: { unblocked: true, taskId: 'task_2' },
-  //   output: {
-  //     text: 'unblocked: true\ntaskId: task_2',
-  //     format: 'toon',
-  //   },
-  //   meta: { command: 'project unblock', duration: '14ms' },
-  // }
-}
-```
-
-CTA `run()` does not inherit output controls from the original command result. Pass the controls you
-want for the CTA run.
-
-CTA objects have `command`, `cliCommand`, optional `description`, `args`, `options`, `raw`, and
-`run()`. Do not check for a `runnable` property.
+CTA execution is not a current `execute_typescript` generated-client capability. Do not document,
+generate, or rely on runnable `meta.cta` helpers for this surface until the generated-client runtime
+implements and tests them.
 
 ## Errors
 
@@ -607,56 +520,37 @@ Failed command runs and malformed client responses throw `Client.ClientError`:
 import { Client } from "incur/client";
 
 try {
-  await extensions.acme.run("project deploy", {
-    args: { projectId: "proj_web_2026" },
-    options: { environment: "production" },
+  await extensions.artifacts.run("inspect", {
+    args: { artifactId: "missing_artifact" },
   });
 } catch (error) {
   if (error instanceof Client.ClientError) {
     console.log(error);
     /// Client.ClientError
-    // Incur.ClientError: Login required before deploying.
+    // Incur.ClientError: Artifact not found.
     // {
-    //   message: 'Login required before deploying.',
-    //   code: 'NOT_AUTHENTICATED',
-    //   status: 401,
+    //   message: 'Artifact not found.',
+    //   code: 'NOT_FOUND',
+    //   status: 404,
     //   retryable: false,
     //   fieldErrors: undefined,
     //   meta: {
-    //     command: 'project deploy',
+    //     command: 'inspect',
     //     duration: '4ms',
-    //     cta: {
-    //       description: 'Authenticate before deploying.',
-    //       commands: [
-    //         {
-    //           command: 'auth login',
-    //           cliCommand: 'auth login',
-    //           description: 'Log in to Acme.',
-    //           args: {},
-    //           options: {},
-    //           raw: { command: 'auth login', description: 'Log in to Acme.' },
-    //           run: [Function],
-    //         },
-    //       ],
-    //     },
     //   },
     //   error: {
-    //     code: 'NOT_AUTHENTICATED',
-    //     message: 'Login required before deploying.',
+    //     code: 'NOT_FOUND',
+    //     message: 'Artifact not found.',
     //     retryable: false,
     //   },
     //   data: {
     //     ok: false,
     //     error: {
-    //       code: 'NOT_AUTHENTICATED',
-    //       message: 'Login required before deploying.',
+    //       code: 'NOT_FOUND',
+    //       message: 'Artifact not found.',
     //       retryable: false,
     //     },
-    //     meta: {
-    //       command: 'project deploy',
-    //       duration: '4ms',
-    //       cta: { ... },
-    //     },
+    //     meta: { command: 'inspect', duration: '4ms' },
     //   },
     // }
   }
@@ -667,98 +561,9 @@ Do not use a structural `IncurClientError` alias. Import `Client` from `incur/cl
 
 ## Streaming
 
-Commands implemented with `async *run` return `Run.StreamResponse<chunk, finalData, Commands>`.
-
-```ts
-const stream = await extensions.acme.run("logs tail", {
-  args: { service: "checkout-api" },
-});
-
-for await (const chunk of stream) {
-  console.log(chunk);
-  /// LogLine
-  // {
-  //   timestamp: '2026-05-24T10:15:00Z',
-  //   level: 'info',
-  //   message: 'request completed',
-  // }
-}
-
-const final = await stream.final;
-
-console.log(final);
-/// Run.StreamFinal<unknown, AcmeCommands>
-// {
-//   ok: true,
-//   data: { lines: 124 },
-//   output: {
-//     text: 'lines: 124',
-//     format: 'toon',
-//   },
-//   meta: {
-//     command: 'logs tail',
-//     duration: '30s',
-//   },
-// }
-```
-
-Use `records()` when you need every stream record, including terminal error records:
-
-```ts
-const rawStream = await extensions.acme.run("logs tail", {
-  args: { service: "checkout-api" },
-});
-
-for await (const record of rawStream.records()) {
-  if (record.type === "chunk") {
-    console.log(record);
-    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'chunk' }>
-    // {
-    //   type: 'chunk',
-    //   data: {
-    //     timestamp: '2026-05-24T10:15:00Z',
-    //     level: 'info',
-    //     message: 'request completed',
-    //   },
-    //   output: {
-    //     text: 'timestamp: 2026-05-24T10:15:00Z\nlevel: info\nmessage: request completed',
-    //     format: 'toon',
-    //   },
-    // }
-  }
-
-  if (record.type === "done") {
-    console.log(record);
-    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'done' }>
-    // {
-    //   type: 'done',
-    //   ok: true,
-    //   data: { lines: 124 },
-    //   output: { text: 'lines: 124', format: 'toon' },
-    //   meta: { command: 'logs tail', duration: '30s' },
-    // }
-  }
-
-  if (record.type === "error") {
-    console.log(record);
-    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'error' }>
-    // {
-    //   type: 'error',
-    //   ok: false,
-    //   error: {
-    //     code: 'LOG_STREAM_DISCONNECTED',
-    //     message: 'Log stream disconnected.',
-    //     retryable: true,
-    //   },
-    //   meta: { command: 'logs tail', duration: '30s' },
-    // }
-  }
-}
-```
-
-A stream can only be consumed once: use async iteration, `.records()`, or `.final` as the consumption
-mode. Streaming commands allow `selection` and `outputFormat`, but reject token pagination controls
-such as `outputTokenLimit`.
+Streaming generated-client commands are not a current `execute_typescript` capability. The current
+runtime must fail closed for streaming user extension commands until streamed child-command
+projection, backpressure, cancellation, final-result recording, and tests are implemented.
 
 ## Discovery Resources
 
@@ -768,7 +573,7 @@ internal inputs to extension build, validation, inspection, and generated-contra
 In v1, agent-authored `execute_typescript` snippets do not receive discovery helper methods such as
 `llms()`, `llmsFull()`, `schema()`, `help()`, or `openapi()` on generated extension clients. The
 agent-facing client surface remains `extensions["<extensionId>"].run(commandId, input)` plus
-generated command map types for loaded TypeScript-enabled extensions.
+generated command map types for emitted builtin TypeScript clients.
 
 Use discovery resources for docs, UI generation, tests, and schema inspection. Use
 `extensions.<extensionId>.run()` for command execution.
@@ -787,7 +592,7 @@ The agent receives:
   not one-shot repository inspection or file edits
 - separate generic Incur TypeScript client guidance for `extensions["<id>"].run(...)` and
   `incur/client`
-- loaded-extension client documentation only for loaded extensions that expose TypeScript API
+- loaded-extension client documentation only for emitted builtin clients that expose TypeScript API
 
 The agent must not receive generated declarations for unavailable or available-but-not-loaded
 extensions.

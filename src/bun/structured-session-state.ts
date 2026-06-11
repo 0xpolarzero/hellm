@@ -643,6 +643,7 @@ export interface CreateStructuredSessionStateStoreOptions {
 
 export interface StructuredSessionStateStore {
   readonly workspaceId: string;
+  readonly databasePath: string;
   upsertPiSession(pi: StructuredPiSessionRecord): void;
   upsertGeneratedAgentContextBinding(input: {
     surfacePiSessionId: string;
@@ -1434,9 +1435,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   private readonly nowFn: () => string;
   private readonly workspace: StructuredWorkspaceRecord;
   readonly workspaceId: string;
+  readonly databasePath: string;
 
   constructor(options: CreateStructuredSessionStateStoreOptions) {
     const databasePath = options.databasePath ?? MEMORY_DATABASE;
+    this.databasePath = databasePath;
     if (databasePath !== MEMORY_DATABASE) {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
