@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +31,12 @@ import {
   type CliRequirementStatus,
   type SvvyxExtensionsDependencyInstaller,
 } from "./svvyx-extensions-command";
-import { formatSvvyxRuntimeError, runSvvyxRuntimeCommand } from "./svvyx-runtime-command";
+import {
+  formatSvvyxRuntimeError,
+  redactStructuredData,
+  runSvvyxRuntimeCommand,
+  runSvvyxRuntimeGeneratedClientCommand,
+} from "./svvyx-runtime-command";
 import type { ExtensionCliRequirement } from "../shared/extensions";
 
 const tempDirs: string[] = [];
@@ -2790,6 +2796,1021 @@ describe("svvyx extensions command", () => {
         errorCode: "extension_not_found",
         currentBuildStatus: "unknown_extension",
       },
+    });
+  });
+
+  it("redacts exact secret values from generated client result data and error data", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-secret";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [
+            {
+              name: "test",
+              schema: {
+                args: {
+                  type: "object",
+                  properties: { input: { type: "string" } },
+                  required: ["input"],
+                },
+                output: {
+                  type: "object",
+                  properties: { secret: { type: "string" }, plain: { type: "string" } },
+                },
+              },
+            },
+          ],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [{ name: "SECRET_TOKEN", required: true, secret: true, description: "Secret token." }],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  args: z.object({ input: z.string() }),",
+        "  env: z.object({ SECRET_TOKEN: z.string() }),",
+        "  run(c) {",
+        "    return { secret: c.env.SECRET_TOKEN, plain: c.args.input };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const result = await runSvvyxRuntimeGeneratedClientCommand({
+      commandId: "test",
+      clientInput: { args: { input: "hello" } },
+      envSecretStore: {
+        get: () => "super-secret-value",
+        has: () => true,
+        set: () => undefined,
+        remove: () => undefined,
+      },
+      extensionId,
+      extensionsRoot,
+    });
+
+    const typedResult = result as Record<string, unknown>;
+    expect(typedResult.ok).toBe(true);
+    const data = typedResult.data as Record<string, unknown>;
+    expect(data.secret).toBe("[REDACTED]");
+    expect(data.plain).toBe("hello");
+    expect(JSON.stringify(result)).not.toContain("super-secret-value");
+    const meta = typedResult.meta as Record<string, unknown>;
+    expect(meta.commandFacts).toMatchObject({
+      extensionId: "test-secret",
+      commandId: "test",
+      runtimeReady: true,
+    });
+  });
+
+  it("redacts exact secret values from ClientError data and fieldErrors", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-secret-error";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [
+            {
+              name: "test",
+              schema: {
+                args: {
+                  type: "object",
+                  properties: { input: { type: "string" } },
+                  required: ["input"],
+                },
+              },
+            },
+          ],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [{ name: "SECRET_TOKEN", required: true, secret: true, description: "Secret token." }],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        'import { Client } from "incur/client";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  args: z.object({ input: z.string() }),",
+        "  env: z.object({ SECRET_TOKEN: z.string() }),",
+        "  run(c) {",
+        "    throw new Client.ClientError(`failed with ${c.env.SECRET_TOKEN}`, {",
+        '      code: "VALIDATION_ERROR",',
+        "      data: { nested: { token: c.env.SECRET_TOKEN } },",
+        '      fieldErrors: [{ path: "token", message: c.env.SECRET_TOKEN }],',
+        "    });",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { args: { input: "hello" } },
+        envSecretStore: {
+          get: () => "super-secret-value",
+          has: () => true,
+          set: () => undefined,
+          remove: () => undefined,
+        },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+
+    expect(error instanceof Error).toBe(true);
+    const typedError = error as Error & { data?: unknown; fieldErrors?: unknown; meta?: unknown };
+    expect(typedError.message).not.toContain("super-secret-value");
+    expect(typedError.message).toContain("[REDACTED]");
+    // Incur wraps extension errors as RPC envelopes; the redacted message is the only
+    // secret-bearing surface that reaches the client. The error data is the envelope itself
+    // which contains the already-redacted message.
+    expect(JSON.stringify(typedError)).not.toContain("super-secret-value");
+  });
+
+  it("redacts exact secret values from structured data recursively", () => {
+    const declarations = [
+      { name: "SECRET_TOKEN", required: true, secret: true, description: "Secret token." },
+    ];
+    const env = { SECRET_TOKEN: "super-secret-value" };
+    const result = redactStructuredData(
+      {
+        ok: true,
+        data: {
+          nested: { token: "super-secret-value" },
+          plain: "hello",
+        },
+        output: {
+          text: "super-secret-value and hello",
+        },
+        meta: {
+          command: "test",
+          duration: "1ms",
+        },
+      },
+      declarations,
+      env,
+    );
+    const typedResult = result as Record<string, unknown>;
+    const data = typedResult.data as Record<string, unknown>;
+    expect(data.nested).toMatchObject({ token: "[REDACTED]" });
+    expect(data.plain).toBe("hello");
+    const output = typedResult.output as Record<string, unknown>;
+    expect(output.text).toBe("[REDACTED] and hello");
+    expect(JSON.stringify(result)).not.toContain("super-secret-value");
+  });
+
+  it("redacts exact secret values from ClientError fieldErrors and data", () => {
+    const declarations = [
+      { name: "SECRET_TOKEN", required: true, secret: true, description: "Secret token." },
+    ];
+    const env = { SECRET_TOKEN: "super-secret-value" };
+    const result = redactStructuredData(
+      {
+        code: "VALIDATION_ERROR",
+        message: "failed with super-secret-value",
+        data: {
+          nested: { token: "super-secret-value" },
+        },
+        fieldErrors: [{ path: "token", message: "super-secret-value" }],
+      },
+      declarations,
+      env,
+    );
+    const typedResult = result as Record<string, unknown>;
+    expect(typedResult.message).toBe("failed with [REDACTED]");
+    const data = typedResult.data as Record<string, unknown> | undefined;
+    expect(data?.nested).toMatchObject({ token: "[REDACTED]" });
+    const fieldErrors = typedResult.fieldErrors as
+      | Array<{ path: string; message: string }>
+      | undefined;
+    expect(fieldErrors?.[0]?.message).toBe("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("super-secret-value");
+  });
+
+  it("rejects missing command id", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-missing-cmd";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  args: z.object({ input: z.string() }),",
+        "  run(c) {",
+        "    return { ok: true, data: c.args.input };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "",
+        clientInput: undefined,
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("Missing command id"),
+    });
+  });
+
+  it("rejects command not in manifest", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-no-cmd";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "existing" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("existing", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "nonexistent",
+        clientInput: undefined,
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("not found in extension manifest"),
+    });
+  });
+
+  it("rejects non-object input", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-non-obj";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: "not-an-object" as unknown,
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("Input must be an object"),
+    });
+  });
+
+  it("rejects invalid selection type", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-bad-sel";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { selection: "not-an-array" },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("selection must be a non-empty string array."),
+    });
+  });
+
+  it("rejects invalid outputFormat", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-bad-fmt";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { outputFormat: "xml" },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("outputFormat must be one of"),
+    });
+  });
+
+  it("rejects negative token limits", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-neg-tokens";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error1 = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { outputTokenLimit: -1 },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error1).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("outputTokenLimit must be a non-negative integer"),
+    });
+
+    const error2 = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { outputTokenOffset: 1.5 },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error2).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("outputTokenOffset must be a non-negative integer"),
+    });
+
+    const error3 = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { outputTokenLimit: NaN },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error3).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("outputTokenLimit must be a non-negative integer"),
+    });
+  });
+
+  it("rejects args on schema-less commands", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-no-schema-args";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { args: { anything: "x" } },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("Unsupported args key"),
+    });
+  });
+
+  it("rejects options on schema-less commands", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-no-schema-opts";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { options: { verbose: true } },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("Unsupported options key"),
+    });
+  });
+
+  it("rejects empty strings in selection", async () => {
+    const extensionsRoot = createTempDir();
+    const extensionId = "test-empty-sel";
+    const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
+    const currentRoot = join(extensionsRoot, "builds", "extensions", extensionId, "current");
+    const generatedRoot = join(extensionsRoot, "generated", "extensions", extensionId);
+    mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
+    mkdirSync(join(currentRoot, "source"), { recursive: true });
+    mkdirSync(generatedRoot, { recursive: true });
+    writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
+    writeFileSync(
+      join(sourceRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: extensionId,
+        title: extensionId,
+        description: `${extensionId} extension`,
+        interface: "svvyx",
+        typescriptApiEnabled: true,
+        instructionFiles: [{ file: "010-main.md", bypassed: false }],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId,
+        interface: "svvyx",
+        module: "source/index.js",
+        commandManifest: {
+          version: "incur.v1",
+          commands: [{ name: "test" }],
+        },
+        typescriptTypes: join(generatedRoot, "types.d.ts"),
+        env: [],
+        dependencies: [],
+      }) + "\n",
+    );
+    writeFileSync(
+      join(currentRoot, "source", "index.js"),
+      [
+        'import { Cli, z } from "incur";',
+        `const cli = Cli.create("${extensionId}");`,
+        'cli.command("test", {',
+        "  run(c) {",
+        "    return { ok: true };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(generatedRoot, "types.d.ts"), "export {};\n");
+    const repoNodeModules = join(process.cwd(), "node_modules");
+    const packageRootNodeModules = join(extensionsRoot, "package", "node_modules");
+    const rootNodeModules = join(extensionsRoot, "node_modules");
+    mkdirSync(join(extensionsRoot, "package"), { recursive: true });
+    if (!existsSync(packageRootNodeModules)) {
+      symlinkSync(repoNodeModules, packageRootNodeModules);
+    }
+    if (!existsSync(rootNodeModules)) {
+      symlinkSync(repoNodeModules, rootNodeModules);
+    }
+
+    const error = await catchError(
+      runSvvyxRuntimeGeneratedClientCommand({
+        commandId: "test",
+        clientInput: { selection: ["valid", ""] },
+        extensionId,
+        extensionsRoot,
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_argument",
+      message: expect.stringContaining("selection must be a non-empty string array"),
     });
   });
 

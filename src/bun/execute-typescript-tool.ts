@@ -1,6 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import { Formatter } from "incur";
+import { Client } from "incur/client";
 import type { Static } from "typebox";
 import { basename } from "node:path";
 import { inspect } from "node:util";
@@ -174,10 +174,7 @@ type GeneratedUserClientInput = {
   outputTokenOffset?: number;
 };
 type GeneratedUserExtensionClient = {
-  run: (
-    commandId: string,
-    input?: GeneratedUserClientInput,
-  ) => Promise<GeneratedClientRunResult<unknown>>;
+  run: (commandId: string, input?: GeneratedUserClientInput) => Promise<unknown>;
 };
 type ExecuteTypescriptExtensions = {
   artifacts?: {
@@ -195,7 +192,7 @@ type ExecuteTypescriptExtensions = {
 } & Record<string, GeneratedUserExtensionClient | undefined>;
 type IncurClientModuleRuntime = {
   Client: {
-    ClientError: new (message?: string) => Error;
+    ClientError: typeof Client.ClientError;
   };
   Resources: Record<string, unknown>;
   Run: Record<string, unknown>;
@@ -887,16 +884,9 @@ async function runCompiledSnippet(
 }
 
 function createIncurClientModule(): IncurClientModuleRuntime {
-  class ClientError extends Error {
-    constructor(message?: string) {
-      super(message);
-      this.name = "ClientError";
-    }
-  }
-
   return Object.freeze({
     Client: Object.freeze({
-      ClientError,
+      ClientError: Client.ClientError,
     }),
     Resources: Object.freeze({}),
     Run: Object.freeze({}),
@@ -1201,10 +1191,8 @@ function createUserSvvyxGeneratedClient(input: {
   extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
 }): GeneratedUserExtensionClient {
   return Object.freeze({
-    run: async (
-      commandId: string,
-      rawInput: GeneratedUserClientInput = {},
-    ): Promise<GeneratedClientRunResult<unknown>> => {
+    run: async (commandId: string, rawInput: GeneratedUserClientInput = {}): Promise<unknown> => {
+      const trimmedCommandId = commandId.trim();
       const toolName = `extensions.${input.extensionId}.run`;
       const childCommand = input.store.createCommand({
         turnId: input.context.turnId ?? null,
@@ -1217,78 +1205,61 @@ function createUserSvvyxGeneratedClient(input: {
         executor: input.context.executor ?? "orchestrator",
         visibility: input.context.visibility ?? "summary",
         title: `Run ${toolName}`,
-        summary: `${input.extensionId}.${commandId}`,
+        summary: `${input.extensionId}.${trimmedCommandId}`,
         arguments: {
-          commandId,
+          commandId: trimmedCommandId,
           input: redactExecuteTypescriptValue(rawInput),
         },
         facts: {
           extensionId: input.extensionId,
-          commandId,
+          commandId: trimmedCommandId,
         },
       });
       input.store.startCommand(childCommand.id);
       try {
         const result = await runSvvyxRuntimeGeneratedClientCommand({
-          commandId,
+          commandId: trimmedCommandId,
           clientInput: rawInput,
           envSecretStore: resolveExecuteTypescriptExtensionEnvSecretStore(input),
           envValues: resolveExecuteTypescriptExtensionsEnvValues(input),
           extensionId: input.extensionId,
           extensionsRoot: input.extensionsRoot,
         });
-        const runResult = parseUserSvvyxGeneratedRunResult({
-          commandFacts: result.commandFacts,
-          commandId,
-          extensionId: input.extensionId,
-          input: rawInput,
-          output: result.output,
-        });
-        if (!runResult.ok) {
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "failed",
-            summary: runResult.error.message,
-            facts: {
-              extensionId: input.extensionId,
-              commandId,
-              ...result.commandFacts,
-            },
-            error: JSON.stringify({
-              ok: false,
-              error: {
-                code: "extension_command_failed",
-                message: runResult.error.message,
-              },
-              commandFacts: result.commandFacts,
-            }),
-          });
-          input.childCommandFacts.push({ status: "failed" });
-          const ClientError = input.incurClientModule.Client.ClientError;
-          throw new ClientError(runResult.error.message);
-        }
         input.store.finishCommand({
           commandId: childCommand.id,
           status: "succeeded",
-          summary: summarizeResult(runResult.data),
+          summary: summarizeResult(isRecord(result) && result.ok === true ? result.data : result),
           facts: {
             extensionId: input.extensionId,
-            commandId,
-            ...result.commandFacts,
+            commandId: trimmedCommandId,
+            runtimeReady: true,
           },
         });
         input.childCommandFacts.push({ status: "succeeded" });
-        return Object.freeze({
-          ok: true,
-          data: runResult.data,
-          output: runResult.output,
-          meta: Object.freeze({
-            ...runResult.meta,
-            commandFacts: Object.freeze({ ...result.commandFacts }),
-          }),
-        });
+        return result;
       } catch (error) {
-        if (error instanceof input.incurClientModule.Client.ClientError) {
+        const ClientError = input.incurClientModule.Client.ClientError;
+        if (error instanceof ClientError) {
+          input.store.finishCommand({
+            commandId: childCommand.id,
+            status: "failed",
+            summary: error.message,
+            facts: {
+              extensionId: input.extensionId,
+              commandId: trimmedCommandId,
+              errorCode: error.code ?? "extension_command_failed",
+              ...(error.data ? { errorData: error.data } : {}),
+              ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+            },
+            error: JSON.stringify({
+              error: {
+                message: error.message,
+                code: error.code,
+                ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+              },
+            }),
+          });
+          input.childCommandFacts.push({ status: "failed" });
           throw error;
         }
         const formatted = formatSvvyxRuntimeError(error);
@@ -1298,14 +1269,13 @@ function createUserSvvyxGeneratedClient(input: {
           summary: formatted.error.message,
           facts: {
             extensionId: input.extensionId,
-            commandId,
+            commandId: trimmedCommandId,
             errorCode: formatted.error.code,
             ...formatted.commandFacts,
           },
           error: JSON.stringify(formatted),
         });
         input.childCommandFacts.push({ status: "failed" });
-        const ClientError = input.incurClientModule.Client.ClientError;
         throw new ClientError(formatted.error.message);
       }
     },
@@ -1367,134 +1337,6 @@ function effectiveLoadedExtensionIds(context: ExecuteTypescriptContext): string[
     ...(context.loadedExtensionIds ??
       resolveActorExtensionState({ actor: context.actor }).loadedExtensionIds),
   ];
-}
-
-type ParsedUserSvvyxRunResult =
-  | {
-      ok: true;
-      data: unknown;
-      output: GeneratedClientRunOutput;
-      meta: Record<string, unknown>;
-    }
-  | {
-      ok: false;
-      error: { message: string };
-    };
-
-function parseUserSvvyxGeneratedRunResult(input: {
-  commandFacts: Record<string, unknown>;
-  commandId: string;
-  extensionId: string;
-  input: GeneratedUserClientInput;
-  output: unknown;
-}): ParsedUserSvvyxRunResult {
-  if (!isRecord(input.output) || typeof input.output.stdout !== "string") {
-    return {
-      ok: true,
-      data: input.output,
-      output: userSvvyxGeneratedOutput(input.output, input.input),
-      meta: {},
-    };
-  }
-  const stdout = input.output.stdout.trim();
-  const parsed = parseJsonOrUndefined(stdout);
-  if (input.output.ok === false) {
-    return {
-      ok: false,
-      error: {
-        message: userSvvyxGeneratedFailureMessage(
-          input.extensionId,
-          input.commandId,
-          parsed,
-          stdout,
-        ),
-      },
-    };
-  }
-  if (isRecord(parsed) && parsed.ok === false) {
-    return {
-      ok: false,
-      error: {
-        message: userSvvyxGeneratedFailureMessage(
-          input.extensionId,
-          input.commandId,
-          parsed,
-          stdout,
-        ),
-      },
-    };
-  }
-  const data = isRecord(parsed) && parsed.ok === true && "data" in parsed ? parsed.data : parsed;
-  const meta = isRecord(parsed) && isRecord(parsed.meta) ? parsed.meta : {};
-  return {
-    ok: true,
-    data,
-    output: userSvvyxGeneratedOutput(data, input.input),
-    meta,
-  };
-}
-
-function parseJsonOrUndefined(value: string): unknown {
-  if (!value) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function userSvvyxGeneratedOutput(
-  data: unknown,
-  input: GeneratedUserClientInput,
-): GeneratedClientRunOutput {
-  const format = input.outputFormat ?? "json";
-  return {
-    format,
-    text: renderGeneratedClientOutputText(data, format),
-    ...(input.outputTokenCount === true ? generatedClientTokenCount(data) : {}),
-    ...(input.outputTokenLimit !== undefined ? { tokenLimit: input.outputTokenLimit } : {}),
-    ...(input.outputTokenOffset !== undefined ? { tokenOffset: input.outputTokenOffset } : {}),
-  };
-}
-
-function generatedClientTokenCount(data: unknown): { tokenCount?: number } {
-  if (typeof data === "number" && Number.isFinite(data)) {
-    return { tokenCount: data };
-  }
-  if (typeof data === "string") {
-    const value = Number(data.trim());
-    return Number.isFinite(value) ? { tokenCount: value } : {};
-  }
-  return {};
-}
-
-function renderGeneratedClientOutputText(
-  data: unknown,
-  format: GeneratedClientRunOutput["format"],
-): string {
-  return Formatter.format(data, format);
-}
-
-function userSvvyxGeneratedFailureMessage(
-  extensionId: string,
-  commandId: string,
-  parsed: unknown,
-  stdout: string,
-): string {
-  if (isRecord(parsed)) {
-    if (isRecord(parsed.error) && typeof parsed.error.message === "string") {
-      return parsed.error.message;
-    }
-    if (typeof parsed.message === "string") {
-      return parsed.message;
-    }
-  }
-  if (stdout) {
-    return stdout;
-  }
-  return `${extensionId}.${commandId} failed.`;
 }
 
 function resolveExecuteTypescriptExtensionEnvSecretStore(input: {

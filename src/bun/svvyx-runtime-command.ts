@@ -2,11 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
-import {
-  isSvvyxCommandManifest,
-  type SvvyxCommandManifest,
-  type SvvyxCommandManifestEntry,
-} from "./svvyx-typescript-declarations";
+import { isSvvyxCommandManifest, type SvvyxCommandManifest } from "./svvyx-typescript-declarations";
 
 type CurrentBuildManifest = {
   schemaVersion: 1;
@@ -96,21 +92,237 @@ export async function runSvvyxRuntimeGeneratedClientCommand(input: {
   envValues?: SvvyxRuntimeEnvValues;
   extensionId: string;
   extensionsRoot?: string;
-}): Promise<SvvyxRuntimeCommandResult> {
-  return runSvvyxRuntimeInvocation({
-    buildExtensionArgv(currentBuild) {
-      return buildGeneratedClientExtensionArgv({
-        clientInput: input.clientInput,
-        commandId: input.commandId,
-        currentBuild,
-        extensionId: input.extensionId,
+}): Promise<unknown> {
+  let extensionArgv: string[] = [];
+  try {
+    assertActiveUserSource(input.extensionId, input.extensionsRoot);
+    const currentBuild = readCurrentBuild(input.extensionId, input.extensionsRoot);
+    if (currentBuild.interface !== "svvyx") {
+      throw runtimeCommandError(
+        "extension_not_dispatchable",
+        `${input.extensionId} current build is not a svvyx extension.`,
+      );
+    }
+    if (!currentBuild.module) {
+      throw runtimeCommandError(
+        "invalid_current_build",
+        `${input.extensionId} current build has no module.`,
+      );
+    }
+    const currentBuildRoot = currentBuildPath(input.extensionId, input.extensionsRoot);
+    const modulePath = resolveCurrentBuildModule(
+      input.extensionId,
+      currentBuildRoot,
+      currentBuild.module,
+    );
+    const missingDependency = currentBuild.dependencies.find(
+      (dependency) => !runtimeDependencyArtifactInstalled(input.extensionsRoot, dependency),
+    );
+    if (missingDependency) {
+      throw runtimeCommandError(
+        "dependency_install_missing",
+        `${input.extensionId} dependency ${missingDependency.name} is not installed.`,
+      );
+    }
+    const env = resolveRuntimeEnv({
+      extensionId: input.extensionId,
+      declarations: currentBuild.env,
+      envSecretStore: input.envSecretStore,
+      envValues: input.envValues,
+    });
+    let loaded: { default?: unknown };
+    try {
+      loaded = (await import(`${modulePath}?svvyx=${Date.now()}`)) as { default?: unknown };
+    } catch {
+      throw runtimeCommandError(
+        "current_build_import_failed",
+        `${input.extensionId} current build CLI could not be imported.`,
+      );
+    }
+    const cli = loaded.default;
+    if (!cli || typeof (cli as { serve?: unknown }).serve !== "function") {
+      throw runtimeCommandError(
+        "invalid_current_build",
+        `${input.extensionId} current build did not default-export an Incur CLI.`,
+      );
+    }
+
+    const commandName = input.commandId.trim();
+    if (!commandName) {
+      throw runtimeCommandError("invalid_argument", "Missing command id.");
+    }
+    const commandEntry = currentBuild.commandManifest?.commands?.find(
+      (entry) => entry.name === commandName,
+    );
+    if (!commandEntry) {
+      throw runtimeCommandError(
+        "invalid_argument",
+        `Command ${commandName} not found in extension manifest.`,
+      );
+    }
+    const commandSchema = commandEntry.schema;
+
+    if (commandEntry.streaming) {
+      throw runtimeCommandError(
+        "streaming_not_supported",
+        `Streaming commands are not supported via the generated client.`,
+      );
+    }
+
+    const rawClientInput = input.clientInput as Record<string, unknown> | undefined;
+    if (rawClientInput !== undefined && !isRecord(rawClientInput)) {
+      throw runtimeCommandError("invalid_argument", "Input must be an object.");
+    }
+    if (isRecord(rawClientInput)) {
+      rejectUnknownGeneratedClientInputKeys(rawClientInput);
+    }
+    if (isRecord(rawClientInput)) {
+      if (rawClientInput.args !== undefined && !isRecord(rawClientInput.args)) {
+        throw runtimeCommandError("invalid_argument", "args must be an object.");
+      }
+      if (rawClientInput.options !== undefined && !isRecord(rawClientInput.options)) {
+        throw runtimeCommandError("invalid_argument", "options must be an object.");
+      }
+      if (
+        rawClientInput.selection !== undefined &&
+        (!Array.isArray(rawClientInput.selection) ||
+          !rawClientInput.selection.every((item) => typeof item === "string" && item.length > 0))
+      ) {
+        throw runtimeCommandError(
+          "invalid_argument",
+          "selection must be a non-empty string array.",
+        );
+      }
+      if (rawClientInput.outputFormat !== undefined) {
+        const supportedFormats = ["toon", "json", "yaml", "md", "jsonl"];
+        if (
+          typeof rawClientInput.outputFormat !== "string" ||
+          !supportedFormats.includes(rawClientInput.outputFormat)
+        ) {
+          throw runtimeCommandError(
+            "invalid_argument",
+            `outputFormat must be one of: ${supportedFormats.join(", ")}.`,
+          );
+        }
+      }
+      if (
+        rawClientInput.outputTokenCount !== undefined &&
+        typeof rawClientInput.outputTokenCount !== "boolean"
+      ) {
+        throw runtimeCommandError("invalid_argument", "outputTokenCount must be a boolean.");
+      }
+      if (
+        rawClientInput.outputTokenLimit !== undefined &&
+        (typeof rawClientInput.outputTokenLimit !== "number" ||
+          !Number.isSafeInteger(rawClientInput.outputTokenLimit) ||
+          rawClientInput.outputTokenLimit < 0)
+      ) {
+        throw runtimeCommandError(
+          "invalid_argument",
+          "outputTokenLimit must be a non-negative integer.",
+        );
+      }
+      if (
+        rawClientInput.outputTokenOffset !== undefined &&
+        (typeof rawClientInput.outputTokenOffset !== "number" ||
+          !Number.isSafeInteger(rawClientInput.outputTokenOffset) ||
+          rawClientInput.outputTokenOffset < 0)
+      ) {
+        throw runtimeCommandError(
+          "invalid_argument",
+          "outputTokenOffset must be a non-negative integer.",
+        );
+      }
+    }
+    const argNames =
+      commandSchema?.args?.type === "object" && commandSchema.args.properties
+        ? Object.keys(commandSchema.args.properties)
+        : [];
+    const optionNames =
+      commandSchema?.options?.type === "object" && commandSchema.options.properties
+        ? Object.keys(commandSchema.options.properties)
+        : [];
+    let processedInput = rawClientInput;
+    if (isRecord(rawClientInput)) {
+      if (isRecord(rawClientInput.args)) {
+        rejectUnknownGeneratedClientRecordKeys(rawClientInput.args, argNames, "args");
+      }
+      if (isRecord(rawClientInput.options)) {
+        rejectUnknownGeneratedClientRecordKeys(rawClientInput.options, optionNames, "options");
+      }
+      if (argNames.length > 0 && isRecord(rawClientInput.args)) {
+        const reordered: Record<string, unknown> = {};
+        for (const key of argNames) {
+          if (Object.prototype.hasOwnProperty.call(rawClientInput.args, key)) {
+            reordered[key] = rawClientInput.args[key];
+          }
+        }
+        processedInput = { ...rawClientInput, args: reordered };
+      }
+    }
+
+    const { Client, MemoryClient } = await import("incur/client");
+    const client = MemoryClient.create(cli as any, { env });
+    const result = await client
+      .run(commandName, processedInput as any)
+      .catch((runError: unknown) => {
+        if (runError instanceof Client.ClientError) {
+          runError.message = redactRuntimeOutput(runError.message, currentBuild.env, env);
+          if ("shortMessage" in runError) {
+            (runError as { shortMessage: string }).shortMessage = redactRuntimeOutput(
+              (runError as { shortMessage: string }).shortMessage,
+              currentBuild.env,
+              env,
+            );
+          }
+          runError.data = redactStructuredData(runError.data, currentBuild.env, env);
+          runError.error = redactStructuredData(runError.error, currentBuild.env, env);
+          runError.fieldErrors = redactStructuredData(runError.fieldErrors, currentBuild.env, env);
+          throw runError;
+        }
+        const message = runError instanceof Error ? runError.message : String(runError);
+        throw runtimeCommandError(
+          "extension_command_failed",
+          redactRuntimeOutput(message, currentBuild.env, env),
+        );
       });
-    },
-    envSecretStore: input.envSecretStore,
-    envValues: input.envValues,
-    extensionId: input.extensionId,
-    extensionsRoot: input.extensionsRoot,
-  });
+    const redacted = redactStructuredData(result, currentBuild.env, env);
+    if (
+      typeof redacted === "object" &&
+      redacted !== null &&
+      !Array.isArray(redacted) &&
+      (redacted as Record<string, unknown>).ok === true
+    ) {
+      const record = redacted as Record<string, unknown>;
+      const meta =
+        typeof record.meta === "object" && record.meta !== null && !Array.isArray(record.meta)
+          ? (record.meta as Record<string, unknown>)
+          : {};
+      return {
+        ...record,
+        meta: {
+          ...meta,
+          commandFacts: {
+            extensionId: input.extensionId,
+            commandId: commandName,
+            runtimeReady: true,
+          },
+        },
+      };
+    }
+    return redacted;
+  } catch (error) {
+    if (error instanceof SvvyxRuntimeCommandError) {
+      throw error.withCommandFacts(
+        blockedDispatchFacts({
+          errorCode: error.code,
+          extensionArgv,
+          extensionId: input.extensionId,
+        }),
+      );
+    }
+    throw error;
+  }
 }
 
 async function runSvvyxRuntimeInvocation(input: {
@@ -301,101 +513,6 @@ function dispatcherHelp(): SvvyxRuntimeCommandResult {
   };
 }
 
-function buildGeneratedClientExtensionArgv(input: {
-  clientInput?: unknown;
-  commandId: string;
-  currentBuild: CurrentBuildManifest;
-  extensionId: string;
-}): string[] {
-  if (typeof input.commandId !== "string" || input.commandId.trim().length === 0) {
-    throw runtimeCommandError("invalid_argument", "commandId must be a non-empty string.");
-  }
-  if (!input.currentBuild.commandManifest) {
-    throw runtimeCommandError(
-      "invalid_current_build",
-      `${input.extensionId} current build command manifest is invalid.`,
-    );
-  }
-  const clientInput = readGeneratedClientInput(input.clientInput);
-  const commandName = input.commandId.trim();
-  const command = input.currentBuild.commandManifest.commands.find(
-    (entry) => entry.name === commandName,
-  );
-  if (!command) {
-    throw runtimeCommandError(
-      "invalid_argument",
-      `${input.extensionId}.${commandName} is not in the current command manifest.`,
-    );
-  }
-  if (command.streaming && hasGeneratedClientTokenPaging(clientInput)) {
-    throw runtimeCommandError(
-      "invalid_argument",
-      "Streaming generated client commands support selection and outputFormat, not token pagination controls.",
-    );
-  }
-  const argv = [
-    ...commandName.split(/\s+/).filter(Boolean),
-    ...generatedClientArgsArgv(command, clientInput.args),
-    ...generatedClientOptionsArgv(command, clientInput.options),
-    ...generatedClientOutputControlsArgv(clientInput),
-    "--verbose",
-    "--format",
-    "json",
-  ];
-  return argv;
-}
-
-type GeneratedClientInvocationInput = {
-  args?: Record<string, unknown>;
-  options?: Record<string, unknown>;
-  selection?: string[];
-  outputFormat?: string;
-  outputTokenCount?: boolean;
-  outputTokenLimit?: number;
-  outputTokenOffset?: number;
-};
-
-function readGeneratedClientInput(value: unknown): GeneratedClientInvocationInput {
-  if (value === undefined) {
-    return {};
-  }
-  if (!isRecord(value)) {
-    throw runtimeCommandError("invalid_argument", "input must be an object when provided.");
-  }
-  rejectUnknownGeneratedClientInputKeys(value);
-  return {
-    ...(value.args !== undefined ? { args: readGeneratedClientRecord(value.args, "args") } : {}),
-    ...(value.options !== undefined
-      ? { options: readGeneratedClientRecord(value.options, "options") }
-      : {}),
-    ...(value.selection !== undefined
-      ? { selection: readGeneratedClientSelection(value.selection) }
-      : {}),
-    ...(value.outputFormat !== undefined
-      ? { outputFormat: readGeneratedClientOutputFormat(value.outputFormat) }
-      : {}),
-    ...(value.outputTokenCount !== undefined
-      ? { outputTokenCount: readGeneratedClientBoolean(value.outputTokenCount, "outputTokenCount") }
-      : {}),
-    ...(value.outputTokenLimit !== undefined
-      ? {
-          outputTokenLimit: readGeneratedClientNonnegativeInteger(
-            value.outputTokenLimit,
-            "outputTokenLimit",
-          ),
-        }
-      : {}),
-    ...(value.outputTokenOffset !== undefined
-      ? {
-          outputTokenOffset: readGeneratedClientNonnegativeInteger(
-            value.outputTokenOffset,
-            "outputTokenOffset",
-          ),
-        }
-      : {}),
-  };
-}
-
 function rejectUnknownGeneratedClientInputKeys(input: Record<string, unknown>): void {
   const allowed = new Set([
     "args",
@@ -416,132 +533,6 @@ function rejectUnknownGeneratedClientInputKeys(input: Record<string, unknown>): 
   }
 }
 
-function readGeneratedClientRecord(value: unknown, name: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw runtimeCommandError("invalid_argument", `${name} must be an object when provided.`);
-  }
-  return value;
-}
-
-function readGeneratedClientSelection(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry)) {
-    throw runtimeCommandError(
-      "invalid_argument",
-      "selection must be an array of non-empty strings.",
-    );
-  }
-  return [...value];
-}
-
-function readGeneratedClientOutputFormat(value: unknown): string {
-  if (
-    value !== "toon" &&
-    value !== "json" &&
-    value !== "yaml" &&
-    value !== "md" &&
-    value !== "jsonl"
-  ) {
-    throw runtimeCommandError(
-      "invalid_argument",
-      "outputFormat must be one of toon, json, yaml, md, or jsonl.",
-    );
-  }
-  return value;
-}
-
-function readGeneratedClientBoolean(value: unknown, name: string): boolean {
-  if (typeof value !== "boolean") {
-    throw runtimeCommandError("invalid_argument", `${name} must be a boolean.`);
-  }
-  return value;
-}
-
-function readGeneratedClientNonnegativeInteger(value: unknown, name: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw runtimeCommandError("invalid_argument", `${name} must be a non-negative integer.`);
-  }
-  return value;
-}
-
-function generatedClientArgsArgv(
-  command: SvvyxCommandManifestEntry,
-  args: Record<string, unknown> | undefined,
-): string[] {
-  if (!args) {
-    return [];
-  }
-  const argNames = schemaPropertyNames(command.schema?.args);
-  rejectUnknownGeneratedClientRecordKeys(args, argNames, "args");
-  const argv: string[] = [];
-  for (const name of argNames) {
-    if (!Object.prototype.hasOwnProperty.call(args, name) || args[name] === undefined) {
-      continue;
-    }
-    argv.push(generatedClientScalar(args[name], `args.${name}`));
-  }
-  return argv;
-}
-
-function generatedClientOptionsArgv(
-  command: SvvyxCommandManifestEntry,
-  options: Record<string, unknown> | undefined,
-): string[] {
-  if (!options) {
-    return [];
-  }
-  const optionNames = schemaPropertyNames(command.schema?.options);
-  rejectUnknownGeneratedClientRecordKeys(options, optionNames, "options");
-  const argv: string[] = [];
-  for (const name of optionNames) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) {
-      throw runtimeCommandError("invalid_argument", `Unsupported option name: ${name}`);
-    }
-    const value = options[name];
-    if (value === undefined || value === false) {
-      continue;
-    }
-    const option = `--${name}`;
-    if (value === true) {
-      argv.push(option);
-      continue;
-    }
-    const values = Array.isArray(value) ? value : [value];
-    for (const entry of values) {
-      argv.push(option, generatedClientScalar(entry, `options.${name}`));
-    }
-  }
-  return argv;
-}
-
-function generatedClientOutputControlsArgv(input: GeneratedClientInvocationInput): string[] {
-  const argv: string[] = [];
-  if (input.selection && input.selection.length > 0) {
-    argv.push("--filter-output", input.selection.join(","));
-  }
-  if (input.outputTokenCount === true) {
-    argv.push("--token-count");
-  }
-  if (input.outputTokenLimit !== undefined) {
-    argv.push("--token-limit", String(input.outputTokenLimit));
-  }
-  if (input.outputTokenOffset !== undefined) {
-    argv.push("--token-offset", String(input.outputTokenOffset));
-  }
-  return argv;
-}
-
-function hasGeneratedClientTokenPaging(input: GeneratedClientInvocationInput): boolean {
-  return (
-    input.outputTokenCount === true ||
-    input.outputTokenLimit !== undefined ||
-    input.outputTokenOffset !== undefined
-  );
-}
-
-function schemaPropertyNames(schema: unknown): string[] {
-  return isRecord(schema) && isRecord(schema.properties) ? Object.keys(schema.properties) : [];
-}
-
 function rejectUnknownGeneratedClientRecordKeys(
   input: Record<string, unknown>,
   allowedNames: readonly string[],
@@ -553,19 +544,6 @@ function rejectUnknownGeneratedClientRecordKeys(
       throw runtimeCommandError("invalid_argument", `Unsupported ${name} key: ${key}`);
     }
   }
-}
-
-function generatedClientScalar(value: unknown, name: string): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  if (typeof value === "boolean") {
-    return String(value);
-  }
-  throw runtimeCommandError("invalid_argument", `${name} must be a string, number, or boolean.`);
 }
 
 function readCurrentBuild(
@@ -751,6 +729,41 @@ function redactRuntimeOutput(
     redacted = redacted.split(value).join("[REDACTED]");
   }
   return redacted;
+}
+
+export function redactStructuredData<T>(
+  data: T,
+  declarations: readonly RuntimeEnvDeclaration[],
+  env: Record<string, string | undefined>,
+): T {
+  const secrets = declarations
+    .filter((d) => d.secret)
+    .map((d) => env[d.name])
+    .filter(Boolean) as string[];
+  if (secrets.length === 0) return data;
+
+  function redactValue(value: unknown): unknown {
+    if (typeof value === "string") {
+      let s = value;
+      for (const secret of secrets) {
+        s = s.split(secret).join("[REDACTED]");
+      }
+      return s;
+    }
+    if (Array.isArray(value)) {
+      return value.map(redactValue);
+    }
+    if (typeof value === "object" && value !== null) {
+      const result: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value)) {
+        result[key] = redactValue(val);
+      }
+      return result;
+    }
+    return value;
+  }
+
+  return redactValue(data) as T;
 }
 
 function currentBuildPath(extensionId: string, extensionsRoot: string | undefined): string {

@@ -36,9 +36,9 @@ export function buildUserSvvyxTypescriptDeclaration(input: {
     "};",
     "",
     `type ${commandMapName} = {`,
-    ...input.commandManifest.commands.flatMap((command) =>
-      renderCommandMapEntry(command, outputControlsName, commandMapName),
-    ),
+    ...input.commandManifest.commands
+      .filter((command) => !command.streaming)
+      .flatMap((command) => renderCommandMapEntry(command, outputControlsName, commandMapName)),
     "};",
     "",
     `type ${inputArgName}<CommandId extends keyof ${commandMapName}> = keyof Omit<${commandMapName}[CommandId]["input"], keyof ${outputControlsName}> extends never`,

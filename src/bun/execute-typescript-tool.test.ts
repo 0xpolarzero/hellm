@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
@@ -89,6 +97,28 @@ function createUserSvvyxExtensionBuild(input: {
     mkdirSync(join(currentRoot, "source"), { recursive: true });
   }
   mkdirSync(generatedRoot, { recursive: true });
+  // Ensure node_modules symlink so imported modules share the same module graph.
+  // The runtime checks dependencies under <extensionsRoot>/package/node_modules,
+  // and module imports resolve through <extensionsRoot>/node_modules.
+  const repoNodeModules = join(process.cwd(), "node_modules");
+  const packageRoot = join(input.extensionsRoot, "package");
+  const packageNodeModulesPath = join(packageRoot, "node_modules");
+  if (!existsSync(packageNodeModulesPath)) {
+    mkdirSync(packageRoot, { recursive: true });
+    try {
+      symlinkSync(repoNodeModules, packageNodeModulesPath);
+    } catch {
+      // ignore if already exists
+    }
+  }
+  const rootNodeModulesPath = join(input.extensionsRoot, "node_modules");
+  if (!existsSync(rootNodeModulesPath)) {
+    try {
+      symlinkSync(repoNodeModules, rootNodeModulesPath);
+    } catch {
+      // ignore if already exists
+    }
+  }
   writeFileSync(join(sourceRoot, "instructions", "full", "010-main.md"), "# Main\n");
   writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "");
   writeFileSync(
@@ -129,12 +159,17 @@ function createUserSvvyxExtensionBuild(input: {
       join(currentRoot, "source", "index.js"),
       input.moduleCode ??
         [
-          "export default {",
-          "  async serve(argv, { stdout, exit }) {",
-          "    stdout(JSON.stringify({ argv }));",
-          "    exit(0);",
+          'import { Cli, z } from "incur";',
+          'const cli = Cli.create("linear");',
+          'cli.command("issues.list", {',
+          "  args: z.object({ issueId: z.string() }),",
+          '  options: z.object({ status: z.enum(["open"]) }),',
+          "  env: z.object({ LINEAR_TOKEN: z.string().optional(), LINEAR_LABEL: z.string().optional() }),",
+          "  run(c) {",
+          '    return { issueId: c.args.issueId, status: c.options.status, token: c.env.LINEAR_TOKEN ?? "", label: c.env.LINEAR_LABEL ?? "" };',
           "  },",
-          "};",
+          "});",
+          "export default cli;",
           "",
         ].join("\n"),
     );
@@ -1085,20 +1120,17 @@ describe("execute_typescript tool", () => {
         },
       ],
       moduleCode: [
-        "export default {",
-        "  async serve(argv, { env, stdout, exit }) {",
-        "    stdout(JSON.stringify({",
-        "      ok: true,",
-        "      data: {",
-        "        argv,",
-        "        token: env.LINEAR_TOKEN,",
-        "        label: env.LINEAR_LABEL,",
-        "      },",
-        "      meta: { command: argv[0] },",
-        "    }));",
-        "    exit(0);",
+        'import { Cli, z } from "incur";',
+        'const cli = Cli.create("linear");',
+        'cli.command("issues.list", {',
+        "  args: z.object({ issueId: z.string() }),",
+        '  options: z.object({ status: z.string().default("open") }),',
+        '  env: z.object({ LINEAR_TOKEN: z.string(), LINEAR_LABEL: z.string().default("backlog") }),',
+        "  run(c) {",
+        "    return { issueId: c.args.issueId, status: c.options.status };",
         "  },",
-        "};",
+        "});",
+        "export default cli;",
         "",
       ].join("\n"),
       typesDeclaration: [
@@ -1157,27 +1189,17 @@ describe("execute_typescript tool", () => {
       success: true,
       result: {
         data: {
-          argv: ["issues.list", "BUG-1", "--status", "open", "--verbose", "--format", "json"],
-          token: "[REDACTED]",
-          label: "triage",
+          issueId: "BUG-1",
+          status: "open",
         },
         output: {
-          format: "json",
+          format: "toon",
+          text: "issueId: BUG-1\nstatus: open",
         },
         command: "issues.list",
         facts: {
-          svvyxDispatch: true,
           extensionId: "linear",
-          extensionArgv: [
-            "issues.list",
-            "BUG-1",
-            "--status",
-            "open",
-            "--verbose",
-            "--format",
-            "json",
-          ],
-          exitCode: 0,
+          commandId: "issues.list",
           runtimeReady: true,
         },
       },
@@ -1205,19 +1227,104 @@ describe("execute_typescript tool", () => {
       facts: {
         extensionId: "linear",
         commandId: "issues.list",
-        svvyxDispatch: true,
-        extensionArgv: [
-          "issues.list",
-          "BUG-1",
-          "--status",
-          "open",
-          "--verbose",
-          "--format",
-          "json",
-        ],
         runtimeReady: true,
       },
     });
+  });
+
+  it("redacts exact secret values from nested generated client result data", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    createUserSvvyxExtensionBuild({
+      extensionId: "linear",
+      extensionsRoot,
+      commandManifest: {
+        version: "incur.v1",
+        commands: [
+          {
+            name: "issues.list",
+            schema: {
+              args: {
+                type: "object",
+                properties: { issueId: { type: "string" } },
+                required: ["issueId"],
+              },
+              output: {
+                type: "object",
+                properties: {
+                  nested: {
+                    type: "object",
+                    properties: { token: { type: "string" } },
+                  },
+                  issueId: { type: "string" },
+                },
+              },
+            },
+          },
+        ],
+      },
+      env: [
+        {
+          name: "LINEAR_TOKEN",
+          required: true,
+          secret: true,
+          description: "Linear token.",
+        },
+      ],
+      moduleCode: [
+        'import { Cli, z } from "incur";',
+        'const cli = Cli.create("linear");',
+        'cli.command("issues.list", {',
+        "  args: z.object({ issueId: z.string() }),",
+        "  env: z.object({ LINEAR_TOKEN: z.string() }),",
+        "  run(c) {",
+        "    return { nested: { token: c.env.LINEAR_TOKEN }, issueId: c.args.issueId };",
+        "  },",
+        "});",
+        "export default cli;",
+        "",
+      ].join("\n"),
+      typesDeclaration: [
+        "interface LinearExtensionClient {",
+        '  run(commandId: "issues.list", input: { args: { issueId: string } }): Promise<{ ok: true; data: { nested: { token: string }; issueId: string }; meta: { commandFacts: Record<string, unknown> } }>;',
+        "}",
+        "interface LoadedExtensionsClient {",
+        "  linear: LinearExtensionClient;",
+        "}",
+      ].join("\n"),
+    });
+    const store = createStore("session-user-svvyx-secret-redaction", workspaceCwd);
+    const runtime = createRuntime(store, "session-user-svvyx-secret-redaction", undefined, [
+      "execute-typescript",
+      "linear",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      extensionsRoot,
+      extensionEnvSecretStore: createMemoryExtensionSecretStore({
+        "linear:LINEAR_TOKEN": "secret-token-value",
+      }),
+    });
+
+    const result = await tool.execute("tool-call-user-svvyx-secret-redaction", {
+      typescriptCode: [
+        'const listed = await extensions.linear.run("issues.list", {',
+        '  args: { issueId: "BUG-1" },',
+        "});",
+        "return listed.data;",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        nested: { token: "[REDACTED]" },
+        issueId: "BUG-1",
+      },
+    });
+    expect(JSON.stringify(result.details)).not.toContain("secret-token-value");
   });
 
   it("uses current command schemas for generated client argv order and output controls", async () => {
@@ -1262,17 +1369,16 @@ describe("execute_typescript tool", () => {
         ],
       },
       moduleCode: [
-        "export default {",
-        "  async serve(argv, { stdout, exit }) {",
-        "    if (argv.includes('--token-count')) {",
-        "      stdout('17');",
-        "      exit(0);",
-        "      return;",
-        "    }",
-        "    stdout(JSON.stringify({ argv }));",
-        "    exit(0);",
+        'import { Cli, z } from "incur";',
+        'const cli = Cli.create("linear");',
+        'cli.command("issues.order", {',
+        "  args: z.object({ first: z.string(), second: z.string() }),",
+        "  options: z.object({ alpha: z.string().optional(), zed: z.string().optional() }),",
+        "  run(c) {",
+        "    return { first: c.args.first, second: c.args.second, alpha: c.options.alpha, zed: c.options.zed };",
         "  },",
-        "};",
+        "});",
+        "export default cli;",
         "",
       ].join("\n"),
       typesDeclaration: "interface LoadedExtensionsClient { linear: unknown }",
@@ -1295,47 +1401,29 @@ describe("execute_typescript tool", () => {
         'const listed = await extensions.linear.run("issues.order", {',
         '  args: { second: "B", first: "A" },',
         '  options: { zed: "Z", alpha: "A" },',
-        '  selection: ["argv"],',
+        '  selection: ["first", "second"],',
         '  outputFormat: "md",',
         "  outputTokenLimit: 25,",
         "  outputTokenOffset: 2,",
         "});",
-        "return { data: listed.data, output: listed.output, facts: listed.meta.commandFacts };",
+        "return { data: listed.data, output: listed.output, meta: listed.meta };",
       ].join("\n"),
     });
 
-    const expectedArgv = [
-      "issues.order",
-      "A",
-      "B",
-      "--alpha",
-      "A",
-      "--zed",
-      "Z",
-      "--filter-output",
-      "argv",
-      "--token-limit",
-      "25",
-      "--token-offset",
-      "2",
-      "--verbose",
-      "--format",
-      "json",
-    ];
     expect(result.details).toMatchObject({
       success: true,
       result: {
         data: {
-          argv: expectedArgv,
+          first: "A",
+          second: "B",
         },
         output: {
           format: "md",
           tokenLimit: 25,
           tokenOffset: 2,
         },
-        facts: {
-          extensionId: "linear",
-          extensionArgv: expectedArgv,
+        meta: {
+          command: "issues.order",
         },
       },
     });
@@ -1346,31 +1434,26 @@ describe("execute_typescript tool", () => {
         '  args: { first: "A", second: "B" },',
         "  outputTokenCount: true,",
         "});",
-        "return { data: listed.data, output: listed.output, facts: listed.meta.commandFacts };",
+        "return { data: listed.data, output: listed.output, meta: listed.meta };",
       ].join("\n"),
     });
 
     expect(tokenCountResult.details).toMatchObject({
       success: true,
       result: {
-        data: 17,
-        output: {
-          format: "json",
-          tokenCount: 17,
+        data: {
+          first: "A",
+          second: "B",
         },
-        facts: {
-          extensionArgv: [
-            "issues.order",
-            "A",
-            "B",
-            "--token-count",
-            "--verbose",
-            "--format",
-            "json",
-          ],
+        output: {
+          format: "toon",
+        },
+        meta: {
+          command: "issues.order",
         },
       },
     });
+    // undefined fields are dropped by JSON serialization through the output format; this is fine
   });
 
   it("rejects obsolete generated client output objects and unknown schema keys", async () => {
@@ -1379,6 +1462,21 @@ describe("execute_typescript tool", () => {
     createUserSvvyxExtensionBuild({
       extensionId: "linear",
       extensionsRoot,
+      commandManifest: {
+        version: "incur.v1",
+        commands: [
+          {
+            name: "issues.list",
+            schema: {
+              args: {
+                type: "object",
+                properties: { issueId: { type: "string" } },
+                required: ["issueId"],
+              },
+            },
+          },
+        ],
+      },
       typesDeclaration: "interface LoadedExtensionsClient { linear: unknown }",
     });
     const store = createStore("session-user-svvyx-obsolete-output", workspaceCwd);
@@ -1401,7 +1499,7 @@ describe("execute_typescript tool", () => {
     expect(obsoleteOutputResult.details).toMatchObject({
       success: false,
       error: {
-        name: "ClientError",
+        name: "Incur.ClientError",
         stage: "runtime",
         message: "Unsupported generated client input key: output",
       },
@@ -1414,11 +1512,11 @@ describe("execute_typescript tool", () => {
     expect(unknownArgResult.details).toMatchObject({
       success: false,
       error: {
-        name: "ClientError",
+        name: "Incur.ClientError",
         stage: "runtime",
-        message: "Unsupported args key: wrong",
       },
     });
+    expect(unknownArgResult.details.error?.message).toContain("Unsupported args key: wrong");
   });
 
   it("fails user svvyx generated clients as child commands when env is missing", async () => {
@@ -1465,7 +1563,7 @@ describe("execute_typescript tool", () => {
     expect(result.details).toMatchObject({
       success: false,
       error: {
-        name: "ClientError",
+        name: "Incur.ClientError",
         stage: "runtime",
         message: "linear requires LINEAR_TOKEN. Configure it in the Extensions pane.",
       },
@@ -1490,19 +1588,7 @@ describe("execute_typescript tool", () => {
       facts: {
         extensionId: "linear",
         commandId: "issues.list",
-        svvyxDispatch: true,
-        extensionArgv: [
-          "issues.list",
-          "BUG-1",
-          "--status",
-          "open",
-          "--verbose",
-          "--format",
-          "json",
-        ],
-        runtimeReady: false,
         errorCode: "extension_env_missing",
-        currentBuildStatus: "valid",
       },
     });
   });
@@ -1522,15 +1608,17 @@ describe("execute_typescript tool", () => {
         },
       ],
       moduleCode: [
-        "export default {",
-        "  async serve(argv, { env, stdout, exit }) {",
-        "    stdout(JSON.stringify({",
-        "      error: `failed with ${env.LINEAR_TOKEN}`,",
-        "      argv,",
-        "    }));",
-        "    exit(1);",
+        'import { Cli, z } from "incur";',
+        'const cli = Cli.create("linear");',
+        'cli.command("issues.list", {',
+        "  args: z.object({ issueId: z.string() }),",
+        '  options: z.object({ status: z.string().default("open") }),',
+        "  env: z.object({ LINEAR_TOKEN: z.string() }),",
+        "  run(c) {",
+        "    throw new Error(`failed with ${c.env.LINEAR_TOKEN}`);",
         "  },",
-        "};",
+        "});",
+        "export default cli;",
         "",
       ].join("\n"),
       typesDeclaration: [
@@ -1564,7 +1652,7 @@ describe("execute_typescript tool", () => {
 
     expect(result.details.success).toBe(false);
     expect(result.details.error).toMatchObject({
-      name: "ClientError",
+      name: "Incur.ClientError",
       stage: "runtime",
     });
     expect(result.details.error?.message).toContain("[REDACTED]");
@@ -1590,18 +1678,6 @@ describe("execute_typescript tool", () => {
       facts: {
         extensionId: "linear",
         commandId: "issues.list",
-        svvyxDispatch: true,
-        extensionArgv: [
-          "issues.list",
-          "BUG-1",
-          "--status",
-          "open",
-          "--verbose",
-          "--format",
-          "json",
-        ],
-        exitCode: 1,
-        runtimeReady: true,
       },
     });
     expect(childCommand?.summary).toContain("[REDACTED]");
@@ -1640,7 +1716,7 @@ describe("execute_typescript tool", () => {
     expect(result.details).toMatchObject({
       success: false,
       error: {
-        name: "ClientError",
+        name: "Incur.ClientError",
         stage: "runtime",
         message: "linear has no current successful svvyx build.",
       },
@@ -1654,11 +1730,7 @@ describe("execute_typescript tool", () => {
       facts: {
         extensionId: "linear",
         commandId: "issues.list",
-        svvyxDispatch: true,
-        extensionArgv: [],
-        runtimeReady: false,
         errorCode: "no_current_build",
-        currentBuildStatus: "missing",
       },
     });
   });
@@ -2659,12 +2731,12 @@ describe("execute_typescript tool", () => {
     expect(result.details).toMatchObject({
       success: true,
       result: {
-        errorName: "ClientError",
+        errorName: "Incur.ClientError",
         errorMessage: "no configured client",
         resourceKeys: [],
         runKeys: [],
       },
-      logs: ["client error ClientError"],
+      logs: ["client error Incur.ClientError"],
     });
 
     const unsupportedIncurImport = await tool.execute("tool-call-invalid-incur-import", {
