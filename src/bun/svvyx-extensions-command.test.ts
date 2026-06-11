@@ -1378,9 +1378,10 @@ describe("svvyx extensions command", () => {
 
   it("routes top-level svvyx dispatcher help through exec_command", async () => {
     const cwd = createTempDir();
-    const execTool = createSvvyDirectTools({ cwd }).codingTools.find(
-      (candidate) => candidate.name === "exec_command",
-    );
+    const execTool = createSvvyDirectTools({
+      cwd,
+      extensionsRoot: createTempDir(),
+    }).codingTools.find((candidate) => candidate.name === "exec_command");
     if (!execTool) throw new Error("exec_command tool missing.");
 
     const result = await execTool.execute(
@@ -7379,6 +7380,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       cwd,
       extensionsBuildRoot: buildRoot,
       extensionsCliProbe: () => tinyfishStatus({ status: "missing" }),
+      extensionsRoot: createTempDir(),
     }).codingTools;
     const execTool = tools.find((candidate) => candidate.name === "exec_command");
     if (!execTool) throw new Error("exec_command tool missing.");

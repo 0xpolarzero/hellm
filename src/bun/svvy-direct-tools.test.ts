@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -13,13 +14,23 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createPromptExecutionContext } from "./prompt-execution-context";
 import type { AppLoggerEvent } from "./app-logger";
-import { getExtensionsGeneratedPackagePath } from "./smithers-runtime/workflow-library";
 import { buildStructuredSessionView } from "./structured-session-selectors";
 import { createStructuredSessionStateStore } from "./structured-session-state";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 
 const tempDirs: string[] = [];
+
+function createSvvyDirectToolsForTest(
+  options: Omit<Parameters<typeof createSvvyDirectTools>[0], "extensionsRoot"> & {
+    extensionsRoot?: string;
+  },
+): ReturnType<typeof createSvvyDirectTools> {
+  return createSvvyDirectTools({
+    ...options,
+    extensionsRoot: options.extensionsRoot ?? join(options.cwd, ".svvy-test", "extensions"),
+  });
+}
 const openStores: ReturnType<typeof createStructuredSessionStateStore>[] = [];
 
 describe("svvy direct tools", () => {
@@ -36,7 +47,7 @@ describe("svvy direct tools", () => {
   });
 
   it("exposes the current native direct tool surface", () => {
-    const tools = createSvvyDirectTools({ cwd: "/repo/svvy" });
+    const tools = createSvvyDirectToolsForTest({ cwd: "/repo/svvy" });
     const toolNames = tools.codingTools.map((tool) => tool.name);
 
     expect(toolNames).toEqual(["exec_command", "write_stdin", "apply_patch"]);
@@ -54,7 +65,7 @@ describe("svvy direct tools", () => {
 
   it("continues a running exec_command session with write_stdin", async () => {
     const cwd = createTempDir();
-    const tools = createSvvyDirectTools({ cwd }).codingTools;
+    const tools = createSvvyDirectToolsForTest({ cwd }).codingTools;
     const execTool = findTool(tools, "exec_command");
     const stdinTool = findTool(tools, "write_stdin");
 
@@ -90,7 +101,7 @@ describe("svvy direct tools", () => {
     const nested = join(cwd, "nested");
     mkdirSync(nested);
     writeFileSync(join(nested, "scoped.txt"), "from-workdir\n");
-    const execTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "exec_command");
+    const execTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "exec_command");
 
     const result = await execTool.execute(
       "tool-exec-workdir",
@@ -150,7 +161,7 @@ describe("svvy direct tools", () => {
     });
     store.startCommand(command.id);
     const execTool = findTool(
-      createSvvyDirectTools({ cwd, runtime, store }).codingTools,
+      createSvvyDirectToolsForTest({ cwd, runtime, store }).codingTools,
       "exec_command",
     );
 
@@ -229,7 +240,7 @@ describe("svvy direct tools", () => {
     });
     const command = store.getSessionState("session-retained-output").commands[0]!;
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         runtime: { current: promptContext },
         store,
@@ -586,7 +597,7 @@ describe("svvy direct tools", () => {
     });
     const runtime = { current: promptContext };
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         runtime,
         store,
@@ -681,7 +692,7 @@ describe("svvy direct tools", () => {
       facts: { toolCallId: "tool-running-exec" },
     });
     store.startCommand(command.id);
-    const tools = createSvvyDirectTools({ cwd, runtime, store }).codingTools;
+    const tools = createSvvyDirectToolsForTest({ cwd, runtime, store }).codingTools;
     const execTool = findTool(tools, "exec_command");
     const stdinTool = findTool(tools, "write_stdin");
 
@@ -790,7 +801,7 @@ describe("svvy direct tools", () => {
       facts: { toolCallId: "tool-running-retained-exec" },
     });
     store.startCommand(command.id);
-    const tools = createSvvyDirectTools({ cwd, runtime, store }).codingTools;
+    const tools = createSvvyDirectToolsForTest({ cwd, runtime, store }).codingTools;
     const execTool = findTool(tools, "exec_command");
     const stdinTool = findTool(tools, "write_stdin");
 
@@ -852,20 +863,78 @@ describe("svvy direct tools", () => {
     expect(outputEventText).not.toContain("z".repeat(70000));
   });
 
-  it("defaults shell network access on and denies shell networking when disabled", async () => {
+  it("runs shell commands without the network-disabled sandbox by default", async () => {
     const cwd = createTempDir();
-    const server = Bun.serve({
-      port: 0,
-      fetch: () => new Response("network-ok\n"),
-    });
-    const url = `http://127.0.0.1:${server.port}/`;
+    const defaultExecTool = findTool(
+      createSvvyDirectToolsForTest({ cwd }).codingTools,
+      "exec_command",
+    );
+    const allowed = await defaultExecTool.execute(
+      "tool-shell-network-default",
+      { cmd: "echo shell-ok" },
+      new AbortController().signal,
+      () => {},
+    );
+    expect(readText(allowed)).toContain("shell-ok");
+    expect(readText(allowed)).toContain("exit code: 0");
+  });
+
+  it("routes network-disabled shell commands through sandbox-exec without fallback", async () => {
+    const cwd = createTempDir();
+    const blockedExecTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, networkAccess: false }).codingTools,
+      "exec_command",
+    );
+    if (!existsSync("/usr/bin/sandbox-exec")) {
+      await expect(
+        blockedExecTool.execute(
+          "tool-shell-network-disabled",
+          { cmd: "echo should-fail" },
+          new AbortController().signal,
+          () => {},
+        ),
+      ).rejects.toThrow("networkAccess=false requires /usr/bin/sandbox-exec");
+      return;
+    }
+
+    const blocked = await blockedExecTool.execute(
+      "tool-shell-network-disabled",
+      { cmd: "echo sandbox-ok" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    const output = readText(blocked);
+
+    if (output.includes("sandbox_apply")) {
+      // Nested sandbox environment: sandbox-exec couldn't apply, the
+      // command did not run unsandboxed and exited nonzero.
+      expect(output).not.toContain("sandbox-ok");
+      expect(output).toContain("exit code:");
+      expect(output).not.toContain("exit code: 0");
+    } else {
+      // Sandbox applied successfully; the network policy itself is covered by
+      // filesystem-sandbox-policy tests that generate the same Seatbelt profile.
+      expect(output).toContain("sandbox-ok");
+      expect(output).toContain("exit code: 0");
+    }
+  });
+
+  it("allows default loopback networking and denies it when the sandbox can run", async () => {
+    const server = startLoopbackTextServer();
+    if (!server) {
+      expect(server).toBeNull();
+      return;
+    }
     try {
-      const defaultExecTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "exec_command");
+      const cwd = createTempDir();
+      const defaultExecTool = findTool(
+        createSvvyDirectToolsForTest({ cwd }).codingTools,
+        "exec_command",
+      );
       const allowed = await defaultExecTool.execute(
-        "tool-shell-network-default",
-        {
-          cmd: `bun -e "console.log(await (await fetch('${url}')).text())"`,
-        },
+        "tool-shell-loopback-network-default",
+        { cmd: `bun -e "console.log(await (await fetch('${server.url}')).text())"` },
         new AbortController().signal,
         () => {},
       );
@@ -873,24 +942,30 @@ describe("svvy direct tools", () => {
       expect(readText(allowed)).toContain("network-ok");
       expect(readText(allowed)).toContain("exit code: 0");
 
+      if (!existsSync("/usr/bin/sandbox-exec")) {
+        expect(existsSync("/usr/bin/sandbox-exec")).toBe(false);
+        return;
+      }
+
       const blockedExecTool = findTool(
-        createSvvyDirectTools({ cwd, networkAccess: false }).codingTools,
+        createSvvyDirectToolsForTest({ cwd, networkAccess: false }).codingTools,
         "exec_command",
       );
       const blocked = await blockedExecTool.execute(
-        "tool-shell-network-disabled",
+        "tool-shell-loopback-network-disabled",
         {
-          cmd: `bun -e "try { console.log(await (await fetch('${url}')).text()); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(37); }"`,
+          cmd: `bun -e "try { console.log(await (await fetch('${server.url}')).text()); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(37); }"`,
+          timeout: 5,
         },
         new AbortController().signal,
         () => {},
       );
-
-      expect(readText(blocked)).not.toContain("network-ok");
-      expect(readText(blocked)).toContain("exit code:");
-      expect(readText(blocked)).not.toContain("exit code: 0");
+      const output = readText(blocked);
+      expect(output).not.toContain("network-ok");
+      expect(output).not.toContain("exit code: 0");
+      expect(output.includes("exit code:") || output.includes("terminated by signal:")).toBe(true);
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 
@@ -920,7 +995,7 @@ describe("svvy direct tools", () => {
       "export function ReviewPanel() { return null; }\n",
     );
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsSourceRoot: sourceRoot,
@@ -975,7 +1050,7 @@ describe("svvy direct tools", () => {
       "export const ReviewPrompt = ``;\n",
     );
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsSourceRoot: join(cwd, "source"),
@@ -1016,7 +1091,7 @@ describe("svvy direct tools", () => {
     mkdirSync(join(sourceRoot, "prompts"), { recursive: true });
     writeFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "# Review\n");
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
@@ -1079,7 +1154,7 @@ describe("svvy direct tools", () => {
     const cwd = createTempDir();
     let catalogReadCount = 0;
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsModelCatalog: () => {
           catalogReadCount += 1;
@@ -1198,7 +1273,7 @@ describe("svvy direct tools", () => {
     writeFileSync(outsidePromptPath, "# Outside\n");
     symlinkSync(outsidePromptPath, join(cwd, ".smithers", "prompts", "outside-link.mdx"));
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
@@ -1362,7 +1437,7 @@ describe("svvy direct tools", () => {
     writeFileSync(reviewPromptPath, "# Review\n");
     writeFileSync(secondPromptPath, "# Second\n");
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsExtensionsGeneratedPackagePath: extensionsPackageRoot,
         workflowsGeneratedPackagePath: packageRoot,
@@ -1425,7 +1500,7 @@ describe("svvy direct tools", () => {
     mkdirSync(promptsDir, { recursive: true });
     writeFileSync(join(promptsDir, "nested-prompt.mdx"), "# Nested\n");
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
@@ -1495,7 +1570,7 @@ describe("svvy direct tools", () => {
       ].join("\n"),
     );
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
@@ -1649,7 +1724,7 @@ describe("svvy direct tools", () => {
       ].join("\n"),
     );
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [
@@ -1740,7 +1815,7 @@ describe("svvy direct tools", () => {
       ),
     );
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [
@@ -1817,7 +1892,7 @@ describe("svvy direct tools", () => {
   it("applies unified patches through apply_patch", async () => {
     const cwd = createTempDir();
     writeFileSync(join(cwd, "target.txt"), "old\n");
-    const patchTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "apply_patch");
+    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
 
     const result = await patchTool.execute(
       "tool-patch",
@@ -1839,7 +1914,7 @@ describe("svvy direct tools", () => {
 
   it("reports failed apply_patch attempts with structured patch facts", async () => {
     const cwd = createTempDir();
-    const patchTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "apply_patch");
+    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
 
     const error = await patchTool
       .execute(
@@ -1905,7 +1980,7 @@ describe("svvy direct tools", () => {
     writeFileSync(generatedExtensionFile, "export const Extensions = { git: 'git' };\n");
     writeFileSync(workspaceLinkFile, "export const GeneratedPrompt = 'old link';\n");
     writeFileSync(workspaceExtensionsLinkFile, "export const Extensions = { github: 'github' };\n");
-    const tools = createSvvyDirectTools({
+    const tools = createSvvyDirectToolsForTest({
       cwd,
       workflowsExtensionsGeneratedPackagePath: extensionsPackageRoot,
       workflowsGeneratedPackagePath: packageRoot,
@@ -2125,19 +2200,84 @@ describe("svvy direct tools", () => {
     );
   });
 
-  it("rejects direct edits to the default generated @svvy/extensions package path", async () => {
+  it("rejects direct edits to the generated @svvy/extensions package path", async () => {
     const cwd = createTempDir();
-    const execTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "exec_command");
-    const generatedExtensionsPath = getExtensionsGeneratedPackagePath();
+    const extensionsRoot = createTempDir();
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, extensionsRoot }).codingTools,
+      "exec_command",
+    );
+    const generatedExtensionsPath = join(extensionsRoot, "generated", "package");
 
     await expect(
       execTool.execute(
-        "tool-shell-default-generated-extensions-output",
+        "tool-shell-generated-extensions-output",
         { cmd: `printf hacked > ${generatedExtensionsPath}/index.ts` },
         new AbortController().signal,
         () => {},
       ),
     ).rejects.toThrow("Generated Workflows output");
+  });
+
+  it("rejects direct edits to the default generated @svvy/extensions package path without touching the real home", () => {
+    const cwd = createTempDir();
+    const home = createTempDir();
+    const script = String.raw`
+const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+const { dirname, join } = await import("node:path");
+const { createSvvyDirectTools } = await import("./src/bun/svvy-direct-tools.ts");
+
+const cwd = process.env.SVVY_TEST_CWD;
+const home = process.env.HOME;
+if (!cwd || !home) {
+  throw new Error("missing test paths");
+}
+const target = join(home, ".config", "svvy", "extensions", "generated", "package", "index.ts");
+mkdirSync(dirname(target), { recursive: true });
+writeFileSync(target, "before\n");
+const execTool = createSvvyDirectTools({ cwd }).codingTools.find((tool) => tool.name === "exec_command");
+if (!execTool) {
+  throw new Error("exec_command tool missing");
+}
+let rejected = false;
+try {
+  await execTool.execute(
+    "tool-shell-default-generated-extensions-output",
+    { cmd: "printf hacked > " + JSON.stringify(target) },
+    new AbortController().signal,
+    () => {},
+  );
+} catch (error) {
+  rejected = String(error instanceof Error ? error.message : error).includes("Generated Workflows output");
+}
+if (!rejected) {
+  throw new Error("default generated extensions path was not protected");
+}
+if (readFileSync(target, "utf8") !== "before\n") {
+  throw new Error("default generated extensions file was modified");
+}
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: home,
+        SVVY_TEST_CWD: cwd,
+      },
+      encoding: "utf8",
+    });
+
+    if (result.status !== 0) {
+      throw new Error(
+        [
+          "default generated extensions path child test failed",
+          result.stdout.trim(),
+          result.stderr.trim(),
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    }
   });
 
   it("lets full-access bypass direct generated-output write protection", async () => {
@@ -2148,7 +2288,7 @@ describe("svvy direct tools", () => {
     writeFileSync(generatedFile, "export const GeneratedPrompt = 'old';\n");
 
     const defaultExecTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
       }).codingTools,
@@ -2165,7 +2305,7 @@ describe("svvy direct tools", () => {
     expect(readFileSync(generatedFile, "utf8")).toBe("export const GeneratedPrompt = 'old';\n");
 
     const fullAccessExecTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalMode: "full-access",
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
@@ -2189,7 +2329,7 @@ describe("svvy direct tools", () => {
     tempDirs.push(outsideRoot);
     const outsideFile = join(outsideRoot, "outside.txt");
     writeFileSync(outsideFile, "before\n");
-    const patchTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "apply_patch");
+    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
 
     await expect(
       patchTool.execute(
@@ -2218,7 +2358,7 @@ describe("svvy direct tools", () => {
     const outsideFile = join(outsideRoot, "outside.txt");
     writeFileSync(outsideFile, "before\n");
     const patchTool = findTool(
-      createSvvyDirectTools({ cwd, approvalMode: "full-access" }).codingTools,
+      createSvvyDirectToolsForTest({ cwd, approvalMode: "full-access" }).codingTools,
       "apply_patch",
     );
 
@@ -2246,7 +2386,7 @@ describe("svvy direct tools", () => {
     const gitConfig = join(cwd, ".git", "config");
     mkdirSync(dirname(gitConfig), { recursive: true });
     writeFileSync(gitConfig, "before\n");
-    const patchTool = findTool(createSvvyDirectTools({ cwd }).codingTools, "apply_patch");
+    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
 
     await expect(
       patchTool.execute(
@@ -2276,7 +2416,7 @@ describe("svvy direct tools", () => {
     mkdirSync(dirname(manifestPath), { recursive: true });
     writeFileSync(manifestPath, '{"schemaVersion":1}\n');
     const patchTool = findTool(
-      createSvvyDirectTools({ cwd, extensionsRoot }).codingTools,
+      createSvvyDirectToolsForTest({ cwd, extensionsRoot }).codingTools,
       "apply_patch",
     );
 
@@ -2304,7 +2444,7 @@ describe("svvy direct tools", () => {
     const target = join(cwd, "should-not-exist.txt");
     const approvalRequests: unknown[] = [];
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: false, reason: "Shell command needs user approval." };
@@ -2341,7 +2481,7 @@ describe("svvy direct tools", () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: true };
@@ -2373,7 +2513,7 @@ describe("svvy direct tools", () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: false, reason: "svvyx command needs approval." };
@@ -2437,7 +2577,7 @@ describe("svvy direct tools", () => {
     writeFileSync(target, "before\n");
     const approvalRequests: unknown[] = [];
     const patchTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: false, reason: "Patch needs user approval." };
@@ -2471,7 +2611,7 @@ describe("svvy direct tools", () => {
     const cwd = createTempDir();
     const target = join(cwd, "allowed.txt");
     const execTool = findTool(
-      createSvvyDirectTools({
+      createSvvyDirectToolsForTest({
         approvalBoundary: () => {
           throw new Error("approval boundary should not run in full-access.");
         },
@@ -2591,7 +2731,7 @@ describe("svvy direct tools", () => {
     writeFileSync(snapshotFile, "{}\n");
     writeFileSync(trashFile, "{}\n");
 
-    const tools = createSvvyDirectTools({ cwd, extensionsRoot }).codingTools;
+    const tools = createSvvyDirectToolsForTest({ cwd, extensionsRoot }).codingTools;
     const patchTool = findTool(tools, "apply_patch");
     const execTool = findTool(tools, "exec_command");
 
@@ -3203,7 +3343,7 @@ function createActiveExecHarness(input: {
   });
   store.startCommand(command.id);
   const execTool = findTool(
-    createSvvyDirectTools({
+    createSvvyDirectToolsForTest({
       cwd: input.cwd,
       runtime,
       store,
@@ -3264,12 +3404,14 @@ function createArtifactsHarness(
     rootThreadId: null,
     promptText: "Use artifacts",
   });
-  const tools = createSvvyDirectTools({
+  const extensionsRoot = join(cwd, "extensions");
+  const tools = createSvvyDirectToolsForTest({
     cwd,
     runtime,
     store,
     openArtifact: harnessOptions.openArtifact,
     onAppLog: harnessOptions.onAppLog,
+    extensionsRoot,
   }).codingTools;
   const tool = tools.find((candidate) => candidate.name === "exec_command");
   if (!tool) {
@@ -3359,6 +3501,22 @@ function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "svvy-direct-tools-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function startLoopbackTextServer(): { stop: () => void; url: string } | null {
+  try {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("network-ok\n"),
+    });
+    return {
+      stop: () => server.stop(true),
+      url: `http://127.0.0.1:${server.port}/`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function findTool(

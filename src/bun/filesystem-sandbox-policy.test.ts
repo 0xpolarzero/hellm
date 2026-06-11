@@ -114,4 +114,16 @@ describe("filesystem sandbox policy", () => {
     expect(profile.profile).not.toContain("network");
     expect(profile.parameters).toEqual({});
   });
+
+  it("generates a network-only restriction for unrestricted network-disabled profiles", () => {
+    const profile = buildMacOsSeatbeltProfile(unrestrictedFileSystemPolicy(), "/repo", {
+      networkAccess: false,
+    });
+
+    expect(profile.profile).toContain("(version 1)");
+    expect(profile.profile).toContain("(allow default)");
+    expect(profile.profile).toContain("(deny network*)");
+    expect(profile.profile).not.toContain("file-write");
+    expect(profile.parameters).toEqual({});
+  });
 });

@@ -66,7 +66,10 @@ const REMOVED_WORKFLOWS_RUNNER_COMMANDS = [
 
 describe("removed product contracts", () => {
   it("does not expose removed native direct tools or prompt-only CLI wrappers", () => {
-    const tools = createSvvyDirectTools({ cwd: "/repo/svvy" }).codingTools;
+    const tools = createSvvyDirectTools({
+      cwd: "/repo/svvy",
+      extensionsRoot: join("/tmp", "extensions"),
+    }).codingTools;
     const toolNames = tools.map((tool) => tool.name);
 
     expect(toolNames).toContain("exec_command");

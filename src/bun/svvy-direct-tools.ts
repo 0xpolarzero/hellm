@@ -20,6 +20,7 @@ import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import {
+  buildMacOsSeatbeltProfile,
   buildManagedWorkspaceWriteFileSystemPolicy,
   canWriteFileSystemPath,
   unrestrictedFileSystemPolicy,
@@ -89,7 +90,6 @@ type RetainedCommandOutputArtifact = {
 
 type ProtectedWriteSnapshot = {
   roots: ProtectedWriteRootSnapshot[];
-  fingerprint: string;
   allowedRoots: string[];
 };
 
@@ -98,6 +98,7 @@ type ProtectedWriteRootSnapshot = {
   existed: boolean;
   entries: ProtectedWriteEntry[];
   allowedRoots: string[];
+  fingerprint: string;
 };
 
 type ProtectedWriteEntry = {
@@ -111,9 +112,11 @@ const runningCommandSessions = new Map<string, RunningCommandSession>();
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES = 64 * 1024;
 const RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE = "Output exceeded the live event retention limit.";
-const NETWORK_DISABLED_SANDBOX_PROFILE = ["(version 1)", "(allow default)", "(deny network*)"].join(
-  "\n",
-);
+const NETWORK_DISABLED_SANDBOX_PROFILE = buildMacOsSeatbeltProfile(
+  unrestrictedFileSystemPolicy(),
+  "/",
+  { networkAccess: false },
+).profile;
 const WORKFLOWS_GENERATED_DIRECT_EDIT_MESSAGE =
   "Generated Workflows output, workspace @svvy/workflows/@svvy/extensions package links, internal Extension files, and immutable or non-active-session Artifacts are read-only. Edit Workflows source, Extension source/manifest/package.json, or the active session's mutable artifact files through the intended command path instead.";
 const MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE =
@@ -1517,7 +1520,6 @@ function captureProtectedWriteSnapshot(
     .map((root) => captureProtectedWriteRootSnapshot(root, normalizedAllowedRoots));
   return {
     roots: rootSnapshots,
-    fingerprint: fingerprintProtectedWriteRootSnapshots(rootSnapshots),
     allowedRoots: normalizedAllowedRoots,
   };
 }
@@ -1527,10 +1529,14 @@ function assertProtectedWriteSnapshotUnchanged(snapshot: ProtectedWriteSnapshot)
     snapshot.roots.map((root) => root.root),
     snapshot.allowedRoots,
   );
-  if (current.fingerprint === snapshot.fingerprint) {
+  const changedRoots = snapshot.roots.filter((root, index) => {
+    const currentRoot = current.roots[index];
+    return !currentRoot || root.fingerprint !== currentRoot.fingerprint;
+  });
+  if (changedRoots.length === 0) {
     return;
   }
-  restoreProtectedWriteSnapshot(snapshot);
+  restoreProtectedWriteSnapshot({ ...snapshot, roots: changedRoots });
   throw new Error(WORKFLOWS_GENERATED_DIRECT_EDIT_MESSAGE);
 }
 
@@ -1541,11 +1547,22 @@ function captureProtectedWriteRootSnapshot(
   const rootAllowedRoots = allowedRoots.filter((allowedRoot) => isPathInside(root, allowedRoot));
   const entries: ProtectedWriteEntry[] = [];
   captureProtectedWriteEntry(root, root, rootAllowedRoots, entries);
+  const sortedEntries = entries.toSorted((left, right) => left.path.localeCompare(right.path));
   return {
     root,
     existed: entries.length > 0,
-    entries: entries.toSorted((left, right) => left.path.localeCompare(right.path)),
+    entries: sortedEntries,
     allowedRoots: rootAllowedRoots,
+    fingerprint: JSON.stringify({
+      root,
+      existed: entries.length > 0,
+      entries: sortedEntries.map((entry) => ({
+        path: entry.path,
+        kind: entry.kind,
+        data: entry.data?.toString("base64"),
+        linkTarget: entry.linkTarget,
+      })),
+    }),
   };
 }
 
@@ -1584,21 +1601,6 @@ function captureProtectedWriteEntry(
     return;
   }
   entries.push({ path, kind: "other" });
-}
-
-function fingerprintProtectedWriteRootSnapshots(roots: readonly ProtectedWriteRootSnapshot[]) {
-  return JSON.stringify(
-    roots.map((root) => ({
-      root: root.root,
-      existed: root.existed,
-      entries: root.entries.map((entry) => ({
-        path: entry.path,
-        kind: entry.kind,
-        data: entry.data?.toString("base64"),
-        linkTarget: entry.linkTarget,
-      })),
-    })),
-  );
 }
 
 function restoreProtectedWriteSnapshot(snapshot: ProtectedWriteSnapshot): void {
