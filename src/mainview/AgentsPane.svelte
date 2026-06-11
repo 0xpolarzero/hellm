@@ -792,7 +792,7 @@
             onclick={() => void createOrchestratorProfile()}
           >
             <PlusIcon size={13} aria-hidden="true" />
-            New
+            <span>New</span>
           </Button>
         </div>
       </div>
@@ -845,7 +845,7 @@
             onclick={() => void createWorkflowAgent()}
           >
             <PlusIcon size={13} aria-hidden="true" />
-            New
+            <span>New</span>
           </Button>
         </div>
       </div>
@@ -892,7 +892,7 @@
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
   />
   <div class="workflow-source-note">
-    <span>{agent.id}.agent.json</span>
+    <span class="workflow-source-filename">{agent.id}.agent.json</span>
     <Tooltip label={workflowAgentSourceTooltip}>
       <button
         type="button"
@@ -1085,8 +1085,21 @@
   }
 
   :global(.category-action .ui-button-content) {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
     height: 100%;
     align-items: center;
+    line-height: 1;
+  }
+
+  :global(.category-action .ui-button-content > svg) {
+    display: block;
+  }
+
+  :global(.category-action .ui-button-content > span) {
+    display: block;
+    line-height: 1;
   }
 
   .agent-rows {
@@ -1343,17 +1356,26 @@
     justify-content: flex-end;
     gap: 0.36rem;
     min-width: 0;
+    min-height: 1.24rem;
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
-    line-height: 1.35;
+    line-height: 1;
   }
 
-  .workflow-source-note span {
+  .workflow-source-filename {
+    display: inline-flex;
+    align-items: center;
     min-width: 0;
+    min-height: 1.24rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .workflow-source-note :global(.ui-tooltip-anchor) {
+    align-items: center;
+    height: 1.24rem;
   }
 
   .workflow-source-button {
@@ -1368,6 +1390,10 @@
     background: transparent;
     color: var(--ui-text-tertiary);
     cursor: pointer;
+  }
+
+  .workflow-source-button :global(svg) {
+    display: block;
   }
 
   .workflow-source-button:hover,

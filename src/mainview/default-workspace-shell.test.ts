@@ -413,8 +413,11 @@ describe("default workspace renderer shell", () => {
     expect(workflowAgentFormSource).toContain("Workflow agent instructions are required.");
     expect(agentsPaneSource).toContain(".agent.json");
     expect(agentsPaneSource).toContain("workflow-source-button");
+    expect(agentsPaneSource).toContain("workflow-source-filename");
     expect(agentsPaneSource).toContain("workflowAgentSourceTooltip");
     expect(agentsPaneSource).toContain("Open in ");
+    expect(agentsPaneSource).toContain(":global(.category-action .ui-button-content > svg)");
+    expect(agentsPaneSource).toContain(":global(.category-action .ui-button-content > span)");
     expect(agentsPaneSource).not.toContain("Open external");
     expect(agentsPaneSource).not.toContain("Generates Agents.");
     expect(agentsPaneSource).not.toContain("updateWorkflowExtensions");
