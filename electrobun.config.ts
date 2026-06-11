@@ -1,6 +1,6 @@
 import type { ElectrobunConfig } from "electrobun";
 
-const createDmg = process.env.SVVY_SKIP_DMG !== "1";
+const createDmg = process.env.SVVY_CREATE_DMG === "1" && process.env.SVVY_SKIP_DMG !== "1";
 
 export default {
   app: {

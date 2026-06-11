@@ -15,6 +15,8 @@ describe("dev browser tools production boundary", () => {
     };
 
     expect(packageJson.scripts.build).toContain("electrobun build --env=stable");
+    expect(packageJson.scripts.build).toContain("SVVY_SKIP_DMG=1");
+    expect(packageJson.scripts["build:dmg"]).toContain("SVVY_CREATE_DMG=1");
     expect(packageJson.scripts["build:dev"]).toContain("electrobun build --env=dev");
   });
 

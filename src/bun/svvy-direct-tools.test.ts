@@ -1174,7 +1174,8 @@ describe("svvy direct tools", () => {
       }
 
       const blockedExecTool = findTool(
-        createSvvyDirectToolsForTest({ cwd, networkAccess: false }).codingTools,
+        createSvvyDirectToolsForTest({ cwd, managedSandbox: true, networkAccess: false })
+          .codingTools,
         "exec_command",
       );
       const blocked = await blockedExecTool.execute(
