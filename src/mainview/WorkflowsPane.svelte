@@ -1,8 +1,8 @@
 <script lang="ts">
-  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import UserCogIcon from "@lucide/svelte/icons/user-cog";
   import { onMount } from "svelte";
+  import type { AppPreferences } from "../shared/agent-settings";
   import type {
     WorkspaceWorkflowsGeneratedExport,
     WorkspaceWorkflowsGeneratedKind,
@@ -11,6 +11,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
+  import OpenExternalButton from "./ui/OpenExternalButton.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -30,6 +31,7 @@
   let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(
     runtime.workflowsGeneratedSnapshot,
   );
+  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
   let selectedId = $state<string | null>(null);
   let activeFilter = $state<(typeof FILTERS)[number]["kind"]>("all");
   let loading = $state(!readModel);
@@ -122,8 +124,12 @@
   onMount(() => {
     const syncRuntimeSnapshots = () => {
       const snapshot = runtime.workflowsGeneratedSnapshot;
+      const nextPreferences = runtime.appPreferencesSnapshot;
       if (snapshot) {
         applyReadModel(snapshot);
+      }
+      if (nextPreferences) {
+        appPreferences = nextPreferences;
       }
     };
     syncRuntimeSnapshots();
@@ -212,14 +218,20 @@
                   Customize Agent
                 </Button>
               {/if}
-              <Button size="sm" onclick={() => openInEditor(selectedItem.sourcePath, "source")}>
-                <ExternalLinkIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-                Source
-              </Button>
-              <Button size="sm" onclick={() => openInEditor(selectedItem.generatedPath, "generated code")}>
-                <ExternalLinkIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-                Generated
-              </Button>
+              <OpenExternalButton
+                size="sm"
+                iconSize={14}
+                editor={appPreferences?.preferredExternalEditor}
+                targetLabel="source"
+                onclick={() => openInEditor(selectedItem.sourcePath, "source")}
+              />
+              <OpenExternalButton
+                size="sm"
+                iconSize={14}
+                editor={appPreferences?.preferredExternalEditor}
+                targetLabel="generated code"
+                onclick={() => openInEditor(selectedItem.generatedPath, "generated code")}
+              />
             </div>
           </header>
 

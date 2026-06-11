@@ -390,6 +390,14 @@ describe("default workspace renderer shell", () => {
       new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
       "utf8",
     );
+    const openExternalButtonSource = await readFile(
+      new URL("./ui/OpenExternalButton.svelte", import.meta.url),
+      "utf8",
+    );
+    const openExternalEditorSource = await readFile(
+      new URL("./ui/open-external-editor.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(agentsPaneSource).toContain("Workflow Agents");
     expect(agentsPaneSource).toContain("workflowAgents");
@@ -410,10 +418,14 @@ describe("default workspace renderer shell", () => {
     expect(workflowAgentFormSource).toContain("formApi.reset(valuesFor(saved))");
     expect(workflowAgentFormSource).toContain("Workflow agent instructions are required.");
     expect(agentsPaneSource).toContain(".agent.json");
+    expect(agentsPaneSource).toContain("OpenExternalButton");
     expect(agentsPaneSource).toContain("workflow-source-button");
     expect(agentsPaneSource).toContain("workflow-source-filename");
-    expect(agentsPaneSource).toContain("workflowAgentSourceTooltip");
-    expect(agentsPaneSource).toContain("Open in ");
+    expect(openExternalButtonSource).toContain(
+      'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
+    );
+    expect(openExternalButtonSource).toContain("openExternalEditorTooltip");
+    expect(openExternalEditorSource).toContain("Open in ${externalEditorLabel(editor)}");
     expect(agentsPaneSource).toContain(":global(.category-action .ui-button-content > svg)");
     expect(agentsPaneSource).toContain(":global(.category-action .ui-button-content > span)");
     expect(agentsPaneSource).not.toContain("Open external");

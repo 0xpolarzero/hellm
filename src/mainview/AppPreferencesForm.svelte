@@ -17,6 +17,7 @@
 	import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 	import Button from "./ui/Button.svelte";
 	import Checkbox from "./ui/Checkbox.svelte";
+	import OpenExternalButton from "./ui/OpenExternalButton.svelte";
 
 	type Props = {
 		preferences: AppPreferences;
@@ -521,13 +522,12 @@
 									</label>
 								{/each}
 								{#if onOpenExternalInstructionSource}
-									<Button
-										variant="ghost"
+									<OpenExternalButton
 										size="sm"
+										editor={formState.current.values.preferredExternalEditor}
+										targetLabel={source.path}
 										onclick={() => void onOpenExternalInstructionSource?.(source.path)}
-									>
-										Open
-									</Button>
+									/>
 								{/if}
 							</div>
 						</div>

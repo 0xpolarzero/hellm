@@ -21,6 +21,7 @@
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Checkbox from "./ui/Checkbox.svelte";
+  import OpenExternalButton from "./ui/OpenExternalButton.svelte";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
 
   type Props = {
@@ -744,14 +745,12 @@
                   </label>
                 {/each}
               </div>
-              <Button
-                size="xs"
-                variant="secondary"
+              <OpenExternalButton
                 disabled={isSavingExternalInstruction}
+                editor={appPreferences?.preferredExternalEditor}
+                targetLabel={extension.externalInstruction.path}
                 onclick={() => openExternalInstruction(extension.externalInstruction!.path)}
-              >
-                Open
-              </Button>
+              />
             </div>
           {:else if extension.id === "request-user-input"}
             {#if settingsError}

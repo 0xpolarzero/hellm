@@ -1,11 +1,11 @@
 <script lang="ts">
-  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SaveIcon from "@lucide/svelte/icons/save";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import { onMount } from "svelte";
+  import type { AppPreferences } from "../shared/agent-settings";
   import type {
     DiscoveredSnippet,
     ManagedSnippet,
@@ -15,6 +15,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
+  import OpenExternalButton from "./ui/OpenExternalButton.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -23,6 +24,7 @@
   let { runtime }: Props = $props();
 
   let snippets = $state<SnippetRecord[]>(runtime.snippetsSnapshot?.snippets ?? []);
+  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
   let selectedId = $state<string | null>(null);
   let hasReadModel = $state(!!runtime.snippetsSnapshot);
   let loading = $state(!hasReadModel);
@@ -182,8 +184,12 @@
   onMount(() => {
     const syncRuntimeSnapshots = () => {
       const snapshot = runtime.snippetsSnapshot;
+      const nextPreferences = runtime.appPreferencesSnapshot;
       if (snapshot) {
         applyReadModel(snapshot);
+      }
+      if (nextPreferences) {
+        appPreferences = nextPreferences;
       }
     };
     syncRuntimeSnapshots();
@@ -283,10 +289,13 @@
             </div>
             <div class="detail-actions">
               {#if discoveredSelected}
-                <Button size="sm" onclick={openDiscoveredSnippet}>
-                  <ExternalLinkIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-                  Open
-                </Button>
+                <OpenExternalButton
+                  size="sm"
+                  iconSize={14}
+                  editor={appPreferences?.preferredExternalEditor}
+                  targetLabel={discoveredSelected.path}
+                  onclick={openDiscoveredSnippet}
+                />
               {:else if managedSelected}
                 <Button size="sm" variant="primary" onclick={saveSnippet} disabled={saving}>
                   <SaveIcon aria-hidden="true" size={14} strokeWidth={1.9} />
