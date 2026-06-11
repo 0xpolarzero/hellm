@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use codex_exec_server::EnvironmentManager;
@@ -6,7 +5,6 @@ use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthManager;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
@@ -46,9 +44,12 @@ pub async fn build_prompt_input(
         Arc::clone(&auth_manager),
         SessionSource::Exec,
         Arc::new(
-            EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths)
-                .await
-                .map_err(|err| CodexErr::Fatal(err.to_string()))?,
+            EnvironmentManager::from_codex_home(
+                config.codex_home.clone(),
+                Some(local_runtime_paths),
+            )
+            .await
+            .map_err(|err| CodexErr::Fatal(err.to_string()))?,
         ),
         empty_extension_registry(),
         /*analytics_events_client*/ None,
@@ -76,8 +77,7 @@ pub(crate) async fn build_prompt_input_from_session(
         .await;
 
     if !input.is_empty() {
-        let input_item = ResponseInputItem::from(input);
-        let response_item = ResponseItem::from(input_item);
+        let response_item = sess.response_item_from_user_input(turn_context.as_ref(), input);
         sess.record_conversation_items(turn_context.as_ref(), std::slice::from_ref(&response_item))
             .await;
     }
@@ -86,15 +86,7 @@ pub(crate) async fn build_prompt_input_from_session(
         .clone_history()
         .await
         .for_prompt(&turn_context.model_info.input_modalities);
-    let router = built_tools(
-        sess,
-        turn_context.as_ref(),
-        &prompt_input,
-        &HashSet::new(),
-        Some(turn_context.turn_skills.outcome.as_ref()),
-        &CancellationToken::new(),
-    )
-    .await?;
+    let router = built_tools(sess, turn_context.as_ref(), &CancellationToken::new()).await?;
     let base_instructions = sess.get_base_instructions().await;
     let prompt = build_prompt(
         prompt_input,
