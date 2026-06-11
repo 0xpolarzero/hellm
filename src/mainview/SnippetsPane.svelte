@@ -5,7 +5,13 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SaveIcon from "@lucide/svelte/icons/save";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import type { DiscoveredSnippet, ManagedSnippet, SnippetRecord } from "../shared/snippets";
+  import { onMount } from "svelte";
+  import type {
+    DiscoveredSnippet,
+    ManagedSnippet,
+    SnippetRecord,
+    SnippetsReadModel,
+  } from "../shared/snippets";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -16,9 +22,10 @@
 
   let { runtime }: Props = $props();
 
-  let snippets = $state<SnippetRecord[]>([]);
+  let snippets = $state<SnippetRecord[]>(runtime.snippetsSnapshot?.snippets ?? []);
   let selectedId = $state<string | null>(null);
-  let loading = $state(true);
+  let hasReadModel = $state(!!runtime.snippetsSnapshot);
+  let loading = $state(!hasReadModel);
   let saving = $state(false);
   let error = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
@@ -72,19 +79,25 @@
     actionMessage = null;
   }
 
+  function applyReadModel(readModel: SnippetsReadModel): void {
+    snippets = readModel.snippets;
+    hasReadModel = true;
+    loading = false;
+    const nextSelected =
+      snippets.find((snippet) => snippet.id === selectedId) ?? snippets[0] ?? null;
+    selectedId = nextSelected?.id ?? null;
+    if (nextSelected?.source === "svvy") {
+      selectSnippet(nextSelected);
+    }
+  }
+
   async function loadSnippets(): Promise<void> {
-    loading = true;
+    loading = !hasReadModel;
     error = null;
     actionMessage = null;
     try {
       const readModel = await runtime.getSnippets();
-      snippets = readModel.snippets;
-      const nextSelected =
-        snippets.find((snippet) => snippet.id === selectedId) ?? snippets[0] ?? null;
-      selectedId = nextSelected?.id ?? null;
-      if (nextSelected?.source === "svvy") {
-        selectSnippet(nextSelected);
-      }
+      applyReadModel(readModel);
     } catch (err) {
       error = err instanceof Error ? err.message : "Snippets are unavailable.";
     } finally {
@@ -166,8 +179,17 @@
     }
   }
 
-  $effect(() => {
+  onMount(() => {
+    const syncRuntimeSnapshots = () => {
+      const snapshot = runtime.snippetsSnapshot;
+      if (snapshot) {
+        applyReadModel(snapshot);
+      }
+    };
+    syncRuntimeSnapshots();
+    const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
     void loadSnippets();
+    return unsubscribeRuntime;
   });
 </script>
 

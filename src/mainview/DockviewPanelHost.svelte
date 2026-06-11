@@ -327,7 +327,7 @@
 
   async function listModelsForComposer(): Promise<ComposerModelOption[]> {
     if (!currentModel) return [];
-    const catalog = await runtime.getAgentModelChoices();
+    const catalog = runtime.agentModelChoicesSnapshot ?? (await runtime.getAgentModelChoices());
     return catalog.items
       .map(modelChoiceToComposerOption)
       .filter((option): option is ComposerModelOption => Boolean(option));
@@ -489,6 +489,7 @@
   <SnippetsPane {runtime} />
 {:else if pane?.target?.surface === "settings"}
   <Settings
+    {runtime}
     workspaceId={runtime.workspaceId}
     {onProviderAuthChanged}
     {onAppAppearanceChanged}

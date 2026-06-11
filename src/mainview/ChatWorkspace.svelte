@@ -602,7 +602,7 @@
     setTimeout(() => {
       showModelPicker = true;
     }, 0);
-    modelChoices = [];
+    modelChoices = runtime.agentModelChoicesSnapshot?.items ?? [];
     try {
       modelChoices = (await runtime.getAgentModelChoices()).items;
     } catch {
@@ -704,6 +704,10 @@
   }
 
   async function refreshAgentSettings() {
+    const snapshot = runtime.agentSettingsSnapshot;
+    if (snapshot) {
+      agentSettings = snapshot;
+    }
     try {
       agentSettings = await runtime.getAgentSettings();
     } catch (error) {
@@ -1404,6 +1408,7 @@
     workspaceBranch = runtime.branch;
     sessionNavigation = runtime.sessionNavigation;
     appLogSummary = runtime.appLogSummary;
+    agentSettings = runtime.agentSettingsSnapshot ?? agentSettings;
     paneLayout = runtime.paneLayout;
     activeLayoutId = runtime.activeLayoutId;
     layoutSlots = runtime.layoutSlots;

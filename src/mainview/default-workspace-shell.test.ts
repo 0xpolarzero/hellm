@@ -212,9 +212,7 @@ describe("default workspace renderer shell", () => {
     );
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId");
     expect(runtimeSource).toContain("rpcClient.request.getWorkspaceUiRestore(scoped())");
-    expect(runtimeSource).toContain(
-      "getAppLogs: (query) => rpcClient.request.getAppLogs(scoped(query ?? {}))",
-    );
+    expect(runtimeSource).toContain("getAppLogs: refreshAppLogs");
     expect(runtimeSource).toContain("rpcClient.request.getWorkflowsGenerated(scoped())");
     expect(runtimeSource).toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
     expect(runtimeSource).toContain(
@@ -667,6 +665,7 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
     const backendSource = await readFile(new URL("../bun/index.ts", import.meta.url), "utf8");
+    const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
     const directToolsSource = await readFile(
       new URL("../bun/svvy-direct-tools.ts", import.meta.url),
       "utf8",
@@ -682,8 +681,10 @@ describe("default workspace renderer shell", () => {
     expect(workflowsPaneSource).toContain("selectedItem.qualifiedName");
     expect(workflowsPaneSource).toContain("onOpenAgentProfile");
     expect(workflowsPaneSource).toContain("Customize Agent");
-    expect(workflowsPaneSource).toContain("runtime.subscribeAppLogUpdate");
-    expect(workflowsPaneSource).toContain("Generated Workflows package rebuilt.");
+    expect(workflowsPaneSource).toContain("runtime.workflowsGeneratedSnapshot");
+    expect(workflowsPaneSource).not.toContain("runtime.subscribeAppLogUpdate");
+    expect(runtimeSource).toContain("Generated Workflows package rebuilt.");
+    expect(runtimeSource).toContain("void refreshWorkflowsGenerated().catch");
     expect(backendSource).toContain("buildWorkflowsGeneratedPackage");
     expect(backendSource).toContain("workflow-agent-settings");
     expect(backendSource).toContain(
@@ -1124,10 +1125,13 @@ describe("default workspace renderer shell", () => {
     expect(settingsSource).toContain("getGeneratedAgentContextExternalSources");
     expect(settingsSource).toContain("openGeneratedAgentContextExternalSourceInEditor");
     expect(settingsSource).toContain("ambientAgentResources: preferences.ambientAgentResources");
-    expect(settingsSource).toContain("await rpc.request.getAppPreferences()");
+    expect(settingsSource).toContain("runtime.appPreferencesSnapshot");
+    expect(settingsSource).toContain("await runtime.getAppPreferences()");
     expect(settingsSource).toContain(
-      "await rpc.request.updateAppPreferences(serializeAppPreferences(preferences))",
+      "await runtime.updateAppPreferences(serializeAppPreferences(preferences))",
     );
+    expect(settingsSource).not.toContain("rpc.request.getAppPreferences");
+    expect(settingsSource).not.toContain("rpc.request.updateAppPreferences");
     expect(appPreferencesFormSource).toContain("Artifact Directory");
     expect(appPreferencesFormSource).toContain("Approval Mode");
     expect(appPreferencesFormSource).toContain("External Instructions");
@@ -1154,6 +1158,72 @@ describe("default workspace renderer shell", () => {
     expect(appSource).not.toContain("getAppPreferences({ workspaceId:");
     expect(contractSource).toContain("getAppPreferences: {\n        params: undefined;");
     expect(contractSource).toContain("updateAppPreferences: {\n        params: AppPreferences;");
+  });
+
+  it("feeds static workspace panes from warm runtime read-model snapshots", async () => {
+    const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
+    const agentsPaneSource = await readFile(
+      new URL("./AgentsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const extensionsPaneSource = await readFile(
+      new URL("./ExtensionsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const settingsSource = await readFile(new URL("./Settings.svelte", import.meta.url), "utf8");
+    const workflowsPaneSource = await readFile(
+      new URL("./WorkflowsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const snippetsPaneSource = await readFile(
+      new URL("./SnippetsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const appLogsPaneSource = await readFile(
+      new URL("./AppLogsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const dockviewHostSource = await readFile(
+      new URL("./DockviewPanelHost.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(runtimeSource).toContain("type AppReadModelCache");
+    expect(runtimeSource).toContain("type WorkspaceReadModelCache");
+    expect(runtimeSource).toContain("const activeRuntimeEmitters");
+    expect(runtimeSource).toContain("function notifyReadModelCachesChanged");
+    expect(runtimeSource).toContain("const refreshWarmReadModels");
+    expect(runtimeSource).toContain("refreshWarmReadModels();");
+    expect(runtimeSource).toContain("agentModelChoicesSnapshot");
+    expect(runtimeSource).toContain("providerAuthsSnapshot");
+    expect(runtimeSource).toContain("externalInstructionSourcesSnapshot");
+    expect(runtimeSource).toContain("getExtensionsInventory: refreshExtensionsInventory");
+    expect(runtimeSource).toContain("getSnippets: refreshSnippets");
+    expect(runtimeSource).toContain("getWorkflowsGenerated: refreshWorkflowsGenerated");
+    expect(runtimeSource).toContain("listProviderAuths: refreshProviderAuths");
+
+    expect(agentsPaneSource).toContain("runtime.agentSettingsSnapshot");
+    expect(agentsPaneSource).toContain("runtime.agentModelChoicesSnapshot");
+    expect(agentsPaneSource).toContain("runtime.extensionsInventorySnapshot");
+    expect(agentsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
+    expect(agentsPaneSource).not.toContain("rpc.request");
+
+    expect(extensionsPaneSource).toContain("runtime.extensionsInventorySnapshot");
+    expect(extensionsPaneSource).toContain("runtime.appPreferencesSnapshot");
+    expect(extensionsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
+    expect(settingsSource).toContain("runtime.providerAuthsSnapshot");
+    expect(settingsSource).toContain("runtime.externalInstructionSourcesSnapshot");
+    expect(settingsSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
+    expect(settingsSource).not.toContain("rpc.request");
+    expect(dockviewHostSource).toContain("<Settings\n    {runtime}");
+
+    expect(workflowsPaneSource).toContain("runtime.workflowsGeneratedSnapshot");
+    expect(workflowsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
+    expect(workflowsPaneSource).not.toContain("subscribeAppLogUpdate");
+    expect(snippetsPaneSource).toContain("runtime.snippetsSnapshot");
+    expect(snippetsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
+    expect(snippetsPaneSource).not.toContain("$effect(() => {\n    void loadSnippets();");
+    expect(appLogsPaneSource).toContain("runtime.appLogsSnapshot");
   });
 
   it("does not keep focus-global artifact or inspector surfaces in the workspace shell", async () => {
@@ -1244,12 +1314,14 @@ describe("default workspace renderer shell", () => {
     expect(dockviewHostSource).toContain('surface === "artifact"');
     expect(dockviewHostSource).toContain("<RelatedInspectorPane");
 
-    expect(settingsSource).toContain("await rpc.request.getAppPreferences()");
-    expect(settingsSource).toContain("await rpc.request.listProviderAuths()");
+    expect(settingsSource).toContain("runtime.appPreferencesSnapshot");
+    expect(settingsSource).toContain("runtime.providerAuthsSnapshot");
+    expect(settingsSource).toContain("await runtime.getAppPreferences()");
+    expect(settingsSource).toContain("await runtime.listProviderAuths()");
     expect(settingsSource).toContain("getGeneratedAgentContextExternalSources");
-    expect(settingsSource).toContain("await rpc.request.setProviderApiKey");
+    expect(settingsSource).toContain("await runtime.setProviderApiKey");
     expect(settingsSource).toContain("throw new Error(message, { cause: err })");
-    expect(settingsSource).toContain("await rpc.request.startOAuth");
+    expect(settingsSource).toContain("await runtime.startOAuth");
     expect(settingsSource).toContain("<AppPreferencesForm");
     expect(settingsSource).not.toContain("<Dialog");
     expect(settingsSource).not.toContain('variant?: "dialog"');

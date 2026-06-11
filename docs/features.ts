@@ -14,7 +14,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Electrobun Desktop Shell",
     status: "shipped",
     summary:
-      "Runs svvy as a native desktop coding app with a Bun-side pi host and renderer shell, including a svvy-owned default workspace runtime used when no user workspace tabs restore.",
+      "Runs svvy as a native desktop coding app with a Bun-side pi host and renderer shell, including a svvy-owned default workspace runtime used when no user workspace tabs restore, plus renderer-runtime warm read-model snapshots that feed static panes synchronously and update open panes immediately when app-global or workspace-keyed state changes.",
     sourceSpecs: ["docs/prd.md", "docs/specs/default-workspace-and-open-workspace.spec.md"],
   },
   {

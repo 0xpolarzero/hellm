@@ -12,8 +12,8 @@
 	import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 	import type { ProviderAuthInfo } from "../shared/workspace-contract";
 	import type { AppAppearance, AppPreferences } from "../shared/agent-settings";
+	import type { ChatRuntime } from "./chat-runtime";
 	import AppPreferencesForm from "./AppPreferencesForm.svelte";
-	import { rpc } from "./rpc";
 	import ProviderApiKeyForm from "./ProviderApiKeyForm.svelte";
 	import Button from "./ui/Button.svelte";
 	import Input from "./ui/Input.svelte";
@@ -21,7 +21,8 @@
 	import { dismissConfirmation } from "./ui/dismiss-confirmation";
 
 	type Props = {
-		workspaceId: string | null;
+		runtime: ChatRuntime;
+		workspaceId?: string | null;
 		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 		onAppAppearanceChanged?: (appearance: AppAppearance) => void;
 	};
@@ -29,17 +30,20 @@
 	type SettingsSection = "general" | "providers";
 
 	let {
+		runtime,
 		workspaceId,
 		onProviderAuthChanged,
 		onAppAppearanceChanged,
 	}: Props = $props();
 
 	let activeSection = $state<SettingsSection>("general");
-	let providers = $state<ProviderAuthInfo[]>([]);
-	let appPreferences = $state<AppPreferences | null>(null);
-	let externalInstructionSources = $state<GeneratedAgentContextExternalSource[]>([]);
-	let providersLoading = $state(true);
-	let appPreferencesLoading = $state(true);
+	let providers = $state<ProviderAuthInfo[]>(runtime.providerAuthsSnapshot ?? []);
+	let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
+	let externalInstructionSources = $state<GeneratedAgentContextExternalSource[]>(
+		runtime.externalInstructionSourcesSnapshot ?? [],
+	);
+	let providersLoading = $state(!runtime.providerAuthsSnapshot);
+	let appPreferencesLoading = $state(!runtime.appPreferencesSnapshot);
 	let error = $state<string | null>(null);
 	let appPreferencesError = $state<string | null>(null);
 	let searchQuery = $state("");
@@ -49,10 +53,10 @@
 	let saveMessage = $state<Record<string, string>>({});
 
 	async function refreshProviders(options: { showLoading?: boolean } = {}) {
-		if (options.showLoading) providersLoading = true;
+		if (options.showLoading || !providers.length) providersLoading = true;
 		error = null;
 		try {
-			providers = await rpc.request.listProviderAuths();
+			providers = await runtime.listProviderAuths();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Failed to load providers";
 		} finally {
@@ -61,10 +65,10 @@
 	}
 
 	async function refreshAppPreferences(options: { showLoading?: boolean } = {}) {
-		if (options.showLoading) appPreferencesLoading = true;
+		if (options.showLoading || !appPreferences) appPreferencesLoading = true;
 		appPreferencesError = null;
 		try {
-			appPreferences = await rpc.request.getAppPreferences();
+			appPreferences = await runtime.getAppPreferences();
 		} catch (err) {
 			appPreferencesError = err instanceof Error ? err.message : "Failed to load app preferences";
 		} finally {
@@ -104,14 +108,12 @@
 	}
 
 	async function refreshExternalInstructionSources() {
-		if (!workspaceId) {
+		if (!workspaceId && !runtime.workspaceId) {
 			externalInstructionSources = [];
 			return;
 		}
 		try {
-			externalInstructionSources = await rpc.request.getGeneratedAgentContextExternalSources({
-				workspaceId,
-			});
+			externalInstructionSources = await runtime.getGeneratedAgentContextExternalSources();
 		} catch {
 			externalInstructionSources = [];
 		}
@@ -178,19 +180,37 @@
 	});
 
 	onMount(() => {
+		const syncRuntimeSnapshots = () => {
+			const nextProviders = runtime.providerAuthsSnapshot;
+			const nextPreferences = runtime.appPreferencesSnapshot;
+			const nextExternalSources = runtime.externalInstructionSourcesSnapshot;
+			if (nextProviders) {
+				providers = nextProviders;
+				providersLoading = false;
+			}
+			if (nextPreferences) {
+				appPreferences = nextPreferences;
+				appPreferencesLoading = false;
+			}
+			if (nextExternalSources) {
+				externalInstructionSources = nextExternalSources;
+			}
+		};
+		syncRuntimeSnapshots();
+		const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
 		void Promise.allSettled([
-			refreshProviders({ showLoading: true }),
-			refreshAppPreferences({ showLoading: true }),
+			refreshProviders({ showLoading: !runtime.providerAuthsSnapshot }),
+			refreshAppPreferences({ showLoading: !runtime.appPreferencesSnapshot }),
 			refreshExternalInstructionSources(),
 		]);
+		return unsubscribeRuntime;
 	});
 
 	async function saveAppPreferences(preferences: AppPreferences): Promise<AppPreferences> {
 		try {
-			const nextSettings = await rpc.request.updateAppPreferences(serializeAppPreferences(preferences));
-			appPreferences = serializeAppPreferences(nextSettings.appPreferences);
+			appPreferences = await runtime.updateAppPreferences(serializeAppPreferences(preferences));
 			await refreshExternalInstructionSources();
-			onAppAppearanceChanged?.(nextSettings.appPreferences.appAppearance);
+			onAppAppearanceChanged?.(appPreferences.appAppearance);
 			return appPreferences;
 		} catch (err) {
 			throw err instanceof Error ? err : new Error("Save failed");
@@ -199,9 +219,8 @@
 
 	async function handleSaveApiKey(providerId: string, apiKey: string) {
 		try {
-			await rpc.request.setProviderApiKey({ providerId, apiKey });
+			await runtime.setProviderApiKey({ providerId, apiKey });
 			editingProvider = null;
-			await refreshProviders();
 			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Saved", 2000);
 		} catch (err) {
@@ -216,9 +235,8 @@
 		oauthLoading[providerId] = true;
 		saveMessage[providerId] = "";
 		try {
-			const result = await rpc.request.startOAuth({ providerId });
+			const result = await runtime.startOAuth({ providerId });
 			if (result.ok) {
-				await refreshProviders();
 				await notifyAuthChanged(providerId);
 				setTimedSaveMessage(providerId, "Connected", 3000);
 			} else {
@@ -238,9 +256,8 @@
 			return;
 		}
 		try {
-			await rpc.request.removeProviderAuth({ providerId });
+			await runtime.removeProviderAuth({ providerId });
 			confirmingProviderRemoval = null;
-			await refreshProviders();
 			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Removed", 2000);
 		} catch (err) {
@@ -302,13 +319,8 @@
 						workspaceKey={workspaceId ?? ""}
 						externalInstructionSources={externalInstructionSources}
 						onOpenExternalInstructionSource={async (path) => {
-							if (!workspaceId) return false;
-							const result =
-								await rpc.request.openGeneratedAgentContextExternalSourceInEditor({
-									workspaceId,
-									path,
-								});
-							return result.opened;
+							if (!workspaceId && !runtime.workspaceId) return false;
+							return runtime.openGeneratedAgentContextExternalSourceInEditor(path);
 						}}
 						onSave={saveAppPreferences}
 					/>

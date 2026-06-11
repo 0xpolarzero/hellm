@@ -1,7 +1,7 @@
 <script lang="ts">
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { flip } from "svelte/animate";
   import {
     DEFAULT_WORKFLOW_AGENT_SETTINGS,
@@ -20,7 +20,6 @@
   } from "../shared/workspace-contract";
   import type { ExtensionUsageState } from "../shared/extensions";
   import type { ChatRuntime } from "./chat-runtime";
-  import { rpc } from "./rpc";
   import Button from "./ui/Button.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import AgentProfileRowForm from "./AgentProfileRowForm.svelte";
@@ -51,8 +50,8 @@
     onSettingsChanged,
   }: Props = $props();
 
-  let settings = $state<AgentSettingsState | null>(initialSettings);
-  let loading = $state(!initialSettings);
+  let settings = $state<AgentSettingsState | null>(initialSettings ?? runtime.agentSettingsSnapshot);
+  let loading = $state(!settings);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
   let savingWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
@@ -61,8 +60,10 @@
   let deletingProfileId = $state<string | null>(null);
   let confirmingDeleteProfileId = $state<string | null>(null);
   let expandedProfileIds = $state<Set<string>>(new Set());
-  let modelChoices = $state<AgentModelChoice[]>([]);
-  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>([]);
+  let modelChoices = $state<AgentModelChoice[]>(runtime.agentModelChoicesSnapshot?.items ?? []);
+  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>(
+    runtime.extensionsInventorySnapshot?.extensions ?? [],
+  );
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
   let loadingContextPreviewKey = $state<string | null>(null);
   let orchestratorRowsElement = $state<HTMLElement | null>(null);
@@ -79,6 +80,7 @@
   let pendingDragClientY: number | null = null;
   let dragAnimationFrame: number | null = null;
   let settingsLoadRequest = 0;
+  let unsubscribeRuntimeSnapshots: (() => void) | null = null;
 
   const orchestrators = $derived(settings?.agents.orchestrators ?? []);
   const displayedOrchestrators = $derived(
@@ -129,6 +131,10 @@
   }
 
   async function loadAgentModelChoices(requestId: number) {
+    const snapshot = runtime.agentModelChoicesSnapshot;
+    if (snapshot && requestId === settingsLoadRequest) {
+      modelChoices = snapshot.items;
+    }
     try {
       const nextModelChoices = await runtime.getAgentModelChoices();
       if (requestId === settingsLoadRequest) {
@@ -142,6 +148,10 @@
   }
 
   async function loadExtensionsInventory(requestId: number) {
+    const snapshot = runtime.extensionsInventorySnapshot;
+    if (snapshot && requestId === settingsLoadRequest) {
+      extensionInventoryItems = snapshot.extensions;
+    }
     try {
       const nextExtensionsInventory = await runtime.getExtensionsInventory();
       if (requestId === settingsLoadRequest) {
@@ -199,10 +209,7 @@
     savingProfileId = profile.id;
     errorMessage = null;
     try {
-      settings = await rpc.request.updateAgentProfile({
-        workspaceId: runtime.workspaceId,
-        profile: mutateProfile(profile),
-      });
+      settings = await runtime.updateAgentProfile(mutateProfile(profile));
       onSettingsChanged?.(settings);
       return (
         settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
@@ -518,10 +525,7 @@
     deletingProfileId = profile.id;
     errorMessage = null;
     try {
-      settings = await rpc.request.deleteAgentProfile({
-        workspaceId: runtime.workspaceId,
-        id: profile.id,
-      });
+      settings = await runtime.deleteAgentProfile(profile.id);
       onSettingsChanged?.(settings);
       confirmingDeleteProfileId = null;
       expandedProfileIds.delete(profile.id);
@@ -692,10 +696,7 @@
       const nextIds = reorderQueuedMessageItems(orchestrators, profileId, beforeProfileId).map(
         (candidate) => candidate.id,
       );
-      settings = await rpc.request.reorderOrchestratorAgents({
-        workspaceId: runtime.workspaceId,
-        ids: nextIds,
-      });
+      settings = await runtime.reorderOrchestratorAgents(nextIds);
       onSettingsChanged?.(settings);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to reorder profiles.";
@@ -737,6 +738,23 @@
     }
   }
 
+  function syncRuntimeSnapshots() {
+    const nextSettings = runtime.agentSettingsSnapshot;
+    const nextModelChoices = runtime.agentModelChoicesSnapshot;
+    const nextExtensionsInventory = runtime.extensionsInventorySnapshot;
+    if (nextSettings) {
+      settings = nextSettings;
+      loading = false;
+      onSettingsChanged?.(nextSettings);
+    }
+    if (nextModelChoices) {
+      modelChoices = nextModelChoices.items;
+    }
+    if (nextExtensionsInventory) {
+      extensionInventoryItems = nextExtensionsInventory.extensions;
+    }
+  }
+
   function focusTargetAgentProfile() {
     if (!targetAgentProfileId || loading) return;
     const escapedTarget = CSS.escape(targetAgentProfileId);
@@ -745,6 +763,15 @@
     );
     targetElement?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
+
+  onMount(() => {
+    syncRuntimeSnapshots();
+    unsubscribeRuntimeSnapshots = runtime.subscribe(syncRuntimeSnapshots);
+    return () => {
+      unsubscribeRuntimeSnapshots?.();
+      unsubscribeRuntimeSnapshots = null;
+    };
+  });
 
   $effect(() => {
     void panelId;

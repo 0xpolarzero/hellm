@@ -50,6 +50,7 @@ import {
   type AgentContextPreviewResponse,
   type AgentModelChoicesResponse,
   type ExtensionsInventoryReadModel,
+  type ProviderAuthInfo,
   type RemoveExtensionEnvOverrideRequest,
   type RemoveExtensionEnvSecretRequest,
   type SetAgentProfileExtensionUsageRequest,
@@ -107,6 +108,7 @@ import {
   type WorkspaceLayoutSlotId,
   type WorkspaceLayoutSlotSummary,
 } from "./pane-layout";
+import { mergeAppLogEntries } from "./app-logs";
 import { rpc } from "./rpc";
 import { buildWorkspaceSessionNavigation } from "./session-state";
 
@@ -145,6 +147,57 @@ const ZERO_USAGE: UsageStats = {
     total: 0,
   },
 };
+
+type AppReadModelCache = {
+  agentSettings: AgentSettingsState | null;
+  appPreferences: AppPreferences | null;
+  workflowsGenerated: WorkspaceWorkflowsGeneratedReadModel | null;
+  agentModelChoices: AgentModelChoicesResponse | null;
+  providerAuths: ProviderAuthInfo[] | null;
+};
+
+type WorkspaceReadModelCache = {
+  appLogs: AppLogReadModel | null;
+  extensionsInventory: ExtensionsInventoryReadModel | null;
+  externalInstructionSources: GeneratedAgentContextExternalSource[] | null;
+  snippets: SnippetsReadModel | null;
+};
+
+const appReadModelCache: AppReadModelCache = {
+  agentSettings: null,
+  appPreferences: null,
+  workflowsGenerated: null,
+  agentModelChoices: null,
+  providerAuths: null,
+};
+
+const workspaceReadModelCaches = new Map<string, WorkspaceReadModelCache>();
+const activeRuntimeEmitters = new Set<{ workspaceId: string; emit: () => void }>();
+
+function workspaceReadModelCache(workspaceId: string): WorkspaceReadModelCache {
+  const existing = workspaceReadModelCaches.get(workspaceId);
+  if (existing) return existing;
+  const cache: WorkspaceReadModelCache = {
+    appLogs: null,
+    extensionsInventory: null,
+    externalInstructionSources: null,
+    snippets: null,
+  };
+  workspaceReadModelCaches.set(workspaceId, cache);
+  return cache;
+}
+
+function cloneOrNull<T>(value: T | null): T | null {
+  return value ? structuredClone(value) : null;
+}
+
+function notifyReadModelCachesChanged(workspaceId?: string): void {
+  for (const entry of activeRuntimeEmitters) {
+    if (!workspaceId || entry.workspaceId === workspaceId) {
+      entry.emit();
+    }
+  }
+}
 
 function buildUserMessage(input: ComposerPromptSubmission): Message {
   const text = input.text.trim();
@@ -389,6 +442,15 @@ export interface ChatRuntime {
   branch?: string;
   kind: WorkspaceInfoResponse["kind"];
   appLogSummary: AppLogSummary;
+  agentSettingsSnapshot: AgentSettingsState | null;
+  appPreferencesSnapshot: AppPreferences | null;
+  agentModelChoicesSnapshot: AgentModelChoicesResponse | null;
+  providerAuthsSnapshot: ProviderAuthInfo[] | null;
+  extensionsInventorySnapshot: ExtensionsInventoryReadModel | null;
+  externalInstructionSourcesSnapshot: GeneratedAgentContextExternalSource[] | null;
+  workflowsGeneratedSnapshot: WorkspaceWorkflowsGeneratedReadModel | null;
+  snippetsSnapshot: SnippetsReadModel | null;
+  appLogsSnapshot: AppLogReadModel | null;
   sessions: WorkspaceSessionSummary[];
   sessionNavigation: WorkspaceSessionNavigationReadModel;
   paneLayout: ChatPaneLayoutState;
@@ -497,6 +559,10 @@ export interface ChatRuntime {
     request?: AgentContextPreviewRequest,
   ) => Promise<AgentContextPreviewResponse>;
   getAgentModelChoices: () => Promise<AgentModelChoicesResponse>;
+  listProviderAuths: () => Promise<ProviderAuthInfo[]>;
+  setProviderApiKey: (request: { providerId: string; apiKey: string }) => Promise<{ ok: boolean }>;
+  startOAuth: (request: { providerId: string }) => Promise<{ ok: boolean; error?: string }>;
+  removeProviderAuth: (request: { providerId: string }) => Promise<{ ok: boolean }>;
   getExtensionsInventory: () => Promise<ExtensionsInventoryReadModel>;
   getAppPreferences: () => Promise<AppPreferences>;
   updateAppPreferences: (preferences: AppPreferences) => Promise<AppPreferences>;
@@ -1448,11 +1514,90 @@ export async function createChatRuntime(
       listener();
     }
   };
+  const runtimeCacheEmitter = { workspaceId: workspaceInfo.workspaceId, emit };
+  activeRuntimeEmitters.add(runtimeCacheEmitter);
 
   const scoped = <T extends object>(request?: T): T & { workspaceId: string } => ({
     ...(request ?? ({} as T)),
     workspaceId: workspaceInfo.workspaceId,
   });
+
+  const setAppCache = <Key extends keyof AppReadModelCache>(
+    key: Key,
+    value: AppReadModelCache[Key],
+  ): AppReadModelCache[Key] => {
+    appReadModelCache[key] = structuredClone(value) as AppReadModelCache[Key];
+    notifyReadModelCachesChanged();
+    return structuredClone(value) as AppReadModelCache[Key];
+  };
+
+  const setWorkspaceCache = <Key extends keyof WorkspaceReadModelCache>(
+    key: Key,
+    value: WorkspaceReadModelCache[Key],
+  ): WorkspaceReadModelCache[Key] => {
+    const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
+    cache[key] = structuredClone(value) as WorkspaceReadModelCache[Key];
+    notifyReadModelCachesChanged(workspaceInfo.workspaceId);
+    return structuredClone(value) as WorkspaceReadModelCache[Key];
+  };
+
+  const refreshAgentSettings = async (): Promise<AgentSettingsState> =>
+    setAppCache("agentSettings", await rpcClient.request.getAgentSettings(scoped()))!;
+
+  const refreshAppPreferences = async (): Promise<AppPreferences> =>
+    setAppCache("appPreferences", await rpcClient.request.getAppPreferences())!;
+
+  const refreshAgentModelChoices = async (): Promise<AgentModelChoicesResponse> =>
+    setAppCache("agentModelChoices", await rpcClient.request.getAgentModelChoices(scoped()))!;
+
+  const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> =>
+    setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
+
+  const refreshExtensionsInventory = async (): Promise<ExtensionsInventoryReadModel> =>
+    setWorkspaceCache(
+      "extensionsInventory",
+      await rpcClient.request.getExtensionsInventory(scoped()),
+    )!;
+
+  const refreshExternalInstructionSources = async (): Promise<
+    GeneratedAgentContextExternalSource[]
+  > =>
+    setWorkspaceCache(
+      "externalInstructionSources",
+      await rpcClient.request.getGeneratedAgentContextExternalSources(scoped()),
+    )!;
+
+  const refreshWorkflowsGenerated = async (): Promise<WorkspaceWorkflowsGeneratedReadModel> =>
+    setAppCache("workflowsGenerated", await rpcClient.request.getWorkflowsGenerated(scoped()))!;
+
+  const refreshSnippets = async (): Promise<SnippetsReadModel> =>
+    setWorkspaceCache("snippets", await rpcClient.request.getSnippets(scoped()))!;
+
+  const refreshAppLogs = async (query?: AppLogQuery): Promise<AppLogReadModel> => {
+    const next = await rpcClient.request.getAppLogs(scoped(query ?? {}));
+    const isDefaultQuery =
+      !query?.afterSeq &&
+      !query?.beforeSeq &&
+      !query?.levels?.length &&
+      !query?.sources?.length &&
+      !query?.query;
+    if (isDefaultQuery) {
+      return setWorkspaceCache("appLogs", next)!;
+    }
+    return next;
+  };
+
+  const refreshWarmReadModels = (): void => {
+    void refreshAgentSettings().catch(() => undefined);
+    void refreshAppPreferences().catch(() => undefined);
+    void refreshAgentModelChoices().catch(() => undefined);
+    void refreshProviderAuths().catch(() => undefined);
+    void refreshExtensionsInventory().catch(() => undefined);
+    void refreshExternalInstructionSources().catch(() => undefined);
+    void refreshWorkflowsGenerated().catch(() => undefined);
+    void refreshSnippets().catch(() => undefined);
+    void refreshAppLogs({ limit: 600 }).catch(() => undefined);
+  };
 
   const currentLayoutSlots = (): WorkspaceLayoutSlotSummary[] =>
     WORKSPACE_LAYOUT_SLOT_IDS.map((id) => {
@@ -1908,6 +2053,7 @@ export async function createChatRuntime(
 
   const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
   await syncProviderAuthPromise;
+  refreshWarmReadModels();
 
   const restoreState = durableLayoutEnabled
     ? ((await rpcClient.request.getWorkspaceUiRestore(scoped()).catch((error: unknown) => {
@@ -2167,6 +2313,23 @@ export async function createChatRuntime(
       return;
     }
     appLogSummary = payload.summary;
+    const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
+    if (cache.appLogs) {
+      cache.appLogs = {
+        ...cache.appLogs,
+        entries: mergeAppLogEntries(cache.appLogs.entries, payload.entries).slice(-600),
+        summary: payload.summary,
+      };
+    }
+    if (
+      payload.entries.some(
+        (entry) =>
+          entry.source === "workflow.library" &&
+          entry.message === "Generated Workflows package rebuilt.",
+      )
+    ) {
+      void refreshWorkflowsGenerated().catch(() => undefined);
+    }
     for (const listener of appLogUpdateListeners) {
       listener(payload);
     }
@@ -2198,6 +2361,35 @@ export async function createChatRuntime(
     get appLogSummary() {
       return structuredClone(appLogSummary);
     },
+    get agentSettingsSnapshot() {
+      return cloneOrNull(appReadModelCache.agentSettings);
+    },
+    get appPreferencesSnapshot() {
+      return cloneOrNull(appReadModelCache.appPreferences);
+    },
+    get agentModelChoicesSnapshot() {
+      return cloneOrNull(appReadModelCache.agentModelChoices);
+    },
+    get providerAuthsSnapshot() {
+      return cloneOrNull(appReadModelCache.providerAuths);
+    },
+    get extensionsInventorySnapshot() {
+      return cloneOrNull(workspaceReadModelCache(workspaceInfo.workspaceId).extensionsInventory);
+    },
+    get externalInstructionSourcesSnapshot() {
+      return cloneOrNull(
+        workspaceReadModelCache(workspaceInfo.workspaceId).externalInstructionSources,
+      );
+    },
+    get workflowsGeneratedSnapshot() {
+      return cloneOrNull(appReadModelCache.workflowsGenerated);
+    },
+    get snippetsSnapshot() {
+      return cloneOrNull(workspaceReadModelCache(workspaceInfo.workspaceId).snippets);
+    },
+    get appLogsSnapshot() {
+      return cloneOrNull(workspaceReadModelCache(workspaceInfo.workspaceId).appLogs);
+    },
     get paneLayout() {
       return structuredClone(paneLayout);
     },
@@ -2212,6 +2404,7 @@ export async function createChatRuntime(
     },
     dispose: () => {
       disposed = true;
+      activeRuntimeEmitters.delete(runtimeCacheEmitter);
       rpcClient.removeMessageListener("sendWorkspaceSync", workspaceSyncListener);
       rpcClient.removeMessageListener("sendSurfaceSync", surfaceSyncListener);
       rpcClient.removeMessageListener("sendAppLogUpdate", appLogUpdateListener);
@@ -2378,7 +2571,7 @@ export async function createChatRuntime(
       }
       await refreshSessions();
     },
-    getAppLogs: (query) => rpcClient.request.getAppLogs(scoped(query ?? {})),
+    getAppLogs: refreshAppLogs,
     getAppLogSummary: async () => {
       appLogSummary = await rpcClient.request.getAppLogSummary(scoped());
       emit();
@@ -2650,7 +2843,7 @@ export async function createChatRuntime(
       const result = await rpcClient.request.openWorkspacePath(scoped({ workspaceRelativePath }));
       return result.opened;
     },
-    getWorkflowsGenerated: () => rpcClient.request.getWorkflowsGenerated(scoped()),
+    getWorkflowsGenerated: refreshWorkflowsGenerated,
     openWorkspaceSourceInEditor: async (path) => {
       const result = await rpcClient.request.openWorkspaceSourceInEditor(scoped({ path }));
       return result.opened;
@@ -2661,50 +2854,111 @@ export async function createChatRuntime(
       );
       return result.opened;
     },
-    getAgentSettings: () => rpcClient.request.getAgentSettings(scoped()),
+    getAgentSettings: refreshAgentSettings,
     getAgentContextPreview: (request = {}) =>
       rpcClient.request.getAgentContextPreview(scoped(request)),
-    getAgentModelChoices: () => rpcClient.request.getAgentModelChoices(scoped()),
-    getExtensionsInventory: () => rpcClient.request.getExtensionsInventory(scoped()),
-    getAppPreferences: () => rpcClient.request.getAppPreferences(),
+    getAgentModelChoices: refreshAgentModelChoices,
+    listProviderAuths: refreshProviderAuths,
+    setProviderApiKey: async (request) => {
+      const result = await rpcClient.request.setProviderApiKey(request);
+      await refreshProviderAuths();
+      void refreshAgentModelChoices().catch(() => undefined);
+      return result;
+    },
+    startOAuth: async (request) => {
+      const result = await rpcClient.request.startOAuth(request);
+      if (result.ok) {
+        await refreshProviderAuths();
+        void refreshAgentModelChoices().catch(() => undefined);
+      }
+      return result;
+    },
+    removeProviderAuth: async (request) => {
+      const result = await rpcClient.request.removeProviderAuth(request);
+      await refreshProviderAuths();
+      void refreshAgentModelChoices().catch(() => undefined);
+      return result;
+    },
+    getExtensionsInventory: refreshExtensionsInventory,
+    getAppPreferences: refreshAppPreferences,
     updateAppPreferences: async (preferences) => {
       const state = await rpcClient.request.updateAppPreferences(preferences);
-      return state.appPreferences;
+      setAppCache("agentSettings", state);
+      const nextPreferences = setAppCache("appPreferences", state.appPreferences)!;
+      void refreshAgentModelChoices().catch(() => undefined);
+      void refreshExtensionsInventory().catch(() => undefined);
+      void refreshExternalInstructionSources().catch(() => undefined);
+      return nextPreferences;
     },
-    revertExtensionChange: (changeId) =>
-      rpcClient.request.revertExtensionChange(
-        scoped({
-          changeId,
-          ...(getFocusedPromptTarget() ? { owningSurface: getFocusedPromptTarget()! } : {}),
-        }),
-      ),
-    setExtensionEnvSecret: (input) => rpcClient.request.setExtensionEnvSecret(scoped(input)),
-    removeExtensionEnvSecret: (input) => rpcClient.request.removeExtensionEnvSecret(scoped(input)),
-    setExtensionEnvOverride: (input) => rpcClient.request.setExtensionEnvOverride(scoped(input)),
-    removeExtensionEnvOverride: (input) =>
-      rpcClient.request.removeExtensionEnvOverride(scoped(input)),
-    updateAgentProfile: (profile) => rpcClient.request.updateAgentProfile(scoped({ profile })),
-    deleteAgentProfile: (id) => rpcClient.request.deleteAgentProfile(scoped({ id })),
-    reorderOrchestratorAgents: (ids) =>
-      rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
-    updateWorkflowAgent: (key, settings) =>
-      rpcClient.request.updateWorkflowAgent(scoped({ key, settings })),
-    deleteWorkflowAgent: (key) => rpcClient.request.deleteWorkflowAgent(scoped({ key })),
+    revertExtensionChange: async (changeId) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.revertExtensionChange(
+          scoped({
+            changeId,
+            ...(getFocusedPromptTarget() ? { owningSurface: getFocusedPromptTarget()! } : {}),
+          }),
+        ),
+      )!,
+    setExtensionEnvSecret: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.setExtensionEnvSecret(scoped(input)),
+      )!,
+    removeExtensionEnvSecret: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.removeExtensionEnvSecret(scoped(input)),
+      )!,
+    setExtensionEnvOverride: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.setExtensionEnvOverride(scoped(input)),
+      )!,
+    removeExtensionEnvOverride: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.removeExtensionEnvOverride(scoped(input)),
+      )!,
+    updateAgentProfile: async (profile) =>
+      setAppCache(
+        "agentSettings",
+        await rpcClient.request.updateAgentProfile(scoped({ profile })),
+      )!,
+    deleteAgentProfile: async (id) =>
+      setAppCache("agentSettings", await rpcClient.request.deleteAgentProfile(scoped({ id })))!,
+    reorderOrchestratorAgents: async (ids) =>
+      setAppCache(
+        "agentSettings",
+        await rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
+      )!,
+    updateWorkflowAgent: async (key, settings) =>
+      setAppCache(
+        "agentSettings",
+        await rpcClient.request.updateWorkflowAgent(scoped({ key, settings })),
+      )!,
+    deleteWorkflowAgent: async (key) =>
+      setAppCache("agentSettings", await rpcClient.request.deleteWorkflowAgent(scoped({ key })))!,
     openWorkflowAgentSourceInEditor: async (key) => {
       const result = await rpcClient.request.openWorkflowAgentSourceInEditor(scoped({ key }));
       return result.opened;
     },
-    setAgentProfileExtensionUsage: (input) =>
-      rpcClient.request.setAgentProfileExtensionUsage(scoped(input)),
-    updateRequestUserInputSettings: (settings) =>
-      rpcClient.request.updateRequestUserInputSettings(scoped(settings)),
+    setAgentProfileExtensionUsage: async (input) =>
+      setAppCache(
+        "agentSettings",
+        await rpcClient.request.setAgentProfileExtensionUsage(scoped(input)),
+      )!,
+    updateRequestUserInputSettings: async (settings) =>
+      setAppCache(
+        "agentSettings",
+        await rpcClient.request.updateRequestUserInputSettings(scoped(settings)),
+      )!,
     getGeneratedAgentContext: () => rpcClient.request.getGeneratedAgentContext(scoped()),
     getGeneratedAgentContextDefaults: () =>
       rpcClient.request.getGeneratedAgentContextDefaults(scoped()),
     getGeneratedAgentContextEntries: () =>
       rpcClient.request.getGeneratedAgentContextEntries(scoped()),
-    getGeneratedAgentContextExternalSources: () =>
-      rpcClient.request.getGeneratedAgentContextExternalSources(scoped()),
+    getGeneratedAgentContextExternalSources: refreshExternalInstructionSources,
     updateGeneratedAgentContext: (request) =>
       rpcClient.request.updateGeneratedAgentContext(scoped(request)),
     resetGeneratedAgentContext: () => rpcClient.request.resetGeneratedAgentContext(scoped()),
@@ -2716,11 +2970,20 @@ export async function createChatRuntime(
       rpcClient.request.renameGeneratedAgentContextSnapshot(scoped({ snapshotId, name })),
     restoreGeneratedAgentContextSnapshot: (snapshotId) =>
       rpcClient.request.restoreGeneratedAgentContextSnapshot(scoped({ snapshotId })),
-    getSnippets: () => rpcClient.request.getSnippets(scoped()),
-    createManagedSnippet: (input) => rpcClient.request.createManagedSnippet(scoped(input)),
-    updateManagedSnippet: (input) => rpcClient.request.updateManagedSnippet(scoped(input)),
+    getSnippets: refreshSnippets,
+    createManagedSnippet: async (input) => {
+      const created = await rpcClient.request.createManagedSnippet(scoped(input));
+      void refreshSnippets().catch(() => undefined);
+      return created;
+    },
+    updateManagedSnippet: async (input) => {
+      const updated = await rpcClient.request.updateManagedSnippet(scoped(input));
+      void refreshSnippets().catch(() => undefined);
+      return updated;
+    },
     deleteManagedSnippet: async (snippetId) => {
       await rpcClient.request.deleteManagedSnippet(scoped({ snippetId }));
+      void refreshSnippets().catch(() => undefined);
     },
     openSnippetExternalSourceInEditor: async (path) => {
       const result = await rpcClient.request.openSnippetExternalSourceInEditor(scoped({ path }));

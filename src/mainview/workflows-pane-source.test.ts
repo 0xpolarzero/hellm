@@ -9,8 +9,10 @@ describe("Workflows pane source contract", () => {
     const source = await readFile(join(SOURCE_ROOT, "WorkflowsPane.svelte"), "utf8");
 
     expect(source).toContain("onMount(() => {");
+    expect(source).toContain("runtime.workflowsGeneratedSnapshot");
+    expect(source).toContain("runtime.subscribe(syncRuntimeSnapshots)");
     expect(source).toContain("void loadWorkflows();");
-    expect(source).toContain("return runtime.subscribeAppLogUpdate");
+    expect(source).not.toContain("runtime.subscribeAppLogUpdate");
     expect(source).not.toContain("$effect(() => {\n    void loadWorkflows();");
   });
 });

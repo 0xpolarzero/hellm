@@ -27,10 +27,12 @@
     { kind: "workflow", label: "Workflows" },
   ];
 
-  let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(null);
+  let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(
+    runtime.workflowsGeneratedSnapshot,
+  );
   let selectedId = $state<string | null>(null);
   let activeFilter = $state<(typeof FILTERS)[number]["kind"]>("all");
-  let loading = $state(true);
+  let loading = $state(!readModel);
   let error = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
 
@@ -58,16 +60,21 @@
       .filter((group) => group.items.length > 0);
   });
 
+  function applyReadModel(next: WorkspaceWorkflowsGeneratedReadModel): void {
+    readModel = next;
+    if (!selectedId || !next.items.some((item) => item.id === selectedId)) {
+      selectedId = next.items[0]?.id ?? null;
+    }
+    loading = false;
+  }
+
   async function loadWorkflows() {
-    loading = true;
+    loading = !readModel;
     error = null;
     actionMessage = null;
     try {
       const next = await runtime.getWorkflowsGenerated();
-      readModel = next;
-      if (!selectedId || !next.items.some((item) => item.id === selectedId)) {
-        selectedId = next.items[0]?.id ?? null;
-      }
+      applyReadModel(next);
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to load generated workflows.";
     } finally {
@@ -113,18 +120,16 @@
   }
 
   onMount(() => {
-    void loadWorkflows();
-    return runtime.subscribeAppLogUpdate((payload) => {
-      if (
-        payload.entries.some(
-          (entry) =>
-            entry.source === "workflow.library" &&
-            entry.message === "Generated Workflows package rebuilt.",
-        )
-      ) {
-        void loadWorkflows();
+    const syncRuntimeSnapshots = () => {
+      const snapshot = runtime.workflowsGeneratedSnapshot;
+      if (snapshot) {
+        applyReadModel(snapshot);
       }
-    });
+    };
+    syncRuntimeSnapshots();
+    const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
+    void loadWorkflows();
+    return unsubscribeRuntime;
   });
 </script>
 

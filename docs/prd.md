@@ -1193,9 +1193,12 @@ Projection ownership is equally simple:
 
 - the backend owns durable workspace projection and live surface runtime ownership
 - Dockview owns layout mechanics and serialized layout state
-- the renderer owns panel bindings, panel focus projection, and panel-local view state
-- the renderer listens for explicit workspace updates and surface updates, then joins them locally
-- the renderer does not poll read APIs, inspect transcript files, or infer lifecycle changes from transcript mutations
+- the renderer runtime owns warm read-model snapshots for app-global state such as app preferences, provider auth summaries, model choices, agent settings, and generated Workflows exports
+- the renderer runtime owns workspace-keyed warm read-model snapshots for workspace projections such as app logs, extension inventory projections, external instruction sources, and snippets
+- Dockview panes synchronously render from those runtime snapshots when they open, refresh through the runtime boundary in the background, and update immediately when another open pane or runtime event changes the same snapshot
+- the renderer owns panel bindings, panel focus projection, and panel-local view state such as selected rows, filters, expanded sections, and scroll
+- the renderer listens for explicit workspace updates and surface updates, then joins them locally through the runtime snapshots and panel bindings
+- the renderer does not poll read APIs on every pane open, inspect transcript files, or infer lifecycle changes from transcript mutations
 - workspace-scoped backend requests and sync events route by explicit `workspaceId`, never by active workspace, focused panel, or current tab
 
 Panel and surface semantics are:

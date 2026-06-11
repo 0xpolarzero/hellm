@@ -30,16 +30,18 @@
   };
 
   let { runtime, targetExtensionId = null, targetView = "inventory" }: Props = $props();
-  let agentSettings = $state<AgentSettingsState | null>(null);
-  let appPreferences = $state<AppPreferences | null>(null);
+  let agentSettings = $state<AgentSettingsState | null>(runtime.agentSettingsSnapshot);
+  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
   let contextPreview = $state<AgentContextPreviewResponse | null>(null);
-  let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(null);
+  let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(
+    runtime.extensionsInventorySnapshot,
+  );
   let settingsError = $state<string | null>(null);
   let inventoryError = $state<string | null>(null);
   let pendingSettings = $state(false);
   let revertingChangeId = $state<string | null>(null);
   let loadingPreview = $state(false);
-  let loadingInventory = $state(false);
+  let loadingInventory = $state(!extensionsInventory);
   let pendingExternalInstructionPath = $state<string | null>(null);
   const extensionRowElements = new Map<string, HTMLElement>();
 
@@ -272,7 +274,7 @@
   }
 
   async function loadExtensionsInventory(): Promise<void> {
-    loadingInventory = true;
+    loadingInventory = !extensionsInventory;
     inventoryError = null;
     try {
       extensionsInventory = await runtime.getExtensionsInventory();
@@ -280,6 +282,22 @@
       inventoryError =
         error instanceof Error ? error.message : "Extension CLI readiness is unavailable.";
     } finally {
+      loadingInventory = false;
+    }
+  }
+
+  function syncRuntimeSnapshots(): void {
+    const nextSettings = runtime.agentSettingsSnapshot;
+    const nextPreferences = runtime.appPreferencesSnapshot;
+    const nextInventory = runtime.extensionsInventorySnapshot;
+    if (nextSettings) {
+      agentSettings = nextSettings;
+    }
+    if (nextPreferences) {
+      appPreferences = nextPreferences;
+    }
+    if (nextInventory) {
+      extensionsInventory = nextInventory;
       loadingInventory = false;
     }
   }
@@ -493,9 +511,12 @@
   }
 
   onMount(() => {
+    syncRuntimeSnapshots();
+    const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
     void loadSettings();
     void loadAppPreferences();
     void loadExtensionsInventory();
+    return unsubscribeRuntime;
   });
 
   $effect(() => {

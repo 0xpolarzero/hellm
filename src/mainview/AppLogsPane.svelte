@@ -45,12 +45,12 @@
     { level: "error", label: "Error logs", shortLabel: "Errors" },
   ];
 
-  let readModel = $state<AppLogReadModel | null>(null);
+  let readModel = $state<AppLogReadModel | null>(runtime.appLogsSnapshot);
   let expandedIds = $state(new Set<string>());
   let levelFilter = $state<AppLogLevel | "all">("all");
   let sourceFilter = $state<AppLogSource | "all">("all");
   let query = $state("");
-  let loading = $state(true);
+  let loading = $state(!readModel);
   let error = $state<string | null>(null);
   let newLogsWhileAway = $state(0);
   let liveMode = $state<AppLogLiveMode>("live");
@@ -271,7 +271,7 @@
   async function loadLogs(options: { forceTail?: boolean; smoothTail?: boolean } = {}) {
     const shouldFollowTail = options.forceTail === undefined ? liveMode === "live" && bottomPinned : options.forceTail;
     const distanceFromEnd = shouldFollowTail || !listElement ? 0 : get(virtualizer).getDistanceFromEnd();
-    loading = true;
+    loading = !readModel;
     error = null;
     try {
       const next = await runtime.getAppLogs({
@@ -443,6 +443,11 @@
       newLogsWhileAway = next.newLogsWhileAway;
     });
     unsubscribeRuntime = runtime.subscribe(() => {
+      const snapshot = runtime.appLogsSnapshot;
+      if (snapshot && levelFilter === "all" && sourceFilter === "all" && !query.trim()) {
+        readModel = snapshot;
+        loading = false;
+      }
       if (runtime.paneLayout.focusedPanelId === panelId) {
         void markReadThroughLatest();
       }

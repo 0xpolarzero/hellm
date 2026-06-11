@@ -22,6 +22,7 @@ How to use this file:
 - [x] Add the artifact projection panel in the desktop workbench. Commit(s): `1d9bc05`, `6d757dc`
 - [x] Add workspace-scoped prompt history recall in the composer. Commit(s): `cb1b7f1`
 - [x] Add multi-session workspace navigation and session switching/resume support. Commit(s): `b22a0c6`, `df1a7df`
+- [x] Feed static workspace panes from renderer-runtime warm read-model snapshots, with app-global state shared across workspace tabs, workspace projections keyed by workspace id, background refresh at runtime boundaries, and immediate pane updates when snapshots change. Commit(s): pending local changes
 
 ## 1. Structured Session State
 
