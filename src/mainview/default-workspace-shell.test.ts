@@ -403,8 +403,10 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain(
       'toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")',
     );
+    expect(agentsPaneSource).not.toContain("Profiles used by orchestrators");
+    expect(agentsPaneSource).not.toContain("agents-header");
     expect(agentsPaneSource).toContain("{preview.actor}");
-    expect(agentsPaneSource).toContain("workflowUsageSummary(agent)");
+    expect(agentsPaneSource).toContain("extensionUsageItems({");
     expect(agentsPaneSource).toContain("WorkflowAgentRowForm");
     expect(workflowAgentFormSource).toContain("createForm");
     expect(workflowAgentFormSource).toContain("formApi.reset(valuesFor(saved))");
@@ -413,6 +415,153 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain("Generates Agents.");
     expect(agentsPaneSource).not.toContain("updateWorkflowExtensions");
     expect(agentsPaneSource).not.toContain("TODO: default workflow agents");
+  });
+
+  it("uses compact Agents pane extension usage controls instead of passive summaries", async () => {
+    const agentsPaneSource = await readFile(
+      new URL("./AgentsPane.svelte", import.meta.url),
+      "utf8",
+    );
+    const agentProfileFormSource = await readFile(
+      new URL("./AgentProfileRowForm.svelte", import.meta.url),
+      "utf8",
+    );
+    const workflowAgentFormSource = await readFile(
+      new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
+      "utf8",
+    );
+    const extensionUsageControlSource = await readFile(
+      new URL("./ExtensionUsageControl.svelte", import.meta.url),
+      "utf8",
+    );
+    const profileExtensionEditorSource = await readFile(
+      new URL("./ProfileExtensionEditor.svelte", import.meta.url),
+      "utf8",
+    );
+    const extensionUsageHelperSource = await readFile(
+      new URL("./agents-pane-extension-usage.ts", import.meta.url),
+      "utf8",
+    );
+    const profileExtensionUsageSaveSource = agentsPaneSource.slice(
+      agentsPaneSource.indexOf("async function setProfileExtensionUsage"),
+      agentsPaneSource.indexOf("async function setWorkflowAgentExtensionUsage"),
+    );
+    const workflowExtensionUsageSaveSource = agentsPaneSource.slice(
+      agentsPaneSource.indexOf("async function setWorkflowAgentExtensionUsage"),
+      agentsPaneSource.indexOf("function openExtension"),
+    );
+
+    expect(agentsPaneSource).toContain("runtime.getExtensionsInventory()");
+    expect(agentsPaneSource).toContain("runtime.setAgentProfileExtensionUsage");
+    expect(profileExtensionUsageSaveSource).not.toContain("savingProfileId =");
+    expect(workflowExtensionUsageSaveSource).not.toContain("savingWorkflowAgentKey =");
+    expect(agentsPaneSource).toContain("function openExtension(extensionId: string)");
+    expect(agentsPaneSource).toContain('surface: "extensions"');
+    expect(agentsPaneSource).toContain("targetExtensionId: extensionId");
+    expect(agentsPaneSource).toContain("extensionUsageItems({");
+    expect(agentsPaneSource).toContain("ProfileExtensionEditor");
+    expect(agentsPaneSource).toContain("setProfileExtensionOrder");
+    expect(agentsPaneSource).toContain("resetProfileExtensionSelection");
+    expect(agentsPaneSource).toContain("resetProfileExtensionOrder");
+    expect(agentsPaneSource).toContain("buildExtensionUsageItems");
+    expect(extensionUsageHelperSource).toContain("resolveActorExtensionState");
+    expect(extensionUsageHelperSource).toContain('extension.id !== "extension-loading"');
+    expect(agentProfileFormSource).toContain("ExtensionUsageControl");
+    expect(workflowAgentFormSource).toContain("ExtensionUsageControl");
+    expect(agentProfileFormSource).toContain("onOpenExtension={onOpenExtension}");
+    expect(workflowAgentFormSource).toContain("onOpenExtension={onOpenExtension}");
+    expect(agentProfileFormSource).toContain("onSetExtensionUsage(extensionId, state)");
+    expect(workflowAgentFormSource).toContain("onSetExtensionUsage(extensionId, state)");
+    expect(agentProfileFormSource).not.toContain("[extensionId]: state");
+    expect(workflowAgentFormSource).not.toContain("[extensionId]: state");
+    expect(extensionUsageControlSource).toContain('label: "Default loaded"');
+    expect(extensionUsageControlSource).toContain('label: "Available"');
+    expect(extensionUsageControlSource).toContain('label: "Off"');
+    expect(extensionUsageControlSource).toContain(
+      'import CheckCircleIcon from "@lucide/svelte/icons/check-circle";',
+    );
+    expect(extensionUsageControlSource).toContain(
+      'import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";',
+    );
+    expect(extensionUsageControlSource).toContain(
+      'import BanIcon from "@lucide/svelte/icons/ban";',
+    );
+    expect(extensionUsageControlSource).toContain(
+      'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
+    );
+    expect(extensionUsageControlSource).toContain("<CheckCircleIcon");
+    expect(extensionUsageControlSource).toContain("<CircleDashedIcon");
+    expect(extensionUsageControlSource).toContain("<BanIcon");
+    expect(extensionUsageControlSource).toContain("<ExternalLinkIcon");
+    expect(extensionUsageControlSource).toContain("Open extension");
+    expect(extensionUsageControlSource).toContain("Open ${item.title} in Extensions");
+    expect(extensionUsageControlSource).toContain('const triggerLabel = "Extensions"');
+    expect(extensionUsageControlSource).toContain("{overrideCount} overrides");
+    expect(extensionUsageControlSource).toContain("grid-template-columns: repeat(3, 1.54rem)");
+    expect(extensionUsageControlSource).toContain(
+      "grid-template-columns: minmax(7rem, 1fr) 4.4rem 1.42rem auto",
+    );
+    expect(extensionUsageControlSource).toContain('class="extension-usage-category"');
+    expect(extensionUsageControlSource).toContain("is-fixed-usage");
+    expect(extensionUsageControlSource).toContain("is-override-usage");
+    expect(extensionUsageControlSource).toContain("is-default-usage");
+    expect(extensionUsageControlSource).toContain(
+      ".extension-usage-row.is-override-usage .extension-usage-title-text",
+    );
+    expect(extensionUsageControlSource).toContain(
+      "background-image: linear-gradient(var(--ui-accent), var(--ui-accent));",
+    );
+    expect(extensionUsageControlSource).toContain("background-size: 100% 2px;");
+    expect(extensionUsageControlSource).toContain("pending: false");
+    expect(extensionUsageControlSource).toContain("const unavailable =");
+    expect(extensionUsageControlSource).toContain("disabled={unavailable}");
+    expect(extensionUsageControlSource).toContain(".extension-state-button.active:disabled");
+    expect(extensionUsageControlSource).not.toContain("pendingKey === optionKey");
+    expect(extensionUsageControlSource).not.toContain("is-saving");
+    expect(extensionUsageControlSource).not.toContain("aria-busy");
+    expect(extensionUsageControlSource).toContain("background: transparent;");
+    expect(extensionUsageControlSource).toContain(
+      "background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));",
+    );
+    expect(extensionUsageControlSource).not.toContain("override-active");
+    expect(extensionUsageControlSource).not.toContain("state-loaded");
+    expect(extensionUsageControlSource).not.toContain("state-available");
+    expect(extensionUsageControlSource).not.toContain("state-off");
+    expect(extensionUsageControlSource).not.toContain("var(--ui-success) 8%");
+    expect(extensionUsageControlSource).not.toContain("var(--ui-info) 8%");
+    expect(extensionUsageControlSource).not.toContain("var(--ui-danger) 7%");
+    expect(extensionUsageControlSource).not.toContain("var(--ui-accent) 14%");
+    expect(extensionUsageControlSource).not.toContain("var(--ui-accent) 76%");
+    expect(extensionUsageControlSource).not.toContain("inset 2px 0 0");
+    expect(extensionUsageControlSource).not.toContain('"fixed"`');
+    expect(extensionUsageControlSource).toContain(
+      'const MENU_OPEN_EVENT = "svvy:extension-usage-menu-open"',
+    );
+    expect(extensionUsageControlSource).toContain("handlePeerMenuOpen");
+    expect(extensionUsageControlSource).toContain("isolation: isolate;");
+    expect(extensionUsageControlSource).toContain("background: var(--ui-bg-elevated);");
+    expect(extensionUsageControlSource).toContain(
+      "background: color-mix(in oklab, var(--ui-surface-subtle) 70%, var(--ui-bg-elevated));",
+    );
+    expect(extensionUsageControlSource).not.toContain("Override");
+    expect(extensionUsageControlSource).not.toContain("{option.label}</button>");
+    expect(extensionUsageControlSource).not.toContain("item.description");
+    expect(extensionUsageControlSource).not.toContain("explicit`");
+    expect(extensionUsageControlSource).not.toContain("defaults");
+    expect(extensionUsageControlSource).not.toContain('label: "Default"');
+    expect(agentProfileFormSource).not.toContain("usageSummary");
+    expect(workflowAgentFormSource).not.toContain("usageSummary");
+    expect(profileExtensionEditorSource).toContain("Selection");
+    expect(profileExtensionEditorSource).toContain("Order");
+    expect(profileExtensionEditorSource).toContain('state === "unavailable"');
+    expect(profileExtensionEditorSource).toContain("onOrderChange");
+    expect(profileExtensionEditorSource).toContain("onResetSelection");
+    expect(profileExtensionEditorSource).toContain("onResetOrder");
+    expect(profileExtensionEditorSource).toContain("onOpenExtension(item.id)");
+    expect(profileExtensionEditorSource).not.toContain("Generated context preview");
+    expect(profileExtensionEditorSource).not.toContain("Actor:");
+    expect(profileExtensionEditorSource).not.toContain("profileName");
+    expect(profileExtensionEditorSource).not.toContain("reasoningEffort");
   });
 
   it("keeps Agents pane model edits constrained to provider metadata options", async () => {
@@ -596,9 +745,13 @@ describe("default workspace renderer shell", () => {
 
     expect(commandPaletteSource).toContain('view: "generated-context-preview"');
     expect(dockviewSource).toContain("targetView={pane.target.view}");
+    expect(dockviewSource).toContain("targetExtensionId={pane.target.targetExtensionId}");
     expect(runtimeSource).toContain("getAgentContextPreview");
     expect(extensionsPaneSource).toContain("Generated Context Preview");
     expect(extensionsPaneSource).toContain("runtime.getAgentContextPreview");
+    expect(extensionsPaneSource).toContain("targetExtensionId");
+    expect(extensionsPaneSource).toContain("data-extension-id={extension.id}");
+    expect(extensionsPaneSource).toContain("target-extension-row");
     expect(extensionsPaneSource).not.toContain(
       "TODO: expanded profile prompt, extension, and generated contract preview.",
     );

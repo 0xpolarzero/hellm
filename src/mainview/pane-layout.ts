@@ -465,7 +465,15 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
         ? { surface: "agents", targetAgentProfileId: binding.targetAgentProfileId }
         : { surface: "agents" };
     case "extensions":
-      return { surface: "extensions" };
+      return {
+        surface: "extensions",
+        ...(binding.view === "generated-context-preview" || binding.view === "inventory"
+          ? { view: binding.view }
+          : {}),
+        ...(typeof binding.targetExtensionId === "string" && binding.targetExtensionId.length > 0
+          ? { targetExtensionId: binding.targetExtensionId }
+          : {}),
+      };
     case "snippets":
       return { surface: "snippets" };
     case "settings":

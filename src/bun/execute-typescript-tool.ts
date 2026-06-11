@@ -245,6 +245,14 @@ type GeneratedModuleImportBinding = IncurClientImportBinding & {
   moduleName: string;
 };
 
+function resolveExecuteTypescriptRuntimeModule(moduleName: string): string | undefined {
+  try {
+    return Bun.resolveSync(moduleName, import.meta.dir);
+  } catch {
+    return undefined;
+  }
+}
+
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
 
 export function createExecuteTypescriptTool(
@@ -568,6 +576,7 @@ export async function runExecuteTypescript(input: {
       runtimeProcessSpawner: input.runtimeProcessSpawner,
       runtimeExtensionIds: Object.keys(extensions),
       runtimeModulePaths: {
+        [INCUR_MODULE]: resolveExecuteTypescriptRuntimeModule(INCUR_MODULE),
         [SVVY_EXTENSIONS_MODULE]: input.workflowsExtensionsGeneratedPackagePath,
         [SVVY_WORKFLOWS_MODULE]: input.workflowsGeneratedPackagePath,
       },
@@ -1436,7 +1445,7 @@ function buildAllowedModules() {
       Resources: Object.freeze({}),
       Run: Object.freeze({}),
     }),
-    "incur": Object.freeze({ ...require("incur") }),
+    "incur": optionalModuleFromPath("incur"),
     "@svvy/extensions": optionalModuleFromPath("@svvy/extensions"),
     "@svvy/workflows": optionalModuleFromPath("@svvy/workflows"),
   });

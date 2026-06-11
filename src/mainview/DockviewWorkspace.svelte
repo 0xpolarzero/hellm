@@ -34,6 +34,7 @@
     openingWorkspace?: boolean;
     openWorkspaceError?: string | null;
     recentWorkspaces?: WorkspaceTabInfo[];
+    agentSettings?: AgentSettingsState | null;
     onFocusPanel: (panelId: string) => void;
     onOpenModelPicker: (panelId: string) => void;
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
@@ -53,6 +54,7 @@
     openingWorkspace = false,
     openWorkspaceError = null,
     recentWorkspaces = [],
+    agentSettings = null,
     onFocusPanel,
     onOpenModelPicker,
     onAgentSettingsChanged,
@@ -96,6 +98,7 @@
         props: {
           runtime,
           panelId: this.panelId,
+          agentSettings,
           onOpenModelPicker,
           onAgentSettingsChanged,
           openingWorkspace,
@@ -118,6 +121,7 @@
         props: {
           runtime,
           panelId: this.panelId,
+          agentSettings,
           onOpenModelPicker,
           onAgentSettingsChanged,
           openingWorkspace,
@@ -672,6 +676,7 @@
       binding: panel.binding,
       title: panel.chrome?.title ?? null,
       renderer: getPanelRenderer(panel),
+      agentSettingsReady: panel.binding?.surface === "agents" ? Boolean(agentSettings) : undefined,
     });
   }
 
@@ -773,6 +778,7 @@
   $effect(() => {
     void panels;
     void focusedPanelId;
+    void agentSettings;
     syncDockviewPanels();
     refreshSurfaceTabs();
     scheduleDockviewLayout();

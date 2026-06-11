@@ -58,19 +58,19 @@ describe("builtin extension registry", () => {
 
     const orchestrator = resolveActorExtensionState({ actor: "orchestrator" });
     expect(orchestrator.loadedExtensionIds).toEqual([
-      "apply-patch",
-      "artifacts",
       "base-common",
       "base-orchestrator",
-      "cx",
+      "shell",
+      "apply-patch",
       "execute-typescript",
       "extension-loading",
+      "request-user-input",
+      "thread-orchestration",
+      "cx",
       "git",
       "github",
-      "request-user-input",
-      "shell",
-      "thread-orchestration",
       "web",
+      "artifacts",
     ]);
     expect(orchestrator.availableExtensionIds).toEqual([
       "extension-managing",
@@ -84,21 +84,21 @@ describe("builtin extension registry", () => {
 
     const handler = resolveActorExtensionState({ actor: "handler" });
     expect(handler.loadedExtensionIds).toEqual([
-      "apply-patch",
-      "artifacts",
       "base-common",
       "base-handler",
-      "cx",
+      "shell",
+      "apply-patch",
       "execute-typescript",
       "extension-loading",
+      "request-user-input",
+      "thread-handling",
+      "cx",
       "git",
       "github",
-      "request-user-input",
-      "shell",
-      "smithers",
-      "thread-handling",
       "web",
+      "smithers",
       "workflows",
+      "artifacts",
     ]);
     expect(handler.availableExtensionIds).toEqual(["extension-managing"]);
     expect(handler.loadedExtensionIds).toContain("thread-handling");
@@ -108,16 +108,16 @@ describe("builtin extension registry", () => {
 
     const workflowTask = resolveActorExtensionState({ actor: "workflow-task" });
     expect(workflowTask.loadedExtensionIds).toEqual([
-      "apply-patch",
-      "artifacts",
       "base-common",
       "base-workflow-task",
-      "cx",
+      "shell",
+      "apply-patch",
       "execute-typescript",
       "extension-loading",
+      "cx",
       "git",
-      "shell",
       "web",
+      "artifacts",
     ]);
     expect(workflowTask.availableExtensionIds).toEqual(["github"]);
     expect(workflowTask.loadedExtensionIds).toContain("base-workflow-task");

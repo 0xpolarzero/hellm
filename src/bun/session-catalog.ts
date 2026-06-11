@@ -52,6 +52,7 @@ import type {
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
   AgentContextPreviewRequest,
+  AgentContextPreviewExtension,
   AgentContextPreviewResponse,
 } from "../shared/workspace-contract";
 import type {
@@ -140,8 +141,12 @@ import { createAgentSettingsStore } from "./agent-settings-store";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { RuntimeApprovalRequestRuntime } from "./runtime-approval-boundary";
-import { resolveActorExtensionState } from "../shared/extensions";
-import { resolveExtensionRecords, type ResolvedExtensionRecord } from "./svvyx-extensions-command";
+import { resolveActorExtensionState, type ExtensionUsageState } from "../shared/extensions";
+import {
+  resolveExtensionRecords,
+  setExtensionUsage,
+  type ResolvedExtensionRecord,
+} from "./svvyx-extensions-command";
 import { discoverExternalInstructionSources } from "./external-instructions";
 import {
   createGeneratedAgentContextStore,
@@ -670,6 +675,7 @@ export class WorkspaceSessionCatalog {
       const extensionState = resolveActorExtensionState({
         actor: "handler",
         profileExtensionUsage: profile.extensionUsage,
+        profileExtensionOrder: profile.extensionOrder,
       });
       const basePrompt = this.buildPromptFromLibrary("handler", {
         ...extensionState,
@@ -688,6 +694,11 @@ export class WorkspaceSessionCatalog {
         systemPrompt: suffix
           ? `${basePrompt}\n\n## Handler Profile Override\n${suffix}`
           : basePrompt,
+        extensions: this.buildAgentContextPreviewExtensions(
+          actor,
+          extensionState,
+          externalInstructionSources,
+        ),
       };
     }
     if (actor === "workflow-task") {
@@ -701,6 +712,7 @@ export class WorkspaceSessionCatalog {
       const extensionState = resolveActorExtensionState({
         actor: "workflow-task",
         profileExtensionUsage: profile.extensionUsage,
+        profileExtensionOrder: profile.extensionOrder,
       });
       return {
         actor,
@@ -715,6 +727,11 @@ export class WorkspaceSessionCatalog {
           ...extensionState,
           externalInstructionSources,
         }),
+        extensions: this.buildAgentContextPreviewExtensions(
+          actor,
+          extensionState,
+          externalInstructionSources,
+        ),
       };
     }
     const profile =
@@ -729,6 +746,7 @@ export class WorkspaceSessionCatalog {
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: profile.extensionUsage,
+      profileExtensionOrder: profile.extensionOrder,
     });
     return {
       actor,
@@ -744,11 +762,42 @@ export class WorkspaceSessionCatalog {
         extensionState,
         externalInstructionSources,
       ),
+      extensions: this.buildAgentContextPreviewExtensions(
+        actor,
+        extensionState,
+        externalInstructionSources,
+      ),
     };
   }
 
   getExtensionsRoot(): string {
     return this.extensionsRoot;
+  }
+
+  setExtensionUsage(input: {
+    agentProfile: string;
+    extensionId: string;
+    state: ExtensionUsageState;
+  }): { actor: "orchestrator" | "handler" | "workflow-task"; settings: AgentSettingsState } {
+    const result = setExtensionUsage({
+      agentSettingsStore: this.agentSettingsStore,
+      structuredSessionStore: this.structuredSessionStore,
+      extensionsRoot: this.extensionsRoot,
+      agentProfile: input.agentProfile,
+      extensionId: input.extensionId,
+      state: input.state,
+    });
+    if (
+      result.actor !== "orchestrator" &&
+      result.actor !== "handler" &&
+      result.actor !== "workflow-task"
+    ) {
+      throw new Error(`Unsupported extension usage actor: ${result.actor}`);
+    }
+    return {
+      actor: result.actor,
+      settings: this.agentSettingsStore.getState(),
+    };
   }
 
   async getGeneratedAgentContextExternalSources(): Promise<GeneratedAgentContextExternalSource[]> {
@@ -819,10 +868,11 @@ export class WorkspaceSessionCatalog {
   }
 
   buildOrchestratorSystemPrompt(
-    settings: Pick<AgentProfileSettings, "systemPrompt" | "extensionUsage">,
+    settings: Pick<AgentProfileSettings, "systemPrompt" | "extensionUsage" | "extensionOrder">,
     extensionState = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: settings.extensionUsage,
+      profileExtensionOrder: settings.extensionOrder,
     }),
     externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
   ): string {
@@ -1123,6 +1173,7 @@ export class WorkspaceSessionCatalog {
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: agentProfileSettings.extensionUsage,
+      profileExtensionOrder: agentProfileSettings.extensionOrder,
     });
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const suffix = agentProfileSettings.systemPrompt.trim();
@@ -1240,6 +1291,7 @@ export class WorkspaceSessionCatalog {
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: sourceAgentProfile.extensionUsage,
+      profileExtensionOrder: sourceAgentProfile.extensionOrder,
     });
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const suffix = sourceAgentProfile.systemPrompt.trim();
@@ -2150,8 +2202,8 @@ export class WorkspaceSessionCatalog {
       availableExtensionIds: [...session.availableExtensionIds],
       externalSourceHashes: [...session.externalSourceHashes],
     };
-    const loadedExtensionIds = [...(input.runtime.loadedExtensionIds ?? [])].toSorted();
-    const availableExtensionIds = [...(input.runtime.availableExtensionIds ?? [])].toSorted();
+    const loadedExtensionIds = [...(input.runtime.loadedExtensionIds ?? [])];
+    const availableExtensionIds = [...(input.runtime.availableExtensionIds ?? [])];
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildAggregateForTarget(target, {
       extensionState: {
@@ -3497,6 +3549,7 @@ export class WorkspaceSessionCatalog {
     const current = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: currentProfile.extensionUsage,
+      profileExtensionOrder: currentProfile.extensionOrder,
     });
     const sessionLoadedExtensionIds =
       managed?.loadedExtensionIds ?? snapshot?.pi.loadedExtensionIds ?? [];
@@ -3510,6 +3563,7 @@ export class WorkspaceSessionCatalog {
       const baseline = resolveActorExtensionState({
         actor: "orchestrator",
         profileExtensionUsage: baselineProfile.extensionUsage,
+        profileExtensionOrder: baselineProfile.extensionOrder,
       });
       const baselineLoaded = new Set(baseline.loadedExtensionIds);
       const dynamicallyLoaded = sessionLoadedExtensionIds.filter((id) => !baselineLoaded.has(id));
@@ -3518,10 +3572,8 @@ export class WorkspaceSessionCatalog {
       }
       const loaded = new Set([...current.loadedExtensionIds, ...dynamicallyLoaded]);
       return {
-        loadedExtensionIds: [...loaded].toSorted(),
-        availableExtensionIds: current.availableExtensionIds
-          .filter((id) => !loaded.has(id))
-          .toSorted(),
+        loadedExtensionIds: [...loaded],
+        availableExtensionIds: current.availableExtensionIds.filter((id) => !loaded.has(id)),
       };
     }
     if (sessionLoadedExtensionIds.length === 0) {
@@ -3530,8 +3582,8 @@ export class WorkspaceSessionCatalog {
     const loaded = new Set([...current.loadedExtensionIds, ...sessionLoadedExtensionIds]);
     const available = new Set([...current.availableExtensionIds, ...sessionAvailableExtensionIds]);
     return {
-      loadedExtensionIds: [...loaded].toSorted(),
-      availableExtensionIds: [...available].filter((id) => !loaded.has(id)).toSorted(),
+      loadedExtensionIds: [...loaded],
+      availableExtensionIds: [...available].filter((id) => !loaded.has(id)),
     };
   }
 
@@ -3546,6 +3598,59 @@ export class WorkspaceSessionCatalog {
     } = {},
   ): string {
     return this.buildPromptAggregateFromLibrary(actor, options).outputs.prompt;
+  }
+
+  private buildAgentContextPreviewExtensions(
+    actor: SvvyActorKind,
+    extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] },
+    externalInstructionSources: readonly GeneratedAgentContextExternalSource[],
+  ): AgentContextPreviewExtension[] {
+    const activeIds = [
+      ...extensionState.loadedExtensionIds.map((id) => ({ id, state: "default_loaded" as const })),
+      ...extensionState.availableExtensionIds.map((id) => ({ id, state: "available" as const })),
+    ];
+    const records = new Map(
+      resolveExtensionRecords(
+        activeIds.map((entry) => entry.id),
+        this.extensionsRoot,
+      ).map((record) => [record.id, record]),
+    );
+    const generatedAgentContextState = this.generatedAgentContextStore.getState();
+    const requestUserInputSettings = this.agentSettingsStore.getState().requestUserInput;
+    return activeIds.map((entry) => {
+      const record = records.get(entry.id);
+      const extensionRecords = record ? [record] : [];
+      return {
+        id: entry.id,
+        title: record?.title ?? entry.id,
+        description: record?.description ?? "",
+        state: entry.state,
+        sourcePath: record?.instructionSourceFiles[0],
+        instruction:
+          entry.state === "default_loaded"
+            ? buildSystemPrompt(actor, {
+                loadedExtensionIds: [entry.id],
+                loadedExtensionRecords: extensionRecords,
+                availableExtensionIds: [],
+                externalInstructionSources,
+                extensionsRoot: this.extensionsRoot,
+                generatedAgentContextState,
+                workspaceKey: this.cwd,
+                requestUserInputSettings,
+              })
+            : buildSystemPrompt(actor, {
+                loadedExtensionIds: [],
+                loadedExtensionRecords: [],
+                availableExtensionIds: [entry.id],
+                availableExtensionRecords: extensionRecords,
+                externalInstructionSources,
+                extensionsRoot: this.extensionsRoot,
+                generatedAgentContextState,
+                workspaceKey: this.cwd,
+                requestUserInputSettings,
+              }),
+      };
+    });
   }
 
   private buildPromptAggregateFromLibrary(
@@ -4257,6 +4362,7 @@ export class WorkspaceSessionCatalog {
     const threadAgentSettings = input.agentProfileSettings
       ? {
           extensionUsage: input.agentProfileSettings.extensionUsage,
+          extensionOrder: input.agentProfileSettings.extensionOrder,
           provider: input.agentProfileSettings.provider,
           model: input.agentProfileSettings.model,
           reasoningEffort: input.agentProfileSettings.reasoningEffort,
@@ -4267,6 +4373,7 @@ export class WorkspaceSessionCatalog {
 
     const extensionState = resolveThreadExtensionState(
       threadAgentSettings.extensionUsage,
+      threadAgentSettings.extensionOrder,
       input.extensions ?? null,
     );
     const thread = this.structuredSessionStore.createThread({
@@ -5098,8 +5205,8 @@ export class WorkspaceSessionCatalog {
     if (!promptContext) {
       return;
     }
-    session.loadedExtensionIds = [...(promptContext.loadedExtensionIds ?? [])].toSorted();
-    session.availableExtensionIds = [...(promptContext.availableExtensionIds ?? [])].toSorted();
+    session.loadedExtensionIds = [...(promptContext.loadedExtensionIds ?? [])];
+    session.availableExtensionIds = [...(promptContext.availableExtensionIds ?? [])];
   }
 
   private wakeSurfaceQueue(target: PromptTarget): void {
@@ -5526,8 +5633,8 @@ async function createManagedSession(
   const extensionState =
     options.loadedExtensionIds && options.availableExtensionIds
       ? {
-          loadedExtensionIds: [...options.loadedExtensionIds].toSorted(),
-          availableExtensionIds: [...options.availableExtensionIds].toSorted(),
+          loadedExtensionIds: [...options.loadedExtensionIds],
+          availableExtensionIds: [...options.availableExtensionIds],
         }
       : options.actorKind === "namer"
         ? { loadedExtensionIds: [], availableExtensionIds: [] }
@@ -6191,11 +6298,13 @@ function resolveThreadTargets(
 
 function resolveThreadExtensionState(
   profileExtensionUsage: Record<string, "default_loaded" | "available" | "unavailable">,
+  profileExtensionOrder: readonly string[] | undefined,
   overrides: Record<string, "default_loaded" | "available" | "unavailable"> | null,
 ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
   return resolveActorExtensionState({
     actor: "handler",
     profileExtensionUsage,
+    profileExtensionOrder,
     overrides,
   });
 }

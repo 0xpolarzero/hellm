@@ -340,8 +340,8 @@ function normalizeAggregateInputs(
 ): GeneratedAgentContextAggregateKeyInputs {
   return {
     actorKind: input.actorKind,
-    loadedExtensionIds: [...input.loadedExtensionIds].toSorted(),
-    availableExtensionIds: [...input.availableExtensionIds].toSorted(),
+    loadedExtensionIds: [...input.loadedExtensionIds],
+    availableExtensionIds: [...input.availableExtensionIds],
     loadedContextKeys: [...input.loadedContextKeys].toSorted(),
     extensionContextFingerprints: Object.fromEntries(
       Object.entries(input.extensionContextFingerprints).toSorted(([left], [right]) =>

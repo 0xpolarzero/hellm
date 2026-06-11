@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import type {
     AgentSettingsState,
     AppPreferences,
@@ -25,10 +25,11 @@
 
   type Props = {
     runtime: ChatRuntime;
+    targetExtensionId?: string | null;
     targetView?: "inventory" | "generated-context-preview";
   };
 
-  let { runtime, targetView = "inventory" }: Props = $props();
+  let { runtime, targetExtensionId = null, targetView = "inventory" }: Props = $props();
   let agentSettings = $state<AgentSettingsState | null>(null);
   let appPreferences = $state<AppPreferences | null>(null);
   let contextPreview = $state<AgentContextPreviewResponse | null>(null);
@@ -40,6 +41,7 @@
   let loadingPreview = $state(false);
   let loadingInventory = $state(false);
   let pendingExternalInstructionPath = $state<string | null>(null);
+  const extensionRowElements = new Map<string, HTMLElement>();
 
   const ACTORS = [
     { id: "orchestrator", label: "Orchestrator" },
@@ -71,6 +73,25 @@
         issues: [],
       },
     }));
+  }
+
+  function registerExtensionRow(node: HTMLElement, extensionId: string) {
+    extensionRowElements.set(extensionId, node);
+    return {
+      destroy() {
+        if (extensionRowElements.get(extensionId) === node) {
+          extensionRowElements.delete(extensionId);
+        }
+      },
+    };
+  }
+
+  async function focusTargetExtension(extensionId: string): Promise<void> {
+    await tick();
+    const row = extensionRowElements.get(extensionId);
+    if (!row) return;
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.focus({ preventScroll: true });
   }
 
   function reversibleChangeCards(): ExtensionChangeCardReadModel[] {
@@ -482,6 +503,13 @@
       void loadContextPreview();
     }
   });
+
+  $effect(() => {
+    if (targetView !== "inventory" || !targetExtensionId || loadingInventory) return;
+    const rowCount = inventoryRows().length;
+    if (rowCount === 0) return;
+    void focusTargetExtension(targetExtensionId);
+  });
 </script>
 
 <section class="extensions-pane" aria-label="Extensions">
@@ -570,7 +598,13 @@
       {@const cliRequirements = inventoryCliRequirements(extension.id)}
       {@const envRequirements = inventoryEnvRequirements(extension.id)}
       {@const declaredCliBinaries = declaredCliRequirementBinaries(extension.id)}
-      <div class="extensions-row" role="row">
+      <div
+        use:registerExtensionRow={extension.id}
+        class={`extensions-row ${extension.id === targetExtensionId ? "target-extension-row" : ""}`.trim()}
+        role="row"
+        tabindex={extension.id === targetExtensionId ? -1 : undefined}
+        data-extension-id={extension.id}
+      >
         <div class="extension-name" role="cell">
           <strong>{extension.title}</strong>
           <span>{extension.description}</span>
@@ -896,6 +930,16 @@
     align-items: center;
     padding: 0.72rem 1.1rem;
     border-bottom: 1px solid var(--ui-border-subtle);
+  }
+
+  .extensions-row.target-extension-row {
+    outline: 1px solid color-mix(in oklab, var(--ui-accent) 46%, var(--ui-border-soft));
+    outline-offset: -1px;
+    background: color-mix(in oklab, var(--ui-accent-soft) 26%, var(--ui-surface));
+  }
+
+  .extensions-row.target-extension-row:focus {
+    outline: 1px solid color-mix(in oklab, var(--ui-accent) 60%, var(--ui-border-soft));
   }
 
   .extension-settings {

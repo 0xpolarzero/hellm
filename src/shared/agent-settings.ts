@@ -42,6 +42,7 @@ export interface AgentProfileSettings extends AgentDefaults {
   name: string;
   systemPrompt: string;
   extensionUsage: Record<string, ExtensionUsageState>;
+  extensionOrder?: string[];
   updateFromComposer: boolean;
   builtin: boolean;
   locked: boolean;
@@ -57,6 +58,7 @@ export interface WorkflowAgentSettings extends Agents.TaskAgentParameters {
   id: string;
   label: string;
   extensionUsage: Record<string, ExtensionUsageState>;
+  extensionOrder?: string[];
 }
 
 export interface AgentSettingsState {
@@ -259,6 +261,7 @@ export const DEFAULT_AGENT_PROFILES = {
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
       extensionUsage: {},
+      extensionOrder: [],
       updateFromComposer: false,
       builtin: true,
       locked: true,
@@ -272,6 +275,7 @@ export const DEFAULT_AGENT_PROFILES = {
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: DEFAULT_THREAD_HANDLER_PROMPT,
       extensionUsage: {},
+      extensionOrder: [],
       updateFromComposer: false,
       builtin: true,
       locked: true,
@@ -295,6 +299,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
     extensions: [],
     extensionUsage: {},
+    extensionOrder: [],
   },
   implementer: {
     id: "implementer",
@@ -304,6 +309,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
     extensions: [],
     extensionUsage: {},
+    extensionOrder: [],
   },
   reviewer: {
     id: "reviewer",
@@ -313,6 +319,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
     extensions: [],
     extensionUsage: {},
+    extensionOrder: [],
   },
 } satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;
 

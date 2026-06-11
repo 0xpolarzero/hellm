@@ -15,6 +15,8 @@
 	import Checkbox from "./ui/Checkbox.svelte";
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
 	import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
+	import ExtensionUsageControl from "./ExtensionUsageControl.svelte";
+	import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
 	import Input from "./ui/Input.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { dismissConfirmation } from "./ui/dismiss-confirmation";
@@ -34,13 +36,18 @@
 		modelChoices: AgentModelChoice[];
 		profile: AgentProfileSettings;
 		saving: boolean;
-		usageSummary: string;
+		extensionUsageItems: ExtensionUsageControlItem[];
 		onCancelDelete: () => void;
 		onConfirmDelete: () => void;
 		onDuplicate?: () => void;
 		onPointerDown?: (event: PointerEvent) => void;
+		onOpenExtension: (extensionId: string) => void;
 		onRequestDelete: () => void;
 		onSave: (profile: AgentProfileSettings) => Promise<AgentProfileSettings>;
+		onSetExtensionUsage: (
+			extensionId: string,
+			state: ExtensionUsageControlItem["state"],
+		) => Promise<AgentProfileSettings>;
 		onToggleExpanded: () => void;
 	};
 
@@ -52,13 +59,15 @@
 		modelChoices,
 		profile,
 		saving,
-		usageSummary,
+		extensionUsageItems,
 		onCancelDelete,
 		onConfirmDelete,
 		onDuplicate,
 		onPointerDown,
+		onOpenExtension,
 		onRequestDelete,
 		onSave,
+		onSetExtensionUsage,
 		onToggleExpanded,
 	}: Props = $props();
 
@@ -194,6 +203,11 @@
 		submitError = "";
 		form.reset(valuesFor(profile));
 	}
+
+	async function saveExtensionUsage(extensionId: string, state: ExtensionUsageControlItem["state"]) {
+		submitError = "";
+		await onSetExtensionUsage(extensionId, state);
+	}
 </script>
 
 <div class="agent-profile-main">
@@ -267,9 +281,13 @@
 					submitSoon();
 				}}
 			/>
-			<span class="model-pill extensions-field extension-usage-summary">
-				{usageSummary}
-			</span>
+			<ExtensionUsageControl
+				ariaLabel={`${profile.name} extension usage`}
+				disabled={disabled}
+				items={extensionUsageItems}
+				onOpenExtension={onOpenExtension}
+				onStateChange={saveExtensionUsage}
+			/>
 		</div>
 		<Tooltip
 			label=""
@@ -499,17 +517,6 @@
 	:global(.compact-select-trigger.agent-reasoning-field) {
 		width: fit-content;
 		max-width: clamp(4.9rem, 9vw, 5.8rem);
-	}
-
-	.extensions-field {
-		width: fit-content;
-		max-width: clamp(5.8rem, 10vw, 6.8rem);
-	}
-
-	.extension-usage-summary {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.composer-sync-field {

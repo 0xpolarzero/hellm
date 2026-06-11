@@ -414,7 +414,12 @@ const strictReviewer = Agents.defineTaskAgent({
 
 Agents-pane workflow-agent rows and saved `.agent.json` files are the same source of truth. An agent
 saved by `svvyx workflows save --kind agent` must appear in the Agents pane. A user change in the
-Agents pane writes the same `.agent.json` source file and then builds immediately.
+Agents pane writes the same `.agent.json` source file and then builds immediately. The Agents pane
+can create and duplicate workflow-agent records, delete user-created records through inline
+confirmation, open the exact `.agent.json` source file, and use the same expanded extension
+selection and instruction-order editor as orchestrator and handler profiles. The seeded Explorer,
+Implementer, and Reviewer workflow-agent records are editable and duplicable defaults, but they are
+not deletable.
 
 The Agents pane is the intended human customization surface for workflow agents. The Workflows pane
 may link a generated `Agents.*` export to the corresponding Agents-pane row for convenience, while

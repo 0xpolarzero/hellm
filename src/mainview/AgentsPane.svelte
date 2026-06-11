@@ -2,28 +2,38 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
-  import type {
-    AgentProfileId,
-    AgentProfileSettings,
-    AgentSettingsState,
-    WorkflowAgentKey,
-    WorkflowAgentSettings,
+  import {
+    DEFAULT_WORKFLOW_AGENT_SETTINGS,
+    type AgentProfileId,
+    type AgentProfileSettings,
+    type AgentSettingsState,
+    type WorkflowAgentKey,
+    type WorkflowAgentSettings,
   } from "../shared/agent-settings";
   import type {
     AgentContextPreviewRequest,
     AgentContextPreviewResponse,
     AgentModelChoice,
+    ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
+  import type { ExtensionUsageState } from "../shared/extensions";
   import type { ChatRuntime } from "./chat-runtime";
   import { rpc } from "./rpc";
   import Button from "./ui/Button.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import AgentProfileRowForm from "./AgentProfileRowForm.svelte";
+  import {
+    type AgentContextActor,
+    extensionUsageItems as buildExtensionUsageItems,
+  } from "./agents-pane-extension-usage";
+  import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
+  import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
 
   type Props = {
     runtime: ChatRuntime;
     panelId: string;
+    initialSettings?: AgentSettingsState | null;
     targetAgentProfileId?: string | null;
     targetView?: "profiles" | "generated-context-preview";
     onSettingsChanged?: (settings: AgentSettingsState) => void;
@@ -32,20 +42,24 @@
   let {
     runtime,
     panelId,
+    initialSettings = null,
     targetAgentProfileId = null,
     targetView = "profiles",
     onSettingsChanged,
   }: Props = $props();
 
-  let settings = $state<AgentSettingsState | null>(null);
-  let loading = $state(true);
+  let settings = $state<AgentSettingsState | null>(initialSettings);
+  let loading = $state(!initialSettings);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
   let savingWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
+  let deletingWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
+  let confirmingDeleteWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
   let deletingProfileId = $state<string | null>(null);
   let confirmingDeleteProfileId = $state<string | null>(null);
   let expandedProfileIds = $state<Set<string>>(new Set());
   let modelChoices = $state<AgentModelChoice[]>([]);
+  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>([]);
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
   let loadingContextPreviewKey = $state<string | null>(null);
   let orchestratorRowsElement = $state<HTMLElement | null>(null);
@@ -61,6 +75,7 @@
   let dropBeforeProfileId = $state<string | null>(null);
   let pendingDragClientY: number | null = null;
   let dragAnimationFrame: number | null = null;
+  let settingsLoadRequest = 0;
 
   const orchestrators = $derived(settings?.agents.orchestrators ?? []);
   const displayedOrchestrators = $derived(
@@ -74,24 +89,52 @@
   );
 
   async function loadSettings() {
-    loading = true;
+    const requestId = ++settingsLoadRequest;
+    loading = !settings;
     errorMessage = null;
     try {
-      const [nextSettings, nextModelChoices] = await Promise.all([
-        runtime.getAgentSettings(),
-        runtime.getAgentModelChoices(),
-      ]);
+      const nextSettings = await runtime.getAgentSettings();
+      if (requestId !== settingsLoadRequest) return;
       settings = nextSettings;
       onSettingsChanged?.(nextSettings);
-      modelChoices = nextModelChoices.items;
+      loading = false;
+      void loadAgentModelChoices(requestId);
+      void loadExtensionsInventory(requestId);
     } catch (error) {
+      if (requestId !== settingsLoadRequest) return;
       errorMessage = error instanceof Error ? error.message : "Unable to load agent profiles.";
     } finally {
-      loading = false;
+      if (requestId === settingsLoadRequest) {
+        loading = false;
+      }
     }
   }
 
-  type AgentContextActor = NonNullable<AgentContextPreviewRequest["actor"]>;
+  async function loadAgentModelChoices(requestId: number) {
+    try {
+      const nextModelChoices = await runtime.getAgentModelChoices();
+      if (requestId === settingsLoadRequest) {
+        modelChoices = nextModelChoices.items;
+      }
+    } catch {
+      if (requestId === settingsLoadRequest) {
+        modelChoices = [];
+      }
+    }
+  }
+
+  async function loadExtensionsInventory(requestId: number) {
+    try {
+      const nextExtensionsInventory = await runtime.getExtensionsInventory();
+      if (requestId === settingsLoadRequest) {
+        extensionInventoryItems = nextExtensionsInventory.extensions;
+      }
+    } catch {
+      if (requestId === settingsLoadRequest) {
+        extensionInventoryItems = [];
+      }
+    }
+  }
 
   function contextPreviewKey(actor: AgentContextActor, profileId: string): string {
     return `${actor}:${profileId}`;
@@ -130,6 +173,7 @@
     return {
       ...profile,
       extensionUsage: { ...profile.extensionUsage },
+      extensionOrder: [...(profile.extensionOrder ?? [])],
     };
   }
 
@@ -164,6 +208,7 @@
         ...agent,
         extensions: [...agent.extensions],
         extensionUsage: { ...agent.extensionUsage },
+        extensionOrder: [...(agent.extensionOrder ?? [])],
       });
       onSettingsChanged?.(settings);
       return settings.workflowAgents[agent.id] ?? agent;
@@ -175,6 +220,171 @@
     }
   }
 
+  async function setProfileExtensionUsage(
+    profile: AgentProfileSettings,
+    extensionId: string,
+    state: ExtensionUsageState,
+  ): Promise<AgentProfileSettings> {
+    errorMessage = null;
+    try {
+      settings = await runtime.setAgentProfileExtensionUsage({
+        agentProfile: profile.id,
+        extensionId,
+        state,
+      });
+      onSettingsChanged?.(settings);
+      refreshAgentContextPreview(profile.id, actorForProfileId(profile.id));
+      return (
+        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
+        (settings.agents.special.threadHandler.id === profile.id
+          ? settings.agents.special.threadHandler
+          : mutateProfile(profile))
+      );
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to save extension usage.";
+      throw error;
+    }
+  }
+
+  async function setWorkflowAgentExtensionUsage(
+    agent: WorkflowAgentSettings,
+    extensionId: string,
+    state: ExtensionUsageState,
+  ): Promise<WorkflowAgentSettings> {
+    errorMessage = null;
+    try {
+      settings = await runtime.setAgentProfileExtensionUsage({
+        agentProfile: agent.id,
+        extensionId,
+        state,
+      });
+      onSettingsChanged?.(settings);
+      refreshAgentContextPreview(agent.id, "workflow-task");
+      return settings.workflowAgents[agent.id] ?? agent;
+    } catch (error) {
+      errorMessage =
+        error instanceof Error ? error.message : "Unable to save workflow agent extension usage.";
+      throw error;
+    }
+  }
+
+  function openExtension(extensionId: string): void {
+    void runtime.openSurface(
+      {
+        surface: "extensions",
+        view: "inventory",
+        targetExtensionId: extensionId,
+      },
+      { kind: "focused-panel" },
+    );
+  }
+
+  async function openWorkflowAgentSource(agent: WorkflowAgentSettings): Promise<void> {
+    errorMessage = null;
+    try {
+      await runtime.openWorkflowAgentSourceInEditor(agent.id);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to open workflow agent source.";
+    }
+  }
+
+  async function updateProfileExtensionEditor(
+    profile: AgentProfileSettings,
+    actor: AgentContextActor,
+    updates: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
+  ): Promise<AgentProfileSettings> {
+    errorMessage = null;
+    try {
+      settings = await runtime.updateAgentProfile({
+        ...mutateProfile(profile),
+        ...updates,
+      });
+      onSettingsChanged?.(settings);
+      refreshAgentContextPreview(profile.id, actor);
+      return (
+        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
+        (settings.agents.special.threadHandler.id === profile.id
+          ? settings.agents.special.threadHandler
+          : mutateProfile(profile))
+      );
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to save extension settings.";
+      throw error;
+    }
+  }
+
+  function resetProfileExtensionSelection(profile: AgentProfileSettings, actor: AgentContextActor) {
+    return updateProfileExtensionEditor(profile, actor, {
+      extensionUsage: {},
+      extensionOrder: [...(profile.extensionOrder ?? [])],
+    });
+  }
+
+  function resetProfileExtensionOrder(profile: AgentProfileSettings, actor: AgentContextActor) {
+    return updateProfileExtensionEditor(profile, actor, {
+      extensionUsage: { ...profile.extensionUsage },
+      extensionOrder: [],
+    });
+  }
+
+  function setProfileExtensionOrder(
+    profile: AgentProfileSettings,
+    actor: AgentContextActor,
+    extensionOrder: string[],
+  ) {
+    return updateProfileExtensionEditor(profile, actor, {
+      extensionUsage: { ...profile.extensionUsage },
+      extensionOrder,
+    });
+  }
+
+  async function updateWorkflowAgentExtensionEditor(
+    agent: WorkflowAgentSettings,
+    updates: Pick<WorkflowAgentSettings, "extensionUsage" | "extensionOrder">,
+  ): Promise<WorkflowAgentSettings> {
+    errorMessage = null;
+    try {
+      const nextAgent = {
+        ...agent,
+        extensionUsage: { ...updates.extensionUsage },
+        extensionOrder: [...(updates.extensionOrder ?? [])],
+        extensions: [...agent.extensions],
+      };
+      settings = await runtime.updateWorkflowAgent(agent.id, nextAgent);
+      onSettingsChanged?.(settings);
+      refreshAgentContextPreview(agent.id, "workflow-task");
+      return settings.workflowAgents[agent.id] ?? nextAgent;
+    } catch (error) {
+      errorMessage =
+        error instanceof Error ? error.message : "Unable to save workflow agent extensions.";
+      throw error;
+    }
+  }
+
+  function resetWorkflowAgentExtensionSelection(agent: WorkflowAgentSettings) {
+    return updateWorkflowAgentExtensionEditor(agent, {
+      extensionUsage: {},
+      extensionOrder: [...(agent.extensionOrder ?? [])],
+    });
+  }
+
+  function resetWorkflowAgentExtensionOrder(agent: WorkflowAgentSettings) {
+    return updateWorkflowAgentExtensionEditor(agent, {
+      extensionUsage: { ...agent.extensionUsage },
+      extensionOrder: [],
+    });
+  }
+
+  function setWorkflowAgentExtensionOrder(
+    agent: WorkflowAgentSettings,
+    extensionOrder: string[],
+  ) {
+    return updateWorkflowAgentExtensionEditor(agent, {
+      extensionUsage: { ...agent.extensionUsage },
+      extensionOrder,
+    });
+  }
+
   function createProfileId(baseName: string): string {
     const slug = baseName
       .toLowerCase()
@@ -184,6 +394,23 @@
     const prefix = slug || "orchestrator";
     const existingIds = new Set(orchestrators.map((profile) => profile.id));
     let index = orchestrators.length + 1;
+    let id = `${prefix}-${index}`;
+    while (existingIds.has(id)) {
+      index += 1;
+      id = `${prefix}-${index}`;
+    }
+    return id;
+  }
+
+  function createWorkflowAgentId(baseName: string): WorkflowAgentKey {
+    const slug = baseName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 36);
+    const prefix = slug || "workflow-agent";
+    const existingIds = new Set(Object.keys(settings?.workflowAgents ?? {}));
+    let index = workflowAgents.length + 1;
     let id = `${prefix}-${index}`;
     while (existingIds.has(id)) {
       index += 1;
@@ -207,6 +434,60 @@
     await saveProfile(profile);
     expandedProfileIds.add(profile.id);
     expandedProfileIds = new Set(expandedProfileIds);
+  }
+
+  async function createWorkflowAgent(source?: WorkflowAgentSettings) {
+    const baseAgent = source ?? workflowAgents[0] ?? Object.values(DEFAULT_WORKFLOW_AGENT_SETTINGS)[0];
+    if (!baseAgent) return;
+    const label = source ? `${source.label} copy` : `Workflow agent ${workflowAgents.length + 1}`;
+    const id = createWorkflowAgentId(label);
+    const agent: WorkflowAgentSettings = {
+      ...baseAgent,
+      id,
+      label,
+      extensions: [...baseAgent.extensions],
+      extensionUsage: { ...baseAgent.extensionUsage },
+      extensionOrder: [...(baseAgent.extensionOrder ?? [])],
+    };
+    await saveWorkflowAgent(agent);
+    expandedProfileIds.add(agent.id);
+    expandedProfileIds = new Set(expandedProfileIds);
+  }
+
+  function isDefaultWorkflowAgent(agent: WorkflowAgentSettings): boolean {
+    return Object.prototype.hasOwnProperty.call(DEFAULT_WORKFLOW_AGENT_SETTINGS, agent.id);
+  }
+
+  function requestDeleteWorkflowAgent(agent: WorkflowAgentSettings) {
+    if (isDefaultWorkflowAgent(agent) || deletingWorkflowAgentKey) return;
+    confirmingDeleteWorkflowAgentKey = agent.id;
+  }
+
+  async function deleteWorkflowAgent(agent: WorkflowAgentSettings) {
+    if (
+      isDefaultWorkflowAgent(agent) ||
+      deletingWorkflowAgentKey ||
+      confirmingDeleteWorkflowAgentKey !== agent.id
+    ) {
+      return;
+    }
+    deletingWorkflowAgentKey = agent.id;
+    errorMessage = null;
+    try {
+      settings = await runtime.deleteWorkflowAgent(agent.id);
+      onSettingsChanged?.(settings);
+      confirmingDeleteWorkflowAgentKey = null;
+      expandedProfileIds.delete(agent.id);
+      expandedProfileIds = new Set(expandedProfileIds);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to delete workflow agent.";
+    } finally {
+      deletingWorkflowAgentKey = null;
+    }
+  }
+
+  function cancelDeleteWorkflowAgentConfirmation() {
+    confirmingDeleteWorkflowAgentKey = null;
   }
 
   function requestDeleteProfile(profile: AgentProfileSettings) {
@@ -415,16 +696,27 @@
     expandedProfileIds = new Set(expandedProfileIds);
   }
 
-  function profileUsageSummary(profile: AgentProfileSettings): string {
-    const entries = Object.entries(profile.extensionUsage);
-    if (entries.length === 0) return "Default usage";
-    return `${entries.length} override${entries.length === 1 ? "" : "s"}`;
+  function extensionUsageItems(input: {
+    actor: AgentContextActor;
+    profileId: string;
+    usage: Record<string, ExtensionUsageState>;
+  }): ExtensionUsageControlItem[] {
+    return buildExtensionUsageItems({
+      ...input,
+      extensionInventoryItems,
+      networkAccess: settings?.appPreferences.networkAccess ?? true,
+    });
   }
 
-  function workflowUsageSummary(agent: WorkflowAgentSettings): string {
-    const entries = Object.entries(agent.extensionUsage);
-    if (entries.length === 0) return "Default usage";
-    return `${entries.length} override${entries.length === 1 ? "" : "s"}`;
+  function refreshAgentContextPreview(profileId: string, actor: AgentContextActor) {
+    const key = contextPreviewKey(actor, profileId);
+    if (contextPreviewByProfileId[key]) {
+      const { [key]: _discarded, ...rest } = contextPreviewByProfileId;
+      contextPreviewByProfileId = rest;
+    }
+    if (expandedProfileIds.has(profileId)) {
+      void loadAgentContextPreview(profileId, actor);
+    }
   }
 
   function focusTargetAgentProfile() {
@@ -439,6 +731,12 @@
   $effect(() => {
     void panelId;
     void loadSettings();
+  });
+
+  $effect(() => {
+    if (!initialSettings || settings) return;
+    settings = initialSettings;
+    loading = false;
   });
 
   $effect(() => {
@@ -458,15 +756,8 @@
 </script>
 
 <section class="agents-pane" data-testid="agents-pane" data-panel-id={panelId}>
-  <header class="agents-header">
-    <div>
-      <h2>Agents</h2>
-      <p>Profiles used by orchestrators and delegated handler threads.</p>
-    </div>
-  </header>
-
   {#if loading}
-    <p class="agents-status">Loading agent profiles...</p>
+    <p class="agents-status">Loading...</p>
   {:else if errorMessage}
     <p class="agents-error">{errorMessage}</p>
   {:else if settings}
@@ -526,7 +817,19 @@
     <div class="agent-category">
       <div class="agent-category-heading">
         <span>Workflow Agents</span>
-        <small>{workflowAgents.length}</small>
+        <div class="agent-category-actions">
+          <small>{workflowAgents.length}</small>
+          <Button
+            variant="ghost"
+            size="xs"
+            class="category-action"
+            disabled={savingWorkflowAgentKey !== null}
+            onclick={() => void createWorkflowAgent()}
+          >
+            <PlusIcon size={13} aria-hidden="true" />
+            New
+          </Button>
+        </div>
       </div>
       <div class="agent-rows">
         {#each workflowAgents as agent (agent.id)}
@@ -551,9 +854,24 @@
     {agent}
     {expanded}
     {modelChoices}
+    confirmingDelete={confirmingDeleteWorkflowAgentKey === agent.id}
+    deleting={deletingWorkflowAgentKey === agent.id}
+    isDefault={isDefaultWorkflowAgent(agent)}
     saving={savingWorkflowAgentKey === agent.id}
-    usageSummary={workflowUsageSummary(agent)}
+    extensionUsageItems={extensionUsageItems({
+      actor: "workflow-task",
+      profileId: agent.id,
+      usage: agent.extensionUsage,
+    })}
+    onCancelDelete={cancelDeleteWorkflowAgentConfirmation}
+    onConfirmDelete={() => void deleteWorkflowAgent(agent)}
+    onDuplicate={() => void createWorkflowAgent(agent)}
     onSave={saveWorkflowAgent}
+    onOpenExtension={openExtension}
+    onOpenSource={() => void openWorkflowAgentSource(agent)}
+    onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
+    onSetExtensionUsage={(extensionId, state) =>
+      setWorkflowAgentExtensionUsage(agent, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
   />
   <div class="workflow-source-note">
@@ -561,7 +879,26 @@
     <span>Generates Agents.{agent.id}</span>
   </div>
   {#if expanded}
-    {@render generatedContextPreview(agent.id, "workflow-task")}
+    {@const previewKey = contextPreviewKey("workflow-task", agent.id)}
+    <div class="agent-profile-expanded">
+      <ProfileExtensionEditor
+        disabled={savingWorkflowAgentKey === agent.id}
+        extensionOrder={agent.extensionOrder ?? []}
+        items={extensionUsageItems({
+          actor: "workflow-task",
+          profileId: agent.id,
+          usage: agent.extensionUsage,
+        })}
+        loading={loadingContextPreviewKey === previewKey}
+        preview={contextPreviewByProfileId[previewKey] ?? null}
+        onOpenExtension={openExtension}
+        onOrderChange={(extensionOrder) => setWorkflowAgentExtensionOrder(agent, extensionOrder)}
+        onResetOrder={() => resetWorkflowAgentExtensionOrder(agent)}
+        onResetSelection={() => resetWorkflowAgentExtensionSelection(agent)}
+        onStateChange={(extensionId, state) =>
+          setWorkflowAgentExtensionUsage(agent, extensionId, state)}
+      />
+    </div>
   {/if}
 {/snippet}
 
@@ -578,17 +915,42 @@
     confirmingDelete={confirmingDeleteProfileId === profile.id}
     deleting={deletingProfileId === profile.id}
     saving={savingProfileId === profile.id}
-    usageSummary={profileUsageSummary(profile)}
+    extensionUsageItems={extensionUsageItems({
+      actor: category === "special" ? "handler" : "orchestrator",
+      profileId: profile.id,
+      usage: profile.extensionUsage,
+    })}
     onCancelDelete={cancelDeleteProfileConfirmation}
     onConfirmDelete={() => void deleteProfile(profile)}
     onDuplicate={category === "orchestrator" ? () => void createOrchestratorProfile(profile) : undefined}
     onPointerDown={category === "orchestrator" ? (event) => handlePointerDown(event, profile) : undefined}
     onRequestDelete={() => requestDeleteProfile(profile)}
     onSave={saveProfile}
+    onOpenExtension={openExtension}
+    onSetExtensionUsage={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")}
   />
   {#if expanded}
-    {@render generatedContextPreview(profile.id, category === "special" ? "handler" : "orchestrator")}
+    {@const actor = category === "special" ? "handler" : "orchestrator"}
+    {@const previewKey = contextPreviewKey(actor, profile.id)}
+    <div class="agent-profile-expanded">
+      <ProfileExtensionEditor
+        disabled={savingProfileId === profile.id}
+        extensionOrder={profile.extensionOrder ?? []}
+        items={extensionUsageItems({
+          actor,
+          profileId: profile.id,
+          usage: profile.extensionUsage,
+        })}
+        loading={loadingContextPreviewKey === previewKey}
+        preview={contextPreviewByProfileId[previewKey] ?? null}
+        onOpenExtension={openExtension}
+        onOrderChange={(extensionOrder) => setProfileExtensionOrder(profile, actor, extensionOrder)}
+        onResetOrder={() => resetProfileExtensionOrder(profile, actor)}
+        onResetSelection={() => resetProfileExtensionSelection(profile, actor)}
+        onStateChange={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
+      />
+    </div>
   {/if}
 {/snippet}
 
@@ -632,29 +994,13 @@
     height: 100%;
     min-height: 0;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: scroll;
     padding: 0.72rem;
+    scrollbar-gutter: stable;
     background: var(--ui-panel);
     color: var(--ui-text-primary);
   }
 
-  .agents-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 0.72rem;
-    padding-bottom: 0.48rem;
-    border-bottom: 1px solid var(--ui-border-soft);
-  }
-
-  .agents-header h2 {
-    margin: 0;
-    font-size: var(--text-base);
-    font-weight: 650;
-    line-height: 1.2;
-  }
-
-  .agents-header p,
   .agents-status {
     margin: 0.18rem 0 0;
     color: var(--ui-text-tertiary);
@@ -704,7 +1050,16 @@
   }
 
   :global(.category-action) {
+    height: 1.42rem;
     min-height: 1.42rem;
+    padding-block: 0;
+    text-transform: none;
+    line-height: 1;
+  }
+
+  :global(.category-action .ui-button-content) {
+    height: 100%;
+    align-items: center;
   }
 
   .agent-rows {
@@ -874,16 +1229,6 @@
     max-width: clamp(4.9rem, 9vw, 5.8rem);
   }
 
-  :global(.compact-combobox-trigger.extensions-field) {
-    width: fit-content;
-    max-width: clamp(5.8rem, 10vw, 6.8rem);
-  }
-
-  :global(.extensions-menu) {
-    min-width: 10rem;
-    max-width: min(15rem, calc(100vw - 2rem));
-  }
-
   .composer-sync-field {
     display: inline-flex;
     align-items: center;
@@ -985,10 +1330,7 @@
   }
 
   .agent-profile-expanded {
-    margin-left: 1.46rem;
-    padding: 0.5rem 0.58rem;
-    border: 1px dashed color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-    border-radius: var(--ui-radius-sm);
+    padding: 0.22rem 0 0.18rem;
     color: var(--ui-text-tertiary);
     font-size: var(--text-sm);
   }

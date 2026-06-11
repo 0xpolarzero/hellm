@@ -208,6 +208,7 @@ function writeWorkflowAgentSourceRecord(
         instructions: settings.instructions,
         extensions: settings.extensions,
         extensionUsage: settings.extensionUsage,
+        extensionOrder: settings.extensionOrder ?? [],
       },
       null,
       2,
@@ -252,6 +253,7 @@ function readWorkflowAgentSourceRecords(
         instructions: typeof raw.instructions === "string" ? raw.instructions : "",
         extensions: Array.isArray(raw.extensions) ? raw.extensions : [],
         extensionUsage: normalizeExtensionUsage(raw.extensionUsage),
+        extensionOrder: normalizeExtensionOrder(raw.extensionOrder),
       });
     } catch {
       continue;
@@ -396,6 +398,7 @@ function normalizeAgentProfile(input: AgentProfileSettings): AgentProfileSetting
     reasoningEffort: input.reasoningEffort,
     systemPrompt: requireNonEmpty(input.systemPrompt, "systemPrompt"),
     extensionUsage: normalizeExtensionUsage(input.extensionUsage),
+    extensionOrder: normalizeExtensionOrder(input.extensionOrder),
     updateFromComposer: Boolean(input.updateFromComposer),
     builtin: Boolean(input.builtin),
     locked: Boolean(input.locked),
@@ -414,6 +417,19 @@ function normalizeExtensionUsage(
     }
   }
   return usage;
+}
+
+function normalizeExtensionOrder(input: string[] | null | undefined): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const rawId of input ?? []) {
+    if (typeof rawId !== "string") continue;
+    const id = rawId.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 function normalizeAgentPromptSettings(input: AgentPromptSettings): AgentPromptSettings {
@@ -439,6 +455,7 @@ function normalizeWorkflowAgentSettings(
     instructions: requireNonEmpty(input.instructions, "instructions"),
     extensions: workflowTaskLoadedExtensionIds(extensionUsage),
     extensionUsage,
+    extensionOrder: normalizeExtensionOrder(input.extensionOrder),
   });
 }
 

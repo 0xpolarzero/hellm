@@ -1031,7 +1031,30 @@ function runSetUsageCommand(
   const extensionId = requireSingleFlagValue(flags, "extension");
   const agentProfile = requireSingleFlagValue(flags, "agent-profile");
   const state = validateUsageState(requireSingleFlagValue(flags, "state"));
-  const extension = requireExtension(extensionId, options.extensionsRoot);
+  return setExtensionUsage({
+    agentSettingsStore: store,
+    structuredSessionStore: options.structuredSessionStore,
+    extensionsRoot: options.extensionsRoot,
+    extensionId,
+    agentProfile,
+    state,
+  });
+}
+
+export type SetExtensionUsageResult = SvvyxExtensionsCommandResult & {
+  actor: SvvyActorKind;
+  agentProfile: string;
+};
+
+export function setExtensionUsage(input: {
+  agentSettingsStore: AgentSettingsStore;
+  structuredSessionStore?: StructuredSessionStateStore;
+  extensionsRoot?: string;
+  extensionId: string;
+  agentProfile: string;
+  state: ExtensionUsageState;
+}): SetExtensionUsageResult {
+  const extension = requireExtension(input.extensionId, input.extensionsRoot);
   if (extension.id === "extension-loading") {
     throw extensionsCommandError(
       "FIXED_EXTENSION_USAGE",
@@ -1039,35 +1062,45 @@ function runSetUsageCommand(
     );
   }
 
-  const target = resolveUsageProfile(store, agentProfile);
+  const target = resolveUsageProfile(input.agentSettingsStore, input.agentProfile);
   assertUsageStateAllowedForActor({
     actor: target.actor,
     extension,
     extensionId: extension.id,
-    requestedState: state,
+    requestedState: input.state,
   });
   const beforeState = configuredExtensionUsageState({
     actor: target.actor,
     extensionId: extension.id,
     profile: target.profile,
   });
-  setUsageProfile(store, target, extension.id, state);
+  const defaultState = configuredDefaultExtensionUsageState({
+    actor: target.actor,
+    extension,
+    extensionId: extension.id,
+    profile: profileWithoutExtensionUsage(target.profile, extension.id),
+  });
+  setUsageProfile(input.agentSettingsStore, target, extension.id, input.state, {
+    explicit: input.state !== defaultState,
+  });
   const changeId = recordExtensionUsageChange({
-    extensionsRoot: resolve(options.extensionsRoot ?? defaultExtensionsRoot()),
+    extensionsRoot: resolve(input.extensionsRoot ?? defaultExtensionsRoot()),
     extensionId: extension.id,
     agentProfile: target.agentProfileName,
     profileId: target.profile.id,
     beforeState,
-    afterState: state,
+    afterState: input.state,
   });
   const queuedUpdates = queueUsageAgentContextRefreshes({
-    store: options.structuredSessionStore,
+    store: input.structuredSessionStore,
     agentProfile: target.agentProfileName,
     profileId: target.profile.id,
     changeId,
   });
 
   return {
+    actor: target.actor,
+    agentProfile: target.agentProfileName,
     output: {
       ok: true,
       changeId,
@@ -1077,7 +1110,7 @@ function runSetUsageCommand(
         state: beforeState,
       },
       after: {
-        state,
+        state: input.state,
       },
       agentContextImpact: {
         affectsNewTurns: true,
@@ -1090,7 +1123,7 @@ function runSetUsageCommand(
       extensionId: extension.id,
       agentProfile: target.agentProfileName,
       beforeUsageState: beforeState,
-      afterUsageState: state,
+      afterUsageState: input.state,
       queuedAgentContextRefreshes: queuedUpdates.length,
     },
   };
@@ -1164,24 +1197,45 @@ function setUsageProfile(
   target: UsageProfileTarget,
   extensionId: string,
   state: ExtensionUsageState,
+  options: { explicit: boolean },
 ): void {
+  const nextExtensionUsage = { ...target.profile.extensionUsage };
+  if (options.explicit) {
+    nextExtensionUsage[extensionId] = state;
+  } else {
+    delete nextExtensionUsage[extensionId];
+  }
   if (target.actor === "workflow-task") {
     store.setWorkflowAgent(target.profile.id, {
       ...target.profile,
-      extensionUsage: {
-        ...target.profile.extensionUsage,
-        [extensionId]: state,
-      },
+      extensions: loadedExtensionUsageIds(nextExtensionUsage),
+      extensionUsage: nextExtensionUsage,
     });
     return;
   }
   store.setAgentProfile({
     ...target.profile,
-    extensionUsage: {
-      ...target.profile.extensionUsage,
-      [extensionId]: state,
-    },
+    extensionUsage: nextExtensionUsage,
   });
+}
+
+function loadedExtensionUsageIds(extensionUsage: Record<string, ExtensionUsageState>): string[] {
+  return Object.entries(extensionUsage)
+    .filter((entry): entry is [string, "default_loaded"] => entry[1] === "default_loaded")
+    .map(([extensionId]) => extensionId)
+    .toSorted();
+}
+
+function profileWithoutExtensionUsage<T extends AgentProfileSettings | WorkflowAgentSettings>(
+  profile: T,
+  extensionId: string,
+): T {
+  const extensionUsage = { ...profile.extensionUsage };
+  delete extensionUsage[extensionId];
+  return {
+    ...profile,
+    extensionUsage,
+  };
 }
 
 function configuredExtensionUsageState(input: {
@@ -1200,6 +1254,23 @@ function configuredExtensionUsageState(input: {
     return "available";
   }
   return "unavailable";
+}
+
+function configuredDefaultExtensionUsageState(input: {
+  actor: SvvyActorKind;
+  extension: ResolvedExtensionRecord;
+  extensionId: string;
+  profile: AgentProfileSettings | WorkflowAgentSettings;
+}): ExtensionUsageState {
+  if (input.extension.category === "user") {
+    if (input.actor === "workflow-task") return "unavailable";
+    return "available";
+  }
+  return configuredExtensionUsageState({
+    actor: input.actor,
+    extensionId: input.extensionId,
+    profile: input.profile,
+  });
 }
 
 function assertUsageStateAllowedForActor(input: {
@@ -2895,7 +2966,7 @@ function restoreSnapshotUsageStates(
       if (!target) {
         continue;
       }
-      setUsageProfile(store, target, extensionId, usageEntry.state);
+      setUsageProfile(store, target, extensionId, usageEntry.state, { explicit: true });
       affectedProfiles.add(`${target.actor}:${target.agentProfileName}`);
       restored += 1;
     }
@@ -5663,7 +5734,16 @@ function revertExtensionUsageChange(
       },
     );
   }
-  setUsageProfile(store, target, change.extensionId, change.before.state);
+  const extension = requireExtension(change.extensionId, options.extensionsRoot);
+  const defaultState = configuredDefaultExtensionUsageState({
+    actor: target.actor,
+    extension,
+    extensionId: change.extensionId,
+    profile: profileWithoutExtensionUsage(target.profile, change.extensionId),
+  });
+  setUsageProfile(store, target, change.extensionId, change.before.state, {
+    explicit: change.before.state !== defaultState,
+  });
   const revertChangeId = recordExtensionUsageChange({
     extensionsRoot: resolve(options.extensionsRoot ?? defaultExtensionsRoot()),
     extensionId: change.extensionId,

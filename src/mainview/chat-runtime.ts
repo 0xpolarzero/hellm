@@ -52,6 +52,7 @@ import {
   type ExtensionsInventoryReadModel,
   type RemoveExtensionEnvOverrideRequest,
   type RemoveExtensionEnvSecretRequest,
+  type SetAgentProfileExtensionUsageRequest,
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
 } from "../shared/workspace-contract";
@@ -297,6 +298,9 @@ export interface ChatRuntimeRpcClient {
     deleteAgentProfile: typeof rpc.request.deleteAgentProfile;
     reorderOrchestratorAgents: typeof rpc.request.reorderOrchestratorAgents;
     updateWorkflowAgent: typeof rpc.request.updateWorkflowAgent;
+    deleteWorkflowAgent: typeof rpc.request.deleteWorkflowAgent;
+    openWorkflowAgentSourceInEditor: typeof rpc.request.openWorkflowAgentSourceInEditor;
+    setAgentProfileExtensionUsage: typeof rpc.request.setAgentProfileExtensionUsage;
     updateAppPreferences: typeof rpc.request.updateAppPreferences;
     updateRequestUserInputSettings: typeof rpc.request.updateRequestUserInputSettings;
     getProviderAuthState: typeof rpc.request.getProviderAuthState;
@@ -515,6 +519,11 @@ export interface ChatRuntime {
   updateWorkflowAgent: (
     key: WorkflowAgentKey,
     settings: WorkflowAgentSettings,
+  ) => Promise<AgentSettingsState>;
+  deleteWorkflowAgent: (key: WorkflowAgentKey) => Promise<AgentSettingsState>;
+  openWorkflowAgentSourceInEditor: (key: WorkflowAgentKey) => Promise<boolean>;
+  setAgentProfileExtensionUsage: (
+    input: Omit<SetAgentProfileExtensionUsageRequest, "workspaceId">,
   ) => Promise<AgentSettingsState>;
   updateRequestUserInputSettings: (
     settings: RequestUserInputSettings,
@@ -2680,6 +2689,13 @@ export async function createChatRuntime(
       rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
     updateWorkflowAgent: (key, settings) =>
       rpcClient.request.updateWorkflowAgent(scoped({ key, settings })),
+    deleteWorkflowAgent: (key) => rpcClient.request.deleteWorkflowAgent(scoped({ key })),
+    openWorkflowAgentSourceInEditor: async (key) => {
+      const result = await rpcClient.request.openWorkflowAgentSourceInEditor(scoped({ key }));
+      return result.opened;
+    },
+    setAgentProfileExtensionUsage: (input) =>
+      rpcClient.request.setAgentProfileExtensionUsage(scoped(input)),
     updateRequestUserInputSettings: (settings) =>
       rpcClient.request.updateRequestUserInputSettings(scoped(settings)),
     getGeneratedAgentContext: () => rpcClient.request.getGeneratedAgentContext(scoped()),

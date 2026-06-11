@@ -149,6 +149,7 @@ export interface AgentsPaneTarget {
 
 export interface ExtensionsPaneTarget {
   surface: "extensions";
+  targetExtensionId?: string;
   view?: "inventory" | "generated-context-preview";
 }
 
@@ -1319,9 +1320,32 @@ export interface UpdateWorkflowAgentRequest {
   settings: WorkflowAgentSettings;
 }
 
+export interface DeleteWorkflowAgentRequest {
+  key: WorkflowAgentKey;
+}
+
+export interface OpenWorkflowAgentSourceInEditorRequest {
+  key: WorkflowAgentKey;
+}
+
+export interface SetAgentProfileExtensionUsageRequest {
+  agentProfile: AgentProfileId | WorkflowAgentKey | "threadHandler";
+  extensionId: string;
+  state: ExtensionUsageState;
+}
+
 export interface AgentContextPreviewRequest {
   profileId?: AgentProfileId;
   actor?: "orchestrator" | "handler" | "workflow-task";
+}
+
+export interface AgentContextPreviewExtension {
+  id: string;
+  title: string;
+  description: string;
+  state: ExtensionUsageState;
+  instruction: string;
+  sourcePath?: string;
 }
 
 export interface AgentContextPreviewResponse {
@@ -1334,6 +1358,7 @@ export interface AgentContextPreviewResponse {
   loadedExtensionIds: string[];
   availableExtensionIds: string[];
   systemPrompt: string;
+  extensions: AgentContextPreviewExtension[];
 }
 
 export interface AgentModelChoice {
@@ -1475,6 +1500,18 @@ export interface ChatRPCSchema {
       };
       updateWorkflowAgent: {
         params: WorkspaceScoped<UpdateWorkflowAgentRequest>;
+        response: AgentSettingsState;
+      };
+      deleteWorkflowAgent: {
+        params: WorkspaceScoped<DeleteWorkflowAgentRequest>;
+        response: AgentSettingsState;
+      };
+      openWorkflowAgentSourceInEditor: {
+        params: WorkspaceScoped<OpenWorkflowAgentSourceInEditorRequest>;
+        response: OpenWorkspaceSourceInEditorResponse;
+      };
+      setAgentProfileExtensionUsage: {
+        params: WorkspaceScoped<SetAgentProfileExtensionUsageRequest>;
         response: AgentSettingsState;
       };
       getAgentContextPreview: {

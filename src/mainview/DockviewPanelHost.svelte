@@ -42,6 +42,7 @@
   type Props = {
     runtime: ChatRuntime;
     panelId: string;
+    agentSettings?: AgentSettingsState | null;
     onOpenModelPicker: (panelId: string) => void;
     openingWorkspace?: boolean;
     openWorkspaceError?: string | null;
@@ -57,6 +58,7 @@
   let {
     runtime,
     panelId,
+    agentSettings = null,
     onOpenModelPicker,
     openingWorkspace = false,
     openWorkspaceError = null,
@@ -472,12 +474,17 @@
   <AgentsPane
     {runtime}
     {panelId}
+    initialSettings={agentSettings}
     targetAgentProfileId={pane.target.targetAgentProfileId}
     targetView={pane.target.view}
     onSettingsChanged={onAgentSettingsChanged}
   />
 {:else if pane?.target?.surface === "extensions"}
-  <ExtensionsPane {runtime} targetView={pane.target.view} />
+  <ExtensionsPane
+    {runtime}
+    targetView={pane.target.view}
+    targetExtensionId={pane.target.targetExtensionId}
+  />
 {:else if pane?.target?.surface === "snippets"}
   <SnippetsPane {runtime} />
 {:else if pane?.target?.surface === "settings"}

@@ -36,6 +36,7 @@ import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
 } from "../shared/agent-settings";
+import { resolveActorExtensionState, type ExtensionUsageState } from "../shared/extensions";
 import { buildWorkspaceSessionNavigation } from "./session-state";
 import { executePaletteFallbackPrompt } from "./command-palette";
 
@@ -921,6 +922,7 @@ function createFakeRpc(input: {
           loadedExtensionIds: [],
           availableExtensionIds: [],
           systemPrompt: "Generated context preview",
+          extensions: [],
         }),
         getAgentModelChoices: async () => ({
           items: [
@@ -1018,6 +1020,80 @@ function createFakeRpc(input: {
               [key]: settings,
             },
           };
+        },
+        deleteWorkflowAgent: async ({ key, workspaceId }) => {
+          const next = await harness.client.request.getAgentSettings({ workspaceId });
+          const workflowAgents = { ...next.workflowAgents };
+          delete workflowAgents[key];
+          return {
+            ...next,
+            workflowAgents,
+          };
+        },
+        openWorkflowAgentSourceInEditor: async ({ key }) => ({
+          opened: true,
+          path: `/tmp/${key}.agent.json`,
+          editor: "system",
+        }),
+        setAgentProfileExtensionUsage: async ({
+          agentProfile,
+          extensionId,
+          state,
+          workspaceId,
+        }) => {
+          const next = await harness.client.request.getAgentSettings({ workspaceId });
+          const updateExtensionUsage = (
+            actor: "orchestrator" | "handler" | "workflow-task",
+            extensionUsage: Record<string, ExtensionUsageState>,
+          ) => {
+            const defaultUsage = { ...extensionUsage };
+            delete defaultUsage[extensionId];
+            const defaultState = resolveActorExtensionState({
+              actor,
+              profileExtensionUsage: defaultUsage,
+            });
+            const baselineState = defaultState.loadedExtensionIds.includes(extensionId)
+              ? "default_loaded"
+              : defaultState.availableExtensionIds.includes(extensionId)
+                ? "available"
+                : "unavailable";
+            if (state === baselineState) {
+              return defaultUsage;
+            }
+            return { ...extensionUsage, [extensionId]: state };
+          };
+          next.agents.orchestrators = next.agents.orchestrators.map((profile) =>
+            profile.id === agentProfile
+              ? {
+                  ...profile,
+                  extensionUsage: updateExtensionUsage("orchestrator", profile.extensionUsage),
+                }
+              : profile,
+          );
+          if (next.agents.special.threadHandler.id === agentProfile) {
+            next.agents.special.threadHandler = {
+              ...next.agents.special.threadHandler,
+              extensionUsage: updateExtensionUsage(
+                "handler",
+                next.agents.special.threadHandler.extensionUsage,
+              ),
+            };
+          }
+          if (next.workflowAgents[agentProfile]) {
+            const extensionUsage = updateExtensionUsage(
+              "workflow-task",
+              next.workflowAgents[agentProfile].extensionUsage,
+            );
+            next.workflowAgents[agentProfile] = {
+              ...next.workflowAgents[agentProfile],
+              extensions: Object.entries(extensionUsage)
+                .filter((entry) => entry[1] === "default_loaded")
+                .map(([id]) => id)
+                .toSorted(),
+              extensionUsage,
+            };
+          }
+          return next;
         },
         updateAppPreferences: async (preferences) => {
           return {

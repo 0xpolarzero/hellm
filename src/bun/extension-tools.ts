@@ -300,8 +300,8 @@ function buildRefreshedContextPreview(
   extensionsRoot?: string,
 ): LoadExtensionDetails["refreshedContext"] {
   const actor = runtime.surfaceKind === "handler" ? "handler" : "orchestrator";
-  const loadedExtensionIds = [...(runtime.loadedExtensionIds ?? [])].toSorted();
-  const availableExtensionIds = [...(runtime.availableExtensionIds ?? [])].toSorted();
+  const loadedExtensionIds = [...(runtime.loadedExtensionIds ?? [])];
+  const availableExtensionIds = [...(runtime.availableExtensionIds ?? [])];
   return {
     actor,
     loadedExtensionIds,

@@ -493,6 +493,7 @@ export function resolveActorExtensionState(input: {
   actor: SvvyActorKind;
   profileExtensionUsage?: Record<string, ExtensionUsageState> | null;
   profileLoadedExtensionIds?: readonly string[];
+  profileExtensionOrder?: readonly string[];
   overrides?: Record<string, ExtensionUsageState> | null;
   networkAccess?: boolean;
 }): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
@@ -542,8 +543,8 @@ export function resolveActorExtensionState(input: {
   }
   states.set("extension-loading", "default_loaded");
   return {
-    loadedExtensionIds: sortedIdsWithState(states, "default_loaded"),
-    availableExtensionIds: sortedIdsWithState(states, "available"),
+    loadedExtensionIds: sortedIdsWithState(states, "default_loaded", input.profileExtensionOrder),
+    availableExtensionIds: sortedIdsWithState(states, "available", input.profileExtensionOrder),
   };
 }
 
@@ -674,11 +675,23 @@ function externalInstructionRecords(
 function sortedIdsWithState(
   states: ReadonlyMap<string, ExtensionUsageState>,
   state: ExtensionUsageState,
+  extensionOrder: readonly string[] = [],
 ): string[] {
+  const orderById = new Map(extensionOrder.map((id, index) => [id, index]));
+  const defaultOrderById = new Map<string, number>(
+    BUILTIN_EXTENSION_IDS.map((id, index) => [id, index]),
+  );
   return [...states.entries()]
     .filter((entry): entry is [string, ExtensionUsageState] => entry[1] === state)
     .map(([id]) => id)
-    .toSorted();
+    .toSorted((left, right) => {
+      const leftOrder = orderById.get(left) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = orderById.get(right) ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      const leftDefaultOrder = defaultOrderById.get(left) ?? Number.MAX_SAFE_INTEGER;
+      const rightDefaultOrder = defaultOrderById.get(right) ?? Number.MAX_SAFE_INTEGER;
+      return leftDefaultOrder - rightDefaultOrder || left.localeCompare(right);
+    });
 }
 
 function actorStates(

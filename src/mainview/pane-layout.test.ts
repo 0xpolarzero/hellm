@@ -116,6 +116,32 @@ describe("normalizePaneLayout", () => {
     expect(normalized.focusedPanelId).toBe("logs");
   });
 
+  it("preserves focused extension inventory targets in restored layouts", () => {
+    const normalized = normalizePaneLayout({
+      dockview: null,
+      panels: [
+        {
+          panelId: "extensions",
+          binding: {
+            surface: "extensions",
+            view: "inventory",
+            targetExtensionId: "smithers",
+          },
+          localState: null,
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: "extensions",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } as unknown as Parameters<typeof normalizePaneLayout>[0]);
+
+    expect(normalized.panels[0]?.binding).toEqual({
+      surface: "extensions",
+      view: "inventory",
+      targetExtensionId: "smithers",
+    });
+  });
+
   it("preserves valid compact thread surfaces and drops malformed or obsolete compact restore records", () => {
     const normalized = normalizePaneLayout({
       dockview: null,

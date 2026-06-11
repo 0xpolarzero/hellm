@@ -106,6 +106,24 @@ describe("default system prompt", () => {
     }
   });
 
+  it("preserves resolved extension order in the generated prompt", () => {
+    const gitBeforeCx = buildSystemPrompt("orchestrator", {
+      loadedExtensionIds: ["git", "cx"],
+      availableExtensionIds: [],
+    });
+    const cxBeforeGit = buildSystemPrompt("orchestrator", {
+      loadedExtensionIds: ["cx", "git"],
+      availableExtensionIds: [],
+    });
+
+    expect(gitBeforeCx.indexOf("Loaded prompt-only extension: Git.")).toBeLessThan(
+      gitBeforeCx.indexOf("Loaded extension: cx semantic code navigation."),
+    );
+    expect(cxBeforeGit.indexOf("Loaded extension: cx semantic code navigation.")).toBeLessThan(
+      cxBeforeGit.indexOf("Loaded prompt-only extension: Git."),
+    );
+  });
+
   it("uses editable base instruction extension files instead of fallback prompt bodies", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-base-extension-"));
     try {

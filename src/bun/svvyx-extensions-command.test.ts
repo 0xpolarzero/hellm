@@ -28,6 +28,7 @@ import {
   readExtensionChangeCards,
   rejectExtensionDependencyRequest,
   runSvvyxExtensionsCommand,
+  setExtensionUsage,
   type CliRequirementStatus,
   type SvvyxExtensionsDependencyInstaller,
 } from "./svvyx-extensions-command";
@@ -6798,9 +6799,103 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentProfile: "default-orchestrator",
       after: { state: "available" },
     });
-    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
-      smithers: "available",
+    expect(
+      agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
+    ).toBeUndefined();
+    structuredSessionStore.close();
+  });
+
+  it("shares set-usage semantics with the app API helper", () => {
+    const extensionsRoot = createTempDir();
+    const agentRoot = createTempDir();
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd: agentRoot,
+      agentDir: join(agentRoot, ".agent"),
+      workflowsSourceRoot: join(agentRoot, "workflows"),
     });
+    const structuredSessionStore = createStructuredSessionStateStore({
+      workspace: {
+        id: agentRoot,
+        label: "svvy",
+        cwd: agentRoot,
+      },
+    });
+    structuredSessionStore.upsertPiSession({
+      sessionId: "session-set-usage-helper",
+      title: "Set Usage Helper",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      orchestratorAgentProfileId: "default-orchestrator",
+      messageCount: 0,
+      status: "idle",
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    });
+
+    expect(() =>
+      setExtensionUsage({
+        agentSettingsStore,
+        structuredSessionStore,
+        extensionsRoot,
+        extensionId: "extension-loading",
+        agentProfile: "default-orchestrator",
+        state: "unavailable",
+      }),
+    ).toThrow("Extension Loading is fixed default_loaded");
+
+    const result = setExtensionUsage({
+      agentSettingsStore,
+      structuredSessionStore,
+      extensionsRoot,
+      extensionId: "smithers",
+      agentProfile: "default-orchestrator",
+      state: "default_loaded",
+    });
+
+    expect(result).toMatchObject({
+      actor: "orchestrator",
+      agentProfile: "default-orchestrator",
+      output: {
+        ok: true,
+        extensionId: "smithers",
+        agentProfile: "default-orchestrator",
+        before: { state: "available" },
+        after: { state: "default_loaded" },
+      },
+    });
+    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
+      smithers: "default_loaded",
+    });
+    expect(
+      structuredSessionStore
+        .listQueuedSurfaceMessages({ surfacePiSessionId: "session-set-usage-helper" })
+        .map((message) => message.kind),
+    ).toEqual(["agent_context_refresh"]);
+
+    const restored = setExtensionUsage({
+      agentSettingsStore,
+      structuredSessionStore,
+      extensionsRoot,
+      extensionId: "smithers",
+      agentProfile: "default-orchestrator",
+      state: "available",
+    });
+
+    expect(restored).toMatchObject({
+      actor: "orchestrator",
+      agentProfile: "default-orchestrator",
+      output: {
+        ok: true,
+        extensionId: "smithers",
+        agentProfile: "default-orchestrator",
+        before: { state: "default_loaded" },
+        after: { state: "available" },
+      },
+    });
+    expect(
+      agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
+    ).toBeUndefined();
     structuredSessionStore.close();
   });
 
@@ -6862,11 +6957,20 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       after: { state: "available" },
     });
     expect(agentSettingsStore.getState().workflowAgents.reviewer).toMatchObject({
-      extensionUsage: {
-        github: "available",
-      },
       extensions: [],
     });
+    expect(
+      agentSettingsStore.getState().workflowAgents.reviewer?.extensionUsage.github,
+    ).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8")),
+    ).toMatchObject({
+      extensions: [],
+    });
+    expect(
+      JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8"))
+        .extensionUsage.github,
+    ).toBeUndefined();
   });
 
   it("reports usage for all profiles and fixed Extension Loading metadata through inspect", async () => {

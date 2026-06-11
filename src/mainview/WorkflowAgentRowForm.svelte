@@ -1,13 +1,21 @@
 <script lang="ts">
+	import CheckIcon from "@lucide/svelte/icons/check";
 	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
 	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+	import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
+	import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
 	import LockIcon from "@lucide/svelte/icons/lock";
+	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { createForm } from "@tanstack/svelte-form";
 	import type { ReasoningEffort, WorkflowAgentSettings } from "../shared/agent-settings";
 	import type { AgentModelChoice } from "../shared/workspace-contract";
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
 	import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
+	import ExtensionUsageControl from "./ExtensionUsageControl.svelte";
+	import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
 	import Input from "./ui/Input.svelte";
+	import Tooltip from "./ui/Tooltip.svelte";
+	import { dismissConfirmation } from "./ui/dismiss-confirmation";
 
 	type WorkflowFormValues = {
 		instructions: string;
@@ -18,16 +26,46 @@
 
 	type Props = {
 		agent: WorkflowAgentSettings;
+		confirmingDelete: boolean;
+		deleting: boolean;
 		expanded: boolean;
+		isDefault: boolean;
 		modelChoices: AgentModelChoice[];
 		saving: boolean;
-		usageSummary: string;
+		extensionUsageItems: ExtensionUsageControlItem[];
+		onCancelDelete: () => void;
+		onConfirmDelete: () => void;
+		onDuplicate: () => void;
+		onOpenExtension: (extensionId: string) => void;
+		onOpenSource: () => void;
+		onRequestDelete: () => void;
 		onSave: (agent: WorkflowAgentSettings) => Promise<WorkflowAgentSettings>;
+		onSetExtensionUsage: (
+			extensionId: string,
+			state: ExtensionUsageControlItem["state"],
+		) => Promise<WorkflowAgentSettings>;
 		onToggleExpanded: () => void;
 	};
 
-	let { agent, expanded, modelChoices, saving, usageSummary, onSave, onToggleExpanded }: Props =
-		$props();
+	let {
+		agent,
+		confirmingDelete,
+		deleting,
+		expanded,
+		isDefault,
+		modelChoices,
+		saving,
+		extensionUsageItems,
+		onCancelDelete,
+		onConfirmDelete,
+		onDuplicate,
+		onOpenExtension,
+		onOpenSource,
+		onRequestDelete,
+		onSave,
+		onSetExtensionUsage,
+		onToggleExpanded,
+	}: Props = $props();
 	let submitError = $state("");
 
 	function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {
@@ -154,7 +192,7 @@
 	}));
 
 	const formState = form.useStore();
-	const disabled = $derived(saving || formState.current.isSubmitting);
+	const disabled = $derived(saving || formState.current.isSubmitting || deleting);
 	const hasUnsavedChanges = $derived(formState.current.isDirty);
 	const formErrors = $derived(formState.current.errors.filter(Boolean));
 
@@ -173,10 +211,19 @@
 		submitError = "";
 		form.reset(valuesFor(agent));
 	}
+
+	async function saveExtensionUsage(extensionId: string, state: ExtensionUsageControlItem["state"]) {
+		submitError = "";
+		await onSetExtensionUsage(extensionId, state);
+	}
 </script>
 
 <div class="agent-profile-main">
-	<span class="agent-drag-placeholder"><LockIcon size={12} aria-hidden="true" /></span>
+	<span class="agent-drag-placeholder">
+		{#if isDefault}
+			<LockIcon size={12} aria-hidden="true" />
+		{/if}
+	</span>
 	<Input
 		value={formState.current.values.label}
 		class="agent-name-input"
@@ -226,9 +273,13 @@
 					submitSoon();
 				}}
 			/>
-			<span class="model-pill extensions-field extension-usage-summary">
-				{usageSummary}
-			</span>
+			<ExtensionUsageControl
+				ariaLabel={`${agent.label} extension usage`}
+				disabled={disabled}
+				items={extensionUsageItems}
+				onOpenExtension={onOpenExtension}
+				onStateChange={saveExtensionUsage}
+			/>
 		</div>
 		{#if hasUnsavedChanges}
 			<div class="agent-form-actions">
@@ -240,6 +291,61 @@
 				</button>
 			</div>
 		{/if}
+		<div
+			class="agent-row-actions"
+			use:dismissConfirmation={{
+				active: confirmingDelete,
+				onDismiss: onCancelDelete,
+			}}
+		>
+			<Tooltip label={`Open ${agent.id}.agent.json`}>
+				<button
+					type="button"
+					class="agent-icon-button"
+					aria-label={`Open ${agent.label} JSON source`}
+					disabled={disabled}
+					onclick={onOpenSource}
+				>
+					<ExternalLinkIcon size={13} aria-hidden="true" />
+				</button>
+			</Tooltip>
+			<Tooltip label="Duplicate workflow agent">
+				<button
+					type="button"
+					class="agent-icon-button"
+					aria-label={`Duplicate ${agent.label}`}
+					disabled={disabled}
+					onclick={onDuplicate}
+				>
+					<CopyPlusIcon size={13} aria-hidden="true" />
+				</button>
+			</Tooltip>
+			{#if confirmingDelete}
+				<Tooltip label="Confirm delete">
+					<button
+						type="button"
+						class="agent-icon-button danger"
+						aria-label={`Confirm deleting ${agent.label}`}
+						disabled={disabled}
+						onclick={onConfirmDelete}
+					>
+						<CheckIcon size={13} aria-hidden="true" />
+					</button>
+				</Tooltip>
+			{:else}
+				<Tooltip label={isDefault ? "Default workflow agent cannot be deleted" : "Delete workflow agent"}>
+					<button
+						type="button"
+						class="agent-icon-button danger"
+						aria-label={`Delete ${agent.label}`}
+						disabled={isDefault || deleting || disabled}
+						onclick={onRequestDelete}
+					>
+						<Trash2Icon size={13} aria-hidden="true" />
+					</button>
+				</Tooltip>
+			{/if}
+		</div>
 	</div>
 	<button
 		type="button"
@@ -365,18 +471,8 @@
 		max-width: clamp(4.9rem, 9vw, 5.8rem);
 	}
 
-	.extensions-field {
-		width: fit-content;
-		max-width: clamp(5.8rem, 10vw, 6.8rem);
-	}
-
-	.extension-usage-summary {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.agent-form-actions {
+	.agent-form-actions,
+	.agent-row-actions {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.08rem;
@@ -402,6 +498,33 @@
 		box-shadow: var(--ui-focus-ring);
 	}
 
+	.agent-icon-button {
+		display: grid;
+		place-items: center;
+		width: 1.32rem;
+		height: var(--agent-row-line-height);
+		border: 0;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-tertiary);
+		cursor: pointer;
+	}
+
+	.agent-icon-button:hover,
+	.agent-icon-button:focus-visible {
+		outline: none;
+		background: var(--ui-hover-bg);
+		color: var(--ui-text-primary);
+		box-shadow: var(--ui-focus-ring);
+	}
+
+	.agent-icon-button.danger:hover,
+	.agent-icon-button.danger:focus-visible {
+		background: var(--ui-danger-soft);
+		color: var(--ui-danger);
+	}
+
+	.agent-icon-button:disabled,
 	.agent-text-button:disabled {
 		cursor: default;
 		opacity: 0.36;

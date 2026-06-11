@@ -680,7 +680,6 @@ function buildSystemPromptFromExtensionState(
   } = {},
 ): string {
   const extensionState = resolvePromptExtensionState(actor, options);
-  const loaded = new Set(extensionState.loadedExtensionIds);
   const loadedInstructionSections = buildLoadedInstructionSections(
     extensionState.loadedExtensionIds,
     options.loadedExtensionRecords ?? [],
@@ -694,95 +693,34 @@ function buildSystemPromptFromExtensionState(
     return true;
   };
 
-  if (loaded.has("base-common")) {
-    if (!pushLoadedInstructionSection("base-common")) {
-      const body = getLibraryInstructionBody(options, "common");
-      sections.push(...(body ? body.split("\n\n") : buildCommonInstructions(actor)));
-    }
-  }
-  if (loaded.has("base-orchestrator") && actor === "orchestrator") {
-    if (!pushLoadedInstructionSection("base-orchestrator")) {
-      sections.push(...getActorInstructionBody(options, actor, BASE_ORCHESTRATOR_INSTRUCTIONS));
-    }
-  }
-  if (loaded.has("base-handler") && actor === "handler") {
-    if (!pushLoadedInstructionSection("base-handler")) {
-      sections.push(...getActorInstructionBody(options, actor, BASE_HANDLER_INSTRUCTIONS));
-    }
-  }
-  if (loaded.has("base-workflow-task") && actor === "workflow-task") {
-    if (!pushLoadedInstructionSection("base-workflow-task")) {
-      sections.push(...getActorInstructionBody(options, actor, BASE_WORKFLOW_TASK_INSTRUCTIONS));
-    }
-  }
   const externalInstructions = buildExternalInstructionSections(
     actor,
     options.externalInstructionSources ?? [],
   );
-  if (externalInstructions) {
+  let externalInstructionsInserted = false;
+  const insertExternalInstructions = () => {
+    if (!externalInstructions || externalInstructionsInserted) return;
     sections.push(externalInstructions);
-  }
-  if (loaded.has("cx")) {
-    sections.push(getLibraryContextPackBody(options, actor, "cx") ?? CX_CONTEXT_BODY);
-  }
-  if (loaded.has("shell")) {
-    sections.push(SHELL_BASE_CONTEXT_BODY);
-    sections.push(SHELL_INCUR_CLI_CONTEXT_BODY);
-  }
-  if (loaded.has("apply-patch")) {
-    sections.push(APPLY_PATCH_CONTEXT_BODY);
-  }
-  if (loaded.has("git")) {
-    sections.push(GIT_CONTEXT_BODY);
-  }
-  if (loaded.has("github")) {
-    sections.push(GITHUB_CONTEXT_BODY);
-  }
-  if (loaded.has("extension-loading")) {
-    sections.push(EXTENSION_LOADING_CONTEXT_BODY);
-  }
-  if (loaded.has("request-user-input")) {
-    sections.push(buildRequestUserInputContextBody(options.requestUserInputSettings));
-  }
-  if (loaded.has("thread-orchestration")) {
-    sections.push(THREAD_ORCHESTRATION_CONTEXT_BODY);
-  }
-  if (loaded.has("thread-handling")) {
-    sections.push(THREAD_HANDLING_CONTEXT_BODY);
-  }
-  if (loaded.has("artifacts")) {
-    sections.push(ARTIFACTS_CONTEXT_BODY);
-  }
-  if (loaded.has("smithers")) {
-    if (actor === "handler") {
-      sections.push(
-        getLibraryContextPackBody(options, actor, "smithers-handler") ??
-          SMITHERS_HANDLER_CONTEXT_BODY,
-      );
-      sections.push(SMITHERS_CORE_INSTRUCTIONS);
-      sections.push(SMITHERS_SVVY_BOUNDARY_APPENDIX);
-    } else if (actor === "workflow-task") {
-      sections.push(
-        getLibraryContextPackBody(options, actor, "smithers-workflow-task") ??
-          SMITHERS_WORKFLOW_TASK_CONTEXT_BODY,
-      );
-    } else {
-      sections.push(
-        getLibraryContextPackBody(options, actor, "smithers-orchestrator") ??
-          SMITHERS_ORCHESTRATOR_CONTEXT_BODY,
-      );
+    externalInstructionsInserted = true;
+  };
+  for (const [index, id] of extensionState.loadedExtensionIds.entries()) {
+    sections.push(
+      ...buildLoadedExtensionPromptSections({
+        actor,
+        extensionId: id,
+        extensionState,
+        externalInstructions,
+        loadedInstructionSections,
+        options,
+        pushLoadedInstructionSection,
+      }),
+    );
+    const nextId = extensionState.loadedExtensionIds[index + 1];
+    if (id.startsWith("base-") && !nextId?.startsWith("base-")) {
+      insertExternalInstructions();
     }
   }
-  if (loaded.has("web")) {
-    sections.push(buildWebPromptContext(actor));
-  }
-  if (loaded.has("workflows") && actor === "handler") {
-    sections.push(WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION);
-    sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
-  }
-  for (const id of extensionState.loadedExtensionIds) {
-    pushLoadedInstructionSection(id);
-  }
+  insertExternalInstructions();
   const availablePrompt = buildAvailableExtensionHints(
     extensionState.availableExtensionIds,
     options.availableExtensionRecords ?? [],
@@ -801,17 +739,106 @@ function buildSystemPromptFromExtensionState(
       sections.push(loadedContextPrompt);
     }
   }
-  if (loaded.has("execute-typescript")) {
-    sections.push(
+  return sections.join("\n\n");
+}
+
+function buildLoadedExtensionPromptSections(input: {
+  actor: SvvyActorKind;
+  extensionId: string;
+  extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] };
+  externalInstructions: string | null;
+  loadedInstructionSections: Map<string, string>;
+  options: NonNullable<Parameters<typeof buildSystemPromptFromExtensionState>[1]>;
+  pushLoadedInstructionSection: (id: string) => boolean;
+}): string[] {
+  const { actor, extensionId, options } = input;
+  if (extensionId === "base-common") {
+    if (input.pushLoadedInstructionSection(extensionId)) return [];
+    const body = getLibraryInstructionBody(options, "common");
+    return body ? body.split("\n\n") : buildCommonInstructions(actor);
+  }
+  if (extensionId === "base-orchestrator" && actor === "orchestrator") {
+    if (input.pushLoadedInstructionSection(extensionId)) return [];
+    return getActorInstructionBody(options, actor, BASE_ORCHESTRATOR_INSTRUCTIONS);
+  }
+  if (extensionId === "base-handler" && actor === "handler") {
+    if (input.pushLoadedInstructionSection(extensionId)) return [];
+    return getActorInstructionBody(options, actor, BASE_HANDLER_INSTRUCTIONS);
+  }
+  if (extensionId === "base-workflow-task" && actor === "workflow-task") {
+    if (input.pushLoadedInstructionSection(extensionId)) return [];
+    return getActorInstructionBody(options, actor, BASE_WORKFLOW_TASK_INSTRUCTIONS);
+  }
+  if (extensionId.startsWith("external_instruction:")) {
+    return input.externalInstructions ? [input.externalInstructions] : [];
+  }
+  if (extensionId === "cx") {
+    return [getLibraryContextPackBody(options, actor, "cx") ?? CX_CONTEXT_BODY];
+  }
+  if (extensionId === "shell") {
+    return [SHELL_BASE_CONTEXT_BODY, SHELL_INCUR_CLI_CONTEXT_BODY];
+  }
+  if (extensionId === "apply-patch") {
+    return [APPLY_PATCH_CONTEXT_BODY];
+  }
+  if (extensionId === "git") {
+    return [GIT_CONTEXT_BODY];
+  }
+  if (extensionId === "github") {
+    return [GITHUB_CONTEXT_BODY];
+  }
+  if (extensionId === "extension-loading") {
+    return [EXTENSION_LOADING_CONTEXT_BODY];
+  }
+  if (extensionId === "request-user-input") {
+    return [buildRequestUserInputContextBody(options.requestUserInputSettings)];
+  }
+  if (extensionId === "thread-orchestration") {
+    return [THREAD_ORCHESTRATION_CONTEXT_BODY];
+  }
+  if (extensionId === "thread-handling") {
+    return [THREAD_HANDLING_CONTEXT_BODY];
+  }
+  if (extensionId === "artifacts") {
+    return [ARTIFACTS_CONTEXT_BODY];
+  }
+  if (extensionId === "smithers") {
+    if (actor === "handler") {
+      return [
+        getLibraryContextPackBody(options, actor, "smithers-handler") ??
+          SMITHERS_HANDLER_CONTEXT_BODY,
+        SMITHERS_CORE_INSTRUCTIONS,
+        SMITHERS_SVVY_BOUNDARY_APPENDIX,
+      ];
+    }
+    if (actor === "workflow-task") {
+      return [
+        getLibraryContextPackBody(options, actor, "smithers-workflow-task") ??
+          SMITHERS_WORKFLOW_TASK_CONTEXT_BODY,
+      ];
+    }
+    return [
+      getLibraryContextPackBody(options, actor, "smithers-orchestrator") ??
+        SMITHERS_ORCHESTRATOR_CONTEXT_BODY,
+    ];
+  }
+  if (extensionId === "web") {
+    return [buildWebPromptContext(actor)];
+  }
+  if (extensionId === "workflows" && actor === "handler") {
+    return [WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION, HANDLER_WORKFLOW_AUTHORING_APPENDIX];
+  }
+  if (extensionId === "execute-typescript") {
+    return [
       buildExecuteTypescriptPromptSection(actor, {
         extensionsRoot: options.extensionsRoot,
-        loadedExtensionIds: extensionState.loadedExtensionIds,
+        loadedExtensionIds: input.extensionState.loadedExtensionIds,
         loadedExtensionRecords: options.loadedExtensionRecords,
       }),
-    );
+    ];
   }
-
-  return sections.join("\n\n");
+  if (input.pushLoadedInstructionSection(extensionId)) return [];
+  return [];
 }
 
 function buildRequestUserInputContextBody(settings?: RequestUserInputSettings): string {
@@ -1004,7 +1031,7 @@ function resolvePromptExtensionState(
 ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
   if (options.loadedExtensionIds || options.availableExtensionIds) {
     const filterUnavailable = (ids: readonly string[]): string[] =>
-      ids.filter((id) => !(id === "web" && options.networkAccess === false)).toSorted();
+      ids.filter((id) => !(id === "web" && options.networkAccess === false));
     return {
       loadedExtensionIds: filterUnavailable(options.loadedExtensionIds ?? []),
       availableExtensionIds: filterUnavailable(options.availableExtensionIds ?? []),

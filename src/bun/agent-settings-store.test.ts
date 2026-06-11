@@ -43,6 +43,7 @@ describe("agent profile settings", () => {
       reasoningEffort: "low",
       systemPrompt: "Own repository strategy.",
       extensionUsage: {},
+      extensionOrder: ["git", "cx", "web"],
       updateFromComposer: false,
       builtin: false,
       locked: false,
@@ -58,6 +59,7 @@ describe("agent profile settings", () => {
         model: "gpt-5.4-mini",
         reasoningEffort: "low",
         systemPrompt: "Own repository strategy.",
+        extensionOrder: ["git", "cx", "web"],
       }),
     );
     expect(updated.agents.special.threadHandler.id).toBe(DEFAULT_THREAD_HANDLER_PROFILE_ID);
@@ -216,6 +218,7 @@ describe("agent profile settings", () => {
       extensionUsage: {
         ci: "default_loaded",
       },
+      extensionOrder: [],
     });
 
     expect(existsSync(join(root, ".svvy", "workflows", "components", "agents.ts"))).toBe(false);
@@ -233,6 +236,7 @@ describe("agent profile settings", () => {
       extensionUsage: {
         ci: "default_loaded",
       },
+      extensionOrder: [],
     });
     expect(store.getState().workflowAgents.reviewer).toEqual(
       expect.objectContaining({
@@ -315,6 +319,7 @@ describe("agent profile settings", () => {
         git: "default_loaded",
         github: "available",
       },
+      extensionOrder: [],
     });
 
     store.setWorkflowAgent("strictReviewer", {
@@ -325,6 +330,7 @@ describe("agent profile settings", () => {
         git: "default_loaded",
         github: "available",
       },
+      extensionOrder: [],
     });
 
     expect(
@@ -343,6 +349,7 @@ describe("agent profile settings", () => {
         git: "default_loaded",
         github: "available",
       },
+      extensionOrder: [],
     });
   });
 

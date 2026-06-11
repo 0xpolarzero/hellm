@@ -38,6 +38,7 @@ import {
 import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
+  DEFAULT_WORKFLOW_AGENT_SETTINGS,
   type AgentDefaults,
 } from "../shared/agent-settings";
 import {
@@ -753,9 +754,10 @@ function getWorkspaceRuntime(input: Parameters<typeof getWorkspaceRuntimeForRequ
 }
 
 function addWorkspaceBranch<T extends { cwd: string }>(info: T): T & { branch?: string } {
+  const branch = getWorkspaceBranch(info.cwd);
   return {
     ...info,
-    branch: getWorkspaceBranch(info.cwd),
+    ...(branch ? { branch } : {}),
   };
 }
 
@@ -1142,6 +1144,74 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           throw error;
         }
         return next;
+      },
+      deleteWorkflowAgent: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { key } = input;
+        if (Object.prototype.hasOwnProperty.call(DEFAULT_WORKFLOW_AGENT_SETTINGS, key)) {
+          throw new Error(`Default workflow agent cannot be deleted: ${key}`);
+        }
+        const previous = runtime.agentSettingsStore.getState().workflowAgents[key] ?? null;
+        if (!previous) {
+          return runtime.agentSettingsStore.getState();
+        }
+        const next = runtime.agentSettingsStore.deleteWorkflowAgent(key);
+        runtime.appLog.info("settings", "Workflow agent deleted.", { key });
+        try {
+          const build = await buildWorkflowsGeneratedPackage({
+            modelCatalog: readDefaultModelCatalog(),
+            workspaceCwds: workspaceRuntimeRegistry
+              .listOpenWorkspaces()
+              .map((workspace) => workspace.cwd),
+          });
+          if (!build.ok) {
+            runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+            throw workflowsBuildFailedError(build.diagnostics);
+          }
+        } catch (error) {
+          if ((error as { code?: string }).code !== "build_failed") {
+            runtime.appLog.error(
+              "workflow.library",
+              "Workflow agent delete rejected because Workflows build errored.",
+              error,
+              { reason: "workflow-agent-delete" },
+            );
+          }
+          runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+          throw error;
+        }
+        return next;
+      },
+      openWorkflowAgentSourceInEditor: (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { key } = input;
+        const agent = runtime.agentSettingsStore.getState().workflowAgents[key];
+        if (!agent) {
+          throw new Error(`Workflow agent not found: ${key}`);
+        }
+        const path = join(getWorkflowsSourceRoot(), "agents", `${key}.agent.json`);
+        const result = openPathInPreferredEditor(runtime, path);
+        runtime.appLog.info("external-editor", "Workflow agent source opened in external editor.", {
+          path,
+          editor: result.editor,
+          opened: result.opened,
+        });
+        return { ...result, path };
+      },
+      setAgentProfileExtensionUsage: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const result = runtime.catalog.setExtensionUsage({
+          agentProfile: input.agentProfile,
+          extensionId: input.extensionId,
+          state: input.state,
+        });
+        runtime.appLog.info("settings", "Agent profile extension usage updated.", {
+          agentProfile: input.agentProfile,
+          extensionId: input.extensionId,
+          state: input.state,
+          actor: result.actor,
+        });
+        return result.settings;
       },
       updateAppPreferences: async (preferences) => {
         const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
