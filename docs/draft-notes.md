@@ -123,3 +123,10 @@
 - queue backlog; any item can be put in backlog and send button has a neighbor something like send to backlog (which would be command + enter)
   - backlog is like the queue except it doesn't get sent, it just stays there until it is deleted or promoted to the queue (which if there is no queue will send immediately)
   - can be useful when you have multiple questions you want to ask or multiple things to do but for each you want to discuss, you just put them in the backlog, it shows below the queue, and when one item has been discussed and is all good you can push them to the queue
+
+- "life" pane
+  - dual code code/life
+  - has a distinct set of "Agents" because it's too vastly different on extensions selection and default agent and stuff
+  - otherwise extensions are shared
+  - maybe workflows is distinct as well because very different use cases?
+  - otherwise pretty much same usage: main orchestrator can take any input ("entry"), dispatch to a thread with correct extensions, e.g. calendar extension for calendar stuff, thread handler will do the thing, can use workflows if needed, and hand back to orchestrator; which can also take multiple entries at the same time it's built-in that this works; maybe orchestrator notifies user with a tool, maybe it's programmatic; we can have an infinite orchestrator session possibly? "dream"/consolidate every day into its own markdown file
