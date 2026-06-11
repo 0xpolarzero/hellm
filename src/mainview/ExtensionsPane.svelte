@@ -1,4 +1,8 @@
 <script lang="ts">
+  import CheckIcon from "@lucide/svelte/icons/check";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import SaveIcon from "@lucide/svelte/icons/save";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import { onMount, tick } from "svelte";
   import type {
     AgentSettingsState,
@@ -14,6 +18,7 @@
     ExtensionCliRequirementReadiness,
     ExtensionEnvRequirementReadiness,
     ExtensionInventoryItemReadModel,
+    ExtensionSnapshotReadModel,
     ExtensionsInventoryReadModel,
   } from "../shared/workspace-contract";
   import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../shared/extensions";
@@ -21,7 +26,11 @@
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Checkbox from "./ui/Checkbox.svelte";
+  import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
+  import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
+  import Tooltip from "./ui/Tooltip.svelte";
+  import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
 
   type Props = {
@@ -44,6 +53,15 @@
   let loadingPreview = $state(false);
   let loadingInventory = $state(!extensionsInventory);
   let pendingExternalInstructionPath = $state<string | null>(null);
+  let selectedSnapshotId = $state("");
+  let snapshotName = $state("");
+  let snapshotPopoverOpen = $state(false);
+  let renamingSnapshotId = $state<string | null>(null);
+  let renameSnapshotName = $state("");
+  let confirmingDeleteSnapshotId = $state<string | null>(null);
+  let snapshotAction = $state<"save" | "rename" | "delete" | "load" | null>(null);
+  let snapshotNameInput = $state<HTMLInputElement | null>(null);
+  let renameSnapshotInput = $state<HTMLInputElement | null>(null);
   const extensionRowElements = new Map<string, HTMLElement>();
 
   const ACTORS = [
@@ -99,6 +117,38 @@
 
   function reversibleChangeCards(): ExtensionChangeCardReadModel[] {
     return extensionsInventory?.reversibleChanges ?? [];
+  }
+
+  function snapshotRows(): ExtensionSnapshotReadModel[] {
+    return extensionsInventory?.snapshots ?? [];
+  }
+
+  function selectedSnapshot(): ExtensionSnapshotReadModel | null {
+    return snapshotRows().find((snapshot) => snapshot.id === selectedSnapshotId) ?? null;
+  }
+
+  function snapshotOptions(): CompactComboboxOption[] {
+    return snapshotRows().map((snapshot) => {
+      const details = [
+        `${snapshot.extensionCount} extension${snapshot.extensionCount === 1 ? "" : "s"}`,
+        snapshot.hasSecretState ? "secret state" : null,
+      ].filter(Boolean);
+      return {
+        value: snapshot.id,
+        label: `${snapshot.name} · ${details.join(" · ")}`,
+        triggerLabel: snapshot.name,
+        searchText: `${snapshot.name} ${snapshot.id} ${details.join(" ")}`,
+        disabled: snapshotAction !== null,
+      };
+    });
+  }
+
+  function changeHistoryOptions(): CompactSelectOption[] {
+    return reversibleChangeCards().map((change) => ({
+      value: change.id,
+      label: `Revert ${change.title} · ${change.extensionId} · ${formatChangeTime(change.createdAt)}`,
+      disabled: revertingChangeId !== null,
+    }));
   }
 
   function usageFor(
@@ -355,6 +405,117 @@
     return date.toLocaleString();
   }
 
+  function defaultSnapshotName(date = new Date()): string {
+    return `Snapshot ${new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date)}`;
+  }
+
+  function closeSnapshotControls(): void {
+    snapshotPopoverOpen = false;
+    renamingSnapshotId = null;
+    confirmingDeleteSnapshotId = null;
+  }
+
+  async function openSnapshotPopover(): Promise<void> {
+    snapshotName = defaultSnapshotName();
+    snapshotPopoverOpen = true;
+    renamingSnapshotId = null;
+    confirmingDeleteSnapshotId = null;
+    await tick();
+    snapshotNameInput?.focus();
+    snapshotNameInput?.select();
+  }
+
+  async function saveExtensionSnapshot(): Promise<void> {
+    const name = snapshotName.trim();
+    if (!name || snapshotAction) return;
+    snapshotAction = "save";
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.saveExtensionSnapshot(name);
+      const created = snapshotRows().find((snapshot) => snapshot.name === name);
+      selectedSnapshotId = created?.id ?? selectedSnapshotId;
+      snapshotPopoverOpen = false;
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to save extension snapshot.";
+    } finally {
+      snapshotAction = null;
+    }
+  }
+
+  async function loadExtensionSnapshot(snapshotId: string): Promise<void> {
+    if (!snapshotId || snapshotAction) return;
+    selectedSnapshotId = snapshotId;
+    snapshotAction = "load";
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.loadExtensionSnapshot(snapshotId);
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to load extension snapshot.";
+    } finally {
+      snapshotAction = null;
+    }
+  }
+
+  async function startRenameSnapshot(): Promise<void> {
+    const snapshot = selectedSnapshot();
+    if (!snapshot || snapshotAction) return;
+    renamingSnapshotId = snapshot.id;
+    renameSnapshotName = snapshot.name;
+    snapshotPopoverOpen = false;
+    confirmingDeleteSnapshotId = null;
+    await tick();
+    renameSnapshotInput?.focus();
+    renameSnapshotInput?.select();
+  }
+
+  async function renameExtensionSnapshot(): Promise<void> {
+    const snapshotId = renamingSnapshotId;
+    const name = renameSnapshotName.trim();
+    if (!snapshotId || !name || snapshotAction) return;
+    snapshotAction = "rename";
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.renameExtensionSnapshot(snapshotId, name);
+      selectedSnapshotId = snapshotId;
+      renamingSnapshotId = null;
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to rename extension snapshot.";
+    } finally {
+      snapshotAction = null;
+    }
+  }
+
+  function requestDeleteSnapshot(): void {
+    const snapshot = selectedSnapshot();
+    if (!snapshot || snapshotAction) return;
+    confirmingDeleteSnapshotId = snapshot.id;
+    snapshotPopoverOpen = false;
+    renamingSnapshotId = null;
+  }
+
+  async function deleteExtensionSnapshot(): Promise<void> {
+    const snapshotId = confirmingDeleteSnapshotId;
+    if (!snapshotId || snapshotAction) return;
+    snapshotAction = "delete";
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.deleteExtensionSnapshot(snapshotId);
+      if (selectedSnapshotId === snapshotId) selectedSnapshotId = "";
+      confirmingDeleteSnapshotId = null;
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to delete extension snapshot.";
+    } finally {
+      snapshotAction = null;
+    }
+  }
+
   async function revertExtensionChange(changeId: string): Promise<void> {
     if (revertingChangeId) return;
     revertingChangeId = changeId;
@@ -532,17 +693,16 @@
     if (rowCount === 0) return;
     void focusTargetExtension(targetExtensionId);
   });
+
+  $effect(() => {
+    const snapshots = snapshotRows();
+    if (selectedSnapshotId && !snapshots.some((snapshot) => snapshot.id === selectedSnapshotId)) {
+      selectedSnapshotId = "";
+    }
+  });
 </script>
 
 <section class="extensions-pane" aria-label="Extensions">
-  <header class="extensions-header">
-    <div>
-      <p>Extensions</p>
-      <h2>Inventory</h2>
-    </div>
-    <strong>{inventoryRows().length}</strong>
-  </header>
-
   {#if targetView === "generated-context-preview"}
     <section class="generated-context-preview" aria-label="Generated context preview">
       {#if settingsError}
@@ -567,44 +727,161 @@
     </section>
   {:else}
   <div class="extensions-inventory">
-  {#if reversibleChangeCards().length}
-    <section class="extension-change-history" aria-label="Reversible extension changes">
-      <div class="extension-change-history-header">
-        <div>
-          <p>Change History</p>
-          <h3>Reversible Changes</h3>
-        </div>
-        <span>{reversibleChangeCards().length}</span>
-      </div>
-      <div class="extension-change-cards">
-        {#each reversibleChangeCards() as change (change.id)}
-          <article class="extension-change-card">
-            <div class="extension-change-card-main">
-              <div>
-                <strong>{change.title}</strong>
-                <span>{change.description}</span>
-              </div>
-              <code>{change.revertCommand}</code>
-            </div>
-            <div class="extension-change-card-meta">
-              <Badge tone={change.kind === "extension_delete" ? "warning" : "info"}>
-                {change.extensionId}
-              </Badge>
-              <span>{formatChangeTime(change.createdAt)}</span>
+    <section class="extension-toolbar" aria-label="Extension controls">
+      <div
+        class="extension-snapshot-controls"
+        use:dismissConfirmation={{
+          active:
+            snapshotPopoverOpen ||
+            renamingSnapshotId !== null ||
+            confirmingDeleteSnapshotId !== null,
+          onDismiss: closeSnapshotControls,
+        }}
+      >
+        <CompactCombobox
+          value={selectedSnapshotId}
+          options={snapshotOptions()}
+          ariaLabel="Load extension snapshot"
+          placeholder="Snapshots"
+          emptyLabel="No snapshots saved."
+          triggerClass="snapshot-trigger"
+          menuClass="snapshot-menu"
+          optionClass="snapshot-option"
+          placement="below"
+          disabled={snapshotAction !== null || snapshotRows().length === 0}
+          onBeforeOpen={loadExtensionsInventory}
+          onSelect={(snapshotId) => loadExtensionSnapshot(snapshotId)}
+        />
+        <Tooltip label="Save current extension state">
+          <Button
+            class="snapshot-icon-button"
+            variant="ghost"
+            size="xs"
+            iconOnly
+            disabled={snapshotAction !== null}
+            aria-label="Save extension snapshot"
+            onclick={() => void openSnapshotPopover()}
+          >
+            <SaveIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+          </Button>
+        </Tooltip>
+        <Tooltip label="Rename selected extension snapshot" disabled={!selectedSnapshot() || snapshotAction !== null}>
+          <Button
+            class="snapshot-icon-button"
+            variant="ghost"
+            size="xs"
+            iconOnly
+            disabled={!selectedSnapshot() || snapshotAction !== null}
+            aria-label="Rename selected extension snapshot"
+            onclick={() => void startRenameSnapshot()}
+          >
+            <PencilIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+          </Button>
+        </Tooltip>
+        <Tooltip
+          label={
+            confirmingDeleteSnapshotId
+              ? "Confirm delete"
+              : "Delete selected extension snapshot"
+          }
+          disabled={!selectedSnapshot() || snapshotAction !== null}
+        >
+          <Button
+            class={`snapshot-icon-button ${confirmingDeleteSnapshotId ? "confirming-delete" : ""}`.trim()}
+            variant={confirmingDeleteSnapshotId ? "danger" : "ghost"}
+            size="xs"
+            iconOnly
+            disabled={!selectedSnapshot() || snapshotAction !== null}
+            aria-label={
+              confirmingDeleteSnapshotId
+                ? "Confirm deleting selected extension snapshot"
+                : "Delete selected extension snapshot"
+            }
+            onclick={() =>
+              confirmingDeleteSnapshotId
+                ? void deleteExtensionSnapshot()
+                : requestDeleteSnapshot()}
+          >
+            {#if confirmingDeleteSnapshotId}
+              <CheckIcon aria-hidden="true" size={13} strokeWidth={2.1} />
+            {:else}
+              <Trash2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
+            {/if}
+          </Button>
+        </Tooltip>
+
+        {#if snapshotPopoverOpen}
+          <div class="snapshot-popover" role="dialog" aria-label="Save extension snapshot">
+            <input
+              bind:this={snapshotNameInput}
+              class="snapshot-name-input"
+              bind:value={snapshotName}
+              aria-label="Snapshot name"
+              onkeydown={(event) => {
+                if (event.key === "Enter") void saveExtensionSnapshot();
+                if (event.key === "Escape") closeSnapshotControls();
+              }}
+            />
+            <Tooltip label="Save extension snapshot">
               <Button
+                class="snapshot-icon-button"
+                variant="ghost"
                 size="xs"
-                variant="secondary"
-                disabled={revertingChangeId !== null}
-                onclick={() => revertExtensionChange(change.id)}
+                iconOnly
+                disabled={snapshotAction !== null || !snapshotName.trim()}
+                aria-label="Save snapshot"
+                onclick={() => void saveExtensionSnapshot()}
               >
-                {revertingChangeId === change.id ? "Reverting" : "Revert"}
+                <CheckIcon aria-hidden="true" size={13} strokeWidth={2.1} />
               </Button>
-            </div>
-          </article>
-        {/each}
+            </Tooltip>
+          </div>
+        {/if}
+
+        {#if renamingSnapshotId}
+          <div class="snapshot-popover" role="dialog" aria-label="Rename extension snapshot">
+            <input
+              bind:this={renameSnapshotInput}
+              class="snapshot-name-input"
+              bind:value={renameSnapshotName}
+              aria-label="Snapshot name"
+              onkeydown={(event) => {
+                if (event.key === "Enter") void renameExtensionSnapshot();
+                if (event.key === "Escape") closeSnapshotControls();
+              }}
+            />
+            <Tooltip label="Rename extension snapshot">
+              <Button
+                class="snapshot-icon-button"
+                variant="ghost"
+                size="xs"
+                iconOnly
+                disabled={snapshotAction !== null || !renameSnapshotName.trim()}
+                aria-label="Rename snapshot"
+                onclick={() => void renameExtensionSnapshot()}
+              >
+                <CheckIcon aria-hidden="true" size={13} strokeWidth={2.1} />
+              </Button>
+            </Tooltip>
+          </div>
+        {/if}
       </div>
+
+      {#if reversibleChangeCards().length}
+        <CompactSelect
+          value="History"
+          options={changeHistoryOptions()}
+          ariaLabel="Reversible extension history"
+          triggerClass="history-trigger"
+          menuClass="history-menu"
+          optionClass="history-option"
+          leadingIcon="history"
+          placement="below"
+          disabled={revertingChangeId !== null}
+          onSelect={(changeId) => revertExtensionChange(changeId)}
+        />
+      {/if}
     </section>
-  {/if}
 
   <div class="extensions-table" role="table" aria-label="Extension inventory">
     <div class="extensions-row header" role="row">
@@ -820,39 +1097,11 @@
 <style>
   .extensions-pane {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     color: var(--ui-text-primary);
     background: var(--ui-surface);
-  }
-
-  .extensions-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 1rem 1.1rem 0.85rem;
-    border-bottom: 1px solid var(--ui-border-subtle);
-  }
-
-  .extensions-header p {
-    margin: 0 0 0.2rem;
-    color: var(--ui-text-tertiary);
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .extensions-header h2 {
-    margin: 0;
-    font-size: 1.05rem;
-    font-weight: 700;
-  }
-
-  .extensions-header strong {
-    color: var(--ui-text-secondary);
-    font-size: 0.8rem;
   }
 
   .extensions-table {
@@ -865,82 +1114,133 @@
     overflow: auto;
   }
 
-  .extension-change-history {
-    display: grid;
-    gap: 0.7rem;
-    padding: 0.85rem 1.1rem;
-    border-bottom: 1px solid var(--ui-border-subtle);
-    background: var(--ui-surface-subtle);
-  }
-
-  .extension-change-history-header,
-  .extension-change-card,
-  .extension-change-card-main,
-  .extension-change-card-meta {
+  .extension-toolbar {
     display: flex;
     align-items: center;
-    gap: 0.65rem;
+    gap: 0.45rem;
+    padding: 0.38rem 1.1rem;
+    border-bottom: 1px solid var(--ui-border-subtle);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 42%, transparent);
+  }
+
+  .extension-snapshot-controls {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.18rem;
     min-width: 0;
   }
 
-  .extension-change-history-header,
-  .extension-change-card {
+  :global(.snapshot-trigger) {
     justify-content: space-between;
+    width: 9.2rem;
+    min-height: 1.55rem;
+    padding: 0.12rem 0.26rem 0.12rem 0.42rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-muted) 34%, transparent);
+    color: var(--ui-text-secondary);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1;
   }
 
-  .extension-change-history-header p,
-  .extension-change-history-header h3 {
-    margin: 0;
+  :global(.snapshot-trigger:hover:not(:disabled)),
+  :global(.snapshot-trigger:focus-visible) {
+    outline: none;
+    background: color-mix(in oklab, var(--ui-surface-muted) 52%, transparent);
+    color: var(--ui-text-primary);
   }
 
-  .extension-change-history-header p,
-  .extension-change-history-header span,
-  .extension-change-card span,
-  .extension-change-card code {
-    color: var(--ui-text-tertiary);
+  :global(.snapshot-trigger:focus-visible) {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  :global(.snapshot-trigger:disabled) {
+    cursor: default;
+    opacity: 0.65;
+  }
+
+  :global(.snapshot-menu) {
+    min-width: 20rem;
+    width: max-content;
+    max-width: min(34rem, calc(100vw - 2rem));
+    max-height: 16rem;
+    overflow: hidden;
+  }
+
+  :global(.snapshot-option) {
+    justify-content: flex-start;
+    min-height: 1.85rem;
+    max-width: 100%;
+    font-family: var(--font-mono);
     font-size: var(--text-xs);
   }
 
-  .extension-change-history-header h3 {
-    font-size: 0.9rem;
-  }
-
-  .extension-change-cards {
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .extension-change-card {
-    padding: 0.65rem 0.7rem;
-    border: 1px solid var(--ui-border-soft);
+  :global(.snapshot-icon-button) {
+    width: 1.55rem;
+    height: 1.55rem;
+    min-height: 1.55rem;
+    padding: 0;
+    border: 0;
     border-radius: var(--ui-radius-sm);
-    background: var(--ui-surface);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    box-shadow: none;
   }
 
-  .extension-change-card-main {
-    flex: 1 1 auto;
-    justify-content: flex-start;
+  :global(.snapshot-icon-button:hover:not(:disabled)),
+  :global(.snapshot-icon-button:focus-visible) {
+    outline: none;
+    background: color-mix(in oklab, var(--ui-surface-muted) 52%, transparent);
+    color: var(--ui-text-primary);
   }
 
-  .extension-change-card-main > div {
+  :global(.snapshot-icon-button:focus-visible) {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  :global(.snapshot-icon-button.confirming-delete) {
+    color: var(--ui-danger);
+  }
+
+  .snapshot-popover {
+    position: absolute;
+    z-index: var(--ui-z-dialog);
+    top: calc(100% + 0.3rem);
+    left: 0;
     display: grid;
-    gap: 0.15rem;
-    min-width: 0;
+    grid-template-columns: minmax(13rem, 1fr) max-content;
+    align-items: center;
+    gap: 0.18rem;
+    width: min(22rem, calc(100vw - 1rem));
+    padding: 0.22rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-raised) 96%, transparent);
+    box-shadow:
+      0 12px 28px color-mix(in oklab, var(--ui-shadow) 22%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--ui-surface) 42%, transparent);
   }
 
-  .extension-change-card-main strong,
-  .extension-change-card-main span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .snapshot-name-input {
+    width: 100%;
+    min-height: 1.6rem;
+    padding: 0.18rem 0.42rem;
+    border: 1px solid transparent;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-muted) 34%, transparent);
+    color: var(--ui-text-primary);
+    font-size: var(--text-sm);
+    line-height: 1.2;
   }
 
-  .extension-change-card code {
-    overflow-wrap: anywhere;
-  }
-
-  .extension-change-card-meta {
-    flex: 0 0 auto;
+  .snapshot-name-input:focus-visible {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ui-accent) 36%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-accent) 16%, transparent);
   }
 
   .extensions-row {

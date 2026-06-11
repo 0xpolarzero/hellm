@@ -329,6 +329,10 @@ export interface ChatRuntimeRpcClient {
     getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
     getAppPreferences: typeof rpc.request.getAppPreferences;
     revertExtensionChange: typeof rpc.request.revertExtensionChange;
+    saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
+    renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
+    deleteExtensionSnapshot: typeof rpc.request.deleteExtensionSnapshot;
+    loadExtensionSnapshot: typeof rpc.request.loadExtensionSnapshot;
     setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
     removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
     setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
@@ -567,6 +571,13 @@ export interface ChatRuntime {
   getAppPreferences: () => Promise<AppPreferences>;
   updateAppPreferences: (preferences: AppPreferences) => Promise<AppPreferences>;
   revertExtensionChange: (changeId: string) => Promise<ExtensionsInventoryReadModel>;
+  saveExtensionSnapshot: (name: string) => Promise<ExtensionsInventoryReadModel>;
+  renameExtensionSnapshot: (
+    snapshotId: string,
+    name: string,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  deleteExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
+  loadExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
   setExtensionEnvSecret: (
     input: Omit<SetExtensionEnvSecretRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
@@ -2899,6 +2910,26 @@ export async function createChatRuntime(
             ...(getFocusedPromptTarget() ? { owningSurface: getFocusedPromptTarget()! } : {}),
           }),
         ),
+      )!,
+    saveExtensionSnapshot: async (name) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.saveExtensionSnapshot(scoped({ name })),
+      )!,
+    renameExtensionSnapshot: async (snapshotId, name) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.renameExtensionSnapshot(scoped({ snapshotId, name })),
+      )!,
+    deleteExtensionSnapshot: async (snapshotId) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.deleteExtensionSnapshot(scoped({ snapshotId })),
+      )!,
+    loadExtensionSnapshot: async (snapshotId) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.loadExtensionSnapshot(scoped({ snapshotId })),
       )!,
     setExtensionEnvSecret: async (input) =>
       setWorkspaceCache(

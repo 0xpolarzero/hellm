@@ -179,6 +179,30 @@ function getRpcRequestTimeoutMs(): number {
   return Math.trunc(parsed);
 }
 
+function quoteSvvyxCommandArg(value: string): string {
+  return JSON.stringify(value);
+}
+
+async function readWorkspaceExtensionsInventory(runtime: WorkspaceRuntime) {
+  return readBuiltinExtensionsInventory({
+    agentSettingsStore: runtime.agentSettingsStore,
+    envSecretStore: extensionEnvSecretStore,
+    extensionsRoot: runtime.catalog.getExtensionsRoot(),
+    externalInstructionSources: await runtime.catalog.getGeneratedAgentContextExternalSources(),
+    includeUserExtensions: true,
+  });
+}
+
+async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command: string) {
+  return runSvvyxExtensionsCommand({
+    agentSettingsStore: runtime.agentSettingsStore,
+    command,
+    envSecretStore: extensionEnvSecretStore,
+    extensionsRoot: runtime.catalog.getExtensionsRoot(),
+    structuredSessionStore: runtime.catalog.getStructuredSessionStore(),
+  });
+}
+
 type DevBrowserToolsRecorder = {
   recordError: (
     kind: "app" | "rpc",
@@ -788,25 +812,17 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       getExtensionsInventory: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
-        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       revertExtensionChange: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         if (!/^chg_[a-z0-9]+_[a-f0-9-]+$/i.test(input.changeId)) {
           throw new Error(`Invalid extension change id: ${input.changeId}`);
         }
-        const result = await runSvvyxExtensionsCommand({
-          agentSettingsStore: runtime.agentSettingsStore,
-          command: `svvyx extensions revert ${input.changeId} --json`,
-          envSecretStore: extensionEnvSecretStore,
-        });
+        const result = await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions revert ${input.changeId} --json`,
+        );
         const output = result.output as {
           changeId?: unknown;
           result?: {
@@ -841,14 +857,65 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           autoBuildStatus,
           recordedConversationEvent,
         });
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      saveExtensionSnapshot: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const name = input.name.trim();
+        if (!name) {
+          throw new Error("Snapshot name cannot be empty.");
+        }
+        const result = await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions snapshots save --name ${quoteSvvyxCommandArg(name)} --json`,
+        );
+        const snapshotId =
+          typeof (result.output as { snapshot?: { id?: unknown } }).snapshot?.id === "string"
+            ? (result.output as { snapshot: { id: string } }).snapshot.id
+            : null;
+        runtime.appLog.info("settings", "Extension snapshot saved from UI.", {
+          snapshotId,
+          name,
         });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      renameExtensionSnapshot: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const name = input.name.trim();
+        if (!name) {
+          throw new Error("Snapshot name cannot be empty.");
+        }
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions snapshots rename ${quoteSvvyxCommandArg(input.snapshotId)} --name ${quoteSvvyxCommandArg(name)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension snapshot renamed from UI.", {
+          snapshotId: input.snapshotId,
+          name,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      deleteExtensionSnapshot: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions snapshots delete ${quoteSvvyxCommandArg(input.snapshotId)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension snapshot deleted from UI.", {
+          snapshotId: input.snapshotId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      loadExtensionSnapshot: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions snapshots load ${quoteSvvyxCommandArg(input.snapshotId)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension snapshot loaded from UI.", {
+          snapshotId: input.snapshotId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       setExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);

@@ -589,6 +589,10 @@ export class WorkspaceSessionCatalog {
     return this.generatedAgentContextStore.getState();
   }
 
+  getStructuredSessionStore(): StructuredSessionStateStore {
+    return this.structuredSessionStore;
+  }
+
   getDefaultGeneratedAgentContextState(): GeneratedAgentContextState {
     return createDefaultGeneratedAgentContextState();
   }

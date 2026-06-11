@@ -50,6 +50,7 @@ import {
 import type {
   ExtensionChangeCardReadModel,
   ExtensionInventoryItemReadModel,
+  ExtensionSnapshotReadModel,
   ExtensionUsageReadiness,
   ExtensionsInventoryReadModel,
 } from "../shared/workspace-contract";
@@ -507,6 +508,7 @@ export async function readBuiltinExtensionsInventory(
     reversibleChanges: readExtensionChangeCards(input.extensionsRoot, {
       includeUserExtensions: input.includeUserExtensions === true,
     }),
+    snapshots: listExtensionSnapshotSummaries(input.extensionsRoot),
   };
 }
 
@@ -2314,7 +2316,7 @@ async function runSnapshotsCommand(
     return {
       output: {
         ok: true,
-        snapshots: listSnapshotSummaries(root),
+        snapshots: listExtensionSnapshotSummaries(root),
       },
       commandFacts: {
         extensionSnapshotsListed: true,
@@ -2412,10 +2414,13 @@ type ExtensionSnapshotSummary = {
   status: "available";
 };
 
-function listSnapshotSummaries(root: string): ExtensionSnapshotSummary[] {
-  const snapshotsRoot = join(root, "snapshots");
+export function listExtensionSnapshotSummaries(
+  root: string | undefined,
+): ExtensionSnapshotReadModel[] {
+  const resolvedRoot = root ?? defaultExtensionsRoot();
+  const snapshotsRoot = join(resolvedRoot, "snapshots");
   return listImmediateDirectories(snapshotsRoot)
-    .map((id) => readSnapshotSummary(root, id))
+    .map((id) => readSnapshotSummary(resolvedRoot, id))
     .toSorted(
       (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );

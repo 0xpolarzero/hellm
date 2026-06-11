@@ -257,9 +257,18 @@ export interface ExtensionChangeCardReadModel {
   reversible: true;
 }
 
+export interface ExtensionSnapshotReadModel {
+  id: string;
+  name: string;
+  extensionCount: number;
+  hasSecretState: boolean;
+  status: "available";
+}
+
 export interface ExtensionsInventoryReadModel {
   extensions: ExtensionInventoryItemReadModel[];
   reversibleChanges: ExtensionChangeCardReadModel[];
+  snapshots: ExtensionSnapshotReadModel[];
 }
 
 export interface RevertExtensionChangeRequest extends WorkspaceScopedRequest {
@@ -270,6 +279,23 @@ export interface RevertExtensionChangeRequest extends WorkspaceScopedRequest {
     surfacePiSessionId: string;
     threadId?: string;
   };
+}
+
+export interface SaveExtensionSnapshotRequest extends WorkspaceScopedRequest {
+  name: string;
+}
+
+export interface RenameExtensionSnapshotRequest extends WorkspaceScopedRequest {
+  snapshotId: string;
+  name: string;
+}
+
+export interface DeleteExtensionSnapshotRequest extends WorkspaceScopedRequest {
+  snapshotId: string;
+}
+
+export interface LoadExtensionSnapshotRequest extends WorkspaceScopedRequest {
+  snapshotId: string;
 }
 
 export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
@@ -1528,6 +1554,22 @@ export interface ChatRPCSchema {
       };
       revertExtensionChange: {
         params: RevertExtensionChangeRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      saveExtensionSnapshot: {
+        params: SaveExtensionSnapshotRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      renameExtensionSnapshot: {
+        params: RenameExtensionSnapshotRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      deleteExtensionSnapshot: {
+        params: DeleteExtensionSnapshotRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      loadExtensionSnapshot: {
+        params: LoadExtensionSnapshotRequest;
         response: ExtensionsInventoryReadModel;
       };
       setExtensionEnvSecret: {

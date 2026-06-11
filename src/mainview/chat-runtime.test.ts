@@ -940,7 +940,11 @@ function createFakeRpc(input: {
             },
           ],
         }),
-        getExtensionsInventory: async () => ({ extensions: [], reversibleChanges: [] }),
+        getExtensionsInventory: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
         getAppPreferences: async () => {
           return (
             await harness.client.request.getAgentSettings({
@@ -948,11 +952,51 @@ function createFakeRpc(input: {
             })
           ).appPreferences;
         },
-        revertExtensionChange: async () => ({ extensions: [], reversibleChanges: [] }),
-        setExtensionEnvSecret: async () => ({ extensions: [], reversibleChanges: [] }),
-        removeExtensionEnvSecret: async () => ({ extensions: [], reversibleChanges: [] }),
-        setExtensionEnvOverride: async () => ({ extensions: [], reversibleChanges: [] }),
-        removeExtensionEnvOverride: async () => ({ extensions: [], reversibleChanges: [] }),
+        revertExtensionChange: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        saveExtensionSnapshot: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        renameExtensionSnapshot: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        deleteExtensionSnapshot: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        loadExtensionSnapshot: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        setExtensionEnvSecret: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        removeExtensionEnvSecret: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        setExtensionEnvOverride: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        removeExtensionEnvOverride: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
         getGeneratedAgentContext: async () => structuredClone(generatedAgentContextState),
         getGeneratedAgentContextDefaults: async () => structuredClone(generatedAgentContextState),
         updateGeneratedAgentContext: async ({ state }) => {

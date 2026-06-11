@@ -2,6 +2,7 @@
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import FolderGit2Icon from "@lucide/svelte/icons/folder-git-2";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import { onMount, tick } from "svelte";
 
   export type CompactSelectOption = {
@@ -18,7 +19,7 @@
     triggerClass?: string;
     menuClass?: string;
     optionClass?: string;
-    leadingIcon?: "branch" | "workspace";
+    leadingIcon?: "branch" | "history" | "workspace";
     textTransform?: "none" | "lowercase";
     placement?: "above" | "below";
     open?: boolean;
@@ -174,6 +175,8 @@
   >
     {#if leadingIcon === "branch"}
       <GitBranchIcon size={12} aria-hidden="true" />
+    {:else if leadingIcon === "history"}
+      <HistoryIcon size={12} aria-hidden="true" />
     {:else if leadingIcon === "workspace"}
       <FolderGit2Icon size={12} aria-hidden="true" />
     {/if}
@@ -264,6 +267,7 @@
   }
 
   .compact-select-trigger.ghost-select,
+  .compact-select-trigger.history-trigger,
   .compact-select-trigger.workspace-path {
     max-width: 100%;
     min-height: 1.45rem;
@@ -284,6 +288,12 @@
     font-weight: var(--compact-control-font-weight);
   }
 
+  .compact-select-trigger.history-trigger {
+    color: var(--ui-text-tertiary);
+    font-family: var(--compact-control-font-family);
+    font-weight: var(--compact-control-font-weight);
+  }
+
   .compact-select-trigger.ghost-select.thinking-field {
     max-width: 7rem;
     color: var(--ui-text-tertiary);
@@ -294,6 +304,8 @@
 
   .compact-select-trigger.ghost-select:hover,
   .compact-select-trigger.ghost-select:focus-visible,
+  .compact-select-trigger.history-trigger:hover,
+  .compact-select-trigger.history-trigger:focus-visible,
   .compact-select-trigger.workspace-path:hover,
   .compact-select-trigger.workspace-path:focus-visible {
     outline: none;
@@ -302,11 +314,13 @@
   }
 
   .compact-select-trigger.ghost-select:focus-visible,
+  .compact-select-trigger.history-trigger:focus-visible,
   .compact-select-trigger.workspace-path:focus-visible {
     box-shadow: var(--ui-focus-ring);
   }
 
   .compact-select-trigger.ghost-select:disabled,
+  .compact-select-trigger.history-trigger:disabled,
   .compact-select-trigger.workspace-path:disabled {
     cursor: default;
     opacity: 0.78;
@@ -371,10 +385,24 @@
     overflow: auto;
   }
 
+  .compact-select-menu.history-menu {
+    min-width: 18rem;
+    width: max-content;
+    max-width: min(28rem, calc(100vw - 2rem));
+    max-height: 18rem;
+    overflow: auto;
+  }
+
   .compact-select-option.branch-option {
     font-family: var(--compact-control-font-family);
     font-size: var(--text-xs);
     font-weight: var(--compact-control-font-weight);
+  }
+
+  .compact-select-option.history-option {
+    justify-content: flex-start;
+    min-height: 1.9rem;
+    max-width: 100%;
   }
 
   .compact-select-option {
