@@ -1963,7 +1963,14 @@
 
   .extension-card-main {
     display: grid;
-    grid-template-columns: 1.1rem 1.35rem 1.55rem minmax(12rem, 1.45fr) minmax(10rem, 0.8fr) minmax(18rem, 1.1fr) auto;
+    grid-template-columns:
+      1.1rem
+      1.35rem
+      1.55rem
+      minmax(9rem, 1fr)
+      minmax(7rem, max-content)
+      minmax(13.25rem, max-content)
+      auto;
     align-items: center;
     gap: 0.4rem;
     min-width: 0;
@@ -2116,16 +2123,15 @@
 
   .extension-default-controls {
     display: grid;
-    grid-template-columns: repeat(2, minmax(8.5rem, 1fr));
+    grid-template-columns: repeat(2, minmax(6.3rem, max-content));
     gap: 0.34rem;
     min-width: 0;
   }
 
   .extension-default-control {
     display: grid;
-    grid-template-columns: minmax(4.8rem, 1fr) auto;
-    align-items: center;
-    gap: 0.28rem;
+    align-items: start;
+    gap: 0.12rem;
     min-width: 0;
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);
