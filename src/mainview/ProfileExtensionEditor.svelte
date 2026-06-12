@@ -25,6 +25,7 @@
     items: ExtensionUsageControlItem[];
     loading?: boolean;
     preview: AgentContextPreviewResponse | null;
+    previewError?: string | null;
     onOpenExtension: (extensionId: string) => void;
     onOrderChange: (extensionIds: string[]) => void | Promise<void>;
     onResetOrder: () => void | Promise<void>;
@@ -44,6 +45,7 @@
     items,
     loading = false,
     preview,
+    previewError = null,
     onOpenExtension,
     onOrderChange,
     onResetOrder,
@@ -314,6 +316,9 @@
     {#if preview}
       <span class="profile-extension-total">{formatPromptTokenCount(preview.tokenCount.tokens)} total</span>
     {/if}
+    {#if previewError}
+      <span class="profile-extension-preview-error" title={previewError}>Preview failed</span>
+    {/if}
   </div>
 
   <div class="profile-extension-list" bind:this={listElement}>
@@ -324,7 +329,7 @@
         class={`profile-extension-row ${item.explicit ? "is-override" : ""} ${item.state === "unavailable" ? "is-off" : ""} ${item.id === draggedExtensionId ? "dragging" : ""}`.trim()}
         data-extension-id={item.id}
         data-draggable={item.state !== "unavailable" ? "true" : "false"}
-        animate:flip={{ duration: 150 }}
+        animate:flip={{ duration: draggedExtensionId ? 150 : 0 }}
       >
         <button
           type="button"
@@ -438,6 +443,17 @@
     min-width: 0;
     overflow: hidden;
     color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .profile-extension-preview-error {
+    flex: 0 0 auto;
+    overflow: hidden;
+    color: var(--ui-danger);
     font-size: var(--text-xs);
     font-weight: 600;
     line-height: 1.3;

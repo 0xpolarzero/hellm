@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
 import {
   SMITHERS_CORE_INSTRUCTIONS,
@@ -171,6 +171,13 @@ const EXTENSION_LOADING_CONTEXT_BODY = [
   "Loaded native extension: Extension Loading.",
   "",
   "Use list_extensions to inspect the current actor's loaded and available extensions. Use load_extension only to load an available ready extension into this actor session.",
+].join("\n");
+
+const EXTENSION_MANAGING_CONTEXT_BODY = [
+  "Loaded native extension: Extension Managing.",
+  "",
+  "Use extension-management commands only for app-owned extension source, build, snapshot, readiness, and inspection work.",
+  "Do not treat Extension Managing as actor-local runtime capability loading; use Extension Loading for actor-local list_extensions and load_extension work.",
 ].join("\n");
 
 const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
@@ -662,6 +669,9 @@ function buildLoadedExtensionPromptSections(input: {
   if (extensionId === "extension-loading") {
     return [EXTENSION_LOADING_CONTEXT_BODY];
   }
+  if (extensionId === "extension-managing") {
+    return [EXTENSION_MANAGING_CONTEXT_BODY];
+  }
   if (extensionId === "request-user-input") {
     return [buildRequestUserInputContextBody(options.requestUserInputSettings)];
   }
@@ -690,7 +700,7 @@ function buildLoadedExtensionPromptSections(input: {
   if (extensionId === "web") {
     return [buildWebPromptContext(actor)];
   }
-  if (extensionId === "workflows" && actor === "handler") {
+  if (extensionId === "workflows") {
     return [WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION, HANDLER_WORKFLOW_AUTHORING_APPENDIX];
   }
   if (extensionId === "execute-typescript") {
@@ -703,6 +713,9 @@ function buildLoadedExtensionPromptSections(input: {
     ];
   }
   if (input.pushLoadedInstructionSection(extensionId)) return [];
+  const record = getExtensionRecord(extensionId);
+  const section = record ? buildLoadedInstructionSection(record) : null;
+  if (section) return [section];
   return [];
 }
 
@@ -748,24 +761,66 @@ function buildLoadedInstructionSections(
   const recordsById = new Map(loadedExtensionRecords.map((record) => [record.id, record]));
   const sections = new Map<string, string>();
   for (const id of loadedExtensionIds) {
+    if (hasBundledLoadedPromptSection(id)) continue;
     const record = recordsById.get(id);
     if (!record) continue;
-    const bypassedFiles = new Set(
-      (record.instructionFiles ?? []).filter((file) => file.bypassed).map((file) => file.file),
-    );
-    const fileSections = record.instructionSourceFiles
-      .filter((file) => isAbsolute(file))
-      .filter((file) => !bypassedFiles.has(file) && !bypassedFiles.has(basename(file)))
-      .map((file) => {
-        const content = readFileSync(file, "utf8").trim();
-        if (!content) return null;
-        return [`Instruction file: ${basename(file)}`, "", content].join("\n");
-      })
-      .filter((section): section is string => Boolean(section));
-    if (fileSections.length === 0) continue;
-    sections.set(record.id, [`Loaded extension: ${record.title}.`, ...fileSections].join("\n\n"));
+    const section = buildLoadedInstructionSection(record);
+    if (section) sections.set(record.id, section);
   }
   return sections;
+}
+
+function buildLoadedInstructionSection(record: ExtensionRecord): string | null {
+  if (
+    isBasePromptExtensionId(record.id) &&
+    record.instructionSourceFiles.length === 1 &&
+    record.instructionSourceFiles[0]?.endsWith("src/bun/default-system-prompt.ts")
+  ) {
+    return null;
+  }
+  const bypassedFiles = new Set(
+    (record.instructionFiles ?? []).filter((file) => file.bypassed).map((file) => file.file),
+  );
+  const fileSections = record.instructionSourceFiles
+    .map((file) => (isAbsolute(file) ? file : resolve(file)))
+    .filter((file) => !bypassedFiles.has(file) && !bypassedFiles.has(basename(file)))
+    .map((file) => {
+      const content = readFileSync(file, "utf8").trim();
+      if (!content) return null;
+      return [`Instruction file: ${basename(file)}`, "", content].join("\n");
+    })
+    .filter((section): section is string => Boolean(section));
+  if (fileSections.length === 0) return null;
+  return [`Loaded extension: ${record.title}.`, ...fileSections].join("\n\n");
+}
+
+function isBasePromptExtensionId(id: string): boolean {
+  return (
+    id === "base-common" ||
+    id === "base-orchestrator" ||
+    id === "base-handler" ||
+    id === "base-workflow-task"
+  );
+}
+
+function hasBundledLoadedPromptSection(id: string): boolean {
+  return (
+    id === "cx" ||
+    id === "shell" ||
+    id === "apply-patch" ||
+    id === "git" ||
+    id === "github" ||
+    id === "extension-loading" ||
+    id === "extension-managing" ||
+    id === "request-user-input" ||
+    id === "thread-orchestration" ||
+    id === "thread-handling" ||
+    id === "artifacts" ||
+    id === "smithers" ||
+    id === "web" ||
+    id === "workflows" ||
+    id === "execute-typescript"
+  );
 }
 
 function getLibraryInstructionBody(
@@ -827,7 +882,7 @@ function buildGeneratedEntriesFromExtensionState(
       content: SMITHERS_SVVY_BOUNDARY_APPENDIX,
     });
   }
-  if (loaded.has("workflows") && actor === "handler") {
+  if (loaded.has("workflows")) {
     entries.push({
       id: "workflow-authoring-contract",
       title: "Workflow Authoring Contract",

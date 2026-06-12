@@ -58,6 +58,7 @@ export interface SvvyAppLaunchOptions {
   }) => Promise<void> | void;
   env?: Record<string, string | undefined>;
   homeDir?: string;
+  openInitialWorkspace?: boolean;
   workspaceDir?: string;
 }
 
@@ -166,7 +167,7 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
   const preparedHomeDirs = new Set<string>();
   const env = {
     ...options.env,
-    SVVY_WORKSPACE_CWD: workspaceDir,
+    ...(options.openInitialWorkspace === false ? {} : { SVVY_WORKSPACE_CWD: workspaceDir }),
   };
 
   return {
@@ -198,22 +199,31 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
 
 async function waitForWorkspaceChrome(page: Page): Promise<void> {
   const deadline = Date.now() + 40_000;
+  let lastDiagnostics = "";
 
   while (Date.now() < deadline) {
     try {
-      if (await page.getByRole("button", { name: "Open settings" }).isVisible()) {
-        if (
-          (await page.locator('[data-testid="dockview-workbench"]').isVisible()) &&
-          (await page
-            .locator(
-              '.dockview-chat-panel[data-testid="workspace-pane"], [data-testid="open-workspace-panel"]',
-            )
-            .first()
-            .isVisible())
-        ) {
-          return;
-        }
+      const settingsVisible = await page.getByRole("button", { name: "Open settings" }).isVisible();
+      const workbenchVisible = await page.locator('[data-testid="dockview-workbench"]').isVisible();
+      const paneVisible = await page
+        .locator(
+          '.dockview-chat-panel[data-testid="workspace-pane"], [data-testid="open-workspace-panel"]',
+        )
+        .first()
+        .isVisible();
+      if (settingsVisible && workbenchVisible && paneVisible) {
+        return;
       }
+      const bodyText = ((await page.locator("body").textContent()) ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 500);
+      lastDiagnostics = JSON.stringify({
+        bodyText,
+        paneVisible,
+        settingsVisible,
+        workbenchVisible,
+      });
 
       const startupFailed = page.getByText("Startup failed").first();
       if (await startupFailed.isVisible()) {
@@ -231,7 +241,7 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
     await Bun.sleep(100);
   }
 
-  throw new Error("Timed out waiting for svvy workspace chrome.");
+  throw new Error(`Timed out waiting for svvy workspace chrome. Last state: ${lastDiagnostics}`);
 }
 
 function isTransientBridgeBootstrapError(error: unknown): boolean {

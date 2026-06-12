@@ -575,6 +575,20 @@ describe("default workspace renderer shell", () => {
     expect(profileExtensionEditorSource).toContain("onResetSelection");
     expect(profileExtensionEditorSource).toContain("onResetOrder");
     expect(profileExtensionEditorSource).toContain("onOpenExtension(item.id)");
+    expect(profileExtensionEditorSource).toContain("previewError?: string | null");
+    expect(profileExtensionEditorSource).toContain("profile-extension-preview-error");
+    expect(agentsPaneSource).toContain("contextPreviewErrorsByProfileId");
+    expect(agentsPaneSource).toContain("activeContextPreviewRequests");
+    expect(agentsPaneSource).toContain("activeContextPreviewRequests.get(key) !== requestId");
+    expect(agentsPaneSource).toContain(
+      "contextPreviewErrorsByProfileId = {\n        ...contextPreviewErrorsByProfileId,",
+    );
+    expect(agentsPaneSource).toContain("if (!expandedProfileIds.has(profileId)");
+    expect(agentsPaneSource).toContain("animate:flip={{ duration: draggedProfileId ? 170 : 0 }}");
+    expect(agentsPaneSource).not.toContain("transform 170ms cubic-bezier");
+    expect(agentsPaneSource).not.toContain(
+      'errorMessage =\n        error instanceof Error ? error.message : "Unable to load generated context preview."',
+    );
     expect(profileExtensionEditorSource).not.toContain("Generated context preview");
     expect(profileExtensionEditorSource).not.toContain("Actor:");
     expect(profileExtensionEditorSource).not.toContain("profileName");

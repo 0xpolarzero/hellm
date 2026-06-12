@@ -26,7 +26,7 @@ import {
   SMITHERS_MEMORY_FRAGMENT,
   SMITHERS_SVVY_BOUNDARY_APPENDIX,
 } from "./smithers-runtime/workflow-authoring-guide";
-import type { ExtensionRecord } from "../shared/extensions";
+import { getExtensionRecord, type ExtensionRecord } from "../shared/extensions";
 
 describe("default system prompt", () => {
   it("puts core coding-agent operating policy into every coding surface", () => {
@@ -104,6 +104,33 @@ describe("default system prompt", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("loads builtin extension instruction text from the extension record without actor gating", () => {
+    const extensionManaging = getExtensionRecord("extension-managing");
+    const workflows = getExtensionRecord("workflows");
+    expect(extensionManaging).not.toBeNull();
+    expect(workflows).not.toBeNull();
+
+    const extensionManagingPrompt = buildSystemPrompt("orchestrator", {
+      loadedExtensionIds: ["extension-managing"],
+      loadedExtensionRecords: [extensionManaging!],
+    });
+    expect(extensionManagingPrompt).toContain("Loaded native extension: Extension Managing.");
+    expect(extensionManagingPrompt).toContain("app-owned extension source");
+
+    const orchestratorWorkflowsPrompt = buildSystemPrompt("orchestrator", {
+      loadedExtensionIds: ["workflows"],
+      loadedExtensionRecords: [workflows!],
+    });
+    const handlerWorkflowsPrompt = buildSystemPrompt("handler", {
+      loadedExtensionIds: ["workflows"],
+      loadedExtensionRecords: [workflows!],
+    });
+    expect(orchestratorWorkflowsPrompt).toContain(WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim());
+    expect(orchestratorWorkflowsPrompt).toContain(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
+    expect(handlerWorkflowsPrompt).toContain(WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim());
+    expect(handlerWorkflowsPrompt).toContain(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
   });
 
   it("preserves resolved extension order in the generated prompt", () => {

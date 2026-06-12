@@ -369,14 +369,17 @@
 
   function inspectCommandFromTranscript(commandId: string): void {
     if (!controller) return;
-    void runtime.openSurface(
-      {
-        workspaceSessionId: controller.target.workspaceSessionId,
-        surface: "command",
-        commandId,
-      },
-      transcriptSplitTarget(),
-    );
+    const workspaceSessionId = controller.target.workspaceSessionId;
+    setTimeout(() => {
+      void runtime.openSurface(
+        {
+          workspaceSessionId,
+          surface: "command",
+          commandId,
+        },
+        transcriptSplitTarget(),
+      );
+    }, 0);
   }
 
   function openHandlerThreadFromTranscript(threadId: string): void {

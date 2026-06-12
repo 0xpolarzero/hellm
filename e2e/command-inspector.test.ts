@@ -242,7 +242,7 @@ async function assertCommandInspectorSurface(page: SvvyApp["page"]): Promise<voi
   const rollupText = (await rollupCard.textContent()) ?? "";
   expect(rollupText).not.toContain("Loaded docs/prd.md.");
 
-  await rollupCard.locator(".reference-workflow-card").click({ force: true });
+  await rollupCard.getByRole("button", { name: /Inspect/ }).click({ force: true });
   const inspector = page.locator(".related-inspector-pane").filter({
     has: page.getByText("Command", { exact: true }),
   });

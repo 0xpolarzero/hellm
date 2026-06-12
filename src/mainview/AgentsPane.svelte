@@ -65,8 +65,11 @@
     runtime.extensionsInventorySnapshot?.extensions ?? [],
   );
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
+  let contextPreviewErrorsByProfileId = $state<Record<string, string>>({});
   let workflowAgentInstructionDrafts = $state<Record<string, string>>({});
   let loadingContextPreviewKey = $state<string | null>(null);
+  let contextPreviewRequestSequence = 0;
+  const activeContextPreviewRequests = new Map<string, number>();
   let orchestratorRowsElement = $state<HTMLElement | null>(null);
   let profileDrag = $state<{
     profileId: string;
@@ -221,23 +224,37 @@
   async function loadAgentContextPreview(
     profileId: AgentProfileId | WorkflowAgentKey,
     actor: AgentContextActor,
+    options: { force?: boolean } = {},
   ) {
     const key = contextPreviewKey(actor, profileId);
-    if (contextPreviewByProfileId[key]) return;
+    if (!options.force && contextPreviewByProfileId[key]) return;
+    const requestId = ++contextPreviewRequestSequence;
+    activeContextPreviewRequests.set(key, requestId);
     loadingContextPreviewKey = key;
-    errorMessage = null;
+    const { [key]: _clearedPreviewError, ...remainingPreviewErrors } =
+      contextPreviewErrorsByProfileId;
+    contextPreviewErrorsByProfileId = remainingPreviewErrors;
     try {
       const preview = await runtime.getAgentContextPreview({ profileId, actor });
+      if (activeContextPreviewRequests.get(key) !== requestId) return;
       contextPreviewByProfileId = {
         ...contextPreviewByProfileId,
         [key]: preview,
       };
     } catch (error) {
-      errorMessage =
-        error instanceof Error ? error.message : "Unable to load generated context preview.";
+      if (activeContextPreviewRequests.get(key) !== requestId || !expandedProfileIds.has(profileId)) {
+        return;
+      }
+      contextPreviewErrorsByProfileId = {
+        ...contextPreviewErrorsByProfileId,
+        [key]: error instanceof Error ? error.message : "Unable to load generated context preview.",
+      };
     } finally {
-      loadingContextPreviewKey =
-        loadingContextPreviewKey === key ? null : loadingContextPreviewKey;
+      if (activeContextPreviewRequests.get(key) === requestId) {
+        activeContextPreviewRequests.delete(key);
+        loadingContextPreviewKey =
+          loadingContextPreviewKey === key ? null : loadingContextPreviewKey;
+      }
     }
   }
 
@@ -756,6 +773,7 @@
   function toggleExpanded(profileId: string, actor: AgentContextActor) {
     if (expandedProfileIds.has(profileId)) {
       expandedProfileIds.delete(profileId);
+      activeContextPreviewRequests.delete(contextPreviewKey(actor, profileId));
     } else {
       expandedProfileIds.add(profileId);
       void loadAgentContextPreview(profileId, actor);
@@ -777,12 +795,12 @@
 
   function refreshAgentContextPreview(profileId: string, actor: AgentContextActor) {
     const key = contextPreviewKey(actor, profileId);
-    if (contextPreviewByProfileId[key]) {
+    if (!expandedProfileIds.has(profileId) && contextPreviewByProfileId[key]) {
       const { [key]: _discarded, ...rest } = contextPreviewByProfileId;
       contextPreviewByProfileId = rest;
     }
     if (expandedProfileIds.has(profileId)) {
-      void loadAgentContextPreview(profileId, actor);
+      void loadAgentContextPreview(profileId, actor, { force: true });
     }
   }
 
@@ -879,7 +897,7 @@
             data-profile-id={profile.id}
             data-reorderable={profile.locked ? "false" : "true"}
             data-targeted={targetAgentProfileId === profile.id ? "true" : undefined}
-            animate:flip={{ duration: 170 }}
+            animate:flip={{ duration: draggedProfileId ? 170 : 0 }}
           >
             {@render profileRowContent(profile, "orchestrator", expanded)}
           </article>
@@ -997,6 +1015,7 @@
           usage: agent.extensionUsage,
         })}
         loading={loadingContextPreviewKey === previewKey}
+        previewError={contextPreviewErrorsByProfileId[previewKey] ?? null}
         {preview}
         onOpenExtension={openExtension}
         onOrderChange={(extensionOrder) => setWorkflowAgentExtensionOrder(agent, extensionOrder)}
@@ -1051,6 +1070,7 @@
         })}
         loading={loadingContextPreviewKey === previewKey}
         preview={contextPreviewByProfileId[previewKey] ?? null}
+        previewError={contextPreviewErrorsByProfileId[previewKey] ?? null}
         onOpenExtension={openExtension}
         onOrderChange={(extensionOrder) => setProfileExtensionOrder(profile, actor, extensionOrder)}
         onResetOrder={() => resetProfileExtensionOrder(profile, actor)}
@@ -1200,7 +1220,6 @@
     background: color-mix(in oklab, var(--ui-surface) 82%, transparent);
     transition:
       opacity 150ms cubic-bezier(0.19, 1, 0.22, 1),
-      transform 170ms cubic-bezier(0.19, 1, 0.22, 1),
       border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
       background-color 150ms cubic-bezier(0.19, 1, 0.22, 1);
   }
