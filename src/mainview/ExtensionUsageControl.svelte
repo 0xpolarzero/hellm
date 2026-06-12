@@ -157,7 +157,7 @@
   function categoryLabel(category: ExtensionCategory): string {
     if (category === "external_instruction") return "External";
     if (category === "user") return "User";
-    return "Builtin";
+    return "builtin";
   }
 
   function stateTooltipDetail(item: ExtensionUsageControlItem, state: ExtensionUsageState): string {

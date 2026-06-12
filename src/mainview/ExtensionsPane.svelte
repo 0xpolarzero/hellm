@@ -239,7 +239,7 @@
   }
 
   function extensionKindTooltip(kind: ExtensionInterfaceKind): string {
-    if (kind === "native_tool") return "App-native tools expose built-in runtime capabilities.";
+    if (kind === "native_tool") return "App-native tools expose builtin runtime capabilities.";
     if (kind === "svvyx") return "svvyx extensions expose app-owned Incur CLI commands.";
     return "Prompt extensions add instruction text and loading hints.";
   }
@@ -615,11 +615,11 @@
   function categoryLabel(category: string): string {
     if (category === "external_instruction") return "External Instructions";
     if (category === "user") return "User";
-    return "Builtin";
+    return "builtin";
   }
 
   function sourceGroupLabel(group: string): string {
-    if (group === "builtin_global_root") return "Builtin global root";
+    if (group === "builtin_global_root") return "builtin global root";
     if (group === "custom_global_root") return "Custom global root";
     return "Workspace chain";
   }
@@ -1443,7 +1443,7 @@
                 <RotateCcwIcon size={13} aria-hidden="true" />
               </button>
             </Tooltip>
-            <Tooltip label={extension.category === "builtin" ? "Builtin extensions cannot be deleted" : "Delete extension"}>
+            <Tooltip label={extension.category === "builtin" ? "builtin extensions cannot be deleted" : "Delete extension"}>
               <button
                 type="button"
                 class="extension-icon-action danger"

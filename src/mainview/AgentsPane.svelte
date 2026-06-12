@@ -915,7 +915,7 @@
     <div class="agent-category">
       <div class="agent-category-heading">
         <span>Special Profiles</span>
-        <small>built in</small>
+        <small>builtin</small>
       </div>
       <div class="agent-rows">
         {#if threadHandler}
