@@ -451,6 +451,10 @@ describe("default workspace renderer shell", () => {
       new URL("./ExtensionUsageControl.svelte", import.meta.url),
       "utf8",
     );
+    const extensionStateButtonsSource = await readFile(
+      new URL("./ExtensionStateButtons.svelte", import.meta.url),
+      "utf8",
+    );
     const profileExtensionEditorSource = await readFile(
       new URL("./ProfileExtensionEditor.svelte", import.meta.url),
       "utf8",
@@ -495,26 +499,24 @@ describe("default workspace renderer shell", () => {
     expect(extensionUsageControlSource).toContain('label: "Available"');
     expect(extensionUsageControlSource).toContain('label: "Off"');
     expect(extensionUsageControlSource).toContain(
-      'import CheckCircleIcon from "@lucide/svelte/icons/check-circle";',
-    );
-    expect(extensionUsageControlSource).toContain(
-      'import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";',
-    );
-    expect(extensionUsageControlSource).toContain(
-      'import BanIcon from "@lucide/svelte/icons/ban";',
+      'import ExtensionStateButtons from "./ExtensionStateButtons.svelte";',
     );
     expect(extensionUsageControlSource).toContain(
       'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
     );
-    expect(extensionUsageControlSource).toContain("<CheckCircleIcon");
-    expect(extensionUsageControlSource).toContain("<CircleDashedIcon");
-    expect(extensionUsageControlSource).toContain("<BanIcon");
+    expect(extensionUsageControlSource).toContain("<ExtensionStateButtons");
+    expect(extensionUsageControlSource).toContain("labelFor={stateLabel}");
+    expect(extensionUsageControlSource).toContain(
+      "detailFor={(state) => stateTooltipDetail(item, state)}",
+    );
+    expect(extensionUsageControlSource).not.toContain("<CheckCircleIcon");
+    expect(extensionUsageControlSource).not.toContain("<CircleDashedIcon");
+    expect(extensionUsageControlSource).not.toContain("<BanIcon");
     expect(extensionUsageControlSource).toContain("<ExternalLinkIcon");
     expect(extensionUsageControlSource).toContain("Open extension");
     expect(extensionUsageControlSource).toContain("Open ${item.title} in Extensions");
     expect(extensionUsageControlSource).toContain('const triggerLabel = "Extensions"');
     expect(extensionUsageControlSource).toContain("{overrideCount} overrides");
-    expect(extensionUsageControlSource).toContain("grid-template-columns: repeat(3, 1.54rem)");
     expect(extensionUsageControlSource).toContain(
       "grid-template-columns: minmax(7rem, 1fr) 4.4rem 1.42rem auto",
     );
@@ -530,14 +532,16 @@ describe("default workspace renderer shell", () => {
     );
     expect(extensionUsageControlSource).toContain("background-size: 100% 2px;");
     expect(extensionUsageControlSource).toContain("pending: false");
-    expect(extensionUsageControlSource).toContain("const unavailable =");
-    expect(extensionUsageControlSource).toContain("disabled={unavailable}");
-    expect(extensionUsageControlSource).toContain(".extension-state-button.active:disabled");
+    expect(extensionUsageControlSource).toContain("disabled={disabled || !item.configurable}");
+    expect(extensionUsageControlSource).toContain(
+      "isAllowed={(state) => item.allowedStates[state]}",
+    );
+    expect(extensionStateButtonsSource).toContain(".extension-state-button.active:disabled");
     expect(extensionUsageControlSource).not.toContain("pendingKey === optionKey");
     expect(extensionUsageControlSource).not.toContain("is-saving");
     expect(extensionUsageControlSource).not.toContain("aria-busy");
     expect(extensionUsageControlSource).toContain("background: transparent;");
-    expect(extensionUsageControlSource).toContain(
+    expect(extensionStateButtonsSource).toContain(
       "background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));",
     );
     expect(extensionUsageControlSource).not.toContain("override-active");
@@ -785,7 +789,7 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.getAgentContextPreview");
     expect(extensionsPaneSource).toContain("targetExtensionId");
     expect(extensionsPaneSource).toContain("data-extension-id={extension.id}");
-    expect(extensionsPaneSource).toContain("target-extension-row");
+    expect(extensionsPaneSource).toContain("target={extension.id === targetExtensionId}");
     expect(extensionsPaneSource).not.toContain(
       "TODO: expanded profile prompt, extension, and generated contract preview.",
     );
@@ -809,12 +813,16 @@ describe("default workspace renderer shell", () => {
       new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
       "utf8",
     );
-    const compactSelectSource = await readFile(
-      new URL("./ui/CompactSelect.svelte", import.meta.url),
-      "utf8",
-    );
     const compactComboboxSource = await readFile(
       new URL("./ui/CompactCombobox.svelte", import.meta.url),
+      "utf8",
+    );
+    const extensionListRowSource = await readFile(
+      new URL("./ExtensionListRow.svelte", import.meta.url),
+      "utf8",
+    );
+    const extensionStateButtonsSource = await readFile(
+      new URL("./ExtensionStateButtons.svelte", import.meta.url),
       "utf8",
     );
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
@@ -839,6 +847,8 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain("removeExtensionEnvSecret");
     expect(contractSource).toContain("setExtensionEnvOverride");
     expect(contractSource).toContain("removeExtensionEnvOverride");
+    expect(contractSource).toContain("SetExtensionTypescriptApiRequest");
+    expect(contractSource).toContain("setExtensionTypescriptApi");
     expect(runtimeSource).toContain("getExtensionsInventory");
     expect(runtimeSource).toContain("getAppPreferences");
     expect(runtimeSource).toContain("updateAppPreferences");
@@ -851,6 +861,7 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("removeExtensionEnvSecret");
     expect(runtimeSource).toContain("setExtensionEnvOverride");
     expect(runtimeSource).toContain("removeExtensionEnvOverride");
+    expect(runtimeSource).toContain("setExtensionTypescriptApi");
     expect(extensionsPaneSource).toContain("runtime.getExtensionsInventory");
     expect(extensionsPaneSource).toContain("External Instructions");
     expect(extensionsPaneSource).toContain("external-instruction-readonly");
@@ -860,7 +871,7 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.getAppPreferences");
     expect(extensionsPaneSource).toContain("runtime.updateAppPreferences");
     expect(extensionsPaneSource).toContain("openGeneratedAgentContextExternalSourceInEditor");
-    expect(extensionsPaneSource).toContain("runtime.revertExtensionChange");
+    expect(extensionsPaneSource).not.toContain("runtime.revertExtensionChange");
     expect(extensionsPaneSource).toContain("runtime.saveExtensionSnapshot");
     expect(extensionsPaneSource).toContain("runtime.renameExtensionSnapshot");
     expect(extensionsPaneSource).toContain("runtime.deleteExtensionSnapshot");
@@ -872,13 +883,28 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("width: 18rem");
     expect(extensionsPaneSource).toContain("min-width: 30rem");
     expect(extensionsPaneSource).toContain("max-width: min(54rem, calc(100vw - 2rem))");
-    expect(extensionsPaneSource).toContain("margin-left: auto");
+    expect(extensionsPaneSource.indexOf('class="extension-toolbar-action"')).toBeLessThan(
+      extensionsPaneSource.indexOf("extension-toolbar-spacer"),
+    );
+    expect(extensionsPaneSource.indexOf("extension-toolbar-spacer")).toBeLessThan(
+      extensionsPaneSource.indexOf('ariaLabel="Load extension snapshot"'),
+    );
+    expect(extensionsPaneSource.indexOf('class="extension-filter-group"')).toBeLessThan(
+      extensionsPaneSource.indexOf('class="new-extension-button"'),
+    );
+    expect(extensionsPaneSource).toContain("extension-toolbar-spacer");
     expect(extensionsPaneSource).toContain("Select a snapshot to rename");
     expect(extensionsPaneSource).toContain("Select a snapshot to delete");
-    expect(extensionsPaneSource).toContain("CompactSelect");
-    expect(extensionsPaneSource).toContain('value="History"');
-    expect(extensionsPaneSource).toContain('leadingIcon="history"');
-    expect(extensionsPaneSource).toContain("changeHistoryOptions");
+    expect(extensionsPaneSource).not.toContain("CompactSelect");
+    expect(extensionsPaneSource).not.toContain('value="History"');
+    expect(extensionsPaneSource).not.toContain('leadingIcon="history"');
+    expect(extensionsPaneSource).not.toContain("changeHistoryOptions");
+    expect(extensionsPaneSource).not.toContain("file.editable || file.skipped");
+    expect(extensionsPaneSource).toContain("ExtensionListRow");
+    expect(extensionsPaneSource).toContain("ExtensionStateButtons");
+    expect(extensionsPaneSource).toContain("runtime.setExtensionTypescriptApi");
+    expect(extensionListRowSource).toContain('class="shared-extension-disclosure"');
+    expect(extensionStateButtonsSource).toContain('class="extension-state-button');
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvOverride");
@@ -901,7 +927,6 @@ describe("default workspace renderer shell", () => {
     );
     expect(buttonSource).not.toContain("not-allowed");
     expect(buttonSource).toContain("cursor: default");
-    expect(compactSelectSource).toContain(".compact-select-option:hover:not(:disabled)");
     expect(compactComboboxSource).toContain(".compact-combobox-option:hover:not(:disabled)");
     expect(agentProfileRowSource).toContain(".agent-icon-button:hover:not(:disabled)");
     expect(agentProfileRowSource).toContain(".agent-icon-button.danger:hover:not(:disabled)");

@@ -223,6 +223,8 @@ export interface ExtensionInventoryItemReadModel {
   interface: ExtensionInterfaceKind;
   title: string;
   description: string;
+  customized: boolean;
+  minimalInstruction: ExtensionInstructionFileReadModel;
   externalInstruction?: {
     sourceGroup: GeneratedAgentContextExternalSource["sourceGroup"];
     rootId?: string;
@@ -347,6 +349,11 @@ export interface ResetExtensionRequest extends WorkspaceScopedRequest {
   extensionId: string;
 }
 
+export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  enabled: boolean;
+}
+
 export interface SetExtensionDefaultUsageRequest extends WorkspaceScopedRequest {
   actorKind: "orchestrator" | "workflow-task";
   extensionId: string;
@@ -380,6 +387,7 @@ export interface ReorderExtensionInstructionFilesRequest extends WorkspaceScoped
 
 export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRequest {
   extensionId: string;
+  kind?: "full" | "minimal";
   name: string;
   content: string;
   baseSourceVersion?: string;
@@ -388,6 +396,7 @@ export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRe
 
 export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceScopedRequest {
   extensionId: string;
+  kind?: "full" | "minimal";
   name: string;
 }
 
@@ -1707,6 +1716,10 @@ export interface ChatRPCSchema {
       };
       resetExtension: {
         params: ResetExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      setExtensionTypescriptApi: {
+        params: SetExtensionTypescriptApiRequest;
         response: ExtensionsInventoryReadModel;
       };
       setExtensionDefaultUsage: {

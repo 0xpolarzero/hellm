@@ -132,6 +132,8 @@ export function extensionUsageItems(
       interface: extension.interface,
       title: extension.title,
       description: extension.description,
+      customized: false,
+      minimalInstruction: minimalInstructionPlaceholder(extension.minimalLoadingHint),
       typescriptApiEnabled: extension.typescriptApiEnabled,
       usage: [],
       requirements: {
@@ -165,6 +167,8 @@ export function extensionUsageItems(
           interface: "instructions" as const,
           title: extensionId,
           description: "Custom extension usage override.",
+          customized: false,
+          minimalInstruction: minimalInstructionPlaceholder(""),
           typescriptApiEnabled: false,
           usage: [],
           requirements: {
@@ -281,4 +285,22 @@ export function extensionUsageItems(
         left.id.localeCompare(right.id)
       );
     });
+}
+
+function minimalInstructionPlaceholder(
+  content: string,
+): ExtensionInventoryItemReadModel["minimalInstruction"] {
+  return {
+    name: "minimal.md",
+    path: "",
+    content,
+    sourceVersion: "",
+    skipped: false,
+    editable: false,
+    generated: false,
+    tokenCount: {
+      tokens: 0,
+      accuracy: "estimated",
+    },
+  };
 }

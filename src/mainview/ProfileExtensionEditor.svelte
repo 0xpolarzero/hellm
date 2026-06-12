@@ -1,11 +1,5 @@
 <script lang="ts">
-  import BanIcon from "@lucide/svelte/icons/ban";
-  import CheckCircleIcon from "@lucide/svelte/icons/check-circle";
-  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
-  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
@@ -16,6 +10,8 @@
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
   import { formatTokenCount } from "./chat-format";
+  import ExtensionListRow from "./ExtensionListRow.svelte";
+  import ExtensionStateButtons from "./ExtensionStateButtons.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import Tooltip from "./ui/Tooltip.svelte";
 
@@ -325,95 +321,54 @@
     {#each displayItems as item (item.id)}
       {@const expanded = expandedIds.has(item.id)}
       {@const tokenLabel = extensionTokenLabel(item)}
-      <article
-        class={`profile-extension-row ${item.explicit ? "is-override" : ""} ${item.state === "unavailable" ? "is-off" : ""} ${item.id === draggedExtensionId ? "dragging" : ""}`.trim()}
+      <div
         data-extension-id={item.id}
         data-draggable={item.state !== "unavailable" ? "true" : "false"}
         animate:flip={{ duration: draggedExtensionId ? 150 : 0 }}
       >
-        <button
-          type="button"
-          class="profile-extension-drag"
-          aria-label={`Reorder ${item.title}`}
-          disabled={disabled || item.state === "unavailable"}
-          onpointerdown={(event) => startDrag(event, item)}
+        <ExtensionListRow
+          id={item.id}
+          title={item.title}
+          description={item.description}
+          markerLabel="override"
+          markerVisible={item.explicit}
+          subdued={item.state === "unavailable"}
+          dragging={item.id === draggedExtensionId}
+          draggable={!disabled && item.state !== "unavailable"}
+          dragLabel={`Reorder ${item.title}`}
+          expanded={expanded}
+          expandedInset={false}
+          tokenLabel={tokenLabel}
+          onDragPointerDown={(event) => startDrag(event, item)}
+          onToggle={() => toggleInstruction(item.id)}
         >
-          <GripVerticalIcon size={13} aria-hidden="true" />
-        </button>
-        <div class="profile-extension-copy">
-          <button
-            type="button"
-            class="profile-extension-title-button"
-            aria-expanded={expanded}
-            aria-label={expanded ? `Hide ${item.title} instructions` : `Show ${item.title} instructions`}
-            onclick={() => toggleInstruction(item.id)}
-          >
-            <span class="profile-extension-title">{item.title}</span>
-            <span class="profile-extension-override" aria-hidden={!item.explicit}>
-              override
-            </span>
-          </button>
-          <p>{item.description}</p>
-        </div>
-        <span
-          class={`profile-extension-token-count ${tokenLabel ? "" : "is-empty"}`.trim()}
-          aria-hidden={!tokenLabel}
-        >
-          {tokenLabel ?? ""}
-        </span>
-        <div class="profile-extension-controls" aria-label={`${item.title} usage state`}>
-          {#each STATES as option (option.state)}
-            {@const selected = item.state === option.state}
-            {@const unavailable = disabled || !item.configurable || !item.allowedStates[option.state]}
-            <Tooltip label={option.label}>
-              <span class="profile-extension-state-wrap">
-                <button
-                  type="button"
-                  class={`profile-extension-state ${selected ? "active" : ""}`.trim()}
-                  aria-pressed={selected}
-                  aria-label={selected ? `${item.title} is ${option.label}` : `Set ${item.title} to ${option.label}`}
-                  disabled={unavailable}
-                  onclick={() => selectState(item, option.state)}
-                >
-                  {#if option.state === "default_loaded"}
-                    <CheckCircleIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                  {:else if option.state === "available"}
-                    <CircleDashedIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                  {:else}
-                    <BanIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                  {/if}
-                </button>
-              </span>
+          {#snippet stateControls()}
+            <ExtensionStateButtons
+              ariaLabel={`${item.title} usage state`}
+              selected={item.state}
+              disabled={disabled || !item.configurable}
+              isAllowed={(state) => item.allowedStates[state]}
+              labelFor={stateLabel}
+              onSelect={(state) => selectState(item, state)}
+            />
+          {/snippet}
+          {#snippet actions()}
+            <Tooltip label="Open extension">
+              <button
+                type="button"
+                class="profile-extension-open"
+                aria-label={`Open ${item.title} in Extensions`}
+                onclick={() => onOpenExtension(item.id)}
+              >
+                <ExternalLinkIcon size={12} aria-hidden="true" />
+              </button>
             </Tooltip>
-          {/each}
-        </div>
-        <Tooltip label="Open extension">
-          <button
-            type="button"
-            class="profile-extension-open"
-            aria-label={`Open ${item.title} in Extensions`}
-            onclick={() => onOpenExtension(item.id)}
-          >
-            <ExternalLinkIcon size={12} aria-hidden="true" />
-          </button>
-        </Tooltip>
-        <button
-          type="button"
-          class="profile-extension-disclosure"
-          aria-expanded={expanded}
-          aria-label={expanded ? `Hide ${item.title} instructions` : `Show ${item.title} instructions`}
-          onclick={() => toggleInstruction(item.id)}
-        >
-          {#if expanded}
-            <ChevronDownIcon size={13} aria-hidden="true" />
-          {:else}
-            <ChevronRightIcon size={13} aria-hidden="true" />
-          {/if}
-        </button>
-        {#if expanded}
-          <pre class="profile-extension-instruction">{stateInstruction(item)}</pre>
-        {/if}
-      </article>
+          {/snippet}
+          {#snippet expandedContent()}
+            <pre class="profile-extension-instruction">{stateInstruction(item)}</pre>
+          {/snippet}
+        </ExtensionListRow>
+      </div>
     {/each}
   </div>
 </div>
@@ -485,10 +440,6 @@
   }
 
   .profile-extension-action:focus-visible,
-  .profile-extension-drag:focus-visible,
-  .profile-extension-disclosure:focus-visible,
-  .profile-extension-title-button:focus-visible,
-  .profile-extension-state:focus-visible,
   .profile-extension-open:focus-visible {
     box-shadow: var(--ui-focus-ring);
   }
@@ -504,28 +455,6 @@
     min-width: 0;
   }
 
-  .profile-extension-row {
-    display: grid;
-    grid-template-columns: 1.1rem minmax(8rem, 1fr) 11rem auto 1.28rem 1.28rem;
-    gap: 0.3rem;
-    align-items: center;
-    min-width: 0;
-    padding: 0.42rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 58%, transparent);
-  }
-
-  .profile-extension-row.is-off {
-    opacity: 0.72;
-  }
-
-  .profile-extension-row.dragging {
-    opacity: 0.62;
-  }
-
-  .profile-extension-drag,
-  .profile-extension-disclosure,
   .profile-extension-open {
     display: grid;
     place-items: center;
@@ -537,156 +466,16 @@
     color: var(--ui-text-tertiary);
   }
 
-  .profile-extension-drag {
-    align-self: center;
-    cursor: grab;
-    touch-action: none;
-  }
-
-  .profile-extension-drag:disabled {
-    cursor: default;
-    opacity: 0.42;
-  }
-
-  .profile-extension-disclosure,
   .profile-extension-open {
     cursor: pointer;
   }
 
-  .profile-extension-drag:not(:disabled):hover,
-  .profile-extension-disclosure:hover,
   .profile-extension-open:hover {
     background: var(--ui-hover-bg);
     color: var(--ui-text-primary);
   }
 
-  .profile-extension-copy {
-    display: grid;
-    gap: 0.12rem;
-    min-width: 0;
-  }
-
-  .profile-extension-title-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.34rem;
-    justify-self: start;
-    max-width: 100%;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .profile-extension-title-button:hover .profile-extension-title,
-  .profile-extension-title-button:focus-visible .profile-extension-title {
-    color: var(--ui-text-primary);
-    text-decoration-color: color-mix(in oklab, var(--ui-accent) 58%, transparent);
-  }
-
-  .profile-extension-title {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--ui-text-primary);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    line-height: 1.28;
-    text-decoration: underline;
-    text-decoration-color: transparent;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 0.16rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .profile-extension-row.is-override .profile-extension-title {
-    text-decoration-color: var(--ui-accent);
-  }
-
-  .profile-extension-override {
-    color: var(--ui-accent);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
-  .profile-extension-override[aria-hidden="true"] {
-    visibility: hidden;
-  }
-
-  .profile-extension-token-count {
-    align-self: center;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    line-height: 1.3;
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .profile-extension-token-count.is-empty {
-    visibility: hidden;
-  }
-
-  .profile-extension-copy p {
-    margin: 0;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    line-height: 1.35;
-  }
-
-  .profile-extension-controls {
-    display: grid;
-    grid-template-columns: repeat(3, 1.54rem);
-    gap: 0.18rem;
-  }
-
-  .profile-extension-state-wrap {
-    display: inline-grid;
-  }
-
-  .profile-extension-state {
-    display: grid;
-    place-items: center;
-    width: 1.38rem;
-    height: 1.28rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: var(--ui-text-tertiary);
-    cursor: pointer;
-  }
-
-  .profile-extension-state:hover:not(:disabled),
-  .profile-extension-state:focus-visible {
-    outline: none;
-    border-color: var(--ui-border-strong);
-    background: var(--ui-hover-bg);
-    color: var(--ui-text-primary);
-  }
-
-  .profile-extension-state.active {
-    border-color: color-mix(in oklab, var(--ui-accent) 42%, var(--ui-border-strong));
-    background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));
-    color: var(--ui-text-primary);
-  }
-
-  .profile-extension-state:disabled {
-    cursor: default;
-    opacity: 0.48;
-  }
-
-  .profile-extension-state.active:disabled {
-    opacity: 1;
-  }
-
   .profile-extension-instruction {
-    grid-column: 2 / -1;
     max-height: 18rem;
     min-width: 0;
     overflow: auto;

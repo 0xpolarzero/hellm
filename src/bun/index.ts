@@ -196,6 +196,7 @@ function quoteSvvyxCommandArg(value: string): string {
 async function readWorkspaceExtensionsInventory(runtime: WorkspaceRuntime) {
   return readBuiltinExtensionsInventory({
     agentSettingsStore: runtime.agentSettingsStore,
+    cwd: runtime.cwd,
     envSecretStore: extensionEnvSecretStore,
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
     externalInstructionSources: await runtime.catalog.getGeneratedAgentContextExternalSources(),
@@ -207,6 +208,7 @@ async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command:
   return runSvvyxExtensionsCommand({
     agentSettingsStore: runtime.agentSettingsStore,
     command,
+    cwd: runtime.cwd,
     envSecretStore: extensionEnvSecretStore,
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
     structuredSessionStore: runtime.catalog.getStructuredSessionStore(),
@@ -1051,6 +1053,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
+      setExtensionTypescriptApi: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions configure --extension ${quoteSvvyxCommandArg(input.extensionId)} --typescript-api ${input.enabled ? "true" : "false"} --json`,
+        );
+        runtime.appLog.info("settings", "Extension TypeScript API setting updated from UI.", {
+          extensionId: input.extensionId,
+          enabled: input.enabled,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
       setExtensionDefaultUsage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         await runWorkspaceExtensionsCommand(
@@ -1071,7 +1085,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           .join(" ");
         await runWorkspaceExtensionsCommand(
           runtime,
-          `svvyx extensions defaults reorder ${orderArgs} --json`,
+          input.extensionIds.length
+            ? `svvyx extensions defaults reorder ${orderArgs} --json`
+            : "svvyx extensions defaults reset-order --json",
         );
         runtime.appLog.info("settings", "Extension default order updated from UI.", {
           count: input.extensionIds.length,
@@ -1135,6 +1151,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         writeExtensionInstructionFile({
           extensionId: input.extensionId,
           file: input.name,
+          kind: input.kind,
           content: input.content,
           baseSourceVersion: input.baseSourceVersion,
           mode: input.mode,
@@ -1149,9 +1166,23 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       openExtensionInstructionFileInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const inventory = await readWorkspaceExtensionsInventory(runtime);
-        const path = inventory.extensions
-          .find((extension) => extension.id === input.extensionId)
-          ?.instructionFiles?.find((file) => file.name === input.name)?.path;
+        const extension = inventory.extensions.find(
+          (candidate) => candidate.id === input.extensionId,
+        );
+        const path =
+          input.kind === "minimal"
+            ? extension?.minimalInstruction.path
+            : extension?.instructionFiles?.find((file) => file.name === input.name)?.path;
+        if (input.kind === "minimal" && path && !existsSync(path) && extension) {
+          writeExtensionInstructionFile({
+            extensionId: input.extensionId,
+            file: input.name,
+            kind: "minimal",
+            content: extension.minimalInstruction.content,
+            mode: "overwrite",
+            extensionsRoot: runtime.catalog.getExtensionsRoot(),
+          });
+        }
         if (!path) {
           throw new Error(
             `Extension instruction file not found: ${input.extensionId}/${input.name}`,

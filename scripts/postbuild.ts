@@ -26,6 +26,20 @@ const nativeWindowControlsLibrary = join(
   "libSvvyWindowControls.dylib",
 );
 const nativeSandboxHelper = join(projectRoot, "build", "native", "svvy-sandbox-helper");
+const generatedInstructionAssets = join(projectRoot, "generated", "instructions", "full");
+
+function copyGeneratedInstructionAssets(): void {
+  if (!existsSync(generatedInstructionAssets)) {
+    console.error(
+      `postbuild: missing generated instruction assets at ${generatedInstructionAssets}`,
+    );
+    process.exit(1);
+  }
+  const appContentsDir = join(appCodeDir, "..", "..");
+  const destination = join(appContentsDir, "MacOS", "generated", "instructions", "full");
+  mkdirSync(destination, { recursive: true });
+  cpSync(generatedInstructionAssets, destination, { recursive: true });
+}
 
 function ensureNativeWindowControlsLibrary(): void {
   if (process.platform !== "darwin") return;
@@ -91,9 +105,12 @@ function copyNativeSandboxHelper(): void {
 
 if (buildEnv === "dev") {
   mkdirSync(appCodeDir, { recursive: true });
-  symlinkSync(nodeModulesSource, nodeModulesDest, "dir");
+  if (!existsSync(nodeModulesDest)) {
+    symlinkSync(nodeModulesSource, nodeModulesDest, "dir");
+  }
   copyNativeWindowControlsLibrary();
   copyNativeSandboxHelper();
+  copyGeneratedInstructionAssets();
   console.log("postbuild: linked repo node_modules into dev bundle");
   process.exit(0);
 }
@@ -191,4 +208,5 @@ while (pendingPackages.length > 0) {
 
 copyNativeWindowControlsLibrary();
 copyNativeSandboxHelper();
+copyGeneratedInstructionAssets();
 console.log(`postbuild: copied ${copied} packages to bundle`);

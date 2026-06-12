@@ -1,8 +1,5 @@
 <script lang="ts">
-  import BanIcon from "@lucide/svelte/icons/ban";
-  import CheckCircleIcon from "@lucide/svelte/icons/check-circle";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import { onDestroy, tick } from "svelte";
   import type { ExtensionCategory, ExtensionUsageState } from "../shared/extensions";
@@ -10,6 +7,7 @@
     canSelectExtensionUsageState,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
+  import ExtensionStateButtons from "./ExtensionStateButtons.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
 
   const MENU_OPEN_EVENT = "svvy:extension-usage-menu-open";
@@ -260,36 +258,15 @@
                 <ExternalLinkIcon aria-hidden="true" size={12} strokeWidth={1.9} />
               </button>
             </Tooltip>
-            <div class="extension-state-buttons" aria-label={`${item.title} usage state`}>
-              {#each STATES as option (option.state)}
-                {@const selected = item.state === option.state}
-                {@const unavailable = disabled || !item.configurable || !item.allowedStates[option.state]}
-                <Tooltip
-                  label={option.label}
-                  details={[{ label: stateTooltipDetail(item, option.state) }]}
-                  side="bottom"
-                >
-                  <span class="extension-state-button-wrap">
-                    <button
-                      type="button"
-                      class={`extension-state-button ${selected ? "active" : ""}`.trim()}
-                      aria-pressed={selected}
-                      aria-label={selected ? `${item.title} is ${option.label}` : `Set ${item.title} to ${option.label}`}
-                      disabled={unavailable}
-                      onclick={() => selectState(item, option.state)}
-                    >
-                      {#if option.state === "default_loaded"}
-                        <CheckCircleIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                      {:else if option.state === "available"}
-                        <CircleDashedIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                      {:else}
-                        <BanIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                      {/if}
-                    </button>
-                  </span>
-                </Tooltip>
-              {/each}
-            </div>
+            <ExtensionStateButtons
+              ariaLabel={`${item.title} usage state`}
+              selected={item.state}
+              disabled={disabled || !item.configurable}
+              isAllowed={(state) => item.allowedStates[state]}
+              labelFor={stateLabel}
+              detailFor={(state) => stateTooltipDetail(item, state)}
+              onSelect={(state) => selectState(item, state)}
+            />
           </div>
         {/each}
       </div>
@@ -503,63 +480,6 @@
     box-shadow: var(--ui-focus-ring);
   }
 
-  .extension-state-buttons {
-    display: inline-grid;
-    grid-template-columns: repeat(3, 1.54rem);
-    gap: 0.12rem;
-  }
-
-  .extension-state-button-wrap {
-    display: inline-flex;
-    min-width: 0;
-  }
-
-  .extension-state-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.54rem;
-    height: 1.42rem;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: var(--ui-text-tertiary);
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .extension-state-button:hover,
-  .extension-state-button:focus-visible {
-    outline: none;
-    background: var(--ui-surface-subtle);
-    color: var(--ui-text-primary);
-  }
-
-  .extension-state-button:focus-visible {
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .extension-state-button.active {
-    border-color: color-mix(in oklab, var(--ui-border-strong) 92%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));
-    color: var(--ui-text-primary);
-    cursor: default;
-    box-shadow:
-      inset 0 0 0 1px color-mix(in oklab, var(--ui-text-primary) 10%, transparent),
-      0 1px 2px color-mix(in oklab, var(--ui-shadow) 18%, transparent);
-  }
-
-  .extension-state-button:disabled {
-    cursor: default;
-    opacity: 0.42;
-    pointer-events: none;
-  }
-
-  .extension-state-button.active:disabled {
-    opacity: 1;
-  }
-
   @media (max-width: 560px) {
     .extension-usage-row {
       grid-template-columns: minmax(0, 1fr) 1.42rem auto;
@@ -570,14 +490,6 @@
       display: none;
     }
 
-    .extension-state-buttons {
-      grid-template-columns: repeat(3, 1.54rem);
-    }
-
-    .extension-state-button,
-    .extension-state-button-wrap {
-      width: 1.54rem;
-    }
   }
 
   @media (prefers-reduced-motion: reduce) {

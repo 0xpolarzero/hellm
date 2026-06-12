@@ -1,14 +1,9 @@
 <script lang="ts">
   import BanIcon from "@lucide/svelte/icons/ban";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import CheckCircleIcon from "@lucide/svelte/icons/check-circle";
-  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import Code2Icon from "@lucide/svelte/icons/code-2";
   import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
-  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
@@ -27,7 +22,6 @@
   import { DEFAULT_EXTERNAL_INSTRUCTION_ACTORS } from "../shared/agent-settings";
   import type {
     AgentContextPreviewResponse,
-    ExtensionChangeCardReadModel,
     ExtensionCliRequirementReadiness,
     ExtensionEnvRequirementReadiness,
     ExtensionInventoryItemReadModel,
@@ -41,12 +35,13 @@
   import Button from "./ui/Button.svelte";
   import Checkbox from "./ui/Checkbox.svelte";
   import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
-  import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
+  import ExtensionListRow from "./ExtensionListRow.svelte";
+  import ExtensionStateButtons from "./ExtensionStateButtons.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
 
   type Props = {
@@ -63,7 +58,6 @@
   let settingsError = $state<string | null>(null);
   let inventoryError = $state<string | null>(null);
   let pendingSettings = $state(false);
-  let revertingChangeId = $state<string | null>(null);
   let loadingPreview = $state(false);
   let loadingInventory = $state(true);
   let pendingExternalInstructionPath = $state<string | null>(null);
@@ -128,6 +122,20 @@
       interface: extension.interface,
       title: extension.title,
       description: extension.description,
+      customized: false,
+      minimalInstruction: {
+        name: "minimal.md",
+        path: "",
+        content: extension.minimalLoadingHint,
+        sourceVersion: "",
+        skipped: false,
+        editable: extension.interface !== "native_tool",
+        generated: false,
+        tokenCount: {
+          tokens: 0,
+          accuracy: "estimated",
+        },
+      },
       typescriptApiEnabled: extension.typescriptApiEnabled,
       usage: [],
       requirements: {
@@ -249,12 +257,7 @@
   }
 
   function customizedExtension(extension: ExtensionInventoryItemReadModel): boolean {
-    return (
-      extension.category === "builtin" &&
-      ((extension.instructionFiles?.some((file) => file.editable || file.skipped) ?? false) ||
-        (extensionsInventory?.defaults?.usage[extension.id]?.some((usage) => usage.customized) ??
-          false))
-    );
+    return extension.customized;
   }
 
   function newExtensionId(title: string): string {
@@ -398,6 +401,23 @@
     }
   }
 
+  async function setExtensionTypescriptApi(extension: ExtensionInventoryItemReadModel, enabled: boolean) {
+    if (pendingExtensionAction || extension.interface !== "svvyx") return;
+    pendingExtensionAction = `typescript-api:${extension.id}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.setExtensionTypescriptApi({
+        extensionId: extension.id,
+        enabled,
+      });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to update TypeScript API setting.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
   function addExtensionDragListeners() {
     window.addEventListener("pointermove", handleExtensionDragMove);
     window.addEventListener("pointerup", handleExtensionDragEnd);
@@ -508,10 +528,6 @@
     row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  function reversibleChangeCards(): ExtensionChangeCardReadModel[] {
-    return extensionsInventory?.reversibleChanges ?? [];
-  }
-
   function snapshotRows(): ExtensionSnapshotReadModel[] {
     return extensionsInventory?.snapshots ?? [];
   }
@@ -534,14 +550,6 @@
         disabled: snapshotAction !== null,
       };
     });
-  }
-
-  function changeHistoryOptions(): CompactSelectOption[] {
-    return reversibleChangeCards().map((change) => ({
-      value: change.id,
-      label: `Revert ${change.title} · ${change.extensionId} · ${formatChangeTime(change.createdAt)}`,
-      disabled: revertingChangeId !== null,
-    }));
   }
 
   function usageFor(
@@ -794,12 +802,6 @@
     });
   }
 
-  function formatChangeTime(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
-  }
-
   function defaultSnapshotName(date = new Date()): string {
     return `Snapshot ${new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -908,20 +910,6 @@
         error instanceof Error ? error.message : "Unable to delete extension snapshot.";
     } finally {
       snapshotAction = null;
-    }
-  }
-
-  async function revertExtensionChange(changeId: string): Promise<void> {
-    if (revertingChangeId) return;
-    revertingChangeId = changeId;
-    inventoryError = null;
-    try {
-      extensionsInventory = await runtime.revertExtensionChange(changeId);
-    } catch (error) {
-      inventoryError =
-        error instanceof Error ? error.message : "Unable to revert extension change.";
-    } finally {
-      revertingChangeId = null;
     }
   }
 
@@ -1122,91 +1110,111 @@
   {:else}
   <div class="extensions-inventory">
     <section class="extension-toolbar" aria-label="Extension controls">
-      <div
-        class="extension-snapshot-controls"
-        use:dismissConfirmation={{
-          active:
-            snapshotPopoverOpen ||
-            renamingSnapshotId !== null ||
-            confirmingDeleteSnapshotId !== null,
-          onDismiss: closeSnapshotControls,
-        }}
-      >
-        <CompactCombobox
-          value={selectedSnapshotId}
-          options={snapshotOptions()}
-          ariaLabel="Load extension snapshot"
-          placeholder="Snapshots"
-          emptyLabel="No snapshots saved."
-          triggerClass="snapshot-trigger"
-          menuClass="snapshot-menu"
-          optionClass="snapshot-option"
-          placement="below"
-          disabled={snapshotAction !== null || snapshotRows().length === 0}
-          onSelect={(snapshotId) => loadExtensionSnapshot(snapshotId)}
-        />
-        <Tooltip label="Save current extension state">
-          <Button
-            class="snapshot-icon-button"
-            variant="ghost"
-            size="xs"
-            iconOnly
+      <div class="extension-toolbar-row extension-toolbar-history-row">
+        <Tooltip label="Reset default extension order">
+          <button
+            type="button"
+            class="extension-toolbar-action"
+            disabled={pendingExtensionAction !== null}
+            onclick={async () => {
+              pendingExtensionAction = "reset-order";
+              try {
+                extensionsInventory = await runtime.reorderExtensionDefaults({ extensionIds: [] });
+              } finally {
+                pendingExtensionAction = null;
+              }
+            }}
+          >
+            <RotateCcwIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+            Order
+          </button>
+        </Tooltip>
+        <div class="extension-toolbar-spacer" aria-hidden="true"></div>
+        <div
+          class="extension-snapshot-controls"
+          use:dismissConfirmation={{
+            active:
+              snapshotPopoverOpen ||
+              renamingSnapshotId !== null ||
+              confirmingDeleteSnapshotId !== null,
+            onDismiss: closeSnapshotControls,
+          }}
+        >
+          <CompactCombobox
+            value={selectedSnapshotId}
+            options={snapshotOptions()}
+            ariaLabel="Load extension snapshot"
+            placeholder="Snapshots"
+            emptyLabel="No snapshots saved."
+            triggerClass="snapshot-trigger"
+            menuClass="snapshot-menu"
+            optionClass="snapshot-option"
+            placement="below"
+            disabled={snapshotAction !== null || snapshotRows().length === 0}
+            onSelect={(snapshotId) => loadExtensionSnapshot(snapshotId)}
+          />
+          <Tooltip label="Save current extension state">
+            <Button
+              class="snapshot-icon-button"
+              variant="ghost"
+              size="xs"
+              iconOnly
+              disabled={snapshotAction !== null}
+              aria-label="Save extension snapshot"
+              onclick={() => void openSnapshotPopover()}
+            >
+              <SaveIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label={selectedSnapshot() ? "Rename selected extension snapshot" : "Select a snapshot to rename"}
             disabled={snapshotAction !== null}
-            aria-label="Save extension snapshot"
-            onclick={() => void openSnapshotPopover()}
           >
-            <SaveIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-          </Button>
-        </Tooltip>
-        <Tooltip
-          label={selectedSnapshot() ? "Rename selected extension snapshot" : "Select a snapshot to rename"}
-          disabled={snapshotAction !== null}
-        >
-          <Button
-            class="snapshot-icon-button"
-            variant="ghost"
-            size="xs"
-            iconOnly
-            disabled={!selectedSnapshot() || snapshotAction !== null}
-            aria-label="Rename selected extension snapshot"
-            onclick={() => void startRenameSnapshot()}
-          >
-            <PencilIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-          </Button>
-        </Tooltip>
-        <Tooltip
-          label={
-            confirmingDeleteSnapshotId
-              ? "Confirm delete"
-              : selectedSnapshot()
-                ? "Delete selected extension snapshot"
-                : "Select a snapshot to delete"
-          }
-          disabled={snapshotAction !== null}
-        >
-          <Button
-            class={`snapshot-icon-button ${confirmingDeleteSnapshotId ? "confirming-delete" : ""}`.trim()}
-            variant={confirmingDeleteSnapshotId ? "danger" : "ghost"}
-            size="xs"
-            iconOnly
-            disabled={!selectedSnapshot() || snapshotAction !== null}
-            aria-label={
+            <Button
+              class="snapshot-icon-button"
+              variant="ghost"
+              size="xs"
+              iconOnly
+              disabled={!selectedSnapshot() || snapshotAction !== null}
+              aria-label="Rename selected extension snapshot"
+              onclick={() => void startRenameSnapshot()}
+            >
+              <PencilIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label={
               confirmingDeleteSnapshotId
-                ? "Confirm deleting selected extension snapshot"
-                : "Delete selected extension snapshot"
+                ? "Confirm delete"
+                : selectedSnapshot()
+                  ? "Delete selected extension snapshot"
+                  : "Select a snapshot to delete"
             }
-            onclick={() =>
-              confirmingDeleteSnapshotId
-                ? void deleteExtensionSnapshot()
-                : requestDeleteSnapshot()}
+            disabled={snapshotAction !== null}
           >
-            {#if confirmingDeleteSnapshotId}
-              <CheckIcon aria-hidden="true" size={13} strokeWidth={2.1} />
-            {:else}
-              <Trash2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
-            {/if}
-          </Button>
-        </Tooltip>
+            <Button
+              class={`snapshot-icon-button ${confirmingDeleteSnapshotId ? "confirming-delete" : ""}`.trim()}
+              variant={confirmingDeleteSnapshotId ? "danger" : "ghost"}
+              size="xs"
+              iconOnly
+              disabled={!selectedSnapshot() || snapshotAction !== null}
+              aria-label={
+                confirmingDeleteSnapshotId
+                  ? "Confirm deleting selected extension snapshot"
+                  : "Delete selected extension snapshot"
+              }
+              onclick={() =>
+                confirmingDeleteSnapshotId
+                  ? void deleteExtensionSnapshot()
+                  : requestDeleteSnapshot()}
+            >
+              {#if confirmingDeleteSnapshotId}
+                <CheckIcon aria-hidden="true" size={13} strokeWidth={2.1} />
+              {:else}
+                <Trash2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
+              {/if}
+            </Button>
+          </Tooltip>
 
         {#if snapshotPopoverOpen}
           <div class="snapshot-popover" role="dialog" aria-label="Save extension snapshot">
@@ -1263,64 +1271,34 @@
             </Tooltip>
           </div>
         {/if}
+        </div>
       </div>
-
-      <div class="extension-filter-group" aria-label="Filter extensions">
-        {#each FILTERS as filter (filter.id)}
-          <button
-            type="button"
-            class={`extension-filter ${extensionFilter === filter.id ? "active" : ""}`.trim()}
-            aria-pressed={extensionFilter === filter.id}
-            onclick={() => (extensionFilter = filter.id)}
+      <div class="extension-toolbar-row extension-toolbar-action-row">
+        <div class="extension-filter-group" aria-label="Filter extensions">
+          {#each FILTERS as filter (filter.id)}
+            <button
+              type="button"
+              class={`extension-filter ${extensionFilter === filter.id ? "active" : ""}`.trim()}
+              aria-pressed={extensionFilter === filter.id}
+              onclick={() => (extensionFilter = filter.id)}
+            >
+              {filter.label}
+            </button>
+          {/each}
+        </div>
+        <div class="extension-toolbar-actions">
+          <Button
+            class="new-extension-button"
+            variant="ghost"
+            size="xs"
+            disabled={pendingExtensionAction !== null}
+            onclick={() => (newExtensionOpen = !newExtensionOpen)}
           >
-            {filter.label}
-          </button>
-        {/each}
+            <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
+            <span>New</span>
+          </Button>
+        </div>
       </div>
-      <Tooltip label="Reset default extension order">
-        <Button
-          class="snapshot-icon-button"
-          variant="ghost"
-          size="xs"
-          iconOnly
-          disabled={pendingExtensionAction !== null}
-          aria-label="Reset default extension order"
-          onclick={async () => {
-            pendingExtensionAction = "reset-order";
-            try {
-              extensionsInventory = await runtime.reorderExtensionDefaults({ extensionIds: [] });
-            } finally {
-              pendingExtensionAction = null;
-            }
-          }}
-        >
-          <RotateCcwIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-        </Button>
-      </Tooltip>
-      <Button
-        class="new-extension-button"
-        variant="primary"
-        size="xs"
-        disabled={pendingExtensionAction !== null}
-        onclick={() => (newExtensionOpen = !newExtensionOpen)}
-      >
-        <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
-        New
-      </Button>
-      {#if reversibleChangeCards().length}
-        <CompactSelect
-          value="History"
-          options={changeHistoryOptions()}
-          ariaLabel="Reversible extension history"
-          triggerClass="history-trigger"
-          menuClass="history-menu"
-          optionClass="history-option"
-          leadingIcon="history"
-          placement="below"
-          disabled={revertingChangeId !== null}
-          onSelect={(changeId) => revertExtensionChange(changeId)}
-        />
-      {/if}
     </section>
 
     {#if inventoryError}
@@ -1367,105 +1345,51 @@
       {@const declaredCliBinaries = declaredCliRequirementBinaries(extension.id)}
       {@const expanded = expandedExtensionIds.has(extension.id)}
       {@const tokenCount = extensionTokenCount(extension)}
-      <article
+      <div
         use:registerExtensionRow={extension.id}
-        class={`extension-card ${extension.id === targetExtensionId ? "target-extension-row" : ""} ${extension.id === draggedExtensionId ? "dragging" : ""}`.trim()}
         data-extension-id={extension.id}
         data-extension-draggable={extensionFilter === "all" ? "true" : "false"}
         animate:flip={{ duration: draggedExtensionId ? 150 : 0 }}
       >
-        <div class="extension-card-main">
-          <button
-            type="button"
-            class="extension-drag"
-            aria-label={`Reorder ${extension.title}`}
-            disabled={extensionFilter !== "all"}
-            onpointerdown={(event) => startExtensionDrag(event, extension)}
-          >
-            <GripVerticalIcon size={13} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="extension-disclosure"
-            aria-expanded={expanded}
-            aria-label={expanded ? `Collapse ${extension.title}` : `Expand ${extension.title}`}
-            onclick={() => toggleExtensionExpanded(extension.id)}
-          >
-            {#if expanded}
-              <ChevronDownIcon size={14} aria-hidden="true" />
-            {:else}
-              <ChevronRightIcon size={14} aria-hidden="true" />
-            {/if}
-          </button>
-          <Tooltip label={extensionKindTooltip(extension.interface)}>
-            <span class={`extension-kind-icon ${extension.interface}`.trim()} aria-label={extensionKindTitle(extension.interface)}>
-              {#if extension.interface === "svvyx"}
-                <TerminalIcon size={14} aria-hidden="true" />
-              {:else if extension.interface === "native_tool"}
-                <Code2Icon size={14} aria-hidden="true" />
-              {:else}
-                <FileTextIcon size={14} aria-hidden="true" />
-              {/if}
-            </span>
-          </Tooltip>
-          <div class="extension-title-block">
-            <button
-              type="button"
-              class="extension-title-button"
-              aria-expanded={expanded}
-              onclick={() => toggleExtensionExpanded(extension.id)}
-            >
-              <strong>{extension.title}</strong>
-              {#if customizedExtension(extension)}
-                <span class="extension-customized-tag">customized</span>
-              {/if}
-            </button>
-            <span>{extension.description}</span>
-          </div>
-          <div class="extension-facts">
+        <ExtensionListRow
+          id={extension.id}
+          title={extension.title}
+          description={extension.description}
+          markerLabel="customized"
+          markerVisible={customizedExtension(extension)}
+          dragging={extension.id === draggedExtensionId}
+          draggable={extensionFilter === "all"}
+          dragLabel={`Reorder ${extension.title}`}
+          expanded={expanded}
+          target={extension.id === targetExtensionId}
+          onDragPointerDown={(event) => startExtensionDrag(event, extension)}
+          onToggle={() => toggleExtensionExpanded(extension.id)}
+        >
+          {#snippet leading()}
+            <Tooltip label={extensionKindTooltip(extension.interface)}>
+              <span class={`extension-kind-icon ${extension.interface}`.trim()} aria-label={extensionKindTitle(extension.interface)}>
+                {#if extension.interface === "svvyx"}
+                  <TerminalIcon size={14} aria-hidden="true" />
+                {:else if extension.interface === "native_tool"}
+                  <Code2Icon size={14} aria-hidden="true" />
+                {:else}
+                  <FileTextIcon size={14} aria-hidden="true" />
+                {/if}
+              </span>
+            </Tooltip>
+          {/snippet}
+          {#snippet meta()}
             <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
               {categoryLabel(extension.category)}
             </Badge>
-            <span>{formatPromptTokenCount(tokenCount)}</span>
             {#if generatedApiLabel(extension)}
               <Badge tone="info">{generatedApiLabel(extension)}</Badge>
             {/if}
             {#if !extension.state.ready}
               <Badge tone="warning">{extension.state.issues[0]?.code ?? "issue"}</Badge>
             {/if}
-          </div>
-          <div class="extension-default-controls">
-            {#each DEFAULT_ACTORS as actor (actor.id)}
-              {@const usage = defaultUsageFor(extension, actor.id)}
-              <div class="extension-default-control" aria-label={`${extension.title} ${actor.label} default`}>
-                <span>{actor.label}</span>
-                <div>
-                  {#each USAGE_STATES as option (option.state)}
-                    {@const selected = usage.state === option.state}
-                    <Tooltip label={option.label}>
-                      <button
-                        type="button"
-                        class={`extension-state-button ${selected ? "active" : ""}`.trim()}
-                        aria-label={`Set ${extension.title} ${actor.label} default to ${option.label}`}
-                        aria-pressed={selected}
-                        disabled={!usage.configurable || pendingDefaultUsageKey !== null}
-                        onclick={() => setDefaultUsage(extension, actor.id, option.state)}
-                      >
-                        {#if option.state === "default_loaded"}
-                          <CheckCircleIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                        {:else if option.state === "available"}
-                          <CircleDashedIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                        {:else}
-                          <BanIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-                        {/if}
-                      </button>
-                    </Tooltip>
-                  {/each}
-                </div>
-              </div>
-            {/each}
-          </div>
-          <div class="extension-row-actions">
+          {/snippet}
+          {#snippet actions()}
             <Tooltip label={extension.interface === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
               <button
                 type="button"
@@ -1499,11 +1423,46 @@
                 <Trash2Icon size={13} aria-hidden="true" />
               </button>
             </Tooltip>
-          </div>
-        </div>
-
-        {#if expanded}
-        <div class="extension-expanded">
+          {/snippet}
+          {#snippet expandedContent()}
+          <section class="extension-defaults-section" aria-label={`${extension.title} defaults`}>
+            <div class="extension-expanded-section-header">
+              <strong>Defaults</strong>
+              <span>{formatPromptTokenCount(tokenCount)}</span>
+            </div>
+            <div class="extension-default-controls">
+              {#if extension.interface === "svvyx"}
+                <label class="extension-default-control extension-typescript-api-control">
+                  <span>TypeScript API</span>
+                  <Checkbox
+                    size="sm"
+                    checked={extension.typescriptApiEnabled}
+                    disabled={pendingExtensionAction !== null}
+                    onchange={(event) =>
+                      setExtensionTypescriptApi(
+                        extension,
+                        (event.currentTarget as HTMLInputElement).checked,
+                      )}
+                  />
+                </label>
+              {/if}
+              {#each DEFAULT_ACTORS as actor (actor.id)}
+                {@const usage = defaultUsageFor(extension, actor.id)}
+                <div class="extension-default-control" aria-label={`${extension.title} ${actor.label} default`}>
+                  <span>{actor.label}</span>
+                  <div>
+                    <ExtensionStateButtons
+                      ariaLabel={`${extension.title} ${actor.label} default`}
+                      selected={usage.state}
+                      disabled={!usage.configurable || pendingDefaultUsageKey !== null}
+                      labelFor={(state) => USAGE_STATES.find((entry) => entry.state === state)?.label ?? "Off"}
+                      onSelect={(state) => setDefaultUsage(extension, actor.id, state)}
+                    />
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </section>
           {#if extension.externalInstruction}
             <div class="external-instruction-readonly" aria-label={`${extension.title} external instruction source`}>
               <div class="external-instruction-meta">
@@ -1522,10 +1481,20 @@
               {/if}
             </div>
           {/if}
-          <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
-            Minimal instruction
-          </Badge>
-          <p class="extension-minimal-hint">{extension.description}</p>
+          <div class="extension-minimal-instruction">
+            <div class="extension-instruction-list-header">
+              <strong>Minimal instruction</strong>
+            </div>
+            <ExtensionInstructionFileEditor
+              runtime={runtime}
+              extensionId={extension.id}
+              kind="minimal"
+              file={extension.minimalInstruction}
+              editor={appPreferences?.preferredExternalEditor}
+              disabled={pendingExtensionAction !== null}
+              onSaved={() => void loadExtensionsInventory()}
+            />
+          </div>
           {#if cliRequirements.length}
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
               {#each cliRequirements as requirement (requirement.id)}
@@ -1634,8 +1603,9 @@
               {/each}
             </div>
           {/if}
-        <div class={`extension-settings ${extension.id === "request-user-input" || extension.externalInstruction ? "" : "empty"}`}>
-          {#if extension.externalInstruction}
+          {#if extension.externalInstruction || extension.id === "request-user-input"}
+          <div class="extension-settings">
+            {#if extension.externalInstruction}
             {@const control = externalInstructionControl(extension)}
             {@const isSavingExternalInstruction = pendingExternalInstructionPath === extension.externalInstruction.path}
             <div class="external-instruction-controls" aria-label={`${extension.title} usage controls`}>
@@ -1677,7 +1647,7 @@
                 onclick={() => openExternalInstruction(extension.externalInstruction!.path)}
               />
             </div>
-          {:else if extension.id === "request-user-input"}
+            {:else if extension.id === "request-user-input"}
             {#if settingsError}
               <p class="extension-settings-error" role="alert">{settingsError}</p>
             {/if}
@@ -1731,13 +1701,12 @@
             {:else}
               <span class="extension-settings-loading">Loading</span>
             {/if}
-          {:else}
-            <span class="extension-settings-empty" aria-hidden="true">-</span>
+            {/if}
+          </div>
           {/if}
-        </div>
-        </div>
-        {/if}
-      </article>
+          {/snippet}
+        </ExtensionListRow>
+      </div>
     {/each}
   </div>
   </div>
@@ -1767,12 +1736,66 @@
   }
 
   .extension-toolbar {
+    display: grid;
+    gap: 0.32rem;
+    padding: 0.42rem 1.1rem 0.48rem;
+    border-bottom: 1px solid var(--ui-border-subtle);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 42%, transparent);
+  }
+
+  .extension-toolbar-row {
     display: flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.38rem 1.1rem;
-    border-bottom: 1px solid var(--ui-border-subtle);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 42%, transparent);
+    min-width: 0;
+  }
+
+  .extension-toolbar-action-row {
+    justify-content: space-between;
+  }
+
+  .extension-toolbar-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
+    min-width: 0;
+  }
+
+  .extension-toolbar-spacer {
+    flex: 1 1 auto;
+    min-width: 0.5rem;
+  }
+
+  .extension-toolbar-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+    height: 1.42rem;
+    padding: 0 0.42rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-secondary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
+  .extension-toolbar-action:hover:not(:disabled),
+  .extension-toolbar-action:focus-visible:not(:disabled) {
+    outline: none;
+    border-color: var(--ui-border-strong);
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-toolbar-action:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-toolbar-action:disabled {
+    cursor: default;
+    opacity: 0.58;
   }
 
   .extension-snapshot-controls {
@@ -1824,22 +1847,6 @@
     overflow: hidden;
   }
 
-  :global(.history-trigger) {
-    margin-left: auto;
-    flex: 0 0 auto;
-  }
-
-  :global(.history-menu) {
-    min-width: 25rem;
-    max-width: min(42rem, calc(100vw - 2rem));
-  }
-
-  :global(.history-option) {
-    justify-content: flex-start;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
-
   :global(.snapshot-option) {
     justify-content: flex-start;
     min-height: 1.85rem;
@@ -1879,6 +1886,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.16rem;
+    flex: 0 1 auto;
     min-width: 0;
     padding: 0.12rem;
     border-radius: var(--ui-radius-sm);
@@ -1917,6 +1925,29 @@
 
   :global(.new-extension-button) {
     flex: 0 0 auto;
+    height: 1.42rem;
+    min-height: 1.42rem;
+    padding-block: 0;
+    line-height: 1;
+    text-transform: none;
+  }
+
+  :global(.new-extension-button .ui-button-content) {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    height: 100%;
+    align-items: center;
+    line-height: 1;
+  }
+
+  :global(.new-extension-button .ui-button-content > svg) {
+    display: block;
+  }
+
+  :global(.new-extension-button .ui-button-content > span) {
+    display: block;
+    line-height: 1;
   }
 
   .new-extension-popover {
@@ -1932,86 +1963,33 @@
   .extensions-list {
     display: grid;
     align-content: start;
-    gap: 0.32rem;
+    gap: 0.22rem;
     min-height: 0;
     min-width: 0;
     overflow: auto;
     padding: 0.52rem 0.72rem 1rem;
   }
 
-  .extension-card {
-    display: grid;
-    min-width: 0;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 58%, transparent);
-  }
-
-  .extension-card.target-extension-row {
-    border-color: color-mix(in oklab, var(--ui-accent) 50%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-accent-soft) 20%, var(--ui-surface-subtle));
-  }
-
-  .extension-card:focus {
-    outline: none;
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .extension-card.dragging {
-    opacity: 0.62;
-  }
-
-  .extension-card-main {
-    display: grid;
-    grid-template-columns:
-      1.1rem
-      1.35rem
-      1.55rem
-      minmax(9rem, 1fr)
-      minmax(7rem, max-content)
-      minmax(13.25rem, max-content)
-      auto;
-    align-items: center;
-    gap: 0.4rem;
-    min-width: 0;
-    padding: 0.48rem 0.54rem;
-  }
-
-  .extension-drag,
-  .extension-disclosure,
   .extension-icon-action {
     display: grid;
     place-items: center;
-    width: 1.35rem;
-    height: 1.35rem;
+    width: 1.32rem;
+    height: var(--agent-row-line-height);
     border: 0;
     border-radius: var(--ui-radius-sm);
     background: transparent;
     color: var(--ui-text-tertiary);
   }
 
-  .extension-drag {
-    width: 1.1rem;
-    cursor: grab;
-    touch-action: none;
-  }
-
-  .extension-drag:disabled,
-  .extension-icon-action:disabled,
-  .extension-state-button:disabled {
+  .extension-icon-action:disabled {
     cursor: default;
     opacity: 0.48;
   }
 
-  .extension-disclosure,
   .extension-icon-action {
     cursor: pointer;
   }
 
-  .extension-drag:not(:disabled):hover,
-  .extension-drag:not(:disabled):focus-visible,
-  .extension-disclosure:hover,
-  .extension-disclosure:focus-visible,
   .extension-icon-action:not(:disabled):hover,
   .extension-icon-action:not(:disabled):focus-visible {
     outline: none;
@@ -2024,19 +2002,16 @@
     color: var(--ui-danger);
   }
 
-  .extension-drag:focus-visible,
-  .extension-disclosure:focus-visible,
-  .extension-icon-action:focus-visible,
-  .extension-title-button:focus-visible,
-  .extension-state-button:focus-visible {
+  .extension-icon-action:focus-visible {
     box-shadow: var(--ui-focus-ring);
   }
 
   .extension-kind-icon {
     display: grid;
     place-items: center;
-    width: 1.55rem;
-    height: 1.55rem;
+    flex: 0 0 auto;
+    width: 1.45rem;
+    height: var(--agent-row-line-height);
     border-radius: var(--ui-radius-sm);
     color: var(--ui-text-secondary);
     background: color-mix(in oklab, var(--ui-surface-muted) 38%, transparent);
@@ -2054,84 +2029,18 @@
     color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
   }
 
-  .extension-title-block {
-    display: grid;
-    gap: 0.12rem;
-    min-width: 0;
-  }
-
-  .extension-title-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.34rem;
-    justify-self: start;
-    max-width: 100%;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: var(--ui-text-primary);
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .extension-title-button strong {
-    min-width: 0;
-    overflow: hidden;
-    font-size: var(--text-sm);
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-title-button:hover strong,
-  .extension-title-button:focus-visible strong {
-    text-decoration: underline;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 0.16rem;
-  }
-
-  .extension-title-block > span {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-customized-tag {
-    flex: 0 0 auto;
-    color: var(--ui-accent);
-    font-size: var(--text-xs);
-    font-weight: 650;
-  }
-
-  .extension-facts {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.24rem 0.34rem;
-    min-width: 0;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
   .extension-default-controls {
     display: grid;
-    grid-template-columns: repeat(2, minmax(6.3rem, max-content));
-    gap: 0.34rem;
+    grid-template-columns: repeat(2, minmax(10rem, max-content));
+    gap: 0.46rem;
     min-width: 0;
   }
 
   .extension-default-control {
     display: grid;
-    align-items: start;
-    gap: 0.12rem;
+    grid-template-columns: minmax(6.2rem, max-content) auto;
+    align-items: center;
+    gap: 0.34rem;
     min-width: 0;
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);
@@ -2144,51 +2053,28 @@
     white-space: nowrap;
   }
 
-  .extension-default-control > div {
+  .extension-defaults-section {
     display: grid;
-    grid-template-columns: repeat(3, 1.38rem);
-    gap: 0.16rem;
-  }
-
-  .extension-state-button {
-    display: grid;
-    place-items: center;
-    width: 1.3rem;
-    height: 1.24rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: var(--ui-text-tertiary);
-    cursor: pointer;
-  }
-
-  .extension-state-button:not(:disabled):hover,
-  .extension-state-button:not(:disabled):focus-visible {
-    outline: none;
-    border-color: var(--ui-border-strong);
-    background: var(--ui-hover-bg);
-    color: var(--ui-text-primary);
-  }
-
-  .extension-state-button.active {
-    border-color: color-mix(in oklab, var(--ui-accent) 42%, var(--ui-border-strong));
-    background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));
-    color: var(--ui-text-primary);
-    opacity: 1;
-  }
-
-  .extension-row-actions {
-    display: grid;
-    grid-template-columns: repeat(3, 1.35rem);
-    gap: 0.12rem;
-    justify-content: end;
-  }
-
-  .extension-expanded {
-    display: grid;
-    gap: 0.58rem;
+    gap: 0.42rem;
     min-width: 0;
-    padding: 0 0.72rem 0.72rem 3.9rem;
+  }
+
+  .extension-expanded-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.72rem;
+    min-width: 0;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1;
+  }
+
+  .extension-expanded-section-header strong {
+    color: var(--ui-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
   }
 
   .extension-minimal-hint {

@@ -1,11 +1,14 @@
 <script lang="ts">
+  import AlertCircleIcon from "@lucide/svelte/icons/alert-circle";
+  import CheckCircle2Icon from "@lucide/svelte/icons/check-circle-2";
+  import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
   import { isFileBackedEditConflictError } from "../shared/file-backed-edit";
   import type { ExtensionInstructionFileReadModel } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
   import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
-  import TextArea from "./ui/TextArea.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
 
   type AutosaveStatus = "conflict" | "error" | "saved" | "saving" | "unsaved";
@@ -15,13 +18,14 @@
     editor?: string;
     extensionId: string;
     file: ExtensionInstructionFileReadModel;
+    kind?: "full" | "minimal";
     runtime: ChatRuntime;
     onSaved: () => void;
   };
 
   const AUTOSAVE_DELAY_MS = 700;
 
-  let { disabled = false, editor = "system", extensionId, file, runtime, onSaved }: Props =
+  let { disabled = false, editor = "system", extensionId, file, kind = "full", runtime, onSaved }: Props =
     $props();
 
   let draft = $state("");
@@ -39,7 +43,7 @@
   );
 
   $effect(() => {
-    const fileKey = `${extensionId}:${file.name}`;
+    const fileKey = `${extensionId}:${kind}:${file.name}`;
     if (loadedFileKey !== fileKey) {
       loadedFileKey = fileKey;
       draft = file.content;
@@ -78,6 +82,7 @@
     try {
       const inventory = await runtime.updateExtensionInstructionFile({
         extensionId,
+        kind,
         name: file.name,
         content: draft,
         baseSourceVersion,
@@ -85,9 +90,15 @@
       });
       const savedFile = inventory.extensions
         .find((extension) => extension.id === extensionId)
-        ?.instructionFiles?.find((candidate) => candidate.name === file.name);
+        ?.[kind === "minimal" ? "minimalInstruction" : "instructionFiles"];
+      const savedSourceVersion =
+        kind === "minimal"
+          ? (savedFile as ExtensionInstructionFileReadModel | undefined)?.sourceVersion
+          : (savedFile as ExtensionInstructionFileReadModel[] | undefined)?.find(
+              (candidate) => candidate.name === file.name,
+            )?.sourceVersion;
       savedContent = draft;
-      baseSourceVersion = savedFile?.sourceVersion ?? baseSourceVersion;
+      baseSourceVersion = savedSourceVersion ?? baseSourceVersion;
       conflictFile = null;
       onSaved();
     } catch (error) {
@@ -112,7 +123,15 @@
   }
 
   async function openExternal() {
-    await runtime.openExtensionInstructionFileInEditor({ extensionId, name: file.name });
+    await runtime.openExtensionInstructionFileInEditor({ extensionId, kind, name: file.name });
+  }
+
+  function autosaveStatusLabel(input: AutosaveStatus): string {
+    if (input === "conflict") return "File changed outside svvy";
+    if (input === "error") return "Autosave failed";
+    if (input === "saving") return "Saving changes";
+    if (input === "unsaved") return "Unsaved changes";
+    return "Saved";
   }
 </script>
 
@@ -125,15 +144,6 @@
       <span>~{formatTokenCount(file.tokenCount.tokens)} tokens</span>
     </div>
     <div class="extension-instruction-editor-actions">
-      {#if status === "conflict"}
-        <FileBackedConflictActions
-          disabled={saving}
-          onDiscard={discardLocalChanges}
-          onOverwrite={() => void save("overwrite")}
-        />
-      {:else if status !== "saved"}
-        <span class={`extension-instruction-status ${status}`}>{status}</span>
-      {/if}
       <Tooltip label="Open instruction file in external editor">
         <OpenExternalButton
           editor={editor as never}
@@ -144,13 +154,46 @@
       </Tooltip>
     </div>
   </div>
-  <TextArea
-    value={draft}
-    resize="vertical"
-    disabled={disabled || !file.editable}
-    aria-label={`${file.name} instruction content`}
-    oninput={(event) => (draft = (event.currentTarget as HTMLTextAreaElement).value)}
-  />
+  <div class="extension-instruction-shell" data-autosave-status={status}>
+    <textarea
+      class="extension-instruction-field"
+      value={draft}
+      disabled={disabled || !file.editable}
+      aria-label={`${file.name} instruction content`}
+      oninput={(event) => (draft = event.currentTarget.value)}
+    ></textarea>
+    <div class="extension-autosave-tooltip">
+      {#if status === "conflict"}
+        <FileBackedConflictActions
+          disabled={saving}
+          onDiscard={discardLocalChanges}
+          onOverwrite={() => void save("overwrite")}
+        />
+      {:else}
+        <Tooltip label={autosaveStatusLabel(status)}>
+        <span
+          class="extension-autosave-status"
+          role="status"
+          aria-live="polite"
+          aria-label={autosaveStatusLabel(status)}
+        >
+          <span class="extension-autosave-icon icon-error">
+            <AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <span class="extension-autosave-icon extension-autosave-spinner icon-saving">
+            <LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <span class="extension-autosave-icon icon-unsaved">
+            <CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <span class="extension-autosave-icon icon-saved">
+            <CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+        </span>
+        </Tooltip>
+      {/if}
+    </div>
+  </div>
   {#if errorMessage}
     <p class="extension-instruction-error" role="alert">{errorMessage}</p>
   {/if}
@@ -216,5 +259,100 @@
     margin: 0;
     font-size: var(--text-xs);
     line-height: 1.4;
+  }
+
+  .extension-instruction-shell {
+    position: relative;
+  }
+
+  .extension-instruction-field {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 4rem;
+    resize: vertical;
+    padding: 0.42rem 2rem 0.42rem 0.5rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent);
+    color: var(--ui-text-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .extension-instruction-field:hover:not(:disabled),
+  .extension-instruction-field:focus-visible:not(:disabled) {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-instruction-field:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .extension-autosave-tooltip {
+    position: absolute;
+    top: 0.36rem;
+    right: 0.36rem;
+  }
+
+  .extension-autosave-status {
+    position: relative;
+    display: block;
+    width: 1.28rem;
+    height: 1.28rem;
+    color: var(--ui-text-tertiary);
+    opacity: 0.72;
+    contain: layout paint style;
+  }
+
+  .extension-autosave-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    transform: translate(-50%, -50%);
+    transition:
+      opacity 120ms ease,
+      color 120ms ease;
+  }
+
+  .extension-autosave-icon :global(svg) {
+    display: block;
+  }
+
+  .extension-instruction-shell[data-autosave-status="saved"] .icon-saved {
+    opacity: 1;
+    color: color-mix(in oklab, var(--ui-success) 54%, var(--ui-text-tertiary));
+  }
+
+  .extension-instruction-shell[data-autosave-status="saving"] .icon-saving {
+    opacity: 1;
+    color: color-mix(in oklab, var(--ui-accent) 68%, var(--ui-text-secondary));
+  }
+
+  .extension-instruction-shell[data-autosave-status="unsaved"] .icon-unsaved {
+    opacity: 1;
+    color: var(--ui-text-tertiary);
+  }
+
+  .extension-instruction-shell[data-autosave-status="error"] .icon-error,
+  .extension-instruction-shell[data-autosave-status="conflict"] .icon-error {
+    opacity: 1;
+    color: color-mix(in oklab, var(--ui-danger) 76%, var(--ui-text-secondary));
+  }
+
+  .extension-autosave-spinner {
+    animation: extension-autosave-spin 0.85s linear infinite;
+  }
+
+  @keyframes extension-autosave-spin {
+    to {
+      transform: translate(-50%, -50%) rotate(360deg);
+    }
   }
 </style>

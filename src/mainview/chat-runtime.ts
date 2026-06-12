@@ -67,6 +67,7 @@ import {
   type SetExtensionDefaultUsageRequest,
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
+  type SetExtensionTypescriptApiRequest,
   type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
 } from "../shared/workspace-contract";
@@ -351,6 +352,7 @@ export interface ChatRuntimeRpcClient {
     duplicateExtension: typeof rpc.request.duplicateExtension;
     deleteExtension: typeof rpc.request.deleteExtension;
     resetExtension: typeof rpc.request.resetExtension;
+    setExtensionTypescriptApi: typeof rpc.request.setExtensionTypescriptApi;
     setExtensionDefaultUsage: typeof rpc.request.setExtensionDefaultUsage;
     reorderExtensionDefaults: typeof rpc.request.reorderExtensionDefaults;
     addExtensionInstructionFile: typeof rpc.request.addExtensionInstructionFile;
@@ -615,6 +617,9 @@ export interface ChatRuntime {
   ) => Promise<ExtensionsInventoryReadModel>;
   resetExtension: (
     input: Omit<ResetExtensionRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  setExtensionTypescriptApi: (
+    input: Omit<SetExtensionTypescriptApiRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
   setExtensionDefaultUsage: (
     input: Omit<SetExtensionDefaultUsageRequest, "workspaceId">,
@@ -3046,6 +3051,11 @@ export async function createChatRuntime(
       setWorkspaceCache(
         "extensionsInventory",
         await rpcClient.request.resetExtension(scoped(input)),
+      )!,
+    setExtensionTypescriptApi: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.setExtensionTypescriptApi(scoped(input)),
       )!,
     setExtensionDefaultUsage: async (input) =>
       setWorkspaceCache(

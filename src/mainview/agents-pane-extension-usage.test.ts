@@ -13,9 +13,23 @@ function extensionInventoryItem(
   const { id, ...overrides } = input;
   return {
     category: "builtin",
+    customized: false,
     description: `${id} extension`,
     id,
     interface: "instructions",
+    minimalInstruction: {
+      name: "minimal.md",
+      path: "",
+      content: "",
+      sourceVersion: "",
+      skipped: false,
+      editable: false,
+      generated: false,
+      tokenCount: {
+        tokens: 0,
+        accuracy: "estimated",
+      },
+    },
     requirements: {
       cliRequirements: [],
       env: [],

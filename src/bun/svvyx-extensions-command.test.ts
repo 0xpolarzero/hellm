@@ -29,6 +29,7 @@ import {
   rejectExtensionDependencyRequest,
   runSvvyxExtensionsCommand,
   setExtensionUsage,
+  writeExtensionInstructionFile,
   type CliRequirementStatus,
   type SvvyxExtensionsDependencyInstaller,
 } from "./svvyx-extensions-command";
@@ -2178,6 +2179,101 @@ describe("svvyx extensions command", () => {
           },
         ],
       },
+    });
+  });
+
+  it("projects builtin extension inventory from generated outputs instead of docs files", async () => {
+    const extensionsRoot = createTempDir();
+    const cwd = createTempDir();
+    const packagedFullDir = join(cwd, "generated", "instructions", "full");
+    mkdirSync(packagedFullDir, { recursive: true });
+    writeFileSync(join(packagedFullDir, "010-base-common.generated.md"), "packaged base common\n");
+    writeFileSync(join(packagedFullDir, "010-tinyfish-cli.generated.md"), "packaged tinyfish\n");
+
+    let inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    const baseCommon = inventory.extensions.find((extension) => extension.id === "base-common");
+    const web = inventory.extensions.find((extension) => extension.id === "web");
+    const shell = inventory.extensions.find((extension) => extension.id === "shell");
+
+    expect(baseCommon).toMatchObject({
+      customized: false,
+      minimalInstruction: {
+        name: "minimal.md",
+        editable: true,
+        generated: false,
+      },
+      instructionFiles: [
+        {
+          name: "010-base-common.generated.md",
+          editable: false,
+          generated: true,
+          skipped: false,
+        },
+      ],
+    });
+    expect(baseCommon?.minimalInstruction.content).toContain("Shared operating instructions");
+    expect(web).toMatchObject({
+      customized: false,
+      instructionFiles: [
+        {
+          name: "010-tinyfish-cli.generated.md",
+          editable: false,
+          generated: true,
+          skipped: false,
+        },
+      ],
+    });
+    expect(shell).toMatchObject({
+      customized: false,
+      minimalInstruction: {
+        editable: false,
+      },
+      instructionFiles: [],
+    });
+    expect(JSON.stringify(inventory.extensions)).not.toContain("docs/specs/extension");
+    expect(baseCommon?.instructionFiles?.[0]?.path).not.toContain("docs/");
+    expect(web?.instructionFiles?.[0]?.path).not.toContain("docs/");
+
+    const minimalPath = join(
+      extensionsRoot,
+      "sources",
+      "builtin-overlays",
+      "base-common",
+      "instructions",
+      "minimal.md",
+    );
+    writeExtensionInstructionFile({
+      extensionId: "base-common",
+      kind: "minimal",
+      file: "minimal.md",
+      content: "Custom base common hint.\n",
+      baseSourceVersion: baseCommon?.minimalInstruction.sourceVersion,
+      extensionsRoot,
+    });
+    expect(readFileSync(minimalPath, "utf8")).toBe("Custom base common hint.\n");
+
+    inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "base-common")).toMatchObject({
+      customized: true,
+      minimalInstruction: {
+        content: "Custom base common hint.\n",
+        path: minimalPath,
+      },
+      instructionFiles: [
+        {
+          name: "010-base-common.generated.md",
+          editable: false,
+          generated: true,
+        },
+      ],
     });
   });
 
@@ -6704,6 +6800,86 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionsRoot,
       }),
     ).rejects.toThrow("typescriptApiEnabled is valid only with interface svvyx.");
+  });
+
+  it("configures user svvyx TypeScript API generation", async () => {
+    const extensionsRoot = createTempDir();
+    await runSvvyxExtensionsCommand({
+      command:
+        'svvyx extensions create --id linear --title "Linear" --description "Linear issue workflow." --interface svvyx --typescript-api true --json',
+      extensionsRoot,
+    });
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions configure --extension linear --typescript-api false --json",
+      extensionsRoot,
+    });
+
+    const inventory = await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "linear")).toMatchObject({
+      interface: "svvyx",
+      typescriptApiEnabled: false,
+    });
+    await expect(
+      runSvvyxExtensionsCommand({
+        command: "svvyx extensions configure --extension linear --typescript-api maybe --json",
+        extensionsRoot,
+      }),
+    ).rejects.toThrow("--typescript-api must be true or false.");
+  });
+
+  it("marks builtin extensions customized only after their overlay differs", async () => {
+    const extensionsRoot = createTempDir();
+    const cwd = createTempDir();
+    const packagedFullDir = join(cwd, "generated", "instructions", "full");
+    mkdirSync(packagedFullDir, { recursive: true });
+    writeFileSync(
+      join(packagedFullDir, "010-tinyfish-cli.generated.md"),
+      "packaged tinyfish instructions\n",
+    );
+
+    let inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
+      customized: false,
+    });
+
+    await runSvvyxExtensionsCommand({
+      command:
+        "svvyx extensions instructions configure web --file 010-tinyfish-cli.generated.md --bypassed true --json",
+      cwd,
+      extensionsRoot,
+    });
+
+    inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
+      customized: false,
+    });
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions instructions add web --name 020-web-notes.md --json",
+      cwd,
+      extensionsRoot,
+    });
+
+    inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
+      customized: true,
+    });
   });
 
   it("inspects builtin extensions with CLI readiness, global usage, and build issues", async () => {
