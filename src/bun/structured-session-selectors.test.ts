@@ -6,7 +6,6 @@ import type {
   StructuredLifecycleEventRecord,
   StructuredPiSessionRecord,
   StructuredSessionSnapshot,
-  StructuredThreadContextRecord,
   StructuredThreadRecord,
   StructuredThreadStatus,
   StructuredTurnRecord,
@@ -30,7 +29,6 @@ type StructuredSessionSnapshotFixture = Omit<
   | "session"
   | "turns"
   | "threads"
-  | "threadContexts"
   | "commands"
   | "episodes"
   | "workflowRuns"
@@ -42,7 +40,6 @@ type StructuredSessionSnapshotFixture = Omit<
 > & {
   session?: Partial<StructuredSessionSnapshot["session"]>;
   threads?: Partial<StructuredThreadRecord>[];
-  threadContexts?: Partial<StructuredThreadContextRecord>[];
   turns?: Partial<StructuredTurnRecord>[];
   commands?: Partial<StructuredCommandRecord>[];
   episodes?: Partial<StructuredEpisodeRecord>[];
@@ -61,7 +58,6 @@ function createSessionSnapshot(
 ): StructuredSessionSnapshot {
   const {
     threads: overrideThreads,
-    threadContexts: overrideThreadContexts,
     turns: overrideTurns,
     commands: overrideCommands,
     episodes: overrideEpisodes,
@@ -107,7 +103,6 @@ function createSessionSnapshot(
         objectiveState: "active",
         status: "completed" as StructuredThreadStatus,
         wait: null,
-        loadedContextKeys: [],
         loadedExtensionIds: [],
         availableExtensionIds: [],
         startedAt: "2026-04-18T07:00:00.000Z",
@@ -115,20 +110,6 @@ function createSessionSnapshot(
         finishedAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...thread };
-    }) ?? [];
-
-  const threadContexts =
-    overrideThreadContexts?.map((threadContext, index) => {
-      const base: StructuredThreadContextRecord = {
-        id: `thread-context-00${index + 1}`,
-        sessionId: "session-selectors",
-        threadId: "thread-001",
-        contextKey: "ci",
-        contextVersion: "2026-04-18",
-        loadedByCommandId: null,
-        loadedAt: "2026-04-18T07:00:30.000Z",
-      };
-      return { ...base, ...threadContext };
     }) ?? [];
 
   const commands =
@@ -343,7 +324,6 @@ function createSessionSnapshot(
     },
     turns,
     threads,
-    threadContexts,
     commands,
     episodes,
     workflowRuns,
@@ -1444,7 +1424,6 @@ describe("structured session selectors", () => {
           title: "Parser fix thread",
           objective: "Patch the parser bug and add regression coverage.",
           status: "completed",
-          loadedContextKeys: ["ci"],
           updatedAt: "2026-04-18T10:04:30.000Z",
           finishedAt: "2026-04-18T10:04:30.000Z",
         },
@@ -1539,7 +1518,6 @@ describe("structured session selectors", () => {
         workflowTaskAttemptCount: 0,
         episodeCount: 2,
         artifactCount: 1,
-        loadedContextKeys: ["ci"],
         latestCommandRollup: {
           commandId: "command-handler-parent",
           threadId: "thread-handler",
@@ -1605,7 +1583,6 @@ describe("structured session selectors", () => {
       workflowTaskAttemptCount: 0,
       episodeCount: 2,
       artifactCount: 1,
-      loadedContextKeys: ["ci"],
       latestCommandRollup: {
         commandId: "command-handler-parent",
         threadId: "thread-handler",

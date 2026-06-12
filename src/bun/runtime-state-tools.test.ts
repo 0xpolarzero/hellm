@@ -273,12 +273,6 @@ function createRuntimeFixture() {
     loadedExtensionIds: ["shell"],
     availableExtensionIds: ["web"],
   });
-  const context = store.loadThreadContext({
-    threadId: thread.id,
-    contextKey: "ci",
-    contextVersion: "1",
-  });
-  expect(context.contextKey).toBe("ci");
   const command = store.createCommand({
     turnId: turn.id,
     surfacePiSessionId: handlerSurfaceId,

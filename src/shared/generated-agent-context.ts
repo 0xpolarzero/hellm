@@ -9,7 +9,6 @@ export type GeneratedAgentContextSectionId =
   | "smithers-svvy-boundary"
   | "workflow-authoring-contract"
   | "handler-workflow-authoring-appendix"
-  | "loaded-optional-context"
   | "execute-typescript";
 
 export interface GeneratedAgentContextEntry {
@@ -55,22 +54,9 @@ export interface GeneratedAgentContextInstructionBlock {
   default: boolean;
 }
 
-export interface GeneratedAgentContextContextPack {
-  id: string;
-  title: string;
-  summary: string;
-  body: string;
-  enabled: boolean;
-  scope: GeneratedAgentContextScope;
-  allowedActors: GeneratedAgentContextActor[];
-  default: boolean;
-  optionalContextKey?: string;
-}
-
 export interface GeneratedAgentContextActorRecipe {
   actor: GeneratedAgentContextActor;
   instructionBlockIds: string[];
-  contextPackIds: string[];
   generatedSectionIds: GeneratedAgentContextSectionId[];
 }
 
@@ -79,7 +65,6 @@ export interface GeneratedAgentContextState {
   revision: number;
   updatedAt: string;
   instructionBlocks: Record<string, GeneratedAgentContextInstructionBlock>;
-  contextPacks: Record<string, GeneratedAgentContextContextPack>;
   actorRecipes: Record<GeneratedAgentContextActor, GeneratedAgentContextActorRecipe>;
 }
 
@@ -113,7 +98,6 @@ export function getGeneratedAgentContextContentKey(state: GeneratedAgentContextS
     sortGeneratedAgentContextValue({
       version: state.version,
       instructionBlocks: state.instructionBlocks,
-      contextPacks: state.contextPacks,
       actorRecipes: state.actorRecipes,
     }),
   );

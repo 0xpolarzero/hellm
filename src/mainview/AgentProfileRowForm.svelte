@@ -176,6 +176,7 @@
 				provider: choice?.providerId ?? provider,
 				model: choice?.modelId ?? model,
 				reasoningEffort: value.reasoningEffort,
+				systemPrompt: "",
 				updateFromComposer: value.updateFromComposer,
 			};
 			const saved = await onSave(next);

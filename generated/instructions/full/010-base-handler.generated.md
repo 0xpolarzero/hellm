@@ -8,9 +8,6 @@ Workflow waits, approvals, and resumes stay inside this handler thread until the
 
 Do not call thread_start from this surface in the adopted supervision model.
 
-Use thread_current when the current objective, wait state, loaded prompt context, or prior thread report state matters.
+Use thread_current when the current objective, wait state, loaded extensions, available extensions, or prior thread report state matters.
 
-Do not infer current workflow details from prompt context; inspect Smithers state with official Smithers CLI commands when workflow state matters.
-
-Available optional prompt context keys:
-- No optional prompt context keys are part of the current product surface.
+Do not infer current workflow details from generated actor instructions; inspect Smithers state with official Smithers CLI commands when workflow state matters.

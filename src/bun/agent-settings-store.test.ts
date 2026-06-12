@@ -58,7 +58,7 @@ describe("agent profile settings", () => {
         provider: "openai",
         model: "gpt-5.4-mini",
         reasoningEffort: "low",
-        systemPrompt: "Own repository strategy.",
+        systemPrompt: "",
         extensionOrder: ["git", "cx", "web"],
       }),
     );
@@ -97,7 +97,7 @@ describe("agent profile settings", () => {
         provider: "anthropic",
         model: "claude-sonnet-4",
         reasoningEffort: "high",
-        systemPrompt: "Supervise delegated workflow work.",
+        systemPrompt: "",
         locked: true,
       }),
     );
@@ -161,7 +161,7 @@ describe("agent profile settings", () => {
         provider: "anthropic",
         model: "claude-sonnet-4",
         reasoningEffort: "high",
-        systemPrompt: "Own the top-level plan.",
+        systemPrompt: "",
         locked: true,
         builtin: true,
       }),
@@ -193,6 +193,7 @@ describe("agent profile settings", () => {
     expect(updated.agents.orchestrators).toContainEqual(
       expect.objectContaining({
         id: "custom-orchestrator",
+        systemPrompt: "",
         builtin: false,
         locked: false,
       }),

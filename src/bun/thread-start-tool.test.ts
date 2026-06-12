@@ -207,7 +207,6 @@ describe("thread_start tool", () => {
         threadGroupId: createdThread?.threadGroupId,
       }),
     });
-    expect(snapshot.threadContexts).toEqual([]);
     expect(appLogEvents).toEqual([
       expect.objectContaining({
         level: "info",

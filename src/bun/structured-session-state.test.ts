@@ -1702,7 +1702,7 @@ describe("structured session state write API", () => {
     ).toHaveLength(1);
   });
 
-  it("loads thread context idempotently without Project CI state records", () => {
+  it("records handler workflow runs without legacy Project CI state records", () => {
     const store = createStore();
     seedSession(store, "session-thread-context");
 
@@ -1716,16 +1716,6 @@ describe("structured session state write API", () => {
       surfacePiSessionId: "pi-thread-context",
       title: "Context thread",
       objective: "Run a delegated workflow.",
-    });
-    const context = store.loadThreadContext({
-      threadId: thread.id,
-      contextKey: "ci",
-      contextVersion: "2026-04-24",
-    });
-    const duplicateContext = store.loadThreadContext({
-      threadId: thread.id,
-      contextKey: "ci",
-      contextVersion: "2026-04-24",
     });
     const handlerTurn = store.startTurn({
       sessionId: "session-thread-context",
@@ -1755,9 +1745,6 @@ describe("structured session state write API", () => {
     });
 
     const snapshot = store.getSessionState("session-thread-context");
-    expect(context.id).toBe(duplicateContext.id);
-    expect(snapshot.threads[0]?.loadedContextKeys).toEqual(["ci"]);
-    expect(snapshot.threadContexts).toEqual([expect.objectContaining({ contextKey: "ci" })]);
     expect(snapshot.workflowRuns).toEqual([expect.objectContaining({ id: workflowRun.id })]);
     expect("ciRuns" in snapshot).toBe(false);
     expect("ciCheckResults" in snapshot).toBe(false);

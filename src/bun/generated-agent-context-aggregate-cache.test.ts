@@ -153,7 +153,6 @@ function baseInputs(id = "shell") {
     actorKind: "orchestrator" as const,
     loadedExtensionIds: [id],
     availableExtensionIds: ["extension-managing"],
-    loadedContextKeys: [],
     extensionContextFingerprints: { [id]: `${id}-fingerprint` },
     generatedAgentContextContentKey: "generated-context-v1",
     agentContextFormatVersion: GENERATED_AGENT_CONTEXT_AGGREGATE_FORMAT_VERSION,

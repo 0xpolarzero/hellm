@@ -73,7 +73,6 @@ function handlerThread(
     workflowTaskAttemptCount: options.workflowTaskAttemptCount ?? 0,
     episodeCount: options.episodeCount ?? 0,
     artifactCount: options.artifactCount ?? 0,
-    loadedContextKeys: options.loadedContextKeys ?? [],
     latestWorkflowRun: options.latestWorkflowRun ?? null,
     latestEpisode: options.latestEpisode ?? null,
     workflowTaskAttempts: options.workflowTaskAttempts,

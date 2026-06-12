@@ -396,7 +396,7 @@ function normalizeAgentProfile(input: AgentProfileSettings): AgentProfileSetting
     provider: requireNonEmpty(input.provider, "provider"),
     model: requireNonEmpty(input.model, "model"),
     reasoningEffort: input.reasoningEffort,
-    systemPrompt: requireNonEmpty(input.systemPrompt, "systemPrompt"),
+    systemPrompt: "",
     extensionUsage: normalizeExtensionUsage(input.extensionUsage),
     extensionOrder: normalizeExtensionOrder(input.extensionOrder),
     updateFromComposer: Boolean(input.updateFromComposer),

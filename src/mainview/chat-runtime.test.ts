@@ -387,7 +387,6 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 1,
-    loadedContextKeys: ["ci"],
     latestWorkflowRun: {
       workflowRunId: "workflow-1",
       workflowName: "parser_regression",
@@ -814,24 +813,20 @@ function createFakeRpc(input: {
     revision: 1,
     updatedAt: new Date(0).toISOString(),
     instructionBlocks: {},
-    contextPacks: {},
     actorRecipes: {
       orchestrator: {
         actor: "orchestrator",
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: ["execute-typescript"],
       },
       handler: {
         actor: "handler",
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: ["execute-typescript"],
       },
       "workflow-task": {
         actor: "workflow-task",
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: ["execute-typescript"],
       },
     },

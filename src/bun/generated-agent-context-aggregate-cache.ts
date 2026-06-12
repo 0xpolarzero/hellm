@@ -37,7 +37,6 @@ export type GeneratedAgentContextAggregateKeyInputs = {
   actorKind: SvvyActorKind;
   loadedExtensionIds: readonly string[];
   availableExtensionIds: readonly string[];
-  loadedContextKeys: readonly string[];
   extensionContextFingerprints: Record<string, string>;
   generatedAgentContextContentKey: string;
   agentContextFormatVersion: number;
@@ -342,7 +341,6 @@ function normalizeAggregateInputs(
     actorKind: input.actorKind,
     loadedExtensionIds: [...input.loadedExtensionIds],
     availableExtensionIds: [...input.availableExtensionIds],
-    loadedContextKeys: [...input.loadedContextKeys].toSorted(),
     extensionContextFingerprints: Object.fromEntries(
       Object.entries(input.extensionContextFingerprints).toSorted(([left], [right]) =>
         left.localeCompare(right),

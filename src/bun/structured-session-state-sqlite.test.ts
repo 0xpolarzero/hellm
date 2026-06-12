@@ -161,11 +161,6 @@ describe("structured session state SQLite persistence", () => {
       title: "Persisted handler thread",
       objective: "Own the delegated task and supervise workflow runs.",
     });
-    const context = first.store.loadThreadContext({
-      threadId: handlerThread.id,
-      contextKey: "ci",
-      contextVersion: "2026-04-24",
-    });
     first.store.finishTurn({
       turnId: orchestratorTurn.id,
       status: "completed",
@@ -267,13 +262,6 @@ describe("structured session state SQLite persistence", () => {
       [firstCommand.id, { cmd: "svvyx workflows build persist-alpha" }],
       [secondCommand.id, { cmd: "svvyx workflows build persist-beta" }],
     ]);
-    expect(afterReload.threadContexts).toEqual([
-      expect.objectContaining({
-        id: context.id,
-        threadId: handlerThread.id,
-        contextKey: "ci",
-      }),
-    ]);
     expect("ciRuns" in afterReload).toBe(false);
     expect("ciCheckResults" in afterReload).toBe(false);
     expect(afterReload.artifacts).toEqual([
@@ -295,7 +283,6 @@ describe("structured session state SQLite persistence", () => {
       runTwo.id,
     ]);
     expect(detail.latestWorkflowRun?.id).toBe(runTwo.id);
-    expect(detail.thread.loadedContextKeys).toEqual(["ci"]);
   });
 
   it("writes artifacts into the workspace-scoped artifact directory with persisted ownership metadata", () => {

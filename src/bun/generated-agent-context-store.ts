@@ -5,7 +5,6 @@ import { getGeneratedAgentContextContentKey } from "../shared/generated-agent-co
 import type {
   GeneratedAgentContextActor,
   GeneratedAgentContextActorRecipe,
-  GeneratedAgentContextContextPack,
   GeneratedAgentContextSectionId,
   GeneratedAgentContextInstructionBlock,
   GeneratedAgentContextSnapshotSummary,
@@ -34,7 +33,6 @@ const GENERATED_SECTION_IDS: GeneratedAgentContextSectionId[] = [
   "smithers-svvy-boundary",
   "workflow-authoring-contract",
   "handler-workflow-authoring-appendix",
-  "loaded-optional-context",
   "execute-typescript",
 ];
 
@@ -217,14 +215,12 @@ export function normalizeGeneratedAgentContextState(
 ): GeneratedAgentContextState {
   const defaults = createDefaultGeneratedAgentContextState();
   const instructionBlocks = normalizeInstructionBlocks(input.instructionBlocks, defaults);
-  const contextPacks = normalizeContextPacks(input.contextPacks, defaults);
   const actorRecipes = normalizeActorRecipes(input.actorRecipes, defaults);
   return {
     version: 1,
     revision: normalizePositiveInteger(overrides.revision ?? input.revision, defaults.revision),
     updatedAt: normalizeTimestamp(overrides.updatedAt ?? input.updatedAt, defaults.updatedAt),
     instructionBlocks,
-    contextPacks,
     actorRecipes,
   };
 }
@@ -267,45 +263,6 @@ function normalizeInstructionBlock(
   };
 }
 
-function normalizeContextPacks(
-  input: GeneratedAgentContextState["contextPacks"] | undefined,
-  defaults: GeneratedAgentContextState,
-): GeneratedAgentContextState["contextPacks"] {
-  const source = input ?? defaults.contextPacks;
-  const output: GeneratedAgentContextState["contextPacks"] = {};
-  for (const [id, pack] of Object.entries(source)) {
-    const normalized = normalizeContextPack(id, pack);
-    if (normalized) {
-      output[normalized.id] = normalized;
-    }
-  }
-  return output;
-}
-
-function normalizeContextPack(
-  fallbackId: string,
-  input: GeneratedAgentContextContextPack,
-): GeneratedAgentContextContextPack | null {
-  const id = normalizeIdentifier(input.id || fallbackId);
-  const title = requireText(input.title, id);
-  const body = requireText(input.body, "");
-  if (!id || !title || !body) {
-    return null;
-  }
-  const allowedActors = (input.allowedActors ?? []).filter((actor) => ACTORS.includes(actor));
-  return {
-    id,
-    title,
-    summary: input.summary?.trim() ?? "",
-    body,
-    enabled: input.enabled !== false,
-    scope: normalizeScope(input.scope),
-    allowedActors: allowedActors.length > 0 ? allowedActors : ACTORS,
-    default: input.default === true,
-    optionalContextKey: input.optionalContextKey?.trim() || undefined,
-  };
-}
-
 function normalizeActorRecipes(
   input: GeneratedAgentContextState["actorRecipes"] | undefined,
   defaults: GeneratedAgentContextState,
@@ -326,7 +283,6 @@ function normalizeActorRecipe(
   return {
     actor,
     instructionBlockIds: normalizeIdList(input?.instructionBlockIds, fallback.instructionBlockIds),
-    contextPackIds: normalizeIdList(input?.contextPackIds, fallback.contextPackIds),
     generatedSectionIds: normalizeGeneratedSectionIds(
       input?.generatedSectionIds,
       fallback.generatedSectionIds,

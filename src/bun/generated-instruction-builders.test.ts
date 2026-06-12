@@ -166,24 +166,20 @@ function createTestState() {
     revision: 0,
     updatedAt: "2026-06-09T00:00:00.000Z",
     instructionBlocks: {},
-    contextPacks: {},
     actorRecipes: {
       orchestrator: {
         actor: "orchestrator" as const,
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: [],
       },
       handler: {
         actor: "handler" as const,
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: [],
       },
       "workflow-task": {
         actor: "workflow-task" as const,
         instructionBlockIds: [],
-        contextPackIds: [],
         generatedSectionIds: [],
       },
     },

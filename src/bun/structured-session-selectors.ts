@@ -250,7 +250,6 @@ export interface StructuredHandlerThreadSummary {
   workflowTaskAttemptCount: number;
   episodeCount: number;
   artifactCount: number;
-  loadedContextKeys: string[];
   latestCommandRollup: StructuredCommandRollup | null;
   latestWorkflowRun: StructuredHandlerThreadWorkflowSummary | null;
   latestEpisode: StructuredHandlerThreadEpisodeSummary | null;
@@ -1153,7 +1152,6 @@ function buildHandlerThreadSummary(
     workflowTaskAttemptCount: workflowTaskAttempts.length,
     episodeCount: episodes.length,
     artifactCount: artifacts.length,
-    loadedContextKeys: thread.loadedContextKeys.slice(),
     latestCommandRollup: getThreadLatestCommandRollup(session, thread.id),
     latestWorkflowRun: latestWorkflowRun
       ? buildThreadWorkflowSummary(session, latestWorkflowRun)
@@ -1361,7 +1359,6 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.session.wait !== null ||
     session.turns.length > 0 ||
     session.threads.length > 0 ||
-    session.threadContexts.length > 0 ||
     buildCommandRollups(session).length > 0 ||
     session.episodes.length > 0 ||
     session.workflowRuns.length > 0 ||

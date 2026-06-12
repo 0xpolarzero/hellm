@@ -64,7 +64,6 @@ import type {
 } from "../shared/generated-agent-context";
 import { getGeneratedAgentContextContentKey } from "../shared/generated-agent-context";
 import {
-  DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_THREAD_HANDLER_PROFILE_ID,
@@ -72,7 +71,6 @@ import {
   type AppPreferences,
   type AgentProfileId,
   type AgentProfileSettings,
-  type AgentPromptSettings,
   type RequestUserInputSettings,
   type WorkflowAgentKey,
 } from "../shared/agent-settings";
@@ -681,11 +679,10 @@ export class WorkspaceSessionCatalog {
         profileExtensionUsage: profile.extensionUsage,
         profileExtensionOrder: profile.extensionOrder,
       });
-      const basePrompt = this.buildPromptFromLibrary("handler", {
+      const systemPrompt = this.buildPromptFromLibrary("handler", {
         ...extensionState,
         externalInstructionSources,
       });
-      const suffix = profile.systemPrompt.trim();
       return {
         actor,
         profileId: profile.id,
@@ -695,9 +692,7 @@ export class WorkspaceSessionCatalog {
         reasoningEffort: profile.reasoningEffort,
         loadedExtensionIds: extensionState.loadedExtensionIds,
         availableExtensionIds: extensionState.availableExtensionIds,
-        systemPrompt: suffix
-          ? `${basePrompt}\n\n## Handler Profile Override\n${suffix}`
-          : basePrompt,
+        systemPrompt,
         extensions: this.buildAgentContextPreviewExtensions(
           actor,
           extensionState,
@@ -730,6 +725,7 @@ export class WorkspaceSessionCatalog {
         systemPrompt: this.buildPromptFromLibrary("workflow-task", {
           ...extensionState,
           externalInstructionSources,
+          customInstructions: profile.instructions,
         }),
         extensions: this.buildAgentContextPreviewExtensions(
           actor,
@@ -872,7 +868,7 @@ export class WorkspaceSessionCatalog {
   }
 
   buildOrchestratorSystemPrompt(
-    settings: Pick<AgentProfileSettings, "systemPrompt" | "extensionUsage" | "extensionOrder">,
+    settings: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
     extensionState = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: settings.extensionUsage,
@@ -880,14 +876,9 @@ export class WorkspaceSessionCatalog {
     }),
     externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
   ): string {
-    const suffix = settings.systemPrompt.trim();
     return this.buildPromptFromLibrary("orchestrator", {
       ...extensionState,
       externalInstructionSources,
-      profileSection:
-        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
-          ? undefined
-          : { title: "Orchestrator Profile", body: suffix },
     });
   }
 
@@ -1180,14 +1171,9 @@ export class WorkspaceSessionCatalog {
       profileExtensionOrder: agentProfileSettings.extensionOrder,
     });
     const externalContextSources = await this.buildCurrentExternalContextSources();
-    const suffix = agentProfileSettings.systemPrompt.trim();
     const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
       ...extensionState,
       externalInstructionSources: externalContextSources,
-      profileSection:
-        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
-          ? undefined
-          : { title: "Orchestrator Profile", body: suffix },
     });
 
     const session = await this.createManagedSurfaceRecord({
@@ -1298,14 +1284,9 @@ export class WorkspaceSessionCatalog {
       profileExtensionOrder: sourceAgentProfile.extensionOrder,
     });
     const externalContextSources = await this.buildCurrentExternalContextSources();
-    const suffix = sourceAgentProfile.systemPrompt.trim();
     const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
       ...extensionState,
       externalInstructionSources: externalContextSources,
-      profileSection:
-        !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
-          ? undefined
-          : { title: "Orchestrator Profile", body: suffix },
     });
     const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
@@ -3384,16 +3365,22 @@ export class WorkspaceSessionCatalog {
     return profile;
   }
 
-  private resolveThreadProfileSettings(surfacePiSessionId: string): AgentPromptSettings | null {
+  private resolveThreadProfileSettings(
+    surfacePiSessionId: string,
+  ): Pick<AgentProfileSettings, "provider" | "model" | "reasoningEffort"> | null {
     for (const session of this.structuredSessionStore.listSessionStates()) {
       const thread = session.threads.find(
         (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
       );
       if (!thread?.agentProfileJson) continue;
       try {
-        const parsed = JSON.parse(thread.agentProfileJson) as AgentPromptSettings;
+        const parsed = JSON.parse(thread.agentProfileJson) as Partial<AgentProfileSettings>;
         if (parsed.provider && parsed.model && parsed.reasoningEffort) {
-          return parsed;
+          return {
+            provider: parsed.provider,
+            model: parsed.model,
+            reasoningEffort: parsed.reasoningEffort,
+          };
         }
       } catch {
         return null;
@@ -3594,11 +3581,10 @@ export class WorkspaceSessionCatalog {
   private buildPromptFromLibrary(
     actor: SvvyActorKind,
     options: {
-      loadedContextKeys?: readonly string[];
       loadedExtensionIds?: readonly string[];
       availableExtensionIds?: readonly string[];
       externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-      profileSection?: { title: string; body: string };
+      customInstructions?: string;
     } = {},
   ): string {
     return this.buildPromptAggregateFromLibrary(actor, options).outputs.prompt;
@@ -3660,11 +3646,10 @@ export class WorkspaceSessionCatalog {
   private buildPromptAggregateFromLibrary(
     actor: SvvyActorKind,
     options: {
-      loadedContextKeys?: readonly string[];
       loadedExtensionIds?: readonly string[];
       availableExtensionIds?: readonly string[];
       externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-      profileSection?: { title: string; body: string };
+      customInstructions?: string;
     } = {},
   ): GeneratedAgentContextAggregateResult {
     const loadedExtensionIds = options.loadedExtensionIds ?? [];
@@ -3685,21 +3670,16 @@ export class WorkspaceSessionCatalog {
       workspaceKey: this.cwd,
       requestUserInputSettings,
     });
-    const profileSection = options.profileSection?.body.trim()
-      ? {
-          title: options.profileSection.title.trim(),
-          body: options.profileSection.body.trim(),
-        }
-      : undefined;
-    const resolvedPrompt = profileSection
-      ? `${prompt}\n\n## ${profileSection.title}\n${profileSection.body}`
+    const customInstructions =
+      actor === "workflow-task" ? options.customInstructions?.trim() || "" : "";
+    const resolvedPrompt = customInstructions
+      ? `## Custom Instructions\n${customInstructions}\n\n${prompt}`
       : prompt;
     return this.generatedAgentContextAggregateCache.getOrCreate(
       {
         actorKind: actor,
         loadedExtensionIds,
         availableExtensionIds,
-        loadedContextKeys: options.loadedContextKeys ?? [],
         extensionContextFingerprints: createExtensionContextFingerprints([
           ...loadedExtensionRecords,
           ...availableExtensionRecords,
@@ -3713,7 +3693,7 @@ export class WorkspaceSessionCatalog {
         ),
         promptSettingsFingerprint: createPromptSettingsFingerprint({
           requestUserInputSettings,
-          profileSection,
+          customInstructions,
         }),
         workspaceKey: this.cwd,
       },
@@ -3738,23 +3718,15 @@ export class WorkspaceSessionCatalog {
     } = {},
   ): GeneratedAgentContextAggregateResult {
     if (target.surface !== "thread" || !target.threadId) {
-      const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-      const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
-      const settings = this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
       const extensionState =
         options.extensionState ??
         this.resolveCurrentExtensionStateForTarget(
           target,
           this.managedSurfaces.get(target.surfacePiSessionId) ?? null,
         );
-      const suffix = settings.systemPrompt.trim();
       return this.buildPromptAggregateFromLibrary("orchestrator", {
         ...extensionState,
         externalInstructionSources: options.externalInstructionSources ?? [],
-        profileSection:
-          !suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT
-            ? undefined
-            : { title: "Orchestrator Profile", body: suffix },
       });
     }
 
@@ -3762,15 +3734,11 @@ export class WorkspaceSessionCatalog {
       this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
         (candidate) => candidate.id === target.threadId,
       ) ?? null;
-    const agentSettings = this.resolveThreadProfileSettings(target.surfacePiSessionId);
-    const suffix = agentSettings?.systemPrompt.trim();
     return this.buildPromptAggregateFromLibrary("handler", {
-      loadedContextKeys: thread?.loadedContextKeys ?? [],
       loadedExtensionIds: options.extensionState?.loadedExtensionIds ?? thread?.loadedExtensionIds,
       availableExtensionIds:
         options.extensionState?.availableExtensionIds ?? thread?.availableExtensionIds,
       externalInstructionSources: options.externalInstructionSources ?? [],
-      profileSection: suffix ? { title: "Handler Profile Override", body: suffix } : undefined,
     });
   }
 
@@ -3831,7 +3799,7 @@ export class WorkspaceSessionCatalog {
     }
     try {
       const parsed = JSON.parse(json) as Partial<AgentProfileSettings>;
-      if (parsed.provider && parsed.model && parsed.reasoningEffort && parsed.systemPrompt) {
+      if (parsed.provider && parsed.model && parsed.reasoningEffort) {
         return {
           ...current,
           ...parsed,
@@ -4362,7 +4330,6 @@ export class WorkspaceSessionCatalog {
     threadSessionManager.newSession();
     threadSessionManager.appendSessionInfo(initialTitle);
     persistSessionManagerSnapshot(threadSessionManager);
-    const defaultThreadHandler = this.agentSettingsStore.getState().agents.special.threadHandler;
     const threadAgentSettings = input.agentProfileSettings
       ? {
           extensionUsage: input.agentProfileSettings.extensionUsage,
@@ -4370,10 +4337,8 @@ export class WorkspaceSessionCatalog {
           provider: input.agentProfileSettings.provider,
           model: input.agentProfileSettings.model,
           reasoningEffort: input.agentProfileSettings.reasoningEffort,
-          systemPrompt:
-            input.agentProfileSettings.systemPrompt.trim() || defaultThreadHandler.systemPrompt,
         }
-      : defaultThreadHandler;
+      : this.agentSettingsStore.getState().agents.special.threadHandler;
 
     const extensionState = resolveThreadExtensionState(
       threadAgentSettings.extensionUsage,
@@ -5960,7 +5925,7 @@ function buildNativeToolSchemasJson(records: readonly ResolvedExtensionRecord[])
 
 function createPromptSettingsFingerprint(input: {
   requestUserInputSettings: RequestUserInputSettings;
-  profileSection?: { title: string; body: string };
+  customInstructions?: string;
 }): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }

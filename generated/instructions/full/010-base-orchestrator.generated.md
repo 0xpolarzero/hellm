@@ -15,6 +15,3 @@ Do not use history: "forked" for ordinary implementation, source-driven research
 Use thread_list and thread_episodes before thread_followup({ activate: true }) when an existing concluded handler thread may already have the right context for follow-up work.
 
 If a delegated objective needs workflow authoring or saving reusable workflow assets, delegate that work to a handler thread instead of trying to do it from the orchestrator surface.
-
-Optional prompt context routing:
-No optional prompt context keys are part of the current product surface. Delegate workflow authoring with `thread_start({ threads: [...] })` when a handler thread is the correct unit.

@@ -23,7 +23,6 @@ import {
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   DEFAULT_THREAD_HANDLER_PROFILE_ID,
-  DEFAULT_THREAD_HANDLER_PROMPT,
   type AgentProfileSettings,
 } from "../shared/agent-settings";
 import { buildSystemPrompt } from "./default-system-prompt";
@@ -392,10 +391,6 @@ function appendGeneratedAgentContextMarker(catalog: WorkspaceSessionCatalog, mar
       },
     },
   });
-}
-
-function countOccurrences(text: string, needle: string): number {
-  return text.split(needle).length - 1;
 }
 
 async function closeSurface(catalog: WorkspaceSessionCatalog, target: PromptTarget): Promise<void> {
@@ -1190,7 +1185,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(handlerPreview.loadedExtensionIds).toContain("base-handler");
       expect(handlerPreview.loadedExtensionIds).not.toContain("base-orchestrator");
       expect(handlerPreview.systemPrompt).toContain("This surface is a delegated handler thread.");
-      expect(handlerPreview.systemPrompt).toContain("## Handler Profile Override");
+      expect(handlerPreview.systemPrompt).not.toContain("## Handler Profile Override");
 
       const workflowTaskPreview = await catalog.getAgentContextPreview({
         actor: "workflow-task",
@@ -1203,6 +1198,15 @@ describe("WorkspaceSessionCatalog", () => {
       expect(workflowTaskPreview.loadedExtensionIds).toContain("base-common");
       expect(workflowTaskPreview.loadedExtensionIds).toContain("base-workflow-task");
       expect(workflowTaskPreview.loadedExtensionIds).not.toContain("base-orchestrator");
+      expect(workflowTaskPreview.systemPrompt.startsWith("## Custom Instructions")).toBe(true);
+      expect(workflowTaskPreview.systemPrompt.indexOf("Inspect the repository")).toBeGreaterThan(
+        -1,
+      );
+      expect(workflowTaskPreview.systemPrompt.indexOf("Inspect the repository")).toBeLessThan(
+        workflowTaskPreview.systemPrompt.indexOf(
+          "You are a task-scoped coding agent running inside one Smithers workflow task attempt.",
+        ),
+      );
     } finally {
       await catalog.dispose();
     }
@@ -2086,9 +2090,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(openedHandler.systemPrompt).not.toContain(
         `# Claude Standards\n\nKeep visible instructions.`,
       );
-      expect(openedHandler.systemPrompt).toContain(
-        `## Handler Profile Override\n${DEFAULT_THREAD_HANDLER_PROMPT}`,
-      );
+      expect(openedHandler.systemPrompt).not.toContain("## Handler Profile Override");
       expect(openedHandler.resolvedSystemPrompt).toContain(
         "This surface is a delegated handler thread.",
       );
@@ -3177,7 +3179,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("composes new-session prompts from raw orchestrator profile settings once", async () => {
+  it("ignores raw orchestrator profile prompt settings", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const suffix = "Custom raw orchestrator profile suffix.";
@@ -3204,12 +3206,9 @@ describe("WorkspaceSessionCatalog", () => {
         },
       );
 
-      expect(created.systemPrompt.startsWith(buildSystemPrompt("orchestrator"))).toBe(true);
-      expect(countOccurrences(created.systemPrompt, "## Orchestrator Profile")).toBe(1);
-      expect(countOccurrences(created.systemPrompt, suffix)).toBe(1);
-      expect(created.systemPrompt).not.toContain(
-        `${buildSystemPrompt("orchestrator")}\n\n## Orchestrator Profile\n${buildSystemPrompt("orchestrator")}`,
-      );
+      expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
+      expect(created.systemPrompt).not.toContain("## Orchestrator Profile");
+      expect(created.systemPrompt).not.toContain(suffix);
     } finally {
       await catalog.dispose();
     }

@@ -216,11 +216,9 @@ export const DEFAULT_AGENT_SETTINGS = {
 export const DEFAULT_ORCHESTRATOR_PROFILE_ID = "default-orchestrator";
 export const DEFAULT_THREAD_HANDLER_PROFILE_ID = "thread-handler";
 
-export const DEFAULT_ORCHESTRATOR_SESSION_PROMPT =
-  "You are svvy, the main orchestrator. Own strategy, route bounded delegated work through handler threads, and make final user-facing decisions.";
+export const DEFAULT_ORCHESTRATOR_SESSION_PROMPT = "";
 
-export const DEFAULT_THREAD_HANDLER_PROMPT =
-  "You are a svvy delegated handler thread. Own the bounded objective, use Smithers through official CLI commands when useful, ask for clarification when blocked, and hand durable outcomes back to the orchestrator.";
+export const DEFAULT_THREAD_HANDLER_PROMPT = "";
 
 export const DEFAULT_NAMER_SESSION_PROMPT = [
   "You generate concise session titles for svvy.",

@@ -78,7 +78,6 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 0,
-    loadedContextKeys: ["ci"],
     latestWorkflowRun: null,
     latestEpisode: {
       episodeId: "episode-1",

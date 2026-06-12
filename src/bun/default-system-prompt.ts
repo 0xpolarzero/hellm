@@ -9,12 +9,6 @@ import type { SvvyActorKind } from "./actor-capabilities";
 import { buildCxPromptContext } from "./cx-runtime/prompt-context";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import {
-  buildLoadedOptionalPromptContextPrompt,
-  buildOptionalPromptContextRegistryPrompt,
-  buildOrchestratorContextRoutingPrompt,
-  validateOptionalPromptContextKeys,
-} from "./prompt-contexts";
-import {
   HANDLER_WORKFLOW_AUTHORING_APPENDIX,
   SMITHERS_SVVY_BOUNDARY_APPENDIX,
 } from "./smithers-runtime/workflow-authoring-guide";
@@ -27,7 +21,6 @@ import {
 import type { RequestUserInputSettings } from "../shared/agent-settings";
 import type {
   GeneratedAgentContextActorRecipe,
-  GeneratedAgentContextContextPack,
   GeneratedAgentContextEntry,
   GeneratedAgentContextSectionId,
   GeneratedAgentContextInstructionBlock,
@@ -121,7 +114,6 @@ export const BASE_ORCHESTRATOR_INSTRUCTIONS = [
   'Do not use history: "forked" for ordinary implementation, source-driven research, test fixing, code review, security review, independent critique, verification, durable-file-specified tasks, or stale/speculative transcript contexts.',
   "Use thread_list and thread_episodes before thread_followup({ activate: true }) when an existing concluded handler thread may already have the right context for follow-up work.",
   "If a delegated objective needs workflow authoring or saving reusable workflow assets, delegate that work to a handler thread instead of trying to do it from the orchestrator surface.",
-  buildOrchestratorContextRoutingPrompt(),
 ].join("\n\n");
 
 export const BASE_HANDLER_INSTRUCTIONS = [
@@ -130,9 +122,8 @@ export const BASE_HANDLER_INSTRUCTIONS = [
   "Use thread_report with outcome only when the current objective is ready to conclude with durable state.",
   "Workflow waits, approvals, and resumes stay inside this handler thread until the handler decides to report an update or conclusion.",
   "Do not call thread_start from this surface in the adopted supervision model.",
-  "Use thread_current when the current objective, wait state, loaded prompt context, or prior thread report state matters.",
-  "Do not infer current workflow details from prompt context; inspect Smithers state with official Smithers CLI commands when workflow state matters.",
-  buildOptionalPromptContextRegistryPrompt(),
+  "Use thread_current when the current objective, wait state, loaded extensions, available extensions, or prior thread report state matters.",
+  "Do not infer current workflow details from generated actor instructions; inspect Smithers state with official Smithers CLI commands when workflow state matters.",
 ].join("\n\n");
 
 export const BASE_WORKFLOW_TASK_INSTRUCTIONS = [
@@ -355,66 +346,20 @@ export function createDefaultGeneratedAgentContextState(
     },
   };
 
-  const contextPacks: Record<string, GeneratedAgentContextContextPack> = {
-    cx: {
-      id: "cx",
-      title: "cx Semantic Code Navigation",
-      summary: "Always-loaded repository navigation guidance.",
-      body: CX_CONTEXT_BODY,
-      enabled: true,
-      scope: globalScope,
-      allowedActors: ["orchestrator", "handler", "workflow-task"],
-      default: true,
-    },
-    "smithers-orchestrator": {
-      id: "smithers-orchestrator",
-      title: "Smithers Workflow Routing",
-      summary: "Orchestrator awareness of handler-supervised workflow execution.",
-      body: SMITHERS_ORCHESTRATOR_CONTEXT_BODY,
-      enabled: true,
-      scope: globalScope,
-      allowedActors: ["orchestrator"],
-      default: true,
-    },
-    "smithers-handler": {
-      id: "smithers-handler",
-      title: "Smithers Workflow Supervision",
-      summary: "Handler-thread Smithers workflow supervision guidance.",
-      body: SMITHERS_HANDLER_CONTEXT_BODY,
-      enabled: true,
-      scope: globalScope,
-      allowedActors: ["handler"],
-      default: true,
-    },
-    "smithers-workflow-task": {
-      id: "smithers-workflow-task",
-      title: "Smithers Task-Agent Boundary",
-      summary: "Workflow task-agent runtime boundary guidance.",
-      body: SMITHERS_WORKFLOW_TASK_CONTEXT_BODY,
-      enabled: true,
-      scope: globalScope,
-      allowedActors: ["workflow-task"],
-      default: true,
-    },
-  };
-
   return {
     version: 1,
     revision,
     updatedAt: now,
     instructionBlocks,
-    contextPacks,
     actorRecipes: {
       orchestrator: {
         actor: "orchestrator",
         instructionBlockIds: ["common", "orchestrator"],
-        contextPackIds: ["cx", "smithers-orchestrator"],
         generatedSectionIds: ["web-context", "execute-typescript"],
       },
       handler: {
         actor: "handler",
         instructionBlockIds: ["common", "handler"],
-        contextPackIds: ["cx", "smithers-handler"],
         generatedSectionIds: [
           "web-context",
           "smithers-core",
@@ -422,14 +367,12 @@ export function createDefaultGeneratedAgentContextState(
           "smithers-svvy-boundary",
           "workflow-authoring-contract",
           "handler-workflow-authoring-appendix",
-          "loaded-optional-context",
           "execute-typescript",
         ],
       },
       "workflow-task": {
         actor: "workflow-task",
         instructionBlockIds: ["common", "workflow-task"],
-        contextPackIds: ["cx", "smithers-workflow-task"],
         generatedSectionIds: ["web-context", "execute-typescript"],
       },
     },
@@ -449,23 +392,6 @@ function getEnabledInstructionBlock(
   return block?.enabled && isPromptBlockActive(block.scope, workspaceKey) ? block : null;
 }
 
-function getEnabledContextPack(
-  state: GeneratedAgentContextState,
-  actor: SvvyActorKind,
-  id: string,
-  workspaceKey?: string,
-): GeneratedAgentContextContextPack | null {
-  const pack = state.contextPacks[id];
-  if (
-    !pack?.enabled ||
-    !pack.allowedActors.includes(actor) ||
-    !isPromptBlockActive(pack.scope, workspaceKey)
-  ) {
-    return null;
-  }
-  return pack;
-}
-
 function isPromptBlockActive(
   scope: { appGlobal: boolean; workspaceKeys: readonly string[] },
   workspaceKey?: string,
@@ -473,32 +399,10 @@ function isPromptBlockActive(
   return scope.appGlobal || (!!workspaceKey && scope.workspaceKeys.includes(workspaceKey));
 }
 
-function buildLoadedOptionalPromptContextFromLibrary(
-  state: GeneratedAgentContextState,
-  keys: readonly string[],
-): string | undefined {
-  const validKeys = validateOptionalPromptContextKeys(keys);
-  if (validKeys.length === 0) {
-    return undefined;
-  }
-
-  const sections = validKeys
-    .map((key) =>
-      Object.values(state.contextPacks).find(
-        (pack) => pack.enabled && pack.optionalContextKey === key,
-      ),
-    )
-    .filter((pack): pack is GeneratedAgentContextContextPack => Boolean(pack))
-    .map((pack) => pack.body.trim())
-    .filter(Boolean);
-  return sections.length > 0 ? sections.join("\n\n") : undefined;
-}
-
 export function buildSystemPromptFromLibrary(
   actor: SvvyActorKind,
   state: GeneratedAgentContextState,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     availableExtensionIds?: readonly string[];
@@ -521,7 +425,6 @@ export function buildGeneratedAgentContextEntries(
   actor: SvvyActorKind,
   state: GeneratedAgentContextState,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     availableExtensionIds?: readonly string[];
@@ -540,16 +443,14 @@ export function buildGeneratedAgentContextEntries(
 
   const recipe = state.actorRecipes[actor] ?? getFallbackRecipe(actor);
   return recipe.generatedSectionIds
-    .map((id) => buildGeneratedAgentContextEntry(actor, state, id, options))
+    .map((id) => buildGeneratedAgentContextEntry(actor, id, options))
     .filter((entry): entry is GeneratedAgentContextEntry => Boolean(entry));
 }
 
 function buildGeneratedAgentContextEntry(
   actor: SvvyActorKind,
-  state: GeneratedAgentContextState,
   id: GeneratedAgentContextSectionId,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     extensionsRoot?: string;
@@ -609,22 +510,6 @@ function buildGeneratedAgentContextEntry(
       content: HANDLER_WORKFLOW_AUTHORING_APPENDIX,
     };
   }
-  if (id === "loaded-optional-context" && actor === "handler") {
-    const content = buildLoadedOptionalPromptContextFromLibrary(
-      state,
-      options.loadedContextKeys ?? [],
-    );
-    if (!content) {
-      return null;
-    }
-    return {
-      id,
-      title: "Loaded Optional Context",
-      source: "src/bun/default-system-prompt.ts",
-      sourcePath: "src/bun/default-system-prompt.ts",
-      content,
-    };
-  }
   if (id === "execute-typescript") {
     return {
       id,
@@ -644,7 +529,6 @@ function buildGeneratedAgentContextEntry(
 export function buildSystemPrompt(
   actor: SvvyActorKind,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     availableExtensionIds?: readonly string[];
@@ -666,7 +550,6 @@ export function buildSystemPrompt(
 function buildSystemPromptFromExtensionState(
   actor: SvvyActorKind,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     availableExtensionIds?: readonly string[];
@@ -728,17 +611,6 @@ function buildSystemPromptFromExtensionState(
   if (availablePrompt) {
     sections.push(availablePrompt);
   }
-  if (actor === "handler") {
-    const loadedContextPrompt = options.generatedAgentContextState
-      ? buildLoadedOptionalPromptContextFromLibrary(
-          options.generatedAgentContextState,
-          options.loadedContextKeys ?? [],
-        )
-      : buildLoadedOptionalPromptContextPrompt(options.loadedContextKeys ?? []);
-    if (loadedContextPrompt) {
-      sections.push(loadedContextPrompt);
-    }
-  }
   return sections.join("\n\n");
 }
 
@@ -773,7 +645,7 @@ function buildLoadedExtensionPromptSections(input: {
     return input.externalInstructions ? [input.externalInstructions] : [];
   }
   if (extensionId === "cx") {
-    return [getLibraryContextPackBody(options, actor, "cx") ?? CX_CONTEXT_BODY];
+    return [CX_CONTEXT_BODY];
   }
   if (extensionId === "shell") {
     return [SHELL_BASE_CONTEXT_BODY, SHELL_INCUR_CLI_CONTEXT_BODY];
@@ -805,22 +677,15 @@ function buildLoadedExtensionPromptSections(input: {
   if (extensionId === "smithers") {
     if (actor === "handler") {
       return [
-        getLibraryContextPackBody(options, actor, "smithers-handler") ??
-          SMITHERS_HANDLER_CONTEXT_BODY,
+        SMITHERS_HANDLER_CONTEXT_BODY,
         SMITHERS_CORE_INSTRUCTIONS,
         SMITHERS_SVVY_BOUNDARY_APPENDIX,
       ];
     }
     if (actor === "workflow-task") {
-      return [
-        getLibraryContextPackBody(options, actor, "smithers-workflow-task") ??
-          SMITHERS_WORKFLOW_TASK_CONTEXT_BODY,
-      ];
+      return [SMITHERS_WORKFLOW_TASK_CONTEXT_BODY];
     }
-    return [
-      getLibraryContextPackBody(options, actor, "smithers-orchestrator") ??
-        SMITHERS_ORCHESTRATOR_CONTEXT_BODY,
-    ];
+    return [SMITHERS_ORCHESTRATOR_CONTEXT_BODY];
   }
   if (extensionId === "web") {
     return [buildWebPromptContext(actor)];
@@ -916,24 +781,9 @@ function getLibraryInstructionBody(
   );
 }
 
-function getLibraryContextPackBody(
-  options: { generatedAgentContextState?: GeneratedAgentContextState; workspaceKey?: string },
-  actor: SvvyActorKind,
-  id: string,
-): string | null {
-  if (!options.generatedAgentContextState) {
-    return null;
-  }
-  return (
-    getEnabledContextPack(options.generatedAgentContextState, actor, id, options.workspaceKey)
-      ?.body ?? null
-  );
-}
-
 function buildGeneratedEntriesFromExtensionState(
   actor: SvvyActorKind,
   options: {
-    loadedContextKeys?: readonly string[];
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
     availableExtensionIds?: readonly string[];
@@ -992,18 +842,6 @@ function buildGeneratedEntriesFromExtensionState(
       sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
       content: HANDLER_WORKFLOW_AUTHORING_APPENDIX,
     });
-  }
-  if (actor === "handler") {
-    const content = buildLoadedOptionalPromptContextPrompt(options.loadedContextKeys ?? []);
-    if (content) {
-      entries.push({
-        id: "loaded-optional-context",
-        title: "Loaded Optional Context",
-        source: "src/bun/default-system-prompt.ts",
-        sourcePath: "src/bun/default-system-prompt.ts",
-        content,
-      });
-    }
   }
   if (loaded.has("execute-typescript")) {
     entries.push({

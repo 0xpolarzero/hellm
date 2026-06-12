@@ -203,7 +203,6 @@ export interface StructuredThreadRecord {
   objectiveState: StructuredThreadObjectiveState;
   status: StructuredThreadStatus;
   wait: StructuredWaitState | null;
-  loadedContextKeys: string[];
   loadedExtensionIds: string[];
   availableExtensionIds: string[];
   worktree?: string;
@@ -232,16 +231,6 @@ export interface StructuredGeneratedAgentContextBindingRecord {
   externalSourceHashes: string[];
   createdAt: string;
   updatedAt: string;
-}
-
-export interface StructuredThreadContextRecord {
-  id: string;
-  sessionId: string;
-  threadId: string;
-  contextKey: string;
-  contextVersion: string;
-  loadedByCommandId: string | null;
-  loadedAt: string;
 }
 
 export interface StructuredCommandRecord {
@@ -598,7 +587,6 @@ export interface StructuredSessionSnapshot {
   };
   turns: StructuredTurnRecord[];
   threads: StructuredThreadRecord[];
-  threadContexts: StructuredThreadContextRecord[];
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
@@ -627,7 +615,6 @@ export interface StructuredThreadDetail {
   childThreads: StructuredThreadRecord[];
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
-  threadContexts: StructuredThreadContextRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   latestWorkflowRun: StructuredWorkflowRunRecord | null;
   workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
@@ -701,12 +688,6 @@ export interface StructuredSessionStateStore {
     agentProfileJson?: string | null;
     generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord;
-  loadThreadContext(input: {
-    threadId: string;
-    contextKey: string;
-    contextVersion: string;
-    loadedByCommandId?: string | null;
-  }): StructuredThreadContextRecord;
   updateThread(input: {
     threadId: string;
     status?: StructuredThreadStatus;
@@ -1175,16 +1156,6 @@ type ThreadRow = {
   started_at: string;
   updated_at: string;
   finished_at: string | null;
-};
-
-type ThreadContextRow = {
-  id: string;
-  session_id: string;
-  thread_id: string;
-  context_key: string;
-  context_version: string;
-  loaded_by_command_id: string | null;
-  loaded_at: string;
 };
 
 type CommandRow = {
@@ -2283,61 +2254,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     this.reconcileSessionWaitAfterRunnableChange(turn.session_id);
 
     return this.mustFindThreadRecord(threadId);
-  }
-
-  loadThreadContext(input: {
-    threadId: string;
-    contextKey: string;
-    contextVersion: string;
-    loadedByCommandId?: string | null;
-  }): StructuredThreadContextRecord {
-    const thread = this.mustFindThreadRow(input.threadId);
-    const existing = this.findThreadContextRow(input.threadId, input.contextKey);
-    if (existing) {
-      return this.mapThreadContext(existing);
-    }
-
-    if (input.loadedByCommandId) {
-      this.mustFindCommandRow(input.loadedByCommandId);
-    }
-
-    const timestamp = this.now();
-    const contextId = createId("thread-context");
-    this.db
-      .query(
-        `INSERT INTO thread_context (
-           id,
-           session_id,
-           thread_id,
-           context_key,
-           context_version,
-           loaded_by_command_id,
-           loaded_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        contextId,
-        thread.session_id,
-        input.threadId,
-        input.contextKey,
-        input.contextVersion,
-        input.loadedByCommandId ?? null,
-        timestamp,
-      );
-
-    this.recordEvent({
-      sessionId: thread.session_id,
-      kind: "context.loaded",
-      subjectKind: "thread",
-      subjectId: input.threadId,
-      at: timestamp,
-      data: {
-        contextKey: input.contextKey,
-        contextVersion: input.contextVersion,
-      },
-    });
-
-    return this.mustFindThreadContextRecord(contextId);
   }
 
   updateThread(input: {
@@ -4834,7 +4750,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       },
       turns: this.queryTurnRecords(sessionId),
       threads: this.queryThreadRecords(sessionId),
-      threadContexts: this.queryThreadContextRecords(sessionId),
       commands: this.queryCommandRecords(sessionId),
       episodes: this.queryEpisodeRecords(sessionId),
       workflowRuns,
@@ -4887,7 +4802,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         "workflow_run",
         "episode",
         "command",
-        "thread_context",
         "thread",
         "turn",
         "session",
@@ -4917,9 +4831,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       childThreads: this.queryThreadRowsByParent(threadId).map((row) => this.mapThread(row)),
       commands: this.queryCommandRowsByThread(threadId).map((row) => this.mapCommand(row)),
       episodes: this.queryEpisodeRowsByThread(threadId).map((row) => this.mapEpisode(row)),
-      threadContexts: this.queryThreadContextRowsByThread(threadId).map((row) =>
-        this.mapThreadContext(row),
-      ),
       workflowRuns,
       latestWorkflowRun,
       workflowTaskAttempts,
@@ -5019,18 +4930,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error(`Structured thread not found: ${threadId}`);
     }
     return row;
-  }
-
-  private findThreadContextRow(threadId: string, contextKey: string): ThreadContextRow | null {
-    return (
-      (this.db
-        .query(
-          `SELECT * FROM thread_context
-           WHERE thread_id = ? AND context_key = ?
-           LIMIT 1`,
-        )
-        .get(threadId, contextKey) as ThreadContextRow | undefined) ?? null
-    );
   }
 
   private mustFindCommandRow(commandId: string): CommandRow {
@@ -5176,16 +5075,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mapEpisode(this.mustFindEpisodeRow(episodeId));
   }
 
-  private mustFindThreadContextRecord(contextId: string): StructuredThreadContextRecord {
-    const row = this.db.query(`SELECT * FROM thread_context WHERE id = ?`).get(contextId) as
-      | ThreadContextRow
-      | undefined;
-    if (!row) {
-      throw new Error(`Structured thread context not found: ${contextId}`);
-    }
-    return this.mapThreadContext(row);
-  }
-
   private mustFindWorkflowRunRecord(workflowId: string): StructuredWorkflowRunRecord {
     return this.mapWorkflowRun(this.mustFindWorkflowRunRow(workflowId));
   }
@@ -5272,12 +5161,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(`SELECT * FROM thread WHERE session_id = ? ORDER BY rowid ASC`)
       .all(sessionId) as ThreadRow[];
-  }
-
-  private queryThreadContextRows(sessionId: string): ThreadContextRow[] {
-    return this.db
-      .query(`SELECT * FROM thread_context WHERE session_id = ? ORDER BY rowid ASC`)
-      .all(sessionId) as ThreadContextRow[];
   }
 
   private queryCommandRows(sessionId: string): CommandRow[] {
@@ -5400,10 +5283,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.queryThreadRows(sessionId).map((row) => this.mapThread(row));
   }
 
-  private queryThreadContextRecords(sessionId: string): StructuredThreadContextRecord[] {
-    return this.queryThreadContextRows(sessionId).map((row) => this.mapThreadContext(row));
-  }
-
   private queryCommandRecords(sessionId: string): StructuredCommandRecord[] {
     return this.queryCommandRows(sessionId).map((row) => this.mapCommand(row));
   }
@@ -5488,12 +5367,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db
       .query(`SELECT * FROM episode WHERE thread_id = ? ORDER BY rowid ASC`)
       .all(threadId) as EpisodeRow[];
-  }
-
-  private queryThreadContextRowsByThread(threadId: string): ThreadContextRow[] {
-    return this.db
-      .query(`SELECT * FROM thread_context WHERE thread_id = ? ORDER BY rowid ASC`)
-      .all(threadId) as ThreadContextRow[];
   }
 
   private queryWorkflowRunRowsForThread(threadId: string): WorkflowRunRow[] {
@@ -5756,9 +5629,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       objectiveState: row.objective_state,
       status: row.status,
       wait: this.mapThreadWait(row),
-      loadedContextKeys: this.queryThreadContextRowsByThread(row.id).map(
-        (context) => context.context_key,
-      ),
       loadedExtensionIds: fromJson<string[]>(row.loaded_extension_ids_json) ?? [],
       availableExtensionIds: fromJson<string[]>(row.available_extension_ids_json) ?? [],
       worktree: row.worktree ?? undefined,
@@ -5767,18 +5637,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
-    };
-  }
-
-  private mapThreadContext(row: ThreadContextRow): StructuredThreadContextRecord {
-    return {
-      id: row.id,
-      sessionId: row.session_id,
-      threadId: row.thread_id,
-      contextKey: row.context_key,
-      contextVersion: row.context_version,
-      loadedByCommandId: row.loaded_by_command_id,
-      loadedAt: row.loaded_at,
     };
   }
 
@@ -6167,17 +6025,6 @@ function initializeSchema(db: Database): void {
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       finished_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS thread_context (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      thread_id TEXT NOT NULL,
-      context_key TEXT NOT NULL,
-      context_version TEXT NOT NULL,
-      loaded_by_command_id TEXT,
-      loaded_at TEXT NOT NULL,
-      UNIQUE(thread_id, context_key)
     );
 
     CREATE TABLE IF NOT EXISTS generated_agent_context_binding (

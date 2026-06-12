@@ -1,7 +1,7 @@
 import { TINYFISH_CLI_INSTRUCTIONS } from "../../../generated/cli-instructions.generated";
-import type { PromptContextActor } from "../../shared/prompt-context";
+import type { SvvyActorKind } from "../actor-capabilities";
 
-export function buildWebPromptContext(actor: PromptContextActor): string {
+export function buildWebPromptContext(actor: SvvyActorKind): string {
   const sections = [
     "Loaded extension: Web.",
     "",

@@ -652,17 +652,6 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("Memory is **state that survives across runs**");
   });
 
-  it("rejects removed optional prompt context keys", () => {
-    expect(buildSystemPrompt("handler")).not.toContain(
-      "Loaded optional prompt context: Project CI.",
-    );
-    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("Project CI");
-
-    expect(() => buildSystemPrompt("handler", { loadedContextKeys: ["ci"] })).toThrow(
-      "Unknown prompt context key: ci",
-    );
-  });
-
   it("projects generated agent context entries with concrete content and editor sources", () => {
     const state = createDefaultGeneratedAgentContextState();
     const handlerEntries = buildGeneratedAgentContextEntries("handler", state);

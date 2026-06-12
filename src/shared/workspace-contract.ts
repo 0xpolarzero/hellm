@@ -1008,7 +1008,6 @@ export interface WorkspaceHandlerThreadSummary {
   workflowTaskAttemptCount?: number;
   episodeCount: number;
   artifactCount: number;
-  loadedContextKeys: string[];
   latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
   latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
   workflowTaskAttempts?: WorkspaceWorkflowTaskAttemptSummary[];
