@@ -72,8 +72,10 @@
   let renameSnapshotInput = $state<HTMLInputElement | null>(null);
   let expandedExtensionIds = $state<Set<string>>(new Set());
   let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
-  let pendingDefaultUsageKey = $state<string | null>(null);
-  let pendingExtensionAction = $state<string | null>(null);
+  let pendingExtensionActions = $state<Set<string>>(new Set());
+  let extensionInventoryMutationGeneration = 0;
+  let appliedExtensionInventoryMutationGeneration = 0;
+  let extensionInventoryNeedsSettledRefresh = false;
   let newExtensionOpen = $state(false);
   let newExtensionTitle = $state("");
   let newExtensionDescription = $state("");
@@ -215,20 +217,23 @@
     state: ExtensionUsageState,
   ) {
     const usage = defaultUsageFor(extension, actorKind);
-    if (!usage.configurable || usage.state === state || pendingDefaultUsageKey !== null) return;
-    pendingDefaultUsageKey = `${extension.id}:${actorKind}:${state}`;
+    const actionKey = `default:${extension.id}:${actorKind}`;
+    if (!usage.configurable || usage.state === state || isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.setExtensionDefaultUsage({
-        extensionId: extension.id,
-        actorKind,
-        state,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.setExtensionDefaultUsage({
+          extensionId: extension.id,
+          actorKind,
+          state,
+        }),
+      );
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to update extension default.";
     } finally {
-      pendingDefaultUsageKey = null;
+      finishExtensionAction(actionKey);
     }
   }
 
@@ -277,6 +282,42 @@
     return extension.customized;
   }
 
+  function isExtensionActionPending(key: string): boolean {
+    return pendingExtensionActions.has(key);
+  }
+
+  function extensionActionPending(extensionId: string): boolean {
+    return [...pendingExtensionActions].some(
+      (key) => key.includes(`:${extensionId}:`) || key.endsWith(`:${extensionId}`),
+    );
+  }
+
+  function startExtensionAction(key: string): void {
+    pendingExtensionActions.add(key);
+    pendingExtensionActions = new Set(pendingExtensionActions);
+  }
+
+  function finishExtensionAction(key: string): void {
+    pendingExtensionActions.delete(key);
+    pendingExtensionActions = new Set(pendingExtensionActions);
+    if (pendingExtensionActions.size === 0 && extensionInventoryNeedsSettledRefresh) {
+      extensionInventoryNeedsSettledRefresh = false;
+      void loadExtensionsInventory({ clearError: false });
+    }
+  }
+
+  async function applyExtensionInventoryMutation(
+    mutation: Promise<ExtensionsInventoryReadModel>,
+  ): Promise<void> {
+    const generation = ++extensionInventoryMutationGeneration;
+    const inventory = await mutation;
+    extensionInventoryNeedsSettledRefresh = true;
+    if (generation >= appliedExtensionInventoryMutationGeneration) {
+      appliedExtensionInventoryMutationGeneration = generation;
+      extensionsInventory = inventory;
+    }
+  }
+
   function newExtensionId(title: string): string {
     return title
       .trim()
@@ -288,16 +329,19 @@
 
   async function createExtension() {
     const title = newExtensionTitle.trim();
-    if (!title || pendingExtensionAction) return;
+    const actionKey = "new";
+    if (!title || isExtensionActionPending(actionKey)) return;
     const id = newExtensionId(title);
-    pendingExtensionAction = "new";
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.createExtension({
-        id,
-        title,
-        description: newExtensionDescription.trim() || `${title} prompt extension.`,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.createExtension({
+          id,
+          title,
+          description: newExtensionDescription.trim() || `${title} prompt extension.`,
+        }),
+      );
       newExtensionTitle = "";
       newExtensionDescription = "";
       newExtensionOpen = false;
@@ -306,28 +350,31 @@
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to create extension.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function duplicateExtension(extension: ExtensionInventoryItemReadModel) {
-    if (pendingExtensionAction || extension.interface === "native_tool") return;
+    const actionKey = `duplicate:${extension.id}`;
+    if (isExtensionActionPending(actionKey) || extension.interface === "native_tool") return;
     const title = `${extension.title} Copy`;
     const id = uniqueExtensionId(newExtensionId(title));
-    pendingExtensionAction = `duplicate:${extension.id}`;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.duplicateExtension({
-        extensionId: extension.id,
-        id,
-        title,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.duplicateExtension({
+          extensionId: extension.id,
+          id,
+          title,
+        }),
+      );
       expandedExtensionIds.add(id);
       expandedExtensionIds = new Set(expandedExtensionIds);
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to duplicate extension.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
@@ -342,109 +389,138 @@
   }
 
   async function deleteExtension(extension: ExtensionInventoryItemReadModel) {
-    if (pendingExtensionAction || extension.category === "builtin") return;
-    pendingExtensionAction = `delete:${extension.id}`;
+    const actionKey = `delete:${extension.id}`;
+    if (extensionActionPending(extension.id) || extension.category === "builtin") return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.deleteExtension({ extensionId: extension.id });
+      await applyExtensionInventoryMutation(runtime.deleteExtension({ extensionId: extension.id }));
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to delete extension.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function resetExtension(extension: ExtensionInventoryItemReadModel) {
-    if (pendingExtensionAction || extension.category !== "builtin") return;
-    pendingExtensionAction = `reset:${extension.id}`;
+    const actionKey = `reset:${extension.id}`;
+    if (extensionActionPending(extension.id) || extension.category !== "builtin") return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.resetExtension({ extensionId: extension.id });
+      await applyExtensionInventoryMutation(runtime.resetExtension({ extensionId: extension.id }));
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to reset extension.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function buildExtension(extensionId: string) {
-    if (pendingExtensionAction) return;
-    pendingExtensionAction = `build:${extensionId}`;
+    const actionKey = `build:${extensionId}`;
+    if (isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.buildExtension({ extensionId });
+      await applyExtensionInventoryMutation(runtime.buildExtension({ extensionId }));
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to build extension.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
-    if (pendingExtensionAction) return;
+    const actionKey = `instruction:${extension.id}`;
+    if (isExtensionActionPending(actionKey)) return;
     const nextIndex = extension.loadedInstructionContributors.length + 1;
     const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.md`;
-    pendingExtensionAction = `add-instruction:${extension.id}`;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.addExtensionInstructionFile({
-        extensionId: extension.id,
-        name,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.addExtensionInstructionFile({
+          extensionId: extension.id,
+          name,
+        }),
+      );
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to add instruction file.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function removeInstructionFile(extensionId: string, name: string) {
-    if (pendingExtensionAction) return;
-    pendingExtensionAction = `remove-instruction:${extensionId}:${name}`;
+    const actionKey = `instruction:${extensionId}`;
+    if (isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.removeExtensionInstructionFile({ extensionId, name });
+      await applyExtensionInventoryMutation(
+        runtime.removeExtensionInstructionFile({ extensionId, name }),
+      );
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to remove instruction file.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function setInstructionSkipped(extensionId: string, name: string, skipped: boolean) {
-    if (pendingExtensionAction) return;
-    pendingExtensionAction = `skip-instruction:${extensionId}:${name}`;
+    const actionKey = `instruction:${extensionId}`;
+    if (isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.configureExtensionInstructionFile({
-        extensionId,
-        name,
-        skipped,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.configureExtensionInstructionFile({
+          extensionId,
+          name,
+          skipped,
+        }),
+      );
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to update instruction file.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
     }
   }
 
   async function setExtensionTypescriptApi(extension: ExtensionInventoryItemReadModel, enabled: boolean) {
-    if (pendingExtensionAction || extension.interface !== "svvyx") return;
-    pendingExtensionAction = `typescript-api:${extension.id}`;
+    const actionKey = `typescript-api:${extension.id}`;
+    if (isExtensionActionPending(actionKey) || extension.interface !== "svvyx") return;
+    startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.setExtensionTypescriptApi({
-        extensionId: extension.id,
-        enabled,
-      });
+      await applyExtensionInventoryMutation(
+        runtime.setExtensionTypescriptApi({
+          extensionId: extension.id,
+          enabled,
+        }),
+      );
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to update TypeScript API setting.";
     } finally {
-      pendingExtensionAction = null;
+      finishExtensionAction(actionKey);
+    }
+  }
+
+  async function resetExtensionOrder(): Promise<void> {
+    const actionKey = "order";
+    if (isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
+    inventoryError = null;
+    try {
+      await applyExtensionInventoryMutation(runtime.reorderExtensionDefaults({ extensionIds: [] }));
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to reset extension order.";
+    } finally {
+      finishExtensionAction(actionKey);
     }
   }
 
@@ -755,9 +831,11 @@
     }
   }
 
-  async function loadExtensionsInventory(): Promise<void> {
+  async function loadExtensionsInventory(options: { clearError?: boolean } = {}): Promise<void> {
     loadingInventory = !extensionsInventory;
-    inventoryError = null;
+    if (options.clearError !== false) {
+      inventoryError = null;
+    }
     try {
       extensionsInventory = await runtime.getExtensionsInventory();
     } catch (error) {
@@ -1145,15 +1223,8 @@
           <button
             type="button"
             class="extension-toolbar-action"
-            disabled={pendingExtensionAction !== null}
-            onclick={async () => {
-              pendingExtensionAction = "reset-order";
-              try {
-                extensionsInventory = await runtime.reorderExtensionDefaults({ extensionIds: [] });
-              } finally {
-                pendingExtensionAction = null;
-              }
-            }}
+            disabled={isExtensionActionPending("order")}
+            onclick={() => void resetExtensionOrder()}
           >
             <RotateCcwIcon aria-hidden="true" size={12} strokeWidth={1.9} />
             Order
@@ -1321,7 +1392,7 @@
             class="new-extension-button"
             variant="ghost"
             size="xs"
-            disabled={pendingExtensionAction !== null}
+            disabled={isExtensionActionPending("new")}
             onclick={() => (newExtensionOpen = !newExtensionOpen)}
           >
             <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
@@ -1360,7 +1431,7 @@
         <Button
           size="xs"
           variant="primary"
-          disabled={!newExtensionTitle.trim() || pendingExtensionAction !== null}
+          disabled={!newExtensionTitle.trim() || isExtensionActionPending("new")}
           onclick={() => void createExtension()}
         >
           Create
@@ -1425,7 +1496,7 @@
               <button
                 type="button"
                 class="extension-icon-action"
-                disabled={extension.interface === "native_tool" || pendingExtensionAction !== null}
+                disabled={extension.interface === "native_tool" || isExtensionActionPending(`duplicate:${extension.id}`)}
                 aria-label={`Duplicate ${extension.title}`}
                 onclick={() => duplicateExtension(extension)}
               >
@@ -1436,7 +1507,7 @@
               <button
                 type="button"
                 class="extension-icon-action"
-                disabled={extension.category !== "builtin" || pendingExtensionAction !== null}
+                disabled={extension.category !== "builtin" || extensionActionPending(extension.id)}
                 aria-label={`Reset ${extension.title}`}
                 onclick={() => resetExtension(extension)}
               >
@@ -1447,7 +1518,7 @@
               <button
                 type="button"
                 class="extension-icon-action danger"
-                disabled={extension.category === "builtin" || pendingExtensionAction !== null}
+                disabled={extension.category === "builtin" || extensionActionPending(extension.id)}
                 aria-label={`Delete ${extension.title}`}
                 onclick={() => deleteExtension(extension)}
               >
@@ -1468,7 +1539,7 @@
                   <Checkbox
                     size="sm"
                     checked={extension.typescriptApiEnabled}
-                    disabled={pendingExtensionAction !== null}
+                    disabled={isExtensionActionPending(`typescript-api:${extension.id}`)}
                     onchange={(event) =>
                       setExtensionTypescriptApi(
                         extension,
@@ -1485,7 +1556,7 @@
                     <ExtensionStateButtons
                       ariaLabel={`${extension.title} ${actor.label} default`}
                       selected={usage.state}
-                      disabled={!usage.configurable || pendingDefaultUsageKey !== null}
+                      disabled={!usage.configurable || isExtensionActionPending(`default:${extension.id}:${actor.id}`)}
                       labelFor={(state) => USAGE_STATES.find((entry) => entry.state === state)?.label ?? "Off"}
                       onSelect={(state) => setDefaultUsage(extension, actor.id, state)}
                     />
@@ -1524,7 +1595,7 @@
                 file={extension.minimalInstruction}
                 label="source"
                 editor={appPreferences?.preferredExternalEditor}
-                disabled={pendingExtensionAction !== null}
+                disabled={extensionActionPending(extension.id)}
                 onSaved={() => void loadExtensionsInventory()}
               />
             </div>
@@ -1558,7 +1629,7 @@
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={pendingExtensionAction !== null || extension.category === "external_instruction"}
+                  disabled={isExtensionActionPending(`instruction:${extension.id}`) || extension.category === "external_instruction"}
                   onclick={() => addInstructionFile(extension)}
                 >
                   <PlusIcon size={13} aria-hidden="true" />
@@ -1572,7 +1643,7 @@
                       <button
                         type="button"
                         class="extension-icon-action"
-                        disabled={pendingExtensionAction !== null}
+                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
                         onclick={() =>
                           setInstructionSkipped(
@@ -1588,7 +1659,7 @@
                       <button
                         type="button"
                         class="extension-icon-action danger"
-                        disabled={pendingExtensionAction !== null || contributor.kind !== "source" || !contributor.file.editable}
+                        disabled={isExtensionActionPending(`instruction:${extension.id}`) || contributor.kind !== "source" || !contributor.file.editable}
                         aria-label="Remove instruction contributor"
                         onclick={() =>
                           contributor.kind === "source"
@@ -1606,7 +1677,7 @@
                       file={contributor.file}
                       label="source"
                       editor={appPreferences?.preferredExternalEditor}
-                      disabled={pendingExtensionAction !== null}
+                      disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                       onSaved={() => void loadExtensionsInventory()}
                     />
                   {:else}
@@ -1617,7 +1688,7 @@
                           <Button
                             size="xs"
                             variant="ghost"
-                            disabled={pendingExtensionAction !== null}
+                            disabled={isExtensionActionPending(`build:${extension.id}`)}
                             onclick={() => void buildExtension(extension.id)}
                           >
                             <RotateCcwIcon size={13} aria-hidden="true" />
@@ -1633,7 +1704,7 @@
                         label="generator"
                         showTokenCount={false}
                         editor={appPreferences?.preferredExternalEditor}
-                        disabled={pendingExtensionAction !== null}
+                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
                       />
                       <ExtensionInstructionFileEditor
@@ -1642,7 +1713,7 @@
                         file={contributor.output}
                         label="last generated"
                         editor={appPreferences?.preferredExternalEditor}
-                        disabled={pendingExtensionAction !== null}
+                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
                       />
                     </div>
@@ -1654,7 +1725,7 @@
             <Button
               size="xs"
               variant="ghost"
-              disabled={pendingExtensionAction !== null || extension.category === "external_instruction"}
+              disabled={isExtensionActionPending(`instruction:${extension.id}`) || extension.category === "external_instruction"}
               onclick={() => addInstructionFile(extension)}
             >
               <PlusIcon size={13} aria-hidden="true" />
@@ -1683,7 +1754,7 @@
                   label="command source"
                   showTokenCount={false}
                   editor={appPreferences?.preferredExternalEditor}
-                  disabled={pendingExtensionAction !== null}
+                  disabled={extensionActionPending(extension.id)}
                   onSaved={() => void loadExtensionsInventory()}
                 />
               {/if}

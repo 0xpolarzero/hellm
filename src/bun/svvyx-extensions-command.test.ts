@@ -6996,6 +6996,38 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).rejects.toThrow("--typescript-api must be true or false.");
   });
 
+  it("configures builtin svvyx TypeScript API generation through overlays", async () => {
+    const extensionsRoot = createTempDir();
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions configure --extension artifacts --typescript-api false --json",
+      extensionsRoot,
+    });
+
+    let inventory = await readBuiltinExtensionsInventory({ extensionsRoot });
+    expect(inventory.extensions.find((extension) => extension.id === "artifacts")).toMatchObject({
+      interface: "svvyx",
+      typescriptApiEnabled: false,
+      tooling: {
+        typescriptApiStatus: "disabled",
+      },
+    });
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions configure --extension artifacts --typescript-api true --json",
+      extensionsRoot,
+    });
+
+    inventory = await readBuiltinExtensionsInventory({ extensionsRoot });
+    expect(inventory.extensions.find((extension) => extension.id === "artifacts")).toMatchObject({
+      interface: "svvyx",
+      typescriptApiEnabled: true,
+      tooling: {
+        typescriptApiStatus: "emitted",
+      },
+    });
+  });
+
   it("marks builtin extensions customized only after their overlay differs", async () => {
     const extensionsRoot = createTempDir();
     const cwd = createTempDir();

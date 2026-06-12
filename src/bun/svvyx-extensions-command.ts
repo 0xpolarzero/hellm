@@ -5365,6 +5365,10 @@ function readBuiltinOverlayRecord(
     title: typeof manifest.title === "string" ? manifest.title : builtin.title,
     description:
       typeof manifest.description === "string" ? manifest.description : builtin.description,
+    typescriptApiEnabled:
+      typeof manifest.typescriptApiEnabled === "boolean"
+        ? manifest.typescriptApiEnabled
+        : builtin.typescriptApiEnabled,
     instructionSourceFiles: instructionsFull.map((file) => file.path),
     minimalLoadingHint: readOptionalFile(paths.instructionsMinimal) || builtin.minimalLoadingHint,
     cliRequirements: cliRequirements.length > 0 ? cliRequirements : builtin.cliRequirements,
