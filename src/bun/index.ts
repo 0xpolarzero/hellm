@@ -78,6 +78,7 @@ import {
   assertExtensionEnvWriteValue,
   readBuiltinExtensionsInventory,
   runSvvyxExtensionsCommand,
+  writeExtensionInstructionFile,
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
@@ -1004,6 +1005,169 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           snapshotId: input.snapshotId,
         });
         return readWorkspaceExtensionsInventory(runtime);
+      },
+      createExtension: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions create --id ${quoteSvvyxCommandArg(input.id)} --title ${quoteSvvyxCommandArg(input.title)} --description ${quoteSvvyxCommandArg(input.description)} --interface instructions --json`,
+        );
+        runtime.appLog.info("settings", "Extension created from UI.", {
+          extensionId: input.id,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      duplicateExtension: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions duplicate --from ${quoteSvvyxCommandArg(input.extensionId)} --id ${quoteSvvyxCommandArg(input.id)} --title ${quoteSvvyxCommandArg(input.title)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension duplicated from UI.", {
+          extensionId: input.id,
+          duplicatedFrom: input.extensionId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      deleteExtension: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions delete ${quoteSvvyxCommandArg(input.extensionId)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension deleted from UI.", {
+          extensionId: input.extensionId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      resetExtension: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions reset ${quoteSvvyxCommandArg(input.extensionId)} --scope instructions --json`,
+        );
+        runtime.appLog.info("settings", "Extension reset from UI.", {
+          extensionId: input.extensionId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      setExtensionDefaultUsage: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions defaults set-usage --actor ${quoteSvvyxCommandArg(input.actorKind)} --extension ${quoteSvvyxCommandArg(input.extensionId)} --state ${quoteSvvyxCommandArg(input.state)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension default usage updated from UI.", {
+          actorKind: input.actorKind,
+          extensionId: input.extensionId,
+          state: input.state,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      reorderExtensionDefaults: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const orderArgs = input.extensionIds
+          .map((extensionId) => `--extension ${quoteSvvyxCommandArg(extensionId)}`)
+          .join(" ");
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions defaults reorder ${orderArgs} --json`,
+        );
+        runtime.appLog.info("settings", "Extension default order updated from UI.", {
+          count: input.extensionIds.length,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      addExtensionInstructionFile: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions instructions add ${quoteSvvyxCommandArg(input.extensionId)} --name ${quoteSvvyxCommandArg(input.name)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension instruction file added from UI.", {
+          extensionId: input.extensionId,
+          name: input.name,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      removeExtensionInstructionFile: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions instructions remove ${quoteSvvyxCommandArg(input.extensionId)} --name ${quoteSvvyxCommandArg(input.name)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension instruction file removed from UI.", {
+          extensionId: input.extensionId,
+          name: input.name,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      configureExtensionInstructionFile: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions instructions configure ${quoteSvvyxCommandArg(input.extensionId)} --file ${quoteSvvyxCommandArg(input.name)} --bypassed ${input.skipped ? "true" : "false"} --json`,
+        );
+        runtime.appLog.info("settings", "Extension instruction file configured from UI.", {
+          extensionId: input.extensionId,
+          name: input.name,
+          skipped: input.skipped,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      reorderExtensionInstructionFiles: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const fileArgs = input.names
+          .map((name) => `--file ${quoteSvvyxCommandArg(name)}`)
+          .join(" ");
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions instructions reorder ${quoteSvvyxCommandArg(input.extensionId)} ${fileArgs} --json`,
+        );
+        runtime.appLog.info("settings", "Extension instruction files reordered from UI.", {
+          extensionId: input.extensionId,
+          count: input.names.length,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      updateExtensionInstructionFile: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        writeExtensionInstructionFile({
+          extensionId: input.extensionId,
+          file: input.name,
+          content: input.content,
+          baseSourceVersion: input.baseSourceVersion,
+          mode: input.mode,
+          extensionsRoot: runtime.catalog.getExtensionsRoot(),
+        });
+        runtime.appLog.info("settings", "Extension instruction file updated from UI.", {
+          extensionId: input.extensionId,
+          name: input.name,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
+      openExtensionInstructionFileInEditor: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const inventory = await readWorkspaceExtensionsInventory(runtime);
+        const path = inventory.extensions
+          .find((extension) => extension.id === input.extensionId)
+          ?.instructionFiles?.find((file) => file.name === input.name)?.path;
+        if (!path) {
+          throw new Error(
+            `Extension instruction file not found: ${input.extensionId}/${input.name}`,
+          );
+        }
+        const result = openPathInPreferredEditor(runtime, path);
+        runtime.appLog.info(
+          "external-editor",
+          "Extension instruction file opened in external editor.",
+          {
+            path,
+            editor: result.editor,
+            opened: result.opened,
+          },
+        );
+        return { ...result, path };
       },
       setExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);

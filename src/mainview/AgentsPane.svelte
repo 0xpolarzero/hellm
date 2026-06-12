@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from "svelte";
   import { flip } from "svelte/animate";
   import {
+    DEFAULT_AGENT_SETTINGS_STATE,
     DEFAULT_WORKFLOW_AGENT_SETTINGS,
     type AgentProfileId,
     type AgentProfileSettings,
@@ -792,6 +793,7 @@
     return buildExtensionUsageItems({
       ...input,
       extensionInventoryItems,
+      extensionDefaults: settings?.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults,
       networkAccess: settings?.appPreferences.networkAccess ?? true,
     });
   }

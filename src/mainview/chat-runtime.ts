@@ -49,13 +49,25 @@ import {
   type AgentContextPreviewRequest,
   type AgentContextPreviewResponse,
   type AgentModelChoicesResponse,
+  type AddExtensionInstructionFileRequest,
+  type ConfigureExtensionInstructionFileRequest,
+  type CreateExtensionRequest,
+  type DeleteExtensionRequest,
+  type DuplicateExtensionRequest,
   type ExtensionsInventoryReadModel,
+  type OpenExtensionInstructionFileInEditorRequest,
   type ProviderAuthInfo,
+  type RemoveExtensionInstructionFileRequest,
   type RemoveExtensionEnvOverrideRequest,
   type RemoveExtensionEnvSecretRequest,
+  type ReorderExtensionDefaultsRequest,
+  type ReorderExtensionInstructionFilesRequest,
+  type ResetExtensionRequest,
   type SetAgentProfileExtensionUsageRequest,
+  type SetExtensionDefaultUsageRequest,
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
+  type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
 } from "../shared/workspace-contract";
 import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
@@ -335,6 +347,18 @@ export interface ChatRuntimeRpcClient {
     renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
     deleteExtensionSnapshot: typeof rpc.request.deleteExtensionSnapshot;
     loadExtensionSnapshot: typeof rpc.request.loadExtensionSnapshot;
+    createExtension: typeof rpc.request.createExtension;
+    duplicateExtension: typeof rpc.request.duplicateExtension;
+    deleteExtension: typeof rpc.request.deleteExtension;
+    resetExtension: typeof rpc.request.resetExtension;
+    setExtensionDefaultUsage: typeof rpc.request.setExtensionDefaultUsage;
+    reorderExtensionDefaults: typeof rpc.request.reorderExtensionDefaults;
+    addExtensionInstructionFile: typeof rpc.request.addExtensionInstructionFile;
+    removeExtensionInstructionFile: typeof rpc.request.removeExtensionInstructionFile;
+    configureExtensionInstructionFile: typeof rpc.request.configureExtensionInstructionFile;
+    reorderExtensionInstructionFiles: typeof rpc.request.reorderExtensionInstructionFiles;
+    updateExtensionInstructionFile: typeof rpc.request.updateExtensionInstructionFile;
+    openExtensionInstructionFileInEditor: typeof rpc.request.openExtensionInstructionFileInEditor;
     setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
     removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
     setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
@@ -580,6 +604,42 @@ export interface ChatRuntime {
   ) => Promise<ExtensionsInventoryReadModel>;
   deleteExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
   loadExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
+  createExtension: (
+    input: Omit<CreateExtensionRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  duplicateExtension: (
+    input: Omit<DuplicateExtensionRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  deleteExtension: (
+    input: Omit<DeleteExtensionRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  resetExtension: (
+    input: Omit<ResetExtensionRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  setExtensionDefaultUsage: (
+    input: Omit<SetExtensionDefaultUsageRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  reorderExtensionDefaults: (
+    input: Omit<ReorderExtensionDefaultsRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  addExtensionInstructionFile: (
+    input: Omit<AddExtensionInstructionFileRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  removeExtensionInstructionFile: (
+    input: Omit<RemoveExtensionInstructionFileRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  configureExtensionInstructionFile: (
+    input: Omit<ConfigureExtensionInstructionFileRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  reorderExtensionInstructionFiles: (
+    input: Omit<ReorderExtensionInstructionFilesRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  updateExtensionInstructionFile: (
+    input: Omit<UpdateExtensionInstructionFileRequest, "workspaceId">,
+  ) => Promise<ExtensionsInventoryReadModel>;
+  openExtensionInstructionFileInEditor: (
+    input: Omit<OpenExtensionInstructionFileInEditorRequest, "workspaceId">,
+  ) => Promise<boolean>;
   setExtensionEnvSecret: (
     input: Omit<SetExtensionEnvSecretRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
@@ -2967,6 +3027,65 @@ export async function createChatRuntime(
         "extensionsInventory",
         await rpcClient.request.loadExtensionSnapshot(scoped({ snapshotId })),
       )!,
+    createExtension: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.createExtension(scoped(input)),
+      )!,
+    duplicateExtension: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.duplicateExtension(scoped(input)),
+      )!,
+    deleteExtension: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.deleteExtension(scoped(input)),
+      )!,
+    resetExtension: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.resetExtension(scoped(input)),
+      )!,
+    setExtensionDefaultUsage: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.setExtensionDefaultUsage(scoped(input)),
+      )!,
+    reorderExtensionDefaults: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.reorderExtensionDefaults(scoped(input)),
+      )!,
+    addExtensionInstructionFile: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.addExtensionInstructionFile(scoped(input)),
+      )!,
+    removeExtensionInstructionFile: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.removeExtensionInstructionFile(scoped(input)),
+      )!,
+    configureExtensionInstructionFile: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.configureExtensionInstructionFile(scoped(input)),
+      )!,
+    reorderExtensionInstructionFiles: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.reorderExtensionInstructionFiles(scoped(input)),
+      )!,
+    updateExtensionInstructionFile: async (input) =>
+      setWorkspaceCache(
+        "extensionsInventory",
+        await rpcClient.request.updateExtensionInstructionFile(scoped(input)),
+      )!,
+    openExtensionInstructionFileInEditor: async (input) => {
+      const result = await rpcClient.request.openExtensionInstructionFileInEditor(scoped(input));
+      return result.opened;
+    },
     setExtensionEnvSecret: async (input) =>
       setWorkspaceCache(
         "extensionsInventory",

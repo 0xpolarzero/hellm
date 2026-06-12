@@ -459,6 +459,10 @@ export type BuiltinExtensionId = (typeof BUILTIN_EXTENSIONS)[number]["id"];
 
 export const BUILTIN_EXTENSION_IDS = BUILTIN_EXTENSIONS.map((extension) => extension.id);
 
+export function builtinDefaultExtensionOrder(): string[] {
+  return [...BUILTIN_EXTENSION_IDS];
+}
+
 const EXTENSION_BY_ID = new Map<string, ExtensionRecord>(
   BUILTIN_EXTENSIONS.map((extension) => [extension.id, extension]),
 );
@@ -491,6 +495,10 @@ export function getExtensionRecord(id: string): ExtensionRecord | null {
 
 export function resolveActorExtensionState(input: {
   actor: SvvyActorKind;
+  defaultExtensionOrder?: readonly string[] | null;
+  defaultExtensionUsage?: Partial<
+    Record<SvvyActorKind, Record<string, ExtensionUsageState>>
+  > | null;
   profileExtensionUsage?: Record<string, ExtensionUsageState> | null;
   profileLoadedExtensionIds?: readonly string[];
   profileExtensionOrder?: readonly string[];
@@ -500,6 +508,13 @@ export function resolveActorExtensionState(input: {
   const states = new Map<string, ExtensionUsageState>();
   for (const extension of BUILTIN_EXTENSIONS) {
     states.set(extension.id, getDefaultUsageState(extension.id, input.actor, input.networkAccess));
+  }
+  if (input.actor !== "handler") {
+    for (const [rawId, state] of Object.entries(input.defaultExtensionUsage?.[input.actor] ?? {})) {
+      const id = rawId.trim();
+      if (!id || id === "extension-loading") continue;
+      states.set(id, state);
+    }
   }
   for (const rawId of input.profileLoadedExtensionIds ?? []) {
     const id = rawId.trim();
@@ -542,9 +557,15 @@ export function resolveActorExtensionState(input: {
     states.set(id, state);
   }
   states.set("extension-loading", "default_loaded");
+  const extensionOrder =
+    input.profileExtensionOrder && input.profileExtensionOrder.length > 0
+      ? input.profileExtensionOrder
+      : input.actor === "handler"
+        ? []
+        : (input.defaultExtensionOrder ?? []);
   return {
-    loadedExtensionIds: sortedIdsWithState(states, "default_loaded", input.profileExtensionOrder),
-    availableExtensionIds: sortedIdsWithState(states, "available", input.profileExtensionOrder),
+    loadedExtensionIds: sortedIdsWithState(states, "default_loaded", extensionOrder),
+    availableExtensionIds: sortedIdsWithState(states, "available", extensionOrder),
   };
 }
 
@@ -593,6 +614,14 @@ function getDefaultUsageState(
     return "unavailable";
   }
   return DEFAULT_STATES[id as BuiltinExtensionId]?.[actor] ?? "unavailable";
+}
+
+export function builtinDefaultExtensionUsageState(
+  id: string,
+  actor: SvvyActorKind,
+  networkAccess = true,
+): ExtensionUsageState {
+  return getDefaultUsageState(id, actor, networkAccess);
 }
 
 function loadedVisibleRecord(

@@ -215,6 +215,38 @@ describe("builtin extension registry", () => {
     expect(state.availableExtensionIds).not.toContain("old");
   });
 
+  it("applies app extension defaults only to orchestrator and workflow-task actors", () => {
+    const defaults = {
+      order: ["team-notes", "shell"],
+      usage: {
+        orchestrator: { "team-notes": "default_loaded" },
+        handler: { "team-notes": "default_loaded" },
+        "workflow-task": { "team-notes": "available" },
+      },
+    } as const;
+
+    const orchestrator = resolveActorExtensionState({
+      actor: "orchestrator",
+      defaultExtensionOrder: defaults.order,
+      defaultExtensionUsage: defaults.usage,
+    });
+    const handler = resolveActorExtensionState({
+      actor: "handler",
+      defaultExtensionOrder: defaults.order,
+      defaultExtensionUsage: defaults.usage,
+    });
+    const workflowTask = resolveActorExtensionState({
+      actor: "workflow-task",
+      defaultExtensionOrder: defaults.order,
+      defaultExtensionUsage: defaults.usage,
+    });
+
+    expect(orchestrator.loadedExtensionIds[0]).toBe("team-notes");
+    expect(handler.loadedExtensionIds).not.toContain("team-notes");
+    expect(handler.availableExtensionIds).not.toContain("team-notes");
+    expect(workflowTask.availableExtensionIds).toContain("team-notes");
+  });
+
   it("declares pinned and unpinned prompt-only CLI requirements", async () => {
     const store = createStore("session-extension-cli-requirements");
     const turn = store.startTurn({

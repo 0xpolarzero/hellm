@@ -973,6 +973,66 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
+        createExtension: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        duplicateExtension: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        deleteExtension: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        resetExtension: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        setExtensionDefaultUsage: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        reorderExtensionDefaults: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        addExtensionInstructionFile: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        removeExtensionInstructionFile: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        configureExtensionInstructionFile: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        reorderExtensionInstructionFiles: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        updateExtensionInstructionFile: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
+        openExtensionInstructionFileInEditor: async () => ({
+          opened: true,
+          editor: "system",
+          path: "/tmp/instruction.md",
+        }),
         setExtensionEnvSecret: async () => ({
           extensions: [],
           reversibleChanges: [],

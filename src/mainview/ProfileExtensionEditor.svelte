@@ -476,8 +476,8 @@
     font-weight: 600;
   }
 
-  .profile-extension-action:hover,
-  .profile-extension-action:focus-visible {
+  .profile-extension-action:hover:not(:disabled),
+  .profile-extension-action:focus-visible:not(:disabled) {
     outline: none;
     border-color: var(--ui-border-strong);
     background: var(--ui-hover-bg);

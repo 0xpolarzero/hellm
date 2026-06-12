@@ -66,9 +66,15 @@ export interface AgentSettingsState {
   version: 2;
   agents: AgentProfileState;
   workflowAgents: Record<WorkflowAgentKey, WorkflowAgentSettings>;
+  extensionDefaults: ExtensionDefaultsSettings;
   extensionEnv: ExtensionEnvSettings;
   requestUserInput: RequestUserInputSettings;
   appPreferences: AppPreferences;
+}
+
+export interface ExtensionDefaultsSettings {
+  order: string[];
+  usage: Partial<Record<ExternalInstructionActor, Record<string, ExtensionUsageState>>>;
 }
 
 export type ExtensionEnvValues = Record<string, Record<string, string>>;
@@ -326,6 +332,10 @@ export const DEFAULT_AGENT_SETTINGS_STATE = {
   version: 2,
   agents: DEFAULT_AGENT_PROFILES,
   workflowAgents: DEFAULT_WORKFLOW_AGENT_SETTINGS,
+  extensionDefaults: {
+    order: [],
+    usage: {},
+  },
   extensionEnv: {
     nonSecretOverrides: {},
   },

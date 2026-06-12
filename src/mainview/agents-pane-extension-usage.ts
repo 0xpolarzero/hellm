@@ -1,5 +1,9 @@
 import type { ExtensionCategory, ExtensionUsageState } from "../shared/extensions";
 import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../shared/extensions";
+import {
+  DEFAULT_AGENT_SETTINGS_STATE,
+  type ExtensionDefaultsSettings,
+} from "../shared/agent-settings";
 import type {
   AgentContextPreviewRequest,
   ExtensionInventoryItemReadModel,
@@ -26,16 +30,20 @@ type ExtensionUsageInventoryInput = {
   usage: Record<string, ExtensionUsageState>;
   profileId: string;
   extensionInventoryItems: ExtensionInventoryItemReadModel[];
+  extensionDefaults?: ExtensionDefaultsSettings;
   networkAccess: boolean;
 };
 
 export function baselineExtensionState(input: {
   actor: AgentContextActor;
   extensionId: string;
+  extensionDefaults?: ExtensionDefaultsSettings | null;
   networkAccess: boolean;
 }): ExtensionUsageState {
   const baseline = resolveActorExtensionState({
     actor: input.actor,
+    defaultExtensionOrder: input.extensionDefaults?.order,
+    defaultExtensionUsage: input.extensionDefaults?.usage,
     networkAccess: input.networkAccess,
   });
   if (baseline.loadedExtensionIds.includes(input.extensionId)) return "default_loaded";
@@ -47,6 +55,7 @@ export function resolvedExtensionState(input: {
   actor: AgentContextActor;
   extension: Pick<ExtensionInventoryItemReadModel, "category" | "id">;
   explicitUsage: Record<string, ExtensionUsageState>;
+  extensionDefaults?: ExtensionDefaultsSettings | null;
   inventoryUsage: ExtensionUsageReadiness | null;
   networkAccess: boolean;
 }): ExtensionUsageState {
@@ -57,12 +66,15 @@ export function resolvedExtensionState(input: {
     return baselineExtensionState({
       actor: input.actor,
       extensionId: input.extension.id,
+      extensionDefaults: input.extensionDefaults,
       networkAccess: input.networkAccess,
     });
   }
 
   const resolved = resolveActorExtensionState({
     actor: input.actor,
+    defaultExtensionOrder: input.extensionDefaults?.order,
+    defaultExtensionUsage: input.extensionDefaults?.usage,
     profileExtensionUsage: input.explicitUsage,
     networkAccess: input.networkAccess,
   });
@@ -91,6 +103,7 @@ export function extensionStateAllowed(input: {
   extension: ExtensionInventoryItemReadModel;
   state: ExtensionUsageState;
   configurable: boolean;
+  extensionDefaults?: ExtensionDefaultsSettings | null;
   networkAccess: boolean;
 }): boolean {
   if (!input.configurable) return false;
@@ -100,6 +113,7 @@ export function extensionStateAllowed(input: {
     baselineExtensionState({
       actor: input.actor,
       extensionId: input.extension.id,
+      extensionDefaults: input.extensionDefaults,
       networkAccess: input.networkAccess,
     }) !== "unavailable"
   );
@@ -137,6 +151,10 @@ export function extensionUsageItems(
     ...inventory.map((extension) => extension.id),
     ...Object.keys(input.usage),
   ]);
+  const extensionDefaults =
+    input.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults;
+  const defaultOrder = input.actor === "handler" ? [] : extensionDefaults.order;
+  const defaultOrderById = new Map(defaultOrder.map((id, index) => [id, index]));
 
   return [...extensionIds]
     .flatMap((extensionId): ExtensionUsageControlItem[] => {
@@ -167,6 +185,7 @@ export function extensionUsageItems(
       const baseline = baselineExtensionState({
         actor: input.actor,
         extensionId: extension.id,
+        extensionDefaults,
         networkAccess: input.networkAccess,
       });
       if (
@@ -191,6 +210,7 @@ export function extensionUsageItems(
         actor: input.actor,
         extension,
         explicitUsage: input.usage,
+        extensionDefaults,
         inventoryUsage: usage,
         networkAccess: input.networkAccess,
       });
@@ -200,6 +220,7 @@ export function extensionUsageItems(
         actor: input.actor,
         extension,
         explicitUsage: defaultUsage,
+        extensionDefaults: input.extensionDefaults,
         inventoryUsage: usage,
         networkAccess: input.networkAccess,
       });
@@ -224,6 +245,7 @@ export function extensionUsageItems(
               extension,
               state: "default_loaded",
               configurable,
+              extensionDefaults,
               networkAccess: input.networkAccess,
             }),
             available: extensionStateAllowed({
@@ -231,6 +253,7 @@ export function extensionUsageItems(
               extension,
               state: "available",
               configurable,
+              extensionDefaults,
               networkAccess: input.networkAccess,
             }),
             unavailable: extensionStateAllowed({
@@ -238,6 +261,7 @@ export function extensionUsageItems(
               extension,
               state: "unavailable",
               configurable,
+              extensionDefaults,
               networkAccess: input.networkAccess,
             }),
           },
@@ -247,8 +271,10 @@ export function extensionUsageItems(
     .toSorted((left, right) => {
       if (left.id === "extension-loading") return -1;
       if (right.id === "extension-loading") return 1;
-      const leftOrder = orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-      const rightOrder = orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+      const leftOrder =
+        defaultOrderById.get(left.id) ?? orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder =
+        defaultOrderById.get(right.id) ?? orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
       return (
         leftOrder - rightOrder ||
         left.title.localeCompare(right.title) ||

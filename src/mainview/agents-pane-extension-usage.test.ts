@@ -251,6 +251,76 @@ describe("Agents pane extension usage helpers", () => {
     ]);
   });
 
+  it("projects app extension defaults into non-handler profile rows", () => {
+    const items = extensionUsageItems({
+      actor: "orchestrator",
+      extensionDefaults: {
+        order: ["team-notes", "smithers"],
+        usage: {
+          orchestrator: {
+            "team-notes": "default_loaded",
+            smithers: "default_loaded",
+          },
+        },
+      },
+      extensionInventoryItems: [
+        extensionInventoryItem({
+          category: "user",
+          id: "team-notes",
+          title: "Team Notes",
+          usage: [],
+        }),
+        extensionInventoryItem({
+          id: "smithers",
+          title: "Smithers",
+          usage: [],
+        }),
+      ],
+      networkAccess: true,
+      profileId: "default",
+      usage: {},
+    });
+
+    expect(items.map((item) => `${item.id}:${item.state}:${item.explicit}`)).toEqual([
+      "team-notes:default_loaded:false",
+      "smithers:default_loaded:false",
+    ]);
+  });
+
+  it("keeps handler profile rows owned by Agents instead of app extension defaults", () => {
+    const items = extensionUsageItems({
+      actor: "handler",
+      extensionDefaults: {
+        order: ["team-notes"],
+        usage: {
+          handler: {
+            "team-notes": "default_loaded",
+          },
+        },
+      },
+      extensionInventoryItems: [
+        extensionInventoryItem({
+          category: "user",
+          id: "team-notes",
+          title: "Team Notes",
+          usage: [],
+        }),
+      ],
+      networkAccess: true,
+      profileId: "threadHandler",
+      usage: {},
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        defaultState: "unavailable",
+        explicit: false,
+        id: "team-notes",
+        state: "unavailable",
+      }),
+    ]);
+  });
+
   it("does not allow selecting the already active usage state", () => {
     const item: ExtensionUsageControlItem = {
       allowedStates: {

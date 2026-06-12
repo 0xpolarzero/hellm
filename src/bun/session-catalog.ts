@@ -73,6 +73,7 @@ import {
   type AgentProfileSettings,
   type RequestUserInputSettings,
   type WorkflowAgentKey,
+  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import {
   projectWorkspaceSessionSummary,
@@ -682,6 +683,8 @@ export class WorkspaceSessionCatalog {
       const profile = settings.agents.special.threadHandler;
       const extensionState = resolveActorExtensionState({
         actor: "handler",
+        defaultExtensionOrder: settings.extensionDefaults.order,
+        defaultExtensionUsage: settings.extensionDefaults.usage,
         profileExtensionUsage: profile.extensionUsage,
         profileExtensionOrder: profile.extensionOrder,
       });
@@ -723,6 +726,8 @@ export class WorkspaceSessionCatalog {
       }
       const extensionState = resolveActorExtensionState({
         actor: "workflow-task",
+        defaultExtensionOrder: settings.extensionDefaults.order,
+        defaultExtensionUsage: settings.extensionDefaults.usage,
         profileExtensionUsage: profile.extensionUsage,
         profileExtensionOrder: profile.extensionOrder,
       });
@@ -766,6 +771,8 @@ export class WorkspaceSessionCatalog {
     }
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
+      defaultExtensionOrder: settings.extensionDefaults.order,
+      defaultExtensionUsage: settings.extensionDefaults.usage,
       profileExtensionUsage: profile.extensionUsage,
       profileExtensionOrder: profile.extensionOrder,
     });
@@ -898,16 +905,29 @@ export class WorkspaceSessionCatalog {
 
   buildOrchestratorSystemPrompt(
     settings: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
-    extensionState = resolveActorExtensionState({
-      actor: "orchestrator",
-      profileExtensionUsage: settings.extensionUsage,
-      profileExtensionOrder: settings.extensionOrder,
-    }),
+    extensionState = this.resolveProfileExtensionState("orchestrator", settings),
     externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
   ): string {
     return this.buildPromptFromLibrary("orchestrator", {
       ...extensionState,
       externalInstructionSources,
+    });
+  }
+
+  private resolveProfileExtensionState(
+    actor: SvvyActorKind,
+    settings: Pick<
+      AgentProfileSettings | WorkflowAgentSettings,
+      "extensionUsage" | "extensionOrder"
+    >,
+  ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
+    const defaults = this.agentSettingsStore.getState().extensionDefaults;
+    return resolveActorExtensionState({
+      actor,
+      defaultExtensionOrder: defaults.order,
+      defaultExtensionUsage: defaults.usage,
+      profileExtensionUsage: settings.extensionUsage,
+      profileExtensionOrder: settings.extensionOrder,
     });
   }
 
@@ -1196,6 +1216,8 @@ export class WorkspaceSessionCatalog {
       defaults.agentProfileSettings ?? this.resolveOrchestratorAgentProfile(agentProfileId);
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
+      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
+      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
       profileExtensionUsage: agentProfileSettings.extensionUsage,
       profileExtensionOrder: agentProfileSettings.extensionOrder,
     });
@@ -1309,6 +1331,8 @@ export class WorkspaceSessionCatalog {
     );
     const extensionState = resolveActorExtensionState({
       actor: "orchestrator",
+      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
+      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
       profileExtensionUsage: sourceAgentProfile.extensionUsage,
       profileExtensionOrder: sourceAgentProfile.extensionOrder,
     });
@@ -3568,6 +3592,8 @@ export class WorkspaceSessionCatalog {
       this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
     const current = resolveActorExtensionState({
       actor: "orchestrator",
+      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
+      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
       profileExtensionUsage: currentProfile.extensionUsage,
       profileExtensionOrder: currentProfile.extensionOrder,
     });
@@ -3582,6 +3608,8 @@ export class WorkspaceSessionCatalog {
       );
       const baseline = resolveActorExtensionState({
         actor: "orchestrator",
+        defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
+        defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
         profileExtensionUsage: baselineProfile.extensionUsage,
         profileExtensionOrder: baselineProfile.extensionOrder,
       });

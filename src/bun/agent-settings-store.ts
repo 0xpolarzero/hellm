@@ -21,6 +21,7 @@ import {
   type AppAppearance,
   type AppPreferences,
   type ExtensionEnvSettings,
+  type ExtensionDefaultsSettings,
   type ExternalInstructionActor,
   type ExternalInstructionControl,
   type ExternalInstructionGlobalRootSetting,
@@ -60,6 +61,7 @@ export type AgentSettingsStore = {
     key: WorkflowAgentKey,
     options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
   ): AgentSettingsState;
+  setExtensionDefaults(settings: ExtensionDefaultsSettings): AgentSettingsState;
   setExtensionEnv(settings: ExtensionEnvSettings): AgentSettingsState;
   setRequestUserInput(settings: RequestUserInputSettings): AgentSettingsState;
   setAppPreferences(preferences: AppPreferences): AgentSettingsState;
@@ -204,6 +206,11 @@ export function createAgentSettingsStore(input: {
       rmSync(path, { force: true });
       return next;
     },
+    setExtensionDefaults: (settings) => {
+      const state = readState();
+      state.extensionDefaults = normalizeExtensionDefaultsSettings(settings);
+      return writeState(state);
+    },
     setExtensionEnv: (settings) => {
       const state = readState();
       state.extensionEnv = normalizeExtensionEnvSettings(settings);
@@ -335,6 +342,10 @@ export function normalizeAgentSettingsState(
       ...defaults.workflowAgents,
       ...workflowAgents,
     }),
+    extensionDefaults: normalizeExtensionDefaultsSettings({
+      ...defaults.extensionDefaults,
+      ...input.extensionDefaults,
+    }),
     extensionEnv: normalizeExtensionEnvSettings({
       ...defaults.extensionEnv,
       ...input.extensionEnv,
@@ -351,6 +362,19 @@ export function normalizeAgentSettingsState(
       ...defaults.appPreferences,
       ...input.appPreferences,
     }),
+  };
+}
+
+function normalizeExtensionDefaultsSettings(
+  input: Partial<ExtensionDefaultsSettings> | undefined,
+): ExtensionDefaultsSettings {
+  const usage: ExtensionDefaultsSettings["usage"] = {};
+  for (const actor of DEFAULT_EXTERNAL_INSTRUCTION_ACTORS) {
+    usage[actor] = normalizeExtensionUsage(input?.usage?.[actor]);
+  }
+  return {
+    order: normalizeExtensionOrder(input?.order),
+    usage,
   };
 }
 

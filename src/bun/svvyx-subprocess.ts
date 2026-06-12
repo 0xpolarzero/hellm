@@ -285,6 +285,7 @@ function createSnapshotAgentSettingsStore(
         workflowAgents: workflowAgents as AgentSettingsState["workflowAgents"],
       });
     },
+    setExtensionDefaults: (extensionDefaults) => setState({ ...state, extensionDefaults }),
     setExtensionEnv: (extensionEnv) => setState({ ...state, extensionEnv }),
     setRequestUserInput: (requestUserInput) => setState({ ...state, requestUserInput }),
     setAppPreferences: (appPreferences) => setState({ ...state, appPreferences }),

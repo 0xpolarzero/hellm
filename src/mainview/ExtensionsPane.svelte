@@ -1,9 +1,22 @@
 <script lang="ts">
+  import BanIcon from "@lucide/svelte/icons/ban";
   import CheckIcon from "@lucide/svelte/icons/check";
+  import CheckCircleIcon from "@lucide/svelte/icons/check-circle";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
+  import Code2Icon from "@lucide/svelte/icons/code-2";
+  import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
+  import FileTextIcon from "@lucide/svelte/icons/file-text";
+  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import PencilIcon from "@lucide/svelte/icons/pencil";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import SaveIcon from "@lucide/svelte/icons/save";
+  import TerminalIcon from "@lucide/svelte/icons/terminal";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
   import type {
     AgentSettingsState,
     AppPreferences,
@@ -21,7 +34,8 @@
     ExtensionSnapshotReadModel,
     ExtensionsInventoryReadModel,
   } from "../shared/workspace-contract";
-  import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../shared/extensions";
+  import { BUILTIN_EXTENSIONS } from "../shared/extensions";
+  import type { ExtensionInterfaceKind, ExtensionUsageState } from "../shared/extensions";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -32,6 +46,8 @@
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
+  import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
+  import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
 
   type Props = {
     runtime: ChatRuntime;
@@ -60,6 +76,23 @@
   let snapshotAction = $state<"save" | "rename" | "delete" | "load" | null>(null);
   let snapshotNameInput = $state<HTMLInputElement | null>(null);
   let renameSnapshotInput = $state<HTMLInputElement | null>(null);
+  let expandedExtensionIds = $state<Set<string>>(new Set());
+  let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
+  let pendingDefaultUsageKey = $state<string | null>(null);
+  let pendingExtensionAction = $state<string | null>(null);
+  let newExtensionOpen = $state(false);
+  let newExtensionTitle = $state("");
+  let newExtensionDescription = $state("");
+  let extensionListElement = $state<HTMLElement | null>(null);
+  let extensionDrag = $state<{
+    extensionId: string;
+    pointerId: number;
+    startY: number;
+    didMove: boolean;
+  } | null>(null);
+  let dragCaptureElement: HTMLElement | null = null;
+  let draggedExtensionId = $state<string | null>(null);
+  let dropBeforeExtensionId = $state<string | null>(null);
   const extensionRowElements = new Map<string, HTMLElement>();
 
   const ACTORS = [
@@ -68,14 +101,28 @@
     { id: "workflow-task", label: "Workflow Task" },
   ] as const;
 
-  const actorStates = ACTORS.map((actor) => ({
-    ...actor,
-    state: resolveActorExtensionState({ actor: actor.id }),
-  }));
+  const DEFAULT_ACTORS = [
+    { id: "orchestrator", label: "Orchestrator" },
+    { id: "workflow-task", label: "Workflow Task" },
+  ] as const;
+
+  const USAGE_STATES: Array<{ state: ExtensionUsageState; label: string }> = [
+    { state: "default_loaded", label: "Loaded" },
+    { state: "available", label: "Available" },
+    { state: "unavailable", label: "Off" },
+  ];
+
+  const FILTERS: Array<{ id: "all" | ExtensionInterfaceKind; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "instructions", label: "Prompt" },
+    { id: "native_tool", label: "Native" },
+    { id: "svvyx", label: "svvyx" },
+  ];
 
   function inventoryRows(): ExtensionInventoryItemReadModel[] {
-    if (extensionsInventory) return extensionsInventory.extensions;
-    return BUILTIN_EXTENSIONS.map((extension) => ({
+    const rows = extensionsInventory
+      ? extensionsInventory.extensions
+      : BUILTIN_EXTENSIONS.map((extension) => ({
       id: extension.id,
       category: extension.category,
       interface: extension.interface,
@@ -92,6 +139,23 @@
         issues: [],
       },
     }));
+    return orderedInventoryRows(rows).filter(
+      (extension) => extensionFilter === "all" || extension.interface === extensionFilter,
+    );
+  }
+
+  function orderedInventoryRows(rows: ExtensionInventoryItemReadModel[]) {
+    const order = extensionsInventory?.defaults?.order ?? BUILTIN_EXTENSIONS.map((extension) => extension.id);
+    const orderById = new Map(order.map((id, index) => [id, index]));
+    return reorderQueuedMessageItems(
+      rows.toSorted((left, right) => {
+        const leftOrder = orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder || left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+      }),
+      draggedExtensionId,
+      dropBeforeExtensionId,
+    );
   }
 
   function registerExtensionRow(node: HTMLElement, extensionId: string) {
@@ -105,12 +169,343 @@
     };
   }
 
+  onDestroy(() => {
+    removeExtensionDragListeners();
+  });
+
+  function toggleExtensionExpanded(extensionId: string) {
+    if (expandedExtensionIds.has(extensionId)) {
+      expandedExtensionIds.delete(extensionId);
+    } else {
+      expandedExtensionIds.add(extensionId);
+    }
+    expandedExtensionIds = new Set(expandedExtensionIds);
+  }
+
+  function defaultUsageFor(
+    extension: ExtensionInventoryItemReadModel,
+    actorKind: (typeof DEFAULT_ACTORS)[number]["id"],
+  ) {
+    return (
+      extensionsInventory?.defaults?.usage[extension.id]?.find(
+        (usage) => usage.actorKind === actorKind,
+      ) ?? {
+        actorKind,
+        state: extension.category === "user" ? "default_loaded" : "unavailable",
+        customized: false,
+        configurable: extension.id !== "extension-loading",
+      }
+    );
+  }
+
+  async function setDefaultUsage(
+    extension: ExtensionInventoryItemReadModel,
+    actorKind: (typeof DEFAULT_ACTORS)[number]["id"],
+    state: ExtensionUsageState,
+  ) {
+    const usage = defaultUsageFor(extension, actorKind);
+    if (!usage.configurable || usage.state === state || pendingDefaultUsageKey !== null) return;
+    pendingDefaultUsageKey = `${extension.id}:${actorKind}:${state}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.setExtensionDefaultUsage({
+        extensionId: extension.id,
+        actorKind,
+        state,
+      });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to update extension default.";
+    } finally {
+      pendingDefaultUsageKey = null;
+    }
+  }
+
+  function extensionKindTitle(kind: ExtensionInterfaceKind): string {
+    if (kind === "native_tool") return "Native tool";
+    if (kind === "svvyx") return "svvyx extension";
+    return "Prompt extension";
+  }
+
+  function extensionKindTooltip(kind: ExtensionInterfaceKind): string {
+    if (kind === "native_tool") return "App-native tools expose built-in runtime capabilities.";
+    if (kind === "svvyx") return "svvyx extensions expose app-owned Incur CLI commands.";
+    return "Prompt extensions add instruction text and loading hints.";
+  }
+
+  function extensionTokenCount(extension: ExtensionInventoryItemReadModel): number {
+    return (extension.instructionFiles ?? [])
+      .filter((file) => !file.skipped)
+      .reduce((total, file) => total + file.tokenCount.tokens, 0);
+  }
+
+  function formatPromptTokenCount(tokens: number): string {
+    return `~${tokens.toLocaleString()} tokens`;
+  }
+
+  function generatedApiLabel(extension: ExtensionInventoryItemReadModel): string | null {
+    if (!extension.typescriptApiEnabled) return null;
+    return "TS API";
+  }
+
+  function customizedExtension(extension: ExtensionInventoryItemReadModel): boolean {
+    return (
+      extension.category === "builtin" &&
+      ((extension.instructionFiles?.some((file) => file.editable || file.skipped) ?? false) ||
+        (extensionsInventory?.defaults?.usage[extension.id]?.some((usage) => usage.customized) ??
+          false))
+    );
+  }
+
+  function newExtensionId(title: string): string {
+    return title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/^[^a-z]+/, "") || "extension";
+  }
+
+  async function createExtension() {
+    const title = newExtensionTitle.trim();
+    if (!title || pendingExtensionAction) return;
+    const id = newExtensionId(title);
+    pendingExtensionAction = "new";
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.createExtension({
+        id,
+        title,
+        description: newExtensionDescription.trim() || `${title} prompt extension.`,
+      });
+      newExtensionTitle = "";
+      newExtensionDescription = "";
+      newExtensionOpen = false;
+      expandedExtensionIds.add(id);
+      expandedExtensionIds = new Set(expandedExtensionIds);
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to create extension.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  async function duplicateExtension(extension: ExtensionInventoryItemReadModel) {
+    if (pendingExtensionAction || extension.interface === "native_tool") return;
+    const title = `${extension.title} Copy`;
+    const id = uniqueExtensionId(newExtensionId(title));
+    pendingExtensionAction = `duplicate:${extension.id}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.duplicateExtension({
+        extensionId: extension.id,
+        id,
+        title,
+      });
+      expandedExtensionIds.add(id);
+      expandedExtensionIds = new Set(expandedExtensionIds);
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to duplicate extension.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  function uniqueExtensionId(base: string): string {
+    const existing = new Set(inventoryRows().map((extension) => extension.id));
+    if (!existing.has(base)) return base;
+    for (let index = 2; index < 1000; index += 1) {
+      const candidate = `${base}-${index}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    return `${base}-${Date.now().toString(36)}`;
+  }
+
+  async function deleteExtension(extension: ExtensionInventoryItemReadModel) {
+    if (pendingExtensionAction || extension.category === "builtin") return;
+    pendingExtensionAction = `delete:${extension.id}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.deleteExtension({ extensionId: extension.id });
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to delete extension.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  async function resetExtension(extension: ExtensionInventoryItemReadModel) {
+    if (pendingExtensionAction || extension.category !== "builtin") return;
+    pendingExtensionAction = `reset:${extension.id}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.resetExtension({ extensionId: extension.id });
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to reset extension.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
+    if (pendingExtensionAction) return;
+    const nextIndex = (extension.instructionFiles?.length ?? 0) + 1;
+    const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.md`;
+    pendingExtensionAction = `add-instruction:${extension.id}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.addExtensionInstructionFile({
+        extensionId: extension.id,
+        name,
+      });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to add instruction file.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  async function removeInstructionFile(extensionId: string, name: string) {
+    if (pendingExtensionAction) return;
+    pendingExtensionAction = `remove-instruction:${extensionId}:${name}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.removeExtensionInstructionFile({ extensionId, name });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to remove instruction file.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  async function setInstructionSkipped(extensionId: string, name: string, skipped: boolean) {
+    if (pendingExtensionAction) return;
+    pendingExtensionAction = `skip-instruction:${extensionId}:${name}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.configureExtensionInstructionFile({
+        extensionId,
+        name,
+        skipped,
+      });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to update instruction file.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
+  function addExtensionDragListeners() {
+    window.addEventListener("pointermove", handleExtensionDragMove);
+    window.addEventListener("pointerup", handleExtensionDragEnd);
+    window.addEventListener("pointercancel", handleExtensionDragCancel);
+  }
+
+  function removeExtensionDragListeners() {
+    window.removeEventListener("pointermove", handleExtensionDragMove);
+    window.removeEventListener("pointerup", handleExtensionDragEnd);
+    window.removeEventListener("pointercancel", handleExtensionDragCancel);
+  }
+
+  function startExtensionDrag(event: PointerEvent, extension: ExtensionInventoryItemReadModel) {
+    if (extensionFilter !== "all") return;
+    extensionDrag = {
+      extensionId: extension.id,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      didMove: false,
+    };
+    draggedExtensionId = null;
+    dropBeforeExtensionId = null;
+    dragCaptureElement = event.currentTarget as HTMLElement;
+    dragCaptureElement.setPointerCapture(event.pointerId);
+    addExtensionDragListeners();
+  }
+
+  function extensionDropTarget(clientY: number): string | null {
+    const candidates = [
+      ...(extensionListElement?.querySelectorAll<HTMLElement>("[data-extension-draggable='true']") ??
+        []),
+    ].filter((element) => element.dataset.extensionId !== draggedExtensionId);
+    for (const element of candidates) {
+      const rect = element.getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) return element.dataset.extensionId ?? null;
+    }
+    return null;
+  }
+
+  function applyExtensionDragMove(clientY: number) {
+    if (!extensionDrag) return;
+    const didMove = extensionDrag.didMove || Math.abs(clientY - extensionDrag.startY) > 5;
+    if (!didMove) return;
+    if (!extensionDrag.didMove) draggedExtensionId = extensionDrag.extensionId;
+    extensionDrag = { ...extensionDrag, didMove: true };
+    dropBeforeExtensionId = extensionDropTarget(clientY);
+  }
+
+  function handleExtensionDragMove(event: PointerEvent) {
+    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
+    applyExtensionDragMove(event.clientY);
+    if (extensionDrag.didMove || Math.abs(event.clientY - extensionDrag.startY) > 5) {
+      event.preventDefault();
+    }
+  }
+
+  function handleExtensionDragCancel(event: PointerEvent) {
+    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
+    cancelExtensionDrag();
+  }
+
+  function releaseExtensionDragCapture(pointerId: number) {
+    if (dragCaptureElement?.hasPointerCapture(pointerId)) {
+      dragCaptureElement.releasePointerCapture(pointerId);
+    }
+    dragCaptureElement = null;
+  }
+
+  function cancelExtensionDrag() {
+    if (!extensionDrag) return;
+    releaseExtensionDragCapture(extensionDrag.pointerId);
+    removeExtensionDragListeners();
+    extensionDrag = null;
+    draggedExtensionId = null;
+    dropBeforeExtensionId = null;
+  }
+
+  async function handleExtensionDragEnd(event: PointerEvent) {
+    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
+    applyExtensionDragMove(event.clientY);
+    const completedDrag = extensionDrag.didMove;
+    const movingId = extensionDrag.extensionId;
+    const beforeId = dropBeforeExtensionId;
+    const pointerId = extensionDrag.pointerId;
+    extensionDrag = null;
+    draggedExtensionId = null;
+    dropBeforeExtensionId = null;
+    releaseExtensionDragCapture(pointerId);
+    removeExtensionDragListeners();
+    const rows = inventoryRows();
+    if (!completedDrag || !queuedMessageOrderChanged(rows, movingId, beforeId)) return;
+    try {
+      extensionsInventory = await runtime.reorderExtensionDefaults({
+        extensionIds: reorderQueuedMessageItems(rows, movingId, beforeId).map(
+          (extension) => extension.id,
+        ),
+      });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : "Unable to reorder extensions.";
+    }
+  }
+
   async function focusTargetExtension(extensionId: string): Promise<void> {
     await tick();
     const row = extensionRowElements.get(extensionId);
     if (!row) return;
     row.scrollIntoView({ block: "center", behavior: "smooth" });
-    row.focus({ preventScroll: true });
   }
 
   function reversibleChangeCards(): ExtensionChangeCardReadModel[] {
@@ -870,6 +1265,48 @@
         {/if}
       </div>
 
+      <div class="extension-filter-group" aria-label="Filter extensions">
+        {#each FILTERS as filter (filter.id)}
+          <button
+            type="button"
+            class={`extension-filter ${extensionFilter === filter.id ? "active" : ""}`.trim()}
+            aria-pressed={extensionFilter === filter.id}
+            onclick={() => (extensionFilter = filter.id)}
+          >
+            {filter.label}
+          </button>
+        {/each}
+      </div>
+      <Tooltip label="Reset default extension order">
+        <Button
+          class="snapshot-icon-button"
+          variant="ghost"
+          size="xs"
+          iconOnly
+          disabled={pendingExtensionAction !== null}
+          aria-label="Reset default extension order"
+          onclick={async () => {
+            pendingExtensionAction = "reset-order";
+            try {
+              extensionsInventory = await runtime.reorderExtensionDefaults({ extensionIds: [] });
+            } finally {
+              pendingExtensionAction = null;
+            }
+          }}
+        >
+          <RotateCcwIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+        </Button>
+      </Tooltip>
+      <Button
+        class="new-extension-button"
+        variant="primary"
+        size="xs"
+        disabled={pendingExtensionAction !== null}
+        onclick={() => (newExtensionOpen = !newExtensionOpen)}
+      >
+        <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
+        New
+      </Button>
       {#if reversibleChangeCards().length}
         <CompactSelect
           value="History"
@@ -886,33 +1323,187 @@
       {/if}
     </section>
 
-  <div class="extensions-table" role="table" aria-label="Extension inventory">
-    <div class="extensions-row header" role="row">
-      <span role="columnheader">Extension</span>
-      <span role="columnheader">Interface</span>
-      {#each ACTORS as actor (actor.id)}
-        <span role="columnheader">{actor.label}</span>
-      {/each}
-      <span role="columnheader">Settings</span>
-    </div>
+    {#if inventoryError}
+      <p class="extension-settings-error" role="alert">{inventoryError}</p>
+    {/if}
 
+    {#if newExtensionOpen}
+      <section class="new-extension-popover" aria-label="New extension">
+        <input
+          class="snapshot-name-input"
+          bind:value={newExtensionTitle}
+          placeholder="Extension name"
+          aria-label="Extension name"
+          onkeydown={(event) => {
+            if (event.key === "Enter") void createExtension();
+            if (event.key === "Escape") newExtensionOpen = false;
+          }}
+        />
+        <input
+          class="snapshot-name-input"
+          bind:value={newExtensionDescription}
+          placeholder="Description"
+          aria-label="Extension description"
+          onkeydown={(event) => {
+            if (event.key === "Enter") void createExtension();
+            if (event.key === "Escape") newExtensionOpen = false;
+          }}
+        />
+        <Button
+          size="xs"
+          variant="primary"
+          disabled={!newExtensionTitle.trim() || pendingExtensionAction !== null}
+          onclick={() => void createExtension()}
+        >
+          Create
+        </Button>
+      </section>
+    {/if}
+
+  <div class="extensions-list" aria-label="Extension inventory" bind:this={extensionListElement}>
     {#each inventoryRows() as extension (extension.id)}
       {@const cliRequirements = inventoryCliRequirements(extension.id)}
       {@const envRequirements = inventoryEnvRequirements(extension.id)}
       {@const declaredCliBinaries = declaredCliRequirementBinaries(extension.id)}
-      <div
+      {@const expanded = expandedExtensionIds.has(extension.id)}
+      {@const tokenCount = extensionTokenCount(extension)}
+      <article
         use:registerExtensionRow={extension.id}
-        class={`extensions-row ${extension.id === targetExtensionId ? "target-extension-row" : ""}`.trim()}
-        role="row"
-        tabindex={extension.id === targetExtensionId ? -1 : undefined}
+        class={`extension-card ${extension.id === targetExtensionId ? "target-extension-row" : ""} ${extension.id === draggedExtensionId ? "dragging" : ""}`.trim()}
         data-extension-id={extension.id}
+        data-extension-draggable={extensionFilter === "all" ? "true" : "false"}
+        animate:flip={{ duration: draggedExtensionId ? 150 : 0 }}
       >
-        <div class="extension-name" role="cell">
-          <strong>{extension.title}</strong>
-          <span>{extension.description}</span>
-          <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
-            {categoryLabel(extension.category)}
-          </Badge>
+        <div class="extension-card-main">
+          <button
+            type="button"
+            class="extension-drag"
+            aria-label={`Reorder ${extension.title}`}
+            disabled={extensionFilter !== "all"}
+            onpointerdown={(event) => startExtensionDrag(event, extension)}
+          >
+            <GripVerticalIcon size={13} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="extension-disclosure"
+            aria-expanded={expanded}
+            aria-label={expanded ? `Collapse ${extension.title}` : `Expand ${extension.title}`}
+            onclick={() => toggleExtensionExpanded(extension.id)}
+          >
+            {#if expanded}
+              <ChevronDownIcon size={14} aria-hidden="true" />
+            {:else}
+              <ChevronRightIcon size={14} aria-hidden="true" />
+            {/if}
+          </button>
+          <Tooltip label={extensionKindTooltip(extension.interface)}>
+            <span class={`extension-kind-icon ${extension.interface}`.trim()} aria-label={extensionKindTitle(extension.interface)}>
+              {#if extension.interface === "svvyx"}
+                <TerminalIcon size={14} aria-hidden="true" />
+              {:else if extension.interface === "native_tool"}
+                <Code2Icon size={14} aria-hidden="true" />
+              {:else}
+                <FileTextIcon size={14} aria-hidden="true" />
+              {/if}
+            </span>
+          </Tooltip>
+          <div class="extension-title-block">
+            <button
+              type="button"
+              class="extension-title-button"
+              aria-expanded={expanded}
+              onclick={() => toggleExtensionExpanded(extension.id)}
+            >
+              <strong>{extension.title}</strong>
+              {#if customizedExtension(extension)}
+                <span class="extension-customized-tag">customized</span>
+              {/if}
+            </button>
+            <span>{extension.description}</span>
+          </div>
+          <div class="extension-facts">
+            <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
+              {categoryLabel(extension.category)}
+            </Badge>
+            <span>{formatPromptTokenCount(tokenCount)}</span>
+            {#if generatedApiLabel(extension)}
+              <Badge tone="info">{generatedApiLabel(extension)}</Badge>
+            {/if}
+            {#if !extension.state.ready}
+              <Badge tone="warning">{extension.state.issues[0]?.code ?? "issue"}</Badge>
+            {/if}
+          </div>
+          <div class="extension-default-controls">
+            {#each DEFAULT_ACTORS as actor (actor.id)}
+              {@const usage = defaultUsageFor(extension, actor.id)}
+              <div class="extension-default-control" aria-label={`${extension.title} ${actor.label} default`}>
+                <span>{actor.label}</span>
+                <div>
+                  {#each USAGE_STATES as option (option.state)}
+                    {@const selected = usage.state === option.state}
+                    <Tooltip label={option.label}>
+                      <button
+                        type="button"
+                        class={`extension-state-button ${selected ? "active" : ""}`.trim()}
+                        aria-label={`Set ${extension.title} ${actor.label} default to ${option.label}`}
+                        aria-pressed={selected}
+                        disabled={!usage.configurable || pendingDefaultUsageKey !== null}
+                        onclick={() => setDefaultUsage(extension, actor.id, option.state)}
+                      >
+                        {#if option.state === "default_loaded"}
+                          <CheckCircleIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                        {:else if option.state === "available"}
+                          <CircleDashedIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                        {:else}
+                          <BanIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                        {/if}
+                      </button>
+                    </Tooltip>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="extension-row-actions">
+            <Tooltip label={extension.interface === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
+              <button
+                type="button"
+                class="extension-icon-action"
+                disabled={extension.interface === "native_tool" || pendingExtensionAction !== null}
+                aria-label={`Duplicate ${extension.title}`}
+                onclick={() => duplicateExtension(extension)}
+              >
+                <CopyPlusIcon size={13} aria-hidden="true" />
+              </button>
+            </Tooltip>
+            <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
+              <button
+                type="button"
+                class="extension-icon-action"
+                disabled={extension.category !== "builtin" || pendingExtensionAction !== null}
+                aria-label={`Reset ${extension.title}`}
+                onclick={() => resetExtension(extension)}
+              >
+                <RotateCcwIcon size={13} aria-hidden="true" />
+              </button>
+            </Tooltip>
+            <Tooltip label={extension.category === "builtin" ? "Builtin extensions cannot be deleted" : "Delete extension"}>
+              <button
+                type="button"
+                class="extension-icon-action danger"
+                disabled={extension.category === "builtin" || pendingExtensionAction !== null}
+                aria-label={`Delete ${extension.title}`}
+                onclick={() => deleteExtension(extension)}
+              >
+                <Trash2Icon size={13} aria-hidden="true" />
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        {#if expanded}
+        <div class="extension-expanded">
           {#if extension.externalInstruction}
             <div class="external-instruction-readonly" aria-label={`${extension.title} external instruction source`}>
               <div class="external-instruction-meta">
@@ -931,6 +1522,10 @@
               {/if}
             </div>
           {/if}
+          <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
+            Minimal instruction
+          </Badge>
+          <p class="extension-minimal-hint">{extension.description}</p>
           {#if cliRequirements.length}
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
               {#each cliRequirements as requirement (requirement.id)}
@@ -952,6 +1547,68 @@
             </span>
           {:else if declaredCliBinaries.length && inventoryError}
             <span class="extension-cli-error">{inventoryError}</span>
+          {/if}
+          {#if extension.instructionFiles?.length}
+            <div class="extension-instruction-list">
+              <div class="extension-instruction-list-header">
+                <strong>Instruction files</strong>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={pendingExtensionAction !== null || extension.category === "external_instruction"}
+                  onclick={() => addInstructionFile(extension)}
+                >
+                  <PlusIcon size={13} aria-hidden="true" />
+                  Add
+                </Button>
+              </div>
+              {#each extension.instructionFiles as file (file.name)}
+                <div class="extension-instruction-row">
+                  <div class="extension-instruction-row-actions">
+                    <Tooltip label={file.skipped ? "Include file in context" : "Skip file without deleting it"}>
+                      <button
+                        type="button"
+                        class="extension-icon-action"
+                        disabled={pendingExtensionAction !== null}
+                        aria-label={file.skipped ? `Include ${file.name}` : `Skip ${file.name}`}
+                        onclick={() => setInstructionSkipped(extension.id, file.name, !file.skipped)}
+                      >
+                        <BanIcon size={13} aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={file.generated || !file.editable ? "Read-only files cannot be removed" : "Remove file to app-managed trash"}>
+                      <button
+                        type="button"
+                        class="extension-icon-action danger"
+                        disabled={pendingExtensionAction !== null || file.generated || !file.editable}
+                        aria-label={`Remove ${file.name}`}
+                        onclick={() => removeInstructionFile(extension.id, file.name)}
+                      >
+                        <Trash2Icon size={13} aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <ExtensionInstructionFileEditor
+                    runtime={runtime}
+                    extensionId={extension.id}
+                    file={file}
+                    editor={appPreferences?.preferredExternalEditor}
+                    disabled={pendingExtensionAction !== null}
+                    onSaved={() => void loadExtensionsInventory()}
+                  />
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={pendingExtensionAction !== null || extension.category === "external_instruction"}
+              onclick={() => addInstructionFile(extension)}
+            >
+              <PlusIcon size={13} aria-hidden="true" />
+              Add instruction file
+            </Button>
           {/if}
           {#if envRequirements.length}
             <div class="extension-env-requirements" aria-label={`${extension.title} env readiness`}>
@@ -977,19 +1634,7 @@
               {/each}
             </div>
           {/if}
-        </div>
-        <div role="cell">
-          <Badge tone={extension.interface === "svvyx" ? "info" : "neutral"}>
-            {interfaceLabel(extension.interface)}
-          </Badge>
-        </div>
-        {#each ACTORS as actor (actor.id)}
-          {@const usage = usageFor(extension, actor.id)}
-          <div role="cell">
-            <Badge tone={usageTone(usage)}>{usage}</Badge>
-          </div>
-        {/each}
-        <div class={`extension-settings ${extension.id === "request-user-input" || extension.externalInstruction ? "" : "empty"}`} role="cell">
+        <div class={`extension-settings ${extension.id === "request-user-input" || extension.externalInstruction ? "" : "empty"}`}>
           {#if extension.externalInstruction}
             {@const control = externalInstructionControl(extension)}
             {@const isSavingExternalInstruction = pendingExternalInstructionPath === extension.externalInstruction.path}
@@ -1090,7 +1735,9 @@
             <span class="extension-settings-empty" aria-hidden="true">-</span>
           {/if}
         </div>
-      </div>
+        </div>
+        {/if}
+      </article>
     {/each}
   </div>
   </div>
@@ -1113,6 +1760,8 @@
   }
 
   .extensions-inventory {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
     min-height: 0;
     overflow: auto;
   }
@@ -1180,6 +1829,17 @@
     flex: 0 0 auto;
   }
 
+  :global(.history-menu) {
+    min-width: 25rem;
+    max-width: min(42rem, calc(100vw - 2rem));
+  }
+
+  :global(.history-option) {
+    justify-content: flex-start;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
   :global(.snapshot-option) {
     justify-content: flex-start;
     min-height: 1.85rem;
@@ -1213,6 +1873,356 @@
 
   :global(.snapshot-icon-button.confirming-delete) {
     color: var(--ui-danger);
+  }
+
+  .extension-filter-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.16rem;
+    min-width: 0;
+    padding: 0.12rem;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-muted) 24%, transparent);
+  }
+
+  .extension-filter {
+    min-height: 1.32rem;
+    padding: 0 0.46rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 650;
+    line-height: 1;
+  }
+
+  .extension-filter:hover,
+  .extension-filter:focus-visible {
+    outline: none;
+    background: color-mix(in oklab, var(--ui-surface-muted) 45%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-filter:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-filter.active {
+    background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
+    color: var(--ui-text-primary);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-border-soft) 70%, transparent);
+  }
+
+  :global(.new-extension-button) {
+    flex: 0 0 auto;
+  }
+
+  .new-extension-popover {
+    display: grid;
+    grid-template-columns: minmax(9rem, 15rem) minmax(12rem, 1fr) max-content;
+    align-items: center;
+    gap: 0.32rem;
+    padding: 0.42rem 1.1rem;
+    border-bottom: 1px solid var(--ui-border-subtle);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 32%, transparent);
+  }
+
+  .extensions-list {
+    display: grid;
+    align-content: start;
+    gap: 0.32rem;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    padding: 0.52rem 0.72rem 1rem;
+  }
+
+  .extension-card {
+    display: grid;
+    min-width: 0;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 58%, transparent);
+  }
+
+  .extension-card.target-extension-row {
+    border-color: color-mix(in oklab, var(--ui-accent) 50%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent-soft) 20%, var(--ui-surface-subtle));
+  }
+
+  .extension-card:focus {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-card.dragging {
+    opacity: 0.62;
+  }
+
+  .extension-card-main {
+    display: grid;
+    grid-template-columns: 1.1rem 1.35rem 1.55rem minmax(12rem, 1.45fr) minmax(10rem, 0.8fr) minmax(18rem, 1.1fr) auto;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    padding: 0.48rem 0.54rem;
+  }
+
+  .extension-drag,
+  .extension-disclosure,
+  .extension-icon-action {
+    display: grid;
+    place-items: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+  }
+
+  .extension-drag {
+    width: 1.1rem;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .extension-drag:disabled,
+  .extension-icon-action:disabled,
+  .extension-state-button:disabled {
+    cursor: default;
+    opacity: 0.48;
+  }
+
+  .extension-disclosure,
+  .extension-icon-action {
+    cursor: pointer;
+  }
+
+  .extension-drag:not(:disabled):hover,
+  .extension-drag:not(:disabled):focus-visible,
+  .extension-disclosure:hover,
+  .extension-disclosure:focus-visible,
+  .extension-icon-action:not(:disabled):hover,
+  .extension-icon-action:not(:disabled):focus-visible {
+    outline: none;
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-icon-action.danger:not(:disabled):hover,
+  .extension-icon-action.danger:not(:disabled):focus-visible {
+    color: var(--ui-danger);
+  }
+
+  .extension-drag:focus-visible,
+  .extension-disclosure:focus-visible,
+  .extension-icon-action:focus-visible,
+  .extension-title-button:focus-visible,
+  .extension-state-button:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-kind-icon {
+    display: grid;
+    place-items: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: var(--ui-radius-sm);
+    color: var(--ui-text-secondary);
+    background: color-mix(in oklab, var(--ui-surface-muted) 38%, transparent);
+  }
+
+  .extension-kind-icon.instructions {
+    color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-text-primary));
+  }
+
+  .extension-kind-icon.native_tool {
+    color: color-mix(in oklab, var(--ui-success) 76%, var(--ui-text-primary));
+  }
+
+  .extension-kind-icon.svvyx {
+    color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
+  }
+
+  .extension-title-block {
+    display: grid;
+    gap: 0.12rem;
+    min-width: 0;
+  }
+
+  .extension-title-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
+    justify-self: start;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-primary);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .extension-title-button strong {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .extension-title-button:hover strong,
+  .extension-title-button:focus-visible strong {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16rem;
+  }
+
+  .extension-title-block > span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .extension-customized-tag {
+    flex: 0 0 auto;
+    color: var(--ui-accent);
+    font-size: var(--text-xs);
+    font-weight: 650;
+  }
+
+  .extension-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.24rem 0.34rem;
+    min-width: 0;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
+  .extension-default-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(8.5rem, 1fr));
+    gap: 0.34rem;
+    min-width: 0;
+  }
+
+  .extension-default-control {
+    display: grid;
+    grid-template-columns: minmax(4.8rem, 1fr) auto;
+    align-items: center;
+    gap: 0.28rem;
+    min-width: 0;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
+  .extension-default-control > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .extension-default-control > div {
+    display: grid;
+    grid-template-columns: repeat(3, 1.38rem);
+    gap: 0.16rem;
+  }
+
+  .extension-state-button {
+    display: grid;
+    place-items: center;
+    width: 1.3rem;
+    height: 1.24rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+  }
+
+  .extension-state-button:not(:disabled):hover,
+  .extension-state-button:not(:disabled):focus-visible {
+    outline: none;
+    border-color: var(--ui-border-strong);
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-state-button.active {
+    border-color: color-mix(in oklab, var(--ui-accent) 42%, var(--ui-border-strong));
+    background: color-mix(in oklab, var(--ui-surface-subtle) 92%, var(--ui-surface-muted));
+    color: var(--ui-text-primary);
+    opacity: 1;
+  }
+
+  .extension-row-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1.35rem);
+    gap: 0.12rem;
+    justify-content: end;
+  }
+
+  .extension-expanded {
+    display: grid;
+    gap: 0.58rem;
+    min-width: 0;
+    padding: 0 0.72rem 0.72rem 3.9rem;
+  }
+
+  .extension-minimal-hint {
+    margin: -0.38rem 0 0;
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+  }
+
+  .extension-instruction-list {
+    display: grid;
+    gap: 0.42rem;
+    min-width: 0;
+  }
+
+  .extension-instruction-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .extension-instruction-list-header strong {
+    color: var(--ui-text-primary);
+    font-size: var(--text-xs);
+  }
+
+  .extension-instruction-row {
+    display: grid;
+    grid-template-columns: 1.55rem minmax(0, 1fr);
+    gap: 0.38rem;
+    min-width: 0;
+  }
+
+  .extension-instruction-row-actions {
+    display: grid;
+    align-content: start;
+    gap: 0.16rem;
+    padding-top: 1.45rem;
   }
 
   .snapshot-popover {
@@ -1250,25 +2260,6 @@
     outline: none;
     border-color: color-mix(in oklab, var(--ui-accent) 36%, transparent);
     box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-accent) 16%, transparent);
-  }
-
-  .extensions-row {
-    display: grid;
-    grid-template-columns: minmax(17rem, 1.5fr) minmax(7rem, 0.55fr) repeat(3, minmax(7rem, 0.6fr)) minmax(16rem, 1fr);
-    gap: 0.85rem;
-    align-items: center;
-    padding: 0.72rem 1.1rem;
-    border-bottom: 1px solid var(--ui-border-subtle);
-  }
-
-  .extensions-row.target-extension-row {
-    outline: 1px solid color-mix(in oklab, var(--ui-accent) 46%, var(--ui-border-soft));
-    outline-offset: -1px;
-    background: color-mix(in oklab, var(--ui-accent-soft) 26%, var(--ui-surface));
-  }
-
-  .extensions-row.target-extension-row:focus {
-    outline: 1px solid color-mix(in oklab, var(--ui-accent) 60%, var(--ui-border-soft));
   }
 
   .extension-settings {
@@ -1314,35 +2305,6 @@
   .extension-settings-error {
     margin: 0;
     color: var(--ui-danger);
-  }
-
-  .extensions-row.header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--ui-surface);
-    color: var(--ui-text-tertiary);
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .extension-name {
-    display: grid;
-    gap: 0.22rem;
-    min-width: 0;
-  }
-
-  .extension-name > strong,
-  .extension-name > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-name > span {
-    color: var(--ui-text-secondary);
-    font-size: 0.78rem;
   }
 
   .extension-cli-requirements,

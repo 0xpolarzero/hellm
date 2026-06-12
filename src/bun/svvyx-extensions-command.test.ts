@@ -127,31 +127,31 @@ describe("svvyx extensions command", () => {
           {
             agentProfile: "default-orchestrator",
             actorKind: "orchestrator",
-            state: "available",
+            state: "default_loaded",
             configurable: true,
           },
           {
             agentProfile: "threadHandler",
             actorKind: "handler",
-            state: "available",
+            state: "unavailable",
             configurable: true,
           },
           {
             agentProfile: "explorer",
             actorKind: "workflow-task",
-            state: "unavailable",
+            state: "default_loaded",
             configurable: true,
           },
           {
             agentProfile: "implementer",
             actorKind: "workflow-task",
-            state: "unavailable",
+            state: "default_loaded",
             configurable: true,
           },
           {
             agentProfile: "reviewer",
             actorKind: "workflow-task",
-            state: "unavailable",
+            state: "default_loaded",
             configurable: true,
           },
         ],
@@ -1520,6 +1520,8 @@ describe("svvyx extensions command", () => {
       removed: {
         name: "030-domain-guide.md",
         path: join(sourceRoot, "instructions", "full", "030-domain-guide.md"),
+        trashId: expect.stringMatching(/^trash_/),
+        trashPath: expect.stringContaining((remove.output as any).removed.trashId),
       },
       instructionsFull: [
         {
@@ -3980,6 +3982,18 @@ describe("svvyx extensions command", () => {
         web: "unavailable",
       },
     });
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state default_loaded --json",
+      extensionsRoot,
+    });
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults reorder --extension notes --extension smithers --extension web --json",
+      extensionsRoot,
+    });
     mkdirSync(join(extensionsRoot, "package"), { recursive: true });
     writeFileSync(join(extensionsRoot, "package", "package.json"), '{"dependencies":{}}\n');
     writeFileSync(join(extensionsRoot, "package", "bun.lock"), "lockfile\n");
@@ -3998,6 +4012,18 @@ describe("svvyx extensions command", () => {
     writeFileSync(join(notesRoot, "instructions", "full", "010-notes.md"), "# Changed\n");
     rmSync(join(extensionsRoot, "sources", "user", "linear"), { force: true, recursive: true });
     await createNotesExtensionAtId(extensionsRoot, "scratch");
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state unavailable --json",
+      extensionsRoot,
+    });
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults reorder --extension web --extension notes --extension smithers --json",
+      extensionsRoot,
+    });
     const structuredSessionStore = createStructuredSessionStateStore({
       workspace: {
         id: agentRoot,
@@ -4131,6 +4157,14 @@ describe("svvyx extensions command", () => {
       notes: "default_loaded",
       web: "unavailable",
     });
+    expect(agentSettingsStore.getState().extensionDefaults.usage.orchestrator).toMatchObject({
+      smithers: "default_loaded",
+    });
+    expect(agentSettingsStore.getState().extensionDefaults.order.slice(0, 3)).toEqual([
+      "notes",
+      "smithers",
+      "web",
+    ]);
     expect(loaded.commandFacts).toMatchObject({
       extensionSnapshotLoaded: true,
       snapshotId,
@@ -6940,6 +6974,90 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
     ).toBeUndefined();
     structuredSessionStore.close();
+  });
+
+  it("sets future extension defaults without mutating existing profile overrides", async () => {
+    const extensionsRoot = createTempDir();
+    const agentRoot = createTempDir();
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd: agentRoot,
+      agentDir: join(agentRoot, ".agent"),
+      workflowsSourceRoot: join(agentRoot, "workflows"),
+    });
+    const beforeProfile = agentSettingsStore.getState().agents.orchestrators[0]!;
+
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state default_loaded --json",
+      extensionsRoot,
+    });
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults set-usage --actor workflow-task --extension github --state default_loaded --json",
+      extensionsRoot,
+    });
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions defaults reorder --extension github --extension smithers --extension shell --json",
+      extensionsRoot,
+    });
+
+    const settings = agentSettingsStore.getState();
+    expect(settings.agents.orchestrators[0]?.extensionUsage).toEqual(beforeProfile.extensionUsage);
+    expect(settings.extensionDefaults.usage.orchestrator).toMatchObject({
+      smithers: "default_loaded",
+    });
+    expect(settings.extensionDefaults.usage["workflow-task"]).toMatchObject({
+      github: "default_loaded",
+    });
+    expect(settings.extensionDefaults.order.slice(0, 3)).toEqual(["github", "smithers", "shell"]);
+
+    const inventory = await readBuiltinExtensionsInventory({
+      agentSettingsStore,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.defaults?.usage.smithers).toContainEqual(
+      expect.objectContaining({
+        actorKind: "orchestrator",
+        state: "default_loaded",
+        customized: true,
+      }),
+    );
+    expect(inventory.defaults?.order.slice(0, 3)).toEqual(["github", "smithers", "shell"]);
+  });
+
+  it("creates user prompt extensions loaded by default for future actors", async () => {
+    const extensionsRoot = createTempDir();
+    const agentRoot = createTempDir();
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd: agentRoot,
+      agentDir: join(agentRoot, ".agent"),
+      workflowsSourceRoot: join(agentRoot, "workflows"),
+    });
+
+    await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        'svvyx extensions create --id notes --title "Notes" --description "Project notes." --interface instructions --json',
+      extensionsRoot,
+    });
+
+    const defaults = agentSettingsStore.getState().extensionDefaults.usage;
+    expect(defaults.orchestrator?.notes).toBe("default_loaded");
+    expect(defaults["workflow-task"]?.notes).toBe("default_loaded");
+    const inventory = await readBuiltinExtensionsInventory({
+      agentSettingsStore,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.defaults?.usage.notes).toEqual([
+      expect.objectContaining({ actorKind: "orchestrator", state: "default_loaded" }),
+      expect.objectContaining({ actorKind: "workflow-task", state: "default_loaded" }),
+    ]);
   });
 
   it("sets workflow-agent extension usage in source records and reverts exactly", async () => {

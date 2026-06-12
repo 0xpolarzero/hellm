@@ -236,6 +236,7 @@ export interface ExtensionInventoryItemReadModel {
     readStatus: GeneratedAgentContextExternalSource["readStatus"];
   };
   typescriptApiEnabled: boolean;
+  instructionFiles?: ExtensionInstructionFileReadModel[];
   usage: ExtensionUsageReadiness[];
   requirements: {
     cliRequirements: ExtensionCliRequirementReadiness[];
@@ -244,6 +245,20 @@ export interface ExtensionInventoryItemReadModel {
   state: {
     ready: boolean;
     issues: ExtensionInventoryIssue[];
+  };
+}
+
+export interface ExtensionInstructionFileReadModel {
+  name: string;
+  path: string;
+  content: string;
+  sourceVersion: string;
+  skipped: boolean;
+  editable: boolean;
+  generated: boolean;
+  tokenCount: {
+    tokens: number;
+    accuracy: "estimated";
   };
 }
 
@@ -267,8 +282,20 @@ export interface ExtensionSnapshotReadModel {
   status: "available";
 }
 
+export interface ExtensionDefaultUsageReadModel {
+  actorKind: "orchestrator" | "workflow-task";
+  state: ExtensionUsageState;
+  customized: boolean;
+  configurable: boolean;
+  fixedReason?: string;
+}
+
 export interface ExtensionsInventoryReadModel {
   extensions: ExtensionInventoryItemReadModel[];
+  defaults?: {
+    order: string[];
+    usage: Record<string, ExtensionDefaultUsageReadModel[]>;
+  };
   reversibleChanges: ExtensionChangeCardReadModel[];
   snapshots: ExtensionSnapshotReadModel[];
 }
@@ -298,6 +325,70 @@ export interface DeleteExtensionSnapshotRequest extends WorkspaceScopedRequest {
 
 export interface LoadExtensionSnapshotRequest extends WorkspaceScopedRequest {
   snapshotId: string;
+}
+
+export interface CreateExtensionRequest extends WorkspaceScopedRequest {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export interface DuplicateExtensionRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  id: string;
+  title: string;
+}
+
+export interface DeleteExtensionRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+}
+
+export interface ResetExtensionRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+}
+
+export interface SetExtensionDefaultUsageRequest extends WorkspaceScopedRequest {
+  actorKind: "orchestrator" | "workflow-task";
+  extensionId: string;
+  state: ExtensionUsageState;
+}
+
+export interface ReorderExtensionDefaultsRequest extends WorkspaceScopedRequest {
+  extensionIds: string[];
+}
+
+export interface AddExtensionInstructionFileRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+}
+
+export interface RemoveExtensionInstructionFileRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+}
+
+export interface ConfigureExtensionInstructionFileRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+  skipped: boolean;
+}
+
+export interface ReorderExtensionInstructionFilesRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  names: string[];
+}
+
+export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
+  content: string;
+  baseSourceVersion?: string;
+  mode?: FileBackedSaveMode;
+}
+
+export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+  name: string;
 }
 
 export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
@@ -1601,6 +1692,54 @@ export interface ChatRPCSchema {
       loadExtensionSnapshot: {
         params: LoadExtensionSnapshotRequest;
         response: ExtensionsInventoryReadModel;
+      };
+      createExtension: {
+        params: CreateExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      duplicateExtension: {
+        params: DuplicateExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      deleteExtension: {
+        params: DeleteExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      resetExtension: {
+        params: ResetExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      setExtensionDefaultUsage: {
+        params: SetExtensionDefaultUsageRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      reorderExtensionDefaults: {
+        params: ReorderExtensionDefaultsRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      addExtensionInstructionFile: {
+        params: AddExtensionInstructionFileRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      removeExtensionInstructionFile: {
+        params: RemoveExtensionInstructionFileRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      configureExtensionInstructionFile: {
+        params: ConfigureExtensionInstructionFileRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      reorderExtensionInstructionFiles: {
+        params: ReorderExtensionInstructionFilesRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      updateExtensionInstructionFile: {
+        params: UpdateExtensionInstructionFileRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      openExtensionInstructionFileInEditor: {
+        params: OpenExtensionInstructionFileInEditorRequest;
+        response: OpenWorkspaceSourceInEditorResponse;
       };
       setExtensionEnvSecret: {
         params: SetExtensionEnvSecretRequest;
