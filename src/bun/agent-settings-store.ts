@@ -255,8 +255,8 @@ function readWorkflowAgentSourceRecords(
         extensionUsage: normalizeExtensionUsage(raw.extensionUsage),
         extensionOrder: normalizeExtensionOrder(raw.extensionOrder),
       });
-    } catch {
-      continue;
+    } catch (error) {
+      throw new Error(`Workflow agent source is not valid JSON: ${path}`, { cause: error });
     }
   }
   return Object.keys(records).length > 0 ? records : fallback;

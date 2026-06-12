@@ -15,6 +15,7 @@ describe("mapAppRuntimeLogSource", () => {
     expect(mapAppRuntimeLogSource("workspace.session.create")).toBe("session");
     expect(mapAppRuntimeLogSource("workspace.surface.open")).toBe("surface");
     expect(mapAppRuntimeLogSource("sendPrompt")).toBe("prompt");
+    expect(mapAppRuntimeLogSource("source.graph")).toBe("source.graph");
     expect(mapAppRuntimeLogSource("workflow.library")).toBe("workflow.library");
     expect(mapAppRuntimeLogSource("external-editor")).toBe("external-editor");
   });

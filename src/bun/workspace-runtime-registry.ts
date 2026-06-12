@@ -18,6 +18,14 @@ import {
   type TitleGenerationLogEvent,
   type WorkflowsGeneratedPackageLogEvent,
 } from "./session-catalog";
+import { extensionsRootForAgentDir } from "./generated-agent-context-aggregate-cache";
+import { getWorkflowsSourceRoot } from "./smithers-runtime/workflow-library";
+import {
+  buildSourceWatchInputs,
+  createSourceInvalidationCoordinator,
+  type SourceInvalidationCoordinator,
+  type SourceInvalidationEvent,
+} from "./source-invalidation-coordinator";
 import { canonicalizeWorkspaceCwd, getDefaultWorkspaceCwd } from "./workspace-context";
 import { WorkspacePathIndex } from "./workspace-path-index";
 
@@ -34,8 +42,10 @@ type WorkspaceRuntimeRegistryOptions = {
     error?: unknown,
   ) => void;
   onAppLogUpdate?: (workspaceId: string, payload: AppLogUpdateMessage) => void;
+  onSourceInvalidation?: (event: SourceInvalidationEvent) => void | Promise<void>;
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
+  sourceWatchEnabled?: boolean;
   workflowsGeneratedPackagePath?: string;
   workflowsExtensionsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
@@ -76,11 +86,48 @@ export class WorkspaceRuntimeRegistry {
   >();
   private readonly agentDir: string;
   private readonly appDataDir: string;
+  private readonly sourceInvalidationCoordinator: SourceInvalidationCoordinator;
   private activeWorkspaceId: string | null = null;
 
   constructor(private readonly options: WorkspaceRuntimeRegistryOptions) {
     this.agentDir = options.agentDir ?? getSvvyAgentDir();
     this.appDataDir = options.appDataDir ?? getSvvyDataDir();
+    this.sourceInvalidationCoordinator = createSourceInvalidationCoordinator({
+      readInputs: () =>
+        buildSourceWatchInputs({
+          agentDir: this.agentDir,
+          cwdByWorkspaceId: new Map(
+            Array.from(this.runtimes.values()).map((runtime) => [runtime.workspaceId, runtime.cwd]),
+          ),
+          externalInstructionsByWorkspaceId: new Map(
+            Array.from(this.runtimes.values()).map((runtime) => [
+              runtime.workspaceId,
+              runtime.agentSettingsStore.getState().appPreferences.externalInstructions,
+            ]),
+          ),
+          extensionsRoot: extensionsRootForAgentDir(this.agentDir),
+          workflowsSourceRoot: this.options.workflowsSourceRoot ?? getWorkflowsSourceRoot(),
+        }),
+      onDomainsChanged: async (event) => {
+        await this.options.onSourceInvalidation?.(event);
+        for (const runtime of this.runtimes.values()) {
+          runtime.appLog.info("source.graph", "Source inputs changed.", {
+            domains: event.domains,
+            reason: event.reason,
+          });
+        }
+      },
+      onWatchError: (error, path) => {
+        this.options.forwardBridgeLog?.(
+          "warn",
+          "Source watcher could not watch a path.",
+          "source.graph",
+          { path },
+          error,
+        );
+      },
+      watchEnabled: this.options.sourceWatchEnabled,
+    });
     if (options.openInitialWorkspace) {
       this.activeWorkspaceId = this.acquireWorkspace(options.initialCwd).workspaceId;
     }
@@ -102,6 +149,7 @@ export class WorkspaceRuntimeRegistry {
     const runtime = this.createRuntime(workspaceId, workspaceCwd, options.kind ?? "user");
     this.runtimes.set(workspaceId, runtime);
     this.activeWorkspaceId = workspaceId;
+    this.sourceInvalidationCoordinator.refreshWatchedInputs("workspace_opened");
     return runtime;
   }
 
@@ -166,12 +214,21 @@ export class WorkspaceRuntimeRegistry {
 
     this.runtimes.delete(workspaceId);
     await runtime.dispose();
+    this.sourceInvalidationCoordinator.refreshWatchedInputs("workspace_closed");
 
     if (this.activeWorkspaceId === workspaceId) {
       const next = this.runtimes.keys().next().value as string | undefined;
       this.activeWorkspaceId = next ?? null;
     }
     return true;
+  }
+
+  requestSourceInvalidationScan(reason: string): void {
+    this.sourceInvalidationCoordinator.requestScan(reason);
+  }
+
+  closeSourceInvalidationCoordinator(): void {
+    this.sourceInvalidationCoordinator.close();
   }
 
   private createRuntime(workspaceId: string, cwd: string, kind: WorkspaceKind): RuntimeRecord {

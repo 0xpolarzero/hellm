@@ -4,6 +4,7 @@ export type AppRuntimeLogKind = "app" | "rpc";
 
 export function mapAppRuntimeLogSource(source: string, kind?: AppRuntimeLogKind): AppLogSource {
   if (kind === "rpc" || source.includes("rpc")) return "app.rpc";
+  if (source.includes("source.graph")) return "source.graph";
   if (source.includes("auth") || source.includes("oauth")) return "auth.provider";
   if (source.includes("sendPrompt")) return "prompt";
   if (source.includes("session")) return "session";

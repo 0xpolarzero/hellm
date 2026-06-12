@@ -29,6 +29,7 @@ afterEach(async () => {
           .map((workspace) => registry.closeWorkspace(workspace.workspaceId)),
       );
     }
+    registry.closeSourceInvalidationCoordinator();
   }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -396,6 +397,7 @@ function createRegistry(
   const registry = new WorkspaceRuntimeRegistry({
     initialCwd,
     agentDir,
+    sourceWatchEnabled: false,
     workflowsSourceRoot: options.workflowsSourceRoot ?? tempWorkspace("workflows-source"),
     ...options,
   });

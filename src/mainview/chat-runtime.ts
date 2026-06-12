@@ -2341,6 +2341,39 @@ export async function createChatRuntime(
     ) {
       void refreshWorkflowsGenerated().catch(() => undefined);
     }
+    for (const entry of payload.entries) {
+      if (entry.source !== "source.graph" || entry.message !== "Source inputs changed.") {
+        continue;
+      }
+      const domains = Array.isArray(entry.details?.domains)
+        ? entry.details.domains.filter((domain): domain is string => typeof domain === "string")
+        : [];
+      const refreshAll = domains.length === 0;
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "agent-settings" || domain === "workflows")
+      ) {
+        void refreshAgentSettings().catch(() => undefined);
+      }
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "extensions" || domain === "external-instructions")
+      ) {
+        void refreshExtensionsInventory().catch(() => undefined);
+      }
+      if (refreshAll || domains.includes("external-instructions")) {
+        void refreshExternalInstructionSources().catch(() => undefined);
+      }
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "extensions" || domain === "workflows")
+      ) {
+        void refreshWorkflowsGenerated().catch(() => undefined);
+      }
+      if (refreshAll || domains.includes("snippets")) {
+        void refreshSnippets().catch(() => undefined);
+      }
+    }
     for (const listener of appLogUpdateListeners) {
       listener(payload);
     }

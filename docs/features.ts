@@ -18,6 +18,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md", "docs/specs/default-workspace-and-open-workspace.spec.md"],
   },
   {
+    id: "source-invalidation",
+    name: "Source Invalidation And File-Backed State",
+    status: "in-progress",
+    summary:
+      "Runs one backend-owned source invalidation coordinator for file-backed product inputs, using watcher events only as hints that trigger debounced and periodically reconciled deterministic source fingerprints; watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed/discovered snippet roots while excluding generated outputs and workspace package links; rebuilds or rereads the smallest affected state, keeps the last ready generated output active when validation fails, surfaces source diagnostics through app logs/read models, refreshes renderer warm caches through backend-authored updates, and queues normal durable `agent_context_refresh` work for open surfaces whose prompt binding fingerprint changes.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/source-invalidation.spec.md"],
+  },
+  {
     id: "provider-auth",
     name: "Provider Auth And Settings",
     status: "shipped",

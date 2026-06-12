@@ -24,6 +24,13 @@ How to use this file:
 - [x] Add multi-session workspace navigation and session switching/resume support. Commit(s): `b22a0c6`, `df1a7df`
 - [x] Feed static workspace panes from renderer-runtime warm read-model snapshots, with app-global state shared across workspace tabs, workspace projections keyed by workspace id, background refresh at runtime boundaries, and immediate pane updates when snapshots change. Commit(s): pending local changes
 
+## 0. Source Invalidation
+
+- [x] Run one backend source invalidation coordinator that watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed/discovered snippet roots, converts raw file events into debounced deterministic source fingerprints, and uses periodic reconciliation as the correctness backstop. Commit(s): pending local changes
+- [x] Keep generated Workflows output, generated Extensions output, extension build directories, workspace `.smithers/node_modules/@svvy/*` links, and workspace `.svvy/generated` prompt previews outside the watcher trigger set. Commit(s): pending local changes
+- [x] Rebuild or reread only affected derived state after source fingerprints change, including Workflows package rebuilds for Workflows and extension source changes, renderer warm-cache refreshes for affected panes, and durable `agent_context_refresh` queue work for open surfaces whose prompt binding fingerprint changes. Commit(s): pending local changes
+- [ ] Surface invalid or unreadable source records directly in the relevant read models instead of letting any existing source reader silently skip malformed file-backed records.
+
 ## 1. Structured Session State
 
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `c432f4e`

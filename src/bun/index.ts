@@ -60,6 +60,10 @@ import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-work
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
+import type {
+  SourceInvalidationDomain,
+  SourceInvalidationEvent,
+} from "./source-invalidation-coordinator";
 import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
 import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
@@ -201,6 +205,84 @@ async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command:
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
     structuredSessionStore: runtime.catalog.getStructuredSessionStore(),
   });
+}
+
+function sourceInvalidationRequiresWorkflowsBuild(
+  domains: readonly SourceInvalidationDomain[],
+): boolean {
+  return domains.includes("extensions") || domains.includes("workflows");
+}
+
+function sourceInvalidationAffectsPromptContext(
+  domains: readonly SourceInvalidationDomain[],
+): boolean {
+  return domains.some((domain) =>
+    ["agent-settings", "extensions", "external-instructions", "workflows"].includes(domain),
+  );
+}
+
+async function handleSourceInvalidation(event: SourceInvalidationEvent): Promise<void> {
+  const openWorkspaces = workspaceRuntimeRegistry.listOpenWorkspaces();
+  const runtimes = openWorkspaces.map((workspace) =>
+    workspaceRuntimeRegistry.getRuntime(workspace.workspaceId),
+  );
+  if (sourceInvalidationRequiresWorkflowsBuild(event.domains)) {
+    for (const runtime of runtimes) {
+      runtime.appLog.info("workflow.library", "Source invalidation started Workflows rebuild.", {
+        domains: event.domains,
+        reason: event.reason,
+      });
+    }
+    try {
+      const build = await buildWorkflowsGeneratedPackage({
+        modelCatalog: readDefaultModelCatalog(),
+        workspaceCwds: openWorkspaces.map((workspace) => workspace.cwd),
+      });
+      if (build.ok) {
+        for (const runtime of runtimes) {
+          runtime.appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
+            reason: "source-invalidation",
+            sourceDomains: event.domains,
+            workflowDiagnosticCount: build.diagnostics.length,
+            workflowExportCount: build.items.length,
+            workflowLinkedWorkspaceCount: build.linkedWorkspaces.length,
+          });
+        }
+      } else {
+        for (const runtime of runtimes) {
+          runtime.appLog.warning(
+            "workflow.library",
+            "Source invalidation left Workflows package stale because rebuild failed.",
+            {
+              diagnostics: build.diagnostics,
+              reason: "source-invalidation",
+              sourceDomains: event.domains,
+              workflowDiagnosticCount: build.diagnostics.length,
+            },
+          );
+        }
+      }
+    } catch (error) {
+      for (const runtime of runtimes) {
+        runtime.appLog.error(
+          "workflow.library",
+          "Source invalidation left Workflows package stale because rebuild errored.",
+          error,
+          {
+            reason: "source-invalidation",
+            sourceDomains: event.domains,
+          },
+        );
+      }
+    }
+  }
+  if (sourceInvalidationAffectsPromptContext(event.domains)) {
+    await Promise.all(
+      runtimes.map((runtime) =>
+        runtime.catalog.notifySourceInputsChanged(`source_invalidation:${event.domains.join(",")}`),
+      ),
+    );
+  }
 }
 
 type DevBrowserToolsRecorder = {
@@ -737,6 +819,7 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
       );
     }
   },
+  onSourceInvalidation: handleSourceInvalidation,
 });
 
 function recordAppRuntimeLog(

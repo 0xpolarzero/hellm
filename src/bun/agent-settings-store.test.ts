@@ -354,6 +354,20 @@ describe("agent profile settings", () => {
     });
   });
 
+  it("fails loudly when a workflow-agent source file is malformed", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-bad-workflow-agent-settings-"));
+    const workflowsSourceRoot = join(root, "workflows");
+    const store = createAgentSettingsStore({
+      cwd: root,
+      agentDir: join(root, ".agent"),
+      workflowsSourceRoot,
+    });
+    store.getState();
+    writeFileSync(join(workflowsSourceRoot, "agents", "implementer.agent.json"), "{");
+
+    expect(() => store.getState()).toThrow("Workflow agent source is not valid JSON:");
+  });
+
   it("does not resurrect deleted saved workflow-agent records from settings JSON", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-source-delete-"));
     const workflowsSourceRoot = join(root, "workflows");

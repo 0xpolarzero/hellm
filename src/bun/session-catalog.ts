@@ -621,6 +621,11 @@ export class WorkspaceSessionCatalog {
     await this.queueOpenSurfacePromptRefreshes("app_preferences_changed");
   }
 
+  async notifySourceInputsChanged(reason: string): Promise<void> {
+    await this.emitOpenSurfacePromptBindingUpdates();
+    await this.queueOpenSurfacePromptRefreshes(reason);
+  }
+
   resetGeneratedAgentContextState(): GeneratedAgentContextState {
     const next = this.generatedAgentContextStore.resetState();
     void this.emitOpenSurfacePromptBindingUpdates();

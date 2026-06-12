@@ -47,6 +47,7 @@ export type AppLogSource =
   | "workspace"
   | "session"
   | "session.title"
+  | "source.graph"
   | "surface"
   | "prompt"
   | "thread"
