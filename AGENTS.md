@@ -45,3 +45,4 @@
 - If a resolved design changes, rewrite the affected progress items to the new steady-state plan instead of leaving stale unchecked steps that describe the old plan.
 - Do not add or preserve legacy, backwards-compatibility, migration, compatibility, or schema-bridge code or docs unless the user explicitly asks for it.
 - When a design changes, delete obsolete paths rather than keeping fallback behavior, one-off migrations, compatibility aliases, legacy fixtures, or dual-schema support.
+- Upon completion of a non-trivial task, review the session and offer suggestions for how this could have been easier in retrospect. For example, any environment changes or availability of tools or framing of the task.
