@@ -31,7 +31,6 @@
   } from "./agents-pane-extension-usage";
   import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
   import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
-  import OpenExternalButton from "./ui/OpenExternalButton.svelte";
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
 
   type Props = {
@@ -998,6 +997,10 @@
     deleting={deletingWorkflowAgentKey === agent.id}
     isDefault={isDefaultWorkflowAgent(agent)}
     saving={savingWorkflowAgentKey === agent.id}
+    preferredExternalEditor={settings?.appPreferences.preferredExternalEditor}
+    sourceTokenCountLabel={expanded
+      ? formatPromptTokenCount(workflowAgentInstructionTokenCount(agent))
+      : null}
     extensionUsageItems={extensionUsageItems({
       actor: "workflow-task",
       profileId: agent.id,
@@ -1008,6 +1011,7 @@
     onDuplicate={() => void createWorkflowAgent(agent)}
     onSave={saveWorkflowAgent}
     onOpenExtension={openExtension}
+    onOpenSource={() => void openWorkflowAgentSource(agent)}
     onInstructionsChange={(instructions) => setWorkflowAgentInstructionDraft(agent.id, instructions)}
     onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
     onSetExtensionDefault={(extensionId, state) =>
@@ -1016,23 +1020,6 @@
       setWorkflowAgentExtensionUsage(agent, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
   />
-  <div class="workflow-source-note">
-    {#if expanded}
-      <span class="workflow-instruction-token-count">
-        {formatPromptTokenCount(workflowAgentInstructionTokenCount(agent))}
-      </span>
-    {/if}
-    <span class="workflow-source-target">
-      <span class="workflow-source-filename">{agent.id}.agent.json</span>
-      <OpenExternalButton
-        class="workflow-source-button"
-        editor={settings?.appPreferences.preferredExternalEditor}
-        targetLabel={`${agent.id}.agent.json`}
-        disabled={deletingWorkflowAgentKey === agent.id}
-        onclick={() => void openWorkflowAgentSource(agent)}
-      />
-    </span>
-  </div>
   {#if expanded}
     {@const previewKey = contextPreviewKey("workflow-task", agent.id)}
     {@const preview = workflowAgentContextPreview(agent)}
@@ -1489,50 +1476,6 @@
     outline: none;
     border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
     box-shadow: var(--ui-focus-ring);
-  }
-
-  .workflow-source-note {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.36rem;
-    min-width: 0;
-    min-height: 1.24rem;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    line-height: 1;
-  }
-
-  .workflow-instruction-token-count {
-    flex: 0 0 auto;
-    color: var(--ui-text-secondary);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .workflow-source-target {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.36rem;
-    margin-left: auto;
-    min-width: 0;
-  }
-
-  .workflow-source-filename {
-    display: inline-flex;
-    align-items: center;
-    min-width: 0;
-    min-height: 1.24rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workflow-source-note :global(.ui-tooltip-anchor) {
-    align-items: center;
-    height: 1.24rem;
   }
 
   .agent-profile-expanded {

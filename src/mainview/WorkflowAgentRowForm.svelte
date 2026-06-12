@@ -10,7 +10,11 @@
 	import LockIcon from "@lucide/svelte/icons/lock";
 	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { createForm } from "@tanstack/svelte-form";
-	import type { ReasoningEffort, WorkflowAgentSettings } from "../shared/agent-settings";
+	import type {
+		PreferredExternalEditor,
+		ReasoningEffort,
+		WorkflowAgentSettings,
+	} from "../shared/agent-settings";
 	import type { AgentModelChoice } from "../shared/workspace-contract";
 	import {
 		isFileBackedEditConflictError,
@@ -22,6 +26,7 @@
 	import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
 	import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
 	import Input from "./ui/Input.svelte";
+	import SourceMetadataTextArea from "./ui/SourceMetadataTextArea.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { dismissConfirmation } from "./ui/dismiss-confirmation";
 
@@ -48,12 +53,15 @@
 		expanded: boolean;
 		isDefault: boolean;
 		modelChoices: AgentModelChoice[];
+		preferredExternalEditor?: PreferredExternalEditor | null;
 		saving: boolean;
+		sourceTokenCountLabel: string | null;
 		extensionUsageItems: ExtensionUsageControlItem[];
 		onCancelDelete: () => void;
 		onConfirmDelete: () => void;
 		onDuplicate: () => void;
 		onOpenExtension: (extensionId: string) => void;
+		onOpenSource: () => void;
 		onInstructionsChange?: (instructions: string) => void;
 		onRequestDelete: () => void;
 		onSave: (
@@ -78,12 +86,15 @@
 		expanded,
 		isDefault,
 		modelChoices,
+		preferredExternalEditor = null,
 		saving,
+		sourceTokenCountLabel,
 		extensionUsageItems,
 		onCancelDelete,
 		onConfirmDelete,
 		onDuplicate,
 		onOpenExtension,
+		onOpenSource,
 		onInstructionsChange,
 		onRequestDelete,
 		onSave,
@@ -486,47 +497,62 @@
 		{/if}
 	</button>
 </div>
-<div class="workflow-instructions-shell" data-autosave-status={autosaveStatus}>
-	<textarea
-		class="workflow-instructions-field"
-		value={formState.current.values.instructions}
-		aria-label={`${agent.label} instructions`}
-		disabled={instructionsDisabled}
-		oninput={(event) => form.setFieldValue("instructions", event.currentTarget.value)}
-		onblur={submit}
-	></textarea>
-	<div class="workflow-autosave-tooltip">
-		{#if autosaveStatus === "conflict"}
-			<FileBackedConflictActions
-				disabled={formState.current.isSubmitting || saving}
-				onDiscard={discardLocalConflict}
-				onOverwrite={() => void overwriteExternalConflict()}
-			/>
-		{:else}
-			<Tooltip label={autosaveStatusLabel(autosaveStatus)}>
-				<span
-					class="workflow-autosave-status"
-					role="status"
-					aria-live="polite"
-					aria-label={autosaveStatusLabel(autosaveStatus)}
-				>
-					<span class="workflow-autosave-icon icon-error">
-						<AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+<SourceMetadataTextArea
+	value={formState.current.values.instructions}
+	status={autosaveStatus}
+	aria-label={`${agent.label} instructions`}
+	disabled={instructionsDisabled}
+	showTokenCount={sourceTokenCountLabel !== null}
+	tokenCountLabel={sourceTokenCountLabel}
+	sourceLabel={`${agent.id}.agent.json`}
+	sourceEditor={preferredExternalEditor}
+	sourceDisabled={deleting}
+	oninput={(event) => form.setFieldValue("instructions", event.currentTarget.value)}
+	onblur={submit}
+	onOpenSource={onOpenSource}
+>
+	{#snippet statusOverlay()}
+		<div class="workflow-autosave-tooltip">
+			{#if autosaveStatus === "conflict"}
+				<FileBackedConflictActions
+					disabled={formState.current.isSubmitting || saving}
+					onDiscard={discardLocalConflict}
+					onOverwrite={() => void overwriteExternalConflict()}
+				/>
+			{:else}
+				<Tooltip label={autosaveStatusLabel(autosaveStatus)}>
+					<span
+						class="workflow-autosave-status"
+						role="status"
+						aria-live="polite"
+						aria-label={autosaveStatusLabel(autosaveStatus)}
+					>
+						<span
+							class={`workflow-autosave-icon icon-error ${autosaveStatus === "error" ? "active" : ""}`.trim()}
+						>
+							<AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+						</span>
+						<span
+							class={`workflow-autosave-icon workflow-autosave-spinner icon-saving ${autosaveStatus === "saving" ? "active" : ""}`.trim()}
+						>
+							<LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+						</span>
+						<span
+							class={`workflow-autosave-icon icon-unsaved ${autosaveStatus === "unsaved" ? "active" : ""}`.trim()}
+						>
+							<CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
+						</span>
+						<span
+							class={`workflow-autosave-icon icon-saved ${autosaveStatus === "saved" ? "active" : ""}`.trim()}
+						>
+							<CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
+						</span>
 					</span>
-					<span class="workflow-autosave-icon workflow-autosave-spinner icon-saving">
-						<LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
-					</span>
-					<span class="workflow-autosave-icon icon-unsaved">
-						<CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
-					</span>
-					<span class="workflow-autosave-icon icon-saved">
-						<CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
-					</span>
-				</span>
-			</Tooltip>
-		{/if}
-	</div>
-</div>
+				</Tooltip>
+			{/if}
+		</div>
+	{/snippet}
+</SourceMetadataTextArea>
 {#if formErrors.length > 0 || submitError}
 	<p class="agent-form-error">{submitError || formErrors.join(" ")}</p>
 {/if}
@@ -668,38 +694,6 @@
 		opacity: 0.36;
 	}
 
-	.workflow-instructions-shell {
-		position: relative;
-	}
-
-	.workflow-instructions-field {
-		box-sizing: border-box;
-		width: 100%;
-		min-height: 4rem;
-		resize: vertical;
-		padding: 0.42rem 2rem 0.42rem 0.5rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent);
-		color: var(--ui-text-primary);
-		font: inherit;
-		font-size: var(--text-sm);
-		line-height: 1.45;
-	}
-
-	.workflow-instructions-field:hover,
-	.workflow-instructions-field:focus-visible {
-		outline: none;
-		border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
-		box-shadow: var(--ui-focus-ring);
-	}
-
-	.workflow-instructions-shell :global(.workflow-autosave-tooltip) {
-		position: absolute;
-		top: 0.36rem;
-		right: 0.36rem;
-	}
-
 	.workflow-autosave-status {
 		position: relative;
 		display: block;
@@ -727,22 +721,26 @@
 		display: block;
 	}
 
-	.workflow-instructions-shell[data-autosave-status="saved"] .icon-saved {
+	.workflow-autosave-icon.active {
+		opacity: 1;
+	}
+
+	.icon-saved.active {
 		opacity: 1;
 		color: color-mix(in oklab, var(--ui-success) 54%, var(--ui-text-tertiary));
 	}
 
-	.workflow-instructions-shell[data-autosave-status="saving"] .icon-saving {
+	.icon-saving.active {
 		opacity: 1;
 		color: color-mix(in oklab, var(--ui-accent) 68%, var(--ui-text-secondary));
 	}
 
-	.workflow-instructions-shell[data-autosave-status="unsaved"] .icon-unsaved {
+	.icon-unsaved.active {
 		opacity: 1;
 		color: var(--ui-text-tertiary);
 	}
 
-	.workflow-instructions-shell[data-autosave-status="error"] .icon-error {
+	.icon-error.active {
 		opacity: 1;
 		color: color-mix(in oklab, var(--ui-danger) 76%, var(--ui-text-secondary));
 	}

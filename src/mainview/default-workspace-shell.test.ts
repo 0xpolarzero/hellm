@@ -390,6 +390,10 @@ describe("default workspace renderer shell", () => {
       new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
       "utf8",
     );
+    const sourceMetadataTextAreaSource = await readFile(
+      new URL("./ui/SourceMetadataTextArea.svelte", import.meta.url),
+      "utf8",
+    );
     const openExternalButtonSource = await readFile(
       new URL("./ui/OpenExternalButton.svelte", import.meta.url),
       "utf8",
@@ -417,10 +421,14 @@ describe("default workspace renderer shell", () => {
     expect(workflowAgentFormSource).toContain("createForm");
     expect(workflowAgentFormSource).toContain("formApi.reset(valuesFor(saved))");
     expect(workflowAgentFormSource).toContain("Workflow agent instructions are required.");
-    expect(agentsPaneSource).toContain(".agent.json");
-    expect(agentsPaneSource).toContain("OpenExternalButton");
-    expect(agentsPaneSource).toContain("workflow-source-button");
-    expect(agentsPaneSource).toContain("workflow-source-filename");
+    expect(workflowAgentFormSource).toContain("SourceMetadataTextArea");
+    expect(workflowAgentFormSource).toContain("showTokenCount={sourceTokenCountLabel !== null}");
+    expect(workflowAgentFormSource).toContain("sourceLabel={`${agent.id}.agent.json`}");
+    expect(sourceMetadataTextAreaSource).toContain("OpenExternalButton");
+    expect(sourceMetadataTextAreaSource).toContain("footerLeading?: Snippet");
+    expect(sourceMetadataTextAreaSource).toContain("showTokenCount?: boolean");
+    expect(sourceMetadataTextAreaSource).toContain("source-metadata-textarea-token-count");
+    expect(sourceMetadataTextAreaSource).toContain("source-metadata-textarea-source-filename");
     expect(openExternalButtonSource).toContain(
       'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
     );
