@@ -331,6 +331,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
   - [x] Agent-profile and workflow-agent profile editors use TanStack Form while preserving direct-save semantics, workflow-agent instruction autosave status inside the textarea, and pi-normalized provider/model/reasoning constraints. Commit(s): pending
   - [x] Extension env editors cover editable non-secret overrides and secret writes/removals through app-owned UI with redacted async errors and backend-authoritative readiness refresh. Commit(s): pending
 - [x] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports, with create, duplicate, user-delete, non-deletable default Explorer/Implementer/Reviewer records, source-file links, and the same expanded extension selection/order editor used by other agent profiles. Commit(s): pending
+- [x] Keep Agents-pane profile and workflow-agent controls visually stable during transient save/autosave states, using save indicators and action-level guards instead of dimming unrelated row controls. Commit(s): pending local changes
 - [x] Define handler guidance for reusable workflow-agent parameter records without coupling shipped product workflow authoring to repo-root `workflows/`. Commit(s): pending local changes
 
 ## 12. Session Titles

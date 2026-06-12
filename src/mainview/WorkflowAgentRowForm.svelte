@@ -224,7 +224,7 @@
 	}));
 
 	const formState = form.useStore();
-	const disabled = $derived(saving || formState.current.isSubmitting || deleting);
+	const controlsDisabled = $derived(deleting);
 	const instructionsDisabled = $derived(deleting);
 	const formErrors = $derived(formState.current.errors.filter(Boolean));
 	const autosaveStatus = $derived<AutosaveStatus>(
@@ -378,7 +378,7 @@
 		value={formState.current.values.label}
 		class="agent-name-input"
 		aria-label={`${agent.label} label`}
-		disabled={disabled}
+		disabled={controlsDisabled}
 		oninput={(event) => form.setFieldValue("label", event.currentTarget.value)}
 		onblur={submit}
 		onkeydown={(event) => {
@@ -396,7 +396,7 @@
 				triggerClass="model-pill agent-model-field"
 				menuClass="model-menu"
 				placement="below"
-				disabled={disabled}
+				disabled={controlsDisabled}
 				onSelect={(value) => {
 					form.setFieldValue("modelValue", value);
 					form.setFieldValue(
@@ -417,7 +417,7 @@
 				menuClass="thinking-menu"
 				textTransform="lowercase"
 				placement="below"
-				disabled={disabled}
+				disabled={controlsDisabled}
 				onSelect={(value) => {
 					form.setFieldValue("reasoningEffort", value as ReasoningEffort);
 					submitSoon();
@@ -425,7 +425,7 @@
 			/>
 			<ExtensionUsageControl
 				ariaLabel={`${agent.label} extension usage`}
-				disabled={disabled}
+				disabled={controlsDisabled}
 				items={extensionUsageItems}
 				onOpenExtension={onOpenExtension}
 				onStateChange={saveExtensionUsage}
@@ -443,7 +443,7 @@
 					type="button"
 					class="agent-icon-button"
 					aria-label={`Duplicate ${agent.label}`}
-					disabled={disabled}
+					disabled={controlsDisabled}
 					onclick={onDuplicate}
 				>
 					<CopyPlusIcon size={13} aria-hidden="true" />
@@ -455,7 +455,7 @@
 						type="button"
 						class="agent-icon-button danger"
 						aria-label={`Confirm deleting ${agent.label}`}
-						disabled={disabled}
+						disabled={controlsDisabled}
 						onclick={onConfirmDelete}
 					>
 						<CheckIcon size={13} aria-hidden="true" />
@@ -467,7 +467,7 @@
 						type="button"
 						class="agent-icon-button danger"
 						aria-label={`Delete ${agent.label}`}
-						disabled={isDefault || deleting || disabled}
+						disabled={isDefault || controlsDisabled}
 						onclick={onRequestDelete}
 					>
 						<Trash2Icon size={13} aria-hidden="true" />

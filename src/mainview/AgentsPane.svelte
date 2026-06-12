@@ -885,7 +885,6 @@
             variant="ghost"
             size="xs"
             class="category-action"
-            disabled={savingProfileId !== null}
             onclick={() => void createOrchestratorProfile()}
           >
             <PlusIcon size={13} aria-hidden="true" />
@@ -938,7 +937,6 @@
             variant="ghost"
             size="xs"
             class="category-action"
-            disabled={savingWorkflowAgentKey !== null}
             onclick={() => void createWorkflowAgent()}
           >
             <PlusIcon size={13} aria-hidden="true" />
@@ -1001,7 +999,7 @@
         class="workflow-source-button"
         editor={settings?.appPreferences.preferredExternalEditor}
         targetLabel={`${agent.id}.agent.json`}
-        disabled={savingWorkflowAgentKey === agent.id || deletingWorkflowAgentKey === agent.id}
+        disabled={deletingWorkflowAgentKey === agent.id}
         onclick={() => void openWorkflowAgentSource(agent)}
       />
     </span>
@@ -1011,7 +1009,7 @@
     {@const preview = workflowAgentContextPreview(agent)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
-        disabled={savingWorkflowAgentKey === agent.id}
+        disabled={deletingWorkflowAgentKey === agent.id}
         extensionOrder={agent.extensionOrder ?? []}
         items={extensionUsageItems({
           actor: "workflow-task",
@@ -1065,7 +1063,7 @@
     {@const previewKey = contextPreviewKey(actor, profile.id)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
-        disabled={savingProfileId === profile.id}
+        disabled={deletingProfileId === profile.id}
         extensionOrder={profile.extensionOrder ?? []}
         items={extensionUsageItems({
           actor,

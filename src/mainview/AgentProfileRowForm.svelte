@@ -185,12 +185,13 @@
 	}));
 
 	const formState = form.useStore();
-	const disabled = $derived(saving || formState.current.isSubmitting || deleting);
+	const controlsDisabled = $derived(deleting);
+	const submitDisabled = $derived(deleting || formState.current.isSubmitting || saving);
 	const hasUnsavedChanges = $derived(formState.current.isDirty);
 	const formErrors = $derived(formState.current.errors.filter(Boolean));
 
 	function submit() {
-		if (!formState.current.isDirty) return;
+		if (!formState.current.isDirty || formState.current.isSubmitting) return;
 		void form.handleSubmit().catch((error) => {
 			submitError = error instanceof Error ? error.message : "Unable to save agent profile.";
 		});
@@ -236,7 +237,7 @@
 			value={formState.current.values.name}
 			class="agent-name-input"
 			aria-label={`${profile.name} name`}
-			disabled={disabled}
+			disabled={controlsDisabled}
 			oninput={(event) => form.setFieldValue("name", event.currentTarget.value)}
 			onblur={submit}
 			onkeydown={(event) => {
@@ -255,7 +256,7 @@
 				triggerClass="model-pill agent-model-field"
 				menuClass="model-menu"
 				placement="below"
-				disabled={disabled}
+				disabled={controlsDisabled}
 				onSelect={(value) => {
 					form.setFieldValue("modelValue", value);
 					form.setFieldValue(
@@ -276,7 +277,7 @@
 				menuClass="thinking-menu"
 				textTransform="lowercase"
 				placement="below"
-				disabled={disabled}
+				disabled={controlsDisabled}
 				onSelect={(value) => {
 					form.setFieldValue("reasoningEffort", value as ReasoningEffort);
 					submitSoon();
@@ -284,7 +285,7 @@
 			/>
 			<ExtensionUsageControl
 				ariaLabel={`${profile.name} extension usage`}
-				disabled={disabled}
+				disabled={controlsDisabled}
 				items={extensionUsageItems}
 				onOpenExtension={onOpenExtension}
 				onStateChange={saveExtensionUsage}
@@ -301,7 +302,7 @@
 				<Checkbox
 					size="sm"
 					checked={formState.current.values.updateFromComposer}
-					disabled={disabled}
+					disabled={controlsDisabled}
 					onchange={(event) => {
 						form.setFieldValue(
 							"updateFromComposer",
@@ -315,10 +316,10 @@
 		</Tooltip>
 		{#if hasUnsavedChanges}
 			<div class="agent-form-actions">
-				<button type="button" class="agent-text-button" disabled={disabled} onclick={submit}>
+				<button type="button" class="agent-text-button" disabled={submitDisabled} onclick={submit}>
 					{formState.current.isSubmitting ? "Saving" : "Save"}
 				</button>
-				<button type="button" class="agent-text-button" disabled={disabled} onclick={resetForm}>
+				<button type="button" class="agent-text-button" disabled={controlsDisabled} onclick={resetForm}>
 					Reset
 				</button>
 			</div>
@@ -336,7 +337,7 @@
 						type="button"
 						class="agent-icon-button"
 						aria-label={`Duplicate ${profile.name}`}
-						disabled={disabled}
+						disabled={controlsDisabled}
 						onclick={onDuplicate}
 					>
 						<CopyPlusIcon size={13} aria-hidden="true" />
@@ -351,7 +352,7 @@
 						type="button"
 						class="agent-icon-button danger"
 						aria-label={`Confirm deleting ${profile.name}`}
-						disabled={disabled}
+						disabled={controlsDisabled}
 						onclick={onConfirmDelete}
 					>
 						<CheckIcon size={13} aria-hidden="true" />
@@ -363,7 +364,7 @@
 						type="button"
 						class="agent-icon-button danger"
 						aria-label={`Delete ${profile.name}`}
-						disabled={profile.locked || deleting || disabled}
+						disabled={profile.locked || controlsDisabled}
 						onclick={onRequestDelete}
 					>
 						<Trash2Icon size={13} aria-hidden="true" />
