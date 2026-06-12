@@ -45,12 +45,12 @@
     { level: "error", label: "Error logs", shortLabel: "Errors" },
   ];
 
-  let readModel = $state<AppLogReadModel | null>(runtime.appLogsSnapshot);
+  let readModel = $state<AppLogReadModel | null>(null);
   let expandedIds = $state(new Set<string>());
   let levelFilter = $state<AppLogLevel | "all">("all");
   let sourceFilter = $state<AppLogSource | "all">("all");
   let query = $state("");
-  let loading = $state(!readModel);
+  let loading = $state(true);
   let error = $state<string | null>(null);
   let newLogsWhileAway = $state(0);
   let liveMode = $state<AppLogLiveMode>("live");
@@ -73,6 +73,16 @@
   const COPY_ALL_WARNING_STORAGE_KEY = "svvy.appLogs.copyAllWarningDismissed";
   const LOG_ROW_ESTIMATE_PX = 76;
   const APP_LOG_TAIL_THRESHOLD_PX = 40;
+
+  function syncRuntimeSnapshot(): void {
+    const snapshot = runtime.appLogsSnapshot;
+    if (snapshot && levelFilter === "all" && sourceFilter === "all" && !query.trim()) {
+      readModel = snapshot;
+      loading = false;
+    }
+  }
+
+  syncRuntimeSnapshot();
 
   const visibleEntries = $derived(
     filterAppLogEntries(readModel?.entries ?? [], {
@@ -443,11 +453,7 @@
       newLogsWhileAway = next.newLogsWhileAway;
     });
     unsubscribeRuntime = runtime.subscribe(() => {
-      const snapshot = runtime.appLogsSnapshot;
-      if (snapshot && levelFilter === "all" && sourceFilter === "all" && !query.trim()) {
-        readModel = snapshot;
-        loading = false;
-      }
+      syncRuntimeSnapshot();
       if (runtime.paneLayout.focusedPanelId === panelId) {
         void markReadThroughLatest();
       }

@@ -87,7 +87,7 @@
 		onToggleExpanded,
 	}: Props = $props();
 	let submitError = $state("");
-	let baseSourceVersion = $state(agent.sourceVersion);
+	let baseSourceVersion = $state<string | undefined>(undefined);
 	let conflictAgent = $state<WorkflowAgentSettings | null>(null);
 
 	function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {

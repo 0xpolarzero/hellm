@@ -37,13 +37,11 @@
 	}: Props = $props();
 
 	let activeSection = $state<SettingsSection>("general");
-	let providers = $state<ProviderAuthInfo[]>(runtime.providerAuthsSnapshot ?? []);
-	let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
-	let externalInstructionSources = $state<GeneratedAgentContextExternalSource[]>(
-		runtime.externalInstructionSourcesSnapshot ?? [],
-	);
-	let providersLoading = $state(!runtime.providerAuthsSnapshot);
-	let appPreferencesLoading = $state(!runtime.appPreferencesSnapshot);
+	let providers = $state<ProviderAuthInfo[]>([]);
+	let appPreferences = $state<AppPreferences | null>(null);
+	let externalInstructionSources = $state<GeneratedAgentContextExternalSource[]>([]);
+	let providersLoading = $state(true);
+	let appPreferencesLoading = $state(true);
 	let error = $state<string | null>(null);
 	let appPreferencesError = $state<string | null>(null);
 	let searchQuery = $state("");
@@ -179,24 +177,26 @@
 		].filter((group) => group.providers.length > 0);
 	});
 
+	function syncRuntimeSnapshots() {
+		const nextProviders = runtime.providerAuthsSnapshot;
+		const nextPreferences = runtime.appPreferencesSnapshot;
+		const nextExternalSources = runtime.externalInstructionSourcesSnapshot;
+		if (nextProviders) {
+			providers = nextProviders;
+			providersLoading = false;
+		}
+		if (nextPreferences) {
+			appPreferences = nextPreferences;
+			appPreferencesLoading = false;
+		}
+		if (nextExternalSources) {
+			externalInstructionSources = nextExternalSources;
+		}
+	}
+
+	syncRuntimeSnapshots();
+
 	onMount(() => {
-		const syncRuntimeSnapshots = () => {
-			const nextProviders = runtime.providerAuthsSnapshot;
-			const nextPreferences = runtime.appPreferencesSnapshot;
-			const nextExternalSources = runtime.externalInstructionSourcesSnapshot;
-			if (nextProviders) {
-				providers = nextProviders;
-				providersLoading = false;
-			}
-			if (nextPreferences) {
-				appPreferences = nextPreferences;
-				appPreferencesLoading = false;
-			}
-			if (nextExternalSources) {
-				externalInstructionSources = nextExternalSources;
-			}
-		};
-		syncRuntimeSnapshots();
 		const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
 		void Promise.allSettled([
 			refreshProviders({ showLoading: !runtime.providerAuthsSnapshot }),

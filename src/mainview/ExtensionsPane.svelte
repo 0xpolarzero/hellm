@@ -40,18 +40,16 @@
   };
 
   let { runtime, targetExtensionId = null, targetView = "inventory" }: Props = $props();
-  let agentSettings = $state<AgentSettingsState | null>(runtime.agentSettingsSnapshot);
-  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
+  let agentSettings = $state<AgentSettingsState | null>(null);
+  let appPreferences = $state<AppPreferences | null>(null);
   let contextPreview = $state<AgentContextPreviewResponse | null>(null);
-  let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(
-    runtime.extensionsInventorySnapshot,
-  );
+  let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(null);
   let settingsError = $state<string | null>(null);
   let inventoryError = $state<string | null>(null);
   let pendingSettings = $state(false);
   let revertingChangeId = $state<string | null>(null);
   let loadingPreview = $state(false);
-  let loadingInventory = $state(!extensionsInventory);
+  let loadingInventory = $state(true);
   let pendingExternalInstructionPath = $state<string | null>(null);
   let selectedSnapshotId = $state("");
   let snapshotName = $state("");
@@ -352,6 +350,8 @@
       loadingInventory = false;
     }
   }
+
+  syncRuntimeSnapshots();
 
   async function loadContextPreview(): Promise<void> {
     loadingPreview = true;
@@ -673,7 +673,6 @@
   }
 
   onMount(() => {
-    syncRuntimeSnapshots();
     const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
     void loadSettings();
     void loadAppPreferences();

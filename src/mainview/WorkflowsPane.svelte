@@ -28,13 +28,11 @@
     { kind: "workflow", label: "Workflows" },
   ];
 
-  let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(
-    runtime.workflowsGeneratedSnapshot,
-  );
-  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
+  let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(null);
+  let appPreferences = $state<AppPreferences | null>(null);
   let selectedId = $state<string | null>(null);
   let activeFilter = $state<(typeof FILTERS)[number]["kind"]>("all");
-  let loading = $state(!readModel);
+  let loading = $state(true);
   let error = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
 
@@ -121,18 +119,20 @@
     return item.agentParameters ? JSON.stringify(item.agentParameters, null, 2) : null;
   }
 
+  function syncRuntimeSnapshots() {
+    const snapshot = runtime.workflowsGeneratedSnapshot;
+    const nextPreferences = runtime.appPreferencesSnapshot;
+    if (snapshot) {
+      applyReadModel(snapshot);
+    }
+    if (nextPreferences) {
+      appPreferences = nextPreferences;
+    }
+  }
+
+  syncRuntimeSnapshots();
+
   onMount(() => {
-    const syncRuntimeSnapshots = () => {
-      const snapshot = runtime.workflowsGeneratedSnapshot;
-      const nextPreferences = runtime.appPreferencesSnapshot;
-      if (snapshot) {
-        applyReadModel(snapshot);
-      }
-      if (nextPreferences) {
-        appPreferences = nextPreferences;
-      }
-    };
-    syncRuntimeSnapshots();
     const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
     void loadWorkflows();
     return unsubscribeRuntime;

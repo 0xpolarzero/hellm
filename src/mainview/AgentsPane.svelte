@@ -51,8 +51,8 @@
     onSettingsChanged,
   }: Props = $props();
 
-  let settings = $state<AgentSettingsState | null>(initialSettings ?? runtime.agentSettingsSnapshot);
-  let loading = $state(!settings);
+  let settings = $state<AgentSettingsState | null>(null);
+  let loading = $state(true);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
   let savingWorkflowAgentKey = $state<WorkflowAgentKey | null>(null);
@@ -61,10 +61,8 @@
   let deletingProfileId = $state<string | null>(null);
   let confirmingDeleteProfileId = $state<string | null>(null);
   let expandedProfileIds = $state<Set<string>>(new Set());
-  let modelChoices = $state<AgentModelChoice[]>(runtime.agentModelChoicesSnapshot?.items ?? []);
-  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>(
-    runtime.extensionsInventorySnapshot?.extensions ?? [],
-  );
+  let modelChoices = $state<AgentModelChoice[]>([]);
+  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>([]);
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
   let contextPreviewErrorsByProfileId = $state<Record<string, string>>({});
   let workflowAgentInstructionDrafts = $state<Record<string, string>>({});
@@ -86,6 +84,7 @@
   let dragAnimationFrame: number | null = null;
   let settingsLoadRequest = 0;
   let unsubscribeRuntimeSnapshots: (() => void) | null = null;
+  let initialSettingsSeeded = false;
 
   const orchestrators = $derived(settings?.agents.orchestrators ?? []);
   const displayedOrchestrators = $derived(
@@ -809,9 +808,11 @@
   }
 
   function syncRuntimeSnapshots() {
-    const nextSettings = runtime.agentSettingsSnapshot;
+    const nextSettings =
+      !initialSettingsSeeded && initialSettings ? initialSettings : runtime.agentSettingsSnapshot;
     const nextModelChoices = runtime.agentModelChoicesSnapshot;
     const nextExtensionsInventory = runtime.extensionsInventorySnapshot;
+    initialSettingsSeeded = true;
     if (nextSettings) {
       settings = nextSettings;
       loading = false;
@@ -834,8 +835,9 @@
     targetElement?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
+  syncRuntimeSnapshots();
+
   onMount(() => {
-    syncRuntimeSnapshots();
     unsubscribeRuntimeSnapshots = runtime.subscribe(syncRuntimeSnapshots);
     return () => {
       unsubscribeRuntimeSnapshots?.();

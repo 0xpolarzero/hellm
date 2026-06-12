@@ -23,11 +23,11 @@
 
   let { runtime }: Props = $props();
 
-  let snippets = $state<SnippetRecord[]>(runtime.snippetsSnapshot?.snippets ?? []);
-  let appPreferences = $state<AppPreferences | null>(runtime.appPreferencesSnapshot);
+  let snippets = $state<SnippetRecord[]>([]);
+  let appPreferences = $state<AppPreferences | null>(null);
   let selectedId = $state<string | null>(null);
-  let hasReadModel = $state(!!runtime.snippetsSnapshot);
-  let loading = $state(!hasReadModel);
+  let hasReadModel = $state(false);
+  let loading = $state(true);
   let saving = $state(false);
   let error = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
@@ -181,18 +181,20 @@
     }
   }
 
+  function syncRuntimeSnapshots() {
+    const snapshot = runtime.snippetsSnapshot;
+    const nextPreferences = runtime.appPreferencesSnapshot;
+    if (snapshot) {
+      applyReadModel(snapshot);
+    }
+    if (nextPreferences) {
+      appPreferences = nextPreferences;
+    }
+  }
+
+  syncRuntimeSnapshots();
+
   onMount(() => {
-    const syncRuntimeSnapshots = () => {
-      const snapshot = runtime.snippetsSnapshot;
-      const nextPreferences = runtime.appPreferencesSnapshot;
-      if (snapshot) {
-        applyReadModel(snapshot);
-      }
-      if (nextPreferences) {
-        appPreferences = nextPreferences;
-      }
-    };
-    syncRuntimeSnapshots();
     const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
     void loadSnippets();
     return unsubscribeRuntime;
