@@ -112,6 +112,7 @@ import {
 import { createRequestUserInputTool, RequestUserInputRuntime } from "./request-user-input-tool";
 import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
+import { countPromptTokens } from "./token-count";
 import { createStreamingCommandTracker } from "./streaming-command-tracker";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadReportTool, type ThreadReportNotificationRequest } from "./thread-report-tool";
@@ -683,6 +684,11 @@ export class WorkspaceSessionCatalog {
         ...extensionState,
         externalInstructionSources,
       });
+      const tokenCount = countPromptTokens({
+        provider: profile.provider,
+        model: profile.model,
+        text: systemPrompt,
+      });
       return {
         actor,
         profileId: profile.id,
@@ -693,10 +699,12 @@ export class WorkspaceSessionCatalog {
         loadedExtensionIds: extensionState.loadedExtensionIds,
         availableExtensionIds: extensionState.availableExtensionIds,
         systemPrompt,
+        tokenCount,
         extensions: this.buildAgentContextPreviewExtensions(
           actor,
           extensionState,
           externalInstructionSources,
+          { provider: profile.provider, model: profile.model },
         ),
       };
     }
@@ -713,6 +721,16 @@ export class WorkspaceSessionCatalog {
         profileExtensionUsage: profile.extensionUsage,
         profileExtensionOrder: profile.extensionOrder,
       });
+      const systemPrompt = this.buildPromptFromLibrary("workflow-task", {
+        ...extensionState,
+        externalInstructionSources,
+        customInstructions: profile.instructions,
+      });
+      const tokenCount = countPromptTokens({
+        provider: profile.provider,
+        model: profile.model,
+        text: systemPrompt,
+      });
       return {
         actor,
         profileId: profile.id,
@@ -722,15 +740,13 @@ export class WorkspaceSessionCatalog {
         reasoningEffort: profile.reasoningEffort,
         loadedExtensionIds: extensionState.loadedExtensionIds,
         availableExtensionIds: extensionState.availableExtensionIds,
-        systemPrompt: this.buildPromptFromLibrary("workflow-task", {
-          ...extensionState,
-          externalInstructionSources,
-          customInstructions: profile.instructions,
-        }),
+        systemPrompt,
+        tokenCount,
         extensions: this.buildAgentContextPreviewExtensions(
           actor,
           extensionState,
           externalInstructionSources,
+          { provider: profile.provider, model: profile.model },
         ),
       };
     }
@@ -748,6 +764,16 @@ export class WorkspaceSessionCatalog {
       profileExtensionUsage: profile.extensionUsage,
       profileExtensionOrder: profile.extensionOrder,
     });
+    const systemPrompt = this.buildOrchestratorSystemPrompt(
+      profile,
+      extensionState,
+      externalInstructionSources,
+    );
+    const tokenCount = countPromptTokens({
+      provider: profile.provider,
+      model: profile.model,
+      text: systemPrompt,
+    });
     return {
       actor,
       profileId: profile.id,
@@ -757,15 +783,13 @@ export class WorkspaceSessionCatalog {
       reasoningEffort: profile.reasoningEffort,
       loadedExtensionIds: extensionState.loadedExtensionIds,
       availableExtensionIds: extensionState.availableExtensionIds,
-      systemPrompt: this.buildOrchestratorSystemPrompt(
-        profile,
-        extensionState,
-        externalInstructionSources,
-      ),
+      systemPrompt,
+      tokenCount,
       extensions: this.buildAgentContextPreviewExtensions(
         actor,
         extensionState,
         externalInstructionSources,
+        { provider: profile.provider, model: profile.model },
       ),
     };
   }
@@ -3594,6 +3618,7 @@ export class WorkspaceSessionCatalog {
     actor: SvvyActorKind,
     extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] },
     externalInstructionSources: readonly GeneratedAgentContextExternalSource[],
+    modelContext: { provider: string; model: string },
   ): AgentContextPreviewExtension[] {
     const activeIds = [
       ...extensionState.loadedExtensionIds.map((id) => ({ id, state: "default_loaded" as const })),
@@ -3610,35 +3635,51 @@ export class WorkspaceSessionCatalog {
     return activeIds.map((entry) => {
       const record = records.get(entry.id);
       const extensionRecords = record ? [record] : [];
+      const buildInstruction = (state: "default_loaded" | "available") =>
+        state === "default_loaded"
+          ? buildSystemPrompt(actor, {
+              loadedExtensionIds: [entry.id],
+              loadedExtensionRecords: extensionRecords,
+              availableExtensionIds: [],
+              externalInstructionSources,
+              extensionsRoot: this.extensionsRoot,
+              generatedAgentContextState,
+              workspaceKey: this.cwd,
+              requestUserInputSettings,
+            })
+          : buildSystemPrompt(actor, {
+              loadedExtensionIds: [],
+              loadedExtensionRecords: [],
+              availableExtensionIds: [entry.id],
+              availableExtensionRecords: extensionRecords,
+              externalInstructionSources,
+              extensionsRoot: this.extensionsRoot,
+              generatedAgentContextState,
+              workspaceKey: this.cwd,
+              requestUserInputSettings,
+            });
+      const countInstruction = (text: string) =>
+        text.trim()
+          ? countPromptTokens({
+              ...modelContext,
+              text,
+            })
+          : undefined;
+      const instruction =
+        entry.state === "default_loaded"
+          ? buildInstruction("default_loaded")
+          : buildInstruction("available");
+      const loadedInstruction =
+        entry.state === "available" ? buildInstruction("default_loaded") : undefined;
       return {
         id: entry.id,
         title: record?.title ?? entry.id,
         description: record?.description ?? "",
         state: entry.state,
         sourcePath: record?.instructionSourceFiles[0],
-        instruction:
-          entry.state === "default_loaded"
-            ? buildSystemPrompt(actor, {
-                loadedExtensionIds: [entry.id],
-                loadedExtensionRecords: extensionRecords,
-                availableExtensionIds: [],
-                externalInstructionSources,
-                extensionsRoot: this.extensionsRoot,
-                generatedAgentContextState,
-                workspaceKey: this.cwd,
-                requestUserInputSettings,
-              })
-            : buildSystemPrompt(actor, {
-                loadedExtensionIds: [],
-                loadedExtensionRecords: [],
-                availableExtensionIds: [entry.id],
-                availableExtensionRecords: extensionRecords,
-                externalInstructionSources,
-                extensionsRoot: this.extensionsRoot,
-                generatedAgentContextState,
-                workspaceKey: this.cwd,
-                requestUserInputSettings,
-              }),
+        instruction,
+        tokenCount: countInstruction(instruction),
+        loadedTokenCount: loadedInstruction ? countInstruction(loadedInstruction) : undefined,
       };
     });
   }

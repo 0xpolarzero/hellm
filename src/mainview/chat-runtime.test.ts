@@ -917,6 +917,7 @@ function createFakeRpc(input: {
           loadedExtensionIds: [],
           availableExtensionIds: [],
           systemPrompt: "Generated context preview",
+          tokenCount: { tokens: 3, accuracy: "estimated" },
           extensions: [],
         }),
         getAgentModelChoices: async () => ({

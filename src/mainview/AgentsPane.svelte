@@ -17,7 +17,9 @@
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
   import type { ExtensionUsageState } from "../shared/extensions";
+  import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";
+  import { formatTokenCount } from "./chat-format";
   import Button from "./ui/Button.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import AgentProfileRowForm from "./AgentProfileRowForm.svelte";
@@ -63,6 +65,7 @@
     runtime.extensionsInventorySnapshot?.extensions ?? [],
   );
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
+  let workflowAgentInstructionDrafts = $state<Record<string, string>>({});
   let loadingContextPreviewKey = $state<string | null>(null);
   let orchestratorRowsElement = $state<HTMLElement | null>(null);
   let profileDrag = $state<{
@@ -156,6 +159,65 @@
     return "orchestrator";
   }
 
+  function workflowAgentInstructionText(agent: WorkflowAgentSettings): string {
+    return workflowAgentInstructionDrafts[agent.id] ?? agent.instructions;
+  }
+
+  function setWorkflowAgentInstructionDraft(agentId: WorkflowAgentKey, instructions: string): void {
+    if (workflowAgentInstructionDrafts[agentId] === instructions) return;
+    workflowAgentInstructionDrafts = {
+      ...workflowAgentInstructionDrafts,
+      [agentId]: instructions,
+    };
+  }
+
+  function workflowAgentInstructionPromptText(instructions: string): string {
+    const trimmed = instructions.trim();
+    return trimmed ? `## Custom Instructions\n${trimmed}` : "";
+  }
+
+  function workflowAgentInstructionTokenCount(agent: WorkflowAgentSettings): number {
+    return countPromptTokens({
+      provider: agent.provider,
+      model: agent.model,
+      text: workflowAgentInstructionText(agent),
+    }).tokens;
+  }
+
+  function formatPromptTokenCount(tokens: number): string {
+    return `~${formatTokenCount(tokens)} tokens`;
+  }
+
+  function workflowAgentContextPreview(agent: WorkflowAgentSettings): AgentContextPreviewResponse | null {
+    const preview = contextPreviewByProfileId[contextPreviewKey("workflow-task", agent.id)] ?? null;
+    if (!preview) return null;
+
+    const currentInstructions = workflowAgentInstructionText(agent);
+    if (currentInstructions === agent.instructions) return preview;
+
+    const savedInstructionTokens = countPromptTokens({
+      provider: preview.provider,
+      model: preview.model,
+      text: workflowAgentInstructionPromptText(agent.instructions),
+    }).tokens;
+    const currentInstructionTokens = countPromptTokens({
+      provider: preview.provider,
+      model: preview.model,
+      text: workflowAgentInstructionPromptText(currentInstructions),
+    }).tokens;
+    const tokens = Math.max(
+      0,
+      preview.tokenCount.tokens - savedInstructionTokens + currentInstructionTokens,
+    );
+    return {
+      ...preview,
+      tokenCount: {
+        ...preview.tokenCount,
+        tokens,
+      },
+    };
+  }
+
   async function loadAgentContextPreview(
     profileId: AgentProfileId | WorkflowAgentKey,
     actor: AgentContextActor,
@@ -218,6 +280,10 @@
         extensionOrder: [...(agent.extensionOrder ?? [])],
       });
       onSettingsChanged?.(settings);
+      if (workflowAgentInstructionDrafts[agent.id] !== undefined) {
+        const { [agent.id]: _discarded, ...rest } = workflowAgentInstructionDrafts;
+        workflowAgentInstructionDrafts = rest;
+      }
       return settings.workflowAgents[agent.id] ?? agent;
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save workflow agent.";
@@ -895,23 +961,32 @@
     onDuplicate={() => void createWorkflowAgent(agent)}
     onSave={saveWorkflowAgent}
     onOpenExtension={openExtension}
+    onInstructionsChange={(instructions) => setWorkflowAgentInstructionDraft(agent.id, instructions)}
     onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
     onSetExtensionUsage={(extensionId, state) =>
       setWorkflowAgentExtensionUsage(agent, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
   />
   <div class="workflow-source-note">
-    <span class="workflow-source-filename">{agent.id}.agent.json</span>
-    <OpenExternalButton
-      class="workflow-source-button"
-      editor={settings?.appPreferences.preferredExternalEditor}
-      targetLabel={`${agent.id}.agent.json`}
-      disabled={savingWorkflowAgentKey === agent.id || deletingWorkflowAgentKey === agent.id}
-      onclick={() => void openWorkflowAgentSource(agent)}
-    />
+    {#if expanded}
+      <span class="workflow-instruction-token-count">
+        {formatPromptTokenCount(workflowAgentInstructionTokenCount(agent))}
+      </span>
+    {/if}
+    <span class="workflow-source-target">
+      <span class="workflow-source-filename">{agent.id}.agent.json</span>
+      <OpenExternalButton
+        class="workflow-source-button"
+        editor={settings?.appPreferences.preferredExternalEditor}
+        targetLabel={`${agent.id}.agent.json`}
+        disabled={savingWorkflowAgentKey === agent.id || deletingWorkflowAgentKey === agent.id}
+        onclick={() => void openWorkflowAgentSource(agent)}
+      />
+    </span>
   </div>
   {#if expanded}
     {@const previewKey = contextPreviewKey("workflow-task", agent.id)}
+    {@const preview = workflowAgentContextPreview(agent)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
         disabled={savingWorkflowAgentKey === agent.id}
@@ -922,7 +997,7 @@
           usage: agent.extensionUsage,
         })}
         loading={loadingContextPreviewKey === previewKey}
-        preview={contextPreviewByProfileId[previewKey] ?? null}
+        {preview}
         onOpenExtension={openExtension}
         onOrderChange={(extensionOrder) => setWorkflowAgentExtensionOrder(agent, extensionOrder)}
         onResetOrder={() => resetWorkflowAgentExtensionOrder(agent)}
@@ -1358,7 +1433,7 @@
   .workflow-source-note {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 0.36rem;
     min-width: 0;
     min-height: 1.24rem;
@@ -1366,6 +1441,22 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     line-height: 1;
+  }
+
+  .workflow-instruction-token-count {
+    flex: 0 0 auto;
+    color: var(--ui-text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .workflow-source-target {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.36rem;
+    margin-left: auto;
+    min-width: 0;
   }
 
   .workflow-source-filename {

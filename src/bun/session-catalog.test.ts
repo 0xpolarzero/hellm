@@ -1172,6 +1172,23 @@ describe("WorkspaceSessionCatalog", () => {
       expect(preview.profileId).toBe(DEFAULT_ORCHESTRATOR_PROFILE_ID);
       expect(preview.loadedExtensionIds).toContain("base-common");
       expect(preview.loadedExtensionIds).toContain("base-orchestrator");
+      expect(preview.tokenCount).toMatchObject({
+        accuracy: "estimated",
+      });
+      expect(preview.tokenCount.tokens).toBeGreaterThan(0);
+      expect(
+        preview.extensions.find((extension) => extension.id === "base-common")?.tokenCount,
+      ).toMatchObject({
+        accuracy: "estimated",
+      });
+      expect(
+        preview.extensions.find((extension) => extension.id === "base-common")?.tokenCount?.tokens,
+      ).toBeGreaterThan(0);
+      const availablePreviewExtension = preview.extensions.find(
+        (extension) => extension.state === "available",
+      );
+      expect(availablePreviewExtension?.tokenCount?.tokens).toBeGreaterThan(0);
+      expect(availablePreviewExtension?.loadedTokenCount?.tokens).toBeGreaterThan(0);
       expect(preview.systemPrompt).toContain("This surface is the orchestrator.");
       expect(preview.systemPrompt).toContain("Loaded native extension: Shell.");
       expect(preview.systemPrompt).toContain("Loaded external_instruction records:");
@@ -1184,6 +1201,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(handlerPreview.loadedExtensionIds).toContain("base-common");
       expect(handlerPreview.loadedExtensionIds).toContain("base-handler");
       expect(handlerPreview.loadedExtensionIds).not.toContain("base-orchestrator");
+      expect(handlerPreview.tokenCount.tokens).toBeGreaterThan(0);
       expect(handlerPreview.systemPrompt).toContain("This surface is a delegated handler thread.");
       expect(handlerPreview.systemPrompt).not.toContain("## Handler Profile Override");
 
@@ -1198,6 +1216,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(workflowTaskPreview.loadedExtensionIds).toContain("base-common");
       expect(workflowTaskPreview.loadedExtensionIds).toContain("base-workflow-task");
       expect(workflowTaskPreview.loadedExtensionIds).not.toContain("base-orchestrator");
+      expect(workflowTaskPreview.tokenCount.tokens).toBeGreaterThan(0);
       expect(workflowTaskPreview.systemPrompt.startsWith("## Custom Instructions")).toBe(true);
       expect(workflowTaskPreview.systemPrompt.indexOf("Inspect the repository")).toBeGreaterThan(
         -1,

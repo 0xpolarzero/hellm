@@ -15,6 +15,7 @@
     canSelectExtensionUsageState,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
+  import { formatTokenCount } from "./chat-format";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import Tooltip from "./ui/Tooltip.svelte";
 
@@ -66,6 +67,9 @@
 
   const previewInstructions = $derived(
     new Map((preview?.extensions ?? []).map((extension) => [extension.id, extension.instruction])),
+  );
+  const previewExtensions = $derived(
+    new Map((preview?.extensions ?? []).map((extension) => [extension.id, extension])),
   );
   const displayItems = $derived(
     orderedItems(items, extensionOrder, draggedExtensionId, dropBeforeExtensionId),
@@ -157,6 +161,23 @@
     }
     if (loading) return "Loading instructions...";
     return "No generated instruction is available for this extension.";
+  }
+
+  function formatPromptTokenCount(tokens: number): string {
+    return `~${formatTokenCount(tokens)} tokens`;
+  }
+
+  function extensionTokenLabel(item: ExtensionUsageControlItem): string | null {
+    if (item.state === "unavailable") return null;
+    const previewExtension = previewExtensions.get(item.id);
+    const tokenCount = previewExtension?.tokenCount;
+    if (!tokenCount) return null;
+    if (item.state === "available" && previewExtension.loadedTokenCount) {
+      return `${formatPromptTokenCount(tokenCount.tokens)} (~${formatTokenCount(
+        previewExtension.loadedTokenCount.tokens,
+      )} loaded)`;
+    }
+    return formatPromptTokenCount(tokenCount.tokens);
   }
 
   function stateLabel(state: ExtensionUsageState): string {
@@ -266,33 +287,39 @@
 
 <div class="profile-extension-editor">
   <div class="profile-extension-toolbar">
-    <Tooltip label="Reset extension selection to builtin defaults">
-      <button
-        type="button"
-        class="profile-extension-action"
-        disabled={disabled || pendingAction !== null}
-        onclick={resetSelection}
-      >
-        <RotateCcwIcon size={12} aria-hidden="true" />
-        Selection
-      </button>
-    </Tooltip>
-    <Tooltip label="Reset instruction order to builtin defaults">
-      <button
-        type="button"
-        class="profile-extension-action"
-        disabled={disabled || pendingAction !== null}
-        onclick={resetOrder}
-      >
-        <RotateCcwIcon size={12} aria-hidden="true" />
-        Order
-      </button>
-    </Tooltip>
+    <div class="profile-extension-actions">
+      <Tooltip label="Reset extension selection to builtin defaults">
+        <button
+          type="button"
+          class="profile-extension-action"
+          disabled={disabled || pendingAction !== null}
+          onclick={resetSelection}
+        >
+          <RotateCcwIcon size={12} aria-hidden="true" />
+          Selection
+        </button>
+      </Tooltip>
+      <Tooltip label="Reset instruction order to builtin defaults">
+        <button
+          type="button"
+          class="profile-extension-action"
+          disabled={disabled || pendingAction !== null}
+          onclick={resetOrder}
+        >
+          <RotateCcwIcon size={12} aria-hidden="true" />
+          Order
+        </button>
+      </Tooltip>
+    </div>
+    {#if preview}
+      <span class="profile-extension-total">{formatPromptTokenCount(preview.tokenCount.tokens)} total</span>
+    {/if}
   </div>
 
   <div class="profile-extension-list" bind:this={listElement}>
     {#each displayItems as item (item.id)}
       {@const expanded = expandedIds.has(item.id)}
+      {@const tokenLabel = extensionTokenLabel(item)}
       <article
         class={`profile-extension-row ${item.explicit ? "is-override" : ""} ${item.state === "unavailable" ? "is-off" : ""} ${item.id === draggedExtensionId ? "dragging" : ""}`.trim()}
         data-extension-id={item.id}
@@ -323,6 +350,12 @@
           </button>
           <p>{item.description}</p>
         </div>
+        <span
+          class={`profile-extension-token-count ${tokenLabel ? "" : "is-empty"}`.trim()}
+          aria-hidden={!tokenLabel}
+        >
+          {tokenLabel ?? ""}
+        </span>
         <div class="profile-extension-controls" aria-label={`${item.title} usage state`}>
           {#each STATES as option (option.state)}
             {@const selected = item.state === option.state}
@@ -389,8 +422,27 @@
 
   .profile-extension-toolbar {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
     gap: 0.34rem;
+    min-width: 0;
+  }
+
+  .profile-extension-actions {
+    display: flex;
+    gap: 0.34rem;
+    min-width: 0;
+  }
+
+  .profile-extension-total {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .profile-extension-action {
@@ -438,7 +490,7 @@
 
   .profile-extension-row {
     display: grid;
-    grid-template-columns: 1.1rem minmax(8rem, 1fr) auto 1.28rem 1.28rem;
+    grid-template-columns: 1.1rem minmax(8rem, 1fr) 11rem auto 1.28rem 1.28rem;
     gap: 0.3rem;
     align-items: center;
     min-width: 0;
@@ -545,6 +597,23 @@
   }
 
   .profile-extension-override[aria-hidden="true"] {
+    visibility: hidden;
+  }
+
+  .profile-extension-token-count {
+    align-self: center;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.3;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .profile-extension-token-count.is-empty {
     visibility: hidden;
   }
 

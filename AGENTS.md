@@ -22,6 +22,7 @@
 - Prefer these references over memory or vague external summaries when questions involve these tools or libraries.
 - To inspect or manually drive a running `svvy` app, use the published `electrobun-browser-tools` CLI (`--app <appId>` or `--url <bridgeUrl>`) for app-bridge/page/state/event inspection; the bridge is mounted in `src/bun/tool-bridge.ts`, and `src/bun/index.ts` logs the resolved `appId` and `bridgeUrl` when it starts. Use CuaDriver alongside it when direct real-app UI interaction or visual verification is cleaner.
 - Put manually captured verification screenshots in the repo-root `screenshots/` folder.
+- For tiny live Svelte state such as status icons, counts, badges, and inline save indicators, keep a stable fixed-size DOM slot mounted and update its state with attributes, classes, opacity, or color. Avoid swapping layout-affecting branches when a state change should not resize, remount, or flash the surrounding component.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Prefer inline code over thin pass-through helpers; if a wrapper only forwards one call without adding policy, reuse, or a meaningful seam, inline it instead of abstracting it.
 - Use subagents heavily for bounded, independent work; default to delegating concrete side tasks when they can run in parallel or reduce main-thread load.

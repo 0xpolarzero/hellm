@@ -1,8 +1,12 @@
 <script lang="ts">
+	import AlertCircleIcon from "@lucide/svelte/icons/alert-circle";
 	import CheckIcon from "@lucide/svelte/icons/check";
+	import CheckCircle2Icon from "@lucide/svelte/icons/check-circle-2";
 	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
 	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+	import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
 	import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
+	import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 	import LockIcon from "@lucide/svelte/icons/lock";
 	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { createForm } from "@tanstack/svelte-form";
@@ -23,6 +27,10 @@
 		reasoningEffort: ReasoningEffort;
 	};
 
+	type AutosaveStatus = "error" | "saved" | "saving" | "unsaved";
+
+	const AUTOSAVE_DELAY_MS = 700;
+
 	type Props = {
 		agent: WorkflowAgentSettings;
 		confirmingDelete: boolean;
@@ -36,6 +44,7 @@
 		onConfirmDelete: () => void;
 		onDuplicate: () => void;
 		onOpenExtension: (extensionId: string) => void;
+		onInstructionsChange?: (instructions: string) => void;
 		onRequestDelete: () => void;
 		onSave: (agent: WorkflowAgentSettings) => Promise<WorkflowAgentSettings>;
 		onSetExtensionUsage: (
@@ -58,6 +67,7 @@
 		onConfirmDelete,
 		onDuplicate,
 		onOpenExtension,
+		onInstructionsChange,
 		onRequestDelete,
 		onSave,
 		onSetExtensionUsage,
@@ -171,6 +181,7 @@
 		},
 		onSubmit: async ({ value, formApi }) => {
 			submitError = "";
+			const submittedValue = { ...value };
 			const choice = selectedChoice(value.modelValue);
 			const fallback = providerModelFrom(value.modelValue);
 			const next: WorkflowAgentSettings = {
@@ -179,22 +190,65 @@
 				provider: choice?.providerId ?? fallback.provider,
 				model: choice?.modelId ?? fallback.model,
 				reasoningEffort: value.reasoningEffort,
-				instructions: value.instructions.trim(),
+				instructions: value.instructions,
 				extensions: [...agent.extensions],
 				extensionUsage: { ...agent.extensionUsage },
 			};
 			const saved = await onSave(next);
-			formApi.reset(valuesFor(saved));
+			if (formValuesEqual(formState.current.values, submittedValue)) {
+				formApi.reset(valuesFor(saved));
+			}
 		},
 	}));
 
 	const formState = form.useStore();
 	const disabled = $derived(saving || formState.current.isSubmitting || deleting);
-	const hasUnsavedChanges = $derived(formState.current.isDirty);
+	const instructionsDisabled = $derived(deleting);
 	const formErrors = $derived(formState.current.errors.filter(Boolean));
+	const autosaveStatus = $derived<AutosaveStatus>(
+		submitError || formErrors.length > 0
+			? "error"
+			: formState.current.isSubmitting || saving
+				? "saving"
+				: formState.current.isDirty
+					? "unsaved"
+					: "saved",
+	);
+
+	$effect(() => {
+		onInstructionsChange?.(formState.current.values.instructions);
+	});
+
+	$effect(() => {
+		const scheduledValue = { ...formState.current.values };
+		if (!formState.current.isDirty || formState.current.isSubmitting || deleting) return;
+		const autosaveTimer = setTimeout(() => {
+			if (!formValuesEqual(formState.current.values, scheduledValue) && !formState.current.isDirty) {
+				return;
+			}
+			submit();
+		}, AUTOSAVE_DELAY_MS);
+		return () => clearTimeout(autosaveTimer);
+	});
+
+	function formValuesEqual(left: WorkflowFormValues, right: WorkflowFormValues): boolean {
+		return (
+			left.instructions === right.instructions &&
+			left.label === right.label &&
+			left.modelValue === right.modelValue &&
+			left.reasoningEffort === right.reasoningEffort
+		);
+	}
+
+	function autosaveStatusLabel(status: AutosaveStatus): string {
+		if (status === "error") return "Autosave failed";
+		if (status === "saving") return "Saving changes";
+		if (status === "unsaved") return "Unsaved changes";
+		return "Saved";
+	}
 
 	function submit() {
-		if (!formState.current.isDirty) return;
+		if (!formState.current.isDirty || formState.current.isSubmitting) return;
 		void form.handleSubmit().catch((error) => {
 			submitError = error instanceof Error ? error.message : "Unable to save workflow agent.";
 		});
@@ -278,16 +332,6 @@
 				onStateChange={saveExtensionUsage}
 			/>
 		</div>
-		{#if hasUnsavedChanges}
-			<div class="agent-form-actions">
-				<button type="button" class="agent-text-button" disabled={disabled} onclick={submit}>
-					{formState.current.isSubmitting ? "Saving" : "Save"}
-				</button>
-				<button type="button" class="agent-text-button" disabled={disabled} onclick={resetForm}>
-					Reset
-				</button>
-			</div>
-		{/if}
 		<div
 			class="agent-row-actions"
 			use:dismissConfirmation={{
@@ -347,14 +391,37 @@
 		{/if}
 	</button>
 </div>
-<textarea
-	class="workflow-instructions-field"
-	value={formState.current.values.instructions}
-	aria-label={`${agent.label} instructions`}
-	disabled={disabled}
-	oninput={(event) => form.setFieldValue("instructions", event.currentTarget.value)}
-	onblur={submit}
-></textarea>
+<div class="workflow-instructions-shell" data-autosave-status={autosaveStatus}>
+	<textarea
+		class="workflow-instructions-field"
+		value={formState.current.values.instructions}
+		aria-label={`${agent.label} instructions`}
+		disabled={instructionsDisabled}
+		oninput={(event) => form.setFieldValue("instructions", event.currentTarget.value)}
+		onblur={submit}
+	></textarea>
+	<Tooltip class="workflow-autosave-tooltip" label={autosaveStatusLabel(autosaveStatus)}>
+		<span
+			class="workflow-autosave-status"
+			role="status"
+			aria-live="polite"
+			aria-label={autosaveStatusLabel(autosaveStatus)}
+		>
+			<span class="workflow-autosave-icon icon-error">
+				<AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+			</span>
+			<span class="workflow-autosave-icon workflow-autosave-spinner icon-saving">
+				<LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+			</span>
+			<span class="workflow-autosave-icon icon-unsaved">
+				<CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
+			</span>
+			<span class="workflow-autosave-icon icon-saved">
+				<CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
+			</span>
+		</span>
+	</Tooltip>
+</div>
 {#if formErrors.length > 0 || submitError}
 	<p class="agent-form-error">{submitError || formErrors.join(" ")}</p>
 {/if}
@@ -457,31 +524,12 @@
 		max-width: clamp(4.9rem, 9vw, 5.8rem);
 	}
 
-	.agent-form-actions,
 	.agent-row-actions {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.08rem;
 		flex: 0 0 auto;
 		min-height: var(--agent-row-line-height);
-	}
-
-	.agent-text-button {
-		min-height: 1.24rem;
-		padding: 0 0.36rem;
-		border: 0;
-		border-radius: var(--ui-radius-sm);
-		background: var(--ui-hover-bg);
-		color: var(--ui-text-secondary);
-		font-size: var(--text-xs);
-		cursor: pointer;
-	}
-
-	.agent-text-button:hover:not(:disabled),
-	.agent-text-button:focus-visible:not(:disabled) {
-		outline: none;
-		color: var(--ui-text-primary);
-		box-shadow: var(--ui-focus-ring);
 	}
 
 	.agent-icon-button {
@@ -510,10 +558,13 @@
 		color: var(--ui-danger);
 	}
 
-	.agent-icon-button:disabled,
-	.agent-text-button:disabled {
+	.agent-icon-button:disabled {
 		cursor: default;
 		opacity: 0.36;
+	}
+
+	.workflow-instructions-shell {
+		position: relative;
 	}
 
 	.workflow-instructions-field {
@@ -521,7 +572,7 @@
 		width: 100%;
 		min-height: 4rem;
 		resize: vertical;
-		padding: 0.42rem 0.5rem;
+		padding: 0.42rem 2rem 0.42rem 0.5rem;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
 		border-radius: var(--ui-radius-sm);
 		background: color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent);
@@ -536,6 +587,69 @@
 		outline: none;
 		border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
 		box-shadow: var(--ui-focus-ring);
+	}
+
+	.workflow-instructions-shell :global(.workflow-autosave-tooltip) {
+		position: absolute;
+		top: 0.36rem;
+		right: 0.36rem;
+	}
+
+	.workflow-autosave-status {
+		position: relative;
+		display: block;
+		width: 1.28rem;
+		height: 1.28rem;
+		color: var(--ui-text-tertiary);
+		opacity: 0.72;
+		contain: layout paint style;
+	}
+
+	.workflow-autosave-icon {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		display: grid;
+		place-items: center;
+		opacity: 0;
+		transform: translate(-50%, -50%);
+		transition:
+			opacity 120ms ease,
+			color 120ms ease;
+	}
+
+	.workflow-autosave-icon :global(svg) {
+		display: block;
+	}
+
+	.workflow-instructions-shell[data-autosave-status="saved"] .icon-saved {
+		opacity: 1;
+		color: color-mix(in oklab, var(--ui-success) 54%, var(--ui-text-tertiary));
+	}
+
+	.workflow-instructions-shell[data-autosave-status="saving"] .icon-saving {
+		opacity: 1;
+		color: color-mix(in oklab, var(--ui-accent) 68%, var(--ui-text-secondary));
+	}
+
+	.workflow-instructions-shell[data-autosave-status="unsaved"] .icon-unsaved {
+		opacity: 1;
+		color: var(--ui-text-tertiary);
+	}
+
+	.workflow-instructions-shell[data-autosave-status="error"] .icon-error {
+		opacity: 1;
+		color: color-mix(in oklab, var(--ui-danger) 76%, var(--ui-text-secondary));
+	}
+
+	.workflow-autosave-spinner {
+		animation: workflow-autosave-spin 0.85s linear infinite;
+	}
+
+	@keyframes workflow-autosave-spin {
+		to {
+			transform: translate(-50%, -50%) rotate(360deg);
+		}
 	}
 
 	.agent-form-error {

@@ -1370,6 +1370,14 @@ export interface AgentContextPreviewExtension {
   description: string;
   state: ExtensionUsageState;
   instruction: string;
+  tokenCount?: {
+    tokens: number;
+    accuracy: "estimated";
+  };
+  loadedTokenCount?: {
+    tokens: number;
+    accuracy: "estimated";
+  };
   sourcePath?: string;
 }
 
@@ -1383,6 +1391,10 @@ export interface AgentContextPreviewResponse {
   loadedExtensionIds: string[];
   availableExtensionIds: string[];
   systemPrompt: string;
+  tokenCount: {
+    tokens: number;
+    accuracy: "estimated";
+  };
   extensions: AgentContextPreviewExtension[];
 }
 
