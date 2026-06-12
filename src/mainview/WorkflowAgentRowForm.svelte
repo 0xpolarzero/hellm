@@ -247,8 +247,10 @@
 		const nextSourceVersion = agent.sourceVersion;
 		if (nextSourceVersion === baseSourceVersion) return;
 		if (formState.current.isDirty) {
-			conflictAgent = agent;
-			conflictActionsOpen = false;
+			if (!conflictAgent || conflictAgent.sourceVersion !== nextSourceVersion) {
+				conflictAgent = agent;
+				conflictActionsOpen = false;
+			}
 			return;
 		}
 		baseSourceVersion = nextSourceVersion;

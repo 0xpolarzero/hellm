@@ -3,7 +3,6 @@
 	import SaveIcon from "@lucide/svelte/icons/save";
 	import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
 	import XIcon from "@lucide/svelte/icons/x";
-	import Button from "./Button.svelte";
 	import Tooltip from "./Tooltip.svelte";
 	import { dismissConfirmation } from "./dismiss-confirmation";
 
@@ -40,40 +39,37 @@
 	{#if active}
 		<span class="file-backed-conflict-popover" role="dialog" aria-label={label}>
 			<Tooltip label="Keep editing local draft">
-				<Button
-					variant="ghost"
-					size="xs"
-					iconOnly
+				<button
+					type="button"
+					class="file-backed-conflict-button"
 					aria-label="Keep editing local draft"
 					{disabled}
 					onclick={onKeepEditing}
 				>
 					<XIcon size={13} aria-hidden="true" />
-				</Button>
+				</button>
 			</Tooltip>
 			<Tooltip label="Discard local changes">
-				<Button
-					variant="danger"
-					size="xs"
-					iconOnly
+				<button
+					type="button"
+					class="file-backed-conflict-button danger"
 					aria-label="Discard local changes"
 					{disabled}
 					onclick={onDiscard}
 				>
 					<RotateCcwIcon size={13} aria-hidden="true" />
-				</Button>
+				</button>
 			</Tooltip>
 			<Tooltip label="Overwrite external changes">
-				<Button
-					variant="success"
-					size="xs"
-					iconOnly
+				<button
+					type="button"
+					class="file-backed-conflict-button danger"
 					aria-label="Overwrite external changes"
 					{disabled}
 					onclick={onOverwrite}
 				>
 					<SaveIcon size={13} aria-hidden="true" />
-				</Button>
+				</button>
 			</Tooltip>
 		</span>
 	{:else}
@@ -114,6 +110,9 @@
 	.file-backed-conflict-warning:focus-visible:not(:disabled) {
 		outline: none;
 		background: var(--ui-warning-soft);
+	}
+
+	.file-backed-conflict-warning:focus-visible:not(:disabled) {
 		box-shadow: var(--ui-focus-ring);
 	}
 
@@ -126,12 +125,40 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.18rem;
-		padding: 0.12rem;
-		border: 1px solid color-mix(in oklab, var(--ui-warning) 42%, var(--ui-border-soft));
-		border-radius: var(--ui-radius-md);
-		background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
-		box-shadow:
-			0 10px 24px -14px color-mix(in oklab, var(--ui-shadow) 68%, transparent),
-			0 2px 8px -4px color-mix(in oklab, var(--ui-shadow) 42%, transparent);
+		min-height: 1.28rem;
+	}
+
+	.file-backed-conflict-button {
+		display: grid;
+		place-items: center;
+		width: 1.32rem;
+		height: 1.28rem;
+		border: 0;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-tertiary);
+		cursor: pointer;
+	}
+
+	.file-backed-conflict-button:hover:not(:disabled),
+	.file-backed-conflict-button:focus-visible:not(:disabled) {
+		outline: none;
+		background: var(--ui-hover-bg);
+		color: var(--ui-text-primary);
+	}
+
+	.file-backed-conflict-button:focus-visible:not(:disabled) {
+		box-shadow: var(--ui-focus-ring);
+	}
+
+	.file-backed-conflict-button.danger:hover:not(:disabled),
+	.file-backed-conflict-button.danger:focus-visible:not(:disabled) {
+		background: var(--ui-danger-soft);
+		color: var(--ui-danger);
+	}
+
+	.file-backed-conflict-button:disabled {
+		cursor: default;
+		opacity: 0.36;
 	}
 </style>
