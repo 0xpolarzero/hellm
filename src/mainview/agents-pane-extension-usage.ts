@@ -113,7 +113,7 @@ export function extensionStateAllowed(input: {
     baselineExtensionState({
       actor: input.actor,
       extensionId: input.extension.id,
-      extensionDefaults: input.extensionDefaults,
+      extensionDefaults: null,
       networkAccess: input.networkAccess,
     }) !== "unavailable"
   );
@@ -194,10 +194,10 @@ export function extensionUsageItems(
             candidate.actorKind === input.actor && candidate.agentProfile === input.profileId,
         ) ?? null;
       const hasStoredUsage = input.usage[extension.id] !== undefined;
-      const baseline = baselineExtensionState({
+      const productBaseline = baselineExtensionState({
         actor: input.actor,
         extensionId: extension.id,
-        extensionDefaults,
+        extensionDefaults: null,
         networkAccess: input.networkAccess,
       });
       if (
@@ -205,7 +205,7 @@ export function extensionUsageItems(
         !hasStoredUsage &&
         extension.id !== "extension-loading" &&
         !usage &&
-        baseline === "unavailable"
+        productBaseline === "unavailable"
       ) {
         return [];
       }
@@ -214,7 +214,7 @@ export function extensionUsageItems(
         !hasStoredUsage &&
         extension.id !== "extension-loading" &&
         usage?.state === "unavailable" &&
-        baseline === "unavailable"
+        productBaseline === "unavailable"
       ) {
         return [];
       }

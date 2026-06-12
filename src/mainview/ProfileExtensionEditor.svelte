@@ -1,5 +1,6 @@
 <script lang="ts">
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
+  import ArrowUpToLineIcon from "@lucide/svelte/icons/arrow-up-to-line";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
@@ -7,6 +8,7 @@
   import type { ExtensionUsageState } from "../shared/extensions";
   import {
     canSelectExtensionUsageState,
+    type AgentContextActor,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
   import { formatTokenCount } from "./chat-format";
@@ -17,6 +19,7 @@
 
   type Props = {
     disabled?: boolean;
+    actor: AgentContextActor;
     extensionOrder: readonly string[];
     items: ExtensionUsageControlItem[];
     loading?: boolean;
@@ -26,6 +29,10 @@
     onOrderChange: (extensionIds: string[]) => void | Promise<void>;
     onResetOrder: () => void | Promise<void>;
     onResetSelection: () => void | Promise<void>;
+    onSetExtensionDefault: (
+      extensionId: string,
+      state: ExtensionUsageState,
+    ) => void | Promise<void>;
     onStateChange: (extensionId: string, state: ExtensionUsageState) => void | Promise<void>;
   };
 
@@ -37,6 +44,7 @@
 
   let {
     disabled = false,
+    actor,
     extensionOrder,
     items,
     loading = false,
@@ -46,11 +54,13 @@
     onOrderChange,
     onResetOrder,
     onResetSelection,
+    onSetExtensionDefault,
     onStateChange,
   }: Props = $props();
 
   let expandedIds = $state<Set<string>>(new Set());
   let pendingStateKey = $state<string | null>(null);
+  let pendingDefaultKey = $state<string | null>(null);
   let pendingAction = $state<"selection" | "order" | null>(null);
   let listElement = $state<HTMLElement | null>(null);
   let drag = $state<{
@@ -180,6 +190,26 @@
 
   function stateLabel(state: ExtensionUsageState): string {
     return STATES.find((entry) => entry.state === state)?.label ?? "Off";
+  }
+
+  function actorDefaultLabel(kind: AgentContextActor): string {
+    if (kind === "orchestrator") return "orchestrator";
+    if (kind === "workflow-task") return "workflow task";
+    return "handler";
+  }
+
+  function canSetActorDefault(kind: AgentContextActor): kind is "orchestrator" | "workflow-task" {
+    return kind === "orchestrator" || kind === "workflow-task";
+  }
+
+  async function setExtensionDefault(item: ExtensionUsageControlItem) {
+    if (!canSetActorDefault(actor) || pendingDefaultKey !== null || !item.explicit) return;
+    pendingDefaultKey = item.id;
+    try {
+      await onSetExtensionDefault(item.id, item.state);
+    } finally {
+      pendingDefaultKey = null;
+    }
   }
 
   function addDragListeners() {
@@ -330,18 +360,35 @@
           id={item.id}
           title={item.title}
           description={item.description}
-          markerLabel="override"
-          markerVisible={item.explicit}
+          marked={item.explicit}
           subdued={item.state === "unavailable"}
           dragging={item.id === draggedExtensionId}
           draggable={!disabled && item.state !== "unavailable"}
           dragLabel={`Reorder ${item.title}`}
           expanded={expanded}
           expandedInset={false}
+          controlActionVisible={item.explicit && canSetActorDefault(actor)}
           tokenLabel={tokenLabel}
           onDragPointerDown={(event) => startDrag(event, item)}
           onToggle={() => toggleInstruction(item.id)}
         >
+          {#snippet controlAction()}
+            <Tooltip
+              class="profile-extension-default-tooltip"
+              label="Set as actor default"
+              details={[{ label: `Use ${stateLabel(item.state)} as the default for new ${actorDefaultLabel(actor)} actors that include ${item.title}. Existing profile overrides stay unchanged.` }]}
+            >
+              <button
+                type="button"
+                class="profile-extension-default"
+                aria-label={`Use ${item.title} ${stateLabel(item.state)} as the default for new ${actorDefaultLabel(actor)} actors`}
+                disabled={disabled || pendingDefaultKey !== null}
+                onclick={() => setExtensionDefault(item)}
+              >
+                <ArrowUpToLineIcon size={12} strokeWidth={1.9} aria-hidden="true" />
+              </button>
+            </Tooltip>
+          {/snippet}
           {#snippet stateControls()}
             <ExtensionStateButtons
               ariaLabel={`${item.title} usage state`}
@@ -440,7 +487,8 @@
   }
 
   .profile-extension-action:focus-visible,
-  .profile-extension-open:focus-visible {
+  .profile-extension-open:focus-visible,
+  .profile-extension-default:focus-visible {
     box-shadow: var(--ui-focus-ring);
   }
 
@@ -470,9 +518,37 @@
     cursor: pointer;
   }
 
+  :global(.profile-extension-default-tooltip) {
+    align-items: center;
+    display: inline-grid;
+    height: 1rem;
+    line-height: 1;
+  }
+
+  .profile-extension-default {
+    display: grid;
+    place-items: center;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-accent-soft) 58%, transparent);
+    color: var(--ui-accent);
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .profile-extension-default:hover:not(:disabled),
+  .profile-extension-default:focus-visible:not(:disabled),
   .profile-extension-open:hover {
     background: var(--ui-hover-bg);
     color: var(--ui-text-primary);
+  }
+
+  .profile-extension-default:disabled {
+    cursor: default;
+    opacity: 0.58;
   }
 
   .profile-extension-instruction {

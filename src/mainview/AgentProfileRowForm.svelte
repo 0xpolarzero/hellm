@@ -48,6 +48,10 @@
 			extensionId: string,
 			state: ExtensionUsageControlItem["state"],
 		) => Promise<AgentProfileSettings>;
+		onSetExtensionDefault?: (
+			extensionId: string,
+			state: ExtensionUsageControlItem["state"],
+		) => Promise<void>;
 		onToggleExpanded: () => void;
 	};
 
@@ -68,6 +72,7 @@
 		onRequestDelete,
 		onSave,
 		onSetExtensionUsage,
+		onSetExtensionDefault,
 		onToggleExpanded,
 	}: Props = $props();
 
@@ -285,9 +290,11 @@
 			/>
 			<ExtensionUsageControl
 				ariaLabel={`${profile.name} extension usage`}
+				actor={category === "special" ? "handler" : "orchestrator"}
 				disabled={controlsDisabled}
 				items={extensionUsageItems}
 				onOpenExtension={onOpenExtension}
+				onSetExtensionDefault={onSetExtensionDefault}
 				onStateChange={saveExtensionUsage}
 			/>
 		</div>

@@ -304,6 +304,45 @@ describe("Agents pane extension usage helpers", () => {
     ]);
   });
 
+  it("keeps actor-default Off rows editable when the builtin extension supports the actor", () => {
+    const items = extensionUsageItems({
+      actor: "orchestrator",
+      extensionDefaults: {
+        order: [],
+        usage: {
+          orchestrator: {
+            web: "unavailable",
+          },
+        },
+      },
+      extensionInventoryItems: [
+        extensionInventoryItem({
+          id: "web",
+          title: "Web",
+          usage: [],
+        }),
+      ],
+      networkAccess: true,
+      profileId: "default",
+      usage: {},
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        allowedStates: {
+          available: true,
+          default_loaded: true,
+          unavailable: true,
+        },
+        configurable: true,
+        defaultState: "unavailable",
+        explicit: false,
+        id: "web",
+        state: "unavailable",
+      }),
+    ]);
+  });
+
   it("keeps handler profile rows owned by Agents instead of app extension defaults", () => {
     const items = extensionUsageItems({
       actor: "handler",

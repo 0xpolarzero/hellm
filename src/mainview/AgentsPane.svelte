@@ -362,6 +362,29 @@
     }
   }
 
+  async function setActorExtensionDefault(
+    actor: Extract<AgentContextActor, "orchestrator" | "workflow-task">,
+    profileId: AgentProfileId | WorkflowAgentKey,
+    extensionId: string,
+    state: ExtensionUsageState,
+  ): Promise<void> {
+    errorMessage = null;
+    try {
+      const inventory = await runtime.setExtensionDefaultUsage({
+        actorKind: actor,
+        extensionId,
+        state,
+      });
+      extensionInventoryItems = inventory.extensions;
+      settings = await runtime.getAgentSettings();
+      onSettingsChanged?.(settings);
+      refreshAgentContextPreview(profileId, actor);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to save extension default.";
+      throw error;
+    }
+  }
+
   function openExtension(extensionId: string): void {
     void runtime.openSurface(
       {
@@ -987,6 +1010,8 @@
     onOpenExtension={openExtension}
     onInstructionsChange={(instructions) => setWorkflowAgentInstructionDraft(agent.id, instructions)}
     onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
+    onSetExtensionDefault={(extensionId, state) =>
+      setActorExtensionDefault("workflow-task", agent.id, extensionId, state)}
     onSetExtensionUsage={(extensionId, state) =>
       setWorkflowAgentExtensionUsage(agent, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
@@ -1013,6 +1038,7 @@
     {@const preview = workflowAgentContextPreview(agent)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
+        actor="workflow-task"
         disabled={deletingWorkflowAgentKey === agent.id}
         extensionOrder={agent.extensionOrder ?? []}
         items={extensionUsageItems({
@@ -1027,6 +1053,8 @@
         onOrderChange={(extensionOrder) => setWorkflowAgentExtensionOrder(agent, extensionOrder)}
         onResetOrder={() => resetWorkflowAgentExtensionOrder(agent)}
         onResetSelection={() => resetWorkflowAgentExtensionSelection(agent)}
+        onSetExtensionDefault={(extensionId, state) =>
+          setActorExtensionDefault("workflow-task", agent.id, extensionId, state)}
         onStateChange={(extensionId, state) =>
           setWorkflowAgentExtensionUsage(agent, extensionId, state)}
       />
@@ -1059,6 +1087,9 @@
     onRequestDelete={() => requestDeleteProfile(profile)}
     onSave={saveProfile}
     onOpenExtension={openExtension}
+    onSetExtensionDefault={category === "orchestrator"
+      ? (extensionId, state) => setActorExtensionDefault("orchestrator", profile.id, extensionId, state)
+      : undefined}
     onSetExtensionUsage={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")}
   />
@@ -1067,6 +1098,7 @@
     {@const previewKey = contextPreviewKey(actor, profile.id)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
+        {actor}
         disabled={deletingProfileId === profile.id}
         extensionOrder={profile.extensionOrder ?? []}
         items={extensionUsageItems({
@@ -1081,6 +1113,10 @@
         onOrderChange={(extensionOrder) => setProfileExtensionOrder(profile, actor, extensionOrder)}
         onResetOrder={() => resetProfileExtensionOrder(profile, actor)}
         onResetSelection={() => resetProfileExtensionSelection(profile, actor)}
+        onSetExtensionDefault={(extensionId, state) =>
+          actor === "handler"
+            ? undefined
+            : setActorExtensionDefault(actor, profile.id, extensionId, state)}
         onStateChange={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
       />
     </div>

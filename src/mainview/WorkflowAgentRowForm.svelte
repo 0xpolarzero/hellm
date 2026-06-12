@@ -64,6 +64,10 @@
 			extensionId: string,
 			state: ExtensionUsageControlItem["state"],
 		) => Promise<WorkflowAgentSettings>;
+		onSetExtensionDefault: (
+			extensionId: string,
+			state: ExtensionUsageControlItem["state"],
+		) => Promise<void>;
 		onToggleExpanded: () => void;
 	};
 
@@ -84,6 +88,7 @@
 		onRequestDelete,
 		onSave,
 		onSetExtensionUsage,
+		onSetExtensionDefault,
 		onToggleExpanded,
 	}: Props = $props();
 	let submitError = $state("");
@@ -414,9 +419,11 @@
 			/>
 			<ExtensionUsageControl
 				ariaLabel={`${agent.label} extension usage`}
+				actor="workflow-task"
 				disabled={controlsDisabled}
 				items={extensionUsageItems}
 				onOpenExtension={onOpenExtension}
+				onSetExtensionDefault={onSetExtensionDefault}
 				onStateChange={saveExtensionUsage}
 			/>
 		</div>

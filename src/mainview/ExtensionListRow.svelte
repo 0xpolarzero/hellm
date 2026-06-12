@@ -15,9 +15,12 @@
     expandedInset?: boolean;
     id: string;
     leading?: Snippet;
+    marked?: boolean;
     markerLabel?: string;
     markerVisible?: boolean;
     meta?: Snippet;
+    controlAction?: Snippet;
+    controlActionVisible?: boolean;
     stateControls?: Snippet;
     subdued?: boolean;
     target?: boolean;
@@ -38,9 +41,12 @@
     expandedInset = true,
     id,
     leading,
+    marked = false,
     markerLabel = "override",
     markerVisible = false,
     meta,
+    controlAction,
+    controlActionVisible = false,
     stateControls,
     subdued = false,
     target = false,
@@ -52,7 +58,7 @@
 </script>
 
 <article
-  class={`shared-extension-row ${expanded ? "expanded" : ""} ${markerVisible ? "is-marked" : ""} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
+  class={`shared-extension-row ${expanded ? "expanded" : ""} ${marked || markerVisible ? "is-marked" : ""} ${controlAction && controlActionVisible ? "has-control-action" : ""} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
   data-extension-id={id}
 >
   <div class="shared-extension-main">
@@ -71,16 +77,20 @@
       </div>
     {/if}
     <div class="shared-extension-copy">
-      <button
-        type="button"
-        class="shared-extension-title-button"
-        aria-expanded={expanded}
-        aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
-        onclick={onToggle}
-      >
-        <span class="shared-extension-title">{title}</span>
-        <span class="shared-extension-marker" aria-hidden={!markerVisible}>{markerLabel}</span>
-      </button>
+      <div class="shared-extension-title-line">
+        <button
+          type="button"
+          class="shared-extension-title-button"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
+          onclick={onToggle}
+        >
+          <span class="shared-extension-title">{title}</span>
+        </button>
+        {#if markerVisible}
+          <span class="shared-extension-marker">{markerLabel}</span>
+        {/if}
+      </div>
       <p>{description}</p>
     </div>
     {#if tokenLabel}
@@ -89,6 +99,11 @@
     {#if meta}
       <div class="shared-extension-meta">
         {@render meta()}
+      </div>
+    {/if}
+    {#if controlAction && controlActionVisible}
+      <div class="shared-extension-control-action">
+        {@render controlAction()}
       </div>
     {/if}
     {#if stateControls}
@@ -196,6 +211,14 @@
     cursor: pointer;
   }
 
+  .shared-extension-row.has-control-action .shared-extension-main {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto 1rem auto auto auto;
+  }
+
+  .shared-extension-row.has-control-action .shared-extension-disclosure {
+    grid-column: 9;
+  }
+
   .shared-extension-drag:not(:disabled):hover,
   .shared-extension-drag:not(:disabled):focus-visible,
   .shared-extension-disclosure:hover,
@@ -227,11 +250,18 @@
     min-width: 0;
   }
 
-  .shared-extension-title-button {
+  .shared-extension-title-line {
     display: inline-flex;
     align-items: center;
     gap: 0.34rem;
     justify-self: start;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .shared-extension-title-button {
+    display: inline-flex;
+    align-items: center;
     max-width: 100%;
     min-width: 0;
     padding: 0;
@@ -243,25 +273,29 @@
   }
 
   .shared-extension-title {
+    display: inline-block;
     min-width: 0;
     overflow: hidden;
+    background-image: none;
+    background-repeat: no-repeat;
+    background-position: 0 calc(100% - 1px);
+    background-size: 100% 2px;
     color: var(--ui-text-primary);
     font-size: var(--text-sm);
     font-weight: 600;
     line-height: 1.28;
-    text-decoration: underline;
-    text-decoration-color: transparent;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 0.16rem;
     text-overflow: ellipsis;
+    vertical-align: bottom;
     white-space: nowrap;
   }
 
   .shared-extension-title-button:hover .shared-extension-title,
-  .shared-extension-title-button:focus-visible .shared-extension-title,
-  .shared-extension-row.is-marked .shared-extension-title {
+  .shared-extension-title-button:focus-visible .shared-extension-title {
     color: var(--ui-text-primary);
-    text-decoration-color: var(--ui-accent);
+  }
+
+  .shared-extension-row.is-marked .shared-extension-title {
+    background-image: linear-gradient(var(--ui-accent), var(--ui-accent));
   }
 
   .shared-extension-marker {
@@ -269,10 +303,6 @@
     color: var(--ui-accent);
     font-size: var(--text-xs);
     font-weight: 650;
-  }
-
-  .shared-extension-marker[aria-hidden="true"] {
-    visibility: hidden;
   }
 
   .shared-extension-copy p {
@@ -315,6 +345,17 @@
     grid-column: 5;
   }
 
+  .shared-extension-control-action {
+    grid-column: 6;
+    display: grid;
+    place-items: center;
+    align-self: center;
+    width: 1rem;
+    min-width: 0;
+    height: var(--agent-row-line-height);
+    line-height: 1;
+  }
+
   .shared-extension-controls {
     grid-column: 6;
     display: grid;
@@ -324,6 +365,14 @@
 
   .shared-extension-actions {
     grid-column: 7;
+  }
+
+  .shared-extension-row.has-control-action .shared-extension-controls {
+    grid-column: 7;
+  }
+
+  .shared-extension-row.has-control-action .shared-extension-actions {
+    grid-column: 8;
   }
 
   .shared-extension-expanded {

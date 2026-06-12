@@ -504,6 +504,9 @@ describe("default workspace renderer shell", () => {
     expect(extensionUsageControlSource).toContain(
       'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
     );
+    expect(extensionUsageControlSource).toContain(
+      'import ArrowUpToLineIcon from "@lucide/svelte/icons/arrow-up-to-line";',
+    );
     expect(extensionUsageControlSource).toContain("<ExtensionStateButtons");
     expect(extensionUsageControlSource).toContain("labelFor={stateLabel}");
     expect(extensionUsageControlSource).toContain(
@@ -515,10 +518,14 @@ describe("default workspace renderer shell", () => {
     expect(extensionUsageControlSource).toContain("<ExternalLinkIcon");
     expect(extensionUsageControlSource).toContain("Open extension");
     expect(extensionUsageControlSource).toContain("Open ${item.title} in Extensions");
+    expect(extensionUsageControlSource).toContain("Set as actor default");
+    expect(extensionUsageControlSource).toContain("<ArrowUpToLineIcon");
+    expect(extensionUsageControlSource).toContain("onSetExtensionDefault");
+    expect(extensionUsageControlSource).toContain("extension-default-action-slot");
     expect(extensionUsageControlSource).toContain('const triggerLabel = "Extensions"');
     expect(extensionUsageControlSource).toContain("{overrideCount} overrides");
     expect(extensionUsageControlSource).toContain(
-      "grid-template-columns: minmax(7rem, 1fr) 4.4rem 1.42rem auto",
+      "grid-template-columns: minmax(7rem, 1fr) 4.4rem 1rem 1.42rem auto",
     );
     expect(extensionUsageControlSource).toContain('class="extension-usage-category"');
     expect(extensionUsageControlSource).toContain("is-fixed-usage");
@@ -568,7 +575,6 @@ describe("default workspace renderer shell", () => {
     expect(extensionUsageControlSource).not.toContain("{option.label}</button>");
     expect(extensionUsageControlSource).not.toContain("item.description");
     expect(extensionUsageControlSource).not.toContain("explicit`");
-    expect(extensionUsageControlSource).not.toContain("defaults");
     expect(extensionUsageControlSource).not.toContain('label: "Default"');
     expect(agentProfileFormSource).not.toContain("usageSummary");
     expect(workflowAgentFormSource).not.toContain("usageSummary");

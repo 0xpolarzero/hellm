@@ -1,10 +1,12 @@
 <script lang="ts">
+  import ArrowUpToLineIcon from "@lucide/svelte/icons/arrow-up-to-line";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import { onDestroy, tick } from "svelte";
   import type { ExtensionCategory, ExtensionUsageState } from "../shared/extensions";
   import {
     canSelectExtensionUsageState,
+    type AgentContextActor,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
   import ExtensionStateButtons from "./ExtensionStateButtons.svelte";
@@ -14,9 +16,14 @@
 
   type Props = {
     ariaLabel: string;
+    actor: AgentContextActor;
     disabled?: boolean;
     items: ExtensionUsageControlItem[];
     onOpenExtension: (extensionId: string) => void;
+    onSetExtensionDefault?: (
+      extensionId: string,
+      state: ExtensionUsageState,
+    ) => void | Promise<void>;
     onStateChange: (extensionId: string, state: ExtensionUsageState) => void | Promise<void>;
   };
 
@@ -26,13 +33,22 @@
     { state: "unavailable", label: "Off" },
   ];
 
-  let { ariaLabel, disabled = false, items, onOpenExtension, onStateChange }: Props = $props();
+  let {
+    ariaLabel,
+    actor,
+    disabled = false,
+    items,
+    onOpenExtension,
+    onSetExtensionDefault,
+    onStateChange,
+  }: Props = $props();
 
   let root = $state<HTMLDivElement | null>(null);
   let triggerElement = $state<HTMLButtonElement | null>(null);
   let menuElement = $state<HTMLDivElement | null>(null);
   let open = $state(false);
   let pendingKey = $state<string | null>(null);
+  let pendingDefaultKey = $state<string | null>(null);
   let menuStyle = $state("");
 
   const overrideCount = $derived(items.filter((item) => item.explicit).length);
@@ -157,7 +173,17 @@
   function categoryLabel(category: ExtensionCategory): string {
     if (category === "external_instruction") return "External";
     if (category === "user") return "User";
-    return "builtin";
+    return "Builtin";
+  }
+
+  function actorDefaultLabel(kind: AgentContextActor): string {
+    if (kind === "orchestrator") return "orchestrator";
+    if (kind === "workflow-task") return "workflow task";
+    return "handler";
+  }
+
+  function canSetActorDefault(kind: AgentContextActor): kind is "orchestrator" | "workflow-task" {
+    return kind === "orchestrator" || kind === "workflow-task";
   }
 
   function stateTooltipDetail(item: ExtensionUsageControlItem, state: ExtensionUsageState): string {
@@ -198,6 +224,25 @@
       // The parent save path owns the visible error state.
     } finally {
       pendingKey = null;
+    }
+  }
+
+  async function setExtensionDefault(item: ExtensionUsageControlItem) {
+    if (
+      !onSetExtensionDefault ||
+      !canSetActorDefault(actor) ||
+      pendingDefaultKey !== null ||
+      !item.explicit
+    ) {
+      return;
+    }
+    pendingDefaultKey = item.id;
+    try {
+      await onSetExtensionDefault(item.id, item.state);
+    } catch {
+      // The parent save path owns the visible error state.
+    } finally {
+      pendingDefaultKey = null;
     }
   }
 
@@ -244,6 +289,26 @@
               <span class="extension-usage-title-text">{item.title}</span>
             </strong>
             <span class="extension-usage-category">{categoryLabel(item.category)}</span>
+            <span class="extension-default-action-slot">
+              {#if item.explicit && canSetActorDefault(actor) && onSetExtensionDefault}
+                <Tooltip
+                  class="extension-default-tooltip"
+                  label="Set as actor default"
+                  details={[{ label: `Use ${stateLabel(item.state)} as the default for new ${actorDefaultLabel(actor)} actors that include ${item.title}. Existing profile overrides stay unchanged.` }]}
+                  side="bottom"
+                >
+                  <button
+                    type="button"
+                    class="extension-default-button"
+                    aria-label={`Use ${item.title} ${stateLabel(item.state)} as the default for new ${actorDefaultLabel(actor)} actors`}
+                    disabled={disabled || pendingDefaultKey !== null}
+                    onclick={() => setExtensionDefault(item)}
+                  >
+                    <ArrowUpToLineIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+                  </button>
+                </Tooltip>
+              {/if}
+            </span>
             <Tooltip
               label="Open extension"
               details={[{ label: "Show this extension in the Extensions pane." }]}
@@ -380,7 +445,7 @@
 
   .extension-usage-row {
     display: grid;
-    grid-template-columns: minmax(7rem, 1fr) 4.4rem 1.42rem auto;
+    grid-template-columns: minmax(7rem, 1fr) 4.4rem 1rem 1.42rem auto;
     align-items: center;
     column-gap: 0.48rem;
     min-height: 1.94rem;
@@ -453,6 +518,51 @@
     white-space: nowrap;
   }
 
+  .extension-default-action-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    line-height: 1;
+  }
+
+  :global(.extension-default-tooltip) {
+    align-items: center;
+    height: 1rem;
+    line-height: 1;
+  }
+
+  .extension-default-button {
+    display: grid;
+    place-items: center;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .extension-default-button:hover:not(:disabled),
+  .extension-default-button:focus-visible:not(:disabled) {
+    outline: none;
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-default-button:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-default-button:disabled {
+    cursor: default;
+    opacity: 0.58;
+  }
+
   .extension-open-button {
     display: inline-flex;
     align-items: center;
@@ -482,7 +592,7 @@
 
   @media (max-width: 560px) {
     .extension-usage-row {
-      grid-template-columns: minmax(0, 1fr) 1.42rem auto;
+      grid-template-columns: minmax(0, 1fr) 1rem 1.42rem auto;
       align-items: center;
     }
 
