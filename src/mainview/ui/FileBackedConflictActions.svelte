@@ -7,36 +7,44 @@
 	import { dismissConfirmation } from "./dismiss-confirmation";
 
 	type Props = {
-		active: boolean;
 		disabled?: boolean;
 		label?: string;
 		onDiscard: () => void;
-		onDismiss: () => void;
-		onKeepEditing: () => void;
-		onOpen: () => void;
 		onOverwrite: () => void;
 	};
 
 	let {
-		active,
 		disabled = false,
 		label = "File changed outside svvy",
 		onDiscard,
-		onDismiss,
-		onKeepEditing,
-		onOpen,
 		onOverwrite,
 	}: Props = $props();
+
+	let open = $state(false);
+
+	function keepEditing() {
+		open = false;
+	}
+
+	function discard() {
+		open = false;
+		onDiscard();
+	}
+
+	function overwrite() {
+		open = false;
+		onOverwrite();
+	}
 </script>
 
 <span
 	class="file-backed-conflict-actions"
 	use:dismissConfirmation={{
-		active,
-		onDismiss,
+		active: open,
+		onDismiss: () => (open = false),
 	}}
 >
-	{#if active}
+	{#if open}
 		<span class="file-backed-conflict-popover" role="dialog" aria-label={label}>
 			<Tooltip label="Keep editing local draft">
 				<button
@@ -44,7 +52,7 @@
 					class="file-backed-conflict-button"
 					aria-label="Keep editing local draft"
 					{disabled}
-					onclick={onKeepEditing}
+					onclick={keepEditing}
 				>
 					<XIcon size={13} aria-hidden="true" />
 				</button>
@@ -55,7 +63,7 @@
 					class="file-backed-conflict-button danger"
 					aria-label="Discard local changes"
 					{disabled}
-					onclick={onDiscard}
+					onclick={discard}
 				>
 					<RotateCcwIcon size={13} aria-hidden="true" />
 				</button>
@@ -66,7 +74,7 @@
 					class="file-backed-conflict-button danger"
 					aria-label="Overwrite external changes"
 					{disabled}
-					onclick={onOverwrite}
+					onclick={overwrite}
 				>
 					<SaveIcon size={13} aria-hidden="true" />
 				</button>
@@ -79,7 +87,7 @@
 				class="file-backed-conflict-warning"
 				aria-label={label}
 				{disabled}
-				onclick={onOpen}
+				onclick={() => (open = true)}
 			>
 				<TriangleAlertIcon size={13} strokeWidth={2} aria-hidden="true" />
 			</button>

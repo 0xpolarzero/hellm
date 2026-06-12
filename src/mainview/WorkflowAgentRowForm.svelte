@@ -89,7 +89,6 @@
 	let submitError = $state("");
 	let baseSourceVersion = $state(agent.sourceVersion);
 	let conflictAgent = $state<WorkflowAgentSettings | null>(null);
-	let conflictActionsOpen = $state(false);
 
 	function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {
 		return `${choice.providerId}:${choice.modelId}`;
@@ -216,7 +215,6 @@
 			});
 			baseSourceVersion = saved.sourceVersion;
 			conflictAgent = null;
-			conflictActionsOpen = false;
 			if (formValuesEqual(formState.current.values, submittedValue)) {
 				formApi.reset(valuesFor(saved));
 			}
@@ -249,13 +247,11 @@
 		if (formState.current.isDirty) {
 			if (!conflictAgent || conflictAgent.sourceVersion !== nextSourceVersion) {
 				conflictAgent = agent;
-				conflictActionsOpen = false;
 			}
 			return;
 		}
 		baseSourceVersion = nextSourceVersion;
 		conflictAgent = null;
-		conflictActionsOpen = false;
 		form.reset(valuesFor(agent));
 	});
 
@@ -295,7 +291,6 @@
 		void form.handleSubmit().catch((error) => {
 			if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
 				conflictAgent = error.conflict.current;
-				conflictActionsOpen = false;
 				return;
 			}
 			submitError = error instanceof Error ? error.message : "Unable to save workflow agent.";
@@ -309,13 +304,8 @@
 	function resetForm() {
 		submitError = "";
 		conflictAgent = null;
-		conflictActionsOpen = false;
 		baseSourceVersion = agent.sourceVersion;
 		form.reset(valuesFor(agent));
-	}
-
-	function keepEditingConflict() {
-		conflictActionsOpen = false;
 	}
 
 	function discardLocalConflict() {
@@ -323,7 +313,6 @@
 		submitError = "";
 		baseSourceVersion = current.sourceVersion;
 		conflictAgent = null;
-		conflictActionsOpen = false;
 		form.reset(valuesFor(current));
 	}
 
@@ -350,14 +339,12 @@
 			});
 			baseSourceVersion = saved.sourceVersion;
 			conflictAgent = null;
-			conflictActionsOpen = false;
 			if (formValuesEqual(formState.current.values, value)) {
 				form.reset(valuesFor(saved));
 			}
 		} catch (error) {
 			if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
 				conflictAgent = error.conflict.current;
-				conflictActionsOpen = false;
 				return;
 			}
 			submitError = error instanceof Error ? error.message : "Unable to overwrite workflow agent.";
@@ -504,11 +491,7 @@
 	<div class="workflow-autosave-tooltip">
 		{#if autosaveStatus === "conflict"}
 			<FileBackedConflictActions
-				active={conflictActionsOpen}
 				disabled={formState.current.isSubmitting || saving}
-				onDismiss={() => (conflictActionsOpen = false)}
-				onOpen={() => (conflictActionsOpen = true)}
-				onKeepEditing={keepEditingConflict}
 				onDiscard={discardLocalConflict}
 				onOverwrite={() => void overwriteExternalConflict()}
 			/>
