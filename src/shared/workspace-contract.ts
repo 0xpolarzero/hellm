@@ -224,7 +224,8 @@ export interface ExtensionInventoryItemReadModel {
   title: string;
   description: string;
   customized: boolean;
-  minimalInstruction: ExtensionInstructionFileReadModel;
+  minimalInstruction?: ExtensionInstructionFileReadModel;
+  loadedInstructionContributors: ExtensionLoadedInstructionContributorReadModel[];
   externalInstruction?: {
     sourceGroup: GeneratedAgentContextExternalSource["sourceGroup"];
     rootId?: string;
@@ -238,7 +239,7 @@ export interface ExtensionInventoryItemReadModel {
     readStatus: GeneratedAgentContextExternalSource["readStatus"];
   };
   typescriptApiEnabled: boolean;
-  instructionFiles?: ExtensionInstructionFileReadModel[];
+  tooling: ExtensionToolingReadModel;
   usage: ExtensionUsageReadiness[];
   requirements: {
     cliRequirements: ExtensionCliRequirementReadiness[];
@@ -257,11 +258,42 @@ export interface ExtensionInstructionFileReadModel {
   sourceVersion: string;
   skipped: boolean;
   editable: boolean;
-  generated: boolean;
   tokenCount: {
     tokens: number;
     accuracy: "estimated";
   };
+}
+
+export type ExtensionLoadedInstructionContributorReadModel =
+  | {
+      kind: "source";
+      file: ExtensionInstructionFileReadModel;
+    }
+  | {
+      kind: "scripted";
+      name: string;
+      skipped: boolean;
+      script: ExtensionInstructionFileReadModel;
+      output: ExtensionInstructionFileReadModel;
+      regenerateCommand: string;
+    };
+
+export interface ExtensionGeneratedReadonlyBlockReadModel {
+  name: string;
+  path: string;
+  content: string;
+  tokenCount: {
+    tokens: number;
+    accuracy: "estimated";
+  };
+}
+
+export interface ExtensionToolingReadModel {
+  nativeToolSchema?: ExtensionGeneratedReadonlyBlockReadModel;
+  svvyxCommandSource?: ExtensionInstructionFileReadModel;
+  svvyxCommandSchema?: ExtensionGeneratedReadonlyBlockReadModel;
+  typescriptApiDeclaration?: ExtensionGeneratedReadonlyBlockReadModel;
+  typescriptApiStatus?: "disabled" | "emitted" | "not_emitted";
 }
 
 export interface ExtensionChangeCardReadModel {
@@ -387,7 +419,7 @@ export interface ReorderExtensionInstructionFilesRequest extends WorkspaceScoped
 
 export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  kind?: "full" | "minimal";
+  kind?: "full" | "minimal" | "script";
   name: string;
   content: string;
   baseSourceVersion?: string;
@@ -396,7 +428,7 @@ export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRe
 
 export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  kind?: "full" | "minimal";
+  kind?: "full" | "minimal" | "script";
   name: string;
 }
 

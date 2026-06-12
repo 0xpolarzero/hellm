@@ -25,7 +25,7 @@ invocations; Extension Managing does not gain a separate model-facing tool surfa
 Extension Managing is a builtin extension for managing extension definitions and extension usage.
 
 It owns extension lifecycle, source discovery, builds, package dependency approvals, usage-state
-commands, snapshot commands, and full-instruction source-file lifecycle commands. It does not own
+commands, snapshot commands, and loaded source contributor lifecycle commands. It does not own
 text-editing commands for instruction or source bodies and does not provide a separate command for
 installing CLI requirements. Authoring-facing Incur guidance belongs to this
 extension's loaded instructions, but the internal runtime plumbing for making built Incur CLIs
@@ -69,7 +69,7 @@ Product-state changes use Extension Managing commands:
 - extension creation
 - extension build
 - generated instruction regeneration as part of extension build
-- full-instruction source file add, remove, rename, and reorder operations
+- loaded source contributor add, remove, rename, and reorder operations
 - extension usage state changes
 - builtin extension reset
 - user-extension delete
@@ -100,7 +100,7 @@ The Extension Managing instructions define what may be edited:
 
 These paths must not be edited by agents:
 
-- generated instruction output files under `instructions/full/`
+- scripted contributor output files under `instructions/full/`
 - `package/bun.lock`
 - generated TypeScript declarations
 - aggregate cache files
@@ -274,32 +274,45 @@ Rules:
 - manifest `installCommand` is a reusable exact-version template; inspect and build-error output
   return a concrete install or update command with the selected version substituted.
   `installCommand` may use `{{version}}` only when `version` is present.
-- `instructionFiles` configures individual Markdown files under `instructions/full/`. It does not
-  define ordering; ordering remains the lexicographic directory listing. Missing files have
-  `bypassed: false`.
-- `generatedInstructions` declare build-generated Markdown files under `instructions/full/` and
-  editable TypeScript generator scripts under `scripts/`. Build runs generation; there is no separate
-  `instructions generate` command.
-- Full instruction file ordering is not stored in the manifest in v1. The source of truth is the
-  lexicographic directory listing under `instructions/full/`.
+- `instructionFiles` stores loaded Markdown source contributors under `instructions/full/` plus
+  per-contributor skip state. The UI and Extension Managing present these as loaded instruction
+  contributors, not as a separate prompt model.
+- `generatedInstructions` stores scripted instruction contributors. Each entry pairs one editable
+  TypeScript generator under `scripts/` with the read-only Markdown output from the last generation
+  under `instructions/full/`. Build regenerates all scripted contributors, and the UI may expose a
+  targeted regenerate action that runs the same build path for the owning extension.
+- Loaded instruction contributor ordering is explicit app-owned extension state. Numeric filename
+  prefixes remain a convenient storage/display convention, not the product contract.
 - Additional implementation-private manifest fields are allowed only if build preserves them and
   they do not alter the actor-facing contract without being added to this spec.
 
-### Instruction Source Files
+### Instruction Contributors
 
-An extension's loaded full instruction is assembled from zero or more ordered Markdown source files
-under:
+Every normal builtin or user extension has one editable minimal instruction source, except the
+fixed always-loaded Extension Loading control may omit it. The minimal instruction is a concise
+available-loading hint; it is not part of the loaded prompt when the extension is already loaded.
+
+An extension's loaded instruction is assembled from zero or more ordered loaded contributors.
+Plain source contributors are editable Markdown files under:
 
 ```text
 instructions/full/*.md
 ```
 
-This is a source-editing convenience for the Extensions UI and the Extension Managing extension. It
-does not mean the model receives an array-valued instruction. The generated actor context receives
-one loaded instruction block for the extension, produced by concatenating the ordered full
-instruction files with stable file-boundary headings or equivalent internal separators.
+Scripted contributors pair an editable TypeScript generator with a read-only generated Markdown
+output:
 
-Full instruction files are ordered lexicographically by filename. Builtin defaults and generated
+```text
+scripts/*.ts
+instructions/full/*.generated.md
+```
+
+The generated actor context receives one loaded instruction block for the extension, produced by
+concatenating the non-skipped loaded contributors with stable contributor-boundary headings or
+equivalent internal separators. Generated Markdown output is read-only build output. To change it,
+edit the generator script or the source data it reads, then regenerate/build.
+
+Loaded Markdown source contributors are ordered lexicographically by filename. Builtin defaults and generated
 user skeletons should use zero-padded numeric prefixes, for example:
 
 ```text
@@ -313,12 +326,12 @@ output and ordinary shell inspection. Extension Managing may still expose conven
 controls for add, remove, rename, and reorder. Reorder may be implemented by renaming files to new
 numeric prefixes. Those lifecycle operations mark the extension `buildRequired: true`.
 
-Individual full instruction files may be configured as `bypassed` through `manifest.json` or
-equivalent app-owned builtin overlay config. Bypassed files remain in the ordered source set, remain
-visible in `inspect`, and are still generated by build when they are generated outputs, but they are
-skipped when loaded full instructions are concatenated for actor prompts.
+Individual loaded contributors may be skipped through `manifest.json` or equivalent app-owned
+builtin overlay config. Skipped contributors remain visible in inspect/UI, and scripted outputs are
+still generated by build, but skipped contributors are omitted when loaded instructions are
+concatenated for actor prompts.
 
-The v1 source of truth for full-instruction ordering is the directory listing, not a manifest field.
+The v1 source of truth for loaded source contributor ordering is the directory listing, not a manifest field.
 Build validation must reject unreadable files under `instructions/full/` that would otherwise be
 included, and must warn on non-Markdown files in that directory when they look accidental. Build
 validation must reject duplicate `instructionFiles` config entries and config entries that reference
@@ -326,7 +339,7 @@ unknown files. If a future manifest adds explicit instruction ordering metadata,
 files and duplicate logical entries must be build errors, and this spec must be updated before that
 metadata becomes authoritative.
 
-Minimal instructions remain a single concise loading-hint file:
+Minimal instructions are a single concise loading-hint file:
 
 ```text
 instructions/minimal.md
@@ -460,7 +473,7 @@ Revertability:
 | Change kind                                                                              | Revert behavior                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Agent `apply_patch` touching app-owned extension files                                   | Revert the whole recorded change, not individual files.                                                                                                                                                                     |
-| `instructions add`, `instructions remove`, `instructions rename`, `instructions reorder` | Restore the previous full instruction file set and filenames recorded by that lifecycle change.                                                                                                                             |
+| `instructions add`, `instructions remove`, `instructions rename`, `instructions reorder` | Restore the previous loaded source contributor set and filenames recorded by that lifecycle change.                                                                                                                          |
 | `instructions configure`                                                                 | Restore the previous instruction-file config recorded by that lifecycle change.                                                                                                                                             |
 | `set-usage`                                                                              | Restore the previous usage state for that extension/profile pair.                                                                                                                                                           |
 | `reset`                                                                                  | Restore the pre-reset files and usage/product state recorded by that reset change.                                                                                                                                          |
@@ -1252,9 +1265,9 @@ Common lifecycle error codes:
 | `EXTERNAL_INSTRUCTION_READONLY` | The target is an `external_instruction` record whose source file is outside Extension Managing ownership.                |
 | `INVALID_INSTRUCTION_FILENAME`  | A requested instruction basename is not an accepted Markdown basename under `instructions/full/`.                        |
 | `INSTRUCTION_FILE_EXISTS`       | A requested target basename already exists.                                                                              |
-| `INSTRUCTION_FILE_NOT_FOUND`    | A requested source basename is not a current full instruction file.                                                      |
+| `INSTRUCTION_FILE_NOT_FOUND`    | A requested source basename is not a current loaded source contributor.                                                 |
 | `INVALID_INSTRUCTION_CONFIG`    | A requested instruction-file config value is not valid for the setting being changed.                                    |
-| `INVALID_INSTRUCTION_ORDER`     | A reorder request omitted, duplicated, or named an unknown full instruction file.                                        |
+| `INVALID_INSTRUCTION_ORDER`     | A reorder request omitted, duplicated, or named an unknown loaded source contributor.                                   |
 | `INSTRUCTION_RENAME_COLLISION`  | A lifecycle command cannot complete without a case-sensitive or case-insensitive filename collision.                     |
 
 ## `inspect`
@@ -1697,7 +1710,7 @@ restore target, native control namespace, or other reserved `svvyx` namespace.
 - `instructions/minimal.md`
 - `source/` only when `--interface svvyx`
 
-The generated full instruction file may be empty or contain only a short neutral Markdown heading. It
+The generated initial loaded source contributor may be empty or contain only a short neutral Markdown heading. It
 must not invent domain-specific guidance or placeholder prose. The generated `svvyx` source skeleton
 must default-export an Incur CLI and must not call `cli.serve()` at top level.
 
@@ -1779,12 +1792,12 @@ Example output:
 }
 ```
 
-## Full Instruction File Lifecycle Commands
+## Loaded Source Contributor Lifecycle Commands
 
 Use case: add, remove, rename, reorder, or configure source files under `instructions/full/` without
 inventing a text-editing API.
 
-These commands operate only on full loaded instruction source files and their file-level config. They
+These commands operate only on loaded Markdown source contributors and their file-level config. They
 do not edit file body content. After creating or renaming a file, agents edit the returned path with
 native `apply_patch`.
 
@@ -1794,7 +1807,7 @@ Accepted names must:
 - end in `.md`
 - not contain `/`, `\`, `..`, a NUL byte, or platform-reserved path syntax
 - not contain `,`
-- not collide with an existing full instruction file unless the command explicitly replaces by
+- not collide with an existing loaded source contributor unless the command explicitly replaces by
   remove then add in separate changes
 
 Applicability:
@@ -1952,10 +1965,10 @@ Result:
 }
 ```
 
-Removing the last full instruction file, or configuring every full instruction file as bypassed, is
-allowed only if the extension genuinely has no loaded instruction prose. The build still validates
-that a loaded extension with no effective full instruction files has either native tools, `svvyx`
-command guidance, or an intentionally empty full-instruction set.
+Removing the last loaded source contributor, or configuring every loaded contributor as bypassed, is
+allowed. The build still validates that a loaded extension with no effective loaded instruction prose
+has either native tools, `svvyx` command guidance, scripted contributors, or an intentionally empty
+loaded-instruction set.
 
 ### `instructions reorder`
 
@@ -2592,10 +2605,10 @@ Parameters:
 
 For `--scope instructions`, reset applies to the complete instruction source set:
 
-- the builtin `instructions/full/*.md` file set is restored exactly
-- overlay-added full instruction files are removed
-- overlay-removed builtin full instruction files are restored
-- renamed full instruction files are restored to builtin names
+- the builtin loaded source contributor set under `instructions/full/*.md` is restored exactly
+- overlay-added loaded source contributors are moved to app-managed trash
+- overlay-removed builtin loaded source contributors are restored
+- renamed loaded source contributors are restored to builtin names
 - builtin instruction-file config, including `bypassed`, is restored exactly
 - `instructions/minimal.md` is restored
 

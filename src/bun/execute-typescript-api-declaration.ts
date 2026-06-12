@@ -4,7 +4,7 @@ import type { SvvyActorKind } from "./actor-capabilities";
 import { resolveActorExtensionState } from "../shared/extensions";
 import type { ExtensionRecord } from "../shared/extensions";
 
-const ARTIFACTS_CLIENT_DECLARATION = `
+export const ARTIFACTS_CLIENT_DECLARATION = `
 type ArtifactsArtifactRef = {
   id: string;
   path: string;
@@ -64,7 +64,7 @@ interface LoadedExtensionsClient {
 }
 `.trim();
 
-const WORKFLOWS_CLIENT_DECLARATION = `
+export const WORKFLOWS_CLIENT_DECLARATION = `
 type WorkflowsKind = "agent" | "prompt" | "component" | "workflow";
 
 type WorkflowsDiagnostic = {

@@ -4,7 +4,10 @@
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
   import { isFileBackedEditConflictError } from "../shared/file-backed-edit";
-  import type { ExtensionInstructionFileReadModel } from "../shared/workspace-contract";
+  import type {
+    ExtensionInstructionFileReadModel,
+    ExtensionLoadedInstructionContributorReadModel,
+  } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
   import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
@@ -18,14 +21,15 @@
     editor?: string;
     extensionId: string;
     file: ExtensionInstructionFileReadModel;
-    kind?: "full" | "minimal";
+    kind?: "full" | "minimal" | "script";
+    label?: string;
     runtime: ChatRuntime;
     onSaved: () => void;
   };
 
   const AUTOSAVE_DELAY_MS = 700;
 
-  let { disabled = false, editor = "system", extensionId, file, kind = "full", runtime, onSaved }: Props =
+  let { disabled = false, editor = "system", extensionId, file, kind = "full", label = "editable", runtime, onSaved }: Props =
     $props();
 
   let draft = $state("");
@@ -90,13 +94,19 @@
       });
       const savedFile = inventory.extensions
         .find((extension) => extension.id === extensionId)
-        ?.[kind === "minimal" ? "minimalInstruction" : "instructionFiles"];
+        ?.[kind === "minimal" ? "minimalInstruction" : "loadedInstructionContributors"];
       const savedSourceVersion =
         kind === "minimal"
           ? (savedFile as ExtensionInstructionFileReadModel | undefined)?.sourceVersion
-          : (savedFile as ExtensionInstructionFileReadModel[] | undefined)?.find(
-              (candidate) => candidate.name === file.name,
-            )?.sourceVersion;
+          : kind === "script"
+            ? (savedFile as ExtensionLoadedInstructionContributorReadModel[] | undefined)?.find(
+                (candidate) =>
+                  candidate.kind === "scripted" && candidate.script.name === file.name,
+              )?.script.sourceVersion
+            : (savedFile as ExtensionLoadedInstructionContributorReadModel[] | undefined)?.find(
+                (candidate) =>
+                  candidate.kind === "source" && candidate.file.name === file.name,
+              )?.file.sourceVersion;
       savedContent = draft;
       baseSourceVersion = savedSourceVersion ?? baseSourceVersion;
       conflictFile = null;
@@ -139,7 +149,7 @@
   <div class="extension-instruction-editor-bar">
     <div>
       <strong>{file.name}</strong>
-      <span>{file.generated ? "generated" : file.editable ? "editable" : "read-only"}</span>
+      <span>{file.editable ? label : "read-only"}</span>
       <span>{file.skipped ? "skipped" : "loaded"}</span>
       <span>~{formatTokenCount(file.tokenCount.tokens)} tokens</span>
     </div>

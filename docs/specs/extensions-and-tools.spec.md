@@ -21,15 +21,24 @@ Agents own:
 
 Extensions own:
 
-- builtin, user, or external-instruction category
-- instruction files
-- minimal available-loading hints
-- interface kind: `native_tool`, `svvyx`, or `instructions`
-- generated TypeScript client declarations when enabled
+- builtin or user ownership and lifecycle
+- an editable minimal instruction source used as the available-loading hint, except fixed
+  always-loaded Extension Loading may omit it
+- zero or more ordered loaded instruction contributors
+- scripted instruction contributors made from an editable TypeScript generator and a read-only
+  generated Markdown output from the last generation
+- optional CLI requirements
+- optional native tool schemas
+- optional `svvyx` command source plus generated command schema
+- optional generated TypeScript API declarations when enabled for `svvyx`
 - env and dependency readiness
 - reset/delete behavior appropriate to category
 
 Generated actor context is composed from the current agent profile plus loaded extensions.
+
+External instruction records are not normal extensions. They are discovered read-only instruction
+files such as `AGENTS.md` or `CLAUDE.md`, owned outside `svvy`, with no minimal instruction, no
+loaded-contributor lifecycle, no generated outputs, and no reset/delete controls.
 
 ## Builtin Extensions
 

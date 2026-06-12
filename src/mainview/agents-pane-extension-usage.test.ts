@@ -24,12 +24,12 @@ function extensionInventoryItem(
       sourceVersion: "",
       skipped: false,
       editable: false,
-      generated: false,
       tokenCount: {
         tokens: 0,
         accuracy: "estimated",
       },
     },
+    loadedInstructionContributors: [],
     requirements: {
       cliRequirements: [],
       env: [],
@@ -40,6 +40,9 @@ function extensionInventoryItem(
     },
     title: id,
     typescriptApiEnabled: false,
+    tooling: {
+      typescriptApiStatus: "disabled",
+    },
     usage: [],
     ...overrides,
   };

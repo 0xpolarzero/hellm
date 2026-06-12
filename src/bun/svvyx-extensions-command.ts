@@ -52,9 +52,12 @@ import {
 import type {
   ExtensionDefaultUsageReadModel,
   ExtensionChangeCardReadModel,
+  ExtensionGeneratedReadonlyBlockReadModel,
   ExtensionInstructionFileReadModel,
   ExtensionInventoryItemReadModel,
+  ExtensionLoadedInstructionContributorReadModel,
   ExtensionSnapshotReadModel,
+  ExtensionToolingReadModel,
   ExtensionUsageReadiness,
   ExtensionsInventoryReadModel,
 } from "../shared/workspace-contract";
@@ -70,6 +73,10 @@ import {
   writeTextFileAtomically,
 } from "./file-backed-resource";
 import { countPromptTokens } from "./token-count";
+import {
+  ARTIFACTS_CLIENT_DECLARATION,
+  WORKFLOWS_CLIENT_DECLARATION,
+} from "./execute-typescript-api-declaration";
 
 export type CliRequirementStatus = {
   id: string;
@@ -404,7 +411,7 @@ export function writeExtensionInstructionFile(input: {
   extensionId: string;
   extensionsRoot?: string;
   file: string;
-  kind?: "full" | "minimal";
+  kind?: "full" | "minimal" | "script";
   mode?: "compare-and-swap" | "overwrite";
 }): {
   ok: true;
@@ -417,6 +424,45 @@ export function writeExtensionInstructionFile(input: {
     extensionsRoot: input.extensionsRoot,
   });
   const paths = editableExtensionInspectPaths(extension, input.extensionsRoot);
+  if (input.kind === "script") {
+    const generatedInstruction = (extension.generatedInstructions ?? []).find(
+      (instruction) =>
+        basename(instruction.script) === input.file || instruction.script === input.file,
+    );
+    if (!generatedInstruction) {
+      throw extensionsCommandError(
+        "SCRIPT_NOT_FOUND",
+        `Generated instruction script not found: ${input.file}`,
+      );
+    }
+    const file = basename(generatedInstruction.script);
+    const path = join(paths.sourceRoot, generatedInstruction.script);
+    if (!existsSync(path)) {
+      const packaged = resolveGeneratedInstructionScriptPath(generatedInstruction, process.cwd());
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, readOptionalFile(packaged));
+    }
+    assertFileBackedSaveAllowed({
+      baseVersion: input.baseSourceVersion,
+      current: {
+        extensionId: extension.id,
+        file,
+        path,
+        content: readOptionalFile(path),
+        sourceVersion: readFileBackedVersion(path),
+      },
+      currentVersion: readFileBackedVersion(path),
+      mode: input.mode,
+    });
+    writeTextFileAtomically(path, input.content);
+    return {
+      ok: true,
+      extensionId: extension.id,
+      file,
+      path,
+      sourceVersion: readFileBackedVersion(path),
+    };
+  }
   if (input.kind === "minimal") {
     const file = "minimal.md";
     const path = paths.instructionsMinimal;
@@ -583,9 +629,21 @@ export async function readBuiltinExtensionsInventory(
       title: extension.title,
       description: extension.description,
       customized: extensionCustomized(extension, input.cwd ?? process.cwd()),
-      minimalInstruction: extensionMinimalInstructionReadModel(extension, input.extensionsRoot),
+      ...(extension.id === "extension-loading"
+        ? {}
+        : {
+            minimalInstruction: extensionMinimalInstructionReadModel(
+              extension,
+              input.extensionsRoot,
+            ),
+          }),
+      loadedInstructionContributors: extensionLoadedInstructionContributors(
+        extension,
+        input.cwd ?? process.cwd(),
+        input.extensionsRoot,
+      ),
       typescriptApiEnabled: extension.typescriptApiEnabled,
-      instructionFiles: extensionInstructionFileReadModels(extension, input.cwd ?? process.cwd()),
+      tooling: extensionToolingReadModel(extension, input.cwd ?? process.cwd()),
       usage:
         extension.category === "user"
           ? userExtensionUsageStates(extension.id, input.agentSettingsStore)
@@ -616,10 +674,11 @@ export async function readBuiltinExtensionsInventory(
   };
 }
 
-function extensionInstructionFileReadModels(
+function extensionLoadedInstructionContributors(
   extension: ResolvedExtensionRecord,
   cwd: string,
-): ExtensionInventoryItemReadModel["instructionFiles"] {
+  extensionsRoot: string | undefined,
+): ExtensionLoadedInstructionContributorReadModel[] {
   const configByName = new Map(
     (extension.instructionFiles ?? []).map((file) => [file.file, file.bypassed]),
   );
@@ -629,40 +688,101 @@ function extensionInstructionFileReadModels(
       instruction,
     ]),
   );
-  const rows = new Map<string, ExtensionInstructionFileReadModel>();
+  const contributors = new Map<string, ExtensionLoadedInstructionContributorReadModel>();
   if (extension.category !== "builtin" || extension.sourceRoot) {
     for (const path of extension.instructionSourceFiles) {
       const name = basename(path);
+      if (generatedByName.has(name)) continue;
       const content = readOptionalFile(path);
-      const generated = generatedByName.has(name);
-      rows.set(name, {
-        name,
-        path,
-        content,
-        sourceVersion: readFileBackedVersion(path),
-        skipped: configByName.get(name) ?? false,
-        editable: extension.category !== "external_instruction" && !generated,
-        generated,
-        tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: content }),
+      contributors.set(name, {
+        kind: "source",
+        file: instructionFileReadModel({
+          content,
+          editable: extension.category !== "external_instruction",
+          name,
+          path,
+          skipped: configByName.get(name) ?? false,
+        }),
       });
     }
   }
   for (const [name, instruction] of generatedByName) {
-    if (rows.has(name)) continue;
-    const path = resolveGeneratedInstructionReadPath(instruction, cwd);
-    const content = readOptionalFile(path);
-    rows.set(name, {
+    const scriptPath = editableGeneratedInstructionScriptPath(
+      extension,
+      instruction,
+      cwd,
+      extensionsRoot,
+    );
+    const packagedScriptPath = resolveGeneratedInstructionScriptPath(instruction, cwd);
+    const outputPath = resolveGeneratedInstructionReadPath(instruction, cwd);
+    const scriptContent = existsSync(scriptPath)
+      ? readOptionalFile(scriptPath)
+      : readOptionalFile(packagedScriptPath);
+    const outputContent = readOptionalFile(outputPath);
+    contributors.set(name, {
+      kind: "scripted",
       name,
-      path,
-      content,
-      sourceVersion: readFileBackedVersion(path),
       skipped: configByName.get(name) ?? false,
-      editable: false,
-      generated: true,
-      tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: content }),
+      script: instructionFileReadModel({
+        content: scriptContent,
+        editable: true,
+        name: basename(instruction.script),
+        path: scriptPath,
+        skipped: false,
+      }),
+      output: instructionFileReadModel({
+        content: outputContent,
+        editable: false,
+        name,
+        path: outputPath,
+        skipped: configByName.get(name) ?? false,
+      }),
+      regenerateCommand: `svvyx extensions build ${extension.id} --json`,
     });
   }
-  return orderedInstructionFileNames(extension, rows.keys()).map((name) => rows.get(name)!);
+  return orderedInstructionFileNames(extension, contributors.keys()).map(
+    (name) => contributors.get(name)!,
+  );
+}
+
+function editableGeneratedInstructionScriptPath(
+  extension: ResolvedExtensionRecord,
+  instruction: ExtensionGeneratedInstruction,
+  cwd: string,
+  extensionsRoot: string | undefined,
+): string {
+  if (extension.sourceRoot) {
+    return join(extension.sourceRoot, instruction.script);
+  }
+  if (extension.category === "builtin") {
+    return join(
+      builtinOverlayPaths(
+        extension.id,
+        extensionsRoot,
+        extension.interface as "instructions" | "svvyx",
+      ).sourceRoot,
+      instruction.script,
+    );
+  }
+  return resolveGeneratedInstructionScriptPath(instruction, cwd);
+}
+
+function instructionFileReadModel(input: {
+  content: string;
+  editable: boolean;
+  name: string;
+  path: string;
+  skipped: boolean;
+}): ExtensionInstructionFileReadModel {
+  return {
+    name: input.name,
+    path: input.path,
+    content: input.content,
+    sourceVersion: readFileBackedVersion(input.path),
+    skipped: input.skipped,
+    editable: input.editable,
+    tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
+  };
 }
 
 function orderedInstructionFileNames(
@@ -688,13 +808,144 @@ function resolveGeneratedInstructionReadPath(
   cwd: string,
 ): string {
   const name = basename(instruction.output);
-  const candidates = [
-    resolve(cwd, instruction.output),
-    resolve(cwd, "generated", instruction.output),
-    resolve(cwd, "generated", "instructions", "full", name),
-    resolve(import.meta.dir, "..", "..", "generated", "instructions", "full", name),
-  ];
+  const candidates = packagedExtensionAssetRoots(cwd).flatMap((root) => [
+    resolve(root, instruction.output),
+    resolve(root, "generated", instruction.output),
+    resolve(root, "generated", "instructions", "full", name),
+  ]);
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+function resolveGeneratedInstructionScriptPath(
+  instruction: ExtensionGeneratedInstruction,
+  cwd: string,
+): string {
+  const candidates = packagedExtensionAssetRoots(cwd).map((root) =>
+    resolve(root, instruction.script),
+  );
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+function packagedExtensionAssetRoots(cwd: string): string[] {
+  const roots = [
+    resolve(cwd),
+    resolve(import.meta.dir, "..", ".."),
+    dirname(process.execPath),
+    resolve(dirname(process.execPath), "..", "Resources"),
+    resolve(dirname(process.execPath), "..", "Resources", "app"),
+  ];
+  return [...new Set(roots)];
+}
+
+function extensionToolingReadModel(
+  extension: ResolvedExtensionRecord,
+  cwd: string,
+): ExtensionToolingReadModel {
+  const typescriptApiDeclaration = extensionTypescriptApiDeclaration(extension, cwd);
+  return {
+    ...(extension.interface === "native_tool"
+      ? {
+          nativeToolSchema: generatedReadonlyBlock({
+            content: `${JSON.stringify(
+              {
+                id: extension.id,
+                title: extension.title,
+                description: extension.description,
+                category: extension.category,
+              },
+              null,
+              2,
+            )}\n`,
+            name: "tool-schema.json",
+            path: `generated/native-tools/${extension.id}.schema.json`,
+          }),
+        }
+      : {}),
+    ...(extension.interface === "svvyx"
+      ? {
+          svvyxCommandSource: extensionSvvyxCommandSourceReadModel(extension, cwd),
+          svvyxCommandSchema: extensionSvvyxCommandSchemaReadModel(extension, cwd),
+          typescriptApiStatus: extension.typescriptApiEnabled
+            ? typescriptApiDeclaration
+              ? "emitted"
+              : "not_emitted"
+            : "disabled",
+          ...(typescriptApiDeclaration ? { typescriptApiDeclaration } : {}),
+        }
+      : { typescriptApiStatus: "disabled" }),
+  };
+}
+
+function generatedReadonlyBlock(input: {
+  content: string;
+  name: string;
+  path: string;
+}): ExtensionGeneratedReadonlyBlockReadModel {
+  return {
+    name: input.name,
+    path: input.path,
+    content: input.content,
+    tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
+  };
+}
+
+function extensionSvvyxCommandSourceReadModel(
+  extension: ResolvedExtensionRecord,
+  cwd: string,
+): ExtensionInstructionFileReadModel {
+  const path = extension.sourceRoot
+    ? join(extension.sourceRoot, "source", "index.ts")
+    : resolve(cwd, "src", "bun", `${extension.id}-extension.ts`);
+  const content = readOptionalFile(path);
+  return instructionFileReadModel({
+    content,
+    editable: extension.category !== "external_instruction",
+    name: "source/index.ts",
+    path,
+    skipped: false,
+  });
+}
+
+function extensionSvvyxCommandSchemaReadModel(
+  extension: ResolvedExtensionRecord,
+  cwd: string,
+): ExtensionGeneratedReadonlyBlockReadModel {
+  const path = resolve(cwd, "generated", "extensions", extension.id, "commands.json");
+  const content = readOptionalFile(path);
+  return generatedReadonlyBlock({
+    content: content || "Command schema is generated by `svvyx extensions build`.\n",
+    name: "commands.json",
+    path,
+  });
+}
+
+function extensionTypescriptApiDeclaration(
+  extension: ResolvedExtensionRecord,
+  cwd: string,
+): ExtensionGeneratedReadonlyBlockReadModel | null {
+  if (!extension.typescriptApiEnabled) return null;
+  if (extension.id === "artifacts") {
+    return generatedReadonlyBlock({
+      content: ARTIFACTS_CLIENT_DECLARATION,
+      name: "artifacts.types.d.ts",
+      path: "generated/execute-typescript-api.generated.ts",
+    });
+  }
+  if (extension.id === "workflows") {
+    return generatedReadonlyBlock({
+      content: WORKFLOWS_CLIENT_DECLARATION,
+      name: "workflows.types.d.ts",
+      path: "generated/execute-typescript-api.generated.ts",
+    });
+  }
+  const path = resolve(cwd, "generated", "extensions", extension.id, "types.d.ts");
+  const content = readOptionalFile(path);
+  if (!content.trim()) return null;
+  return generatedReadonlyBlock({
+    content,
+    name: "types.d.ts",
+    path,
+  });
 }
 
 function extensionMinimalInstructionReadModel(
@@ -720,9 +971,7 @@ function extensionMinimalInstructionReadModel(
     sourceVersion:
       path && existsSync(path) ? readFileBackedVersion(path) : fileBackedTextVersion(content),
     skipped: false,
-    editable:
-      extension.category !== "external_instruction" && extension.interface !== "native_tool",
-    generated: false,
+    editable: extension.category !== "external_instruction",
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: content }),
   };
 }
@@ -775,22 +1024,18 @@ function externalInstructionInventoryItem(
     title: source.title,
     description: `Read-only ${source.kind} external instruction file.`,
     customized: false,
-    minimalInstruction: {
-      name: "minimal.md",
-      path: source.path,
-      content: "External instruction files are loaded read-only when enabled for this actor.",
-      sourceVersion: fileBackedTextVersion(
-        "External instruction files are loaded read-only when enabled for this actor.",
-      ),
-      skipped: false,
-      editable: false,
-      generated: false,
-      tokenCount: countPromptTokens({
-        provider: "openai",
-        model: "gpt-4o",
-        text: "External instruction files are loaded read-only when enabled for this actor.",
-      }),
-    },
+    loadedInstructionContributors: [
+      {
+        kind: "source",
+        file: instructionFileReadModel({
+          content: source.content,
+          editable: false,
+          name: basename(source.path),
+          path: source.path,
+          skipped: !source.enabled || !readable,
+        }),
+      },
+    ],
     externalInstruction: {
       sourceGroup: source.sourceGroup,
       rootId: source.rootId,
@@ -804,6 +1049,9 @@ function externalInstructionInventoryItem(
       readStatus: source.readStatus,
     },
     typescriptApiEnabled: false,
+    tooling: {
+      typescriptApiStatus: "disabled",
+    },
     usage: (["orchestrator", "handler", "workflow-task"] as const).map((actorKind) => ({
       actorKind,
       agentProfile: "external_instruction",

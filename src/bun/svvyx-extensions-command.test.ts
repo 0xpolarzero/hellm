@@ -2153,6 +2153,21 @@ describe("svvyx extensions command", () => {
     ).toMatchObject({
       category: "external_instruction",
       interface: "instructions",
+      loadedInstructionContributors: [
+        {
+          kind: "source",
+          file: {
+            name: "AGENTS.md",
+            path: "/repo/AGENTS.md",
+            content: "# Repo Standards\n\nUse the repo contract.",
+            editable: false,
+            skipped: false,
+          },
+        },
+      ],
+      tooling: {
+        typescriptApiStatus: "disabled",
+      },
       externalInstruction: {
         path: "/repo/AGENTS.md",
         content: "# Repo Standards\n\nUse the repo contract.",
@@ -2165,6 +2180,11 @@ describe("svvyx extensions command", () => {
         expect.objectContaining({ actorKind: "workflow-task", state: "unavailable" }),
       ],
     });
+    expect(
+      inventory.extensions.find(
+        (extension) => extension.id === "external_instruction:AGENTS.md:/repo/AGENTS.md",
+      )?.minimalInstruction,
+    ).toBeUndefined();
     expect(
       inventory.extensions.find(
         (extension) => extension.id === "external_instruction:CLAUDE.md:/repo/CLAUDE.md",
@@ -2196,6 +2216,7 @@ describe("svvyx extensions command", () => {
       includeUserExtensions: true,
     });
     const baseCommon = inventory.extensions.find((extension) => extension.id === "base-common");
+    const artifacts = inventory.extensions.find((extension) => extension.id === "artifacts");
     const web = inventory.extensions.find((extension) => extension.id === "web");
     const shell = inventory.extensions.find((extension) => extension.id === "shell");
 
@@ -2204,39 +2225,73 @@ describe("svvyx extensions command", () => {
       minimalInstruction: {
         name: "minimal.md",
         editable: true,
-        generated: false,
       },
-      instructionFiles: [
+      loadedInstructionContributors: [
         {
+          kind: "scripted",
           name: "010-base-common.generated.md",
-          editable: false,
-          generated: true,
           skipped: false,
+          script: {
+            editable: true,
+          },
+          output: {
+            name: "010-base-common.generated.md",
+            content: "packaged base common\n",
+            editable: false,
+          },
         },
       ],
     });
-    expect(baseCommon?.minimalInstruction.content).toContain("Shared operating instructions");
+    expect(baseCommon?.minimalInstruction?.content).toContain("Shared operating instructions");
     expect(web).toMatchObject({
       customized: false,
-      instructionFiles: [
+      loadedInstructionContributors: [
         {
+          kind: "scripted",
           name: "010-tinyfish-cli.generated.md",
-          editable: false,
-          generated: true,
           skipped: false,
+          output: {
+            name: "010-tinyfish-cli.generated.md",
+            content: "packaged tinyfish\n",
+            editable: false,
+          },
         },
       ],
     });
     expect(shell).toMatchObject({
       customized: false,
       minimalInstruction: {
-        editable: false,
+        editable: true,
       },
-      instructionFiles: [],
+      loadedInstructionContributors: [],
+      tooling: {
+        nativeToolSchema: {
+          name: "tool-schema.json",
+        },
+        typescriptApiStatus: "disabled",
+      },
     });
+    expect(shell?.tooling.nativeToolSchema?.content).toContain('"id": "shell"');
+    expect(artifacts).toMatchObject({
+      tooling: {
+        typescriptApiStatus: "emitted",
+        typescriptApiDeclaration: {
+          name: "artifacts.types.d.ts",
+        },
+      },
+    });
+    expect(artifacts?.tooling.typescriptApiDeclaration?.content).toContain("artifacts");
     expect(JSON.stringify(inventory.extensions)).not.toContain("docs/specs/extension");
-    expect(baseCommon?.instructionFiles?.[0]?.path).not.toContain("docs/");
-    expect(web?.instructionFiles?.[0]?.path).not.toContain("docs/");
+    expect(
+      baseCommon?.loadedInstructionContributors[0]?.kind === "scripted"
+        ? baseCommon.loadedInstructionContributors[0].output.path
+        : "",
+    ).not.toContain("docs/");
+    expect(
+      web?.loadedInstructionContributors[0]?.kind === "scripted"
+        ? web.loadedInstructionContributors[0].output.path
+        : "",
+    ).not.toContain("docs/");
 
     const minimalPath = join(
       extensionsRoot,
@@ -2251,7 +2306,7 @@ describe("svvyx extensions command", () => {
       kind: "minimal",
       file: "minimal.md",
       content: "Custom base common hint.\n",
-      baseSourceVersion: baseCommon?.minimalInstruction.sourceVersion,
+      baseSourceVersion: baseCommon?.minimalInstruction?.sourceVersion,
       extensionsRoot,
     });
     expect(readFileSync(minimalPath, "utf8")).toBe("Custom base common hint.\n");
@@ -2267,11 +2322,13 @@ describe("svvyx extensions command", () => {
         content: "Custom base common hint.\n",
         path: minimalPath,
       },
-      instructionFiles: [
+      loadedInstructionContributors: [
         {
+          kind: "scripted",
           name: "010-base-common.generated.md",
-          editable: false,
-          generated: true,
+          output: {
+            editable: false,
+          },
         },
       ],
     });

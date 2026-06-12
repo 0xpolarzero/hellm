@@ -27,6 +27,12 @@ const nativeWindowControlsLibrary = join(
 );
 const nativeSandboxHelper = join(projectRoot, "build", "native", "svvy-sandbox-helper");
 const generatedInstructionAssets = join(projectRoot, "generated", "instructions", "full");
+const generatedInstructionScripts = [
+  "generate-api-declarations.ts",
+  "generate-cx-skill.ts",
+  "generate-smithers-fragment.ts",
+  "generate-tinyfish-cli.ts",
+];
 
 function copyGeneratedInstructionAssets(): void {
   if (!existsSync(generatedInstructionAssets)) {
@@ -39,6 +45,20 @@ function copyGeneratedInstructionAssets(): void {
   const destination = join(appContentsDir, "MacOS", "generated", "instructions", "full");
   mkdirSync(destination, { recursive: true });
   cpSync(generatedInstructionAssets, destination, { recursive: true });
+}
+
+function copyGeneratedInstructionScripts(): void {
+  const appContentsDir = join(appCodeDir, "..", "..");
+  const destination = join(appContentsDir, "MacOS", "scripts");
+  mkdirSync(destination, { recursive: true });
+  for (const script of generatedInstructionScripts) {
+    const source = join(projectRoot, "scripts", script);
+    if (!existsSync(source)) {
+      console.error(`postbuild: missing generated instruction script at ${source}`);
+      process.exit(1);
+    }
+    cpSync(source, join(destination, script));
+  }
 }
 
 function ensureNativeWindowControlsLibrary(): void {
@@ -111,6 +131,7 @@ if (buildEnv === "dev") {
   copyNativeWindowControlsLibrary();
   copyNativeSandboxHelper();
   copyGeneratedInstructionAssets();
+  copyGeneratedInstructionScripts();
   console.log("postbuild: linked repo node_modules into dev bundle");
   process.exit(0);
 }
@@ -209,4 +230,5 @@ while (pendingPackages.length > 0) {
 copyNativeWindowControlsLibrary();
 copyNativeSandboxHelper();
 copyGeneratedInstructionAssets();
+copyGeneratedInstructionScripts();
 console.log(`postbuild: copied ${copied} packages to bundle`);

@@ -130,13 +130,16 @@
         sourceVersion: "",
         skipped: false,
         editable: extension.interface !== "native_tool",
-        generated: false,
         tokenCount: {
           tokens: 0,
           accuracy: "estimated",
         },
       },
+      loadedInstructionContributors: [],
       typescriptApiEnabled: extension.typescriptApiEnabled,
+      tooling: {
+        typescriptApiStatus: extension.typescriptApiEnabled ? "not_emitted" : "disabled",
+      },
       usage: [],
       requirements: {
         cliRequirements: [],
@@ -242,9 +245,23 @@
   }
 
   function extensionTokenCount(extension: ExtensionInventoryItemReadModel): number {
-    return (extension.instructionFiles ?? [])
-      .filter((file) => !file.skipped)
-      .reduce((total, file) => total + file.tokenCount.tokens, 0);
+    return extension.loadedInstructionContributors
+      .filter((contributor) => !contributorSkipped(contributor))
+      .reduce((total, contributor) => total + contributorTokenCount(contributor), 0);
+  }
+
+  function contributorSkipped(
+    contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
+  ): boolean {
+    return contributor.kind === "source" ? contributor.file.skipped : contributor.skipped;
+  }
+
+  function contributorTokenCount(
+    contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
+  ): number {
+    return contributor.kind === "source"
+      ? contributor.file.tokenCount.tokens
+      : contributor.output.tokenCount.tokens;
   }
 
   function formatPromptTokenCount(tokens: number): string {
@@ -352,7 +369,7 @@
 
   async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
     if (pendingExtensionAction) return;
-    const nextIndex = (extension.instructionFiles?.length ?? 0) + 1;
+    const nextIndex = extension.loadedInstructionContributors.length + 1;
     const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.md`;
     pendingExtensionAction = `add-instruction:${extension.id}`;
     inventoryError = null;
@@ -1481,20 +1498,23 @@
               {/if}
             </div>
           {/if}
-          <div class="extension-minimal-instruction">
-            <div class="extension-instruction-list-header">
-              <strong>Minimal instruction</strong>
+          {#if extension.minimalInstruction}
+            <div class="extension-minimal-instruction">
+              <div class="extension-instruction-list-header">
+                <strong>Minimal instruction</strong>
+              </div>
+              <ExtensionInstructionFileEditor
+                runtime={runtime}
+                extensionId={extension.id}
+                kind="minimal"
+                file={extension.minimalInstruction}
+                label="source"
+                editor={appPreferences?.preferredExternalEditor}
+                disabled={pendingExtensionAction !== null}
+                onSaved={() => void loadExtensionsInventory()}
+              />
             </div>
-            <ExtensionInstructionFileEditor
-              runtime={runtime}
-              extensionId={extension.id}
-              kind="minimal"
-              file={extension.minimalInstruction}
-              editor={appPreferences?.preferredExternalEditor}
-              disabled={pendingExtensionAction !== null}
-              onSaved={() => void loadExtensionsInventory()}
-            />
-          </div>
+          {/if}
           {#if cliRequirements.length}
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
               {#each cliRequirements as requirement (requirement.id)}
@@ -1517,10 +1537,10 @@
           {:else if declaredCliBinaries.length && inventoryError}
             <span class="extension-cli-error">{inventoryError}</span>
           {/if}
-          {#if extension.instructionFiles?.length}
+          {#if extension.loadedInstructionContributors.length}
             <div class="extension-instruction-list">
               <div class="extension-instruction-list-header">
-                <strong>Instruction files</strong>
+                <strong>Loaded instructions</strong>
                 <Button
                   size="xs"
                   variant="ghost"
@@ -1531,40 +1551,77 @@
                   Add
                 </Button>
               </div>
-              {#each extension.instructionFiles as file (file.name)}
+              {#each extension.loadedInstructionContributors as contributor (contributor.kind === "source" ? contributor.file.name : contributor.name)}
                 <div class="extension-instruction-row">
                   <div class="extension-instruction-row-actions">
-                    <Tooltip label={file.skipped ? "Include file in context" : "Skip file without deleting it"}>
+                    <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
                       <button
                         type="button"
                         class="extension-icon-action"
                         disabled={pendingExtensionAction !== null}
-                        aria-label={file.skipped ? `Include ${file.name}` : `Skip ${file.name}`}
-                        onclick={() => setInstructionSkipped(extension.id, file.name, !file.skipped)}
+                        aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
+                        onclick={() =>
+                          setInstructionSkipped(
+                            extension.id,
+                            contributor.kind === "source" ? contributor.file.name : contributor.output.name,
+                            !contributorSkipped(contributor),
+                          )}
                       >
                         <BanIcon size={13} aria-hidden="true" />
                       </button>
                     </Tooltip>
-                    <Tooltip label={file.generated || !file.editable ? "Read-only files cannot be removed" : "Remove file to app-managed trash"}>
+                    <Tooltip label={contributor.kind !== "source" || !contributor.file.editable ? "Only source instruction files can be removed" : "Remove file to app-managed trash"}>
                       <button
                         type="button"
                         class="extension-icon-action danger"
-                        disabled={pendingExtensionAction !== null || file.generated || !file.editable}
-                        aria-label={`Remove ${file.name}`}
-                        onclick={() => removeInstructionFile(extension.id, file.name)}
+                        disabled={pendingExtensionAction !== null || contributor.kind !== "source" || !contributor.file.editable}
+                        aria-label="Remove instruction contributor"
+                        onclick={() =>
+                          contributor.kind === "source"
+                            ? removeInstructionFile(extension.id, contributor.file.name)
+                            : undefined}
                       >
                         <Trash2Icon size={13} aria-hidden="true" />
                       </button>
                     </Tooltip>
                   </div>
-                  <ExtensionInstructionFileEditor
-                    runtime={runtime}
-                    extensionId={extension.id}
-                    file={file}
-                    editor={appPreferences?.preferredExternalEditor}
-                    disabled={pendingExtensionAction !== null}
-                    onSaved={() => void loadExtensionsInventory()}
-                  />
+                  {#if contributor.kind === "source"}
+                    <ExtensionInstructionFileEditor
+                      runtime={runtime}
+                      extensionId={extension.id}
+                      file={contributor.file}
+                      label="source"
+                      editor={appPreferences?.preferredExternalEditor}
+                      disabled={pendingExtensionAction !== null}
+                      onSaved={() => void loadExtensionsInventory()}
+                    />
+                  {:else}
+                    <div class="scripted-instruction-contributor">
+                      <div class="extension-instruction-list-header">
+                        <strong>{contributor.name}</strong>
+                        <code>{contributor.regenerateCommand}</code>
+                      </div>
+                      <ExtensionInstructionFileEditor
+                        runtime={runtime}
+                        extensionId={extension.id}
+                        kind="script"
+                        file={contributor.script}
+                        label="generator"
+                        editor={appPreferences?.preferredExternalEditor}
+                        disabled={pendingExtensionAction !== null}
+                        onSaved={() => void loadExtensionsInventory()}
+                      />
+                      <ExtensionInstructionFileEditor
+                        runtime={runtime}
+                        extensionId={extension.id}
+                        file={contributor.output}
+                        label="last generated"
+                        editor={appPreferences?.preferredExternalEditor}
+                        disabled={pendingExtensionAction !== null}
+                        onSaved={() => void loadExtensionsInventory()}
+                      />
+                    </div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -1578,6 +1635,59 @@
               <PlusIcon size={13} aria-hidden="true" />
               Add instruction file
             </Button>
+          {/if}
+          {#if extension.tooling.nativeToolSchema || extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema || extension.tooling.typescriptApiStatus !== "disabled"}
+            <div class="extension-tooling-section" aria-label={`${extension.title} tooling`}>
+              <div class="extension-instruction-list-header">
+                <strong>Tooling</strong>
+              </div>
+              {#if extension.tooling.nativeToolSchema}
+                <div class="extension-readonly-block">
+                  <div class="extension-readonly-block-bar">
+                    <strong>{extension.tooling.nativeToolSchema.name}</strong>
+                    <span>native tool schema</span>
+                  </div>
+                  <pre>{extension.tooling.nativeToolSchema.content}</pre>
+                </div>
+              {/if}
+              {#if extension.tooling.svvyxCommandSource}
+                <ExtensionInstructionFileEditor
+                  runtime={runtime}
+                  extensionId={extension.id}
+                  file={extension.tooling.svvyxCommandSource}
+                  label="command source"
+                  editor={appPreferences?.preferredExternalEditor}
+                  disabled={pendingExtensionAction !== null}
+                  onSaved={() => void loadExtensionsInventory()}
+                />
+              {/if}
+              {#if extension.tooling.svvyxCommandSchema}
+                <div class="extension-readonly-block">
+                  <div class="extension-readonly-block-bar">
+                    <strong>{extension.tooling.svvyxCommandSchema.name}</strong>
+                    <span>generated command schema</span>
+                  </div>
+                  <pre>{extension.tooling.svvyxCommandSchema.content}</pre>
+                </div>
+              {/if}
+              {#if extension.tooling.typescriptApiDeclaration}
+                <div class="extension-readonly-block">
+                  <div class="extension-readonly-block-bar">
+                    <strong>{extension.tooling.typescriptApiDeclaration.name}</strong>
+                    <span>generated TypeScript API</span>
+                  </div>
+                  <pre>{extension.tooling.typescriptApiDeclaration.content}</pre>
+                </div>
+              {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
+                <div class="extension-readonly-block">
+                  <div class="extension-readonly-block-bar">
+                    <strong>TypeScript API</strong>
+                    <span>enabled, not emitted</span>
+                  </div>
+                  <pre>Generated TypeScript API declarations are not emitted for this extension in the current runtime.</pre>
+                </div>
+              {/if}
+            </div>
           {/if}
           {#if envRequirements.length}
             <div class="extension-env-requirements" aria-label={`${extension.title} env readiness`}>
@@ -1981,12 +2091,7 @@
     color: var(--ui-text-tertiary);
   }
 
-  .extension-icon-action:disabled {
-    cursor: default;
-    opacity: 0.48;
-  }
-
-  .extension-icon-action {
+  .extension-icon-action:not(:disabled) {
     cursor: pointer;
   }
 
@@ -2004,6 +2109,11 @@
 
   .extension-icon-action:focus-visible {
     box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-icon-action:disabled {
+    cursor: default;
+    opacity: 0.48;
   }
 
   .extension-kind-icon {
@@ -2115,6 +2225,68 @@
     align-content: start;
     gap: 0.16rem;
     padding-top: 1.45rem;
+  }
+
+  .scripted-instruction-contributor,
+  .extension-tooling-section {
+    display: grid;
+    gap: 0.42rem;
+    min-width: 0;
+  }
+
+  .scripted-instruction-contributor .extension-instruction-list-header code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+  }
+
+  .extension-readonly-block {
+    display: grid;
+    gap: 0.34rem;
+    min-width: 0;
+    padding: 0.42rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
+  }
+
+  .extension-readonly-block-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    min-width: 0;
+  }
+
+  .extension-readonly-block-bar strong {
+    overflow: hidden;
+    color: var(--ui-text-primary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .extension-readonly-block-bar span {
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
+  .extension-readonly-block pre {
+    max-height: 14rem;
+    overflow: auto;
+    margin: 0;
+    padding: 0.55rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: var(--ui-surface);
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    white-space: pre-wrap;
   }
 
   .snapshot-popover {

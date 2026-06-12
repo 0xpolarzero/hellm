@@ -1171,14 +1171,20 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         );
         const path =
           input.kind === "minimal"
-            ? extension?.minimalInstruction.path
-            : extension?.instructionFiles?.find((file) => file.name === input.name)?.path;
+            ? extension?.minimalInstruction?.path
+            : input.kind === "script"
+              ? extension?.loadedInstructionContributors
+                  .filter((contributor) => contributor.kind === "scripted")
+                  .find((contributor) => contributor.script.name === input.name)?.script.path
+              : extension?.loadedInstructionContributors
+                  .filter((contributor) => contributor.kind === "source")
+                  .find((contributor) => contributor.file.name === input.name)?.file.path;
         if (input.kind === "minimal" && path && !existsSync(path) && extension) {
           writeExtensionInstructionFile({
             extensionId: input.extensionId,
             file: input.name,
             kind: "minimal",
-            content: extension.minimalInstruction.content,
+            content: extension.minimalInstruction?.content ?? "",
             mode: "overwrite",
             extensionsRoot: runtime.catalog.getExtensionsRoot(),
           });

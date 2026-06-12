@@ -134,7 +134,11 @@ export function extensionUsageItems(
       description: extension.description,
       customized: false,
       minimalInstruction: minimalInstructionPlaceholder(extension.minimalLoadingHint),
+      loadedInstructionContributors: [],
       typescriptApiEnabled: extension.typescriptApiEnabled,
+      tooling: {
+        typescriptApiStatus: extension.typescriptApiEnabled ? "not_emitted" : "disabled",
+      },
       usage: [],
       requirements: {
         cliRequirements: [],
@@ -169,7 +173,11 @@ export function extensionUsageItems(
           description: "Custom extension usage override.",
           customized: false,
           minimalInstruction: minimalInstructionPlaceholder(""),
+          loadedInstructionContributors: [],
           typescriptApiEnabled: false,
+          tooling: {
+            typescriptApiStatus: "disabled",
+          },
           usage: [],
           requirements: {
             cliRequirements: [],
@@ -297,7 +305,6 @@ function minimalInstructionPlaceholder(
     sourceVersion: "",
     skipped: false,
     editable: false,
-    generated: false,
     tokenCount: {
       tokens: 0,
       accuracy: "estimated",
