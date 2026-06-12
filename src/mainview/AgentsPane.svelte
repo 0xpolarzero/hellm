@@ -1194,7 +1194,7 @@
 
   .agent-drag-handle:not(:disabled):focus-visible,
   .agent-expand-button:focus-visible,
-  .agent-icon-button:focus-visible {
+  .agent-icon-button:focus-visible:not(:disabled) {
     box-shadow: var(--ui-focus-ring);
   }
 
@@ -1306,15 +1306,15 @@
     cursor: pointer;
   }
 
-  .agent-icon-button:hover,
-  .agent-icon-button:focus-visible {
+  .agent-icon-button:hover:not(:disabled),
+  .agent-icon-button:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-hover-bg);
     color: var(--ui-text-primary);
   }
 
-  .agent-icon-button.danger:hover,
-  .agent-icon-button.danger:focus-visible {
+  .agent-icon-button.danger:hover:not(:disabled),
+  .agent-icon-button.danger:focus-visible:not(:disabled) {
     background: var(--ui-danger-soft);
     color: var(--ui-danger);
   }

@@ -508,7 +508,10 @@ export async function readBuiltinExtensionsInventory(
     reversibleChanges: readExtensionChangeCards(input.extensionsRoot, {
       includeUserExtensions: input.includeUserExtensions === true,
     }),
-    snapshots: listExtensionSnapshotSummaries(input.extensionsRoot),
+    snapshots: listExtensionSnapshotSummaries(input.extensionsRoot, {
+      agentSettingsStore: input.agentSettingsStore,
+      envSecretStore: input.envSecretStore,
+    }),
   };
 }
 
@@ -2316,7 +2319,10 @@ async function runSnapshotsCommand(
     return {
       output: {
         ok: true,
-        snapshots: listExtensionSnapshotSummaries(root),
+        snapshots: listExtensionSnapshotSummaries(root, {
+          agentSettingsStore: options.agentSettingsStore,
+          envSecretStore: options.envSecretStore,
+        }),
       },
       commandFacts: {
         extensionSnapshotsListed: true,
@@ -2414,11 +2420,19 @@ type ExtensionSnapshotSummary = {
   status: "available";
 };
 
+const INITIAL_EXTENSION_SNAPSHOT_ID = "snap_initial";
+const INITIAL_EXTENSION_SNAPSHOT_NAME = "Initial";
+
 export function listExtensionSnapshotSummaries(
   root: string | undefined,
+  options: {
+    agentSettingsStore?: AgentSettingsStore;
+    envSecretStore?: ExtensionEnvSecretStore;
+  } = {},
 ): ExtensionSnapshotReadModel[] {
-  const resolvedRoot = root ?? defaultExtensionsRoot();
+  const resolvedRoot = resolve(root ?? defaultExtensionsRoot());
   const snapshotsRoot = join(resolvedRoot, "snapshots");
+  ensureInitialExtensionSnapshot(resolvedRoot, options);
   return listImmediateDirectories(snapshotsRoot)
     .map((id) => readSnapshotSummary(resolvedRoot, id))
     .toSorted(
@@ -2432,10 +2446,19 @@ function saveExtensionSnapshot(
   options: {
     agentSettingsStore?: AgentSettingsStore;
     envSecretStore?: ExtensionEnvSecretStore;
+    snapshotId?: string;
   } = {},
 ): ExtensionSnapshotSummary {
-  const snapshotId = `snap_${new Date().toISOString().slice(0, 10).replaceAll("-", "_")}_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  const snapshotId =
+    options.snapshotId ??
+    `snap_${new Date().toISOString().slice(0, 10).replaceAll("-", "_")}_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   const snapshotRoot = snapshotPath(root, snapshotId);
+  if (existsSync(snapshotRoot)) {
+    throw extensionsCommandError(
+      "SNAPSHOT_EXISTS",
+      `Extension snapshot already exists: ${snapshotId}`,
+    );
+  }
   mkdirSync(snapshotRoot, { recursive: true });
   copySnapshotDirectory(join(root, "sources", "user"), join(snapshotRoot, "sources", "user"));
   copySnapshotDirectory(
@@ -2458,6 +2481,23 @@ function saveExtensionSnapshot(
   };
   writeSnapshotMetadata(snapshotRoot, summary);
   return summary;
+}
+
+function ensureInitialExtensionSnapshot(
+  root: string,
+  options: {
+    agentSettingsStore?: AgentSettingsStore;
+    envSecretStore?: ExtensionEnvSecretStore;
+  } = {},
+): void {
+  const snapshotsRoot = join(root, "snapshots");
+  if (listImmediateDirectories(snapshotsRoot).length > 0) {
+    return;
+  }
+  saveExtensionSnapshot(root, INITIAL_EXTENSION_SNAPSHOT_NAME, {
+    ...options,
+    snapshotId: INITIAL_EXTENSION_SNAPSHOT_ID,
+  });
 }
 
 function renameExtensionSnapshot(

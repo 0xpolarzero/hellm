@@ -749,7 +749,6 @@
           optionClass="snapshot-option"
           placement="below"
           disabled={snapshotAction !== null || snapshotRows().length === 0}
-          onBeforeOpen={loadExtensionsInventory}
           onSelect={(snapshotId) => loadExtensionSnapshot(snapshotId)}
         />
         <Tooltip label="Save current extension state">
@@ -765,7 +764,10 @@
             <SaveIcon aria-hidden="true" size={13} strokeWidth={1.9} />
           </Button>
         </Tooltip>
-        <Tooltip label="Rename selected extension snapshot" disabled={!selectedSnapshot() || snapshotAction !== null}>
+        <Tooltip
+          label={selectedSnapshot() ? "Rename selected extension snapshot" : "Select a snapshot to rename"}
+          disabled={snapshotAction !== null}
+        >
           <Button
             class="snapshot-icon-button"
             variant="ghost"
@@ -782,9 +784,11 @@
           label={
             confirmingDeleteSnapshotId
               ? "Confirm delete"
-              : "Delete selected extension snapshot"
+              : selectedSnapshot()
+                ? "Delete selected extension snapshot"
+                : "Select a snapshot to delete"
           }
-          disabled={!selectedSnapshot() || snapshotAction !== null}
+          disabled={snapshotAction !== null}
         >
           <Button
             class={`snapshot-icon-button ${confirmingDeleteSnapshotId ? "confirming-delete" : ""}`.trim()}
@@ -1128,12 +1132,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.18rem;
+    flex: 0 1 auto;
     min-width: 0;
   }
 
   :global(.snapshot-trigger) {
     justify-content: space-between;
-    width: 9.2rem;
+    width: 18rem;
     min-height: 1.55rem;
     padding: 0.12rem 0.26rem 0.12rem 0.42rem;
     border: 0;
@@ -1164,11 +1169,16 @@
   }
 
   :global(.snapshot-menu) {
-    min-width: 20rem;
+    min-width: 30rem;
     width: max-content;
-    max-width: min(34rem, calc(100vw - 2rem));
+    max-width: min(54rem, calc(100vw - 2rem));
     max-height: 16rem;
     overflow: hidden;
+  }
+
+  :global(.history-trigger) {
+    margin-left: auto;
+    flex: 0 0 auto;
   }
 
   :global(.snapshot-option) {

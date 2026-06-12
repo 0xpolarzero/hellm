@@ -786,6 +786,23 @@ describe("default workspace renderer shell", () => {
       new URL("./ExtensionEnvValueForm.svelte", import.meta.url),
       "utf8",
     );
+    const buttonSource = await readFile(new URL("./ui/Button.svelte", import.meta.url), "utf8");
+    const agentProfileRowSource = await readFile(
+      new URL("./AgentProfileRowForm.svelte", import.meta.url),
+      "utf8",
+    );
+    const workflowAgentRowSource = await readFile(
+      new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
+      "utf8",
+    );
+    const compactSelectSource = await readFile(
+      new URL("./ui/CompactSelect.svelte", import.meta.url),
+      "utf8",
+    );
+    const compactComboboxSource = await readFile(
+      new URL("./ui/CompactCombobox.svelte", import.meta.url),
+      "utf8",
+    );
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
     const contractSource = await readFile(
       new URL("../shared/workspace-contract.ts", import.meta.url),
@@ -836,6 +853,14 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.loadExtensionSnapshot");
     expect(extensionsPaneSource).toContain("CompactCombobox");
     expect(extensionsPaneSource).toContain("Snapshots");
+    expect(extensionsPaneSource).not.toContain("onBeforeOpen={loadExtensionsInventory}");
+    expect(extensionsPaneSource).toContain("flex: 0 1 auto");
+    expect(extensionsPaneSource).toContain("width: 18rem");
+    expect(extensionsPaneSource).toContain("min-width: 30rem");
+    expect(extensionsPaneSource).toContain("max-width: min(54rem, calc(100vw - 2rem))");
+    expect(extensionsPaneSource).toContain("margin-left: auto");
+    expect(extensionsPaneSource).toContain("Select a snapshot to rename");
+    expect(extensionsPaneSource).toContain("Select a snapshot to delete");
     expect(extensionsPaneSource).toContain("CompactSelect");
     expect(extensionsPaneSource).toContain('value="History"');
     expect(extensionsPaneSource).toContain('leadingIcon="history"');
@@ -860,6 +885,14 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).not.toContain(
       'extension.cliRequirements.map((requirement) => requirement.binary).join(", ")}</code>',
     );
+    expect(buttonSource).not.toContain("not-allowed");
+    expect(buttonSource).toContain("cursor: default");
+    expect(compactSelectSource).toContain(".compact-select-option:hover:not(:disabled)");
+    expect(compactComboboxSource).toContain(".compact-combobox-option:hover:not(:disabled)");
+    expect(agentProfileRowSource).toContain(".agent-icon-button:hover:not(:disabled)");
+    expect(agentProfileRowSource).toContain(".agent-icon-button.danger:hover:not(:disabled)");
+    expect(workflowAgentRowSource).toContain(".agent-icon-button:hover:not(:disabled)");
+    expect(workflowAgentRowSource).toContain(".agent-icon-button.danger:hover:not(:disabled)");
   });
 
   it("wires Dockview transcripts to semantic blocks and structured actions", async () => {

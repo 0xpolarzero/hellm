@@ -94,8 +94,8 @@
     cursor: pointer;
   }
 
-  .context-menu button:hover,
-  .context-menu button:focus-visible {
+  .context-menu button:hover:not(:disabled),
+  .context-menu button:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-surface-subtle);
     color: var(--ui-text-primary);
@@ -105,8 +105,8 @@
     color: var(--ui-danger);
   }
 
-  .context-menu button.tone-danger:hover,
-  .context-menu button.tone-danger:focus-visible {
+  .context-menu button.tone-danger:hover:not(:disabled),
+  .context-menu button.tone-danger:focus-visible:not(:disabled) {
     background: color-mix(in oklab, var(--ui-danger) 12%, transparent);
     color: var(--ui-danger);
   }

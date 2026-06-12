@@ -3795,6 +3795,49 @@ describe("svvyx extensions command", () => {
     });
   });
 
+  it("creates a default initial extension snapshot on first snapshot read", async () => {
+    const extensionsRoot = createTempDir();
+
+    const listed = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions snapshots list --json",
+      extensionsRoot,
+    });
+
+    expect(listed.output).toEqual({
+      ok: true,
+      snapshots: [
+        {
+          id: "snap_initial",
+          name: "Initial",
+          extensionCount: 0,
+          hasSecretState: false,
+          status: "available",
+        },
+      ],
+    });
+    expect(existsSync(join(extensionsRoot, "snapshots", "snap_initial", "metadata.json"))).toBe(
+      true,
+    );
+
+    await createNotesExtension(extensionsRoot);
+    const loaded = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions snapshots load snap_initial --json",
+      extensionsRoot,
+    });
+    expect(loaded.output).toMatchObject({
+      ok: true,
+      snapshotId: "snap_initial",
+      restored: {
+        extensions: [],
+        packageState: "not_present",
+        secretState: {
+          status: "not_present",
+        },
+      },
+    });
+    expect(existsSync(join(extensionsRoot, "sources", "user", "notes"))).toBe(false);
+  });
+
   it("saves, lists, renames, and deletes local extension snapshots without exposing paths", async () => {
     const extensionsRoot = createTempDir();
     await createNotesExtension(extensionsRoot);

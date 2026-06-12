@@ -1608,7 +1608,7 @@
 
 	.workspace-mention-link.missing {
 		color: color-mix(in oklab, var(--ui-warning) 76%, var(--ui-text-primary));
-		cursor: not-allowed;
+		cursor: default;
 		text-decoration-style: dashed;
 	}
 

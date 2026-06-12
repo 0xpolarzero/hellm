@@ -345,7 +345,7 @@
   }
 
   :global([data-cmdk-item][data-disabled]) {
-    cursor: not-allowed;
+    cursor: default;
     opacity: 0.54;
   }
 

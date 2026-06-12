@@ -145,6 +145,6 @@
     border-color: var(--ui-border-soft);
     background: var(--ui-surface-muted);
     color: var(--ui-text-tertiary);
-    cursor: not-allowed;
+    cursor: default;
   }
 </style>

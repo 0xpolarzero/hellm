@@ -433,8 +433,8 @@
     color: var(--ui-text-primary);
   }
 
-  .compact-select-option:hover,
-  .compact-select-option:focus-visible {
+  .compact-select-option:hover:not(:disabled),
+  .compact-select-option:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-surface-subtle);
     color: var(--ui-text-primary);

@@ -719,7 +719,7 @@
 	.settings-field select:disabled,
 	.settings-field input:disabled {
 		color: var(--ui-text-tertiary);
-		cursor: not-allowed;
+		cursor: default;
 		opacity: 0.72;
 	}
 

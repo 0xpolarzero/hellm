@@ -593,9 +593,9 @@
     color: var(--ui-text-primary);
   }
 
-  .compact-combobox-option.focused,
-  .compact-combobox-option:hover,
-  .compact-combobox-option:focus-visible {
+  .compact-combobox-option.focused:not(:disabled),
+  .compact-combobox-option:hover:not(:disabled),
+  .compact-combobox-option:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-surface-subtle);
     color: var(--ui-text-primary);

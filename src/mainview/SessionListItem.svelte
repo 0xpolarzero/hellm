@@ -268,7 +268,7 @@
 
   .session-main:disabled {
     opacity: 0.62;
-    cursor: not-allowed;
+    cursor: default;
   }
 
   .active .session-main {

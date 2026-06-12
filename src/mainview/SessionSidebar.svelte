@@ -1123,7 +1123,7 @@
   }
 
   .sidebar-action-row:disabled {
-    cursor: not-allowed;
+    cursor: default;
     opacity: 0.5;
   }
 
@@ -1280,7 +1280,7 @@
   }
 
   .sidebar-action-main:disabled {
-    cursor: not-allowed;
+    cursor: default;
   }
 
   .new-session-accordion {
@@ -1503,7 +1503,7 @@
   }
 
   .sidebar-child-row:disabled {
-    cursor: not-allowed;
+    cursor: default;
     opacity: 0.55;
   }
 
