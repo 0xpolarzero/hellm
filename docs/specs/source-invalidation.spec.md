@@ -28,6 +28,13 @@ The backend owns one source invalidation coordinator that:
 Renderer panes do not watch files and do not infer source freshness. They subscribe to backend
 read-model updates.
 
+Editable file-backed panes additionally use edit-session conflict control. Each editable snapshot
+includes the source version it was loaded from, and each save is a compare-and-swap against the
+current backend file version. If the source changed outside the editor after the draft's base
+version, the save is rejected as a conflict, the local dirty draft remains mounted, and the editor
+stops autosaving that draft until the user explicitly chooses to keep editing, discard the local
+draft, or overwrite the external source.
+
 ## Watched Source Domains
 
 ### Agent Settings
@@ -134,6 +141,10 @@ Each invalidation batch runs in this order:
 Invalid source must not be silently skipped or interpreted as deletion. If a source file exists but
 is unreadable or invalid, the product reports that state and keeps the previous ready generated
 output active until source becomes valid again.
+
+Editable source saves must never silently overwrite a file whose current source version differs
+from the draft's base version. Explicit overwrite is a separate user action and is the only path
+that may replace an externally changed source file from a stale draft.
 
 ## Reliability Requirements
 

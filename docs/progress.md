@@ -26,9 +26,10 @@ How to use this file:
 
 ## 0. Source Invalidation
 
-- [x] Run one backend source invalidation coordinator that watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed/discovered snippet roots, converts raw file events into debounced deterministic source fingerprints, and uses periodic reconciliation as the correctness backstop. Commit(s): pending local changes
-- [x] Keep generated Workflows output, generated Extensions output, extension build directories, workspace `.smithers/node_modules/@svvy/*` links, and workspace `.svvy/generated` prompt previews outside the watcher trigger set. Commit(s): pending local changes
-- [x] Rebuild or reread only affected derived state after source fingerprints change, including Workflows package rebuilds for Workflows and extension source changes, renderer warm-cache refreshes for affected panes, and durable `agent_context_refresh` queue work for open surfaces whose prompt binding fingerprint changes. Commit(s): pending local changes
+- [x] Run one backend source invalidation coordinator that watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed/discovered snippet roots, converts raw file events into debounced deterministic source fingerprints, and uses periodic reconciliation as the correctness backstop. Commit(s): `03bf43f69`
+- [x] Keep generated Workflows output, generated Extensions output, extension build directories, workspace `.smithers/node_modules/@svvy/*` links, and workspace `.svvy/generated` prompt previews outside the watcher trigger set. Commit(s): `03bf43f69`
+- [x] Rebuild or reread only affected derived state after source fingerprints change, including Workflows package rebuilds for Workflows and extension source changes, renderer warm-cache refreshes for affected panes, and durable `agent_context_refresh` queue work for open surfaces whose prompt binding fingerprint changes. Commit(s): `03bf43f69`
+- [x] Protect editable file-backed workflow-agent source drafts with shared source-version compare-and-swap saves, warning-state autosave controls, and explicit keep-editing, discard-local, and overwrite-external conflict actions. Commit(s): `6f5ada150`
 - [ ] Surface invalid or unreadable source records directly in the relevant read models instead of letting any existing source reader silently skip malformed file-backed records.
 
 ## 1. Structured Session State

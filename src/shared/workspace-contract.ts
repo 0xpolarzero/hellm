@@ -11,6 +11,7 @@ import type {
   WorkflowAgentKey,
   WorkflowAgentSettings,
 } from "./agent-settings";
+import type { FileBackedSaveMode } from "./file-backed-edit";
 import type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "./extensions";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type {
@@ -1344,7 +1345,24 @@ export interface ReorderOrchestratorAgentsRequest {
 export interface UpdateWorkflowAgentRequest {
   key: WorkflowAgentKey;
   settings: WorkflowAgentSettings;
+  baseSourceVersion?: string;
+  mode?: FileBackedSaveMode;
 }
+
+export type UpdateWorkflowAgentResponse =
+  | {
+      ok: true;
+      state: AgentSettingsState;
+      agent: WorkflowAgentSettings;
+    }
+  | {
+      ok: false;
+      code: "file_backed_edit_conflict";
+      state: AgentSettingsState;
+      current: WorkflowAgentSettings;
+      currentVersion: string;
+      baseVersion: string;
+    };
 
 export interface DeleteWorkflowAgentRequest {
   key: WorkflowAgentKey;
@@ -1538,7 +1556,7 @@ export interface ChatRPCSchema {
       };
       updateWorkflowAgent: {
         params: WorkspaceScoped<UpdateWorkflowAgentRequest>;
-        response: AgentSettingsState;
+        response: UpdateWorkflowAgentResponse;
       };
       deleteWorkflowAgent: {
         params: WorkspaceScoped<DeleteWorkflowAgentRequest>;

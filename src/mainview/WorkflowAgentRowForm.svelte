@@ -12,10 +12,15 @@
 	import { createForm } from "@tanstack/svelte-form";
 	import type { ReasoningEffort, WorkflowAgentSettings } from "../shared/agent-settings";
 	import type { AgentModelChoice } from "../shared/workspace-contract";
+	import {
+		isFileBackedEditConflictError,
+		type FileBackedSaveMode,
+	} from "../shared/file-backed-edit";
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
 	import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
 	import ExtensionUsageControl from "./ExtensionUsageControl.svelte";
 	import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
+	import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
 	import Input from "./ui/Input.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { dismissConfirmation } from "./ui/dismiss-confirmation";
@@ -27,7 +32,12 @@
 		reasoningEffort: ReasoningEffort;
 	};
 
-	type AutosaveStatus = "error" | "saved" | "saving" | "unsaved";
+	type AutosaveStatus = "conflict" | "error" | "saved" | "saving" | "unsaved";
+
+	type SaveWorkflowAgentOptions = {
+		baseSourceVersion?: string;
+		mode?: FileBackedSaveMode;
+	};
 
 	const AUTOSAVE_DELAY_MS = 700;
 
@@ -46,7 +56,10 @@
 		onOpenExtension: (extensionId: string) => void;
 		onInstructionsChange?: (instructions: string) => void;
 		onRequestDelete: () => void;
-		onSave: (agent: WorkflowAgentSettings) => Promise<WorkflowAgentSettings>;
+		onSave: (
+			agent: WorkflowAgentSettings,
+			options?: SaveWorkflowAgentOptions,
+		) => Promise<WorkflowAgentSettings>;
 		onSetExtensionUsage: (
 			extensionId: string,
 			state: ExtensionUsageControlItem["state"],
@@ -74,6 +87,9 @@
 		onToggleExpanded,
 	}: Props = $props();
 	let submitError = $state("");
+	let baseSourceVersion = $state(agent.sourceVersion);
+	let conflictAgent = $state<WorkflowAgentSettings | null>(null);
+	let conflictActionsOpen = $state(false);
 
 	function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {
 		return `${choice.providerId}:${choice.modelId}`;
@@ -194,7 +210,13 @@
 				extensions: [...agent.extensions],
 				extensionUsage: { ...agent.extensionUsage },
 			};
-			const saved = await onSave(next);
+			const saved = await onSave(next, {
+				baseSourceVersion,
+				mode: "compare-and-swap",
+			});
+			baseSourceVersion = saved.sourceVersion;
+			conflictAgent = null;
+			conflictActionsOpen = false;
 			if (formValuesEqual(formState.current.values, submittedValue)) {
 				formApi.reset(valuesFor(saved));
 			}
@@ -206,9 +228,11 @@
 	const instructionsDisabled = $derived(deleting);
 	const formErrors = $derived(formState.current.errors.filter(Boolean));
 	const autosaveStatus = $derived<AutosaveStatus>(
-		submitError || formErrors.length > 0
-			? "error"
-			: formState.current.isSubmitting || saving
+		conflictAgent
+			? "conflict"
+			: submitError || formErrors.length > 0
+				? "error"
+				: formState.current.isSubmitting || saving
 				? "saving"
 				: formState.current.isDirty
 					? "unsaved"
@@ -220,8 +244,24 @@
 	});
 
 	$effect(() => {
+		const nextSourceVersion = agent.sourceVersion;
+		if (nextSourceVersion === baseSourceVersion) return;
+		if (formState.current.isDirty) {
+			conflictAgent = agent;
+			conflictActionsOpen = false;
+			return;
+		}
+		baseSourceVersion = nextSourceVersion;
+		conflictAgent = null;
+		conflictActionsOpen = false;
+		form.reset(valuesFor(agent));
+	});
+
+	$effect(() => {
 		const scheduledValue = { ...formState.current.values };
-		if (!formState.current.isDirty || formState.current.isSubmitting || deleting) return;
+		if (conflictAgent || !formState.current.isDirty || formState.current.isSubmitting || deleting) {
+			return;
+		}
 		const autosaveTimer = setTimeout(() => {
 			if (!formValuesEqual(formState.current.values, scheduledValue) && !formState.current.isDirty) {
 				return;
@@ -241,6 +281,7 @@
 	}
 
 	function autosaveStatusLabel(status: AutosaveStatus): string {
+		if (status === "conflict") return "File changed outside svvy";
 		if (status === "error") return "Autosave failed";
 		if (status === "saving") return "Saving changes";
 		if (status === "unsaved") return "Unsaved changes";
@@ -248,8 +289,13 @@
 	}
 
 	function submit() {
-		if (!formState.current.isDirty || formState.current.isSubmitting) return;
+		if (conflictAgent || !formState.current.isDirty || formState.current.isSubmitting) return;
 		void form.handleSubmit().catch((error) => {
+			if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
+				conflictAgent = error.conflict.current;
+				conflictActionsOpen = false;
+				return;
+			}
 			submitError = error instanceof Error ? error.message : "Unable to save workflow agent.";
 		});
 	}
@@ -260,7 +306,60 @@
 
 	function resetForm() {
 		submitError = "";
+		conflictAgent = null;
+		conflictActionsOpen = false;
+		baseSourceVersion = agent.sourceVersion;
 		form.reset(valuesFor(agent));
+	}
+
+	function keepEditingConflict() {
+		conflictActionsOpen = false;
+	}
+
+	function discardLocalConflict() {
+		const current = conflictAgent ?? agent;
+		submitError = "";
+		baseSourceVersion = current.sourceVersion;
+		conflictAgent = null;
+		conflictActionsOpen = false;
+		form.reset(valuesFor(current));
+	}
+
+	async function overwriteExternalConflict() {
+		if (!conflictAgent || formState.current.isSubmitting) return;
+		submitError = "";
+		const value = { ...formState.current.values };
+		const choice = selectedChoice(value.modelValue);
+		const fallback = providerModelFrom(value.modelValue);
+		const next: WorkflowAgentSettings = {
+			...agent,
+			label: value.label.trim(),
+			provider: choice?.providerId ?? fallback.provider,
+			model: choice?.modelId ?? fallback.model,
+			reasoningEffort: value.reasoningEffort,
+			instructions: value.instructions,
+			extensions: [...agent.extensions],
+			extensionUsage: { ...agent.extensionUsage },
+		};
+		try {
+			const saved = await onSave(next, {
+				baseSourceVersion,
+				mode: "overwrite",
+			});
+			baseSourceVersion = saved.sourceVersion;
+			conflictAgent = null;
+			conflictActionsOpen = false;
+			if (formValuesEqual(formState.current.values, value)) {
+				form.reset(valuesFor(saved));
+			}
+		} catch (error) {
+			if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
+				conflictAgent = error.conflict.current;
+				conflictActionsOpen = false;
+				return;
+			}
+			submitError = error instanceof Error ? error.message : "Unable to overwrite workflow agent.";
+		}
 	}
 
 	async function saveExtensionUsage(extensionId: string, state: ExtensionUsageControlItem["state"]) {
@@ -400,27 +499,41 @@
 		oninput={(event) => form.setFieldValue("instructions", event.currentTarget.value)}
 		onblur={submit}
 	></textarea>
-	<Tooltip class="workflow-autosave-tooltip" label={autosaveStatusLabel(autosaveStatus)}>
-		<span
-			class="workflow-autosave-status"
-			role="status"
-			aria-live="polite"
-			aria-label={autosaveStatusLabel(autosaveStatus)}
-		>
-			<span class="workflow-autosave-icon icon-error">
-				<AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
-			</span>
-			<span class="workflow-autosave-icon workflow-autosave-spinner icon-saving">
-				<LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
-			</span>
-			<span class="workflow-autosave-icon icon-unsaved">
-				<CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
-			</span>
-			<span class="workflow-autosave-icon icon-saved">
-				<CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
-			</span>
-		</span>
-	</Tooltip>
+	<div class="workflow-autosave-tooltip">
+		{#if autosaveStatus === "conflict"}
+			<FileBackedConflictActions
+				active={conflictActionsOpen}
+				disabled={formState.current.isSubmitting || saving}
+				onDismiss={() => (conflictActionsOpen = false)}
+				onOpen={() => (conflictActionsOpen = true)}
+				onKeepEditing={keepEditingConflict}
+				onDiscard={discardLocalConflict}
+				onOverwrite={() => void overwriteExternalConflict()}
+			/>
+		{:else}
+			<Tooltip label={autosaveStatusLabel(autosaveStatus)}>
+				<span
+					class="workflow-autosave-status"
+					role="status"
+					aria-live="polite"
+					aria-label={autosaveStatusLabel(autosaveStatus)}
+				>
+					<span class="workflow-autosave-icon icon-error">
+						<AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+					</span>
+					<span class="workflow-autosave-icon workflow-autosave-spinner icon-saving">
+						<LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
+					</span>
+					<span class="workflow-autosave-icon icon-unsaved">
+						<CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
+					</span>
+					<span class="workflow-autosave-icon icon-saved">
+						<CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
+					</span>
+				</span>
+			</Tooltip>
+		{/if}
+	</div>
 </div>
 {#if formErrors.length > 0 || submitError}
 	<p class="agent-form-error">{submitError || formErrors.join(" ")}</p>

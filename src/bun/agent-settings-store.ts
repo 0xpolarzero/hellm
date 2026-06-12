@@ -34,6 +34,13 @@ import {
 import type { Agents } from "./smithers-runtime/workflow-authoring-contract";
 import { getWorkflowsSourceRoot } from "./smithers-runtime/workflow-library";
 import {
+  assertFileBackedSaveAllowed,
+  fileBackedTextVersion,
+  readFileBackedVersion,
+  writeTextFileAtomically,
+} from "./file-backed-resource";
+import type { FileBackedSaveMode } from "../shared/file-backed-edit";
+import {
   BUILTIN_EXTENSIONS,
   resolveActorExtensionState,
   type ExtensionUsageState,
@@ -44,8 +51,15 @@ export type AgentSettingsStore = {
   setAgentProfile(profile: AgentProfileSettings): AgentSettingsState;
   deleteAgentProfile(id: AgentProfileId): AgentSettingsState;
   reorderOrchestratorProfiles(ids: AgentProfileId[]): AgentSettingsState;
-  setWorkflowAgent(key: WorkflowAgentKey, settings: WorkflowAgentSettings): AgentSettingsState;
-  deleteWorkflowAgent(key: WorkflowAgentKey): AgentSettingsState;
+  setWorkflowAgent(
+    key: WorkflowAgentKey,
+    settings: WorkflowAgentSettings,
+    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
+  ): AgentSettingsState;
+  deleteWorkflowAgent(
+    key: WorkflowAgentKey,
+    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
+  ): AgentSettingsState;
   setExtensionEnv(settings: ExtensionEnvSettings): AgentSettingsState;
   setRequestUserInput(settings: RequestUserInputSettings): AgentSettingsState;
   setAppPreferences(preferences: AppPreferences): AgentSettingsState;
@@ -77,7 +91,10 @@ export function createAgentSettingsStore(input: {
 
   const writeState = (state: AgentSettingsState): AgentSettingsState => {
     mkdirSync(dirname(settingsPath), { recursive: true });
-    writeFileSync(settingsPath, `${JSON.stringify(state, null, 2)}\n`);
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify(stripSourceVersionsFromState(state), null, 2)}\n`,
+    );
     return state;
   };
 
@@ -157,19 +174,34 @@ export function createAgentSettingsStore(input: {
       });
       return writeState(state);
     },
-    setWorkflowAgent: (key, settings) => {
+    setWorkflowAgent: (key, settings, options) => {
       const state = readState();
       const normalizedWorkflowAgent = normalizeWorkflowAgentSettings(key, settings);
+      const path = workflowAgentSourcePath(workflowsSourceRoot, normalizedWorkflowAgent.id);
+      assertFileBackedSaveAllowed({
+        baseVersion: options?.baseSourceVersion,
+        current: state.workflowAgents[key] ?? normalizedWorkflowAgent,
+        currentVersion: readFileBackedVersion(path),
+        mode: options?.mode,
+      });
       state.workflowAgents[key] = normalizedWorkflowAgent;
+      const saved = writeWorkflowAgentSourceRecord(workflowsSourceRoot, normalizedWorkflowAgent);
+      state.workflowAgents[key] = saved;
       const next = writeState(state);
-      writeWorkflowAgentSourceRecord(workflowsSourceRoot, normalizedWorkflowAgent);
       return next;
     },
-    deleteWorkflowAgent: (key) => {
+    deleteWorkflowAgent: (key, options) => {
       const state = readState();
+      const path = workflowAgentSourcePath(workflowsSourceRoot, key);
+      assertFileBackedSaveAllowed({
+        baseVersion: options?.baseSourceVersion,
+        current: state.workflowAgents[key] ?? null,
+        currentVersion: readFileBackedVersion(path),
+        mode: options?.mode,
+      });
       delete state.workflowAgents[key];
       const next = writeState(state);
-      rmSync(join(workflowsSourceRoot, "agents", `${key}.agent.json`), { force: true });
+      rmSync(path, { force: true });
       return next;
     },
     setExtensionEnv: (settings) => {
@@ -193,28 +225,11 @@ export function createAgentSettingsStore(input: {
 function writeWorkflowAgentSourceRecord(
   workflowsSourceRoot: string,
   settings: WorkflowAgentSettings,
-): string {
-  const path = join(workflowsSourceRoot, "agents", `${settings.id}.agent.json`);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(
-    path,
-    `${JSON.stringify(
-      {
-        id: settings.id,
-        label: settings.label,
-        provider: settings.provider,
-        model: settings.model,
-        reasoningEffort: settings.reasoningEffort,
-        instructions: settings.instructions,
-        extensions: settings.extensions,
-        extensionUsage: settings.extensionUsage,
-        extensionOrder: settings.extensionOrder ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return path;
+): WorkflowAgentSettings {
+  const path = workflowAgentSourcePath(workflowsSourceRoot, settings.id);
+  const content = workflowAgentSourceContent(settings);
+  writeTextFileAtomically(path, content);
+  return { ...settings, sourceVersion: fileBackedTextVersion(content) };
 }
 
 function ensureWorkflowAgentSourceRecords(
@@ -244,6 +259,7 @@ function readWorkflowAgentSourceRecords(
     try {
       const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<WorkflowAgentSettings>;
       const id = basename(entry, ".agent.json");
+      const sourceVersion = readFileBackedVersion(path);
       records[id] = normalizeWorkflowAgentSettings(id, {
         id,
         label: typeof raw.label === "string" ? raw.label : id,
@@ -254,12 +270,52 @@ function readWorkflowAgentSourceRecords(
         extensions: Array.isArray(raw.extensions) ? raw.extensions : [],
         extensionUsage: normalizeExtensionUsage(raw.extensionUsage),
         extensionOrder: normalizeExtensionOrder(raw.extensionOrder),
+        sourceVersion,
       });
     } catch (error) {
       throw new Error(`Workflow agent source is not valid JSON: ${path}`, { cause: error });
     }
   }
   return Object.keys(records).length > 0 ? records : fallback;
+}
+
+function workflowAgentSourcePath(workflowsSourceRoot: string, id: string): string {
+  return join(workflowsSourceRoot, "agents", `${id}.agent.json`);
+}
+
+function workflowAgentSourceContent(settings: WorkflowAgentSettings): string {
+  return `${JSON.stringify(
+    {
+      id: settings.id,
+      label: settings.label,
+      provider: settings.provider,
+      model: settings.model,
+      reasoningEffort: settings.reasoningEffort,
+      instructions: settings.instructions,
+      extensions: settings.extensions,
+      extensionUsage: settings.extensionUsage,
+      extensionOrder: settings.extensionOrder ?? [],
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function stripSourceVersionsFromState(state: AgentSettingsState): AgentSettingsState {
+  return {
+    ...state,
+    workflowAgents: Object.fromEntries(
+      Object.entries(state.workflowAgents).map(([key, agent]) => [
+        key,
+        stripWorkflowAgentSourceVersion(agent),
+      ]),
+    ),
+  };
+}
+
+function stripWorkflowAgentSourceVersion(agent: WorkflowAgentSettings): WorkflowAgentSettings {
+  const { sourceVersion: _sourceVersion, ...rest } = agent;
+  return rest;
 }
 
 export function normalizeAgentSettingsState(
@@ -456,6 +512,7 @@ function normalizeWorkflowAgentSettings(
     extensions: workflowTaskLoadedExtensionIds(extensionUsage),
     extensionUsage,
     extensionOrder: normalizeExtensionOrder(input.extensionOrder),
+    sourceVersion: input.sourceVersion,
   });
 }
 

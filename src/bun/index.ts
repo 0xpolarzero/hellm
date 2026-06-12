@@ -40,6 +40,7 @@ import {
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_WORKFLOW_AGENT_SETTINGS,
   type AgentDefaults,
+  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import {
   getProviderEnvVar,
@@ -64,6 +65,10 @@ import type {
   SourceInvalidationDomain,
   SourceInvalidationEvent,
 } from "./source-invalidation-coordinator";
+import {
+  FILE_BACKED_EDIT_CONFLICT_CODE,
+  isFileBackedEditConflictError,
+} from "../shared/file-backed-edit";
 import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
 import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
@@ -1233,7 +1238,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       updateWorkflowAgent: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { key, settings } = input;
+        const { key, settings, baseSourceVersion, mode } = input;
         const modelCatalog = readDefaultModelCatalog();
         assertAgentModelSelection(
           {
@@ -1244,7 +1249,26 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           modelCatalog,
         );
         const previous = runtime.agentSettingsStore.getState().workflowAgents[key] ?? null;
-        const next = runtime.agentSettingsStore.setWorkflowAgent(key, settings);
+        let next;
+        try {
+          next = runtime.agentSettingsStore.setWorkflowAgent(key, settings, {
+            baseSourceVersion,
+            mode,
+          });
+        } catch (error) {
+          if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
+            return {
+              ok: false,
+              code: FILE_BACKED_EDIT_CONFLICT_CODE,
+              state: runtime.agentSettingsStore.getState(),
+              current: error.conflict.current,
+              currentVersion: error.conflict.currentVersion,
+              baseVersion: error.conflict.baseVersion,
+            };
+          }
+          throw error;
+        }
+        const saved = next.workflowAgents[key] ?? settings;
         runtime.appLog.info("settings", "Workflow agent settings updated.", { key });
         try {
           const build = await buildWorkflowsGeneratedPackage({
@@ -1270,9 +1294,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
               },
             );
             if (previous) {
-              runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+              runtime.agentSettingsStore.setWorkflowAgent(key, previous, {
+                baseSourceVersion: saved.sourceVersion,
+              });
             } else {
-              runtime.agentSettingsStore.deleteWorkflowAgent(key);
+              runtime.agentSettingsStore.deleteWorkflowAgent(key, {
+                baseSourceVersion: saved.sourceVersion,
+              });
             }
             throw workflowsBuildFailedError(build.diagnostics);
           }
@@ -1281,9 +1309,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             throw error;
           }
           if (previous) {
-            runtime.agentSettingsStore.setWorkflowAgent(key, previous);
+            runtime.agentSettingsStore.setWorkflowAgent(key, previous, {
+              baseSourceVersion: saved.sourceVersion,
+            });
           } else {
-            runtime.agentSettingsStore.deleteWorkflowAgent(key);
+            runtime.agentSettingsStore.deleteWorkflowAgent(key, {
+              baseSourceVersion: saved.sourceVersion,
+            });
           }
           runtime.appLog.error(
             "workflow.library",
@@ -1293,7 +1325,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           );
           throw error;
         }
-        return next;
+        return { ok: true, state: next, agent: saved };
       },
       deleteWorkflowAgent: async (input) => {
         const runtime = getWorkspaceRuntime(input);

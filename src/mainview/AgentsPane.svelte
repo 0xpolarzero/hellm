@@ -17,6 +17,7 @@
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
   import type { ExtensionUsageState } from "../shared/extensions";
+  import type { FileBackedSaveMode } from "../shared/file-backed-edit";
   import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
@@ -286,7 +287,10 @@
     }
   }
 
-  async function saveWorkflowAgent(agent: WorkflowAgentSettings): Promise<WorkflowAgentSettings> {
+  async function saveWorkflowAgent(
+    agent: WorkflowAgentSettings,
+    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
+  ): Promise<WorkflowAgentSettings> {
     savingWorkflowAgentKey = agent.id;
     errorMessage = null;
     try {
@@ -295,7 +299,7 @@
         extensions: [...agent.extensions],
         extensionUsage: { ...agent.extensionUsage },
         extensionOrder: [...(agent.extensionOrder ?? [])],
-      });
+      }, options);
       onSettingsChanged?.(settings);
       if (workflowAgentInstructionDrafts[agent.id] !== undefined) {
         const { [agent.id]: _discarded, ...rest } = workflowAgentInstructionDrafts;

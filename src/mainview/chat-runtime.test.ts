@@ -1053,13 +1053,14 @@ function createFakeRpc(input: {
           return next;
         },
         updateWorkflowAgent: async ({ key, settings, workspaceId }) => {
-          return {
+          const state = {
             ...(await harness.client.request.getAgentSettings({ workspaceId })),
             workflowAgents: {
               ...(await harness.client.request.getAgentSettings({ workspaceId })).workflowAgents,
               [key]: settings,
             },
           };
+          return { ok: true, state, agent: settings };
         },
         deleteWorkflowAgent: async ({ key, workspaceId }) => {
           const next = await harness.client.request.getAgentSettings({ workspaceId });

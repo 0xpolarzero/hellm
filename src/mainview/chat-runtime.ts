@@ -56,7 +56,9 @@ import {
   type SetAgentProfileExtensionUsageRequest,
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
+  type UpdateWorkflowAgentResponse,
 } from "../shared/workspace-contract";
+import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
 import type {
   GeneratedAgentContextActor,
   GeneratedAgentContextExternalSource,
@@ -596,6 +598,7 @@ export interface ChatRuntime {
   updateWorkflowAgent: (
     key: WorkflowAgentKey,
     settings: WorkflowAgentSettings,
+    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
   ) => Promise<AgentSettingsState>;
   deleteWorkflowAgent: (key: WorkflowAgentKey) => Promise<AgentSettingsState>;
   openWorkflowAgentSourceInEditor: (key: WorkflowAgentKey) => Promise<boolean>;
@@ -2996,11 +2999,21 @@ export async function createChatRuntime(
         "agentSettings",
         await rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
       )!,
-    updateWorkflowAgent: async (key, settings) =>
-      setAppCache(
-        "agentSettings",
-        await rpcClient.request.updateWorkflowAgent(scoped({ key, settings })),
-      )!,
+    updateWorkflowAgent: async (key, settings, saveOptions) => {
+      const result: UpdateWorkflowAgentResponse = await rpcClient.request.updateWorkflowAgent(
+        scoped({ key, settings, ...saveOptions }),
+      );
+      if (!result.ok) {
+        setAppCache("agentSettings", result.state);
+        throw new FileBackedEditConflictError<WorkflowAgentSettings>({
+          code: result.code,
+          current: result.current,
+          currentVersion: result.currentVersion,
+          baseVersion: result.baseVersion,
+        });
+      }
+      return setAppCache("agentSettings", result.state)!;
+    },
     deleteWorkflowAgent: async (key) =>
       setAppCache("agentSettings", await rpcClient.request.deleteWorkflowAgent(scoped({ key })))!,
     openWorkflowAgentSourceInEditor: async (key) => {

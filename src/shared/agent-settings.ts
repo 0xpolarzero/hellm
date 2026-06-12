@@ -59,6 +59,7 @@ export interface WorkflowAgentSettings extends Agents.TaskAgentParameters {
   label: string;
   extensionUsage: Record<string, ExtensionUsageState>;
   extensionOrder?: string[];
+  sourceVersion?: string;
 }
 
 export interface AgentSettingsState {

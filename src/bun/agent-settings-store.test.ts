@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { createAgentSettingsStore } from "./agent-settings-store";
+import { isFileBackedEditConflictError } from "../shared/file-backed-edit";
 import {
   AMBIENT_AGENT_RESOURCE_CATEGORIES,
   DEFAULT_EXTERNAL_INSTRUCTIONS,
@@ -308,20 +309,23 @@ describe("agent profile settings", () => {
       workflowsSourceRoot,
     });
 
-    expect(store.getState().workflowAgents.strictReviewer).toEqual({
-      id: "strictReviewer",
-      label: "Strict Reviewer",
-      provider: "openai",
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
-      instructions: "Review strict source records.",
-      extensions: ["git"],
-      extensionUsage: {
-        git: "default_loaded",
-        github: "available",
-      },
-      extensionOrder: [],
-    });
+    expect(store.getState().workflowAgents.strictReviewer).toEqual(
+      expect.objectContaining({
+        id: "strictReviewer",
+        label: "Strict Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Review strict source records.",
+        extensions: ["git"],
+        extensionUsage: {
+          git: "default_loaded",
+          github: "available",
+        },
+        extensionOrder: [],
+        sourceVersion: expect.stringMatching(/^sha256:/),
+      }),
+    );
 
     store.setWorkflowAgent("strictReviewer", {
       ...store.getState().workflowAgents.strictReviewer!,
@@ -352,6 +356,108 @@ describe("agent profile settings", () => {
       },
       extensionOrder: [],
     });
+  });
+
+  it("rejects workflow-agent saves when the source changed after the editor base version", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-cas-"));
+    const workflowsSourceRoot = join(root, "workflows");
+    const store = createAgentSettingsStore({
+      cwd: root,
+      agentDir: join(root, ".agent"),
+      workflowsSourceRoot,
+    });
+    const saved = store.setWorkflowAgent("reviewer", {
+      id: "reviewer",
+      label: "Reviewer",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      instructions: "Review strictly.",
+      extensions: [],
+      extensionUsage: {},
+    }).workflowAgents.reviewer!;
+    const sourcePath = join(workflowsSourceRoot, "agents", "reviewer.agent.json");
+
+    writeFileSync(
+      sourcePath,
+      JSON.stringify(
+        {
+          id: "reviewer",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "External edit.",
+          extensions: [],
+          extensionUsage: {},
+          extensionOrder: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(() =>
+      store.setWorkflowAgent(
+        "reviewer",
+        {
+          ...saved,
+          instructions: "Local stale edit.",
+        },
+        { baseSourceVersion: saved.sourceVersion, mode: "compare-and-swap" },
+      ),
+    ).toThrow();
+    try {
+      store.setWorkflowAgent(
+        "reviewer",
+        {
+          ...saved,
+          instructions: "Local stale edit.",
+        },
+        { baseSourceVersion: saved.sourceVersion, mode: "compare-and-swap" },
+      );
+    } catch (error) {
+      expect(isFileBackedEditConflictError(error)).toBe(true);
+    }
+    expect(readFileSync(sourcePath, "utf8")).toContain("External edit.");
+  });
+
+  it("allows explicit workflow-agent overwrite after a source conflict", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-overwrite-"));
+    const workflowsSourceRoot = join(root, "workflows");
+    const store = createAgentSettingsStore({
+      cwd: root,
+      agentDir: join(root, ".agent"),
+      workflowsSourceRoot,
+    });
+    const saved = store.setWorkflowAgent("reviewer", {
+      id: "reviewer",
+      label: "Reviewer",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      instructions: "Review strictly.",
+      extensions: [],
+      extensionUsage: {},
+    }).workflowAgents.reviewer!;
+    const sourcePath = join(workflowsSourceRoot, "agents", "reviewer.agent.json");
+    writeFileSync(
+      sourcePath,
+      readFileSync(sourcePath, "utf8").replace("Review strictly.", "External edit."),
+    );
+
+    const updated = store.setWorkflowAgent(
+      "reviewer",
+      {
+        ...saved,
+        instructions: "Overwrite with local draft.",
+      },
+      { baseSourceVersion: saved.sourceVersion, mode: "overwrite" },
+    );
+
+    expect(updated.workflowAgents.reviewer!.instructions).toBe("Overwrite with local draft.");
+    expect(updated.workflowAgents.reviewer!.sourceVersion).toMatch(/^sha256:/);
+    expect(readFileSync(sourcePath, "utf8")).toContain("Overwrite with local draft.");
   });
 
   it("fails loudly when a workflow-agent source file is malformed", () => {
