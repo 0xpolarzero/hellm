@@ -381,6 +381,10 @@ export interface ResetExtensionRequest extends WorkspaceScopedRequest {
   extensionId: string;
 }
 
+export interface BuildExtensionRequest extends WorkspaceScopedRequest {
+  extensionId: string;
+}
+
 export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest {
   extensionId: string;
   enabled: boolean;
@@ -1748,6 +1752,10 @@ export interface ChatRPCSchema {
       };
       resetExtension: {
         params: ResetExtensionRequest;
+        response: ExtensionsInventoryReadModel;
+      };
+      buildExtension: {
+        params: BuildExtensionRequest;
         response: ExtensionsInventoryReadModel;
       };
       setExtensionTypescriptApi: {

@@ -46,6 +46,7 @@ import {
   resolveActorExtensionState,
   type ExtensionCliRequirement,
   type ExtensionGeneratedInstruction,
+  type ExtensionInstructionFile,
   type ExtensionRecord,
   type ExtensionUsageState,
 } from "../shared/extensions";
@@ -77,6 +78,7 @@ import {
   ARTIFACTS_CLIENT_DECLARATION,
   WORKFLOWS_CLIENT_DECLARATION,
 } from "./execute-typescript-api-declaration";
+import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
 
 export type CliRequirementStatus = {
   id: string;
@@ -621,6 +623,7 @@ export async function readBuiltinExtensionsInventory(
       envRequirements,
       [...dependencies, ...trustedDependencies],
       extensionBuildCurrentPath(extension.id, undefined, input.extensionsRoot),
+      input.cwd ?? process.cwd(),
     );
     extensions.push({
       id: extension.id,
@@ -689,7 +692,25 @@ function extensionLoadedInstructionContributors(
     ]),
   );
   const contributors = new Map<string, ExtensionLoadedInstructionContributorReadModel>();
-  if (extension.category !== "builtin" || extension.sourceRoot) {
+  if (extension.category === "builtin" && !extension.sourceRoot) {
+    for (const file of builtinDefaultInstructionFiles(extension, cwd)) {
+      if (generatedByName.has(file.name)) continue;
+      const path = join(
+        builtinOverlayPaths(extension.id, extensionsRoot, extension.interface).instructionsFullDir,
+        file.name,
+      );
+      contributors.set(file.name, {
+        kind: "source",
+        file: instructionFileReadModel({
+          content: file.content,
+          editable: true,
+          name: file.name,
+          path,
+          skipped: configByName.get(file.name) ?? false,
+        }),
+      });
+    }
+  } else {
     for (const path of extension.instructionSourceFiles) {
       const name = basename(path);
       if (generatedByName.has(name)) continue;
@@ -756,11 +777,7 @@ function editableGeneratedInstructionScriptPath(
   }
   if (extension.category === "builtin") {
     return join(
-      builtinOverlayPaths(
-        extension.id,
-        extensionsRoot,
-        extension.interface as "instructions" | "svvyx",
-      ).sourceRoot,
+      builtinOverlayPaths(extension.id, extensionsRoot, extension.interface).sourceRoot,
       instruction.script,
     );
   }
@@ -953,7 +970,7 @@ function extensionMinimalInstructionReadModel(
   extensionsRoot: string | undefined,
 ): ExtensionInventoryItemReadModel["minimalInstruction"] {
   const path =
-    extension.category === "builtin" && extension.interface !== "native_tool"
+    extension.category === "builtin"
       ? builtinOverlayPaths(extension.id, extensionsRoot, extension.interface).instructionsMinimal
       : extension.sourceRoot
         ? join(extension.sourceRoot, "instructions", "minimal.md")
@@ -961,7 +978,7 @@ function extensionMinimalInstructionReadModel(
   const content =
     path && existsSync(path)
       ? readOptionalFile(path)
-      : extension.category === "builtin" && extension.interface !== "native_tool"
+      : extension.category === "builtin"
         ? `${extension.minimalLoadingHint}\n`
         : extension.minimalLoadingHint;
   return {
@@ -2501,6 +2518,7 @@ async function runInspectCommand(
     envRequirements,
     [...dependencies, ...trustedDependencies],
     paths.buildCurrent,
+    options.cwd ?? process.cwd(),
   );
   const hasCurrentBuild = extensionHasCurrentBuild(extension, paths.buildCurrent, issues);
   const draftChanged = issues.some((issue) => issue.code === "BUILD_REQUIRED");
@@ -5291,9 +5309,6 @@ function readBuiltinOverlayRecord(
   builtin: ExtensionRecord,
   extensionsRoot: string | undefined,
 ): ResolvedExtensionRecord | null {
-  if (builtin.interface === "native_tool") {
-    return null;
-  }
   const root = resolve(extensionsRoot ?? defaultExtensionsRoot());
   const sourceRoot = join(root, "sources", "builtin-overlays", builtin.id);
   const manifestPath = join(sourceRoot, "manifest.json");
@@ -5319,10 +5334,9 @@ function readBuiltinOverlayRecord(
       `Builtin overlay interface must match packaged extension: ${builtin.id}`,
     );
   }
-  const instructionFiles = readManifestInstructionFiles(manifest);
+  let instructionFiles = readManifestInstructionFiles(manifest);
   const envDeclarations = readManifestEnvDeclarations(manifest);
   const cliRequirements = readManifestCliRequirements(manifest);
-  const generatedInstructions = readManifestGeneratedInstructions(manifest);
   const dependencies = readManifestDependencies(manifest, "dependencies", "dependency");
   const trustedDependencies = readManifestDependencies(
     manifest,
@@ -5330,7 +5344,22 @@ function readBuiltinOverlayRecord(
     "trusted_dependency",
   );
   const paths = builtinOverlayPaths(builtin.id, extensionsRoot, builtin.interface);
-  const instructionsFull = listInstructionFileViews(paths.instructionsFullDir, instructionFiles);
+  const packagedGeneratedInstructions = builtin.generatedInstructions ?? [];
+  instructionFiles = normalizeBuiltinOverlayInstructionFiles(builtin, instructionFiles);
+  ensureBuiltinOverlayDefaultInstructionFiles(builtin, paths, instructionFiles);
+  if (writeNormalizedBuiltinOverlayManifest(manifestPath, manifest, builtin, instructionFiles)) {
+    instructionFiles = readManifestInstructionFiles(readJsonObject(manifestPath));
+  }
+  const visibleInstructionNames = new Set(instructionFiles.map((instruction) => instruction.file));
+  const instructionsFull = listInstructionFileViews(
+    paths.instructionsFullDir,
+    instructionFiles,
+  ).filter((file) => visibleInstructionNames.has(file.name));
+  const extensionBuildFingerprint = builtinOverlaySourceBuildFingerprint(
+    builtin,
+    paths,
+    instructionFiles,
+  );
   return {
     ...builtin,
     title: typeof manifest.title === "string" ? manifest.title : builtin.title,
@@ -5339,15 +5368,143 @@ function readBuiltinOverlayRecord(
     instructionSourceFiles: instructionsFull.map((file) => file.path),
     minimalLoadingHint: readOptionalFile(paths.instructionsMinimal) || builtin.minimalLoadingHint,
     cliRequirements: cliRequirements.length > 0 ? cliRequirements : builtin.cliRequirements,
-    generatedInstructions:
-      generatedInstructions.length > 0 ? generatedInstructions : builtin.generatedInstructions,
+    generatedInstructions: packagedGeneratedInstructions,
     instructionFiles,
     envDeclarations,
     dependencies,
     trustedDependencies,
-    extensionBuildFingerprint: sourceBuildFingerprint(sourceRoot),
+    extensionBuildFingerprint,
     sourceRoot,
   };
+}
+
+function normalizeBuiltinOverlayInstructionFiles(
+  builtin: ExtensionRecord,
+  instructionFiles: readonly ExtensionInstructionFile[],
+): ExtensionInstructionFile[] {
+  const packagedGeneratedNames = new Set(
+    (builtin.generatedInstructions ?? []).map((instruction) => basename(instruction.output)),
+  );
+  const directDefaultNames = new Set(
+    builtinLoadedInstructionDefaults(builtin.id).map((instruction) =>
+      validateInstructionBasename(instruction.name),
+    ),
+  );
+  return instructionFiles.filter((instruction) => {
+    if (directDefaultNames.has(instruction.file)) return true;
+    if (packagedGeneratedNames.has(instruction.file)) return true;
+    if (packagedGeneratedNames.size > 0) return true;
+    return !instruction.file.endsWith(".generated.md");
+  });
+}
+
+function ensureBuiltinOverlayDefaultInstructionFiles(
+  builtin: ExtensionRecord,
+  paths: ReturnType<typeof builtinOverlayPaths>,
+  instructionFiles: ExtensionInstructionFile[],
+): void {
+  const names = new Set(instructionFiles.map((instruction) => instruction.file));
+  for (const file of builtinDirectDefaultInstructionFiles(builtin)) {
+    if (!names.has(file.name)) {
+      instructionFiles.push({ file: file.name, bypassed: false });
+      names.add(file.name);
+    }
+    const target = join(paths.instructionsFullDir, file.name);
+    if (!existsSync(target)) {
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, file.content);
+    }
+  }
+  const minimal = readOptionalFile(paths.instructionsMinimal);
+  if (
+    !minimal ||
+    obsoleteBuiltinMinimalInstructionHints(builtin.id).includes(
+      normalizeMinimalInstructionContent(minimal),
+    )
+  ) {
+    mkdirSync(dirname(paths.instructionsMinimal), { recursive: true });
+    writeFileSync(paths.instructionsMinimal, builtin.minimalLoadingHint + "\n");
+  }
+}
+
+function builtinOverlaySourceBuildFingerprint(
+  builtin: ExtensionRecord,
+  paths: ReturnType<typeof builtinOverlayPaths>,
+  instructionFiles: readonly ExtensionInstructionFile[],
+): string | null {
+  if ((builtin.generatedInstructions ?? []).length > 0) {
+    return sourceBuildFingerprint(paths.sourceRoot);
+  }
+  if (!existsSync(paths.sourceRoot)) return null;
+  const hash = createHash("sha256");
+  const activeFiles = [
+    paths.manifest,
+    paths.instructionsMinimal,
+    ...instructionFiles.map((instruction) => join(paths.instructionsFullDir, instruction.file)),
+  ].filter((file) => existsSync(file));
+  for (const file of activeFiles.toSorted((left, right) => left.localeCompare(right))) {
+    hash.update(file.slice(paths.sourceRoot.length + 1));
+    hash.update("\0");
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function builtinDirectDefaultInstructionFiles(
+  extension: ExtensionRecord,
+): { content: string; name: string }[] {
+  return builtinLoadedInstructionDefaults(extension.id)
+    .map((instruction) => ({
+      content: `${instruction.content.trimEnd()}\n`,
+      name: validateInstructionBasename(instruction.name),
+    }))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+function writeNormalizedBuiltinOverlayManifest(
+  manifestPath: string,
+  manifest: Record<string, unknown>,
+  builtin: ExtensionRecord,
+  instructionFiles: readonly ExtensionInstructionFile[],
+): boolean {
+  const normalized = {
+    ...manifest,
+    title: typeof manifest.title === "string" ? manifest.title : builtin.title,
+    description:
+      typeof manifest.description === "string" ? manifest.description : builtin.description,
+    typescriptApiEnabled:
+      typeof manifest.typescriptApiEnabled === "boolean"
+        ? manifest.typescriptApiEnabled
+        : builtin.typescriptApiEnabled,
+    instructionFiles,
+    ...(builtin.generatedInstructions && builtin.generatedInstructions.length > 0
+      ? { generatedInstructions: builtin.generatedInstructions }
+      : { generatedInstructions: undefined }),
+  };
+  if (!builtin.generatedInstructions || builtin.generatedInstructions.length === 0) {
+    delete normalized.generatedInstructions;
+  }
+  const before = JSON.stringify(manifest);
+  const after = JSON.stringify(normalized);
+  if (before === after) return false;
+  writeFileSync(manifestPath, JSON.stringify(normalized, null, 2) + "\n");
+  return true;
+}
+
+function obsoleteBuiltinMinimalInstructionHints(id: string): string[] {
+  switch (id) {
+    case "base-common":
+      return ["Shared operating instructions are loaded automatically."];
+    case "base-orchestrator":
+      return ["Orchestrator role instructions are loaded for orchestrator surfaces."];
+    case "base-handler":
+      return ["Handler role instructions are loaded for delegated handler surfaces."];
+    case "base-workflow-task":
+      return ["Workflow task-agent role instructions are loaded for task attempts."];
+    default:
+      return [];
+  }
 }
 
 function materializeBuiltinInstructionOverlay(
@@ -5357,14 +5514,9 @@ function materializeBuiltinInstructionOverlay(
     extensionsRoot?: string;
   },
 ): ResolvedExtensionRecord {
-  const defaultFiles = builtinDefaultInstructionFiles(extension, options.cwd ?? process.cwd());
+  const packaged = getExtensionRecord(extension.id) ?? extension;
+  const defaultFiles = builtinDefaultInstructionFiles(packaged, options.cwd ?? process.cwd());
   if (defaultFiles.length === 0) {
-    throw extensionsCommandError(
-      "INSTRUCTIONS_NOT_EDITABLE",
-      `${extension.title} has no editable app-owned instruction storage.`,
-    );
-  }
-  if (extension.interface === "native_tool") {
     throw extensionsCommandError(
       "INSTRUCTIONS_NOT_EDITABLE",
       `${extension.title} has no editable app-owned instruction storage.`,
@@ -5391,8 +5543,8 @@ function materializeBuiltinInstructionOverlay(
                 (entry) => entry.file === file.name && entry.bypassed,
               ) ?? false,
           })),
-          ...(extension.generatedInstructions
-            ? { generatedInstructions: extension.generatedInstructions }
+          ...(packaged.generatedInstructions
+            ? { generatedInstructions: packaged.generatedInstructions }
             : {}),
         },
         null,
@@ -5451,7 +5603,14 @@ function builtinDefaultInstructionFiles(
   extension: ResolvedExtensionRecord,
   cwd: string,
 ): { content: string; name: string }[] {
-  const names = new Set<string>();
+  const defaults = new Map<string, string>();
+  for (const instruction of builtinLoadedInstructionDefaults(extension.id)) {
+    defaults.set(
+      validateInstructionBasename(instruction.name),
+      `${instruction.content.trimEnd()}\n`,
+    );
+  }
+  const names = new Set<string>(defaults.keys());
   for (const instruction of extension.generatedInstructions ?? []) {
     names.add(validateInstructionBasename(basename(instruction.output)));
   }
@@ -5474,7 +5633,7 @@ function builtinDefaultInstructionFiles(
       const source = candidates.find((candidate) => existsSync(candidate));
       return {
         name,
-        content: source ? readFileSync(source, "utf8") : "",
+        content: source ? readFileSync(source, "utf8") : (defaults.get(name) ?? ""),
       };
     });
 }
@@ -5712,14 +5871,8 @@ function requireEditableInstructionsExtension(
   if (extension.category === "user" && extension.sourceRoot) {
     return extension;
   }
-  if (extension.category === "builtin" && extension.interface !== "native_tool") {
-    return materializeBuiltinInstructionOverlay(extension, options);
-  }
   if (extension.category === "builtin") {
-    throw extensionsCommandError(
-      "INSTRUCTIONS_NOT_EDITABLE",
-      `${extension.title} has no editable app-owned instruction storage.`,
-    );
+    return materializeBuiltinInstructionOverlay(extension, options);
   }
   throw extensionsCommandError(
     "INSTRUCTIONS_NOT_EDITABLE",
@@ -5771,7 +5924,6 @@ function validateInstructionCommandBeforeMaterialization(
   if (
     !extension ||
     extension.category !== "builtin" ||
-    extension.interface === "native_tool" ||
     builtinOverlayExists(extension.id, options.extensionsRoot)
   ) {
     return;
@@ -7133,7 +7285,7 @@ function editableExtensionInspectPaths(
   extensionsRoot: string | undefined,
 ): EditableInstructionPaths {
   const paths =
-    extension.category === "builtin" && extension.interface !== "native_tool"
+    extension.category === "builtin"
       ? builtinOverlayPaths(extension.id, extensionsRoot, extension.interface)
       : userExtensionPaths(
           extension.id,
@@ -7154,7 +7306,7 @@ function editableExtensionInspectPaths(
 function builtinOverlayPaths(
   id: string,
   extensionsRoot: string | undefined,
-  interfaceKind: "instructions" | "svvyx",
+  interfaceKind: ExtensionRecord["interface"],
 ): EditableExtensionPaths {
   const root = resolve(extensionsRoot ?? defaultExtensionsRoot());
   const sourceRoot = join(root, "sources", "builtin-overlays", id);
@@ -7479,6 +7631,7 @@ function extensionIssues(
   envRequirements: readonly EnvRequirementStatus[],
   dependencies: readonly DependencyRequirementStatus[],
   buildCurrent: string,
+  cwd: string,
 ): ExtensionIssue[] {
   const issues: ExtensionIssue[] = [];
   if (extension.category === "user") {
@@ -7497,7 +7650,11 @@ function extensionIssues(
         message: `${extension.title} has source changes that have not been built.`,
       });
     }
-  } else if (extension.category === "builtin" && extension.sourceRoot) {
+  } else if (
+    extension.category === "builtin" &&
+    extension.sourceRoot &&
+    extensionCustomized(extension, cwd)
+  ) {
     if (extensionBuildIsOutdated(extension, buildCurrent)) {
       issues.push({
         code: "BUILD_REQUIRED",

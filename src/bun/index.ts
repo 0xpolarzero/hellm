@@ -1053,6 +1053,17 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
+      buildExtension: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        await runWorkspaceExtensionsCommand(
+          runtime,
+          `svvyx extensions build ${quoteSvvyxCommandArg(input.extensionId)} --json`,
+        );
+        runtime.appLog.info("settings", "Extension built from UI.", {
+          extensionId: input.extensionId,
+        });
+        return readWorkspaceExtensionsInventory(runtime);
+      },
       setExtensionTypescriptApi: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         await runWorkspaceExtensionsCommand(
@@ -1179,12 +1190,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
               : extension?.loadedInstructionContributors
                   .filter((contributor) => contributor.kind === "source")
                   .find((contributor) => contributor.file.name === input.name)?.file.path;
-        if (input.kind === "minimal" && path && !existsSync(path) && extension) {
+        if (path && !existsSync(path) && extension && input.kind !== "script") {
+          const content =
+            input.kind === "minimal"
+              ? extension.minimalInstruction?.content
+              : extension.loadedInstructionContributors
+                  .filter((contributor) => contributor.kind === "source")
+                  .find((contributor) => contributor.file.name === input.name)?.file.content;
           writeExtensionInstructionFile({
             extensionId: input.extensionId,
             file: input.name,
-            kind: "minimal",
-            content: extension.minimalInstruction?.content ?? "",
+            kind: input.kind ?? "full",
+            content: content ?? "",
             mode: "overwrite",
             extensionsRoot: runtime.catalog.getExtensionsRoot(),
           });

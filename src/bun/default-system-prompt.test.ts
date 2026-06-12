@@ -154,7 +154,7 @@ describe("default system prompt", () => {
   it("uses editable base instruction extension files instead of fallback prompt bodies", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-base-extension-"));
     try {
-      const baseFile = join(root, "010-base-common.generated.md");
+      const baseFile = join(root, "010-base-common.md");
       writeFileSync(baseFile, "# Edited Base\n\nUse the edited base prompt.");
 
       const prompt = buildSystemPrompt("orchestrator", {
@@ -167,16 +167,11 @@ describe("default system prompt", () => {
             title: "Base Common",
             description: "Shared svvy operating instructions.",
             instructionSourceFiles: [baseFile],
-            minimalLoadingHint: "Shared operating instructions are loaded automatically.",
+            minimalLoadingHint:
+              "Load Base Common only when shared svvy operating rules are missing.",
             typescriptApiEnabled: false,
             envReadiness: "not_required",
             dependencyReadiness: "not_required",
-            generatedInstructions: [
-              {
-                output: "instructions/full/010-base-common.generated.md",
-                script: "scripts/generate-api-declarations.ts",
-              },
-            ],
             resetBehavior: "builtin_reset",
             deleteBehavior: "not_allowed",
           },
@@ -184,7 +179,7 @@ describe("default system prompt", () => {
       });
 
       expect(prompt).toContain("Loaded extension: Base Common.");
-      expect(prompt).toContain("Instruction file: 010-base-common.generated.md");
+      expect(prompt).toContain("Instruction file: 010-base-common.md");
       expect(prompt).toContain("Use the edited base prompt.");
       expect(prompt).not.toContain("You are svvy, a pragmatic software engineering assistant");
     } finally {

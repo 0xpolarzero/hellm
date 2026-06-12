@@ -2202,7 +2202,7 @@ describe("svvyx extensions command", () => {
     });
   });
 
-  it("projects builtin extension inventory from generated outputs instead of docs files", async () => {
+  it("projects builtin extension inventory from prompt contributors instead of docs files", async () => {
     const extensionsRoot = createTempDir();
     const cwd = createTempDir();
     const packagedFullDir = join(cwd, "generated", "instructions", "full");
@@ -2228,21 +2228,20 @@ describe("svvyx extensions command", () => {
       },
       loadedInstructionContributors: [
         {
-          kind: "scripted",
-          name: "010-base-common.generated.md",
-          skipped: false,
-          script: {
+          kind: "source",
+          file: {
+            name: "010-base-common.md",
             editable: true,
-          },
-          output: {
-            name: "010-base-common.generated.md",
-            content: "packaged base common\n",
-            editable: false,
           },
         },
       ],
     });
-    expect(baseCommon?.minimalInstruction?.content).toContain("Shared operating instructions");
+    expect(baseCommon?.minimalInstruction?.content).toContain("Load Base Common");
+    expect(
+      baseCommon?.loadedInstructionContributors[0]?.kind === "source"
+        ? baseCommon.loadedInstructionContributors[0].file.content
+        : "",
+    ).toContain("You are svvy");
     expect(web).toMatchObject({
       customized: false,
       loadedInstructionContributors: [
@@ -2263,7 +2262,6 @@ describe("svvyx extensions command", () => {
       minimalInstruction: {
         editable: true,
       },
-      loadedInstructionContributors: [],
       tooling: {
         nativeToolSchema: {
           name: "tool-schema.json",
@@ -2271,6 +2269,22 @@ describe("svvyx extensions command", () => {
         typescriptApiStatus: "disabled",
       },
     });
+    expect(shell?.loadedInstructionContributors).toEqual([
+      expect.objectContaining({
+        kind: "source",
+        file: expect.objectContaining({
+          name: "010-shell.md",
+          editable: true,
+        }),
+      }),
+      expect.objectContaining({
+        kind: "source",
+        file: expect.objectContaining({
+          name: "020-incur-cli-usage.md",
+          editable: true,
+        }),
+      }),
+    ]);
     expect(shell?.tooling.nativeToolSchema?.content).toContain('"id": "shell"');
     expect(artifacts).toMatchObject({
       tooling: {
@@ -2285,7 +2299,9 @@ describe("svvyx extensions command", () => {
     expect(
       baseCommon?.loadedInstructionContributors[0]?.kind === "scripted"
         ? baseCommon.loadedInstructionContributors[0].output.path
-        : "",
+        : baseCommon?.loadedInstructionContributors[0]?.kind === "source"
+          ? baseCommon.loadedInstructionContributors[0].file.path
+          : "",
     ).not.toContain("docs/");
     expect(
       web?.loadedInstructionContributors[0]?.kind === "scripted"
@@ -2324,10 +2340,10 @@ describe("svvyx extensions command", () => {
       },
       loadedInstructionContributors: [
         {
-          kind: "scripted",
-          name: "010-base-common.generated.md",
-          output: {
-            editable: false,
+          kind: "source",
+          file: {
+            name: "010-base-common.md",
+            editable: true,
           },
         },
       ],
@@ -2519,27 +2535,104 @@ describe("svvyx extensions command", () => {
     );
   });
 
+  it("normalizes stale base prompt overlays away from generated instruction metadata", async () => {
+    const extensionsRoot = createTempDir();
+    const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "base-common");
+    const fullDir = join(overlayRoot, "instructions", "full");
+    mkdirSync(fullDir, { recursive: true });
+    mkdirSync(join(overlayRoot, "instructions"), { recursive: true });
+    writeFileSync(
+      join(overlayRoot, "manifest.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: "base-common",
+          title: "Base Common",
+          description: "Shared svvy operating instructions.",
+          interface: "instructions",
+          typescriptApiEnabled: false,
+          instructionFiles: [{ file: "010-base-common.generated.md", bypassed: false }],
+          generatedInstructions: [
+            {
+              output: "instructions/full/010-base-common.generated.md",
+              script: "scripts/generate-api-declarations.ts",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(fullDir, "010-base-common.generated.md"),
+      "#!/usr/bin/env bun\n\nstale generator source\n",
+    );
+    writeFileSync(
+      join(overlayRoot, "instructions", "minimal.md"),
+      "Shared operating instructions are loaded automatically.\n",
+    );
+
+    const inventory = await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    const baseCommon = inventory.extensions.find((extension) => extension.id === "base-common");
+
+    expect(baseCommon).toMatchObject({
+      customized: false,
+      state: {
+        ready: true,
+        issues: [],
+      },
+      loadedInstructionContributors: [
+        {
+          kind: "source",
+          file: {
+            name: "010-base-common.md",
+            editable: true,
+          },
+        },
+      ],
+    });
+    expect(baseCommon?.minimalInstruction?.content).toContain("Load Base Common");
+    expect(baseCommon?.loadedInstructionContributors).toHaveLength(1);
+    expect(
+      baseCommon?.loadedInstructionContributors.some(
+        (contributor) => contributor.kind === "scripted",
+      ),
+    ).toBe(false);
+    expect(readFileSync(join(fullDir, "010-base-common.md"), "utf8")).toContain("You are svvy");
+    const manifest = JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8"));
+    expect(manifest.generatedInstructions).toBeUndefined();
+    expect(manifest.instructionFiles).toEqual([
+      {
+        file: "010-base-common.md",
+        bypassed: false,
+      },
+    ]);
+  });
+
   it("materializes and resets editable base prompt builtin overlays", async () => {
     const extensionsRoot = createTempDir();
     const basePrompts = [
       {
         id: "base-common",
-        file: "010-base-common.generated.md",
+        file: "010-base-common.md",
         marker: "You are svvy, a pragmatic software engineering assistant",
       },
       {
         id: "base-orchestrator",
-        file: "010-base-orchestrator.generated.md",
+        file: "010-base-orchestrator.md",
         marker: "This surface is the orchestrator.",
       },
       {
         id: "base-handler",
-        file: "010-base-handler.generated.md",
+        file: "010-base-handler.md",
         marker: "This surface is a delegated handler thread.",
       },
       {
         id: "base-workflow-task",
-        file: "010-base-workflow-task.generated.md",
+        file: "010-base-workflow-task.md",
         marker: "You are a task-scoped coding agent",
       },
     ];
@@ -2568,11 +2661,11 @@ describe("svvyx extensions command", () => {
     });
     const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "base-common");
     const fullDir = join(overlayRoot, "instructions", "full");
-    const baseFile = join(fullDir, "010-base-common.generated.md");
+    const baseFile = join(fullDir, "010-base-common.md");
 
     expect((inspect.output as any).extension.paths.instructionsFull).toEqual([
       {
-        name: "010-base-common.generated.md",
+        name: "010-base-common.md",
         path: baseFile,
         bypassed: false,
       },
@@ -2583,15 +2676,9 @@ describe("svvyx extensions command", () => {
     expect(JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8"))).toMatchObject({
       id: "base-common",
       interface: "instructions",
-      generatedInstructions: [
-        {
-          output: "instructions/full/010-base-common.generated.md",
-          script: "scripts/generate-api-declarations.ts",
-        },
-      ],
       instructionFiles: [
         {
-          file: "010-base-common.generated.md",
+          file: "010-base-common.md",
           bypassed: false,
         },
       ],
@@ -6732,10 +6819,31 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(existsSync(join(extensionsRoot, "sources", "builtin-overlays", "web"))).toBe(false);
     await expect(
       runSvvyxExtensionsCommand({
-        command: "svvyx extensions instructions add shell --name 020-shell.md --json",
+        command: "svvyx extensions instructions add shell --name 030-shell-extra.md --json",
         extensionsRoot,
       }),
-    ).rejects.toThrow("Shell has no editable app-owned instruction storage.");
+    ).resolves.toMatchObject({
+      output: {
+        ok: true,
+        extensionId: "shell",
+        created: {
+          name: "030-shell-extra.md",
+        },
+      },
+    });
+    expect(
+      existsSync(
+        join(
+          extensionsRoot,
+          "sources",
+          "builtin-overlays",
+          "shell",
+          "instructions",
+          "full",
+          "030-shell-extra.md",
+        ),
+      ),
+    ).toBe(true);
     await expect(
       runSvvyxExtensionsCommand({
         command:

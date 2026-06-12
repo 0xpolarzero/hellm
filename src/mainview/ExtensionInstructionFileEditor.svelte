@@ -23,13 +23,24 @@
     file: ExtensionInstructionFileReadModel;
     kind?: "full" | "minimal" | "script";
     label?: string;
+    showTokenCount?: boolean;
     runtime: ChatRuntime;
     onSaved: () => void;
   };
 
   const AUTOSAVE_DELAY_MS = 700;
 
-  let { disabled = false, editor = "system", extensionId, file, kind = "full", label = "editable", runtime, onSaved }: Props =
+  let {
+    disabled = false,
+    editor = "system",
+    extensionId,
+    file,
+    kind = "full",
+    label = "editable",
+    showTokenCount = true,
+    runtime,
+    onSaved,
+  }: Props =
     $props();
 
   let draft = $state("");
@@ -146,24 +157,6 @@
 </script>
 
 <div class={`extension-instruction-editor ${file.skipped ? "is-skipped" : ""}`.trim()}>
-  <div class="extension-instruction-editor-bar">
-    <div>
-      <strong>{file.name}</strong>
-      <span>{file.editable ? label : "read-only"}</span>
-      <span>{file.skipped ? "skipped" : "loaded"}</span>
-      <span>~{formatTokenCount(file.tokenCount.tokens)} tokens</span>
-    </div>
-    <div class="extension-instruction-editor-actions">
-      <Tooltip label="Open instruction file in external editor">
-        <OpenExternalButton
-          editor={editor as never}
-          targetLabel={file.path}
-          disabled={disabled}
-          onclick={openExternal}
-        />
-      </Tooltip>
-    </div>
-  </div>
   <div class="extension-instruction-shell" data-autosave-status={status}>
     <textarea
       class="extension-instruction-field"
@@ -204,6 +197,24 @@
       {/if}
     </div>
   </div>
+  <div class="extension-instruction-source-note">
+    <div class="extension-instruction-source-meta">
+      <strong>{file.name}</strong>
+      <span>{file.editable ? label : "read-only"}</span>
+      <span>{file.skipped ? "skipped" : "loaded"}</span>
+      {#if showTokenCount}
+        <span>~{formatTokenCount(file.tokenCount.tokens)} tokens</span>
+      {/if}
+    </div>
+    <Tooltip label="Open instruction file in external editor">
+      <OpenExternalButton
+        editor={editor as never}
+        targetLabel={file.path}
+        disabled={disabled}
+        onclick={openExternal}
+      />
+    </Tooltip>
+  </div>
   {#if errorMessage}
     <p class="extension-instruction-error" role="alert">{errorMessage}</p>
   {/if}
@@ -212,48 +223,46 @@
 <style>
   .extension-instruction-editor {
     display: grid;
-    gap: 0.34rem;
+    gap: 0.26rem;
     min-width: 0;
-    padding: 0.42rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
   }
 
   .extension-instruction-editor.is-skipped {
     opacity: 0.74;
   }
 
-  .extension-instruction-editor-bar {
-    display: flex;
+  .extension-instruction-source-note {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.36rem;
     min-width: 0;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+    line-height: 1;
   }
 
-  .extension-instruction-editor-bar > div:first-child,
-  .extension-instruction-editor-actions {
+  .extension-instruction-source-meta {
     display: inline-flex;
     align-items: center;
     gap: 0.38rem;
     min-width: 0;
   }
 
-  .extension-instruction-editor-bar strong,
-  .extension-instruction-editor-bar span {
+  .extension-instruction-source-note strong,
+  .extension-instruction-source-note span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .extension-instruction-editor-bar strong {
-    color: var(--ui-text-primary);
-    font-size: var(--text-sm);
+  .extension-instruction-source-note strong {
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
 
-  .extension-instruction-editor-bar span,
+  .extension-instruction-source-note span,
   .extension-instruction-status {
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);

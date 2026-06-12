@@ -149,38 +149,38 @@ export const SHELL_INCUR_CLI_CONTEXT_BODY = [
   "Use the specific loaded extension instructions for domain command names and examples.",
 ].join("\n");
 
-const APPLY_PATCH_CONTEXT_BODY = [
+export const APPLY_PATCH_CONTEXT_BODY = [
   "Loaded native extension: Apply Patch.",
   "",
   "Use apply_patch for targeted source edits. It is not a shell and cannot run commands or continue processes.",
 ].join("\n");
 
-const GIT_CONTEXT_BODY = [
+export const GIT_CONTEXT_BODY = [
   "Loaded prompt-only extension: Git.",
   "",
   "Use git through ordinary Shell commands for repository status, diffs, branches, staging, commits, and history. There are no native git_* tools, no svvyx git commands, and no generated Git TypeScript clients.",
 ].join("\n");
 
-const GITHUB_CONTEXT_BODY = [
+export const GITHUB_CONTEXT_BODY = [
   "Loaded prompt-only extension: GitHub.",
   "",
   "Use gh through ordinary Shell commands for GitHub issues, pull requests, reviews, Actions, publishing, and wrap-up. There are no native github_* tools, no svvyx github commands, and no generated GitHub TypeScript clients.",
 ].join("\n");
 
-const EXTENSION_LOADING_CONTEXT_BODY = [
+export const EXTENSION_LOADING_CONTEXT_BODY = [
   "Loaded native extension: Extension Loading.",
   "",
   "Use list_extensions to inspect the current actor's loaded and available extensions. Use load_extension only to load an available ready extension into this actor session.",
 ].join("\n");
 
-const EXTENSION_MANAGING_CONTEXT_BODY = [
+export const EXTENSION_MANAGING_CONTEXT_BODY = [
   "Loaded native extension: Extension Managing.",
   "",
   "Use extension-management commands only for app-owned extension source, build, snapshot, readiness, and inspection work.",
   "Do not treat Extension Managing as actor-local runtime capability loading; use Extension Loading for actor-local list_extensions and load_extension work.",
 ].join("\n");
 
-const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
+export const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
   "Loaded native extension: Request User Input.",
   "",
   "Use `request_user_input` only for user decisions that could materially steer the work and where you can choose a conservative default now.",
@@ -188,7 +188,7 @@ const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
   "Continue with the returned answer. If a later `request_user_input.answer` message arrives, treat it as a normal queued answer follow-up and reassess only if it materially changes the work.",
 ].join("\n");
 
-const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY = [
+export const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY = [
   "Loaded native extension: Request User Input.",
   "",
   "Use `request_user_input` only when the answer is required before proceeding safely.",
@@ -196,13 +196,13 @@ const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY = [
   'When the tool returns, continue with the returned answer. If the answer is marked `answeredBy: "timeout_default"`, treat it as a fallback, not confirmed user preference.',
 ].join("\n");
 
-const THREAD_ORCHESTRATION_CONTEXT_BODY = [
+export const THREAD_ORCHESTRATION_CONTEXT_BODY = [
   "Loaded native extension: Thread Orchestration.",
   "",
   "Use thread_start for delegated handler objectives, thread_followup for exact thread or group follow-up, thread_request_report for one-handler updates, and thread_list/thread_episodes when handler state matters.",
 ].join("\n");
 
-const THREAD_HANDLING_CONTEXT_BODY = [
+export const THREAD_HANDLING_CONTEXT_BODY = [
   "Loaded native extension: Thread Handling.",
   "",
   "Use thread_current and thread_group to inspect this handler context, thread_episodes for durable report history, and thread_report for intermediate updates or conclusions.",
@@ -251,7 +251,7 @@ const ARTIFACTS_COMMAND_CONTRACTS = [
   },
 ] as const;
 
-const ARTIFACTS_CONTEXT_BODY = buildArtifactsContextBody();
+export const ARTIFACTS_CONTEXT_BODY = buildArtifactsContextBody();
 
 function buildArtifactsContextBody(): string {
   return [
@@ -268,7 +268,7 @@ function buildArtifactsContextBody(): string {
   ].join("\n");
 }
 
-const SMITHERS_ORCHESTRATOR_CONTEXT_BODY = [
+export const SMITHERS_ORCHESTRATOR_CONTEXT_BODY = [
   "Loaded always-on prompt context: Smithers workflow routing.",
   "",
   "Handler threads use official Smithers CLI commands through Shell for workflow work. The orchestrator knows this capability exists, but it does not receive `smithers_*` tool declarations or product workflow wrappers.",
@@ -276,7 +276,7 @@ const SMITHERS_ORCHESTRATOR_CONTEXT_BODY = [
   "When work requires workflow execution, workflow authoring, or workflow inspection, delegate a bounded objective to a handler thread with `thread_start`. Use `thread_followup({ activate: true })` when a concluded handler thread already has the right delegated context for follow-up work.",
 ].join("\n");
 
-const SMITHERS_HANDLER_CONTEXT_BODY = [
+export const SMITHERS_HANDLER_CONTEXT_BODY = [
   "Loaded prompt-only extension: Smithers CLI workflow authoring.",
   "",
   "Handler threads use official Smithers CLI commands through Shell against workspace `.smithers/` source. Smithers adds no native tools, no generated TypeScript clients, and no product workflow wrapper tools.",
@@ -286,11 +286,99 @@ const SMITHERS_HANDLER_CONTEXT_BODY = [
   "When the delegated objective has an important update, call `thread_report`. Include `outcome` only when the current handler objective is concluded.",
 ].join("\n");
 
-const SMITHERS_WORKFLOW_TASK_CONTEXT_BODY = [
+export const SMITHERS_WORKFLOW_TASK_CONTEXT_BODY = [
   "Loaded always-on prompt context: Smithers task-agent boundary.",
   "",
   "Smithers owns task lifecycle, retries, validation, approval gates, and workflow state whenever an official Smithers workflow invokes a task agent.",
 ].join("\n");
+
+export type BuiltinLoadedInstructionDefault = {
+  name: string;
+  content: string;
+};
+
+export function builtinLoadedInstructionDefaults(
+  extensionId: string,
+): BuiltinLoadedInstructionDefault[] {
+  if (extensionId === "base-common") {
+    return [{ name: "010-base-common.md", content: BASE_COMMON_INSTRUCTIONS }];
+  }
+  if (extensionId === "base-orchestrator") {
+    return [{ name: "010-base-orchestrator.md", content: BASE_ORCHESTRATOR_INSTRUCTIONS }];
+  }
+  if (extensionId === "base-handler") {
+    return [{ name: "010-base-handler.md", content: BASE_HANDLER_INSTRUCTIONS }];
+  }
+  if (extensionId === "base-workflow-task") {
+    return [{ name: "010-base-workflow-task.md", content: BASE_WORKFLOW_TASK_INSTRUCTIONS }];
+  }
+  if (extensionId === "shell") {
+    return [
+      { name: "010-shell.md", content: SHELL_BASE_CONTEXT_BODY },
+      { name: "020-incur-cli-usage.md", content: SHELL_INCUR_CLI_CONTEXT_BODY },
+    ];
+  }
+  if (extensionId === "apply-patch") {
+    return [{ name: "010-apply-patch.md", content: APPLY_PATCH_CONTEXT_BODY }];
+  }
+  if (extensionId === "execute-typescript") {
+    return [
+      {
+        name: "010-execute-typescript.md",
+        content: buildExecuteTypescriptBasePromptSection("orchestrator"),
+      },
+      {
+        name: "020-incur-typescript-clients.md",
+        content: EXECUTE_TYPESCRIPT_INCUR_CLIENT_PROMPT_SECTION,
+      },
+    ];
+  }
+  if (extensionId === "extension-loading") {
+    return [{ name: "010-extension-loading.md", content: EXTENSION_LOADING_CONTEXT_BODY }];
+  }
+  if (extensionId === "extension-managing") {
+    return [{ name: "010-extension-managing.md", content: EXTENSION_MANAGING_CONTEXT_BODY }];
+  }
+  if (extensionId === "request-user-input") {
+    return [
+      { name: "010-request-user-input.md", content: REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY },
+    ];
+  }
+  if (extensionId === "thread-orchestration") {
+    return [{ name: "010-thread-orchestration.md", content: THREAD_ORCHESTRATION_CONTEXT_BODY }];
+  }
+  if (extensionId === "thread-handling") {
+    return [{ name: "010-thread-handling.md", content: THREAD_HANDLING_CONTEXT_BODY }];
+  }
+  if (extensionId === "git") {
+    return [{ name: "010-git.md", content: GIT_CONTEXT_BODY }];
+  }
+  if (extensionId === "github") {
+    return [{ name: "010-github.md", content: GITHUB_CONTEXT_BODY }];
+  }
+  if (extensionId === "artifacts") {
+    return [{ name: "010-artifacts.md", content: ARTIFACTS_CONTEXT_BODY }];
+  }
+  if (extensionId === "smithers") {
+    return [
+      { name: "020-smithers-handler.md", content: SMITHERS_HANDLER_CONTEXT_BODY },
+      { name: "030-smithers-svvy-boundary.md", content: SMITHERS_SVVY_BOUNDARY_APPENDIX },
+    ];
+  }
+  if (extensionId === "workflows") {
+    return [
+      {
+        name: "010-workflow-authoring-contract.md",
+        content: WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION,
+      },
+      {
+        name: "020-handler-workflow-authoring-appendix.md",
+        content: HANDLER_WORKFLOW_AUTHORING_APPENDIX,
+      },
+    ];
+  }
+  return [];
+}
 
 function buildCommonInstructions(actor: SvvyActorKind): string[] {
   const common = BASE_COMMON_INSTRUCTIONS.split("\n\n");

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
 import { createListExtensionsTool, createLoadExtensionTool } from "./extension-tools";
+import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import {
   createStructuredSessionStateStore,
@@ -155,30 +156,22 @@ describe("builtin extension registry", () => {
     }
   });
 
-  it("declares base actor prompts as generated builtin instruction files", () => {
-    expect(getExtensionRecord("base-common")?.generatedInstructions).toEqual([
-      {
-        output: "instructions/full/010-base-common.generated.md",
-        script: "scripts/generate-api-declarations.ts",
-      },
+  it("declares base actor prompts as direct builtin instruction files", () => {
+    expect(getExtensionRecord("base-common")?.generatedInstructions).toBeUndefined();
+    expect(getExtensionRecord("base-orchestrator")?.generatedInstructions).toBeUndefined();
+    expect(getExtensionRecord("base-handler")?.generatedInstructions).toBeUndefined();
+    expect(getExtensionRecord("base-workflow-task")?.generatedInstructions).toBeUndefined();
+    expect(builtinLoadedInstructionDefaults("base-common")).toEqual([
+      expect.objectContaining({ name: "010-base-common.md" }),
     ]);
-    expect(getExtensionRecord("base-orchestrator")?.generatedInstructions).toEqual([
-      {
-        output: "instructions/full/010-base-orchestrator.generated.md",
-        script: "scripts/generate-api-declarations.ts",
-      },
+    expect(builtinLoadedInstructionDefaults("base-orchestrator")).toEqual([
+      expect.objectContaining({ name: "010-base-orchestrator.md" }),
     ]);
-    expect(getExtensionRecord("base-handler")?.generatedInstructions).toEqual([
-      {
-        output: "instructions/full/010-base-handler.generated.md",
-        script: "scripts/generate-api-declarations.ts",
-      },
+    expect(builtinLoadedInstructionDefaults("base-handler")).toEqual([
+      expect.objectContaining({ name: "010-base-handler.md" }),
     ]);
-    expect(getExtensionRecord("base-workflow-task")?.generatedInstructions).toEqual([
-      {
-        output: "instructions/full/010-base-workflow-task.generated.md",
-        script: "scripts/generate-api-declarations.ts",
-      },
+    expect(builtinLoadedInstructionDefaults("base-workflow-task")).toEqual([
+      expect.objectContaining({ name: "010-base-workflow-task.md" }),
     ]);
   });
 

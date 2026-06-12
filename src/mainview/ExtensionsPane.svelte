@@ -367,6 +367,19 @@
     }
   }
 
+  async function buildExtension(extensionId: string) {
+    if (pendingExtensionAction) return;
+    pendingExtensionAction = `build:${extensionId}`;
+    inventoryError = null;
+    try {
+      extensionsInventory = await runtime.buildExtension({ extensionId });
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to build extension.";
+    } finally {
+      pendingExtensionAction = null;
+    }
+  }
+
   async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
     if (pendingExtensionAction) return;
     const nextIndex = extension.loadedInstructionContributors.length + 1;
@@ -1378,6 +1391,7 @@
           draggable={extensionFilter === "all"}
           dragLabel={`Reorder ${extension.title}`}
           expanded={expanded}
+          expandedInset={false}
           target={extension.id === targetExtensionId}
           onDragPointerDown={(event) => startExtensionDrag(event, extension)}
           onToggle={() => toggleExtensionExpanded(extension.id)}
@@ -1599,7 +1613,17 @@
                     <div class="scripted-instruction-contributor">
                       <div class="extension-instruction-list-header">
                         <strong>{contributor.name}</strong>
-                        <code>{contributor.regenerateCommand}</code>
+                        <Tooltip label={`Run ${contributor.regenerateCommand}`}>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            disabled={pendingExtensionAction !== null}
+                            onclick={() => void buildExtension(extension.id)}
+                          >
+                            <RotateCcwIcon size={13} aria-hidden="true" />
+                            Build
+                          </Button>
+                        </Tooltip>
                       </div>
                       <ExtensionInstructionFileEditor
                         runtime={runtime}
@@ -1607,6 +1631,7 @@
                         kind="script"
                         file={contributor.script}
                         label="generator"
+                        showTokenCount={false}
                         editor={appPreferences?.preferredExternalEditor}
                         disabled={pendingExtensionAction !== null}
                         onSaved={() => void loadExtensionsInventory()}
@@ -1656,6 +1681,7 @@
                   extensionId={extension.id}
                   file={extension.tooling.svvyxCommandSource}
                   label="command source"
+                  showTokenCount={false}
                   editor={appPreferences?.preferredExternalEditor}
                   disabled={pendingExtensionAction !== null}
                   onSaved={() => void loadExtensionsInventory()}
@@ -2224,7 +2250,6 @@
     display: grid;
     align-content: start;
     gap: 0.16rem;
-    padding-top: 1.45rem;
   }
 
   .scripted-instruction-contributor,
@@ -2232,14 +2257,6 @@
     display: grid;
     gap: 0.42rem;
     min-width: 0;
-  }
-
-  .scripted-instruction-contributor .extension-instruction-list-header code {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
   }
 
   .extension-readonly-block {

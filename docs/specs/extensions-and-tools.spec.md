@@ -36,6 +36,10 @@ Extensions own:
 
 Generated actor context is composed from the current agent profile plus loaded extensions.
 
+Direct builtin prompt text, including base actor prompts and native-tool guidance, is modeled as
+editable loaded Markdown source contributors. Scripted contributors are used only when an extension
+has a real generator/source pair.
+
 External instruction records are not normal extensions. They are discovered read-only instruction
 files such as `AGENTS.md` or `CLAUDE.md`, owned outside `svvy`, with no minimal instruction, no
 loaded-contributor lifecycle, no generated outputs, and no reset/delete controls.

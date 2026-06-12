@@ -993,6 +993,11 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
+        buildExtension: async () => ({
+          extensions: [],
+          reversibleChanges: [],
+          snapshots: [],
+        }),
         setExtensionTypescriptApi: async () => ({
           extensions: [],
           reversibleChanges: [],
