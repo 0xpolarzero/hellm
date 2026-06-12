@@ -71,7 +71,7 @@ Sources:
 
 ```text
 ~/.config/svvy/extensions/sources/user/**
-~/.config/svvy/extensions/sources/builtin-overlays/**
+~/.config/svvy/extensions/sources/builtin/**
 ~/.config/svvy/extensions/package/package.json
 ```
 

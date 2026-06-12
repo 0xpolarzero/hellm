@@ -29,7 +29,7 @@
     ExtensionsInventoryReadModel,
   } from "../shared/workspace-contract";
   import { BUILTIN_EXTENSIONS } from "../shared/extensions";
-  import type { ExtensionInterfaceKind, ExtensionUsageState } from "../shared/extensions";
+  import type { ExtensionInterfaceKind } from "../shared/extensions";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -41,7 +41,6 @@
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
   import ExtensionListRow from "./ExtensionListRow.svelte";
-  import ExtensionStateButtons from "./ExtensionStateButtons.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
 
   type Props = {
@@ -96,17 +95,6 @@
     { id: "handler", label: "Handler" },
     { id: "workflow-task", label: "Workflow Task" },
   ] as const;
-
-  const DEFAULT_ACTORS = [
-    { id: "orchestrator", label: "Orchestrator" },
-    { id: "workflow-task", label: "Workflow Task" },
-  ] as const;
-
-  const USAGE_STATES: Array<{ state: ExtensionUsageState; label: string }> = [
-    { state: "default_loaded", label: "Loaded" },
-    { state: "available", label: "Available" },
-    { state: "unavailable", label: "Off" },
-  ];
 
   const FILTERS: Array<{ id: "all" | ExtensionInterfaceKind; label: string }> = [
     { id: "all", label: "All" },
@@ -195,48 +183,6 @@
     expandedExtensionIds = new Set(expandedExtensionIds);
   }
 
-  function defaultUsageFor(
-    extension: ExtensionInventoryItemReadModel,
-    actorKind: (typeof DEFAULT_ACTORS)[number]["id"],
-  ) {
-    return (
-      extensionsInventory?.defaults?.usage[extension.id]?.find(
-        (usage) => usage.actorKind === actorKind,
-      ) ?? {
-        actorKind,
-        state: extension.category === "user" ? "default_loaded" : "unavailable",
-        customized: false,
-        configurable: extension.id !== "extension-loading",
-      }
-    );
-  }
-
-  async function setDefaultUsage(
-    extension: ExtensionInventoryItemReadModel,
-    actorKind: (typeof DEFAULT_ACTORS)[number]["id"],
-    state: ExtensionUsageState,
-  ) {
-    const usage = defaultUsageFor(extension, actorKind);
-    const actionKey = `default:${extension.id}:${actorKind}`;
-    if (!usage.configurable || usage.state === state || isExtensionActionPending(actionKey)) return;
-    startExtensionAction(actionKey);
-    inventoryError = null;
-    try {
-      await applyExtensionInventoryMutation(
-        runtime.setExtensionDefaultUsage({
-          extensionId: extension.id,
-          actorKind,
-          state,
-        }),
-      );
-    } catch (error) {
-      inventoryError =
-        error instanceof Error ? error.message : "Unable to update extension default.";
-    } finally {
-      finishExtensionAction(actionKey);
-    }
-  }
-
   function extensionKindTitle(kind: ExtensionInterfaceKind): string {
     if (kind === "native_tool") return "Native tool";
     if (kind === "svvyx") return "svvyx extension";
@@ -249,28 +195,10 @@
     return "Prompt extensions add instruction text and loading hints.";
   }
 
-  function extensionTokenCount(extension: ExtensionInventoryItemReadModel): number {
-    return extension.loadedInstructionContributors
-      .filter((contributor) => !contributorSkipped(contributor))
-      .reduce((total, contributor) => total + contributorTokenCount(contributor), 0);
-  }
-
   function contributorSkipped(
     contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
   ): boolean {
     return contributor.kind === "source" ? contributor.file.skipped : contributor.skipped;
-  }
-
-  function contributorTokenCount(
-    contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
-  ): number {
-    return contributor.kind === "source"
-      ? contributor.file.tokenCount.tokens
-      : contributor.output.tokenCount.tokens;
-  }
-
-  function formatPromptTokenCount(tokens: number): string {
-    return `~${tokens.toLocaleString()} tokens`;
   }
 
   function generatedApiLabel(extension: ExtensionInventoryItemReadModel): string | null {
@@ -280,6 +208,16 @@
 
   function customizedExtension(extension: ExtensionInventoryItemReadModel): boolean {
     return extension.customized;
+  }
+
+  function extensionNeedsBuild(extension: ExtensionInventoryItemReadModel): boolean {
+    return extension.state.issues.some(
+      (issue) => issue.code === "BUILD_REQUIRED" || issue.code === "NO_CURRENT_BUILD",
+    );
+  }
+
+  function buildRequiredExtensions(): ExtensionInventoryItemReadModel[] {
+    return inventoryRows().filter(extensionNeedsBuild);
   }
 
   function isExtensionActionPending(key: string): boolean {
@@ -430,6 +368,28 @@
     }
   }
 
+  async function buildRequiredExtensionSet() {
+    const extensions = buildRequiredExtensions();
+    const actionKey = "build-all";
+    if (extensions.length === 0 || isExtensionActionPending(actionKey)) return;
+    startExtensionAction(actionKey);
+    inventoryError = null;
+    try {
+      let inventory: ExtensionsInventoryReadModel | null = null;
+      for (const extension of extensions) {
+        inventory = await runtime.buildExtension({ extensionId: extension.id });
+      }
+      if (inventory) {
+        extensionsInventory = inventory;
+      }
+      extensionInventoryNeedsSettledRefresh = true;
+    } catch (error) {
+      inventoryError = error instanceof Error ? error.message : "Unable to build extensions.";
+    } finally {
+      finishExtensionAction(actionKey);
+    }
+  }
+
   async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
     const actionKey = `instruction:${extension.id}`;
     if (isExtensionActionPending(actionKey)) return;
@@ -502,6 +462,7 @@
           enabled,
         }),
       );
+      await applyExtensionInventoryMutation(runtime.buildExtension({ extensionId: extension.id }));
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to update TypeScript API setting.";
@@ -656,36 +617,6 @@
         disabled: snapshotAction !== null,
       };
     });
-  }
-
-  function usageFor(
-    extension: ExtensionInventoryItemReadModel,
-    actor: (typeof ACTORS)[number]["id"],
-  ): string {
-    const inventoryUsage = extension.usage.find((usage) => usage.actorKind === actor);
-    if (inventoryUsage) return usageLabel(inventoryUsage.state);
-    const state = actorStates.find((candidate) => candidate.id === actor)?.state;
-    if (state?.loadedExtensionIds.includes(extension.id)) return "Loaded";
-    if (state?.availableExtensionIds.includes(extension.id)) return "Available";
-    return "Unavailable";
-  }
-
-  function usageLabel(state: string): string {
-    if (state === "default_loaded") return "Loaded";
-    if (state === "available") return "Available";
-    return "Unavailable";
-  }
-
-  function usageTone(usage: string): "neutral" | "info" | "success" | "warning" | "danger" {
-    if (usage === "Loaded") return "success";
-    if (usage === "Available") return "info";
-    return "neutral";
-  }
-
-  function interfaceLabel(kind: string): string {
-    if (kind === "native_tool") return "Native";
-    if (kind === "svvyx") return "svvyx";
-    return "Prompt";
   }
 
   function categoryLabel(category: string): string {
@@ -1219,6 +1150,7 @@
   <div class="extensions-inventory">
     <section class="extension-toolbar" aria-label="Extension controls">
       <div class="extension-toolbar-row extension-toolbar-history-row">
+        <div class="extension-toolbar-spacer" aria-hidden="true"></div>
         <Tooltip label="Reset default extension order">
           <button
             type="button"
@@ -1230,7 +1162,6 @@
             Order
           </button>
         </Tooltip>
-        <div class="extension-toolbar-spacer" aria-hidden="true"></div>
         <div
           class="extension-snapshot-controls"
           use:dismissConfirmation={{
@@ -1388,6 +1319,20 @@
           {/each}
         </div>
         <div class="extension-toolbar-actions">
+          {#if buildRequiredExtensions().length > 0}
+            <Tooltip label={`Build ${buildRequiredExtensions().length} extension${buildRequiredExtensions().length === 1 ? "" : "s"}`}>
+              <Button
+                class="new-extension-button"
+                variant="ghost"
+                size="xs"
+                disabled={isExtensionActionPending("build-all")}
+                onclick={() => void buildRequiredExtensionSet()}
+              >
+                <RotateCcwIcon aria-hidden="true" size={13} strokeWidth={2} />
+                <span>Build</span>
+              </Button>
+            </Tooltip>
+          {/if}
           <Button
             class="new-extension-button"
             variant="ghost"
@@ -1445,7 +1390,6 @@
       {@const envRequirements = inventoryEnvRequirements(extension.id)}
       {@const declaredCliBinaries = declaredCliRequirementBinaries(extension.id)}
       {@const expanded = expandedExtensionIds.has(extension.id)}
-      {@const tokenCount = extensionTokenCount(extension)}
       <div
         use:registerExtensionRow={extension.id}
         data-extension-id={extension.id}
@@ -1527,15 +1471,10 @@
             </Tooltip>
           {/snippet}
           {#snippet expandedContent()}
-          <section class="extension-defaults-section" aria-label={`${extension.title} defaults`}>
-            <div class="extension-expanded-section-header">
-              <strong>Defaults</strong>
-              <span>{formatPromptTokenCount(tokenCount)}</span>
-            </div>
-            <div class="extension-default-controls">
-              {#if extension.interface === "svvyx"}
-                <label class="extension-default-control extension-typescript-api-control">
-                  <span>TypeScript API</span>
+          {#if extension.interface === "svvyx"}
+            <section class="extension-top-controls" aria-label={`${extension.title} TypeScript API`}>
+              <Tooltip label="Adds generated client declarations to the execute_typescript API for this extension. Toggling rebuilds the extension.">
+                <label class="extension-inline-checkbox">
                   <Checkbox
                     size="sm"
                     checked={extension.typescriptApiEnabled}
@@ -1546,25 +1485,72 @@
                         (event.currentTarget as HTMLInputElement).checked,
                       )}
                   />
+                  <span>Enable TypeScript API</span>
                 </label>
+              </Tooltip>
+            </section>
+          {/if}
+          {#if extension.id === "request-user-input"}
+            <section class="extension-top-controls" aria-label="Request User Input mode">
+              {#if settingsError}
+                <p class="extension-settings-error" role="alert">{settingsError}</p>
               {/if}
-              {#each DEFAULT_ACTORS as actor (actor.id)}
-                {@const usage = defaultUsageFor(extension, actor.id)}
-                <div class="extension-default-control" aria-label={`${extension.title} ${actor.label} default`}>
-                  <span>{actor.label}</span>
-                  <div>
-                    <ExtensionStateButtons
-                      ariaLabel={`${extension.title} ${actor.label} default`}
-                      selected={usage.state}
-                      disabled={!usage.configurable || isExtensionActionPending(`default:${extension.id}:${actor.id}`)}
-                      labelFor={(state) => USAGE_STATES.find((entry) => entry.state === state)?.label ?? "Off"}
-                      onSelect={(state) => setDefaultUsage(extension, actor.id, state)}
-                    />
-                  </div>
+              {#if agentSettings}
+                <div class="request-input-mode">
+                  <Tooltip label="The agent can continue working while the user prompt is open.">
+                    <Button
+                      size="xs"
+                      variant={agentSettings.requestUserInput.mode === "nonblocking" ? "primary" : "ghost"}
+                      disabled={pendingSettings}
+                      onclick={() => updateRequestUserInputSettings({ mode: "nonblocking" })}
+                    >
+                      Nonblocking
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label="The agent waits for the user answer before continuing.">
+                    <Button
+                      size="xs"
+                      variant={agentSettings.requestUserInput.mode === "blocking" ? "primary" : "ghost"}
+                      disabled={pendingSettings}
+                      onclick={() => updateRequestUserInputSettings({ mode: "blocking" })}
+                    >
+                      Blocking
+                    </Button>
+                  </Tooltip>
                 </div>
-              {/each}
-            </div>
-          </section>
+                {#if agentSettings.requestUserInput.mode === "blocking"}
+                  <label class="request-input-timeout-toggle">
+                    <Checkbox
+                      size="sm"
+                      checked={agentSettings.requestUserInput.blockingTimeout.enabled}
+                      disabled={pendingSettings}
+                      onchange={(event) =>
+                        updateRequestUserInputSettings({
+                          blockingTimeout: {
+                            enabled: (event.currentTarget as HTMLInputElement).checked,
+                          },
+                        })}
+                    />
+                    <span>Timeout</span>
+                  </label>
+                  <label class="request-input-timeout-field">
+                    <span>Seconds</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      disabled={pendingSettings || !agentSettings.requestUserInput.blockingTimeout.enabled}
+                      value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
+                      onchange={(event) =>
+                        updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
+                    />
+                  </label>
+                {/if}
+              {:else}
+                <span class="extension-settings-loading">Loading</span>
+              {/if}
+            </section>
+          {/if}
           {#if extension.externalInstruction}
             <div class="external-instruction-readonly" aria-label={`${extension.title} external instruction source`}>
               <div class="external-instruction-meta">
@@ -1638,38 +1624,6 @@
               </div>
               {#each extension.loadedInstructionContributors as contributor (contributor.kind === "source" ? contributor.file.name : contributor.name)}
                 <div class="extension-instruction-row">
-                  <div class="extension-instruction-row-actions">
-                    <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
-                      <button
-                        type="button"
-                        class="extension-icon-action"
-                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
-                        aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
-                        onclick={() =>
-                          setInstructionSkipped(
-                            extension.id,
-                            contributor.kind === "source" ? contributor.file.name : contributor.output.name,
-                            !contributorSkipped(contributor),
-                          )}
-                      >
-                        <BanIcon size={13} aria-hidden="true" />
-                      </button>
-                    </Tooltip>
-                    <Tooltip label={contributor.kind !== "source" || !contributor.file.editable ? "Only source instruction files can be removed" : "Remove file to app-managed trash"}>
-                      <button
-                        type="button"
-                        class="extension-icon-action danger"
-                        disabled={isExtensionActionPending(`instruction:${extension.id}`) || contributor.kind !== "source" || !contributor.file.editable}
-                        aria-label="Remove instruction contributor"
-                        onclick={() =>
-                          contributor.kind === "source"
-                            ? removeInstructionFile(extension.id, contributor.file.name)
-                            : undefined}
-                      >
-                        <Trash2Icon size={13} aria-hidden="true" />
-                      </button>
-                    </Tooltip>
-                  </div>
                   {#if contributor.kind === "source"}
                     <ExtensionInstructionFileEditor
                       runtime={runtime}
@@ -1679,23 +1633,39 @@
                       editor={appPreferences?.preferredExternalEditor}
                       disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                       onSaved={() => void loadExtensionsInventory()}
-                    />
+                    >
+                      {#snippet footerControls()}
+                        <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
+                          <button
+                            type="button"
+                            class="extension-footer-icon-action"
+                            disabled={isExtensionActionPending(`instruction:${extension.id}`)}
+                            aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
+                            onclick={() =>
+                              setInstructionSkipped(
+                                extension.id,
+                                contributor.file.name,
+                                !contributorSkipped(contributor),
+                              )}
+                          >
+                            <BanIcon size={12} aria-hidden="true" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={contributor.file.editable ? "Remove file to app-managed trash" : "Only source instruction files can be removed"}>
+                          <button
+                            type="button"
+                            class="extension-footer-icon-action danger"
+                            disabled={isExtensionActionPending(`instruction:${extension.id}`) || !contributor.file.editable}
+                            aria-label="Remove instruction contributor"
+                            onclick={() => removeInstructionFile(extension.id, contributor.file.name)}
+                          >
+                            <Trash2Icon size={12} aria-hidden="true" />
+                          </button>
+                        </Tooltip>
+                      {/snippet}
+                    </ExtensionInstructionFileEditor>
                   {:else}
                     <div class="scripted-instruction-contributor">
-                      <div class="extension-instruction-list-header">
-                        <strong>{contributor.name}</strong>
-                        <Tooltip label={`Run ${contributor.regenerateCommand}`}>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={isExtensionActionPending(`build:${extension.id}`)}
-                            onclick={() => void buildExtension(extension.id)}
-                          >
-                            <RotateCcwIcon size={13} aria-hidden="true" />
-                            Build
-                          </Button>
-                        </Tooltip>
-                      </div>
                       <ExtensionInstructionFileEditor
                         runtime={runtime}
                         extensionId={extension.id}
@@ -1706,7 +1676,21 @@
                         editor={appPreferences?.preferredExternalEditor}
                         disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
-                      />
+                      >
+                        {#snippet footerControls()}
+                          <Tooltip label={`Build generated instruction with ${contributor.regenerateCommand}`}>
+                            <button
+                              type="button"
+                              class="extension-footer-text-action"
+                              disabled={isExtensionActionPending(`build:${extension.id}`)}
+                              onclick={() => void buildExtension(extension.id)}
+                            >
+                              <RotateCcwIcon size={12} aria-hidden="true" />
+                              Build
+                            </button>
+                          </Tooltip>
+                        {/snippet}
+                      </ExtensionInstructionFileEditor>
                       <ExtensionInstructionFileEditor
                         runtime={runtime}
                         extensionId={extension.id}
@@ -1715,7 +1699,26 @@
                         editor={appPreferences?.preferredExternalEditor}
                         disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
-                      />
+                      >
+                        {#snippet footerControls()}
+                          <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
+                            <button
+                              type="button"
+                              class="extension-footer-icon-action"
+                              disabled={isExtensionActionPending(`instruction:${extension.id}`)}
+                              aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
+                              onclick={() =>
+                                setInstructionSkipped(
+                                  extension.id,
+                                  contributor.output.name,
+                                  !contributorSkipped(contributor),
+                                )}
+                            >
+                              <BanIcon size={12} aria-hidden="true" />
+                            </button>
+                          </Tooltip>
+                        {/snippet}
+                      </ExtensionInstructionFileEditor>
                     </div>
                   {/if}
                 </div>
@@ -1738,51 +1741,102 @@
                 <strong>Tooling</strong>
               </div>
               {#if extension.tooling.nativeToolSchema}
-                <div class="extension-readonly-block">
-                  <div class="extension-readonly-block-bar">
-                    <strong>{extension.tooling.nativeToolSchema.name}</strong>
-                    <span>native tool schema</span>
+                <details class="extension-collapsible-block">
+                  <summary>
+                    <span>Tool schema</span>
+                    <Badge tone="neutral">native</Badge>
+                  </summary>
+                  <div class="extension-readonly-block">
+                    <div class="extension-readonly-block-bar">
+                      <strong>{extension.tooling.nativeToolSchema.name}</strong>
+                      <span>generated</span>
+                    </div>
+                    <pre>{extension.tooling.nativeToolSchema.content}</pre>
                   </div>
-                  <pre>{extension.tooling.nativeToolSchema.content}</pre>
-                </div>
+                </details>
               {/if}
-              {#if extension.tooling.svvyxCommandSource}
-                <ExtensionInstructionFileEditor
-                  runtime={runtime}
-                  extensionId={extension.id}
-                  file={extension.tooling.svvyxCommandSource}
-                  label="command source"
-                  showTokenCount={false}
-                  editor={appPreferences?.preferredExternalEditor}
-                  disabled={extensionActionPending(extension.id)}
-                  onSaved={() => void loadExtensionsInventory()}
-                />
+              {#if extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema}
+                <details class="extension-collapsible-block">
+                  <summary>
+                    <span>svvyx commands</span>
+                    <Badge tone="info">schema</Badge>
+                  </summary>
+                  {#if extension.tooling.svvyxCommandSource}
+                    <ExtensionInstructionFileEditor
+                      runtime={runtime}
+                      extensionId={extension.id}
+                      file={extension.tooling.svvyxCommandSource}
+                      label="command source"
+                      showTokenCount={false}
+                      editor={appPreferences?.preferredExternalEditor}
+                      disabled={extensionActionPending(extension.id)}
+                      onSaved={() => void loadExtensionsInventory()}
+                    >
+                      {#snippet footerControls()}
+                        <Tooltip label="Build command schema from source/index.ts">
+                          <button
+                            type="button"
+                            class="extension-footer-text-action"
+                            disabled={isExtensionActionPending(`build:${extension.id}`)}
+                            onclick={() => void buildExtension(extension.id)}
+                          >
+                            <RotateCcwIcon size={12} aria-hidden="true" />
+                            Build
+                          </button>
+                        </Tooltip>
+                      {/snippet}
+                    </ExtensionInstructionFileEditor>
+                  {/if}
+                  {#if extension.tooling.svvyxCommandSchema}
+                    <div class="extension-readonly-block">
+                      <div class="extension-readonly-block-bar">
+                        <strong>{extension.tooling.svvyxCommandSchema.name}</strong>
+                        <span>generated command schema</span>
+                      </div>
+                      <pre>{extension.tooling.svvyxCommandSchema.content}</pre>
+                    </div>
+                  {/if}
+                </details>
               {/if}
-              {#if extension.tooling.svvyxCommandSchema}
-                <div class="extension-readonly-block">
-                  <div class="extension-readonly-block-bar">
-                    <strong>{extension.tooling.svvyxCommandSchema.name}</strong>
-                    <span>generated command schema</span>
-                  </div>
-                  <pre>{extension.tooling.svvyxCommandSchema.content}</pre>
-                </div>
+              {#if extension.tooling.typescriptApiDeclaration || extension.tooling.typescriptApiStatus === "not_emitted"}
+                <details class="extension-collapsible-block">
+                  <summary>
+                    <span>TypeScript API</span>
+                    <Badge tone={extension.tooling.typescriptApiDeclaration ? "info" : "warning"}>
+                      {extension.tooling.typescriptApiDeclaration ? "generated" : "not emitted"}
+                    </Badge>
+                  </summary>
+                  {#if extension.tooling.typescriptApiDeclaration}
+                    <div class="extension-readonly-block">
+                      <div class="extension-readonly-block-bar">
+                        <strong>{extension.tooling.typescriptApiDeclaration.name}</strong>
+                        <span>generated TypeScript API</span>
+                      </div>
+                      <pre>{extension.tooling.typescriptApiDeclaration.content}</pre>
+                    </div>
+                  {:else}
+                    <div class="extension-readonly-block">
+                      <div class="extension-readonly-block-bar">
+                        <strong>TypeScript API</strong>
+                        <span>enabled, not emitted</span>
+                      </div>
+                      <pre>Generated TypeScript API declarations are not emitted for this extension in the current runtime.</pre>
+                    </div>
+                  {/if}
+                </details>
               {/if}
-              {#if extension.tooling.typescriptApiDeclaration}
-                <div class="extension-readonly-block">
-                  <div class="extension-readonly-block-bar">
-                    <strong>{extension.tooling.typescriptApiDeclaration.name}</strong>
-                    <span>generated TypeScript API</span>
-                  </div>
-                  <pre>{extension.tooling.typescriptApiDeclaration.content}</pre>
-                </div>
-              {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
-                <div class="extension-readonly-block">
-                  <div class="extension-readonly-block-bar">
-                    <strong>TypeScript API</strong>
-                    <span>enabled, not emitted</span>
-                  </div>
-                  <pre>Generated TypeScript API declarations are not emitted for this extension in the current runtime.</pre>
-                </div>
+              {#if extensionNeedsBuild(extension)}
+                <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={isExtensionActionPending(`build:${extension.id}`)}
+                    onclick={() => void buildExtension(extension.id)}
+                  >
+                    <RotateCcwIcon size={13} aria-hidden="true" />
+                    Build required
+                  </Button>
+                </Tooltip>
               {/if}
             </div>
           {/if}
@@ -1810,11 +1864,10 @@
               {/each}
             </div>
           {/if}
-          {#if extension.externalInstruction || extension.id === "request-user-input"}
+          {#if extension.externalInstruction}
+          {@const control = externalInstructionControl(extension)}
+          {@const isSavingExternalInstruction = pendingExternalInstructionPath === extension.externalInstruction.path}
           <div class="extension-settings">
-            {#if extension.externalInstruction}
-            {@const control = externalInstructionControl(extension)}
-            {@const isSavingExternalInstruction = pendingExternalInstructionPath === extension.externalInstruction.path}
             <div class="external-instruction-controls" aria-label={`${extension.title} usage controls`}>
               <label class="external-instruction-enable">
                 <Checkbox
@@ -1854,61 +1907,6 @@
                 onclick={() => openExternalInstruction(extension.externalInstruction!.path)}
               />
             </div>
-            {:else if extension.id === "request-user-input"}
-            {#if settingsError}
-              <p class="extension-settings-error" role="alert">{settingsError}</p>
-            {/if}
-            {#if agentSettings}
-              <div class="request-input-mode" aria-label="Request User Input mode">
-                <Button
-                  size="xs"
-                  variant={agentSettings.requestUserInput.mode === "nonblocking" ? "primary" : "ghost"}
-                  disabled={pendingSettings}
-                  onclick={() => updateRequestUserInputSettings({ mode: "nonblocking" })}
-                >
-                  Nonblocking
-                </Button>
-                <Button
-                  size="xs"
-                  variant={agentSettings.requestUserInput.mode === "blocking" ? "primary" : "ghost"}
-                  disabled={pendingSettings}
-                  onclick={() => updateRequestUserInputSettings({ mode: "blocking" })}
-                >
-                  Blocking
-                </Button>
-              </div>
-              {#if agentSettings.requestUserInput.mode === "blocking"}
-                <label class="request-input-timeout-toggle">
-                  <Checkbox
-                    size="sm"
-                    checked={agentSettings.requestUserInput.blockingTimeout.enabled}
-                    disabled={pendingSettings}
-                    onchange={(event) =>
-                      updateRequestUserInputSettings({
-                        blockingTimeout: {
-                          enabled: (event.currentTarget as HTMLInputElement).checked,
-                        },
-                      })}
-                  />
-                  <span>Timeout</span>
-                </label>
-                <label class="request-input-timeout-field">
-                  <span>Seconds</span>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    disabled={pendingSettings || !agentSettings.requestUserInput.blockingTimeout.enabled}
-                    value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
-                    onchange={(event) =>
-                      updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
-                  />
-                </label>
-              {/if}
-            {:else}
-              <span class="extension-settings-loading">Loading</span>
-            {/if}
-            {/if}
           </div>
           {/if}
           {/snippet}
@@ -1928,11 +1926,6 @@
     min-height: 0;
     color: var(--ui-text-primary);
     background: var(--ui-surface);
-  }
-
-  .extensions-table {
-    min-height: 0;
-    overflow: auto;
   }
 
   .extensions-inventory {
@@ -2236,59 +2229,22 @@
     color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
   }
 
-  .extension-default-controls {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(10rem, max-content));
-    gap: 0.46rem;
+  .extension-top-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
     min-width: 0;
   }
 
-  .extension-default-control {
-    display: grid;
-    grid-template-columns: minmax(6.2rem, max-content) auto;
+  .extension-inline-checkbox {
+    display: inline-flex;
     align-items: center;
     gap: 0.34rem;
     min-width: 0;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
-  .extension-default-control > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-defaults-section {
-    display: grid;
-    gap: 0.42rem;
-    min-width: 0;
-  }
-
-  .extension-expanded-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.72rem;
-    min-width: 0;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    line-height: 1;
-  }
-
-  .extension-expanded-section-header strong {
-    color: var(--ui-text-primary);
-    font-family: var(--font-sans);
-    font-size: var(--text-xs);
-  }
-
-  .extension-minimal-hint {
-    margin: -0.38rem 0 0;
     color: var(--ui-text-secondary);
     font-size: var(--text-xs);
-    line-height: 1.45;
+    font-weight: 650;
   }
 
   .extension-instruction-list {
@@ -2311,16 +2267,8 @@
   }
 
   .extension-instruction-row {
-    display: grid;
-    grid-template-columns: 1.55rem minmax(0, 1fr);
-    gap: 0.38rem;
+    display: block;
     min-width: 0;
-  }
-
-  .extension-instruction-row-actions {
-    display: grid;
-    align-content: start;
-    gap: 0.16rem;
   }
 
   .scripted-instruction-contributor,
@@ -2328,6 +2276,102 @@
     display: grid;
     gap: 0.42rem;
     min-width: 0;
+  }
+
+  .extension-footer-icon-action,
+  .extension-footer-text-action {
+    display: inline-grid;
+    place-items: center;
+    min-width: 0;
+    height: 1.16rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+  }
+
+  .extension-footer-icon-action {
+    width: 1.16rem;
+  }
+
+  .extension-footer-text-action {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    gap: 0.22rem;
+    padding: 0 0.28rem;
+    font: inherit;
+    font-size: var(--text-xs);
+    font-weight: 700;
+  }
+
+  .extension-footer-icon-action:hover:not(:disabled),
+  .extension-footer-icon-action:focus-visible:not(:disabled),
+  .extension-footer-text-action:hover:not(:disabled),
+  .extension-footer-text-action:focus-visible:not(:disabled) {
+    outline: none;
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-footer-icon-action.danger:hover:not(:disabled),
+  .extension-footer-icon-action.danger:focus-visible:not(:disabled) {
+    color: var(--ui-danger);
+  }
+
+  .extension-footer-icon-action:disabled,
+  .extension-footer-text-action:disabled {
+    cursor: default;
+    opacity: 0.48;
+  }
+
+  .extension-collapsible-block {
+    display: grid;
+    gap: 0.38rem;
+    min-width: 0;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 70%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 40%, transparent);
+  }
+
+  .extension-collapsible-block > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
+    min-height: 1.9rem;
+    padding: 0.3rem 0.48rem;
+    color: var(--ui-text-secondary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    list-style: none;
+  }
+
+  .extension-collapsible-block > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .extension-collapsible-block > summary::after {
+    content: "";
+    width: 0.42rem;
+    height: 0.42rem;
+    margin-left: auto;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg) translateY(-0.08rem);
+    opacity: 0.7;
+  }
+
+  .extension-collapsible-block[open] > summary::after {
+    transform: rotate(225deg) translateY(-0.08rem);
+  }
+
+  .extension-collapsible-block[open] {
+    padding-bottom: 0.42rem;
+  }
+
+  .extension-collapsible-block > :not(summary) {
+    margin-inline: 0.42rem;
   }
 
   .extension-readonly-block {
@@ -2420,11 +2464,6 @@
     align-items: center;
   }
 
-  .extension-settings.empty {
-    justify-items: start;
-  }
-
-  .extension-settings-empty,
   .extension-settings-loading {
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);

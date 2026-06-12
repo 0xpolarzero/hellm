@@ -333,7 +333,7 @@ describe("svvyx extensions command", () => {
       linearPaths.generatedRoot,
       linearPaths.buildCurrent,
       (build.output as any).build.currentPath,
-      join(extensionsRoot, "sources", "builtin-overlays", "web", "manifest.json"),
+      join(extensionsRoot, "sources", "builtin", "web", "manifest.json"),
       join(extensionsRoot, "trash", (deleted.output as any).trashId, "sources", "user", "notes"),
       join(extensionsRoot, "snapshots", (snapshot.output as any).snapshot.id),
     ]) {
@@ -344,9 +344,9 @@ describe("svvyx extensions command", () => {
     expect(existsSync(join(extensionsRoot, "sources", "user", "linear", "manifest.json"))).toBe(
       true,
     );
-    expect(
-      existsSync(join(extensionsRoot, "sources", "builtin-overlays", "web", "manifest.json")),
-    ).toBe(true);
+    expect(existsSync(join(extensionsRoot, "sources", "builtin", "web", "manifest.json"))).toBe(
+      true,
+    );
     expect(
       existsSync(
         join(extensionsRoot, "builds", "extensions", "linear", "current", "manifest.json"),
@@ -597,7 +597,7 @@ describe("svvyx extensions command", () => {
     });
   });
 
-  it("materializes Incur command schemas into the current svvyx build manifest", async () => {
+  it("builds Incur command schemas into the current svvyx build manifest", async () => {
     const extensionsRoot = createTempDir();
     await createLinearExtension(extensionsRoot);
     const sourceRoot = join(extensionsRoot, "sources", "user", "linear");
@@ -681,6 +681,14 @@ describe("svvyx extensions command", () => {
         },
       ],
     });
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(extensionsRoot, "generated", "extensions", "linear", "commands.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(manifest.commandManifest);
     expect(manifest.typescriptTypes).toBe(
       join(extensionsRoot, "generated", "extensions", "linear", "types.d.ts"),
     );
@@ -697,6 +705,87 @@ describe("svvyx extensions command", () => {
       "result: Run.Result<{ value: string; tag: string }, LinearExtensionCommandMap>",
     );
     expect(typesDeclaration).toContain("linear: LinearExtensionClient");
+  });
+
+  it("scaffolds and builds builtin svvyx sources with generated command schemas", async () => {
+    const extensionsRoot = createTempDir();
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions inspect artifacts --json",
+      extensionsRoot,
+    });
+    expect(
+      readFileSync(
+        join(extensionsRoot, "sources", "builtin", "artifacts", "source", "index.ts"),
+        "utf8",
+      ),
+    ).toContain("Cli.create('artifacts'");
+
+    const artifactsBuild = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions build artifacts --json",
+      extensionsRoot,
+    });
+    expect(artifactsBuild.output).toMatchObject({
+      ok: true,
+      extensionId: "artifacts",
+      build: {
+        status: "success",
+        interface: "svvyx",
+        runtimeReady: true,
+      },
+    });
+    const artifactsManifest = JSON.parse(
+      readFileSync(
+        join(extensionsRoot, "builds", "extensions", "artifacts", "current", "manifest.json"),
+        "utf8",
+      ),
+    );
+    expect(artifactsManifest.module).toBe("source/index.js");
+    expect(
+      artifactsManifest.commandManifest.commands.map((command: any) => command.name).toSorted(),
+    ).toEqual(["create", "delete", "inspect", "list", "open"]);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(extensionsRoot, "generated", "extensions", "artifacts", "commands.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(artifactsManifest.commandManifest);
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions inspect workflows --json",
+      extensionsRoot,
+    });
+    expect(
+      readFileSync(
+        join(extensionsRoot, "sources", "builtin", "workflows", "source", "index.ts"),
+        "utf8",
+      ),
+    ).toContain("Cli.create('workflows'");
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions build workflows --json",
+      extensionsRoot,
+    });
+    const workflowsManifest = JSON.parse(
+      readFileSync(
+        join(extensionsRoot, "builds", "extensions", "workflows", "current", "manifest.json"),
+        "utf8",
+      ),
+    );
+    expect(workflowsManifest.module).toBe("source/index.js");
+    expect(
+      workflowsManifest.commandManifest.commands.map((command: any) => command.name).toSorted(),
+    ).toEqual(["build", "list", "models list", "save"]);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(extensionsRoot, "generated", "extensions", "workflows", "commands.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(workflowsManifest.commandManifest);
   });
 
   it("rejects svvyx runtime dispatch when current command manifest is malformed", async () => {
@@ -1535,7 +1624,7 @@ describe("svvyx extensions command", () => {
     expect(existsSync(join(sourceRoot, "instructions", "full", "030-domain-guide.md"))).toBe(false);
   });
 
-  it("manages builtin full instruction overlays without mutating packaged defaults", async () => {
+  it("manages builtin full instruction sources without mutating packaged defaults", async () => {
     const extensionsRoot = createTempDir();
     const cwd = createTempDir();
     const packagedFullDir = join(cwd, "generated", "instructions", "full");
@@ -1548,8 +1637,8 @@ describe("svvyx extensions command", () => {
       cwd,
       extensionsRoot,
     });
-    const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "web");
-    const fullDir = join(overlayRoot, "instructions", "full");
+    const sourceRoot = join(extensionsRoot, "sources", "builtin", "web");
+    const fullDir = join(sourceRoot, "instructions", "full");
     expect(add.output).toMatchObject({
       ok: true,
       extensionId: "web",
@@ -1558,10 +1647,6 @@ describe("svvyx extensions command", () => {
         path: join(fullDir, "020-domain.md"),
       },
       instructionsFull: [
-        {
-          name: "010-tinyfish-cli.generated.md",
-          bypassed: false,
-        },
         {
           name: "020-domain.md",
           bypassed: false,
@@ -1573,8 +1658,8 @@ describe("svvyx extensions command", () => {
       "packaged tinyfish instructions\n",
     );
     expect(readFileSync(packagedTinyfish, "utf8")).toBe("packaged tinyfish instructions\n");
-    const overlayManifest = JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8"));
-    expect(overlayManifest).toMatchObject({
+    const sourceManifest = JSON.parse(readFileSync(join(sourceRoot, "manifest.json"), "utf8"));
+    expect(sourceManifest).toMatchObject({
       id: "web",
       interface: "instructions",
       instructionFiles: [
@@ -1626,8 +1711,7 @@ describe("svvyx extensions command", () => {
     });
 
     const reorder = await runSvvyxExtensionsCommand({
-      command:
-        "svvyx extensions instructions reorder web --file 030-domain.md --file 010-tinyfish-cli.generated.md --json",
+      command: "svvyx extensions instructions reorder web --file 030-domain.md --json",
       cwd,
       extensionsRoot,
     });
@@ -1638,25 +1722,16 @@ describe("svvyx extensions command", () => {
           from: "030-domain.md",
           to: "010-domain.md",
         },
-        {
-          from: "010-tinyfish-cli.generated.md",
-          to: "020-tinyfish-cli.generated.md",
-        },
       ],
       instructionsFull: [
         {
           name: "010-domain.md",
           bypassed: false,
         },
-        {
-          name: "020-tinyfish-cli.generated.md",
-          bypassed: true,
-        },
       ],
       buildRequired: true,
     });
-    expect(existsSync(join(fullDir, "010-tinyfish-cli.generated.md"))).toBe(false);
-    expect(readFileSync(join(fullDir, "020-tinyfish-cli.generated.md"), "utf8")).toBe(
+    expect(readFileSync(join(fullDir, "010-tinyfish-cli.generated.md"), "utf8")).toBe(
       "packaged tinyfish instructions\n",
     );
 
@@ -1697,8 +1772,8 @@ describe("svvyx extensions command", () => {
       },
     });
     expect(existsSync(join(fullDir, "010-domain.md"))).toBe(true);
-    expect(existsSync(join(fullDir, "010-tinyfish-cli.generated.md"))).toBe(false);
-    writeFileSync(join(overlayRoot, "instructions", "minimal.md"), "custom minimal\n");
+    expect(existsSync(join(fullDir, "010-tinyfish-cli.generated.md"))).toBe(true);
+    writeFileSync(join(sourceRoot, "instructions", "minimal.md"), "custom minimal\n");
 
     const reset = await runSvvyxExtensionsCommand({
       command: "svvyx extensions reset web --scope instructions --json",
@@ -1714,10 +1789,8 @@ describe("svvyx extensions command", () => {
       result: {
         resetFiles: expect.arrayContaining([
           join(fullDir, "010-domain.md"),
-          join(fullDir, "010-tinyfish-cli.generated.md"),
-          join(fullDir, "020-tinyfish-cli.generated.md"),
-          join(overlayRoot, "instructions", "minimal.md"),
-          join(overlayRoot, "manifest.json"),
+          join(sourceRoot, "instructions", "minimal.md"),
+          join(sourceRoot, "manifest.json"),
         ]),
         buildRequired: false,
         autoBuild: {
@@ -1742,11 +1815,11 @@ describe("svvyx extensions command", () => {
     expect(readFileSync(join(fullDir, "010-tinyfish-cli.generated.md"), "utf8")).toBe(
       "packaged tinyfish instructions\n",
     );
-    expect(readFileSync(join(overlayRoot, "instructions", "minimal.md"), "utf8")).toContain(
+    expect(readFileSync(join(sourceRoot, "instructions", "minimal.md"), "utf8")).toContain(
       "TinyFish",
     );
     expect(
-      JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8")).instructionFiles,
+      JSON.parse(readFileSync(join(sourceRoot, "manifest.json"), "utf8")).instructionFiles,
     ).toEqual([
       {
         file: "010-tinyfish-cli.generated.md",
@@ -1775,22 +1848,22 @@ describe("svvyx extensions command", () => {
         },
       },
     });
-    expect(readFileSync(join(overlayRoot, "instructions", "minimal.md"), "utf8")).toBe(
+    expect(readFileSync(join(sourceRoot, "instructions", "minimal.md"), "utf8")).toBe(
       "custom minimal\n",
     );
     expect(readdirSync(fullDir).toSorted((left, right) => left.localeCompare(right))).toEqual([
       "010-domain.md",
-      "020-tinyfish-cli.generated.md",
+      "010-tinyfish-cli.generated.md",
     ]);
     expect(
-      JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8")).instructionFiles,
+      JSON.parse(readFileSync(join(sourceRoot, "manifest.json"), "utf8")).instructionFiles,
     ).toEqual([
       {
         file: "010-domain.md",
         bypassed: false,
       },
       {
-        file: "020-tinyfish-cli.generated.md",
+        file: "010-tinyfish-cli.generated.md",
         bypassed: true,
       },
     ]);
@@ -2251,12 +2324,18 @@ describe("svvyx extensions command", () => {
           skipped: false,
           output: {
             name: "010-tinyfish-cli.generated.md",
-            content: "packaged tinyfish\n",
             editable: false,
           },
         },
       ],
     });
+    const webContributor = web?.loadedInstructionContributors[0];
+    expect(webContributor?.kind === "scripted" ? webContributor.output.content : "").toContain(
+      "TinyFish CLI",
+    );
+    expect(webContributor?.kind === "scripted" ? webContributor.script.name : "").toBe(
+      "generate-tinyfish-cli.ts",
+    );
     expect(shell).toMatchObject({
       customized: false,
       minimalInstruction: {
@@ -2312,7 +2391,7 @@ describe("svvyx extensions command", () => {
     const minimalPath = join(
       extensionsRoot,
       "sources",
-      "builtin-overlays",
+      "builtin",
       "base-common",
       "instructions",
       "minimal.md",
@@ -2535,14 +2614,14 @@ describe("svvyx extensions command", () => {
     );
   });
 
-  it("normalizes stale base prompt overlays away from generated instruction metadata", async () => {
+  it("normalizes stale base prompt sources away from generated instruction metadata", async () => {
     const extensionsRoot = createTempDir();
-    const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "base-common");
-    const fullDir = join(overlayRoot, "instructions", "full");
+    const sourceRoot = join(extensionsRoot, "sources", "builtin", "base-common");
+    const fullDir = join(sourceRoot, "instructions", "full");
     mkdirSync(fullDir, { recursive: true });
-    mkdirSync(join(overlayRoot, "instructions"), { recursive: true });
+    mkdirSync(join(sourceRoot, "instructions"), { recursive: true });
     writeFileSync(
-      join(overlayRoot, "manifest.json"),
+      join(sourceRoot, "manifest.json"),
       JSON.stringify(
         {
           schemaVersion: 1,
@@ -2568,7 +2647,7 @@ describe("svvyx extensions command", () => {
       "#!/usr/bin/env bun\n\nstale generator source\n",
     );
     writeFileSync(
-      join(overlayRoot, "instructions", "minimal.md"),
+      join(sourceRoot, "instructions", "minimal.md"),
       "Shared operating instructions are loaded automatically.\n",
     );
 
@@ -2602,7 +2681,7 @@ describe("svvyx extensions command", () => {
       ),
     ).toBe(false);
     expect(readFileSync(join(fullDir, "010-base-common.md"), "utf8")).toContain("You are svvy");
-    const manifest = JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(sourceRoot, "manifest.json"), "utf8"));
     expect(manifest.generatedInstructions).toBeUndefined();
     expect(manifest.instructionFiles).toEqual([
       {
@@ -2612,7 +2691,7 @@ describe("svvyx extensions command", () => {
     ]);
   });
 
-  it("materializes and resets editable base prompt builtin overlays", async () => {
+  it("scaffolds and resets editable base prompt builtin sources", async () => {
     const extensionsRoot = createTempDir();
     const basePrompts = [
       {
@@ -2642,7 +2721,7 @@ describe("svvyx extensions command", () => {
         command: `svvyx extensions inspect ${basePrompt.id} --json`,
         extensionsRoot,
       });
-      const promptRoot = join(extensionsRoot, "sources", "builtin-overlays", basePrompt.id);
+      const promptRoot = join(extensionsRoot, "sources", "builtin", basePrompt.id);
       const promptFile = join(promptRoot, "instructions", "full", basePrompt.file);
 
       expect((inspectPrompt.output as any).extension.paths.instructionsFull).toEqual([
@@ -2659,8 +2738,8 @@ describe("svvyx extensions command", () => {
       command: "svvyx extensions inspect base-common --json",
       extensionsRoot,
     });
-    const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "base-common");
-    const fullDir = join(overlayRoot, "instructions", "full");
+    const sourceRoot = join(extensionsRoot, "sources", "builtin", "base-common");
+    const fullDir = join(sourceRoot, "instructions", "full");
     const baseFile = join(fullDir, "010-base-common.md");
 
     expect((inspect.output as any).extension.paths.instructionsFull).toEqual([
@@ -2673,7 +2752,7 @@ describe("svvyx extensions command", () => {
     expect(readFileSync(baseFile, "utf8")).toContain(
       "You are svvy, a pragmatic software engineering assistant",
     );
-    expect(JSON.parse(readFileSync(join(overlayRoot, "manifest.json"), "utf8"))).toMatchObject({
+    expect(JSON.parse(readFileSync(join(sourceRoot, "manifest.json"), "utf8"))).toMatchObject({
       id: "base-common",
       interface: "instructions",
       instructionFiles: [
@@ -2799,18 +2878,12 @@ describe("svvyx extensions command", () => {
       cwd,
       extensionsRoot,
     });
-    const overlayManifestPath = join(
-      extensionsRoot,
-      "sources",
-      "builtin-overlays",
-      "web",
-      "manifest.json",
-    );
-    const overlayManifest = JSON.parse(readFileSync(overlayManifestPath, "utf8"));
-    overlayManifest.dependencies = {
+    const sourceManifestPath = join(extensionsRoot, "sources", "builtin", "web", "manifest.json");
+    const sourceManifest = JSON.parse(readFileSync(sourceManifestPath, "utf8"));
+    sourceManifest.dependencies = {
       "@web/runtime": "2.3.4",
     };
-    writeFileSync(overlayManifestPath, JSON.stringify(overlayManifest, null, 2) + "\n");
+    writeFileSync(sourceManifestPath, JSON.stringify(sourceManifest, null, 2) + "\n");
 
     const reset = await runSvvyxExtensionsCommand({
       command: "svvyx extensions reset web --scope instructions --json",
@@ -4141,7 +4214,7 @@ describe("svvyx extensions command", () => {
           interface: "instructions",
         },
       ],
-      builtinOverlays: [],
+      builtinSources: [],
     });
     expect(existsSync(join(snapshotRoot, "package", "package.json"))).toBe(true);
     expect(existsSync(join(snapshotRoot, "package", "bun.lock"))).toBe(false);
@@ -6439,11 +6512,10 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(failedGeneratedCollision.output).toMatchObject({
       ok: false,
       error: {
-        code: "INVALID_GENERATED_INSTRUCTION",
+        code: "GENERATED_INSTRUCTION_BUILD_FAILED",
         extensionId: "notes",
-        path: join(sourceRoot, "manifest.json"),
-        output: "instructions/full/010-notes.md",
-        instructionFile: "010-notes.md",
+        script: join(sourceRoot, "scripts", "generate.ts"),
+        output: join(sourceRoot, "instructions", "full", "010-notes.md"),
       },
     });
     expect(readFileSync(currentManifest, "utf8")).toBe(previousCurrent);
@@ -6473,9 +6545,10 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(unsupportedGenerated.output).toMatchObject({
       ok: false,
       error: {
-        code: "BUILD_FAILED",
+        code: "GENERATED_INSTRUCTION_BUILD_FAILED",
         extensionId: "notes",
-        path: join(sourceRoot, "manifest.json"),
+        script: join(sourceRoot, "scripts", "generate.ts"),
+        output: join(sourceRoot, "instructions", "full", "020-generated.md"),
       },
     });
     expect(readFileSync(currentManifest, "utf8")).toBe(previousCurrent);
@@ -6597,9 +6670,10 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(sharedScript.output).toMatchObject({
       ok: false,
       error: {
-        code: "BUILD_FAILED",
+        code: "GENERATED_INSTRUCTION_BUILD_FAILED",
         extensionId: "notes",
-        path: join(sourceRoot, "manifest.json"),
+        script: join(sourceRoot, "scripts", "generate.ts"),
+        output: join(sourceRoot, "instructions", "full", "020-generated.md"),
       },
     });
   });
@@ -6807,7 +6881,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionsRoot,
       }),
     ).rejects.toThrow("Invalid instruction Markdown basename: ../bad.md");
-    expect(existsSync(join(extensionsRoot, "sources", "builtin-overlays", "web"))).toBe(false);
+    expect(existsSync(join(extensionsRoot, "sources", "builtin", "web"))).toBe(false);
     await expect(
       runSvvyxExtensionsCommand({
         command:
@@ -6816,7 +6890,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionsRoot,
       }),
     ).rejects.toThrow("Reorder must mention every current full instruction file exactly once.");
-    expect(existsSync(join(extensionsRoot, "sources", "builtin-overlays", "web"))).toBe(false);
+    expect(existsSync(join(extensionsRoot, "sources", "builtin", "web"))).toBe(true);
     await expect(
       runSvvyxExtensionsCommand({
         command: "svvyx extensions instructions add shell --name 030-shell-extra.md --json",
@@ -6836,7 +6910,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         join(
           extensionsRoot,
           "sources",
-          "builtin-overlays",
+          "builtin",
           "shell",
           "instructions",
           "full",
@@ -6996,7 +7070,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).rejects.toThrow("--typescript-api must be true or false.");
   });
 
-  it("configures builtin svvyx TypeScript API generation through overlays", async () => {
+  it("configures builtin svvyx TypeScript API generation through sources", async () => {
     const extensionsRoot = createTempDir();
 
     await runSvvyxExtensionsCommand({
@@ -7028,7 +7102,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     });
   });
 
-  it("marks builtin extensions customized only after their overlay differs", async () => {
+  it("marks builtin extensions customized only after their source differs", async () => {
     const extensionsRoot = createTempDir();
     const cwd = createTempDir();
     const packagedFullDir = join(cwd, "generated", "instructions", "full");
@@ -7095,7 +7169,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       cliProbe: () => tinyfishStatus({ status: "missing" }),
     });
     const output = result.output as any;
-    const overlayRoot = join(extensionsRoot, "sources", "builtin-overlays", "web");
+    const sourceRoot = join(extensionsRoot, "sources", "builtin", "web");
 
     expect(output.ok).toBe(true);
     expect(output.extension).toMatchObject({
@@ -7105,17 +7179,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       title: "Web",
       typescriptApiEnabled: false,
       paths: {
-        sourceRoot: overlayRoot,
-        manifest: join(overlayRoot, "manifest.json"),
-        instructionsFullDir: join(overlayRoot, "instructions", "full"),
-        instructionsFull: [
-          {
-            name: "010-tinyfish-cli.generated.md",
-            path: join(overlayRoot, "instructions", "full", "010-tinyfish-cli.generated.md"),
-            bypassed: false,
-          },
-        ],
-        instructionsMinimal: join(overlayRoot, "instructions", "minimal.md"),
+        sourceRoot: sourceRoot,
+        manifest: join(sourceRoot, "manifest.json"),
+        instructionsFullDir: join(sourceRoot, "instructions", "full"),
+        instructionsFull: [],
+        instructionsMinimal: join(sourceRoot, "instructions", "minimal.md"),
       },
       state: {
         buildRequired: true,
@@ -7166,7 +7234,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(output.extension).not.toHaveProperty("nativeTools");
     expect(
       readFileSync(
-        join(overlayRoot, "instructions", "full", "010-tinyfish-cli.generated.md"),
+        join(sourceRoot, "instructions", "full", "010-tinyfish-cli.generated.md"),
         "utf8",
       ),
     ).toBe("packaged tinyfish instructions\n");
@@ -7725,10 +7793,12 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   it("fails Web build with an ordinary JSON error when TinyFish is missing", async () => {
     const cwd = createTempDir();
     const buildRoot = join(cwd, "extension-builds");
+    const extensionsRoot = join(cwd, "extensions");
     const result = await runSvvyxExtensionsCommand({
       buildRoot,
       command: "svvyx extensions build web --json",
       cwd,
+      extensionsRoot,
       cliProbe: () => tinyfishStatus({ status: "missing" }),
     });
     const output = result.output as any;
@@ -7756,14 +7826,17 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   });
 
   it("fails generated-instruction CLI builds consistently for cx and Smithers", async () => {
+    const extensionsRoot = createTempDir();
     const cxResult = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build cx --json",
       cwd: "/repo/svvy",
+      extensionsRoot,
       cliProbe: (requirement) => cliStatus(requirement, { status: "missing" }),
     });
     const smithersResult = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build smithers --json",
       cwd: "/repo/svvy",
+      extensionsRoot,
       cliProbe: (requirement) =>
         cliStatus(requirement, { path: "/usr/local/bin/smithers", status: "unknown" }),
     });
@@ -7799,10 +7872,12 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   it("fails Web build when TinyFish exists but version detection is unknown", async () => {
     const cwd = createTempDir();
     const buildRoot = join(cwd, "extension-builds");
+    const extensionsRoot = join(cwd, "extensions");
     const result = await runSvvyxExtensionsCommand({
       buildRoot,
       command: "svvyx extensions build web --json",
       cwd,
+      extensionsRoot,
       cliProbe: () => tinyfishStatus({ status: "unknown", path: "/usr/local/bin/tinyfish" }),
     });
     const output = result.output as any;

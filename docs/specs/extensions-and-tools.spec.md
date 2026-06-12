@@ -36,6 +36,18 @@ Extensions own:
 
 Generated actor context is composed from the current agent profile plus loaded extensions.
 
+Normal builtin and user extension sources are local editable files under
+`~/.config/svvy/extensions/sources/...`. Builtin extension defaults are packaged read-only app
+assets used only to scaffold missing builtin source directories and reset builtin source back to its
+default state. User extensions own their local source directories directly. External instruction
+records are the read-only exception: their content remains in external files such as `AGENTS.md` and
+is never copied into an editable svvy source lifecycle.
+
+For `svvyx` extensions, `source/index.ts` is the editable command source. A build produces generated
+command schema output such as `commands.json`, which is the command contract that enters generated
+prompt/tool context. Optional generated TypeScript API declarations are a separate build artifact
+that exposes typed clients through `execute_typescript`; they are not the command schema.
+
 Direct builtin prompt text, including base actor prompts and native-tool guidance, is modeled as
 editable loaded Markdown source contributors. Scripted contributors are used only when an extension
 has a real generator/source pair.

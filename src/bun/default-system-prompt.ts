@@ -20,9 +20,7 @@ import {
 } from "../shared/extensions";
 import type { RequestUserInputSettings } from "../shared/agent-settings";
 import type {
-  GeneratedAgentContextActorRecipe,
   GeneratedAgentContextEntry,
-  GeneratedAgentContextSectionId,
   GeneratedAgentContextInstructionBlock,
   GeneratedAgentContextExternalSource,
   GeneratedAgentContextState,
@@ -176,7 +174,7 @@ export const EXTENSION_LOADING_CONTEXT_BODY = [
 export const EXTENSION_MANAGING_CONTEXT_BODY = [
   "Loaded native extension: Extension Managing.",
   "",
-  "Use extension-management commands only for app-owned extension source, build, snapshot, readiness, and inspection work.",
+  "Use extension-management commands only for local extension source, build, snapshot, readiness, and inspection work.",
   "Do not treat Extension Managing as actor-local runtime capability loading; use Extension Loading for actor-local list_extensions and load_extension work.",
 ].join("\n");
 
@@ -450,32 +448,20 @@ export function createDefaultGeneratedAgentContextState(
       orchestrator: {
         actor: "orchestrator",
         instructionBlockIds: ["common", "orchestrator"],
-        generatedSectionIds: ["web-context", "execute-typescript"],
+        generatedSectionIds: [],
       },
       handler: {
         actor: "handler",
         instructionBlockIds: ["common", "handler"],
-        generatedSectionIds: [
-          "web-context",
-          "smithers-core",
-          "smithers-memory",
-          "smithers-svvy-boundary",
-          "workflow-authoring-contract",
-          "handler-workflow-authoring-appendix",
-          "execute-typescript",
-        ],
+        generatedSectionIds: [],
       },
       "workflow-task": {
         actor: "workflow-task",
         instructionBlockIds: ["common", "workflow-task"],
-        generatedSectionIds: ["web-context", "execute-typescript"],
+        generatedSectionIds: [],
       },
     },
   };
-}
-
-function getFallbackRecipe(actor: SvvyActorKind): GeneratedAgentContextActorRecipe {
-  return createDefaultGeneratedAgentContextState().actorRecipes[actor];
 }
 
 function getEnabledInstructionBlock(
@@ -518,7 +504,7 @@ export function buildSystemPromptFromLibrary(
 
 export function buildGeneratedAgentContextEntries(
   actor: SvvyActorKind,
-  state: GeneratedAgentContextState,
+  _state: GeneratedAgentContextState,
   options: {
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
@@ -528,97 +514,7 @@ export function buildGeneratedAgentContextEntries(
     networkAccess?: boolean;
   } = {},
 ): GeneratedAgentContextEntry[] {
-  if (
-    options.loadedExtensionIds ||
-    options.availableExtensionIds ||
-    options.networkAccess === false
-  ) {
-    return buildGeneratedEntriesFromExtensionState(actor, options);
-  }
-
-  const recipe = state.actorRecipes[actor] ?? getFallbackRecipe(actor);
-  return recipe.generatedSectionIds
-    .map((id) => buildGeneratedAgentContextEntry(actor, id, options))
-    .filter((entry): entry is GeneratedAgentContextEntry => Boolean(entry));
-}
-
-function buildGeneratedAgentContextEntry(
-  actor: SvvyActorKind,
-  id: GeneratedAgentContextSectionId,
-  options: {
-    loadedExtensionIds?: readonly string[];
-    loadedExtensionRecords?: readonly ExtensionRecord[];
-    extensionsRoot?: string;
-  },
-): GeneratedAgentContextEntry | null {
-  if (id === "web-context") {
-    return {
-      id,
-      title: "Web Context",
-      source: "generated/instructions/full/010-tinyfish-cli.generated.md",
-      sourcePath: "generated/instructions/full/010-tinyfish-cli.generated.md",
-      content: buildWebPromptContext(actor),
-    };
-  }
-  if (id === "smithers-core" && actor === "handler") {
-    return {
-      id,
-      title: "Smithers Core Instructions",
-      source: "generated/smithers-instructions.generated.ts",
-      sourcePath: "generated/smithers-instructions.generated.ts",
-      content: SMITHERS_CORE_INSTRUCTIONS,
-    };
-  }
-  if (id === "smithers-memory" && actor === "handler") {
-    return {
-      id,
-      title: "Smithers Memory Instructions",
-      source: "generated/smithers-instructions.generated.ts",
-      sourcePath: "generated/smithers-instructions.generated.ts",
-      content: SMITHERS_MEMORY_INSTRUCTIONS,
-    };
-  }
-  if (id === "smithers-svvy-boundary" && actor === "handler") {
-    return {
-      id,
-      title: "Smithers svvy Boundary",
-      source: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
-      sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
-      content: SMITHERS_SVVY_BOUNDARY_APPENDIX,
-    };
-  }
-  if (id === "workflow-authoring-contract" && actor === "handler") {
-    return {
-      id,
-      title: "Workflow Authoring Contract",
-      source: "generated/workflow-authoring-contract.generated.ts",
-      sourcePath: "generated/workflow-authoring-contract.generated.ts",
-      content: WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION,
-    };
-  }
-  if (id === "handler-workflow-authoring-appendix" && actor === "handler") {
-    return {
-      id,
-      title: "Handler Workflow Authoring Appendix",
-      source: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
-      sourcePath: "src/bun/smithers-runtime/workflow-authoring-guide.ts",
-      content: HANDLER_WORKFLOW_AUTHORING_APPENDIX,
-    };
-  }
-  if (id === "execute-typescript") {
-    return {
-      id,
-      title: "Execute Typescript",
-      source: "generated/execute-typescript-api.generated.ts",
-      sourcePath: "generated/execute-typescript-api.generated.ts",
-      content: buildExecuteTypescriptPromptSection(actor, {
-        extensionsRoot: options.extensionsRoot,
-        loadedExtensionIds: options.loadedExtensionIds,
-        loadedExtensionRecords: options.loadedExtensionRecords,
-      }),
-    };
-  }
-  return null;
+  return buildGeneratedEntriesFromExtensionState(actor, options);
 }
 
 export function buildSystemPrompt(
@@ -859,13 +755,6 @@ function buildLoadedInstructionSections(
 }
 
 function buildLoadedInstructionSection(record: ExtensionRecord): string | null {
-  if (
-    isBasePromptExtensionId(record.id) &&
-    record.instructionSourceFiles.length === 1 &&
-    record.instructionSourceFiles[0]?.endsWith("src/bun/default-system-prompt.ts")
-  ) {
-    return null;
-  }
   const bypassedFiles = new Set(
     (record.instructionFiles ?? []).filter((file) => file.bypassed).map((file) => file.file),
   );
@@ -880,15 +769,6 @@ function buildLoadedInstructionSection(record: ExtensionRecord): string | null {
     .filter((section): section is string => Boolean(section));
   if (fileSections.length === 0) return null;
   return [`Loaded extension: ${record.title}.`, ...fileSections].join("\n\n");
-}
-
-function isBasePromptExtensionId(id: string): boolean {
-  return (
-    id === "base-common" ||
-    id === "base-orchestrator" ||
-    id === "base-handler" ||
-    id === "base-workflow-task"
-  );
 }
 
 function hasBundledLoadedPromptSection(id: string): boolean {

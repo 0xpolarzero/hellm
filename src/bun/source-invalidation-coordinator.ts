@@ -219,7 +219,7 @@ export function buildSourceWatchInputs(input: {
     {
       domain: "extensions",
       kind: "directory",
-      path: join(input.extensionsRoot, "sources", "builtin-overlays"),
+      path: join(input.extensionsRoot, "sources", "builtin"),
       recursive: true,
     },
     {

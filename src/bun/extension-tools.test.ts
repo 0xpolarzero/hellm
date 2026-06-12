@@ -134,17 +134,29 @@ describe("builtin extension registry", () => {
     );
     expect(threadOrchestration).toMatchObject({
       interface: "native_tool",
-      instructionSourceFiles: ["docs/specs/extension/thread_managing.extension.spec.md"],
+      instructionSourceFiles: [],
     });
     expect(threadHandling).toMatchObject({
       interface: "native_tool",
-      instructionSourceFiles: ["docs/specs/extension/thread_managing.extension.spec.md"],
+      instructionSourceFiles: [],
     });
+    expect(builtinLoadedInstructionDefaults("thread-orchestration")).toEqual([
+      expect.objectContaining({ name: "010-thread-orchestration.md" }),
+    ]);
+    expect(builtinLoadedInstructionDefaults("thread-handling")).toEqual([
+      expect.objectContaining({ name: "010-thread-handling.md" }),
+    ]);
 
     for (const extension of BUILTIN_EXTENSIONS) {
       expect(extension.category).toBe("builtin");
       expect(["instructions", "native_tool", "svvyx"]).toContain(extension.interface);
-      expect(extension.instructionSourceFiles.length).toBeGreaterThan(0);
+      const generatedInstructionCount =
+        "generatedInstructions" in extension ? extension.generatedInstructions.length : 0;
+      expect(
+        extension.instructionSourceFiles.length +
+          builtinLoadedInstructionDefaults(extension.id).length +
+          generatedInstructionCount,
+      ).toBeGreaterThan(0);
       expect(extension.minimalLoadingHint.trim().length).toBeGreaterThan(0);
       expect(["ready", "not_required", "missing"]).toContain(extension.envReadiness);
       expect(["ready", "not_required", "missing"]).toContain(extension.dependencyReadiness);
@@ -348,6 +360,18 @@ describe("builtin extension registry", () => {
     ]);
     expect(byId.get("smithers")?.instructionFiles).toEqual([
       {
+        file: "010-smithers-core.generated.md",
+        bypassed: false,
+      },
+      {
+        file: "020-smithers-handler.md",
+        bypassed: false,
+      },
+      {
+        file: "030-smithers-svvy-boundary.md",
+        bypassed: false,
+      },
+      {
         file: "040-smithers-memory.generated.md",
         bypassed: true,
       },
@@ -366,7 +390,7 @@ describe("builtin extension registry", () => {
       interface: "instructions",
       title: "Web",
       description: "Prompt-only TinyFish CLI guidance.",
-      instructionSourceFiles: ["docs/specs/extension/web.extension.spec.md"],
+      instructionSourceFiles: [],
       minimalLoadingHint:
         "Use TinyFish through Shell for web research when network access is enabled.",
       typescriptApiEnabled: false,
@@ -572,7 +596,7 @@ describe("extension loading tools", () => {
     ]);
   });
 
-  it("lists loaded base prompt extensions from editable builtin overlay files", async () => {
+  it("lists loaded base prompt extensions from editable builtin source files", async () => {
     const extensionsRoot = mkdtempSync(join(tmpdir(), "svvy-base-list-extension-"));
     try {
       const store = createStore("session-base-extension-tools");
@@ -612,7 +636,7 @@ describe("extension loading tools", () => {
       for (const extension of result.details.loaded) {
         expect(extension.instructionSourceFiles).toHaveLength(1);
         expect(extension.instructionSourceFiles[0]).toContain(
-          join(extensionsRoot, "sources", "builtin-overlays", extension.id, "instructions", "full"),
+          join(extensionsRoot, "sources", "builtin", extension.id, "instructions", "full"),
         );
         expect(extension.instructionSourceFiles[0]).not.toBe("src/bun/default-system-prompt.ts");
       }

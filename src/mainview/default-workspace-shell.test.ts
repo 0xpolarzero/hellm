@@ -835,8 +835,12 @@ describe("default workspace renderer shell", () => {
       new URL("./ExtensionListRow.svelte", import.meta.url),
       "utf8",
     );
-    const extensionStateButtonsSource = await readFile(
-      new URL("./ExtensionStateButtons.svelte", import.meta.url),
+    const extensionInstructionEditorSource = await readFile(
+      new URL("./ExtensionInstructionFileEditor.svelte", import.meta.url),
+      "utf8",
+    );
+    const sourceMetadataTextAreaSource = await readFile(
+      new URL("./ui/SourceMetadataTextArea.svelte", import.meta.url),
       "utf8",
     );
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
@@ -897,10 +901,10 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("width: 18rem");
     expect(extensionsPaneSource).toContain("min-width: 30rem");
     expect(extensionsPaneSource).toContain("max-width: min(54rem, calc(100vw - 2rem))");
-    expect(extensionsPaneSource.indexOf('class="extension-toolbar-action"')).toBeLessThan(
-      extensionsPaneSource.indexOf("extension-toolbar-spacer"),
-    );
     expect(extensionsPaneSource.indexOf("extension-toolbar-spacer")).toBeLessThan(
+      extensionsPaneSource.indexOf('class="extension-toolbar-action"'),
+    );
+    expect(extensionsPaneSource.indexOf('class="extension-toolbar-action"')).toBeLessThan(
       extensionsPaneSource.indexOf('ariaLabel="Load extension snapshot"'),
     );
     expect(extensionsPaneSource.indexOf('class="extension-filter-group"')).toBeLessThan(
@@ -915,10 +919,13 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).not.toContain("changeHistoryOptions");
     expect(extensionsPaneSource).not.toContain("file.editable || file.skipped");
     expect(extensionsPaneSource).toContain("ExtensionListRow");
-    expect(extensionsPaneSource).toContain("ExtensionStateButtons");
+    expect(extensionsPaneSource).not.toContain("ExtensionStateButtons");
+    expect(extensionsPaneSource).toContain("footerControls");
+    expect(extensionsPaneSource).toContain("extension-collapsible-block");
+    expect(extensionInstructionEditorSource).toContain("SourceMetadataTextArea");
+    expect(sourceMetadataTextAreaSource).toContain("footerLeading");
     expect(extensionsPaneSource).toContain("runtime.setExtensionTypescriptApi");
     expect(extensionListRowSource).toContain('class="shared-extension-disclosure"');
-    expect(extensionStateButtonsSource).toContain('class="extension-state-button');
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvOverride");

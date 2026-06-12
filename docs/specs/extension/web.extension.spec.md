@@ -532,14 +532,14 @@ Because Web is a builtin prompt-only extension:
 - hand-authored `svvy` Web guidance lives in separate ordered Markdown instruction files
 - Web is non-deletable
 - Web is resettable to builtin defaults
-- Web can be customized only through the normal builtin-extension overlay mechanisms described in
+- Web can be customized only through the normal builtin local source mechanisms described in
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension_managing.extension.spec.md`
 - Web has an editable generated-instruction TypeScript script under `scripts/`
 - Web has no editable extension runtime source in v1
 - Web has no generated TypeScript declaration file in v1
 - Web has no executable or `svvyx` source build step in v1
 - Web still participates in the normal Extension Managing validation/build path for prompt-only
-  extensions so changed instruction overlays regenerate generated agent context and extension
+  extensions so changed local instruction source regenerates generated agent context and extension
   fingerprints
 
 The Extension UI may show whether the `tinyfish` binary appears to be available on PATH, the

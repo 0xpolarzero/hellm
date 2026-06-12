@@ -95,7 +95,7 @@ const RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE = "Output exceeded the live event re
 const WORKFLOWS_GENERATED_DIRECT_EDIT_MESSAGE =
   "Generated Workflows output, workspace @svvy/workflows/@svvy/extensions package links, internal Extension files, and immutable or non-active-session Artifacts are read-only. Edit Workflows source, Extension source/manifest/package.json, or the active session's mutable artifact files through the intended command path instead.";
 const MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE =
-  "Managed filesystem policy allows writes only inside the workspace, configured writable roots, active mutable artifacts, and explicit app-owned source roots.";
+  "Managed filesystem policy allows writes only inside the workspace, configured writable roots, active mutable artifacts, and explicit extension source roots.";
 
 type DirectToolOptions = {
   cwd: string;
@@ -1208,7 +1208,7 @@ function generatedInstructionOutputPaths(extensionsRoot: string): string[] {
   const outputs: string[] = [];
   for (const sourcesRoot of [
     resolvePath(extensionsRoot, "sources", "user"),
-    resolvePath(extensionsRoot, "sources", "builtin-overlays"),
+    resolvePath(extensionsRoot, "sources", "builtin"),
   ]) {
     let extensionIds: string[];
     try {

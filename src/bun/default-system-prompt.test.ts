@@ -117,7 +117,7 @@ describe("default system prompt", () => {
       loadedExtensionRecords: [extensionManaging!],
     });
     expect(extensionManagingPrompt).toContain("Loaded native extension: Extension Managing.");
-    expect(extensionManagingPrompt).toContain("app-owned extension source");
+    expect(extensionManagingPrompt).toContain("local extension source");
 
     const orchestratorWorkflowsPrompt = buildSystemPrompt("orchestrator", {
       loadedExtensionIds: ["workflows"],

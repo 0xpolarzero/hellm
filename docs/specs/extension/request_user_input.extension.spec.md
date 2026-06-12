@@ -109,7 +109,7 @@ When the active variant changes:
 File-backed extension source:
 
 ```text
-~/.config/svvy/extensions/sources/builtin-overlays/request-user-input/
+~/.config/svvy/extensions/sources/builtin/request-user-input/
   manifest.json
   variants/
     nonblocking/

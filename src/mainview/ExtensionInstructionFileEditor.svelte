@@ -3,6 +3,7 @@
   import CheckCircle2Icon from "@lucide/svelte/icons/check-circle-2";
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
+  import type { Snippet } from "svelte";
   import { isFileBackedEditConflictError } from "../shared/file-backed-edit";
   import type {
     ExtensionInstructionFileReadModel,
@@ -11,7 +12,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
   import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
-  import OpenExternalButton from "./ui/OpenExternalButton.svelte";
+  import SourceMetadataTextArea from "./ui/SourceMetadataTextArea.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
 
   type AutosaveStatus = "conflict" | "error" | "saved" | "saving" | "unsaved";
@@ -20,6 +21,7 @@
     disabled?: boolean;
     editor?: string;
     extensionId: string;
+    footerControls?: Snippet;
     file: ExtensionInstructionFileReadModel;
     kind?: "full" | "minimal" | "script";
     label?: string;
@@ -34,6 +36,7 @@
     disabled = false,
     editor = "system",
     extensionId,
+    footerControls,
     file,
     kind = "full",
     label = "editable",
@@ -157,15 +160,20 @@
 </script>
 
 <div class={`extension-instruction-editor ${file.skipped ? "is-skipped" : ""}`.trim()}>
-  <div class="extension-instruction-shell" data-autosave-status={status}>
-    <textarea
-      class="extension-instruction-field"
-      value={draft}
-      disabled={disabled || !file.editable}
-      aria-label={`${file.name} instruction content`}
-      oninput={(event) => (draft = event.currentTarget.value)}
-    ></textarea>
-    <div class="extension-autosave-tooltip">
+  <SourceMetadataTextArea
+    value={draft}
+    status={status}
+    aria-label={`${file.name} instruction content`}
+    disabled={disabled || !file.editable}
+    showTokenCount={showTokenCount}
+    tokenCountLabel={showTokenCount ? `~${formatTokenCount(file.tokenCount.tokens)} tokens` : null}
+    sourceLabel={file.name}
+    sourceDisabled={disabled}
+    sourceEditor={editor as never}
+    oninput={(event) => (draft = event.currentTarget.value)}
+    onOpenSource={openExternal}
+  >
+    {#snippet statusOverlay()}
       {#if status === "conflict"}
         <FileBackedConflictActions
           disabled={saving}
@@ -180,41 +188,30 @@
           aria-live="polite"
           aria-label={autosaveStatusLabel(status)}
         >
-          <span class="extension-autosave-icon icon-error">
+          <span class={`extension-autosave-icon icon-error ${status === "error" || status === "conflict" ? "active" : ""}`.trim()}>
             <AlertCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
           </span>
-          <span class="extension-autosave-icon extension-autosave-spinner icon-saving">
+          <span class={`extension-autosave-icon extension-autosave-spinner icon-saving ${status === "saving" ? "active" : ""}`.trim()}>
             <LoaderCircleIcon size={13} strokeWidth={2} aria-hidden="true" />
           </span>
-          <span class="extension-autosave-icon icon-unsaved">
+          <span class={`extension-autosave-icon icon-unsaved ${status === "unsaved" ? "active" : ""}`.trim()}>
             <CircleDashedIcon size={13} strokeWidth={2} aria-hidden="true" />
           </span>
-          <span class="extension-autosave-icon icon-saved">
+          <span class={`extension-autosave-icon icon-saved ${status === "saved" ? "active" : ""}`.trim()}>
             <CheckCircle2Icon size={13} strokeWidth={2} aria-hidden="true" />
           </span>
         </span>
         </Tooltip>
       {/if}
-    </div>
-  </div>
-  <div class="extension-instruction-source-note">
-    <div class="extension-instruction-source-meta">
-      <strong>{file.name}</strong>
+    {/snippet}
+    {#snippet footerLeading()}
+      {#if footerControls}
+        {@render footerControls()}
+      {/if}
       <span>{file.editable ? label : "read-only"}</span>
       <span>{file.skipped ? "skipped" : "loaded"}</span>
-      {#if showTokenCount}
-        <span>~{formatTokenCount(file.tokenCount.tokens)} tokens</span>
-      {/if}
-    </div>
-    <Tooltip label="Open instruction file in external editor">
-      <OpenExternalButton
-        editor={editor as never}
-        targetLabel={file.path}
-        disabled={disabled}
-        onclick={openExternal}
-      />
-    </Tooltip>
-  </div>
+    {/snippet}
+  </SourceMetadataTextArea>
   {#if errorMessage}
     <p class="extension-instruction-error" role="alert">{errorMessage}</p>
   {/if}
@@ -231,38 +228,7 @@
     opacity: 0.74;
   }
 
-  .extension-instruction-source-note {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) max-content;
-    align-items: center;
-    gap: 0.36rem;
-    min-width: 0;
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    line-height: 1;
-  }
-
-  .extension-instruction-source-meta {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.38rem;
-    min-width: 0;
-  }
-
-  .extension-instruction-source-note strong,
-  .extension-instruction-source-note span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-instruction-source-note strong {
-    color: var(--ui-text-secondary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
-  .extension-instruction-source-note span,
+  .extension-instruction-editor :global(.source-metadata-textarea-footer-start > span),
   .extension-instruction-status {
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);
@@ -278,43 +244,6 @@
     margin: 0;
     font-size: var(--text-xs);
     line-height: 1.4;
-  }
-
-  .extension-instruction-shell {
-    position: relative;
-  }
-
-  .extension-instruction-field {
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 4rem;
-    resize: vertical;
-    padding: 0.42rem 2rem 0.42rem 0.5rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent);
-    color: var(--ui-text-primary);
-    font: inherit;
-    font-size: var(--text-sm);
-    line-height: 1.45;
-  }
-
-  .extension-instruction-field:hover:not(:disabled),
-  .extension-instruction-field:focus-visible:not(:disabled) {
-    outline: none;
-    border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .extension-instruction-field:disabled {
-    cursor: default;
-    opacity: 0.6;
-  }
-
-  .extension-autosave-tooltip {
-    position: absolute;
-    top: 0.36rem;
-    right: 0.36rem;
   }
 
   .extension-autosave-status {
@@ -344,23 +273,22 @@
     display: block;
   }
 
-  .extension-instruction-shell[data-autosave-status="saved"] .icon-saved {
+  .extension-autosave-icon.active.icon-saved {
     opacity: 1;
     color: color-mix(in oklab, var(--ui-success) 54%, var(--ui-text-tertiary));
   }
 
-  .extension-instruction-shell[data-autosave-status="saving"] .icon-saving {
+  .extension-autosave-icon.active.icon-saving {
     opacity: 1;
     color: color-mix(in oklab, var(--ui-accent) 68%, var(--ui-text-secondary));
   }
 
-  .extension-instruction-shell[data-autosave-status="unsaved"] .icon-unsaved {
+  .extension-autosave-icon.active.icon-unsaved {
     opacity: 1;
     color: var(--ui-text-tertiary);
   }
 
-  .extension-instruction-shell[data-autosave-status="error"] .icon-error,
-  .extension-instruction-shell[data-autosave-status="conflict"] .icon-error {
+  .extension-autosave-icon.active.icon-error {
     opacity: 1;
     color: color-mix(in oklab, var(--ui-danger) 76%, var(--ui-text-secondary));
   }
