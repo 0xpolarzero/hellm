@@ -89,7 +89,7 @@ export function createStartThreadTool(options: {
       }
 
       options.store.setTurnDecision({
-        turnId: runtime.turnId,
+        turnId: runtime.turnId!,
         decision: "thread_start",
         onlyIfPending: true,
       });
@@ -137,7 +137,7 @@ export function createStartThreadTool(options: {
         for (const requestedThread of requestedThreads) {
           const thread = await options.bridge.createHandlerThread({
             sessionId: runtime.sessionId,
-            turnId: runtime.turnId,
+            turnId: runtime.turnId!,
             parentThreadId: runtime.rootThreadId ?? null,
             parentSurfacePiSessionId: runtime.surfacePiSessionId,
             threadGroupId,

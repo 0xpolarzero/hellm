@@ -131,18 +131,50 @@ export * as Workflows from "./workflows";
 
 Agent-facing usage should look like:
 
-```ts
+```tsx
+import { Task } from "smithers-orchestrator";
 import { Agents, Components, Prompts, Workflows } from "@svvy/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
+
+export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
 ```
 
 Everything agent-related lives under `Agents.*`, including:
 
 - `Agents.defineTaskAgent`
 - `Agents.TaskAgentParameters` as a type export
-- generated reusable agent parameter exports such as `Agents.defaultAgent` and
-  `Agents.reviewerAgent`
+- generated reusable agent parameter exports such as `Agents.defaultAgent`,
+  `Agents.reviewerAgent`, `Agents.implementerAgent`, and `Agents.explorerAgent`
+
+The generated reusable agent exports are `TaskAgentParameters` records persisted from structured
+source files under:
+
+```text
+~/.config/svvy/workflows/agents/*.agent.json
+```
+
+`Agents.defineTaskAgent(parametersOrAgentsExport)` accepts either a direct parameters object or one
+of those generated `Agents.*` parameter exports. It returns the Smithers-compatible `AgentLike`
+value intended for `<Task agent={...}>`.
+
+Direct parameters are valid when the workflow source owns the task-agent configuration:
+
+```tsx
+import { Task } from "smithers-orchestrator";
+import { Agents } from "@svvy/workflows";
+
+const explorer = Agents.defineTaskAgent({
+  id: "explore",
+  label: "Explorer",
+  provider: "openai",
+  model: "gpt-5.4",
+  reasoningEffort: "medium",
+  instructions: "Explore the requested area and return concise findings.",
+});
+
+export default <Task id="explore" agent={explorer}>Map the relevant code paths.</Task>;
+```
 
 The root package must not export reusable agents, components, prompts, or workflows as flat root
 symbols. The four namespace exports are the public shape.
@@ -432,6 +464,79 @@ not deletable.
 The Agents pane is the intended human customization surface for workflow agents. The Workflows pane
 may link a generated `Agents.*` export to the corresponding Agents-pane row for convenience, while
 still exposing the source file link for transparency.
+
+## Workflow Task-Agent Bridge
+
+The `AgentLike` returned by `Agents.defineTaskAgent(...)` calls back into `svvy` through a narrow
+authenticated workflow task-agent bridge. The bridge exists because official Smithers CLI workflow
+code runs in a child process, while `svvy` owns pi runtime creation, sandboxing, approvals,
+generated context binding, and durable workflow task-attempt surface state in the app process.
+
+The bridge callback environment is injected into handler-thread `exec_command` child environments
+that have an active structured source command id. The injection is command-scoped; it is not global
+app environment, not based on parsing the shell text for `smithers`, and not a `svvy` wrapper around
+the official Smithers CLI. The injected environment contains:
+
+- `SVVY_WORKFLOW_AGENT_BRIDGE_URL`, the local `runTaskAgent` endpoint
+- `SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN`, an unguessable app-owned bridge auth token scoped to
+  `(workspaceSessionId, sourceCommandId)` and redacted from command output
+- `SVVY_WORKSPACE_SESSION_ID`, the owning top-level workspace session
+- `SVVY_SOURCE_COMMAND_ID`, the owning handler-thread `exec_command` record
+
+The bridge exposes exactly one operation:
+
+```ts
+type RunTaskAgentInput = {
+  operation: "runTaskAgent";
+  taskAgent: TaskAgentParameters;
+  taskContext?: {
+    runId?: string;
+    nodeId?: string;
+    iteration?: number;
+    attempt?: number;
+  };
+  smithersRunId?: string;
+  nodeId?: string;
+  run?: unknown;
+  node?: unknown;
+  iteration?: number;
+  attempt?: number;
+  prompt?: string;
+  messages?: unknown;
+  rootDir?: string;
+  workspaceSessionId: string;
+  sourceCommandId: string;
+};
+
+type RunTaskAgentResult = {
+  text: string;
+  usage?: unknown;
+  output?: unknown;
+};
+```
+
+`taskContext`, `smithersRunId`, `nodeId`, `run`, `node`, `iteration`, and `attempt` carry
+Smithers-owned identity and context for the specific task attempt. `prompt` and `messages` carry
+the Smithers task prompt material. `rootDir` is the Smithers task root when Smithers supplies it.
+`workspaceSessionId` binds the attempt to the app-owned top-level workspace session, and
+`sourceCommandId` binds it to the handler-thread `exec_command` record whose command-scoped bridge
+token authorized the callback. The server must reject calls whose token does not match
+`(workspaceSessionId, sourceCommandId)`, whose source command does not exist, or whose source command
+is not owned by a handler thread.
+
+The result is Smithers-compatible `{ text, usage? }`. `output` is present only when the app runtime
+supplies structured task output for that attempt; callers must not assume it is always present.
+
+Concurrency is allowed. Multiple simultaneous Smithers task agents may call `runTaskAgent`; `svvy`
+binds each accepted call to one workflow-task-attempt surface and runs it through the normal
+pi-backed task-agent execution model. Attempts keep their own generated context fingerprint, command
+facts, approvals, wait state, context-budget usage, and durable surface projection.
+
+The bridge boundary is deliberately small. It exposes no arbitrary app RPC, no shell escape, no
+settings mutation, no orchestrator or handler-thread controls, and no product workflow-control API.
+It does not duplicate Smithers workflow/run state; Smithers remains the owner of workflow graph,
+run, node, iteration, and retry state. `svvy` persists only the task-agent attempt surface and the
+app-owned facts needed to render, resume, audit, and authorize that attempt.
 
 ## Build Pipeline
 

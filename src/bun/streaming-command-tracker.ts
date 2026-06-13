@@ -70,9 +70,11 @@ export function createStreamingCommandTracker(options: {
       const isSpecialized = SPECIALIZED_TOOL_NAMES.has(input.toolName);
       const command = options.store.createCommand({
         turnId: options.promptContext.turnId,
+        workflowTaskAttemptId: options.promptContext.workflowTaskAttemptId,
         threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
+        workflowRunId: options.promptContext.workflowRunId,
         toolName: input.toolName,
-        executor: options.promptContext.surfaceKind === "handler" ? "handler" : "orchestrator",
+        executor: inferExecutor(options.promptContext.surfaceKind),
         visibility: isSpecialized ? "surface" : inferVisibility(input.toolName),
         title: `Run ${input.toolName}`,
         summary: summarizeArguments(input.partialArguments),
@@ -187,6 +189,13 @@ function inferVisibility(toolName: string): StructuredCommandVisibility {
     return "trace";
   }
   return "summary";
+}
+
+function inferExecutor(surfaceKind: PromptExecutionContext["surfaceKind"]) {
+  if (surfaceKind === "workflow-task") {
+    return "workflow-task-agent" as const;
+  }
+  return surfaceKind === "handler" ? "handler" : "orchestrator";
 }
 
 function summarizeArguments(args: unknown): string {

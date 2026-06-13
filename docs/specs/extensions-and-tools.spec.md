@@ -86,8 +86,9 @@ The builtin extension inventory above is exhaustive for the base design.
 Usage states are `loaded`, `available`, and `unavailable`. `unavailable` means the extension is
 configured off for that actor's resolved default or profile binding; it is not by itself a hard
 actor boundary. Configurable extensions may be moved between loaded, available, and unavailable for
-a target actor/profile through the normal usage controls unless the extension is fixed by product
-contract. Extension Loading is the fixed always-loaded control.
+a target actor/profile through the normal usage controls unless the extension is fixed always-loaded
+by product contract. Extension Loading is the fixed always-loaded control; other `unavailable`
+defaults remain configurable off states.
 
 ## Smithers Boundary
 
@@ -112,6 +113,16 @@ svvyx workflows models list --json
 ```
 
 It manages reusable source and generated imports. It does not run Smithers workflows.
+
+Generated `Agents.*` exports in `@svvy/workflows` are persisted `TaskAgentParameters` records from
+`~/.config/svvy/workflows/agents`. `Agents.defineTaskAgent(parametersOrAgentsExport)` returns a
+Smithers-compatible `AgentLike` for `<Task agent={...}>`. That `AgentLike` calls the app process
+through the narrow authenticated `runTaskAgent` bridge with task-agent parameters, Smithers
+taskContext/run/node/iteration/attempt identity, prompt/messages, rootDir, and workspace/session
+binding, and receives `{ text, usage? }` plus optional `output` only when supplied by the app
+runtime. The bridge accepts concurrent calls, binds each to a workflow-task-attempt surface, exposes
+no arbitrary app RPC/shell/settings/orchestrator controls, and does not duplicate Smithers
+workflow/run state.
 
 When loaded into `execute_typescript`, it may expose the standard generated client:
 

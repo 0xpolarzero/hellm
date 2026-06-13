@@ -414,7 +414,7 @@ export function createRequestUserInputTool(options: {
       const settings = requestUserInputRuntime.getSettings();
 
       options.store.setTurnDecision({
-        turnId: runtime.turnId,
+        turnId: runtime.turnId!,
         decision: REQUEST_USER_INPUT_TOOL_NAME,
         onlyIfPending: true,
       });
@@ -473,7 +473,7 @@ export function createRequestUserInputTool(options: {
         sessionId: runtime.sessionId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
-        turnId: runtime.turnId,
+        turnId: runtime.turnId!,
         commandId: command.id,
         toolItemId: _toolCallId,
         variant: settings.mode,

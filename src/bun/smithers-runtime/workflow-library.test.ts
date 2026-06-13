@@ -8,10 +8,12 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "bun:test";
 import { ExtensionDependencyApprovalStore } from "../extension-dependency-approval-store";
 import {
@@ -191,10 +193,38 @@ describe("Workflows generated read model", () => {
     const agentsIndex = readFileSync(join(packageRoot, "agents", "index.ts"), "utf8");
     expect(agentsIndex).toContain("export interface TaskAgentParameters");
     expect(agentsIndex).toContain("  id: string;");
-    expect(agentsIndex).toContain("export function defineTaskAgent<T extends TaskAgentParameters>");
+    expect(agentsIndex).toContain("export type AgentLike");
+    expect(agentsIndex).toContain(
+      "export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): AgentLike",
+    );
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_URL");
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN");
+    expect(agentsIndex).toContain("SVVY_WORKSPACE_SESSION_ID");
+    expect(agentsIndex).toContain("SVVY_SOURCE_COMMAND_ID");
+    expect(agentsIndex).toContain('operation: "runTaskAgent"');
+    expect(agentsIndex).toContain('"prompt",');
+    expect(agentsIndex).toContain('"messages",');
+    expect(agentsIndex).toContain('"rootDir",');
+    expect(agentsIndex).toContain('"resumeSession",');
+    expect(agentsIndex).toContain('"continueSession",');
+    expect(agentsIndex).toContain('"taskContext",');
+    expect(agentsIndex).toContain('"run",');
+    expect(agentsIndex).toContain('"node",');
+    expect(agentsIndex).toContain('"iteration",');
+    expect(agentsIndex).toContain('"attempt",');
+    expect(agentsIndex).toContain("smithersRunId");
+    expect(agentsIndex).toContain("nodeId");
+    expect(agentsIndex).toContain('"maxOutputBytes"');
+    expect(agentsIndex).not.toContain("supportsNativeStructuredOutput");
     expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
       'export { reviewerAgent } from "./reviewerAgent";',
     );
+    const reviewerAgentSource = readFileSync(
+      join(packageRoot, "agents", "reviewerAgent.ts"),
+      "utf8",
+    );
+    expect(reviewerAgentSource).toContain("satisfies TaskAgentParameters");
+    expect(reviewerAgentSource).not.toContain("defineTaskAgent");
     expect(existsSync(join(packageRoot, "components", "ReviewPanel.tsx"))).toBe(true);
     expect(existsSync(join(packageRoot, "prompts", "ReviewPrompt.ts"))).toBe(true);
     expect(existsSync(join(packageRoot, "workflows", "ReviewWorkflow.tsx"))).toBe(true);
@@ -212,6 +242,178 @@ describe("Workflows generated read model", () => {
         generatedPath: join(packageRoot, "prompts", "ReviewPrompt.ts"),
       },
     );
+  });
+
+  it("turns generated agent parameter records into bridge-backed AgentLike values", async () => {
+    const root = createTempDir();
+    const sourceRoot = join(root, "source");
+    const packageRoot = join(root, "generated", "package");
+    const extensionsPackageRoot = join(root, "generated", "extensions-package");
+    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(sourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "Review bridge payloads.",
+          overrides: { shell: "available" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const build = await buildWorkflowsGeneratedPackage({
+      extensionsGeneratedPackagePath: extensionsPackageRoot,
+      generatedPackagePath: packageRoot,
+      modelCatalog: [modelChoice()],
+      sourceRoot,
+    });
+    expect(build.ok).toBe(true);
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvy/extensions",
+      targetPath: extensionsPackageRoot,
+    });
+
+    const received: unknown[] = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((requestInfo: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(requestInfo, init);
+      expect(request.method).toBe("POST");
+      expect(request.headers.get("authorization")).toBe("Bearer bridge-token");
+      return request.json().then((body) => {
+        received.push(body);
+        return Response.json({ text: "review complete", usage: { outputTokens: 7 } });
+      });
+    }) as typeof fetch;
+    const previousEnv = snapshotBridgeEnv();
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN = "bridge-token";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
+    process.env.SVVY_SOURCE_COMMAND_ID = "command-workflow-001";
+    process.env.SVVY_WORKSPACE_SESSION_ID = "workspace-session-001";
+
+    try {
+      const workflows = await import(`${pathToFileURL(join(packageRoot, "index.ts")).href}?bridge`);
+      const agent = workflows.Agents.defineTaskAgent(workflows.Agents.reviewerAgent);
+
+      expect(workflows.Agents.reviewerAgent).toMatchObject({
+        id: "reviewerAgent",
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+      });
+      expect(workflows.Agents.reviewerAgent).not.toHaveProperty("generate");
+      expect(agent).toMatchObject({ id: "reviewerAgent" });
+      expect(typeof agent.generate).toBe("function");
+
+      await expect(
+        agent.generate({
+          prompt: "Review this patch.",
+          messages: [{ role: "user", content: "Find risks." }],
+          rootDir: "/workspace/project",
+          taskContext: { taskId: "task-review" },
+          run: { id: "run-001" },
+          node: { id: "node-review" },
+          iteration: { index: 2 },
+          attempt: { index: 1 },
+          onEvent: () => {},
+          onStdout: () => {},
+        }),
+      ).resolves.toEqual({ text: "review complete", usage: { outputTokens: 7 } });
+    } finally {
+      restoreBridgeEnv(previousEnv);
+      globalThis.fetch = previousFetch;
+    }
+
+    expect(received).toEqual([
+      {
+        operation: "runTaskAgent",
+        taskAgent: {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "Review bridge payloads.",
+          overrides: { shell: "available" },
+        },
+        workspaceSessionId: "workspace-session-001",
+        sourceCommandId: "command-workflow-001",
+        prompt: "Review this patch.",
+        messages: [{ role: "user", content: "Find risks." }],
+        rootDir: "/workspace/project",
+        taskContext: { taskId: "task-review" },
+        run: { id: "run-001" },
+        node: { id: "node-review" },
+        iteration: 2,
+        attempt: 1,
+        smithersRunId: "run-001",
+        nodeId: "node-review",
+      },
+    ]);
+  });
+
+  it("reports clear generated AgentLike bridge errors for missing env and malformed responses", async () => {
+    const root = createTempDir();
+    const sourceRoot = join(root, "source");
+    const packageRoot = join(root, "generated", "package");
+    const extensionsPackageRoot = join(root, "generated", "extensions-package");
+    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(sourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "Review bridge failures.",
+        },
+        null,
+        2,
+      ),
+    );
+    const build = await buildWorkflowsGeneratedPackage({
+      extensionsGeneratedPackagePath: extensionsPackageRoot,
+      generatedPackagePath: packageRoot,
+      modelCatalog: [modelChoice()],
+      sourceRoot,
+    });
+    expect(build.ok).toBe(true);
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvy/extensions",
+      targetPath: extensionsPackageRoot,
+    });
+    const workflows = await import(`${pathToFileURL(join(packageRoot, "index.ts")).href}?errors`);
+    const agent = workflows.Agents.defineTaskAgent(workflows.Agents.reviewerAgent);
+    const previousEnv = snapshotBridgeEnv();
+    delete process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL;
+
+    await expect(agent.generate({ prompt: "missing env" })).rejects.toThrow(
+      "Missing required svvy workflow task-agent bridge env var: SVVY_WORKFLOW_AGENT_BRIDGE_URL",
+    );
+
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (() => Response.json({ output: "missing text" })) as unknown as typeof fetch;
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN = "bridge-token";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
+    process.env.SVVY_SOURCE_COMMAND_ID = "command-workflow-001";
+    process.env.SVVY_WORKSPACE_SESSION_ID = "workspace-session-001";
+    try {
+      await expect(agent.generate({ prompt: "bad response" })).rejects.toThrow(
+        "Malformed svvy workflow task-agent bridge response: expected object with string text.",
+      );
+    } finally {
+      restoreBridgeEnv(previousEnv);
+      globalThis.fetch = previousFetch;
+    }
   });
 
   it("links generated Workflows packages into Smithers workspaces without replacing non-symlinks", async () => {
@@ -1396,6 +1598,35 @@ function approveExtensionDependency(
   });
   if (request) {
     dependencyApprovalStore.approveRequest(request.requestId);
+  }
+}
+
+function linkPackageForGeneratedImport(input: {
+  packageRoot: string;
+  packageName: string;
+  targetPath: string;
+}): void {
+  const linkPath = join(input.packageRoot, "node_modules", ...input.packageName.split("/"));
+  mkdirSync(join(linkPath, ".."), { recursive: true });
+  symlinkSync(input.targetPath, linkPath);
+}
+
+function snapshotBridgeEnv(): Record<string, string | undefined> {
+  return {
+    SVVY_SOURCE_COMMAND_ID: process.env.SVVY_SOURCE_COMMAND_ID,
+    SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN,
+    SVVY_WORKFLOW_AGENT_BRIDGE_URL: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL,
+    SVVY_WORKSPACE_SESSION_ID: process.env.SVVY_WORKSPACE_SESSION_ID,
+  };
+}
+
+function restoreBridgeEnv(snapshot: Record<string, string | undefined>): void {
+  for (const [name, value] of Object.entries(snapshot)) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
   }
 }
 

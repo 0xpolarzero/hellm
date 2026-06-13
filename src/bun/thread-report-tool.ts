@@ -122,7 +122,7 @@ export function createThreadReportTool(options: {
         }
 
         options.store.setTurnDecision({
-          turnId: runtime.turnId,
+          turnId: runtime.turnId!,
           decision: "thread_report",
         });
 

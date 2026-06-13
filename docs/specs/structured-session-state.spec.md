@@ -223,8 +223,16 @@ loops, or renderer polling.
 
 ## State Boundary
 
+Workflow task-agent attempts are app-owned pi-backed surfaces. `svvy` persists their generated
+context fingerprint, command facts, approvals, wait state, context-budget usage, bridge-call binding,
+and visible surface projection so they remain inspectable and resumable through the product.
+
+Smithers remains the owner of workflow graph, run, node, iteration, retry, and workflow lifecycle
+state. The authenticated workflow task-agent bridge records only the app-owned attempt binding and
+task-agent execution facts needed for the surface.
+
 Structured session state excludes:
 
-- Smithers bridge lifecycle projection
+- Smithers workflow/run lifecycle projection
 - workspace-local svvy workflow source/runtime state
 - `smithers_*` or `workflow_*` wrapper decisions

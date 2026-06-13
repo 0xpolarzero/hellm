@@ -56,18 +56,27 @@ export function createListExtensionsTool(options: {
     parameters: listExtensionsParamsSchema,
     execute: async (_toolCallId, _params: ListExtensionsParams) => {
       const runtime = requireActiveRuntime(options.runtime, LIST_EXTENSIONS_TOOL_NAME);
-      options.store.setTurnDecision({
-        turnId: runtime.turnId,
-        decision: LIST_EXTENSIONS_TOOL_NAME,
-        onlyIfPending: true,
-      });
+      if (runtime.turnId) {
+        options.store.setTurnDecision({
+          turnId: runtime.turnId,
+          decision: LIST_EXTENSIONS_TOOL_NAME,
+          onlyIfPending: true,
+        });
+      }
       const command = options.store.createOrReuseStreamingCommand({
         toolCallId: _toolCallId,
         turnId: runtime.turnId,
+        workflowTaskAttemptId: runtime.workflowTaskAttemptId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
+        workflowRunId: runtime.workflowRunId,
         toolName: LIST_EXTENSIONS_TOOL_NAME,
-        executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+        executor:
+          runtime.surfaceKind === "workflow-task"
+            ? "workflow-task-agent"
+            : runtime.surfaceKind === "handler"
+              ? "handler"
+              : "orchestrator",
         visibility: "surface",
         title: "List extensions",
         summary: "List loaded and available extensions.",
@@ -141,18 +150,27 @@ export function createLoadExtensionTool(options: {
     execute: async (_toolCallId, params: LoadExtensionParams) => {
       const runtime = requireActiveRuntime(options.runtime, LOAD_EXTENSION_TOOL_NAME);
       const id = params.extensionId.trim();
-      options.store.setTurnDecision({
-        turnId: runtime.turnId,
-        decision: "load_extension",
-        onlyIfPending: true,
-      });
+      if (runtime.turnId) {
+        options.store.setTurnDecision({
+          turnId: runtime.turnId,
+          decision: "load_extension",
+          onlyIfPending: true,
+        });
+      }
       const command = options.store.createOrReuseStreamingCommand({
         toolCallId: _toolCallId,
         turnId: runtime.turnId,
+        workflowTaskAttemptId: runtime.workflowTaskAttemptId,
         surfacePiSessionId: runtime.surfacePiSessionId,
         threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
+        workflowRunId: runtime.workflowRunId,
         toolName: LOAD_EXTENSION_TOOL_NAME,
-        executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+        executor:
+          runtime.surfaceKind === "workflow-task"
+            ? "workflow-task-agent"
+            : runtime.surfaceKind === "handler"
+              ? "handler"
+              : "orchestrator",
         visibility: "surface",
         title: `Load extension: ${id}`,
         summary: `Load extension ${id}.`,

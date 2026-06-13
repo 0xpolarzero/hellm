@@ -332,7 +332,7 @@ function recordReadOnlyToolCommand<T extends Record<string, unknown>>(input: {
 }): T {
   if (input.turnDecision) {
     input.store.setTurnDecision({
-      turnId: input.runtime.turnId,
+      turnId: input.runtime.turnId!,
       decision: input.turnDecision,
       onlyIfPending: true,
     });

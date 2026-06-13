@@ -473,6 +473,169 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("app-owned and cannot be overridden");
   });
 
+  it("injects command-scoped workflow task-agent bridge env for handler shell commands", async () => {
+    const cwd = createTempDir();
+    const store = createStructuredSessionStateStore({
+      workspace: { id: cwd, label: "Bridge", cwd, artifactDir: join(cwd, "artifacts") },
+      databasePath: join(cwd, "state.sqlite"),
+    });
+    openStores.push(store);
+    store.upsertPiSession({
+      sessionId: "session-smithers-bridge",
+      title: "Smithers bridge",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z",
+    });
+    const orchestratorTurn = store.startTurn({
+      sessionId: "session-smithers-bridge",
+      surfacePiSessionId: "session-smithers-bridge",
+      requestSummary: "Start handler",
+    });
+    const thread = store.createThread({
+      turnId: orchestratorTurn.id,
+      surfacePiSessionId: "session-smithers-handler",
+      title: "Smithers handler",
+      objective: "Run Smithers workflow.",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-smithers-bridge",
+      surfacePiSessionId: "session-smithers-handler",
+      threadId: thread.id,
+      requestSummary: "Run Smithers",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        sessionId: "session-smithers-bridge",
+        turnId: turn.id,
+        surfacePiSessionId: "session-smithers-handler",
+        surfaceKind: "handler",
+        surfaceThreadId: thread.id,
+        rootThreadId: thread.id,
+        promptText: "Run Smithers",
+      }),
+    };
+    const command = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      surfacePiSessionId: "session-smithers-handler",
+      toolName: "exec_command",
+      executor: "handler",
+      visibility: "summary",
+      title: "Run exec_command",
+      summary: "Run shell command.",
+      arguments: { cmd: "node -e" },
+      facts: { toolCallId: "tool-smithers-bridge" },
+    });
+    store.startCommand(command.id);
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        runtime,
+        store,
+        workflowTaskAgentBridge: ({ runtime: bridgeRuntime, sourceCommandId }) => ({
+          SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
+          SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
+          SVVY_WORKSPACE_SESSION_ID: bridgeRuntime?.sessionId ?? "",
+          SVVY_SOURCE_COMMAND_ID: sourceCommandId ?? "",
+        }),
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-smithers-bridge",
+      {
+        cmd: [
+          'printf "url=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_URL"',
+          'printf "token=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN"',
+          'printf "workspace=%s\\n" "$SVVY_WORKSPACE_SESSION_ID"',
+          'printf "source=%s\\n" "$SVVY_SOURCE_COMMAND_ID"',
+        ].join("; "),
+      },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(result)).toContain("url=http://127.0.0.1:9999/runTaskAgent");
+    expect(readText(result)).toContain("token=[REDACTED]");
+    expect(readText(result)).not.toContain("bridge-token");
+    expect(readText(result)).toContain("workspace=session-smithers-bridge");
+    expect(readText(result)).toContain(`source=${command.id}`);
+  });
+
+  it("does not inject workflow task-agent bridge env for orchestrator shell commands", async () => {
+    const cwd = createTempDir();
+    const store = createStructuredSessionStateStore({
+      workspace: { id: cwd, label: "Bridge", cwd, artifactDir: join(cwd, "artifacts") },
+      databasePath: join(cwd, "state.sqlite"),
+    });
+    openStores.push(store);
+    store.upsertPiSession({
+      sessionId: "session-orchestrator-no-bridge",
+      title: "Orchestrator no bridge",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-orchestrator-no-bridge",
+      surfacePiSessionId: "session-orchestrator-no-bridge",
+      requestSummary: "Run shell command",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        sessionId: "session-orchestrator-no-bridge",
+        turnId: turn.id,
+        surfacePiSessionId: "session-orchestrator-no-bridge",
+        promptText: "Run shell command",
+      }),
+    };
+    const command = store.createCommand({
+      turnId: turn.id,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Run exec_command",
+      summary: "Run shell command.",
+      arguments: { cmd: "env" },
+      facts: { toolCallId: "tool-orchestrator-no-bridge" },
+    });
+    store.startCommand(command.id);
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        runtime,
+        store,
+        workflowTaskAgentBridge: () => ({
+          SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
+          SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
+          SVVY_WORKSPACE_SESSION_ID: "session-orchestrator-no-bridge",
+          SVVY_SOURCE_COMMAND_ID: command.id,
+        }),
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-orchestrator-no-bridge",
+      { cmd: 'printf "url=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_URL"' },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(result)).toContain("url=");
+    expect(readText(result)).not.toContain("runTaskAgent");
+  });
+
   it("cleans up temporary svvyx shim directories after subprocess completion", async () => {
     const cwd = createTempDir();
     const packageRoot = join(cwd, "generated", "package");

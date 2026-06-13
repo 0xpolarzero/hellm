@@ -197,8 +197,8 @@ That hand-authored file must stay small and positive. It should say only:
   library
 - generated Workflows output is read-only; edit source and rebuild
 
-It covers only the current Smithers boundary and omits Smithers bridge tools, product UI surfaces,
-and non-current workspace source paths.
+It covers only the current Smithers boundary and omits broad Smithers runtime bridge tools, product
+UI surfaces, and non-current workspace source paths.
 
 ## Memory Fragment
 
@@ -224,11 +224,16 @@ Extension Managing commands.
 Smithers is prompt-only official CLI guidance for handler-thread workflow work. The Smithers product
 boundary is workspace `.smithers/` authoring, checked `smithers` CLI commands through Shell,
 `@svvy/workflows` imports for reusable material, and no native or `svvyx` Smithers runtime surface.
+Smithers task agents created with `Agents.defineTaskAgent(...)` use the narrow authenticated
+`runTaskAgent` bridge described in `docs/specs/workflow-library.spec.md` so Smithers workflow code
+running inside a handler-thread command-scoped environment can ask the app process to run one
+pi-backed task-agent attempt. That bridge is not a Smithers runtime-control surface and does not
+expose workflow graph, shell, settings, orchestrator, or handler controls.
 The Smithers product boundary excludes:
 
 - Smithers as a builtin native-tool extension
 - Smithers as an Incur-backed `svvyx smithers` extension
-- a Bun-owned Smithers bridge
+- a broad Bun-owned Smithers workflow/runtime bridge
 - a product abstraction over Smithers execution
 - generated Smithers observability, events, DevTools, Gateway, MCP, or OpenTelemetry instructions as
   default `svvy` product behavior

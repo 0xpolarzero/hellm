@@ -32,11 +32,21 @@ export namespace Agents {
     overrides?: Record<TaskAgentExtensionId, TaskAgentExtensionOverrideState>;
   }
 
+  export type AgentLike = {
+    id?: string;
+    generate: (args: unknown) => Promise<unknown>;
+  };
+
   /**
-   * Helper for authoring reusable app-global agent parameter modules without
-   * weakening the generated declaration contract.
+   * Adapter for using reusable app-global agent parameter records as Smithers
+   * task agents.
    */
-  export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): T {
-    return parameters;
+  export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): AgentLike {
+    return {
+      id: parameters.id,
+      async generate() {
+        throw new Error("Agents.defineTaskAgent is available only from generated @svvy/workflows.");
+      },
+    };
   }
 }

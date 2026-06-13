@@ -82,7 +82,7 @@ export function createThreadFollowupTool(options: {
       const threadGroupId = params.threadGroupId?.trim() || null;
 
       options.store.setTurnDecision({
-        turnId: runtime.turnId,
+        turnId: runtime.turnId!,
         decision: "thread_followup",
         onlyIfPending: true,
       });
@@ -175,7 +175,7 @@ export function createThreadRequestReportTool(options: {
       const threadId = params.threadId.trim();
       const request = params.request?.trim() || null;
       options.store.setTurnDecision({
-        turnId: runtime.turnId,
+        turnId: runtime.turnId!,
         decision: "thread_request_report",
         onlyIfPending: true,
       });

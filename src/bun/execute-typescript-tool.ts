@@ -24,7 +24,10 @@ import {
   createMacOsKeychainExtensionEnvSecretStore,
   type ExtensionEnvSecretStore,
 } from "./extension-env-secret-store";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type {
+  PromptExecutionRuntimeHandle,
+  PromptExecutionSurfaceKind,
+} from "./prompt-execution-context";
 import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
 import type {
   StructuredCommandRecord,
@@ -269,13 +272,17 @@ export function createExecuteTypescriptTool(
         throw new Error(`${EXECUTE_TYPESCRIPT_TOOL_NAME} can only run during an active prompt.`);
       }
 
-      options.store.setTurnDecision({
-        turnId: runtime.turnId,
-        decision: "execute_typescript",
-        onlyIfPending: true,
-      });
+      if (runtime.turnId) {
+        options.store.setTurnDecision({
+          turnId: runtime.turnId,
+          decision: "execute_typescript",
+          onlyIfPending: true,
+        });
+      }
       ensureRunnableSurfaceThread(options.store, runtime.sessionId, runtime.rootThreadId);
 
+      const actor = actorForPromptRuntime(runtime.surfaceKind);
+      const executor = executorForPromptRuntime(runtime.surfaceKind);
       const result = await runExecuteTypescript({
         cwd: options.cwd,
         store: options.store,
@@ -284,10 +291,12 @@ export function createExecuteTypescriptTool(
         context: {
           sessionId: runtime.sessionId,
           turnId: runtime.turnId,
-          actor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+          workflowTaskAttemptId: runtime.workflowTaskAttemptId,
+          workflowRunId: runtime.workflowRunId,
+          actor,
           surfacePiSessionId: runtime.surfacePiSessionId,
           threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
-          executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+          executor,
           loadedExtensionIds: runtime.loadedExtensionIds,
         },
         openArtifact: options.openArtifact,
@@ -1785,6 +1794,22 @@ function artifactsRuntimeContext(context: ExecuteTypescriptContext): SvvyxArtifa
     surfaceKind: context.actor === "handler" ? "handler" : "orchestrator",
     surfaceThreadId: context.actor === "handler" ? context.threadId : null,
   };
+}
+
+function actorForPromptRuntime(surfaceKind: PromptExecutionSurfaceKind): SvvyActorKind {
+  if (surfaceKind === "workflow-task") {
+    return "workflow-task";
+  }
+  return surfaceKind === "handler" ? "handler" : "orchestrator";
+}
+
+function executorForPromptRuntime(
+  surfaceKind: PromptExecutionSurfaceKind,
+): StructuredCommandExecutor {
+  if (surfaceKind === "workflow-task") {
+    return "workflow-task-agent";
+  }
+  return surfaceKind === "handler" ? "handler" : "orchestrator";
 }
 
 function executeTypescriptWorkflowLogDetails(

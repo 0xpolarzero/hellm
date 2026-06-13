@@ -56,7 +56,7 @@ export function createToolExecutionCommandTracker(options: {
       }
 
       const turnDecision = turnDecisionForTool(toolName);
-      if (turnDecision) {
+      if (turnDecision && options.promptContext.turnId) {
         options.store.setTurnDecision({
           turnId: options.promptContext.turnId,
           decision: turnDecision,
@@ -73,7 +73,9 @@ export function createToolExecutionCommandTracker(options: {
       } else {
         const command = options.store.createCommand({
           turnId: options.promptContext.turnId,
+          workflowTaskAttemptId: options.promptContext.workflowTaskAttemptId,
           threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
+          workflowRunId: options.promptContext.workflowRunId,
           toolName,
           executor: inferExecutor(toolName, options.promptContext),
           visibility: inferVisibility(toolName),
@@ -251,6 +253,10 @@ function directToolLogDetails(
   return {
     workspaceSessionId: promptContext.sessionId,
     surfacePiSessionId: promptContext.surfacePiSessionId,
+    ...(promptContext.workflowRunId ? { workflowRunId: promptContext.workflowRunId } : {}),
+    ...(promptContext.workflowTaskAttemptId
+      ? { workflowTaskAttemptId: promptContext.workflowTaskAttemptId }
+      : {}),
     ...(threadId ? { threadId } : {}),
     commandId,
     toolName,
@@ -283,6 +289,9 @@ function inferExecutor(
   _toolName: string,
   promptContext: Pick<PromptExecutionContext, "surfaceKind">,
 ): StructuredCommandExecutor {
+  if (promptContext.surfaceKind === "workflow-task") {
+    return "workflow-task-agent";
+  }
   return promptContext.surfaceKind === "handler" ? "handler" : "orchestrator";
 }
 

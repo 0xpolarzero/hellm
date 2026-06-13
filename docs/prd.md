@@ -218,7 +218,53 @@ The generated package name is `@svvy/workflows`. The root public API exports onl
 import { Agents, Components, Prompts, Workflows } from "@svvy/workflows";
 ```
 
-Reusable values are accessed through those namespaces, for example `Agents.defaultAgent`, `Components.SomeComponent`, `Prompts.somePrompt`, and `Workflows.someWorkflow`. `Agents.defineTaskAgent` and type `Agents.TaskAgentParameters` also live under `Agents.*` so agent usage stays uniform.
+Reusable values are accessed through those namespaces, for example `Agents.defaultAgent`, `Agents.reviewerAgent`, `Agents.implementerAgent`, `Agents.explorerAgent`, `Components.SomeComponent`, `Prompts.somePrompt`, and `Workflows.someWorkflow`. `Agents.*` generated agent exports are persisted `TaskAgentParameters` records from `~/.config/svvy/workflows/agents/*.agent.json`. `Agents.defineTaskAgent` and type `Agents.TaskAgentParameters` also live under `Agents.*` so agent usage stays uniform.
+
+Smithers task usage passes the generated parameter record into `Agents.defineTaskAgent`, which returns the Smithers-compatible `AgentLike` value intended for `<Task agent={...}>`:
+
+```tsx
+import { Task } from "smithers-orchestrator";
+import { Agents } from "@svvy/workflows";
+
+const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
+
+export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+```
+
+Direct parameters are also valid when the workflow source owns the task-agent configuration:
+
+```tsx
+import { Task } from "smithers-orchestrator";
+import { Agents } from "@svvy/workflows";
+
+const explorer = Agents.defineTaskAgent({
+  id: "explore",
+  label: "Explorer",
+  provider: "openai",
+  model: "gpt-5.4",
+  reasoningEffort: "medium",
+  instructions: "Explore the requested area and return concise findings.",
+});
+
+export default <Task id="explore" agent={explorer}>Map the relevant code paths.</Task>;
+```
+
+The returned `AgentLike` runs through a narrow authenticated workflow task-agent bridge back into
+the `svvy` app process. Official Smithers CLI workflow code runs in a child process, while `svvy`
+owns pi runtime creation, sandboxing, approvals, generated context binding, and durable workflow
+task-attempt surface state in the app process. The bridge is scoped to one operation,
+`runTaskAgent`, and its callback environment is injected only into handler-thread `exec_command`
+child environments that have an active structured source command id. The injection is not based on
+Smithers command-string parsing, binary shadowing, or a `svvy` workflow wrapper. It carries an
+unguessable app-owned auth token plus the local bridge endpoint, the owning `workspaceSessionId`,
+and the source `exec_command` id as `sourceCommandId`.
+`runTaskAgent` accepts the task-agent parameters, Smithers task context/run/node/iteration/attempt
+identity, prompt/messages, root directory, and explicit workspace/session binding. It returns the
+Smithers-compatible result `{ text, usage? }` and may include `output` only when the app runtime
+supplies structured task output. Multiple task agents may call the bridge concurrently; each call is
+bound to one workflow-task-attempt surface. The bridge exposes no arbitrary app RPC, shell,
+settings, orchestrator, handler-thread, or workflow-control operations and does not duplicate
+Smithers workflow/run state.
 
 When the app opens or prepares a workspace with `.smithers/`, it idempotently links the generated package into:
 

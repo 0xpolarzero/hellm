@@ -200,6 +200,53 @@ describe("svvyx workflows build", () => {
   });
 });
 
+describe("svvyx workflows unsupported runner and control verbs", () => {
+  const unsupportedCommands = [
+    "svvyx workflows run --json",
+    "svvyx workflows resume --json",
+    "svvyx workflows approve --json",
+    "svvyx workflows inspect --json",
+    "svvyx workflows debug --json",
+    "svvyx workflows cancel --json",
+    "svvyx workflows status --json",
+    "svvyx workflows logs --json",
+    "svvyx workflows retry --json",
+    "svvyx workflows start --json",
+    "svvyx workflows stop --json",
+    "svvyx workflows pause --json",
+    "svvyx workflows continue --json",
+    "svvyx workflows install --json",
+    "svvyx workflows retrieve --json",
+    "svvyx workflows promote --json",
+  ] as const;
+
+  for (const command of unsupportedCommands) {
+    it(`rejects ${command}`, async () => {
+      try {
+        await runSvvyxWorkflowsCommand({ command });
+      } catch (error) {
+        const output = formatSvvyxWorkflowsError(error);
+        expect(output.error.code).toBe("unsupported_command");
+        expect(output.error.message).toContain("Unsupported Workflows command:");
+        return;
+      }
+      throw new Error(`Expected ${command} to be rejected.`);
+    });
+  }
+
+  it("rejects unsupported models subcommands", async () => {
+    try {
+      await runSvvyxWorkflowsCommand({ command: "svvyx workflows models run --json" });
+    } catch (error) {
+      const output = formatSvvyxWorkflowsError(error);
+      expect(output.error.code).toBe("unsupported_command");
+      expect(output.error.message).toBe("Unsupported Workflows models command: run");
+      return;
+    }
+    throw new Error("Expected models runner command to be rejected.");
+  });
+});
+
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "svvy-workflows-command-"));
   tempDirs.push(dir);

@@ -50,6 +50,7 @@ type RunningCommandSession = {
   managedSandbox: boolean;
   protectedWriteSnapshot: ProtectedWriteSnapshot;
   liveProjection: LiveCommandProjection | null;
+  outputRedactions: readonly string[];
 };
 
 type LiveCommandProjection = {
@@ -122,7 +123,15 @@ type DirectToolOptions = {
   managedSandbox?: boolean | (() => boolean);
   networkAccess?: boolean | (() => boolean);
   onAppLog?: (event: AppLoggerEvent) => void;
+  workflowTaskAgentBridge?: WorkflowTaskAgentBridgeEnvProvider;
 };
+
+export type WorkflowTaskAgentBridgeEnvProvider = (input: {
+  command: string;
+  commandCwd: string;
+  runtime: PromptExecutionRuntimeHandle["current"];
+  sourceCommandId: string | null;
+}) => Record<string, string> | null;
 
 type DirectToolSet = {
   codingTools: AgentTool<any>[];
@@ -402,6 +411,7 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
               store: options.store,
               sessionId: options.runtime.current.sessionId,
               turnId: options.runtime.current.turnId,
+              workflowTaskAttemptId: options.runtime.current.workflowTaskAttemptId ?? null,
               toolCallId,
             })
           : null;
@@ -423,10 +433,16 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
         commandCwd,
         options,
       });
+      const workflowTaskAgentBridgeEnv = prepareWorkflowTaskAgentBridgeEnv({
+        activeCommand,
+        command: params.cmd,
+        commandCwd,
+        options,
+      });
       const execInput = {
         cwd: commandCwd,
         cmd: params.cmd,
-        env: svvyxSubprocess?.env,
+        env: { ...workflowTaskAgentBridgeEnv, ...svvyxSubprocess?.env },
         fileSystemPolicy: svvyxSubprocess
           ? svvyxSubprocessFileSystemPolicy(options)
           : directToolFileSystemPolicy(options),
@@ -441,6 +457,7 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
             : DEFAULT_COMMAND_TIMEOUT_MS,
         signal,
         liveProjection: activeLiveProjection,
+        outputRedactions: workflowTaskAgentBridgeOutputRedactions(workflowTaskAgentBridgeEnv),
       };
       const result = await runExecCommandWithSandboxEscalation({
         input: execInput,
@@ -479,6 +496,8 @@ type PreparedSvvyxSubprocess = {
   resultPath: string;
   shimDir: string;
 };
+
+const WORKFLOW_TASK_AGENT_BRIDGE_TOKEN_ENV = "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN";
 
 type SvvyxSubprocessAppAction = {
   kind: "artifact.open";
@@ -557,6 +576,45 @@ function prepareSvvyxSubprocess(input: {
     resultPath,
     shimDir: shim.dir,
   };
+}
+
+function prepareWorkflowTaskAgentBridgeEnv(input: {
+  activeCommand: Pick<StructuredCommandRecord, "id"> | null;
+  command: string;
+  commandCwd: string;
+  options: DirectToolOptions;
+}): Record<string, string> | null {
+  const runtime = input.options.runtime?.current ?? null;
+  if (
+    runtime?.surfaceKind !== "handler" ||
+    !input.activeCommand ||
+    !input.options.workflowTaskAgentBridge
+  ) {
+    return null;
+  }
+  return input.options.workflowTaskAgentBridge({
+    command: input.command,
+    commandCwd: input.commandCwd,
+    runtime,
+    sourceCommandId: input.activeCommand?.id ?? null,
+  });
+}
+
+function workflowTaskAgentBridgeOutputRedactions(
+  env: Record<string, string> | null,
+): readonly string[] {
+  const token = env?.[WORKFLOW_TASK_AGENT_BRIDGE_TOKEN_ENV];
+  return token ? [token] : [];
+}
+
+function redactCommandOutput(text: string, redactions: readonly string[] | undefined): string {
+  let redacted = text;
+  for (const value of redactions ?? []) {
+    if (value.length > 0) {
+      redacted = redacted.replaceAll(value, "[REDACTED]");
+    }
+  }
+  return redacted;
 }
 
 type SvvyxShellInvocation =
@@ -1280,6 +1338,7 @@ async function runExecCommand(input: {
   timeoutMs: number;
   signal?: AbortSignal;
   liveProjection?: LiveCommandProjection | null;
+  outputRedactions?: readonly string[];
 }): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
   const protectedWriteSnapshot = captureProtectedWriteSnapshot(
     input.protectedWriteRoots,
@@ -1302,16 +1361,17 @@ async function runExecCommand(input: {
     managedSandbox: input.managedSandbox,
     protectedWriteSnapshot,
     liveProjection: input.liveProjection ?? null,
+    outputRedactions: input.outputRedactions ?? [],
   };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
-    const text = String(chunk);
+    const text = redactCommandOutput(String(chunk), input.outputRedactions);
     session.stdout.push(text);
     recordLiveCommandOutput(input.liveProjection, "stdout", text);
   });
   child.stderr.on("data", (chunk) => {
-    const text = String(chunk);
+    const text = redactCommandOutput(String(chunk), input.outputRedactions);
     session.stderr.push(text);
     recordLiveCommandOutput(input.liveProjection, "stderr", text);
   });
@@ -1941,7 +2001,8 @@ function formatCommandOutput(input: {
 function findActiveExecCommand(input: {
   store: StructuredSessionStateStore;
   sessionId: string;
-  turnId: string;
+  turnId: string | null;
+  workflowTaskAttemptId: string | null;
   toolCallId: string;
 }): StructuredCommandRecord | null {
   const snapshot = input.store.getSessionState(input.sessionId);
@@ -1950,6 +2011,7 @@ function findActiveExecCommand(input: {
       .filter(
         (command) =>
           command.turnId === input.turnId &&
+          command.workflowTaskAttemptId === input.workflowTaskAttemptId &&
           command.toolName === "exec_command" &&
           command.status === "running" &&
           command.facts?.toolCallId === input.toolCallId,

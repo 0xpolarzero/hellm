@@ -740,7 +740,14 @@ describe("default system prompt", () => {
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_start");
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_handoff");
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_report");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_followup");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_current");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_group");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("thread_episodes");
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("request_context");
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("smithers_*");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("Smithers CLI");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("svvyx workflows");
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain("extensions.workflows");
   });
 });

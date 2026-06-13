@@ -190,16 +190,59 @@ Loaded Workflows instructions must teach:
 - reusable workflow material lives under `~/.config/svvy/workflows/`
 - generated imports come from `@svvy/workflows`
 - the only public root imports are `Agents`, `Components`, `Prompts`, and `Workflows`
-- `Agents.defineTaskAgent` and `Agents.TaskAgentParameters` live under `Agents`
+- generated `Agents.*` exports such as `Agents.reviewerAgent`, `Agents.implementerAgent`, and
+  `Agents.explorerAgent` are persisted `TaskAgentParameters` records from
+  `~/.config/svvy/workflows/agents`
+- `Agents.defineTaskAgent(parametersOrAgentsExport)` and `Agents.TaskAgentParameters` live under
+  `Agents`
+- `Agents.defineTaskAgent(...)` returns the Smithers-compatible `AgentLike` intended for
+  `<Task agent={...}>`
+- generated agent usage:
+
+```tsx
+import { Task } from "smithers-orchestrator";
+import { Agents } from "@svvy/workflows";
+
+const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
+
+export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+```
+
+- direct parameter usage:
+
+```tsx
+import { Task } from "smithers-orchestrator";
+import { Agents } from "@svvy/workflows";
+
+const reviewer = Agents.defineTaskAgent({
+  id: "reviewerAgent",
+  label: "Reviewer",
+  provider: "openai",
+  model: "gpt-5.4",
+  reasoningEffort: "medium",
+  instructions: "Review the diff.",
+});
+
+export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+```
+
 - agents use `svvyx workflows list` to orient
 - agents use `svvyx workflows save` to save reusable material
 - agents use `svvyx workflows build` after source edits
 - agents use `svvyx workflows models list` to choose valid provider/model/reasoning values
 - generated output and `.smithers/node_modules/@svvy/workflows` are read-only plumbing
 - Smithers execution uses official Smithers CLI commands through Shell, not Workflows commands
+- task-agent execution uses the narrow authenticated `runTaskAgent` bridge available in
+  handler-thread command-scoped environments; that bridge accepts task-agent parameters, Smithers
+  taskContext/run/node/iteration/attempt identity, prompt/messages, rootDir, workspace/session
+  binding, and returns `{ text, usage? }` plus optional `output` only when app runtime supplies it
+- the task-agent bridge supports concurrent calls, binds each call to one workflow-task-attempt
+  surface, exposes no arbitrary app RPC/shell/settings/orchestrator controls, and does not
+  duplicate Smithers workflow/run state
 
 Loaded Workflows instructions cover only app-global source-library commands, generated imports,
-read-only generated output, and the official Smithers CLI execution boundary.
+read-only generated output, task-agent import usage, and the official Smithers CLI execution
+boundary.
 
 ## Workflows Pane Relationship
 

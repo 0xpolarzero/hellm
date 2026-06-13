@@ -1,11 +1,13 @@
 import type { StructuredEpisodeKind } from "./structured-session-state";
 import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 
-export type PromptExecutionSurfaceKind = "orchestrator" | "handler";
+export type PromptExecutionSurfaceKind = "orchestrator" | "handler" | "workflow-task";
 
 export interface PromptExecutionContext {
   sessionId: string;
-  turnId: string;
+  turnId: string | null;
+  workflowTaskAttemptId?: string | null;
+  workflowRunId?: string | null;
   surfacePiSessionId: string;
   surfaceThreadId: string | null;
   surfaceKind: PromptExecutionSurfaceKind;
@@ -30,7 +32,9 @@ export interface PromptExecutionRuntimeHandle {
 
 export function createPromptExecutionContext(input: {
   sessionId: string;
-  turnId: string;
+  turnId?: string | null;
+  workflowTaskAttemptId?: string | null;
+  workflowRunId?: string | null;
   surfacePiSessionId: string;
   surfaceThreadId?: string | null;
   surfaceKind?: PromptExecutionSurfaceKind;
@@ -52,12 +56,20 @@ export function createPromptExecutionContext(input: {
   if (surfaceKind === "handler" && !surfaceThreadId) {
     throw new Error("Handler prompt execution context requires a thread id.");
   }
+  if (surfaceKind === "workflow-task" && !input.workflowTaskAttemptId) {
+    throw new Error("Workflow task prompt execution context requires an attempt id.");
+  }
+  if (surfaceKind !== "workflow-task" && !input.turnId) {
+    throw new Error("Prompt execution context requires a turn id.");
+  }
 
   const defaultEpisodeKind = input.defaultEpisodeKind ?? input.rootEpisodeKind ?? "change";
 
   return {
     sessionId: input.sessionId,
-    turnId: input.turnId,
+    turnId: input.turnId ?? null,
+    workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
+    workflowRunId: input.workflowRunId ?? null,
     surfacePiSessionId: input.surfacePiSessionId,
     surfaceThreadId,
     surfaceKind,

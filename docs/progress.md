@@ -498,6 +498,10 @@ Current product decisions for this section are specified in `docs/specs/workflow
       Commit(s): pending local changes
 - [x] For `Agents.*` exports, show the generated task-agent parameter object and provide a primary
       human navigation action to the corresponding Agents pane record. Commit(s): pending local changes
+- [x] Specify generated `Agents.*` task-agent parameter exports, direct parameter usage, and the
+      authenticated `runTaskAgent` bridge contract that binds Smithers task-agent calls from
+      handler-thread command-scoped environments to app-owned workflow-task-attempt surfaces without
+      exposing broader app or workflow controls. Commit(s): pending local changes
 - [x] Refresh the Workflows pane after successful `svvyx workflows build` and after Agents pane
       edits that trigger a Workflows build. Commit(s): pending local changes
 - [x] Keep the Workflows pane limited to generated `@svvy/workflows` visibility, with no inferred

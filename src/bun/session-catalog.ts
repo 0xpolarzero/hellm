@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -137,7 +137,10 @@ import {
 } from "./generated-agent-context-aggregate-cache";
 import type { SvvyActorKind } from "./actor-capabilities";
 import { createAgentSettingsStore } from "./agent-settings-store";
-import { createSvvyDirectTools } from "./svvy-direct-tools";
+import {
+  createSvvyDirectTools,
+  type WorkflowTaskAgentBridgeEnvProvider,
+} from "./svvy-direct-tools";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { RuntimeApprovalRequestRuntime } from "./runtime-approval-boundary";
 import { resolveActorExtensionState, type ExtensionUsageState } from "../shared/extensions";
@@ -168,6 +171,13 @@ import {
 } from "./runtime-state-tools";
 import { WorkspaceRecoveryCoordinator } from "./workspace-recovery-coordinator";
 import { ensureWorkflowsPackageLinks } from "./smithers-runtime/workflow-library";
+import {
+  createWorkflowTaskAgentBridgeServer,
+  WORKFLOW_TASK_AGENT_BRIDGE_ENV,
+  type WorkflowTaskAgentBridgeRequest,
+  type WorkflowTaskAgentBridgeResult,
+  type WorkflowTaskAgentBridgeServer,
+} from "./smithers-runtime/task-agent-bridge-server";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -354,6 +364,7 @@ interface CreateManagedSessionOptions {
   ) => void | Promise<void>;
   onAppLog?: (event: AppLoggerEvent) => void;
   readOpenWorkspaceCwds?: () => readonly string[];
+  workflowTaskAgentBridge?: WorkflowTaskAgentBridgeEnvProvider;
   requestUserInputRuntime?: RequestUserInputRuntime;
   openArtifact?: (input: { sessionId: string; artifactId: string }) => boolean | Promise<boolean>;
   approvalBoundary?: RuntimeApprovalBoundary;
@@ -433,6 +444,7 @@ export class WorkspaceSessionCatalog {
     | null = null;
   private appLogListener: ((event: AppLoggerEvent) => void) | null = null;
   private openWorkspaceCwdsReader: (() => readonly string[]) | null = null;
+  private readonly workflowTaskAgentBridge: WorkflowTaskAgentBridgeServer;
 
   constructor(
     private readonly cwd: string,
@@ -465,6 +477,15 @@ export class WorkspaceSessionCatalog {
     });
     this.runtimeApprovalRuntime = new RuntimeApprovalRequestRuntime(this.structuredSessionStore);
     this.approvalBoundary = approvalBoundary ?? this.runtimeApprovalRuntime.createBoundary();
+    this.workflowTaskAgentBridge = createWorkflowTaskAgentBridgeServer({
+      authorize: (request, bearerToken) =>
+        this.isValidWorkflowTaskAgentBridgeToken({
+          bearerToken,
+          sourceCommandId: request.sourceCommandId,
+          workspaceSessionId: request.workspaceSessionId,
+        }),
+      runTaskAgent: (request) => this.runWorkflowTaskAgentBridgeRequest(request),
+    });
     this.requestUserInputRuntime.setSettings(this.agentSettingsStore.getState().requestUserInput);
     this.requestUserInputRuntime.setRequestUpdatedListener(() => {
       void this.emitWorkspaceSync("structured.updated");
@@ -540,9 +561,14 @@ export class WorkspaceSessionCatalog {
     return join(this.sessionDir, "threads");
   }
 
+  private get workflowTaskSurfaceDir(): string {
+    return join(this.sessionDir, "workflow-tasks");
+  }
+
   async dispose(): Promise<void> {
     this.closed = true;
     this.recoveryCoordinator.close();
+    await this.workflowTaskAgentBridge.close();
     for (const request of this.structuredSessionStore.listOpenRuntimeApprovalRequests()) {
       this.runtimeApprovalRuntime.cancelOpenRequestsForSurface(
         request.surfacePiSessionId,
@@ -2160,6 +2186,7 @@ export class WorkspaceSessionCatalog {
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
       readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
+      workflowTaskAgentBridge: this.workflowTaskAgentBridgeEnv.bind(this),
       managedSandbox: this.managedSandbox,
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
@@ -2328,6 +2355,7 @@ export class WorkspaceSessionCatalog {
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
       readOpenWorkspaceCwds: this.readOpenWorkspaceCwds.bind(this),
+      workflowTaskAgentBridge: this.workflowTaskAgentBridgeEnv.bind(this),
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
       workflowsExtensionsGeneratedPackagePath:
@@ -3463,6 +3491,24 @@ export class WorkspaceSessionCatalog {
           availableExtensionIds: thread.availableExtensionIds,
         };
       }
+      const workflowTaskAttempt = session.workflowTaskAttempts.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (workflowTaskAttempt) {
+        const binding = workflowTaskAttempt.generatedAgentContextFingerprint
+          ? this.structuredSessionStore.getGeneratedAgentContextBinding({
+              surfacePiSessionId,
+              generatedAgentContextFingerprint:
+                workflowTaskAttempt.generatedAgentContextFingerprint,
+            })
+          : null;
+        if (binding) {
+          return {
+            loadedExtensionIds: binding.loadedExtensionIds,
+            availableExtensionIds: binding.availableExtensionIds,
+          };
+        }
+      }
     }
     return null;
   }
@@ -3477,6 +3523,12 @@ export class WorkspaceSessionCatalog {
       );
       if (thread) {
         return thread.generatedAgentContextFingerprint ?? null;
+      }
+      const workflowTaskAttempt = session.workflowTaskAttempts.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (workflowTaskAttempt) {
+        return workflowTaskAttempt.generatedAgentContextFingerprint ?? null;
       }
     }
     return null;
@@ -4065,7 +4117,7 @@ export class WorkspaceSessionCatalog {
     message: Message | null,
   ): void {
     session.pendingUserMessage =
-      promptContext && message
+      promptContext?.turnId && message
         ? { turnId: promptContext.turnId, message: structuredClone(message) }
         : null;
   }
@@ -4099,9 +4151,9 @@ export class WorkspaceSessionCatalog {
   ): Promise<void> {
     const orchestratorTarget = this.buildOrchestratorPromptTarget(request.runtime.sessionId);
     const payload: ThreadReportNotificationQueuePayload = {
-      threadId: request.runtime.surfaceThreadId,
+      threadId: request.runtime.surfaceThreadId!,
       sourceCommandId: request.commandId,
-      turnId: request.runtime.turnId,
+      turnId: request.runtime.turnId!,
       summary: request.episode.summary,
       episodeId: request.episode.id,
       outcome: request.outcome,
@@ -4367,7 +4419,11 @@ export class WorkspaceSessionCatalog {
       return managedSurface.session.sessionManager.getSessionFile();
     }
 
-    for (const sessionDir of [this.sessionDir, this.threadSurfaceDir]) {
+    for (const sessionDir of [
+      this.sessionDir,
+      this.threadSurfaceDir,
+      this.workflowTaskSurfaceDir,
+    ]) {
       const sessions = await SessionManager.list(this.cwd, sessionDir);
       const match = sessions.find((info) => info.id === sessionId);
       if (match) {
@@ -4932,6 +4988,312 @@ export class WorkspaceSessionCatalog {
     return this.openWorkspaceCwdsReader?.() ?? [this.cwd];
   }
 
+  private workflowTaskAgentBridgeEnv(input: Parameters<WorkflowTaskAgentBridgeEnvProvider>[0]) {
+    const runtime = input.runtime;
+    if (!runtime?.sessionId || !input.sourceCommandId) {
+      return null;
+    }
+    return {
+      [WORKFLOW_TASK_AGENT_BRIDGE_ENV.URL]: `${this.workflowTaskAgentBridge.getUrl()}/runTaskAgent`,
+      [WORKFLOW_TASK_AGENT_BRIDGE_ENV.TOKEN]: this.createWorkflowTaskAgentBridgeToken({
+        sourceCommandId: input.sourceCommandId,
+        workspaceSessionId: runtime.sessionId,
+      }),
+      [WORKFLOW_TASK_AGENT_BRIDGE_ENV.WORKSPACE_SESSION_ID]: runtime.sessionId,
+      [WORKFLOW_TASK_AGENT_BRIDGE_ENV.SOURCE_COMMAND_ID]: input.sourceCommandId,
+    };
+  }
+
+  private createWorkflowTaskAgentBridgeToken(input: {
+    sourceCommandId: string;
+    workspaceSessionId: string;
+  }): string {
+    return createHmac("sha256", this.workflowTaskAgentBridge.token)
+      .update(input.workspaceSessionId)
+      .update("\0")
+      .update(input.sourceCommandId)
+      .digest("base64url");
+  }
+
+  private isValidWorkflowTaskAgentBridgeToken(input: {
+    bearerToken: string;
+    sourceCommandId: string;
+    workspaceSessionId: string;
+  }): boolean {
+    const expected = Buffer.from(this.createWorkflowTaskAgentBridgeToken(input));
+    const actual = Buffer.from(input.bearerToken);
+    return (
+      actual.length > 0 && actual.length === expected.length && timingSafeEqual(actual, expected)
+    );
+  }
+
+  private async runWorkflowTaskAgentBridgeRequest(
+    request: WorkflowTaskAgentBridgeRequest,
+  ): Promise<WorkflowTaskAgentBridgeResult> {
+    const snapshot = this.requireStructuredSnapshot(request.workspaceSessionId);
+    const sourceCommand =
+      snapshot.commands.find((command) => command.id === request.sourceCommandId) ?? null;
+    if (!sourceCommand) {
+      throw new Error(`Smithers source command not found: ${request.sourceCommandId}`);
+    }
+    if (!sourceCommand.threadId) {
+      throw new Error("Smithers task-agent bridge requires a handler-thread source command.");
+    }
+
+    const workflowRun =
+      this.structuredSessionStore.findWorkflowRunBySmithersRunId(request.taskContext.runId) ??
+      this.structuredSessionStore.recordWorkflow({
+        threadId: sourceCommand.threadId,
+        commandId: sourceCommand.id,
+        smithersRunId: request.taskContext.runId,
+        workflowName: request.taskContext.runId,
+        workflowSource: "artifact",
+        status: "running",
+        summary: `Smithers workflow ${request.taskContext.runId} is running.`,
+      });
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const extensionState = resolveActorExtensionState({
+      actor: "workflow-task",
+      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
+      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
+      profileExtensionUsage: request.agent.overrides ?? {},
+    });
+    const aggregate = this.buildPromptAggregateFromLibrary("workflow-task", {
+      ...extensionState,
+      externalInstructionSources: externalContextSources,
+      customInstructions: request.agent.instructions,
+    });
+    const fingerprint = createGeneratedAgentContextFingerprint({
+      systemPrompt: aggregate.outputs.prompt,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
+    });
+    const existingAttempt = this.structuredSessionStore.findWorkflowTaskAttemptBySmithersIdentity({
+      smithersRunId: request.taskContext.runId,
+      nodeId: request.taskContext.nodeId,
+      iteration: request.taskContext.iteration,
+      attempt: request.taskContext.attempt,
+    });
+    const surfacePiSessionId =
+      existingAttempt?.surfacePiSessionId ?? (await this.createWorkflowTaskSurfaceSession(request));
+    const prompt = buildWorkflowTaskAgentPrompt(request);
+    const attempt = this.structuredSessionStore.upsertWorkflowTaskAttempt({
+      workflowRunId: workflowRun.id,
+      smithersRunId: request.taskContext.runId,
+      nodeId: request.taskContext.nodeId,
+      iteration: request.taskContext.iteration,
+      attempt: request.taskContext.attempt,
+      surfacePiSessionId,
+      title: request.agent.label ?? request.agent.id,
+      summary: `Run ${request.agent.label ?? request.agent.id} for ${request.taskContext.nodeId}.`,
+      kind: "agent",
+      status: "running",
+      smithersState: "running",
+      prompt,
+      agentId: request.agent.id,
+      agentModel: request.agent.model,
+      agentEngine: request.agent.provider,
+      generatedAgentContextFingerprint: fingerprint,
+      generatedAgentContextBinding: {
+        aggregateCacheKey: aggregate.cacheKey,
+        systemPrompt: aggregate.outputs.prompt,
+        svvyxGuidance: aggregate.outputs.svvyxGuidance,
+        commandsDts: aggregate.outputs.commandsDts,
+        nativeToolSchemasJson: aggregate.outputs.nativeToolSchemasJson,
+        generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
+        loadedExtensionIds: extensionState.loadedExtensionIds,
+        availableExtensionIds: extensionState.availableExtensionIds,
+        externalSourceHashes: externalSourceHashes(externalContextSources).toSorted(),
+      },
+      meta: {
+        rootDir: request.rootDir ?? null,
+        sourceCommandId: request.sourceCommandId,
+      },
+    });
+
+    this.structuredSessionStore.replaceWorkflowTaskMessages({
+      workflowTaskAttemptId: attempt.id,
+      messages: workflowTaskMessagesFromRequest(request, prompt),
+    });
+
+    const session = await this.createManagedSurfaceRecord({
+      sessionManager: await this.openWorkflowTaskSurfaceSession(surfacePiSessionId),
+      actorKind: "workflow-task",
+      provider: request.agent.provider,
+      model: request.agent.model,
+      thinkingLevel: request.agent.reasoningEffort as ThinkingLevel,
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextAggregateKey: aggregate.cacheKey,
+      generatedAgentContextAggregate: aggregate.outputs,
+      generatedAgentContextFingerprint: fingerprint,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
+      agentProfileId: request.agent.id,
+    });
+    const promptContext = createPromptExecutionContext({
+      sessionId: request.workspaceSessionId,
+      workflowTaskAttemptId: attempt.id,
+      workflowRunId: workflowRun.id,
+      surfacePiSessionId,
+      surfaceKind: "workflow-task",
+      surfaceThreadId: sourceCommand.threadId,
+      rootThreadId: sourceCommand.threadId,
+      promptText: prompt,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalInstructionSources: externalContextSources,
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextFingerprint: fingerprint,
+    });
+
+    try {
+      const message = await this.runWorkflowTaskAgentPrompt(session, prompt, promptContext);
+      const text = extractAssistantText(message).trim();
+      if (!text) {
+        throw new Error("Workflow task agent finished without text output.");
+      }
+      this.structuredSessionStore.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: request.taskContext.runId,
+        nodeId: request.taskContext.nodeId,
+        iteration: request.taskContext.iteration,
+        attempt: request.taskContext.attempt,
+        surfacePiSessionId,
+        summary: `Completed ${request.taskContext.nodeId}.`,
+        kind: "agent",
+        status: "completed",
+        smithersState: "succeeded",
+        responseText: text,
+      });
+      this.structuredSessionStore.replaceWorkflowTaskMessages({
+        workflowTaskAttemptId: attempt.id,
+        messages: [
+          ...workflowTaskMessagesFromRequest(request, prompt),
+          {
+            id: `workflow-task-message-${randomUUID()}`,
+            role: "assistant",
+            source: "responseText",
+            text,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+      return { text, ...(message.usage ? { usage: message.usage } : {}) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.structuredSessionStore.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: request.taskContext.runId,
+        nodeId: request.taskContext.nodeId,
+        iteration: request.taskContext.iteration,
+        attempt: request.taskContext.attempt,
+        surfacePiSessionId,
+        summary: `Failed ${request.taskContext.nodeId}: ${message}`,
+        kind: "agent",
+        status: "failed",
+        smithersState: "failed",
+        error: message,
+      });
+      throw error;
+    } finally {
+      await this.emitWorkspaceSync("structured.updated");
+    }
+  }
+
+  private async runWorkflowTaskAgentPrompt(
+    session: ManagedSession,
+    prompt: string,
+    promptContext: PromptExecutionContext,
+  ): Promise<AssistantMessage> {
+    session.promptExecutionRuntime.current = promptContext;
+    const streamingCommandTracker = createStreamingCommandTracker({
+      store: this.structuredSessionStore,
+      promptContext,
+    });
+    const toolCommandTracker = createToolExecutionCommandTracker({
+      store: this.structuredSessionStore,
+      promptContext,
+      onAppLog: this.emitAppLog.bind(this),
+      onReusedStreamingToolCall: (toolCallId) =>
+        streamingCommandTracker.releaseToolCall(toolCallId),
+    });
+    const unsubscribe = session.session.subscribe((event) => {
+      if (event.type === "message_update") {
+        forwardToolcallEventToStreamingTracker(
+          streamingCommandTracker,
+          event.assistantMessageEvent,
+        );
+        return;
+      }
+      if (event.type === "tool_execution_start") {
+        toolCommandTracker.handleToolExecutionStart({
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.args,
+        });
+        return;
+      }
+      if (event.type === "tool_execution_end") {
+        toolCommandTracker.handleToolExecutionEnd({
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          result: event.result,
+          isError: event.isError,
+        });
+      }
+    });
+    try {
+      syncAuthStorage(session.authStorage);
+      const promptStartMessageCount = session.session.agent.state.messages.length;
+      await session.session.prompt(prompt, { expandPromptTemplates: false });
+      const message =
+        getLatestAssistantMessage(
+          session.session.agent.state.messages.slice(promptStartMessageCount),
+        ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
+      if (!message) {
+        throw new Error("The pi session finished without producing an assistant message.");
+      }
+      if (message.stopReason === "error" || message.stopReason === "aborted") {
+        throw new Error(
+          message.errorMessage || `Workflow task agent stopped: ${message.stopReason}`,
+        );
+      }
+      return message;
+    } finally {
+      unsubscribe();
+      streamingCommandTracker.finishDanglingStreamingCommands({
+        status: "failed",
+        error: "Workflow task prompt ended before streamed command execution settled.",
+      });
+      toolCommandTracker.finishDanglingCommands({
+        status: "failed",
+        error: "Workflow task prompt ended before command execution settled.",
+      });
+      session.promptExecutionRuntime.current = null;
+    }
+  }
+
+  private async createWorkflowTaskSurfaceSession(
+    request: WorkflowTaskAgentBridgeRequest,
+  ): Promise<string> {
+    const sessionManager = SessionManager.create(this.cwd, this.workflowTaskSurfaceDir);
+    sessionManager.newSession();
+    sessionManager.appendSessionInfo(
+      `${request.agent.label ?? request.agent.id}: ${request.taskContext.nodeId}`,
+    );
+    persistSessionManagerSnapshot(sessionManager);
+    return sessionManager.getSessionId();
+  }
+
+  private async openWorkflowTaskSurfaceSession(
+    surfacePiSessionId: string,
+  ): Promise<SessionManager> {
+    const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
+    return SessionManager.open(sessionFile!, dirname(sessionFile!));
+  }
+
   private async runAgentPrompt(
     session: ManagedSession,
     options: SendAgentPromptOptions,
@@ -5481,7 +5843,7 @@ export class WorkspaceSessionCatalog {
     promptContext: PromptExecutionContext | null,
     message: AssistantMessage,
   ): void {
-    if (!promptContext) {
+    if (!promptContext?.turnId) {
       return;
     }
 
@@ -5574,7 +5936,7 @@ export class WorkspaceSessionCatalog {
     promptContext: PromptExecutionContext | null,
     _message: AssistantMessage,
   ): void {
-    if (!promptContext) {
+    if (!promptContext?.turnId) {
       return;
     }
 
@@ -5622,7 +5984,7 @@ export class WorkspaceSessionCatalog {
     }
 
     this.structuredSessionStore.setTurnDecision({
-      turnId: input.promptContext.turnId,
+      turnId: input.promptContext.turnId!,
       decision: inferPendingTurnDecision(input),
       onlyIfPending: true,
     });
@@ -5730,6 +6092,7 @@ async function createManagedSession(
     onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
     onAppLog: options.onAppLog,
     workflowsWorkspaceCwds: options.readOpenWorkspaceCwds,
+    workflowTaskAgentBridge: options.workflowTaskAgentBridge,
   });
   const threadListTool = createThreadListTool({
     runtime: promptExecutionRuntime,
@@ -6998,6 +7361,52 @@ function messageToPlainText(message: Message): string {
         .filter(Boolean)
         .join("\n");
   }
+}
+
+function buildWorkflowTaskAgentPrompt(request: WorkflowTaskAgentBridgeRequest): string {
+  const explicitPrompt = request.prompt?.trim();
+  if (explicitPrompt) {
+    return explicitPrompt;
+  }
+  const messages = request.messages
+    ?.map((message) => `${message.role}: ${message.text.trim()}`)
+    .filter((line) => line.trim().length > 0)
+    .join("\n\n");
+  if (messages?.trim()) {
+    return messages;
+  }
+  throw new Error("runTaskAgent requires prompt or messages.");
+}
+
+function workflowTaskMessagesFromRequest(
+  request: WorkflowTaskAgentBridgeRequest,
+  prompt: string,
+): Array<{
+  id: string;
+  role: "user" | "assistant" | "stderr";
+  source: "prompt" | "event" | "responseText";
+  text: string;
+  createdAt: string;
+}> {
+  const now = new Date().toISOString();
+  const messages = request.messages?.length
+    ? request.messages.map((message) => ({
+        id: `workflow-task-message-${randomUUID()}`,
+        role: (message.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+        source: "prompt" as const,
+        text: message.text,
+        createdAt: now,
+      }))
+    : [
+        {
+          id: `workflow-task-message-${randomUUID()}`,
+          role: "user" as const,
+          source: "prompt" as const,
+          text: prompt,
+          createdAt: now,
+        },
+      ];
+  return messages;
 }
 
 function flattenUserContent(content: Message["content"]): string {
