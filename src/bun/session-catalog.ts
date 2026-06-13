@@ -73,7 +73,6 @@ import {
   type AgentProfileSettings,
   type RequestUserInputSettings,
   type WorkflowAgentKey,
-  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import {
   projectWorkspaceSessionSummary,
@@ -337,7 +336,6 @@ interface CreateManagedSessionOptions {
   generatedAgentContextFingerprint?: string;
   generatedAgentContextRevision?: number;
   agentProfileId?: AgentProfileId;
-  profileLoadedExtensionIds?: readonly string[];
   loadedExtensionIds?: readonly string[];
   availableExtensionIds?: readonly string[];
   externalContextSources?: readonly GeneratedAgentContextExternalSource[];
@@ -728,7 +726,7 @@ export class WorkspaceSessionCatalog {
         actor: "workflow-task",
         defaultExtensionOrder: settings.extensionDefaults.order,
         defaultExtensionUsage: settings.extensionDefaults.usage,
-        profileExtensionUsage: profile.extensionUsage,
+        profileExtensionUsage: profile.overrides ?? {},
         profileExtensionOrder: profile.extensionOrder,
       });
       const systemPrompt = this.buildPromptFromLibrary("workflow-task", {
@@ -916,17 +914,18 @@ export class WorkspaceSessionCatalog {
 
   private resolveProfileExtensionState(
     actor: SvvyActorKind,
-    settings: Pick<
-      AgentProfileSettings | WorkflowAgentSettings,
-      "extensionUsage" | "extensionOrder"
-    >,
+    settings: {
+      extensionUsage?: Record<string, ExtensionUsageState>;
+      overrides?: Record<string, ExtensionUsageState>;
+      extensionOrder?: readonly string[];
+    },
   ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
     const defaults = this.agentSettingsStore.getState().extensionDefaults;
     return resolveActorExtensionState({
       actor,
       defaultExtensionOrder: defaults.order,
       defaultExtensionUsage: defaults.usage,
-      profileExtensionUsage: settings.extensionUsage,
+      profileExtensionUsage: settings.extensionUsage ?? settings.overrides ?? {},
       profileExtensionOrder: settings.extensionOrder,
     });
   }
@@ -3654,7 +3653,7 @@ export class WorkspaceSessionCatalog {
     modelContext: { provider: string; model: string },
   ): AgentContextPreviewExtension[] {
     const activeIds = [
-      ...extensionState.loadedExtensionIds.map((id) => ({ id, state: "default_loaded" as const })),
+      ...extensionState.loadedExtensionIds.map((id) => ({ id, state: "loaded" as const })),
       ...extensionState.availableExtensionIds.map((id) => ({ id, state: "available" as const })),
     ];
     const records = new Map(
@@ -3668,8 +3667,8 @@ export class WorkspaceSessionCatalog {
     return activeIds.map((entry) => {
       const record = records.get(entry.id);
       const extensionRecords = record ? [record] : [];
-      const buildInstruction = (state: "default_loaded" | "available") =>
-        state === "default_loaded"
+      const buildInstruction = (state: "loaded" | "available") =>
+        state === "loaded"
           ? buildSystemPrompt(actor, {
               loadedExtensionIds: [entry.id],
               loadedExtensionRecords: extensionRecords,
@@ -3699,11 +3698,9 @@ export class WorkspaceSessionCatalog {
             })
           : undefined;
       const instruction =
-        entry.state === "default_loaded"
-          ? buildInstruction("default_loaded")
-          : buildInstruction("available");
+        entry.state === "loaded" ? buildInstruction("loaded") : buildInstruction("available");
       const loadedInstruction =
-        entry.state === "available" ? buildInstruction("default_loaded") : undefined;
+        entry.state === "available" ? buildInstruction("loaded") : undefined;
       return {
         id: entry.id,
         title: record?.title ?? entry.id,
@@ -4393,7 +4390,7 @@ export class WorkspaceSessionCatalog {
     threadGroupId?: string | null;
     objective: string;
     historyMode?: "isolated" | "forked";
-    extensions?: Record<string, "default_loaded" | "available" | "unavailable"> | null;
+    overrides?: Record<string, "loaded" | "available" | "unavailable"> | null;
     agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
     autoStart?: boolean;
@@ -4417,7 +4414,7 @@ export class WorkspaceSessionCatalog {
     const extensionState = resolveThreadExtensionState(
       threadAgentSettings.extensionUsage,
       threadAgentSettings.extensionOrder,
-      input.extensions ?? null,
+      input.overrides ?? null,
     );
     const thread = this.structuredSessionStore.createThread({
       turnId: input.turnId,
@@ -5683,7 +5680,6 @@ async function createManagedSession(
         ? { loadedExtensionIds: [], availableExtensionIds: [] }
         : resolveActorExtensionState({
             actor: options.actorKind,
-            profileLoadedExtensionIds: options.profileLoadedExtensionIds,
           });
   const executeTypescriptTool = createExecuteTypescriptTool({
     cwd: options.sessionManager.getCwd(),
@@ -6340,9 +6336,9 @@ function resolveThreadTargets(
 }
 
 function resolveThreadExtensionState(
-  profileExtensionUsage: Record<string, "default_loaded" | "available" | "unavailable">,
+  profileExtensionUsage: Record<string, "loaded" | "available" | "unavailable">,
   profileExtensionOrder: readonly string[] | undefined,
-  overrides: Record<string, "default_loaded" | "available" | "unavailable"> | null,
+  overrides: Record<string, "loaded" | "available" | "unavailable"> | null,
 ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
   return resolveActorExtensionState({
     actor: "handler",

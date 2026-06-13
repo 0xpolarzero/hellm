@@ -40,11 +40,11 @@ Default usage state:
 | Handler             | available   |
 | Workflow task agent | unavailable |
 
-It is available rather than default-loaded for ordinary orchestrators and handlers because most
+It is available rather than loaded by default for ordinary orchestrators and handlers because most
 coding work should not receive extension-authoring instructions and commands by default. An agent
 can request it when the user asks to inspect, create, edit, build, reset, delete, revert, or
 configure extensions. These are defaults, not actor-kind restrictions: an agent profile may be
-configured to make Extension Managing `default_loaded`, `available`, or `unavailable`.
+configured to make Extension Managing `loaded`, `available`, or `unavailable`.
 
 ## Ownership Boundary
 
@@ -1338,7 +1338,7 @@ type InspectInstructionFile = {
 type ExtensionUsageState = {
   actorKind: "orchestrator" | "handler" | "workflow-task";
   agentProfile: string;
-  state: "default_loaded" | "available" | "unavailable";
+  state: "loaded" | "available" | "unavailable";
   configurable: boolean;
   fixedReason?: "app_native_control";
 };
@@ -1494,13 +1494,13 @@ Prompt-only builtin example:
       {
         "agentProfile": "default-orchestrator",
         "actorKind": "orchestrator",
-        "state": "default_loaded",
+        "state": "loaded",
         "configurable": true
       },
       {
         "agentProfile": "threadHandler",
         "actorKind": "handler",
-        "state": "default_loaded",
+        "state": "loaded",
         "configurable": true
       },
       {
@@ -1609,7 +1609,7 @@ Incur-backed user example:
       {
         "agentProfile": "threadHandler",
         "actorKind": "handler",
-        "state": "default_loaded",
+        "state": "loaded",
         "configurable": true
       },
       {
@@ -2541,7 +2541,7 @@ current binding use `load_extension`; agents that want to change profile default
 `svvyx extensions set-usage`.
 
 Fixed app-native control extensions cannot be changed by `set-usage`. In v1, Extension Loading is
-fixed `default_loaded` and attempts to set it to any state must fail with a clear error.
+fixed `loaded` and attempts to set it to any state must fail with a clear error.
 
 ```bash
 svvyx extensions set-usage \
@@ -2557,7 +2557,7 @@ Parameters:
 | ----------------- | -------- | ------------------------------------------------ |
 | `--extension`     | yes      | Stable extension id.                             |
 | `--agent-profile` | yes      | Agent profile id.                                |
-| `--state`         | yes      | `default_loaded`, `available`, or `unavailable`. |
+| `--state`         | yes      | `loaded`, `available`, or `unavailable`. |
 | `--json`          | no       | Return machine-readable JSON.                    |
 
 Example output:

@@ -32,9 +32,9 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` |
-| Handler thread | `default_loaded` |
-| Workflow task agent | `default_loaded` |
+| Orchestrator | `loaded` |
+| Handler thread | `loaded` |
+| Workflow task agent | `loaded` |
 
 Artifacts is a `svvyx` extension because v1 requires both a stable CLI command family and generated
 TypeScript clients inside `execute_typescript`. Native-tool extensions do not enable

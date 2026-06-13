@@ -25,9 +25,9 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` |
-| Handler thread | `default_loaded` |
-| Workflow task agent | `default_loaded` |
+| Orchestrator | `loaded` |
+| Handler thread | `loaded` |
+| Workflow task agent | `loaded` |
 
 ## Tool Surface
 

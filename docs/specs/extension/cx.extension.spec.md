@@ -32,7 +32,7 @@ The resolved cx v1 model is:
 - `cx` is a builtin extension.
 - `cx` uses `interface: "instructions"`.
 - `cx` is prompt-only.
-- `cx` is default-loaded for all adopted actor kinds.
+- `cx` is loaded by default for all adopted actor kinds.
 - `cx` teaches the official `cx` CLI by loading the generated upstream `cx skill` instructions.
 - `svvy` does not expose `cx_overview`, `cx_symbols`, `cx_definition`, `cx_references`,
   `cx_lang_list`, `cx_lang_add`, `cx_lang_remove`, `cx_cache_path`, or `cx_cache_clean` as native
@@ -87,11 +87,11 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` |
-| Handler thread | `default_loaded` |
-| Workflow task agent | `default_loaded` |
+| Orchestrator | `loaded` |
+| Handler thread | `loaded` |
+| Workflow task agent | `loaded` |
 
-The cx extension being default-loaded means the generated actor prompt includes the loaded cx
+The cx extension being loaded by default means the generated actor prompt includes the loaded cx
 instructions. It does not mean any additional native tool, `svvyx` namespace, or generated
 TypeScript client is registered.
 
@@ -456,7 +456,7 @@ availability. Until then, cx remains direct CLI guidance.
 Required doc/extension tests:
 
 - cx is represented as `category: "builtin"` and `interface: "instructions"`.
-- cx is default-loaded for orchestrator, handler-thread, and workflow task-agent actors.
+- cx is loaded by default for orchestrator, handler-thread, and workflow task-agent actors.
 - cx declares `cx-cli@0.7.1` as a CLI requirement with binary `cx`.
 - cx declares `instructions/full/010-cx-skill.generated.md` as a generated instruction file.
 - cx declares `scripts/generate-cx-skill.ts` as the generated instruction script.
@@ -493,7 +493,7 @@ Optional live verification:
 ## Invariants
 
 - cx v1 is a prompt-only builtin extension.
-- cx v1 is default-loaded for all adopted actor kinds.
+- cx v1 is loaded by default for all adopted actor kinds.
 - cx v1 loads the official upstream `cx skill` content from a versioned crates.io artifact.
 - cx v1 uses `scripts/generate-cx-skill.ts` to generate
   `instructions/full/010-cx-skill.generated.md`.

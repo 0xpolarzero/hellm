@@ -128,7 +128,7 @@ describe("svvyx extensions command", () => {
           {
             agentProfile: "default-orchestrator",
             actorKind: "orchestrator",
-            state: "default_loaded",
+            state: "loaded",
             configurable: true,
           },
           {
@@ -140,19 +140,19 @@ describe("svvyx extensions command", () => {
           {
             agentProfile: "explorer",
             actorKind: "workflow-task",
-            state: "default_loaded",
+            state: "loaded",
             configurable: true,
           },
           {
             agentProfile: "implementer",
             actorKind: "workflow-task",
-            state: "default_loaded",
+            state: "loaded",
             configurable: true,
           },
           {
             agentProfile: "reviewer",
             actorKind: "workflow-task",
-            state: "default_loaded",
+            state: "loaded",
             configurable: true,
           },
         ],
@@ -472,7 +472,7 @@ describe("svvyx extensions command", () => {
     );
     expect(generatedExtensionsIndex).toContain('"git": "git"');
     expect(generatedExtensionsIndex).toContain('"linear": "linear"');
-    expect(generatedExtensionsIndex).not.toContain('"workflows": "workflows"');
+    expect(generatedExtensionsIndex).toContain('"workflows": "workflows"');
 
     const inspectAfter = await runSvvyxExtensionsCommand({
       command: "svvyx extensions inspect linear --json",
@@ -2248,8 +2248,8 @@ describe("svvyx extensions command", () => {
         readStatus: { status: "readable" },
       },
       usage: [
-        expect.objectContaining({ actorKind: "orchestrator", state: "default_loaded" }),
-        expect.objectContaining({ actorKind: "handler", state: "default_loaded" }),
+        expect.objectContaining({ actorKind: "orchestrator", state: "loaded" }),
+        expect.objectContaining({ actorKind: "handler", state: "loaded" }),
         expect.objectContaining({ actorKind: "workflow-task", state: "unavailable" }),
       ],
     });
@@ -2472,8 +2472,8 @@ describe("svvyx extensions command", () => {
           sourceRoot: null,
         },
         usage: [
-          expect.objectContaining({ actorKind: "orchestrator", state: "default_loaded" }),
-          expect.objectContaining({ actorKind: "handler", state: "default_loaded" }),
+          expect.objectContaining({ actorKind: "orchestrator", state: "loaded" }),
+          expect.objectContaining({ actorKind: "handler", state: "loaded" }),
           expect.objectContaining({ actorKind: "workflow-task", state: "unavailable" }),
         ],
       },
@@ -4291,14 +4291,14 @@ describe("svvyx extensions command", () => {
       extensionUsage: {
         ...profile.extensionUsage,
         linear: "unavailable",
-        notes: "default_loaded",
+        notes: "loaded",
         web: "unavailable",
       },
     });
     await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state default_loaded --json",
+        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
@@ -4404,7 +4404,7 @@ describe("svvyx extensions command", () => {
         ...changedProfile.extensionUsage,
         linear: "available",
         notes: "unavailable",
-        web: "default_loaded",
+        web: "loaded",
       },
     });
 
@@ -4467,11 +4467,11 @@ describe("svvyx extensions command", () => {
     expect((loaded.output as any).restored.usageStates).toBeGreaterThan(0);
     expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
       linear: "unavailable",
-      notes: "default_loaded",
+      notes: "loaded",
       web: "unavailable",
     });
     expect(agentSettingsStore.getState().extensionDefaults.usage.orchestrator).toMatchObject({
-      smithers: "default_loaded",
+      smithers: "loaded",
     });
     expect(agentSettingsStore.getState().extensionDefaults.order.slice(0, 3)).toEqual([
       "notes",
@@ -7202,31 +7202,31 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       {
         actorKind: "orchestrator",
         agentProfile: "default-orchestrator",
-        state: "default_loaded",
+        state: "loaded",
         configurable: true,
       },
       {
         actorKind: "handler",
         agentProfile: "threadHandler",
-        state: "default_loaded",
+        state: "loaded",
         configurable: true,
       },
       {
         actorKind: "workflow-task",
         agentProfile: "explorer",
-        state: "default_loaded",
+        state: "loaded",
         configurable: true,
       },
       {
         actorKind: "workflow-task",
         agentProfile: "implementer",
-        state: "default_loaded",
+        state: "loaded",
         configurable: true,
       },
       {
         actorKind: "workflow-task",
         agentProfile: "reviewer",
-        state: "default_loaded",
+        state: "loaded",
         configurable: true,
       },
     ]);
@@ -7271,7 +7271,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     const result = await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state default_loaded --json",
+        "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json",
       extensionsRoot,
       structuredSessionStore,
     });
@@ -7282,7 +7282,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       extensionId: "smithers",
       agentProfile: "default-orchestrator",
       before: { state: "available" },
-      after: { state: "default_loaded" },
+      after: { state: "loaded" },
       agentContextImpact: {
         affectsNewTurns: true,
         activeRunsChangeAtNextSafeBoundary: true,
@@ -7297,7 +7297,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       },
     });
     expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
-      smithers: "default_loaded",
+      smithers: "loaded",
     });
     expect(
       structuredSessionStore
@@ -7360,7 +7360,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         agentProfile: "default-orchestrator",
         state: "unavailable",
       }),
-    ).toThrow("Extension Loading is fixed default_loaded");
+    ).toThrow("Extension Loading is fixed loaded");
 
     const result = setExtensionUsage({
       agentSettingsStore,
@@ -7368,7 +7368,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       extensionsRoot,
       extensionId: "smithers",
       agentProfile: "default-orchestrator",
-      state: "default_loaded",
+      state: "loaded",
     });
 
     expect(result).toMatchObject({
@@ -7379,11 +7379,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionId: "smithers",
         agentProfile: "default-orchestrator",
         before: { state: "available" },
-        after: { state: "default_loaded" },
+        after: { state: "loaded" },
       },
     });
     expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
-      smithers: "default_loaded",
+      smithers: "loaded",
     });
     expect(
       structuredSessionStore
@@ -7407,7 +7407,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         ok: true,
         extensionId: "smithers",
         agentProfile: "default-orchestrator",
-        before: { state: "default_loaded" },
+        before: { state: "loaded" },
         after: { state: "available" },
       },
     });
@@ -7430,13 +7430,13 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state default_loaded --json",
+        "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions defaults set-usage --actor workflow-task --extension github --state default_loaded --json",
+        "svvyx extensions defaults set-usage --actor workflow-task --extension github --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
@@ -7449,10 +7449,10 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     const settings = agentSettingsStore.getState();
     expect(settings.agents.orchestrators[0]?.extensionUsage).toEqual(beforeProfile.extensionUsage);
     expect(settings.extensionDefaults.usage.orchestrator).toMatchObject({
-      smithers: "default_loaded",
+      smithers: "loaded",
     });
     expect(settings.extensionDefaults.usage["workflow-task"]).toMatchObject({
-      github: "default_loaded",
+      github: "loaded",
     });
     expect(settings.extensionDefaults.order.slice(0, 3)).toEqual(["github", "smithers", "shell"]);
 
@@ -7464,7 +7464,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(inventory.defaults?.usage.smithers).toContainEqual(
       expect.objectContaining({
         actorKind: "orchestrator",
-        state: "default_loaded",
+        state: "loaded",
         customized: true,
       }),
     );
@@ -7488,16 +7488,16 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     });
 
     const defaults = agentSettingsStore.getState().extensionDefaults.usage;
-    expect(defaults.orchestrator?.notes).toBe("default_loaded");
-    expect(defaults["workflow-task"]?.notes).toBe("default_loaded");
+    expect(defaults.orchestrator?.notes).toBe("loaded");
+    expect(defaults["workflow-task"]?.notes).toBe("loaded");
     const inventory = await readBuiltinExtensionsInventory({
       agentSettingsStore,
       extensionsRoot,
       includeUserExtensions: true,
     });
     expect(inventory.defaults?.usage.notes).toEqual([
-      expect.objectContaining({ actorKind: "orchestrator", state: "default_loaded" }),
-      expect.objectContaining({ actorKind: "workflow-task", state: "default_loaded" }),
+      expect.objectContaining({ actorKind: "orchestrator", state: "loaded" }),
+      expect.objectContaining({ actorKind: "workflow-task", state: "loaded" }),
     ]);
   });
 
@@ -7514,7 +7514,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     const result = await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions set-usage --extension github --agent-profile reviewer --state default_loaded --json",
+        "svvyx extensions set-usage --extension github --agent-profile reviewer --state loaded --json",
       extensionsRoot,
     });
     const output = result.output as any;
@@ -7524,7 +7524,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       extensionId: "github",
       agentProfile: "reviewer",
       before: { state: "available" },
-      after: { state: "default_loaded" },
+      after: { state: "loaded" },
       agentContextImpact: {
         affectsNewTurns: true,
         activeRunsChangeAtNextSafeBoundary: true,
@@ -7532,18 +7532,16 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       },
     });
     expect(agentSettingsStore.getState().workflowAgents.reviewer).toMatchObject({
-      extensionUsage: {
-        github: "default_loaded",
+      overrides: {
+        github: "loaded",
       },
-      extensions: ["github"],
     });
     expect(
       JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8")),
     ).toMatchObject({
-      extensionUsage: {
-        github: "default_loaded",
+      overrides: {
+        github: "loaded",
       },
-      extensions: ["github"],
     });
 
     const reverted = await runSvvyxExtensionsCommand({
@@ -7558,20 +7556,15 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentProfile: "reviewer",
       after: { state: "available" },
     });
-    expect(agentSettingsStore.getState().workflowAgents.reviewer).toMatchObject({
-      extensions: [],
-    });
     expect(
-      agentSettingsStore.getState().workflowAgents.reviewer?.extensionUsage.github,
+      agentSettingsStore.getState().workflowAgents.reviewer?.overrides?.github,
     ).toBeUndefined();
     expect(
       JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8")),
-    ).toMatchObject({
-      extensions: [],
-    });
+    ).toMatchObject({ overrides: {} });
     expect(
       JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8"))
-        .extensionUsage.github,
+        .overrides.github,
     ).toBeUndefined();
   });
 
@@ -7589,15 +7582,15 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       kind: "orchestrator",
       name: "Docs orchestrator",
       extensionUsage: {
-        smithers: "default_loaded",
+        smithers: "loaded",
       },
       builtin: false,
       locked: false,
     });
     agentSettingsStore.setWorkflowAgent("reviewer", {
       ...agentSettingsStore.getState().workflowAgents.reviewer!,
-      extensionUsage: {
-        github: "default_loaded",
+      overrides: {
+        github: "loaded",
       },
     });
 
@@ -7618,14 +7611,14 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       expect.objectContaining({
         actorKind: "orchestrator",
         agentProfile: "docs-orchestrator",
-        state: "default_loaded",
+        state: "loaded",
       }),
     );
     expect(smithersUsage).toContainEqual(
       expect.objectContaining({
         actorKind: "handler",
         agentProfile: "threadHandler",
-        state: "default_loaded",
+        state: "loaded",
       }),
     );
     expect(smithersUsage).toContainEqual(
@@ -7645,7 +7638,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       expect.objectContaining({
         actorKind: "workflow-task",
         agentProfile: "reviewer",
-        state: "default_loaded",
+        state: "loaded",
       }),
     );
 
@@ -7657,7 +7650,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect((inspectedLoading.output as any).extension.usage[0]).toMatchObject({
       configurable: false,
       fixedReason: "app_native_control",
-      state: "default_loaded",
+      state: "loaded",
     });
   });
 
@@ -7675,10 +7668,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         command:
           "svvyx extensions set-usage --extension extension-loading --agent-profile default-orchestrator --state unavailable --json",
       }),
-    ).rejects.toThrow("Extension Loading is fixed default_loaded");
+    ).rejects.toThrow("Extension Loading is fixed loaded");
   });
 
-  it("rejects undocumented profile aliases and actor-incompatible usage states", async () => {
+  it("rejects undocumented profile aliases and accepts actor-default-unavailable overrides", async () => {
+    const extensionsRoot = createTempDir();
     const agentRoot = createTempDir();
     const agentSettingsStore = createAgentSettingsStore({
       cwd: agentRoot,
@@ -7691,24 +7685,43 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         agentSettingsStore,
         command:
           "svvyx extensions set-usage --extension smithers --agent-profile default --state available --json",
+        extensionsRoot,
       }),
     ).rejects.toThrow("Agent profile not found: default");
 
-    await expect(
-      runSvvyxExtensionsCommand({
-        agentSettingsStore,
-        command:
-          "svvyx extensions set-usage --extension thread-orchestration --agent-profile threadHandler --state default_loaded --json",
-      }),
-    ).rejects.toThrow("unavailable for handler profiles");
+    const handlerOverride = await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions set-usage --extension thread-orchestration --agent-profile threadHandler --state loaded --json",
+      extensionsRoot,
+    });
+    const workflowOverride = await runSvvyxExtensionsCommand({
+      agentSettingsStore,
+      command:
+        "svvyx extensions set-usage --extension workflows --agent-profile reviewer --state loaded --json",
+      extensionsRoot,
+    });
 
-    await expect(
-      runSvvyxExtensionsCommand({
-        agentSettingsStore,
-        command:
-          "svvyx extensions set-usage --extension workflows --agent-profile reviewer --state default_loaded --json",
-      }),
-    ).rejects.toThrow("unavailable for workflow-task profiles");
+    expect(handlerOverride.output).toMatchObject({
+      ok: true,
+      extensionId: "thread-orchestration",
+      agentProfile: "threadHandler",
+      after: { state: "loaded" },
+    });
+    expect(workflowOverride.output).toMatchObject({
+      ok: true,
+      extensionId: "workflows",
+      agentProfile: "reviewer",
+      after: { state: "loaded" },
+    });
+    expect(agentSettingsStore.getState().agents.special.threadHandler.extensionUsage).toMatchObject(
+      {
+        "thread-orchestration": "loaded",
+      },
+    );
+    expect(agentSettingsStore.getState().workflowAgents.reviewer?.overrides).toMatchObject({
+      workflows: "loaded",
+    });
   });
 
   it("conflicts when reverting usage after later profile changes", async () => {
@@ -7722,7 +7735,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     const first = await runSvvyxExtensionsCommand({
       agentSettingsStore,
       command:
-        "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state default_loaded --json",
+        "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({

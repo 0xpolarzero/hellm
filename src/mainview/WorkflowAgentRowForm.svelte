@@ -222,8 +222,7 @@
 				model: choice?.modelId ?? fallback.model,
 				reasoningEffort: value.reasoningEffort,
 				instructions: value.instructions,
-				extensions: [...agent.extensions],
-				extensionUsage: { ...agent.extensionUsage },
+				overrides: { ...agent.overrides },
 			};
 			const saved = await onSave(next, {
 				baseSourceVersion,
@@ -345,8 +344,7 @@
 			model: choice?.modelId ?? fallback.model,
 			reasoningEffort: value.reasoningEffort,
 			instructions: value.instructions,
-			extensions: [...agent.extensions],
-			extensionUsage: { ...agent.extensionUsage },
+			overrides: { ...agent.overrides },
 		};
 		try {
 			const saved = await onSave(next, {

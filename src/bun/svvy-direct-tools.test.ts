@@ -1916,7 +1916,7 @@ describe("svvy direct tools", () => {
           model: "gpt-5.4",
           reasoningEffort: "low",
           instructions: "Handle the task.",
-          extensions: ["shell"],
+          overrides: { shell: "loaded" },
         },
         null,
         2,
@@ -1931,7 +1931,7 @@ describe("svvy direct tools", () => {
         '  label: "Reviewer",',
         '  reasoningEffort: "medium",',
         '  instructions: "Review strictly.",',
-        '  extensions: ["shell"],',
+        '  overrides: { shell: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1946,7 +1946,7 @@ describe("svvy direct tools", () => {
         "  model,",
         '  reasoningEffort: "medium",',
         '  instructions: "Review strictly.",',
-        '  extensions: ["shell"],',
+        '  overrides: { shell: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1996,7 +1996,7 @@ describe("svvy direct tools", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      extensions: ["shell"],
+      overrides: { shell: "loaded" },
     });
     expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
       "export function defineTaskAgent",
@@ -2035,7 +2035,7 @@ describe("svvy direct tools", () => {
           model: "missing-model",
           reasoningEffort: "medium",
           instructions: "Review strictly.",
-          extensions: ["missing-extension"],
+          overrides: { "missing-extension": "loaded" },
         },
         null,
         2,

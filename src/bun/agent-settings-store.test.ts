@@ -69,7 +69,7 @@ describe("agent profile settings", () => {
     expect(updated.agents.titleNamer.reasoningEffort).toBe("low");
 
     expect(updated.workflowAgents.explorer!.instructions).toContain("Inspect the repository");
-    expect(updated.workflowAgents.explorer!.extensions).toEqual([]);
+    expect(updated.workflowAgents.explorer!.overrides).toEqual({});
     expect(existsSync(join(root, "workflows", "agents", "explorer.agent.json"))).toBe(true);
     expect(existsSync(join(root, "workflows", "agents", "implementer.agent.json"))).toBe(true);
     expect(existsSync(join(root, "workflows", "agents", "reviewer.agent.json"))).toBe(true);
@@ -216,9 +216,8 @@ describe("agent profile settings", () => {
       model: "claude-sonnet-4",
       reasoningEffort: "high",
       instructions: "Review strictly.",
-      extensions: ["ci"],
-      extensionUsage: {
-        ci: "default_loaded",
+      overrides: {
+        ci: "loaded",
       },
       extensionOrder: [],
     });
@@ -234,9 +233,8 @@ describe("agent profile settings", () => {
       model: "claude-sonnet-4",
       reasoningEffort: "high",
       instructions: "Review strictly.",
-      extensions: ["ci"],
-      extensionUsage: {
-        ci: "default_loaded",
+      overrides: {
+        ci: "loaded",
       },
       extensionOrder: [],
     });
@@ -246,7 +244,9 @@ describe("agent profile settings", () => {
         model: "claude-sonnet-4",
         reasoningEffort: "high",
         instructions: "Review strictly.",
-        extensions: ["ci"],
+        overrides: {
+          ci: "loaded",
+        },
       }),
     );
   });
@@ -266,8 +266,7 @@ describe("agent profile settings", () => {
       model: "gpt-5.4",
       reasoningEffort: "medium",
       instructions: "Temporary agent.",
-      extensions: [],
-      extensionUsage: {},
+      overrides: {},
     });
 
     const sourcePath = join(root, "workflows", "agents", "temporary.agent.json");
@@ -294,8 +293,8 @@ describe("agent profile settings", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strict source records.",
-          extensionUsage: {
-            git: "default_loaded",
+          overrides: {
+            git: "loaded",
             github: "available",
           },
         },
@@ -317,9 +316,8 @@ describe("agent profile settings", () => {
         model: "gpt-5.4",
         reasoningEffort: "medium",
         instructions: "Review strict source records.",
-        extensions: ["git"],
-        extensionUsage: {
-          git: "default_loaded",
+        overrides: {
+          git: "loaded",
           github: "available",
         },
         extensionOrder: [],
@@ -330,9 +328,8 @@ describe("agent profile settings", () => {
     store.setWorkflowAgent("strictReviewer", {
       ...store.getState().workflowAgents.strictReviewer!,
       instructions: "Review the implementation and tests strictly.",
-      extensions: ["git"],
-      extensionUsage: {
-        git: "default_loaded",
+      overrides: {
+        git: "loaded",
         github: "available",
       },
       extensionOrder: [],
@@ -349,9 +346,8 @@ describe("agent profile settings", () => {
       model: "gpt-5.4",
       reasoningEffort: "medium",
       instructions: "Review the implementation and tests strictly.",
-      extensions: ["git"],
-      extensionUsage: {
-        git: "default_loaded",
+      overrides: {
+        git: "loaded",
         github: "available",
       },
       extensionOrder: [],
@@ -373,8 +369,7 @@ describe("agent profile settings", () => {
       model: "gpt-5.4",
       reasoningEffort: "medium",
       instructions: "Review strictly.",
-      extensions: [],
-      extensionUsage: {},
+      overrides: {},
     }).workflowAgents.reviewer!;
     const sourcePath = join(workflowsSourceRoot, "agents", "reviewer.agent.json");
 
@@ -388,8 +383,7 @@ describe("agent profile settings", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "External edit.",
-          extensions: [],
-          extensionUsage: {},
+          overrides: {},
           extensionOrder: [],
         },
         null,
@@ -437,8 +431,7 @@ describe("agent profile settings", () => {
       model: "gpt-5.4",
       reasoningEffort: "medium",
       instructions: "Review strictly.",
-      extensions: [],
-      extensionUsage: {},
+      overrides: {},
     }).workflowAgents.reviewer!;
     const sourcePath = join(workflowsSourceRoot, "agents", "reviewer.agent.json");
     writeFileSync(
@@ -490,37 +483,14 @@ describe("agent profile settings", () => {
       model: "gpt-5.4",
       reasoningEffort: "medium",
       instructions: "Review strict source records.",
-      extensions: ["git"],
-      extensionUsage: {
-        git: "default_loaded",
+      overrides: {
+        git: "loaded",
       },
     });
     rmSync(join(workflowsSourceRoot, "agents", "strictReviewer.agent.json"));
 
     expect(store.getState().workflowAgents.strictReviewer).toBeUndefined();
     expect(store.getState().workflowAgents.explorer).toBeDefined();
-  });
-
-  it("drops empty extension ids when normalizing workflow agent settings", () => {
-    const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-removed-tool-settings-"));
-    const store = createAgentSettingsStore({
-      cwd: root,
-      agentDir: join(root, ".agent"),
-      workflowsSourceRoot: join(root, "workflows"),
-    });
-
-    const updated = store.setWorkflowAgent("explorer", {
-      id: "explorer",
-      label: "Explorer",
-      provider: "openai",
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
-      instructions: "Explore.",
-      extensions: ["cx", "", "web"],
-      extensionUsage: {},
-    });
-
-    expect(updated.workflowAgents.explorer!.extensions).toEqual(["cx", "web"]);
   });
 
   it("persists preferred external editor preferences", () => {

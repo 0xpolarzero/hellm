@@ -503,7 +503,7 @@ describe("default workspace renderer shell", () => {
     expect(workflowAgentFormSource).toContain("onSetExtensionUsage(extensionId, state)");
     expect(agentProfileFormSource).not.toContain("[extensionId]: state");
     expect(workflowAgentFormSource).not.toContain("[extensionId]: state");
-    expect(extensionUsageControlSource).toContain('label: "Default loaded"');
+    expect(extensionUsageControlSource).toContain('label: "Loaded"');
     expect(extensionUsageControlSource).toContain('label: "Available"');
     expect(extensionUsageControlSource).toContain('label: "Off"');
     expect(extensionUsageControlSource).toContain(

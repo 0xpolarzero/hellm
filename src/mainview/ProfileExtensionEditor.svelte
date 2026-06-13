@@ -37,7 +37,7 @@
   };
 
   const STATES: Array<{ state: ExtensionUsageState; label: string }> = [
-    { state: "default_loaded", label: "Loaded" },
+    { state: "loaded", label: "Loaded" },
     { state: "available", label: "Available" },
     { state: "unavailable", label: "Off" },
   ];

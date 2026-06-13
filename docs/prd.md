@@ -112,7 +112,7 @@ Before any target surface runs a turn through pi:
   handler system prompt, and not shared pi transcript state. It does not create shared tools or
   continuing access to orchestrator-only callable surfaces.
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, GitHub default-loaded for orchestrators and handler threads while available for workflow task agents, and Smithers default-loaded for handler threads as prompt-only official CLI guidance. The builtin Workflows extension is default-loaded for handler threads as the app-owned `svvyx workflows ...` source-library command family. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git loaded by default for all adopted agent kinds, Web loaded by default for all adopted agent kinds only while `networkAccess` is enabled, GitHub loaded by default for orchestrators and handler threads while available for workflow task agents, and Smithers loaded by default for handler threads as prompt-only official CLI guidance. The builtin Workflows extension is loaded by default for handler threads as the app-owned `svvyx workflows ...` source-library command family. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
@@ -122,20 +122,20 @@ Every normal builtin or user extension has the same composable shape: an editabl
 
 Normal builtin and user extension sources are real local files under `~/.config/svvy/extensions/sources/...`: builtin sources live under `sources/builtin/<id>/`, user sources under `sources/user/<id>/`. Packaged app defaults are read-only templates used only to scaffold missing builtin source and to reset builtin source back to its default state. For `svvyx` extensions, `source/index.ts` is the editable command source; `commands.json` is generated build output that enters generated prompt/tool context. The optional generated TypeScript API declaration is a separate generated artifact that exposes typed clients through `execute_typescript`; it is not the command schema.
 
-External instruction records are deliberately separate from normal extensions. Discovered files such as `AGENTS.md` and `CLAUDE.md` are read-only external instruction inputs owned outside `svvy`; they have no minimal hint, no editable source lifecycle, no scripted contributors, no reset/delete lifecycle, and only expose file content, read status, and actor enablement controls. Base actor prompts are normal builtin instruction extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default profile. Other extension default usage is future-facing profile policy for newly created orchestrator sessions and workflow task-agent attempts only; the singleton handler profile remains owned by Agents and can still be customized there. Changing defaults must not rewrite the bound generated context of an existing surface except through the normal out-of-date fingerprint refresh flow. Extension loaded instruction text is actor-agnostic; actor-specific behavior is represented by separate extension records, such as `base-orchestrator` versus `base-handler` or `thread-orchestration` versus `thread-handling`, and profile defaults decide which actor loads each extension. New user extensions start in the loaded default state for new orchestrators and workflow task agents unless the user changes their per-actor defaults before use. Extension snapshots include a saved Initial baseline when no local snapshots exist, while user-named snapshots preserve local source, package, usage, ordered contributors, skip/default state, customized tags, generated-contributor source/output state, and coarse secret-state restore points. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
+External instruction records are deliberately separate from normal extensions. Discovered files such as `AGENTS.md` and `CLAUDE.md` are read-only external instruction inputs owned outside `svvy`; they have no minimal hint, no editable source lifecycle, no scripted contributors, no reset/delete lifecycle, and only expose file content, read status, and actor enablement controls. Base actor prompts are normal builtin instruction extensions: `base-common` is loaded by default for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are loaded by default by the corresponding default profile. Other extension default usage is future-facing profile policy for newly created orchestrator sessions and workflow task-agent attempts only; the singleton handler profile remains owned by Agents and can still be customized there. Changing defaults must not rewrite the bound generated context of an existing surface except through the normal out-of-date fingerprint refresh flow. Extension loaded instruction text is actor-agnostic; actor-specific behavior is represented by separate extension records, such as `base-orchestrator` versus `base-handler` or `thread-orchestration` versus `thread-handling`, and profile defaults decide which actor loads each extension. New user extensions start in the loaded default state for new orchestrators and workflow task agents unless the user changes their per-actor defaults before use. Extension snapshots include a saved Initial baseline when no local snapshots exist, while user-named snapshots preserve local source, package, usage, ordered contributors, skip/default state, customized tags, generated-contributor source/output state, and coarse secret-state restore points. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
 
 File-backed source inputs refresh through a backend-owned source invalidation coordinator, not through renderer panes. Low-level file watcher events only schedule deterministic fingerprint scans; source fingerprints, validation results, and generated build facts are authoritative. The coordinator watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed or discovered snippet roots. It never watches generated output such as Workflows generated packages, Extensions generated packages, extension build directories, workspace `.smithers/node_modules/@svvy/*` links, or workspace `.svvy/generated` prompt preview files as triggers. When a source fingerprint changes, `svvy` recomputes the smallest affected state: workflow-agent source records refresh the Agents pane and rebuild `@svvy/workflows`; extension source refreshes inventory and generated declarations and triggers Workflows validation when needed; external instruction changes refresh Extensions inventory rows, prompt previews, and open-surface prompt bindings; snippet changes refresh only snippet read models. Invalid or unreadable source is surfaced as diagnostics while the previous ready generated output remains active, and affected existing surfaces receive normal durable `agent_context_refresh` queue work at the next safe boundary.
 
 The default actor-specific generated context split is:
 
-- the orchestrator prompt knows that workflow action normally belongs in a delegated handler thread; Smithers and Workflows are available to orchestrators but not default-loaded in the default orchestrator profile
+- the orchestrator prompt knows that workflow action normally belongs in a delegated handler thread; Smithers and Workflows are available to orchestrators but not loaded by default in the default orchestrator profile
 - a handler-thread prompt receives prompt-only Smithers CLI guidance, the Workflows `svvyx` command family, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_group`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
 - the orchestrator prompt receives `request_user_input`, `thread_start`, `thread_followup`,
   `thread_list`, `thread_episodes`, and `thread_request_report` so user clarification,
   delegated-thread state, durable thread groups, durable episodes, handler follow-ups, handler
   reactivation, and handler status requests are handled through focused tools instead of prompt
   stuffing
-- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Workflows, Extension Managing, and broad handler/orchestrator controls are not default-loaded
+- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Workflows, Extension Managing, and broad handler/orchestrator controls are not loaded by default
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage overrides remain the source of truth for loaded, available, and unavailable extensions; setting an extension back to the resolved actor/profile default removes the stored override, and Extension Loading is the only fixed always-loaded extension control
 - Smithers execution is not exposed through native `svvy` workflow wrappers. Agents run official Smithers CLI commands through Shell, and those shell commands project as normal command-family `exec_command` work.
@@ -243,7 +243,7 @@ It is not a Smithers runner. There is no `install`, `retrieve`, `promote`, kind-
 
 `svvyx workflows save` copies or extracts reusable source into `~/.config/svvy/workflows/`. It fails if it would overwrite an existing source item unless `--overwrite` is present. A successful save immediately runs the full build pipeline.
 
-`svvyx workflows build` first builds and validates Extensions, generates or refreshes `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and refreshes workspace package links.
+`svvyx workflows build` first builds and validates Extensions, generates or refreshes `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension usage overrides, generates `@svvy/workflows`, and refreshes workspace package links.
 
 `svvyx workflows models list --json` returns provider/model/reasoning choices from the same pi-normalized provider metadata and auth state used by the Agents pane. Build-time validation must fail explicitly when an agent parameter record names a provider/model/reasoning combination or extension reference that is not available under that registry. It must not silently clamp, rewrite, or defer those errors to runtime.
 
@@ -275,7 +275,7 @@ run the official CLI through `exec_command`. The normal inspection ladder is:
 cx overview -> cx symbols -> cx definition / cx references -> exec_command with rg/sed/cat/ls/find
 ```
 
-The builtin cx instructions are default-loaded for orchestrators, handler threads, and workflow task
+The builtin cx instructions are loaded by default for orchestrators, handler threads, and workflow task
 agents. The cx extension declares an exact CLI requirement and a reusable install-command template.
 If the `cx` binary is missing or the installed version does not match the declared version,
 extension build fails with an ordinary structured error. Agents may then run the concrete install
@@ -394,7 +394,7 @@ configure env values, or mutate agent profile defaults.
 
 Prompt-only Web guidance is different from a native Web tool surface.
 
-The builtin Web extension is a default-loaded prompt-only extension that teaches agents to use the
+The builtin Web extension is a loaded by default prompt-only extension that teaches agents to use the
 official TinyFish CLI through ordinary shell commands. It does not add `web_search`, `web_fetch`,
 `svvyx web`, generated Web TypeScript clients, or app-owned Web Provider settings. TinyFish owns CLI
 install, auth, search, fetch, browser-backed research, and command output behavior. `svvy` only owns
@@ -421,7 +421,7 @@ Smithers is prompt-only official CLI guidance. It adds no native tools and no ge
 
 Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. Agents access it by running `svvyx workflows ...` through Shell as ordinary `exec_command` command-family work, or through loaded generated `execute_typescript` clients when available. It exposes `list`, `save`, `build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
 
-The default orchestrator context should know that workflow action normally belongs in a delegated handler thread, but ordinary orchestrator profiles do not default-load Smithers or Workflows. The default handler context knows that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as product behavior.
+The default orchestrator context should know that workflow action normally belongs in a delegated handler thread, but ordinary orchestrator profiles do not load by default Smithers or Workflows. The default handler context knows that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as product behavior.
 
 A workflow task agent should know only its task-local instructions and task-local tools. It must not receive Smithers, Workflows, handler controls, or orchestrator controls by default.
 
@@ -809,7 +809,7 @@ User-created orchestrator profiles are ordered in the Agents pane. That order dr
 Session records persist the orchestrator profile selected at creation time, the profile snapshot that was active at creation time, and the generated agent context fingerprint used by the orchestrator surface. All top-level sessions are orchestrator sessions created through New orchestrator or equivalent command-palette prompt fallback.
 
 Handler threads use the `threadHandler` special profile. Each `thread_start.threads[]` item may pass
-creation-time extension overrides as a partial override over that profile's extension usage states.
+creation-time `overrides` as a partial map over that profile's extension usage states.
 Extensions remain separate product knowledge and capability records; they do not carry model,
 reasoning, or prompt-selection settings.
 
@@ -828,8 +828,8 @@ Agents own:
 - profile display name
 - actor kind
 - provider/model and reasoning defaults
-- default-loaded base instruction extensions
-- per-extension usage state: `default_loaded`, `available`, or `unavailable`, except fixed
+- loaded base instruction extensions
+- per-extension usage state: `loaded`, `available`, or `unavailable`, except fixed
   app-native controls such as Extension Loading
 - per-profile extension instruction order, edited by dragging active expanded-profile extension rows
 - expandable per-extension generated instruction previews for that profile, with tokenx-backed
@@ -862,6 +862,12 @@ the `svvyx artifacts ...` command family, with `create`, `inspect`, `list`, `ope
 commands defined in `docs/specs/extension/artifacts.extension.spec.md`.
 
 External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the Extensions pane as a distinct read-only category, use the same per-agent usage states as other extensions, show path/content/order in generated-context previews, and provide an open-external-file action. Resetting an external instruction record changes only `svvy` usage/settings metadata; it never overwrites the external file.
+
+`unavailable` is the configured Off state for an extension in a resolved actor/profile binding, not
+a hard actor boundary by itself. Configurability is not blocked merely because an extension's default
+state is `unavailable`; normal usage controls may move configurable extensions between loaded,
+available, and unavailable for a target actor/profile. Extension Loading remains the fixed
+always-loaded control.
 
 Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, emitted generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
 

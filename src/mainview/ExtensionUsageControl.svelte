@@ -28,7 +28,7 @@
   };
 
   const STATES: Array<{ state: ExtensionUsageState; label: string }> = [
-    { state: "default_loaded", label: "Default loaded" },
+    { state: "loaded", label: "Loaded" },
     { state: "available", label: "Available" },
     { state: "unavailable", label: "Off" },
   ];
@@ -196,7 +196,7 @@
     if (!item.allowedStates[state]) {
       return `${item.title} cannot be set to ${stateLabel(state)} for this agent kind.`;
     }
-    if (state === "default_loaded") {
+    if (state === "loaded") {
       return "Load full instructions, tools, and generated declarations into new sessions using this profile.";
     }
     if (state === "available") {

@@ -3,7 +3,7 @@ import type { GeneratedAgentContextExternalSource } from "./generated-agent-cont
 
 export type ExtensionCategory = "builtin" | "user" | "external_instruction";
 export type ExtensionInterfaceKind = "instructions" | "native_tool" | "svvyx";
-export type ExtensionUsageState = "default_loaded" | "available" | "unavailable";
+export type ExtensionUsageState = "loaded" | "available" | "unavailable";
 
 export interface ExtensionCliRequirement {
   id: string;
@@ -46,7 +46,7 @@ export interface ExtensionRecord {
 }
 
 export interface VisibleLoadedExtensionRecord extends ExtensionRecord {
-  state: "default_loaded";
+  state: "loaded";
 }
 
 export interface VisibleAvailableExtensionRecord extends Omit<
@@ -441,25 +441,25 @@ const EXTENSION_BY_ID = new Map<string, ExtensionRecord>(
 );
 
 const DEFAULT_STATES: Record<BuiltinExtensionId, ActorExtensionDefaults> = {
-  "base-common": all("default_loaded"),
-  "base-orchestrator": actorStates("default_loaded", "unavailable", "unavailable"),
-  "base-handler": actorStates("unavailable", "default_loaded", "unavailable"),
-  "base-workflow-task": actorStates("unavailable", "unavailable", "default_loaded"),
-  shell: all("default_loaded"),
-  "apply-patch": all("default_loaded"),
-  "execute-typescript": all("default_loaded"),
-  "extension-loading": all("default_loaded"),
+  "base-common": all("loaded"),
+  "base-orchestrator": actorStates("loaded", "unavailable", "unavailable"),
+  "base-handler": actorStates("unavailable", "loaded", "unavailable"),
+  "base-workflow-task": actorStates("unavailable", "unavailable", "loaded"),
+  shell: all("loaded"),
+  "apply-patch": all("loaded"),
+  "execute-typescript": all("loaded"),
+  "extension-loading": all("loaded"),
   "extension-managing": actorStates("available", "available", "unavailable"),
-  "request-user-input": actorStates("default_loaded", "default_loaded", "unavailable"),
-  "thread-orchestration": actorStates("default_loaded", "unavailable", "unavailable"),
-  "thread-handling": actorStates("unavailable", "default_loaded", "unavailable"),
-  cx: all("default_loaded"),
-  git: all("default_loaded"),
-  github: actorStates("default_loaded", "default_loaded", "available"),
-  web: all("default_loaded"),
-  smithers: actorStates("available", "default_loaded", "unavailable"),
-  workflows: actorStates("available", "default_loaded", "unavailable"),
-  artifacts: all("default_loaded"),
+  "request-user-input": actorStates("loaded", "loaded", "unavailable"),
+  "thread-orchestration": actorStates("loaded", "unavailable", "unavailable"),
+  "thread-handling": actorStates("unavailable", "loaded", "unavailable"),
+  cx: all("loaded"),
+  git: all("loaded"),
+  github: actorStates("loaded", "loaded", "available"),
+  web: all("loaded"),
+  smithers: actorStates("available", "loaded", "unavailable"),
+  workflows: actorStates("available", "loaded", "unavailable"),
+  artifacts: all("loaded"),
 };
 
 export function getExtensionRecord(id: string): ExtensionRecord | null {
@@ -473,7 +473,6 @@ export function resolveActorExtensionState(input: {
     Record<SvvyActorKind, Record<string, ExtensionUsageState>>
   > | null;
   profileExtensionUsage?: Record<string, ExtensionUsageState> | null;
-  profileLoadedExtensionIds?: readonly string[];
   profileExtensionOrder?: readonly string[];
   overrides?: Record<string, ExtensionUsageState> | null;
   networkAccess?: boolean;
@@ -489,26 +488,14 @@ export function resolveActorExtensionState(input: {
       states.set(id, state);
     }
   }
-  for (const rawId of input.profileLoadedExtensionIds ?? []) {
-    const id = rawId.trim();
-    if (!id) continue;
-    if (!EXTENSION_BY_ID.has(id)) {
-      states.set(id, "default_loaded");
-    } else if (states.get(id) !== "unavailable") {
-      states.set(id, "default_loaded");
-    }
-  }
   for (const [rawId, state] of Object.entries(input.profileExtensionUsage ?? {})) {
     const id = rawId.trim();
     if (!id) continue;
+    if (id === "extension-loading") continue;
     if (!EXTENSION_BY_ID.has(id)) {
       if (state !== "unavailable") {
         states.set(id, state);
       }
-      continue;
-    }
-    const defaultState = getDefaultUsageState(id, input.actor, input.networkAccess);
-    if (defaultState === "unavailable" && state !== "unavailable") {
       continue;
     }
     states.set(id, state);
@@ -523,13 +510,9 @@ export function resolveActorExtensionState(input: {
       continue;
     }
     if (id === "extension-loading") continue;
-    const defaultState = getDefaultUsageState(id, input.actor, input.networkAccess);
-    if (defaultState === "unavailable" && state !== "unavailable") {
-      continue;
-    }
     states.set(id, state);
   }
-  states.set("extension-loading", "default_loaded");
+  states.set("extension-loading", "loaded");
   const extensionOrder =
     input.profileExtensionOrder && input.profileExtensionOrder.length > 0
       ? input.profileExtensionOrder
@@ -537,7 +520,7 @@ export function resolveActorExtensionState(input: {
         ? []
         : (input.defaultExtensionOrder ?? []);
   return {
-    loadedExtensionIds: sortedIdsWithState(states, "default_loaded", extensionOrder),
+    loadedExtensionIds: sortedIdsWithState(states, "loaded", extensionOrder),
     availableExtensionIds: sortedIdsWithState(states, "available", extensionOrder),
   };
 }
@@ -602,7 +585,7 @@ function loadedVisibleRecord(
   extensionRecords: ReadonlyMap<string, ExtensionRecord> = new Map(),
 ): VisibleLoadedExtensionRecord[] {
   const record = extensionRecords.get(id) ?? getExtensionRecord(id);
-  return record ? [{ ...publicExtensionRecord(record), state: "default_loaded" }] : [];
+  return record ? [{ ...publicExtensionRecord(record), state: "loaded" }] : [];
 }
 
 function availableVisibleRecord(
@@ -668,7 +651,7 @@ function externalInstructionRecords(
       source.readStatus.status === "readable" &&
       (!actor || source.actors.includes(actor))
     ) {
-      loaded.push({ ...record, state: "default_loaded" });
+      loaded.push({ ...record, state: "loaded" });
     }
   }
   return { loaded, available };

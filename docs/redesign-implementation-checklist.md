@@ -59,14 +59,14 @@ acceptance rows stay unchecked until their implementation and tests land.
 
 - [x] Implement the Agents pane between Logs and Extensions. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Store app-global orchestrator profiles, the special `threadHandler` profile, workflow-agent profiles, provider/model/reasoning defaults, extension usage selections, profile metadata, and generated context previews. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
-  - [x] Store orchestrator and special `threadHandler` profile extension usage selections as explicit `default_loaded`/`available`/`unavailable` profile state instead of a loaded-extension id list.
+  - [x] Store orchestrator and special `threadHandler` profile extension usage selections as explicit `loaded`/`available`/`unavailable` profile state instead of a loaded-extension id list.
 - [x] Keep the default orchestrator profile locked, first, non-draggable, non-deletable, and editable for settings. Sources: `docs/prd.md`, `docs/progress.md`.
 - [x] Allow users to create, duplicate, order, edit, and inline-single-confirm delete user-created orchestrator profiles. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Drive the New orchestrator picker order, profile-specific command-palette actions, and surface profile badges from Agents-pane orchestrator-profile order. Sources: `docs/prd.md`, `docs/specs/command-palette.spec.md`.
 - [x] Persist each top-level session's selected orchestrator profile, profile snapshot, and generated agent-context fingerprint at creation. Sources: `docs/prd.md`.
 - [x] Let profile-backed orchestrator sessions optionally save composer model/reasoning changes back to that profile for future sessions. Sources: `docs/prd.md`.
 - [x] Use `threadHandler` for delegated handler-thread surfaces. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
-- [x] Apply `thread_start.threads[].extensions` as creation-time partial overrides over `threadHandler` extension usage states. Sources: `docs/prd.md`, `docs/progress.md`.
+- [x] Apply `thread_start.threads[].overrides` as creation-time partial overrides over `threadHandler` extension usage states. Sources: `docs/prd.md`, `docs/progress.md`.
 - [x] Represent workflow-agent profiles as structured Workflows source records that generate `Agents.*` exports. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Use pi's normalized provider/model/reasoning metadata and runtime thinking controls for model and reasoning dropdowns; do not maintain svvy-owned provider special cases or freeform model/reasoning text. Sources: `docs/prd.md`.
 - [x] Use TanStack Form for complex provider, agent-profile, extension-env, and app-preference forms with validation, dirty state, reset/cancel, pending save, async errors, and backend-authoritative normalization. Sources: `docs/prd.md`, `docs/progress.md`.
@@ -78,18 +78,18 @@ acceptance rows stay unchecked until their implementation and tests land.
 ## Extensions Model
 
 - [x] Implement Extensions as builtin, user, and external_instruction records with category, instruction source files, minimal available-loading hints, interface kind, generated clients, env/dependency readiness, reset/delete behavior, and read-only usage views. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
-- [x] Support extension usage states `default_loaded`, `available`, and `unavailable` per profile/actor, except fixed app-native controls such as Extension Loading. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Support extension usage states `loaded`, `available`, and `unavailable` per profile/actor, except fixed app-native controls such as Extension Loading. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [x] Implement the exhaustive builtin extension inventory: `base-common`, `base-orchestrator`, `base-handler`, `base-workflow-task`, `shell`, `apply-patch`, `execute-typescript`, `extension-loading`, `extension-managing`, `request-user-input`, `thread-orchestration`, `thread-handling`, `cx`, `git`, `github`, `web`, `smithers`, `workflows`, `artifacts`, and external instructions. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load `base-common`, Shell, Apply Patch, Execute TypeScript, Extension Loading, cx, Git, and Artifacts for orchestrators, handler threads, and workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load `base-orchestrator` and `thread-orchestration` only for orchestrators. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load `base-handler`, `thread-handling`, Smithers, and Workflows only for handler threads. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load `base-workflow-task` only for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load GitHub for orchestrators and handler threads; make it available for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Make Extension Managing available for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Make Request User Input default-loaded for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Make Smithers available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Make Workflows available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [x] Default-load Web only when `networkAccess` is true; make it unavailable/no prompt guidance when `networkAccess` is false. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
+- [x] Load by default `base-common`, Shell, Apply Patch, Execute TypeScript, Extension Loading, cx, Git, and Artifacts for orchestrators, handler threads, and workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load by default `base-orchestrator` and `thread-orchestration` only for orchestrators. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load by default `base-handler`, `thread-handling`, Smithers, and Workflows only for handler threads. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load by default `base-workflow-task` only for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load by default GitHub for orchestrators and handler threads; make it available for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Extension Managing available for orchestrators and handlers, configured off for workflow task agents, and still configurable through profile overrides. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Request User Input loaded for orchestrators and handlers, configured off for workflow task agents, and still configurable through profile overrides. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Smithers available, not loaded, for orchestrators; loaded for handlers; configured off for workflow task agents; and still configurable through profile overrides. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Workflows available, not loaded, for orchestrators; loaded for handlers; configured off for workflow task agents; and still configurable through profile overrides. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load by default Web only when `networkAccess` is true; make it unavailable/no prompt guidance when `networkAccess` is false. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
 - [x] Build generated actor context from loaded base instruction extensions, loaded extension instructions, available minimal hints, external instructions, native tool declarations, loaded svvyx guidance, and generated TypeScript declarations. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
   - [x] Compose resolved loaded extension full instruction files into actor context with file-boundary headings, while skipping instruction files configured as unloaded. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Use resolved available extension records for minimal hints, including user extensions, without exposing full instruction sources for available records. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
@@ -123,7 +123,7 @@ acceptance rows stay unchecked until their implementation and tests land.
   - [ ] Follow-up: connect enabled ambient resources to runtime use only after category-specific host/source/workspace/profile contracts exist.
 - [x] Cover callable capabilities, extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, execution policy, and runtime state as ambient resource categories. Sources: `docs/specs/ambient-agent-resources-baseline.spec.md`.
 - [x] Preserve visible external instruction files while blocking host-ambient behavior-changing resources from affecting prompts, tools, commands, UI, provider/auth behavior, or execution policy until enabled. Sources: `docs/prd.md`.
-  - [x] Discover same-directory `AGENTS.md` and `CLAUDE.md` as visible external instruction records while default-loading only `AGENTS.md`; lone `CLAUDE.md` files remain enabled by default.
+  - [x] Discover same-directory `AGENTS.md` and `CLAUDE.md` as visible external instruction records while load by defaulting only `AGENTS.md`; lone `CLAUDE.md` files remain enabled by default.
   - [x] Follow-up: implement persisted per-file enablement, actor selection, and global root management for external instruction records.
     - [x] Add normalized persisted settings, discovery controls, default-off builtin global roots, custom root handling, workspace-keyed file controls, actor-selected prompt composition, and freshness fingerprints for external instruction records.
     - [x] Add user-facing Settings controls for global root management, per-file enablement, read-status display, actor chips, and external-editor actions.
@@ -220,7 +220,7 @@ acceptance rows stay unchecked until their implementation and tests land.
   - [x] Resume blocked install/build work after dependency approval, install approved packages with lifecycle scripts disabled unless the exact trusted identity is approved, and report installed/missing package artifacts from the app-owned package area.
 - [x] Make `set-usage` mutate persistent agent-profile extension usage, queue context refresh for affected sessions, and never directly mutate the caller's current binding. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Implement `set-usage` for orchestrator and `threadHandler` profiles with persistent tri-state usage, exact profile ids, actor-compatibility rejection, queued `agent_context_refresh` work, no direct caller-binding mutation, reversible usage change records, and exact revert conflict detection.
-  - [x] Extend `set-usage` to workflow-agent profile usage after workflow-agent profiles store full tri-state extension usage instead of only loaded `Agents.TaskAgentParameters.extensions`.
+  - [x] Support `set-usage` for workflow-agent profile sparse extension usage overrides.
 - [x] Make Extension Loading fixed and not user-changeable through `set-usage`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Implement `reset`, `delete`, `revert`, and snapshots with reversible product-state and file behavior. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Implement user-extension `svvyx extensions delete <id> --json` by recording an app-global reversible change before moving local source into trash, rejecting builtin deletes, blocking stale `svvyx` runtime dispatch for deleted builds, and restoring deleted sources through `svvyx extensions revert <change-id> --json` with collision and build-required handling.
@@ -237,11 +237,11 @@ acceptance rows stay unchecked until their implementation and tests land.
   - [x] Implement local snapshot secret-state preservation and coarse restore reporting without exposing raw secrets, keychain ids, or snapshot-secret storage ids.
   - [x] Implement dependency-approval resume/install completion.
 - [x] Keep generated extension clients behind `extensions["<id>"].run(commandId, input)`; dot access only for identifier-safe ids. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
-- [x] Generate `@svvy/extensions` as part of Extension build before Workflows build consumes extension references. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/workflow-library.spec.md`.
+- [x] Generate `@svvy/extensions` as part of Extension build before Workflows build consumes extension usage override keys. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/workflow-library.spec.md`.
   - [x] Refresh the generated `@svvy/extensions` package during the Workflows build path from workflow-task-safe builtin extension ids plus active ready user `svvyx` extensions that opt into TypeScript API generation after the Extension prebuild pass, excluding deleted source, instruction-only extensions, dependency-blocked current builds, and extensions that fail build validation.
   - [x] Refresh the generated `@svvy/extensions` package transactionally during successful `svvyx extensions build`, using the same app-global extension root and restoring the previous current build if package refresh fails.
   - [x] Fail Workflows build before workflow-agent source validation when app-owned user Extension source is invalid or a TypeScript-enabled `svvyx` extension cannot be rebuilt successfully, preserving generated-package transactionality and avoiding generic unavailable-extension diagnostics for build-input failures.
-  - [x] Run the Extension build/validation pipeline before Workflows build validates workflow-agent extension references, including automatic rebuild of dirty TypeScript-enabled user `svvyx` extensions and dependency/CLI-aware build outcomes, instead of only validating current build readiness and recomputing the generated export set from existing current builds.
+  - [x] Run the Extension build/validation pipeline before Workflows build validates workflow-agent extension usage overrides, including automatic rebuild of dirty TypeScript-enabled user `svvyx` extensions and dependency/CLI-aware build outcomes, instead of only validating current build readiness and recomputing the generated export set from existing current builds.
 
 ## CLI Requirements
 
@@ -443,15 +443,15 @@ acceptance rows stay unchecked until their implementation and tests land.
 - [x] For `--kind agent`, statically extract `Agents.defineTaskAgent(...)` or resolvable `defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic inputs with structured diagnostics. Sources: `docs/progress.md`, `docs/specs/workflow-library.spec.md`.
   - [x] Extract literal `Agents.defineTaskAgent(...)` / `defineTaskAgent(...)` records, including `Extensions.<id>` and `Extensions["<id>"]` references, without executing TypeScript; reject dynamic required fields.
   - [x] Resolve accepted static spreads from known saved `Agents.*` records and reject unresolved spreads.
-- [x] Implement `svvyx workflows build --json` to build Extensions, generate/refresh `@svvy/extensions`, validate Workflows source, validate workflow-agent provider/model/reasoning and extension references, generate `@svvy/workflows`, and refresh workspace package links. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
+- [x] Implement `svvyx workflows build --json` to build Extensions, generate/refresh `@svvy/extensions`, validate Workflows source, validate workflow-agent provider/model/reasoning and extension usage overrides, generate `@svvy/workflows`, and refresh workspace package links. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
   - [x] Implement the Workflows source validation and `@svvy/workflows` generation portion of `svvyx workflows build --json`.
   - [x] Generate and refresh the current workflow-task-safe `@svvy/extensions` package before `@svvy/workflows`, including ready active user TypeScript-enabled `svvyx` extensions, emit generated agent imports from `@svvy/extensions`, and refresh both workspace package links.
-  - [x] Rebuild dirty or unbuilt TypeScript-enabled user `svvyx` Extensions through the Extension build command before Workflows source validation, forward CLI/env/secret/build-root inputs through `svvyx workflows build` and `save`, and fail closed on Extension build errors before workflow-agent extension-reference diagnostics.
-  - [x] Move generated `@svvy/extensions` refresh behind the full Extension build/approval pipeline once dependency-approved package resolution and generated Incur command-schema extraction are implemented.
+  - [x] Rebuild dirty or unbuilt TypeScript-enabled user `svvyx` Extensions through the Extension build command before Workflows source validation, forward CLI/env/secret/build-root inputs through `svvyx workflows build` and `save`, and fail closed on Extension build errors before workflow-agent extension override diagnostics.
+  - [x] Generate `@svvy/extensions` through the full Extension build/approval pipeline with dependency-approved package resolution and generated Incur command-schema extraction.
 - [x] Implement `svvyx workflows models list --json` from pi-normalized provider/model/reasoning/auth metadata, with no live completion request by default. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
-- [x] Fail build explicitly when task-agent parameter records name unavailable provider/model/reasoning combinations or extension references; do not silently clamp, rewrite, or defer to runtime. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
-  - [x] Fail the current Workflows generation step on unavailable provider/model/reasoning, unauthenticated provider, and workflow-task-unavailable builtin extension ids.
-  - [x] Validate workflow-agent extension ids against the generated `@svvy/extensions` export set, including ready user extension exports, and preserve extension ids through generated read-model parsing.
+- [x] Fail build explicitly when task-agent parameter records name unavailable provider/model/reasoning combinations or invalid extension usage overrides; do not silently clamp, rewrite, or defer to runtime. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
+  - [x] Fail the current Workflows generation step on unavailable provider/model/reasoning, unauthenticated provider, and invalid extension usage override ids.
+  - [x] Validate workflow-agent extension override ids against the generated `@svvy/extensions` export set, including ready user extension exports, and preserve extension ids through generated read-model parsing.
 - [x] Do not implement Workflows `install`, `retrieve`, `promote`, kind-specific list subcommands, workflow run/resume/approve/inspect/debug controls, or product workflow wrapper commands. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Attach generated export metadata only internally for UI links; do not expose public metadata fields, `__exports`, public declarations, or changed agent import usage. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 
@@ -484,8 +484,8 @@ acceptance rows stay unchecked until their implementation and tests land.
 - [x] Do not use latest cx docs, GitHub, default local binary output, or local installed binary output as the primary generated cx source. Sources: `docs/specs/extension/cx.extension.spec.md`.
 - [x] Teach the code inspection ladder `cx overview -> cx symbols -> cx definition / cx references -> exec_command with rg/sed/cat/ls/find`. Sources: `docs/prd.md`, `docs/specs/extension/cx.extension.spec.md`.
 - [x] Implement Git and GitHub as prompt-only CLI guidance; no wrapper tools unless a current extension spec defines them. Sources: `docs/specs/extension/git.extension.spec.md`, `docs/specs/extension/github.extension.spec.md`.
-- [x] Keep Git CLI requirements unpinned and default-loaded for all actors. Sources: `docs/specs/extension/git.extension.spec.md`.
-- [x] Keep GitHub prompt-only guidance default-loaded for orchestrators/handlers and available for workflow task agents, with unpinned `git` and `gh` requirements. Sources: `docs/specs/extension/github.extension.spec.md`.
+- [x] Keep Git CLI requirements unpinned and loaded by default for all actors. Sources: `docs/specs/extension/git.extension.spec.md`.
+- [x] Keep GitHub prompt-only guidance loaded by default for orchestrators/handlers and available for workflow task agents, with unpinned `git` and `gh` requirements. Sources: `docs/specs/extension/github.extension.spec.md`.
 
 ## Snippets Prompt Macros
 

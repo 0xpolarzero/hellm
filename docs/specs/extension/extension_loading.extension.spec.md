@@ -25,11 +25,11 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` |
-| Handler thread | `default_loaded` |
-| Workflow task agent | `default_loaded` |
+| Orchestrator | `loaded` |
+| Handler thread | `loaded` |
+| Workflow task agent | `loaded` |
 
-Extension Loading is fixed app-native control. It is always default-loaded and is not configurable
+Extension Loading is fixed app-native control. It is always loaded by default and is not configurable
 through agent profile extension usage state.
 
 ## Tool Surface

@@ -295,8 +295,7 @@
     try {
       settings = await runtime.updateWorkflowAgent(agent.id, {
         ...agent,
-        extensions: [...agent.extensions],
-        extensionUsage: { ...agent.extensionUsage },
+        overrides: { ...agent.overrides },
         extensionOrder: [...(agent.extensionOrder ?? [])],
       }, options);
       onSettingsChanged?.(settings);
@@ -456,15 +455,14 @@
 
   async function updateWorkflowAgentExtensionEditor(
     agent: WorkflowAgentSettings,
-    updates: Pick<WorkflowAgentSettings, "extensionUsage" | "extensionOrder">,
+    updates: Pick<WorkflowAgentSettings, "overrides" | "extensionOrder">,
   ): Promise<WorkflowAgentSettings> {
     errorMessage = null;
     try {
       const nextAgent = {
         ...agent,
-        extensionUsage: { ...updates.extensionUsage },
+        overrides: { ...updates.overrides },
         extensionOrder: [...(updates.extensionOrder ?? [])],
-        extensions: [...agent.extensions],
       };
       settings = await runtime.updateWorkflowAgent(agent.id, nextAgent);
       onSettingsChanged?.(settings);
@@ -479,14 +477,14 @@
 
   function resetWorkflowAgentExtensionSelection(agent: WorkflowAgentSettings) {
     return updateWorkflowAgentExtensionEditor(agent, {
-      extensionUsage: {},
+      overrides: {},
       extensionOrder: [...(agent.extensionOrder ?? [])],
     });
   }
 
   function resetWorkflowAgentExtensionOrder(agent: WorkflowAgentSettings) {
     return updateWorkflowAgentExtensionEditor(agent, {
-      extensionUsage: { ...agent.extensionUsage },
+      overrides: { ...agent.overrides },
       extensionOrder: [],
     });
   }
@@ -496,7 +494,7 @@
     extensionOrder: string[],
   ) {
     return updateWorkflowAgentExtensionEditor(agent, {
-      extensionUsage: { ...agent.extensionUsage },
+      overrides: { ...agent.overrides },
       extensionOrder,
     });
   }
@@ -561,8 +559,7 @@
       ...baseAgent,
       id,
       label,
-      extensions: [...baseAgent.extensions],
-      extensionUsage: { ...baseAgent.extensionUsage },
+      overrides: { ...baseAgent.overrides },
       extensionOrder: [...(baseAgent.extensionOrder ?? [])],
     };
     await saveWorkflowAgent(agent);
@@ -1004,7 +1001,7 @@
     extensionUsageItems={extensionUsageItems({
       actor: "workflow-task",
       profileId: agent.id,
-      usage: agent.extensionUsage,
+      usage: agent.overrides ?? {},
     })}
     onCancelDelete={cancelDeleteWorkflowAgentConfirmation}
     onConfirmDelete={() => void deleteWorkflowAgent(agent)}
@@ -1031,7 +1028,7 @@
         items={extensionUsageItems({
           actor: "workflow-task",
           profileId: agent.id,
-          usage: agent.extensionUsage,
+          usage: agent.overrides ?? {},
         })}
         loading={loadingContextPreviewKey === previewKey}
         previewError={contextPreviewErrorsByProfileId[previewKey] ?? null}

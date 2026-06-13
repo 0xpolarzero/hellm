@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../shared/extensions";
+import { BUILTIN_EXTENSIONS } from "../shared/extensions";
 import {
   ExtensionDependencyApprovalStore,
   extensionDependencyIdentityFromDeclaration,
@@ -92,18 +92,9 @@ export function writeGeneratedExtensionsPackage(
 export function generatedExtensionExportIds(
   options: { extensionsRoot?: string } = {},
 ): Set<string> {
-  const workflowTaskExtensions = resolveActorExtensionState({
-    actor: "workflow-task",
-  });
-  const workflowTaskUsableIds = new Set<string>([
-    ...workflowTaskExtensions.loadedExtensionIds,
-    ...workflowTaskExtensions.availableExtensionIds,
-  ]);
   return new Set(
     [
-      ...BUILTIN_EXTENSIONS.filter((extension) => workflowTaskUsableIds.has(extension.id)).map(
-        (extension) => extension.id,
-      ),
+      ...BUILTIN_EXTENSIONS.map((extension) => extension.id),
       ...readReadyUserExtensionExportIds(options.extensionsRoot),
     ].toSorted(),
   );

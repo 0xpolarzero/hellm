@@ -11,10 +11,11 @@ export namespace Agents {
   export type ReasoningEffort = ThinkingLevel;
 
   /**
-   * Extension ids loaded into workflow task-agent attempts that use this reusable
-   * agent parameter record.
+   * Extension ids whose workflow task-agent default usage may be overridden by
+   * this reusable agent parameter record.
    */
   export type TaskAgentExtensionId = string;
+  export type TaskAgentExtensionOverrideState = "loaded" | "available" | "unavailable";
 
   /**
    * Reusable app-global agent parameter record. These records are data that
@@ -28,7 +29,7 @@ export namespace Agents {
     model: string;
     reasoningEffort: ReasoningEffort;
     instructions: string;
-    extensions: readonly TaskAgentExtensionId[];
+    overrides?: Record<TaskAgentExtensionId, TaskAgentExtensionOverrideState>;
   }
 
   /**

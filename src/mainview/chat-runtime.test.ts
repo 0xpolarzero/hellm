@@ -1164,7 +1164,7 @@ function createFakeRpc(input: {
               profileExtensionUsage: defaultUsage,
             });
             const baselineState = defaultState.loadedExtensionIds.includes(extensionId)
-              ? "default_loaded"
+              ? "loaded"
               : defaultState.availableExtensionIds.includes(extensionId)
                 ? "available"
                 : "unavailable";
@@ -1191,17 +1191,13 @@ function createFakeRpc(input: {
             };
           }
           if (next.workflowAgents[agentProfile]) {
-            const extensionUsage = updateExtensionUsage(
+            const overrides = updateExtensionUsage(
               "workflow-task",
-              next.workflowAgents[agentProfile].extensionUsage,
+              next.workflowAgents[agentProfile].overrides ?? {},
             );
             next.workflowAgents[agentProfile] = {
               ...next.workflowAgents[agentProfile],
-              extensions: Object.entries(extensionUsage)
-                .filter((entry) => entry[1] === "default_loaded")
-                .map(([id]) => id)
-                .toSorted(),
-              extensionUsage,
+              overrides,
             };
           }
           return next;

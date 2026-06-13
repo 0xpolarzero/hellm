@@ -51,7 +51,7 @@ type ThreadStartInput = {
   threads: Array<{
     objective: string;
     history?: "isolated" | "forked";
-    extensions?: Record<string, "default_loaded" | "available" | "unavailable">;
+    overrides?: Record<string, "loaded" | "available" | "unavailable">;
   }>;
 };
 ```
@@ -63,7 +63,7 @@ Rules:
 - Use `forked` only when conversational continuity is explicitly requested or materially necessary.
 - Multiple items are for separate user-visible handler conversations, not ordinary internal
   parallelism.
-- Extension overrides are partial overrides over the `threadHandler` profile.
+- `overrides` is a partial map over the `threadHandler` profile.
 
 Output shape:
 

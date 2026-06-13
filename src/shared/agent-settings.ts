@@ -57,7 +57,6 @@ export interface AgentProfileState {
 export interface WorkflowAgentSettings extends Agents.TaskAgentParameters {
   id: string;
   label: string;
-  extensionUsage: Record<string, ExtensionUsageState>;
   extensionOrder?: string[];
   sourceVersion?: string;
 }
@@ -302,8 +301,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     instructions:
       "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
-    extensions: [],
-    extensionUsage: {},
+    overrides: {},
     extensionOrder: [],
   },
   implementer: {
@@ -312,8 +310,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     instructions:
       "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
-    extensions: [],
-    extensionUsage: {},
+    overrides: {},
     extensionOrder: [],
   },
   reviewer: {
@@ -322,8 +319,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     instructions:
       "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
-    extensions: [],
-    extensionUsage: {},
+    overrides: {},
     extensionOrder: [],
   },
 } satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;

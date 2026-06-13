@@ -46,7 +46,7 @@ export function baselineExtensionState(input: {
     defaultExtensionUsage: input.extensionDefaults?.usage,
     networkAccess: input.networkAccess,
   });
-  if (baseline.loadedExtensionIds.includes(input.extensionId)) return "default_loaded";
+  if (baseline.loadedExtensionIds.includes(input.extensionId)) return "loaded";
   if (baseline.availableExtensionIds.includes(input.extensionId)) return "available";
   return "unavailable";
 }
@@ -78,7 +78,7 @@ export function resolvedExtensionState(input: {
     profileExtensionUsage: input.explicitUsage,
     networkAccess: input.networkAccess,
   });
-  if (resolved.loadedExtensionIds.includes(input.extension.id)) return "default_loaded";
+  if (resolved.loadedExtensionIds.includes(input.extension.id)) return "loaded";
   if (resolved.availableExtensionIds.includes(input.extension.id)) return "available";
   return "unavailable";
 }
@@ -107,16 +107,7 @@ export function extensionStateAllowed(input: {
   networkAccess: boolean;
 }): boolean {
   if (!input.configurable) return false;
-  if (input.state === "unavailable") return true;
-  if (input.extension.category === "user") return true;
-  return (
-    baselineExtensionState({
-      actor: input.actor,
-      extensionId: input.extension.id,
-      extensionDefaults: null,
-      networkAccess: input.networkAccess,
-    }) !== "unavailable"
-  );
+  return true;
 }
 
 export function extensionUsageItems(
@@ -252,10 +243,10 @@ export function extensionUsageItems(
           configurable,
           fixedReason: usage?.fixedReason,
           allowedStates: {
-            default_loaded: extensionStateAllowed({
+            loaded: extensionStateAllowed({
               actor: input.actor,
               extension,
-              state: "default_loaded",
+              state: "loaded",
               configurable,
               extensionDefaults,
               networkAccess: input.networkAccess,

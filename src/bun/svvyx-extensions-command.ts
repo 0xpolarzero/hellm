@@ -1057,7 +1057,7 @@ function extensionDefaultsReadModel(
     usage[extension.id] = (["orchestrator", "workflow-task"] as const).map((actorKind) => {
       const baseline =
         extension.category === "user"
-          ? "default_loaded"
+          ? "loaded"
           : builtinDefaultExtensionUsageState(
               extension.id,
               actorKind,
@@ -1120,9 +1120,7 @@ function externalInstructionInventoryItem(
       actorKind,
       agentProfile: "external_instruction",
       state:
-        source.enabled && readable && source.actors.includes(actorKind)
-          ? "default_loaded"
-          : "unavailable",
+        source.enabled && readable && source.actors.includes(actorKind) ? "loaded" : "unavailable",
       configurable: false,
       fixedReason: "external_instruction_settings",
     })),
@@ -1349,11 +1347,11 @@ function runCreateCommand(
         ...settings.extensionDefaults.usage,
         orchestrator: {
           ...settings.extensionDefaults.usage.orchestrator,
-          [id]: "default_loaded",
+          [id]: "loaded",
         },
         "workflow-task": {
           ...settings.extensionDefaults.usage["workflow-task"],
-          [id]: "default_loaded",
+          [id]: "loaded",
         },
       },
     });
@@ -1504,11 +1502,11 @@ function runDuplicateCommand(
         ...settings.extensionDefaults.usage,
         orchestrator: {
           ...settings.extensionDefaults.usage.orchestrator,
-          [id]: "default_loaded",
+          [id]: "loaded",
         },
         "workflow-task": {
           ...settings.extensionDefaults.usage["workflow-task"],
-          [id]: "default_loaded",
+          [id]: "loaded",
         },
       },
     });
@@ -1892,7 +1890,7 @@ function runDefaultsCommand(
     if (extension.id === "extension-loading") {
       throw extensionsCommandError(
         "FIXED_EXTENSION_USAGE",
-        "Extension Loading is fixed default_loaded and cannot be changed by defaults set-usage.",
+        "Extension Loading is fixed loaded and cannot be changed by defaults set-usage.",
       );
     }
     assertUsageStateAllowedForActor({
@@ -1906,7 +1904,7 @@ function runDefaultsCommand(
     const actorUsage = { ...usage[actor] };
     const builtinState =
       extension.category === "user"
-        ? "default_loaded"
+        ? "loaded"
         : builtinDefaultExtensionUsageState(
             extension.id,
             actor,
@@ -1999,7 +1997,7 @@ export function setExtensionUsage(input: {
   if (extension.id === "extension-loading") {
     throw extensionsCommandError(
       "FIXED_EXTENSION_USAGE",
-      "Extension Loading is fixed default_loaded and cannot be changed by set-usage.",
+      "Extension Loading is fixed loaded and cannot be changed by set-usage.",
     );
   }
 
@@ -2082,12 +2080,12 @@ function requireAgentSettingsStore(store: AgentSettingsStore | undefined): Agent
 }
 
 function validateUsageState(value: string): ExtensionUsageState {
-  if (value === "default_loaded" || value === "available" || value === "unavailable") {
+  if (value === "loaded" || value === "available" || value === "unavailable") {
     return value;
   }
   throw extensionsCommandError(
     "invalid_argument",
-    "Extension usage state must be default_loaded, available, or unavailable.",
+    "Extension usage state must be loaded, available, or unavailable.",
   );
 }
 
@@ -2190,7 +2188,7 @@ function setUsageProfile(
   state: ExtensionUsageState,
   options: { explicit: boolean },
 ): void {
-  const nextExtensionUsage = { ...target.profile.extensionUsage };
+  const nextExtensionUsage = { ...profileExtensionUsageForTarget(target) };
   if (options.explicit) {
     nextExtensionUsage[extensionId] = state;
   } else {
@@ -2199,8 +2197,7 @@ function setUsageProfile(
   if (target.actor === "workflow-task") {
     store.setWorkflowAgent(target.profile.id, {
       ...target.profile,
-      extensions: loadedExtensionUsageIds(nextExtensionUsage),
-      extensionUsage: nextExtensionUsage,
+      overrides: nextExtensionUsage,
     });
     return;
   }
@@ -2210,19 +2207,28 @@ function setUsageProfile(
   });
 }
 
-function loadedExtensionUsageIds(extensionUsage: Record<string, ExtensionUsageState>): string[] {
-  return Object.entries(extensionUsage)
-    .filter((entry): entry is [string, "default_loaded"] => entry[1] === "default_loaded")
-    .map(([extensionId]) => extensionId)
-    .toSorted();
+function profileExtensionUsageForTarget(
+  target: UsageProfileTarget,
+): Record<string, ExtensionUsageState> {
+  return target.actor === "workflow-task"
+    ? (target.profile.overrides ?? {})
+    : target.profile.extensionUsage;
 }
 
 function profileWithoutExtensionUsage<T extends AgentProfileSettings | WorkflowAgentSettings>(
   profile: T,
   extensionId: string,
 ): T {
-  const extensionUsage = { ...profile.extensionUsage };
+  const sourceUsage =
+    "extensionUsage" in profile ? profile.extensionUsage : (profile.overrides ?? {});
+  const extensionUsage = { ...sourceUsage };
   delete extensionUsage[extensionId];
+  if (!("extensionUsage" in profile)) {
+    return {
+      ...profile,
+      overrides: extensionUsage,
+    };
+  }
   return {
     ...profile,
     extensionUsage,
@@ -2236,14 +2242,18 @@ function configuredExtensionUsageState(input: {
   profile: AgentProfileSettings | WorkflowAgentSettings;
 }): ExtensionUsageState {
   const defaults = input.agentSettingsStore?.getState().extensionDefaults;
+  const profileExtensionUsage =
+    "extensionUsage" in input.profile
+      ? input.profile.extensionUsage
+      : (input.profile.overrides ?? {});
   const state = resolveActorExtensionState({
     actor: input.actor,
     defaultExtensionOrder: defaults?.order,
     defaultExtensionUsage: defaults?.usage,
-    profileExtensionUsage: input.profile.extensionUsage,
+    profileExtensionUsage,
   });
   if (state.loadedExtensionIds.includes(input.extensionId)) {
-    return "default_loaded";
+    return "loaded";
   }
   if (state.availableExtensionIds.includes(input.extensionId)) {
     return "available";
@@ -2271,25 +2281,7 @@ function assertUsageStateAllowedForActor(input: {
   extensionId: string;
   requestedState: ExtensionUsageState;
 }): void {
-  if (input.requestedState === "unavailable") {
-    return;
-  }
-  if (
-    input.extension.category === "user" &&
-    (input.actor === "orchestrator" || input.actor === "handler" || input.actor === "workflow-task")
-  ) {
-    return;
-  }
-  const baseline = resolveActorExtensionState({ actor: input.actor });
-  if (
-    !baseline.loadedExtensionIds.includes(input.extensionId) &&
-    !baseline.availableExtensionIds.includes(input.extensionId)
-  ) {
-    throw extensionsCommandError(
-      "USAGE_STATE_UNAVAILABLE_FOR_ACTOR",
-      `Extension ${input.extensionId} is unavailable for ${input.actor} profiles and cannot be set to ${input.requestedState}.`,
-    );
-  }
+  void input;
 }
 
 function queueUsageAgentContextRefreshes(input: {
@@ -4059,7 +4051,7 @@ function resolveSnapshotUsageProfile(input: {
 }
 
 function isExtensionUsageState(value: unknown): value is ExtensionUsageState {
-  return value === "default_loaded" || value === "available" || value === "unavailable";
+  return value === "loaded" || value === "available" || value === "unavailable";
 }
 
 function snapshotPackageFileIsSafe(path: string): boolean {
@@ -7271,7 +7263,7 @@ function revertExtensionUsageChange(
 }
 
 function isUsageState(value: unknown): value is ExtensionUsageState {
-  return value === "default_loaded" || value === "available" || value === "unavailable";
+  return value === "loaded" || value === "available" || value === "unavailable";
 }
 
 function readInstructionLifecycleChange(
@@ -7771,9 +7763,9 @@ function defaultExtensionsRoot(): string {
 
 function userExtensionUsageStates(extensionId: string, store?: AgentSettingsStore) {
   return usageStatesForUserExtension(extensionId, store, {
-    orchestrator: "default_loaded",
+    orchestrator: "loaded",
     handler: "unavailable",
-    "workflow-task": "default_loaded",
+    "workflow-task": "loaded",
   });
 }
 
@@ -7814,7 +7806,7 @@ function usageStatesForUserExtension(
         actorKind: "workflow-task" as const,
         agentProfile: profile.id,
         state:
-          profile.extensionUsage[extensionId] ??
+          profile.overrides?.[extensionId] ??
           defaultUsage?.["workflow-task"]?.[extensionId] ??
           fallback["workflow-task"],
         configurable: true,
@@ -7873,7 +7865,7 @@ function usageStatesForDefaultProfiles(extensionId: string, store?: AgentSetting
             actor: "workflow-task",
             defaultExtensionOrder: settings?.extensionDefaults.order,
             defaultExtensionUsage: settings?.extensionDefaults.usage,
-            profileExtensionUsage: profile.extensionUsage,
+            profileExtensionUsage: profile.overrides ?? {},
           }),
         }),
     ),
@@ -7891,7 +7883,7 @@ function usageRow(input: {
     actorKind: input.actorKind,
     agentProfile: input.agentProfile,
     state: input.state.loadedExtensionIds.includes(input.extensionId)
-      ? "default_loaded"
+      ? "loaded"
       : input.state.availableExtensionIds.includes(input.extensionId)
         ? "available"
         : "unavailable",

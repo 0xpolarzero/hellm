@@ -13,7 +13,7 @@ import type {
 export const START_THREAD_TOOL_NAME = "thread_start";
 
 const extensionUsageStateSchema = Type.Union([
-  Type.Literal("default_loaded"),
+  Type.Literal("loaded"),
   Type.Literal("available"),
   Type.Literal("unavailable"),
 ]);
@@ -31,9 +31,7 @@ const threadStartItemSchema = Type.Object(
         "Compact task packet with goal, acceptance criteria, durable paths, accepted decisions, constraints, expected output, and what not to do.",
     }),
     history: Type.Optional(threadHistorySchema),
-    extensions: Type.Optional(
-      Type.Record(Type.String({ minLength: 1 }), extensionUsageStateSchema),
-    ),
+    overrides: Type.Optional(Type.Record(Type.String({ minLength: 1 }), extensionUsageStateSchema)),
   },
   { additionalProperties: false },
 );
@@ -67,7 +65,7 @@ export interface ThreadStartBridge {
     threadGroupId: string | null;
     objective: string;
     historyMode: StructuredThreadHistoryMode;
-    extensions: Record<string, "default_loaded" | "available" | "unavailable"> | null;
+    overrides: Record<string, "loaded" | "available" | "unavailable"> | null;
     agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
   }): Promise<StructuredThreadRecord>;
@@ -99,7 +97,7 @@ export function createStartThreadTool(options: {
       const requestedThreads = params.threads.map((thread) => ({
         objective: thread.objective.trim(),
         historyMode: thread.history ?? "isolated",
-        extensions: thread.extensions ?? null,
+        overrides: thread.overrides ?? null,
       }));
       const emptyObjective = requestedThreads.find((thread) => !thread.objective);
       let threadGroupId = params.threadGroupId?.trim() || null;
@@ -145,7 +143,7 @@ export function createStartThreadTool(options: {
             threadGroupId,
             objective: requestedThread.objective,
             historyMode: requestedThread.historyMode,
-            extensions: requestedThread.extensions,
+            overrides: requestedThread.overrides,
             agentProfileSettings: null,
             loadedByCommandId: command.id,
           });

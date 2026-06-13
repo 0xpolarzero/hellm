@@ -72,7 +72,7 @@ describe("Workflows generated read model", () => {
         '  model: "gpt-5.4",',
         '  reasoningEffort: "medium",',
         '  instructions: "Review strictly.",',
-        '  extensions: ["git"],',
+        '  overrides: { [Extensions["git"]]: "loaded" },',
         "} satisfies Agents.TaskAgentParameters;",
       ].join("\n"),
     );
@@ -117,7 +117,7 @@ describe("Workflows generated read model", () => {
         model: "gpt-5.4",
         reasoningEffort: "medium",
         instructions: "Review strictly.",
-        extensions: ["git"],
+        overrides: { git: "loaded" },
       },
     });
   });
@@ -140,7 +140,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strictly.",
-          extensions: ["shell"],
+          overrides: { shell: "loaded" },
         },
         null,
         2,
@@ -278,7 +278,7 @@ describe("Workflows generated read model", () => {
           model: "missing-model",
           reasoningEffort: "xhigh",
           instructions: "Review strictly.",
-          extensions: ["missing-extension"],
+          overrides: { "missing-extension": "loaded" },
         },
         null,
         2,
@@ -294,7 +294,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "xhigh",
           instructions: "Review strictly.",
-          extensions: ["shell"],
+          overrides: { shell: "loaded" },
         },
         null,
         2,
@@ -329,7 +329,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strictly.",
-          extensions: ["shell"],
+          overrides: { shell: "loaded" },
         },
         null,
         2,
@@ -353,7 +353,7 @@ describe("Workflows generated read model", () => {
     expect(existsSync(packageRoot)).toBe(false);
   });
 
-  it("fails builds on unauthenticated providers and workflow-task-unavailable extensions", async () => {
+  it("fails builds on unauthenticated providers and unknown extension overrides", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -368,7 +368,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strictly.",
-          extensions: ["workflows"],
+          overrides: { "missing-workflow-extension": "loaded" },
         },
         null,
         2,
@@ -406,7 +406,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strictly.",
-          extensions: ["git", "github"],
+          overrides: { git: "loaded", github: "loaded" },
         },
         null,
         2,
@@ -428,18 +428,24 @@ describe("Workflows generated read model", () => {
     const extensionsIndex = readFileSync(join(extensionsPackageRoot, "index.ts"), "utf8");
     expect(extensionsIndex).toContain('"git": "git"');
     expect(extensionsIndex).toContain('"github": "github"');
-    expect(extensionsIndex).not.toContain('"workflows": "workflows"');
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
     expect(generatedAgent).toContain('import { Extensions } from "@svvy/extensions";');
     expect(generatedAgent).toContain('Extensions["git"]');
     expect(generatedAgent).toContain('Extensions["github"]');
-    expect(generatedAgent).not.toContain('"extensions": [\n    "git"');
+    expect(generatedAgent).not.toContain('Extensions["workflows"]');
+    expect(generatedAgent).not.toContain('"extensions"');
     const generatedAgentsIndex = readFileSync(join(packageRoot, "agents", "index.ts"), "utf8");
     expect(generatedAgentsIndex).toContain('import type { ExtensionId } from "@svvy/extensions";');
     expect(generatedAgentsIndex).toContain("export type TaskAgentExtensionId = ExtensionId;");
-    expect(build.items[0]?.agentParameters?.extensions).toEqual(["git", "github"]);
+    expect(build.items[0]?.agentParameters?.overrides).toEqual({
+      git: "loaded",
+      github: "loaded",
+    });
     const readModel = await readWorkflowsGeneratedReadModel(packageRoot, { sourceRoot });
-    expect(readModel.items[0]?.agentParameters?.extensions).toEqual(["git", "github"]);
+    expect(readModel.items[0]?.agentParameters?.overrides).toEqual({
+      git: "loaded",
+      github: "loaded",
+    });
     expect(
       readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvy", "workflows")),
     ).toBe(packageRoot);
@@ -448,7 +454,7 @@ describe("Workflows generated read model", () => {
     ).toBe(extensionsPackageRoot);
   });
 
-  it("derives workflow-agent generated extensions from tri-state source usage", async () => {
+  it("derives workflow-agent generated extensions from source overrides", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const generatedPackagePath = join(root, "generated", "workflows-package");
@@ -466,11 +472,10 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review the implementation.",
-          extensions: ["workflows"],
-          extensionUsage: {
-            github: "default_loaded",
+          overrides: {
+            github: "loaded",
             git: "available",
-            workflows: "default_loaded",
+            shell: "unavailable",
           },
         },
         null,
@@ -487,13 +492,18 @@ describe("Workflows generated read model", () => {
     });
 
     expect(build.ok).toBe(true);
-    expect(build.items[0]?.agentParameters?.extensions).toEqual(["github"]);
+    expect(build.items[0]?.agentParameters?.overrides).toEqual({
+      github: "loaded",
+      git: "available",
+      shell: "unavailable",
+    });
     const generatedAgent = readFileSync(
       join(generatedPackagePath, "agents", "reviewerAgent.ts"),
       "utf8",
     );
     expect(generatedAgent).toContain('Extensions["github"]');
-    expect(generatedAgent).not.toContain("Extensions.workflows");
+    expect(generatedAgent).toContain('Extensions["git"]');
+    expect(generatedAgent).toContain('Extensions["shell"]');
     expect(generatedAgent).not.toContain("extensionUsage");
   });
 
@@ -519,7 +529,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review strict Linear context.",
-          extensions: ["git", "linear-tools"],
+          overrides: { git: "loaded", "linear-tools": "loaded" },
         },
         null,
         2,
@@ -541,7 +551,10 @@ describe("Workflows generated read model", () => {
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
     expect(generatedAgent).toContain('Extensions["git"]');
     expect(generatedAgent).toContain('Extensions["linear-tools"]');
-    expect(build.items[0]?.agentParameters?.extensions).toEqual(["git", "linear-tools"]);
+    expect(build.items[0]?.agentParameters?.overrides).toEqual({
+      git: "loaded",
+      "linear-tools": "loaded",
+    });
   });
 
   it("includes dependency-backed user svvyx extensions after exact package artifacts are installed", async () => {
@@ -573,7 +586,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review dependency-backed extension references.",
-          extensions: ["installed-api"],
+          overrides: { "installed-api": "loaded" },
         },
         null,
         2,
@@ -593,7 +606,7 @@ describe("Workflows generated read model", () => {
     expect(extensionIds).toContain('"installed-api": "installed-api"');
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
     expect(generatedAgent).toContain('Extensions["installed-api"]');
-    expect(build.items[0]?.agentParameters?.extensions).toEqual(["installed-api"]);
+    expect(build.items[0]?.agentParameters?.overrides).toEqual({ "installed-api": "loaded" });
   });
 
   it("rejects dependency-backed user svvyx extensions with exact artifacts but no approval ledger entry", async () => {
@@ -620,7 +633,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review unapproved dependency-backed extension references.",
-          extensions: ["unapproved-api"],
+          overrides: { "unapproved-api": "loaded" },
         },
         null,
         2,
@@ -674,7 +687,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review rebuilt extension references.",
-          extensions: ["unbuilt-api", "stale-api"],
+          overrides: { "unbuilt-api": "loaded", "stale-api": "loaded" },
         },
         null,
         2,
@@ -697,7 +710,10 @@ describe("Workflows generated read model", () => {
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
     expect(generatedAgent).toContain('Extensions["stale-api"]');
     expect(generatedAgent).toContain('Extensions["unbuilt-api"]');
-    expect(build.items[0]?.agentParameters?.extensions).toEqual(["unbuilt-api", "stale-api"]);
+    expect(build.items[0]?.agentParameters?.overrides).toEqual({
+      "unbuilt-api": "loaded",
+      "stale-api": "loaded",
+    });
   });
 
   it("fails before workflow-agent validation when user extension build inputs are invalid", async () => {
@@ -738,7 +754,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review broken extension context.",
-          extensions: ["missing-workflow-extension"],
+          overrides: { "missing-workflow-extension": "loaded" },
         },
         null,
         2,
@@ -812,7 +828,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review extension preflight ordering.",
-          extensions: ["buildable-api", "missing-workflow-extension"],
+          overrides: { "buildable-api": "loaded", "missing-workflow-extension": "loaded" },
         },
         null,
         2,
@@ -888,7 +904,12 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "medium",
           instructions: "Review unavailable extension references.",
-          extensions: ["blocked-api", "mismatched-api", "instructions-only", "deleted-api"],
+          overrides: {
+            "blocked-api": "loaded",
+            "mismatched-api": "loaded",
+            "instructions-only": "loaded",
+            "deleted-api": "loaded",
+          },
         },
         null,
         2,
@@ -928,7 +949,7 @@ describe("Workflows generated read model", () => {
           model: "gpt-5.4",
           reasoningEffort: "low",
           instructions: "Handle the task.",
-          extensions: ["shell"],
+          overrides: { shell: "loaded" },
         },
         null,
         2,
@@ -943,7 +964,7 @@ describe("Workflows generated read model", () => {
         '  label: "Reviewer",',
         '  reasoningEffort: "medium",',
         '  instructions: "Review strictly.",',
-        '  extensions: [Extensions.git, Extensions["apply-patch"]],',
+        '  overrides: { [Extensions.git]: "loaded", [Extensions["apply-patch"]]: "available" },',
         "});",
       ].join("\n"),
     );
@@ -959,7 +980,7 @@ describe("Workflows generated read model", () => {
         "  model,",
         '  reasoningEffort: "medium",',
         '  instructions: "Review strictly.",',
-        '  extensions: ["shell"],',
+        '  overrides: { shell: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -988,7 +1009,7 @@ describe("Workflows generated read model", () => {
         '  model: "gpt-5.4",',
         '  reasoningEffort: "medium",',
         '  instructions: "Review from imported helper.",',
-        "  extensions: [Extensions.git],",
+        '  overrides: { [Extensions.git]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1005,7 +1026,7 @@ describe("Workflows generated read model", () => {
         '  model: "gpt-5.4",',
         '  reasoningEffort: "medium",',
         '  instructions: "Do not extract local helpers.",',
-        "  extensions: [Extensions.git],",
+        '  overrides: { [Extensions.git]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1022,7 +1043,7 @@ describe("Workflows generated read model", () => {
         '  model: "gpt-5.4",',
         '  reasoningEffort: "medium",',
         '  instructions: "Do not extract other namespaces.",',
-        "  extensions: [Extensions.git],",
+        '  overrides: { [Extensions.git]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1036,7 +1057,10 @@ describe("Workflows generated read model", () => {
         model: "gpt-5.4",
         reasoningEffort: "medium",
         instructions: "Review strictly.",
-        extensions: ["git", "apply-patch"],
+        overrides: {
+          git: "loaded",
+          "apply-patch": "available",
+        },
       },
     });
     expect(
@@ -1050,7 +1074,7 @@ describe("Workflows generated read model", () => {
         model: "gpt-5.4",
         reasoningEffort: "medium",
         instructions: "Review from imported helper.",
-        extensions: ["git"],
+        overrides: { git: "loaded" },
       },
     });
     expect(() => extractWorkflowAgentParametersFromSource({ path: dynamicPath })).toThrow(

@@ -2156,7 +2156,7 @@ describe("WorkspaceSessionCatalog", () => {
             parentSurfacePiSessionId: string;
             objective: string;
             historyMode: "isolated";
-            extensions: Record<string, "default_loaded" | "available" | "unavailable">;
+            overrides: Record<string, "loaded" | "available" | "unavailable">;
             agentProfileSettings: null;
             loadedByCommandId: string;
             autoStart: false;
@@ -2169,12 +2169,12 @@ describe("WorkspaceSessionCatalog", () => {
         parentSurfacePiSessionId: created.target.surfacePiSessionId,
         objective: "Use a narrower handler extension binding for this objective.",
         historyMode: "isolated",
-        extensions: {
-          "extension-managing": "default_loaded",
+        overrides: {
+          "extension-managing": "loaded",
           smithers: "available",
           workflows: "unavailable",
           "request-user-input": "unavailable",
-          "thread-orchestration": "default_loaded",
+          "thread-orchestration": "loaded",
           "thread-handling": "unavailable",
         },
         agentProfileSettings: null,
@@ -2188,9 +2188,9 @@ describe("WorkspaceSessionCatalog", () => {
         name: "Thread handler",
       });
       expect(storedThread.loadedExtensionIds).toContain("extension-managing");
+      expect(storedThread.loadedExtensionIds).toContain("thread-orchestration");
       expect(storedThread.loadedExtensionIds).not.toContain("smithers");
       expect(storedThread.loadedExtensionIds).not.toContain("workflows");
-      expect(storedThread.loadedExtensionIds).not.toContain("thread-orchestration");
       expect(storedThread.loadedExtensionIds).not.toContain("thread-handling");
       expect(storedThread.availableExtensionIds).toEqual(["smithers"]);
 
@@ -2208,7 +2208,7 @@ describe("WorkspaceSessionCatalog", () => {
         "- smithers: Use official Smithers CLI commands through Shell for workspace .smithers work.",
       );
       expect(openedHandler.resolvedSystemPrompt).not.toContain("svvyx workflows");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain(
+      expect(openedHandler.resolvedSystemPrompt).toContain(
         "Loaded native extension: Thread Orchestration.",
       );
       expect(openedHandler.resolvedSystemPrompt).not.toContain(
@@ -2614,7 +2614,7 @@ describe("WorkspaceSessionCatalog", () => {
       model: DEFAULTS.model,
       reasoningEffort: DEFAULTS.thinkingLevel,
       systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-      extensionUsage: { smithers: "default_loaded" },
+      extensionUsage: { smithers: "loaded" },
       updateFromComposer: false,
       builtin: false,
       locked: false,
@@ -2869,7 +2869,7 @@ describe("WorkspaceSessionCatalog", () => {
       model: DEFAULTS.model,
       reasoningEffort: DEFAULTS.thinkingLevel,
       systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-      extensionUsage: { smithers: "default_loaded" },
+      extensionUsage: { smithers: "loaded" },
       updateFromComposer: false,
       builtin: false,
       locked: false,

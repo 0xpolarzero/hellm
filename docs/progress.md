@@ -155,7 +155,7 @@ How to use this file:
 
 Current product decisions for this section are specified in `docs/specs/extension/web.extension.spec.md`.
 
-- [x] Expose Web as a builtin `instructions` extension that is default-loaded for orchestrators,
+- [x] Expose Web as a builtin `instructions` extension that is loaded by default for orchestrators,
       handler threads, and workflow task agents only while `networkAccess` is true, and unavailable with
       no prompt guidance when `networkAccess` is false. Commit(s): pending local changes
 - [x] Generate the Web extension's core prompt content from the TinyFish-owned `@tiny-fish/cli@0.1.6` package artifact instead of mutable skill URLs. Commit(s): pending local changes
@@ -173,7 +173,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
       reporting update metadata without adding native Web tools or generated Web clients. Commit(s):
       pending local changes
 - [x] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts. Commit(s): pending local changes
-- [x] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
+- [x] Add generated-context and extension-inventory tests proving Web is prompt-only, loaded by default
       for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is
       false, and absent from native tool declarations, loaded `svvyx` command guidance, generated TypeScript
       declarations, provider settings, and Firecrawl provider lists. Commit(s): pending local changes
@@ -184,7 +184,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread_start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
-- [x] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; agent-facing prompts and runtime tool declarations contain only that thread-control surface. Commit(s): pending local changes
+- [x] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `overrides`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; agent-facing prompts and runtime tool declarations contain only that thread-control surface. Commit(s): pending local changes
 - [x] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread_start`. Commit(s): `d323012`
 - [x] Re-enter orchestrator control from durable handler-thread episodes, using durable thread objective state plus the latest episode instead of raw transcript scanning. Commit(s): `d323012`, `fdaf460`
 
@@ -213,7 +213,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Keep Smithers as a builtin prompt-only extension that loads official CLI and authoring guidance for handler threads without native Smithers tools, generated TypeScript clients, product workflow wrappers, or bundled app Smithers runtime dependencies. Commit(s): pending local changes
 - [x] Generate the Smithers core instruction fragment from the Extension Managing-selected `smithers-orchestrator` documentation version while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces. Commit(s): pending local changes
 - [x] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, checked global `smithers` CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output. Commit(s): pending local changes
-- [x] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads default-load Smithers prompt guidance and workflow task agents do not default-load Smithers. Commit(s): pending local changes
+- [x] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads load by default Smithers prompt guidance and workflow task agents do not load by default Smithers. Commit(s): pending local changes
 
 ## 6. Workflows Source, Build, And Generated Surface
 
@@ -223,12 +223,12 @@ Current product decisions for this section are specified in `docs/specs/workflow
 - [x] Treat generated Workflows output and workspace `.smithers/node_modules/@svvy/workflows` links as read-only plumbing outside the safe writable boundary; ordinary edits target source and then build. Commit(s): pending local changes
 - [x] Generate `@svvy/workflows` with only `Agents`, `Components`, `Prompts`, and `Workflows` root namespaces, and export `Agents.defineTaskAgent` plus `Agents.TaskAgentParameters` under `Agents`. Commit(s): pending local changes
 - [x] Link `@svvy/workflows` and generated `@svvy/extensions` into each opened workspace's `.smithers/node_modules` without relying on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or source-checkout-relative paths. Commit(s): pending local changes
-- [x] Generate `@svvy/extensions` during the Workflows build path from workflow-task-safe builtin ids plus active ready user `svvyx` extensions that opt into TypeScript API generation after Extension prebuild, including dependency-backed current builds only when their exact approved package artifacts are installed; reject workflow-agent references to deleted, instruction-only, dependency-missing, build-failed, or workflow-task-unavailable extension ids. Commit(s): pending local changes
+- [x] Generate `@svvy/extensions` during the Workflows build path from workflow-task-safe builtin ids plus active ready user `svvyx` extensions that opt into TypeScript API generation after Extension prebuild, including dependency-backed current builds only when their exact approved package artifacts are installed; reject workflow-agent overrides for deleted, instruction-only, dependency-missing, or build-failed extension ids. Commit(s): pending local changes
 - [x] Implement `svvyx workflows list [--kind agent|prompt|component|workflow] --json` with only mechanically available export identity and source/generated paths. Commit(s): pending local changes
 - [x] Implement `svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json`, with strict overwrite rejection by default and automatic build after successful save. Commit(s): pending local changes
-- [x] Implement `svvyx workflows build --json` so it first builds Extensions, generates `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and repairs workspace links. Commit(s): pending local changes
+- [x] Implement `svvyx workflows build --json` so it first builds Extensions, generates `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension usage overrides, generates `@svvy/workflows`, and repairs workspace links. Commit(s): pending local changes
   - [x] Preflight app-owned user Extension source before Workflows source validation so invalid Extension build inputs and TypeScript-enabled `svvyx` extensions that cannot rebuild fail with Extension-specific diagnostics before `@svvy/extensions` or `@svvy/workflows` package writes. Commit(s): pending
-  - [x] Add automatic Extension rebuild and dependency/CLI-aware outcomes to the Workflows build pipeline before workflow-agent extension references are accepted. Commit(s): pending
+  - [x] Add automatic Extension rebuild and dependency/CLI-aware outcomes to the Workflows build pipeline before workflow-agent extension usage overrides are accepted. Commit(s): pending
 - [x] Implement `svvyx workflows models list --json` from the same pi-normalized provider/model/auth/reasoning metadata used by the Agents pane, without a live completion request by default. Commit(s): pending local changes
 - [x] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports. Commit(s): pending local changes
 - [x] Save `--kind agent` by statically extracting `Agents.defineTaskAgent(...)` or resolvable `defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic or unresolved inputs with structured diagnostics. Commit(s): pending local changes
@@ -380,7 +380,7 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, `docs/specs/extension/smithers.extension.spec.md`, and `docs/specs/extension/workflows.extension.spec.md`.
 
 - [x] Define builtin extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Workflows, Web, Git, GitHub, External Instructions, Artifacts, and Request User Input with default usage states for each adopted agent family. Commit(s): `673837a`
-- [x] Load base orchestrator, handler, and workflow-task guidance through builtin `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with prompt-only Smithers guidance and Workflows source-library commands, and workflow task agents keeping Smithers, Workflows, and handler controls unavailable by default. Commit(s): `673837a`
+- [x] Load base orchestrator, handler, and workflow-task guidance through builtin `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers loaded by default with prompt-only Smithers guidance and Workflows source-library commands, and workflow task agents keeping Smithers, Workflows, and handler controls configured off by default but still configurable through profile overrides. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded and available extension bindings in surface metadata so users can see when specialized extensions are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
@@ -433,7 +433,7 @@ Current product decisions for this section are specified in `docs/specs/ambient-
   - [x] Add a pure resolved-binding helper that returns enabled ambient candidates only when category, source, scope, actor, and profile all match. Commit(s): pending
 - [x] Implement the baseline pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and keep behavior-changing ambient extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings disabled until enabled through exact category/source/workspace/profile contracts. Commit(s): pending local changes
   - [x] Create managed pi actor sessions with default-deny resource loading, svvy-composed system prompts, empty agent files and append prompts, no host extensions/skills/prompt templates/themes/additional paths/factories, suppressed pi built-in tools, svvy-owned custom tools only, disabled prompt-template expansion, and no ambient `extendResources()` calls. Commit(s): pending
-  - [x] Discover same-directory `AGENTS.md` and `CLAUDE.md` as visible external instruction records while default-loading only `AGENTS.md`; lone `CLAUDE.md` files remain enabled by default. Commit(s): pending
+  - [x] Discover same-directory `AGENTS.md` and `CLAUDE.md` as visible external instruction records while load by defaulting only `AGENTS.md`; lone `CLAUDE.md` files remain enabled by default. Commit(s): pending
   - [x] Implement backend and Settings controls for external-instruction per-file enablement, actor selection, default-off builtin global roots, custom global roots, read-status visibility, and external-editor actions. Commit(s): pending local changes
   - [x] Project external-instruction records into the Extensions pane's distinct read-only External Instructions category with source group, path, read status, content, hash, per-file enablement, actor controls, Extension Managing inspect metadata, live stale prompt-binding updates, and external-editor actions. Commit(s): pending local changes
   - [ ] Connect enabled ambient resources to runtime loading only after category-specific host/source/workspace/profile contracts exist.

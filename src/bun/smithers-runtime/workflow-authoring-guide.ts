@@ -110,7 +110,7 @@ const ASSET_AND_AGENT_EXAMPLE = [
   "  model: 'gpt-5.4',",
   "  reasoningEffort: 'medium',",
   "  instructions: 'Review the task result for correctness, edge cases, and test coverage.',",
-  "  extensions: ['cx'],",
+  "  overrides: { cx: 'loaded' },",
   "});",
   "```",
 ].join("\n");

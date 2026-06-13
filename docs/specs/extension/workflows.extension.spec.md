@@ -35,13 +35,13 @@ Default usage:
 | Actor kind | State |
 | --- | --- |
 | Orchestrator | `available` |
-| Handler thread | `default_loaded` |
+| Handler thread | `loaded` |
 | Workflow task agent | `unavailable` |
 
 The Workflows extension is available to orchestrators so they can understand that reusable workflow
 material exists, but normal workflow authoring belongs to handler threads. Workflow task agents do
-not receive Workflows by default because they should execute the local task they were given, not
-mutate the app-global workflow library unless a later explicit design adopts that behavior.
+not receive Workflows by default because they should execute the local task they were given. That
+`unavailable` default is a configurable off state, not a hard actor boundary.
 
 ## Command Family
 
@@ -141,7 +141,7 @@ It must:
 1. build and validate Extensions
 2. generate or refresh `@svvy/extensions`
 3. validate Workflows source
-4. validate workflow-agent provider/model/reasoning and extension references
+4. validate workflow-agent provider/model/reasoning and extension usage overrides
 5. generate `@svvy/workflows`
 6. link generated packages into opened workspace `.smithers/node_modules`
 

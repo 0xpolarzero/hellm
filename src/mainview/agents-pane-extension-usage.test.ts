@@ -57,7 +57,7 @@ describe("Agents pane extension usage helpers", () => {
           actorKind: "orchestrator",
           agentProfile: "default",
           configurable: true,
-          state: "default_loaded",
+          state: "loaded",
         },
       ],
     });
@@ -80,7 +80,7 @@ describe("Agents pane extension usage helpers", () => {
         inventoryUsage: { ...web.usage[0]!, state: "unavailable" },
         networkAccess: true,
       }),
-    ).toBe("default_loaded");
+    ).toBe("loaded");
   });
 
   it("keeps explicit overrides resolved through actor extension policy", () => {
@@ -91,7 +91,7 @@ describe("Agents pane extension usage helpers", () => {
           actorKind: "orchestrator",
           agentProfile: "default",
           configurable: true,
-          state: "default_loaded",
+          state: "loaded",
         },
       ],
     });
@@ -100,11 +100,11 @@ describe("Agents pane extension usage helpers", () => {
       resolvedExtensionState({
         actor: "orchestrator",
         extension: web,
-        explicitUsage: { web: "default_loaded" },
+        explicitUsage: { web: "loaded" },
         inventoryUsage: web.usage[0] ?? null,
         networkAccess: false,
       }),
-    ).toBe("unavailable");
+    ).toBe("loaded");
 
     expect(
       resolvedExtensionState({
@@ -199,7 +199,7 @@ describe("Agents pane extension usage helpers", () => {
       ],
       networkAccess: true,
       profileId: "default",
-      usage: { smithers: "default_loaded" },
+      usage: { smithers: "loaded" },
     });
 
     expect(items).toEqual([
@@ -207,7 +207,7 @@ describe("Agents pane extension usage helpers", () => {
         defaultState: "available",
         explicit: true,
         id: "smithers",
-        state: "default_loaded",
+        state: "loaded",
       }),
     ]);
   });
@@ -235,7 +235,7 @@ describe("Agents pane extension usage helpers", () => {
           actorKind: "orchestrator",
           agentProfile: "default",
           configurable: true,
-          state: "default_loaded",
+          state: "loaded",
         },
       ],
     });
@@ -263,7 +263,7 @@ describe("Agents pane extension usage helpers", () => {
       }).map((item) => `${item.id}:${item.state}`),
     ).toEqual([
       "first-extension:unavailable",
-      "second-extension:default_loaded",
+      "second-extension:loaded",
       "third-extension:available",
     ]);
   });
@@ -275,8 +275,8 @@ describe("Agents pane extension usage helpers", () => {
         order: ["team-notes", "smithers"],
         usage: {
           orchestrator: {
-            "team-notes": "default_loaded",
-            smithers: "default_loaded",
+            "team-notes": "loaded",
+            smithers: "loaded",
           },
         },
       },
@@ -299,8 +299,8 @@ describe("Agents pane extension usage helpers", () => {
     });
 
     expect(items.map((item) => `${item.id}:${item.state}:${item.explicit}`)).toEqual([
-      "team-notes:default_loaded:false",
-      "smithers:default_loaded:false",
+      "team-notes:loaded:false",
+      "smithers:loaded:false",
     ]);
   });
 
@@ -331,7 +331,7 @@ describe("Agents pane extension usage helpers", () => {
       expect.objectContaining({
         allowedStates: {
           available: true,
-          default_loaded: true,
+          loaded: true,
           unavailable: true,
         },
         configurable: true,
@@ -350,7 +350,7 @@ describe("Agents pane extension usage helpers", () => {
         order: ["team-notes"],
         usage: {
           handler: {
-            "team-notes": "default_loaded",
+            "team-notes": "loaded",
           },
         },
       },
@@ -381,7 +381,7 @@ describe("Agents pane extension usage helpers", () => {
     const item: ExtensionUsageControlItem = {
       allowedStates: {
         available: true,
-        default_loaded: true,
+        loaded: true,
         unavailable: true,
       },
       category: "builtin",

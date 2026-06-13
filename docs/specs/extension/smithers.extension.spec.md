@@ -59,7 +59,7 @@ Default usage:
 | Actor kind | State |
 | --- | --- |
 | Orchestrator | `available` |
-| Handler thread | `default_loaded` |
+| Handler thread | `loaded` |
 | Workflow task agent | `unavailable` |
 
 The Smithers extension is prompt-only. It adds no native tools, no generated TypeScript client, and

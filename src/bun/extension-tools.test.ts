@@ -187,7 +187,7 @@ describe("builtin extension registry", () => {
     ]);
   });
 
-  it("keeps Extension Loading fixed default-loaded through profile and thread overrides", () => {
+  it("keeps Extension Loading fixed loaded through profile and thread overrides", () => {
     const state = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: {
@@ -202,15 +202,33 @@ describe("builtin extension registry", () => {
     expect(state.availableExtensionIds).not.toContain("extension-loading");
   });
 
+  it("lets profile usage load or expose builtin extensions regardless of actor default", () => {
+    const handlerState = resolveActorExtensionState({
+      actor: "handler",
+      profileExtensionUsage: {
+        "thread-orchestration": "loaded",
+      },
+    });
+    const workflowState = resolveActorExtensionState({
+      actor: "workflow-task",
+      profileExtensionUsage: {
+        workflows: "available",
+      },
+    });
+
+    expect(handlerState.loadedExtensionIds).toContain("thread-orchestration");
+    expect(workflowState.availableExtensionIds).toContain("workflows");
+  });
+
   it("preserves explicit user extension ids from profile usage", () => {
     const state = resolveActorExtensionState({
       actor: "orchestrator",
       profileExtensionUsage: {
-        notes: "default_loaded",
+        jira: "loaded",
+        notes: "loaded",
         linear: "available",
         old: "unavailable",
       },
-      profileLoadedExtensionIds: ["jira"],
     });
 
     expect(state.loadedExtensionIds).toContain("jira");
@@ -224,8 +242,8 @@ describe("builtin extension registry", () => {
     const defaults = {
       order: ["team-notes", "shell"],
       usage: {
-        orchestrator: { "team-notes": "default_loaded" },
-        handler: { "team-notes": "default_loaded" },
+        orchestrator: { "team-notes": "loaded" },
+        handler: { "team-notes": "loaded" },
         "workflow-task": { "team-notes": "available" },
       },
     } as const;
@@ -524,7 +542,7 @@ describe("builtin extension registry", () => {
       dependencyReadiness: "not_required",
       resetBehavior: "external_refresh",
       deleteBehavior: "not_allowed",
-      state: "default_loaded",
+      state: "loaded",
     });
     expect(visible.available.map((extension) => extension.id)).toEqual(["smithers"]);
   });
@@ -848,7 +866,7 @@ describe("extension loading tools", () => {
       typescriptApiEnabled: false,
       resetBehavior: "external_refresh",
       deleteBehavior: "not_allowed",
-      state: "default_loaded",
+      state: "loaded",
     });
     expect(result.content[0]?.type === "text" ? result.content[0].text : "").toContain(
       externalInstructionExtensionId(source),

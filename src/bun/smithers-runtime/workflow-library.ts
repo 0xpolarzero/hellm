@@ -15,11 +15,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
 import ts from "typescript";
-import {
-  BUILTIN_EXTENSIONS,
-  resolveActorExtensionState,
-  type ExtensionUsageState,
-} from "../../shared/extensions";
+import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../../shared/extensions";
 import type { AgentSettingsStore } from "../agent-settings-store";
 import type { ExtensionEnvSecretStore } from "../extension-env-secret-store";
 import {
@@ -93,6 +89,9 @@ type WorkflowGeneratedManifest = {
 };
 
 const GENERATED_MANIFEST_FILE = ".svvy-workflows-manifest.json";
+const TASK_AGENT_OVERRIDE_STATES = ["loaded", "available", "unavailable"] as const;
+
+type TaskAgentExtensionOverrideState = (typeof TASK_AGENT_OVERRIDE_STATES)[number];
 
 const SOURCE_DIR_BY_KIND = {
   agent: "agents",
@@ -1302,6 +1301,9 @@ function propertyNameToString(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
     return name.text;
   }
+  if (ts.isComputedPropertyName(name)) {
+    return extensionReferenceToId(name.expression);
+  }
   return null;
 }
 
@@ -1393,7 +1395,7 @@ function readAgentSourceRecord(
       });
       return null;
     }
-    return normalizeAgentSourceRecord(parsed);
+    return parsed;
   } catch (error) {
     diagnostics.push({
       code: "invalid_agent_source",
@@ -1404,60 +1406,37 @@ function readAgentSourceRecord(
   }
 }
 
-function normalizeAgentSourceRecord(record: Record<string, unknown>): Record<string, unknown> {
-  const extensionUsage = recordProperty(record, "extensionUsage");
-  if (!extensionUsage) {
-    return record;
-  }
-  return {
-    ...record,
-    extensions: workflowTaskLoadedExtensionIds(extensionUsage),
-  };
-}
-
-function recordProperty(
+function taskAgentOverridesProperty(
   record: Record<string, unknown>,
-  key: string,
-): Record<string, ExtensionUsageState> | null {
-  const value = record[key];
+): Record<string, TaskAgentExtensionOverrideState> | null | undefined {
+  if (!Object.hasOwn(record, "overrides")) {
+    return undefined;
+  }
+  const value = record.overrides;
+  if (value === undefined) {
+    return undefined;
+  }
   if (!isRecord(value)) {
     return null;
   }
-  const usage: Record<string, ExtensionUsageState> = {};
+  const overrides: Record<string, TaskAgentExtensionOverrideState> = {};
   for (const [rawId, rawState] of Object.entries(value)) {
     const id = rawId.trim();
-    if (
-      id &&
-      (rawState === "default_loaded" || rawState === "available" || rawState === "unavailable")
-    ) {
-      usage[id] = rawState;
+    if (!id || !isTaskAgentExtensionOverrideState(rawState)) {
+      return null;
     }
+    overrides[id] = rawState;
   }
-  return usage;
+  return overrides;
 }
 
-function workflowTaskLoadedExtensionIds(
-  extensionUsage: Record<string, ExtensionUsageState>,
-): string[] {
-  const loaded = new Set<string>();
-  for (const [rawId, state] of Object.entries(extensionUsage)) {
-    const id = rawId.trim();
-    if (!id || state !== "default_loaded") {
-      continue;
-    }
-    if (!isBuiltinExtensionId(id)) {
-      loaded.add(id);
-      continue;
-    }
-    const builtinState = resolveActorExtensionState({
-      actor: "workflow-task",
-      profileExtensionUsage: { [id]: "default_loaded" },
-    });
-    if (builtinState.loadedExtensionIds.includes(id)) {
-      loaded.add(id);
-    }
-  }
-  return [...loaded].toSorted();
+function isTaskAgentExtensionOverrideState(
+  value: unknown,
+): value is TaskAgentExtensionOverrideState {
+  return (
+    typeof value === "string" &&
+    TASK_AGENT_OVERRIDE_STATES.includes(value as TaskAgentExtensionOverrideState)
+  );
 }
 
 function validateWorkflowSourceItems(
@@ -1493,7 +1472,7 @@ function validateWorkflowSourceItems(
     const model = stringProperty(parameters, "model");
     const reasoningEffort = stringProperty(parameters, "reasoningEffort") as ReasoningEffort | null;
     const instructions = stringProperty(parameters, "instructions");
-    const extensions = stringArrayProperty(parameters, "extensions");
+    const overrides = taskAgentOverridesProperty(parameters);
 
     for (const [field, value] of [
       ["id", stringProperty(parameters, "id")],
@@ -1512,10 +1491,26 @@ function validateWorkflowSourceItems(
         });
       }
     }
-    if (!extensions) {
+    if (Object.hasOwn(parameters, "extensions")) {
       diagnostics.push({
         code: "invalid_agent_parameters",
-        message: `Workflow agent ${item.exportName} extensions must be a string array.`,
+        message: `Workflow agent ${item.exportName} must use overrides, not extensions.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    }
+    if (Object.hasOwn(parameters, "extensionUsage")) {
+      diagnostics.push({
+        code: "invalid_agent_parameters",
+        message: `Workflow agent ${item.exportName} must use overrides, not extensionUsage.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    }
+    if (overrides === null) {
+      diagnostics.push({
+        code: "invalid_agent_parameters",
+        message: `Workflow agent ${item.exportName} overrides must be an object whose values are loaded, available, or unavailable.`,
         path: item.sourcePath,
         exportName: item.exportName,
       });
@@ -1544,32 +1539,28 @@ function validateWorkflowSourceItems(
         exportName: item.exportName,
       });
     }
-    const builtinWorkflowTaskExtensions = resolveActorExtensionState({
-      actor: "workflow-task",
-      profileLoadedExtensionIds: (extensions ?? []).filter((extensionId) =>
-        isBuiltinExtensionId(extensionId),
-      ),
-    });
-    const availableBuiltinExtensions = new Set<string>([
-      ...builtinWorkflowTaskExtensions.loadedExtensionIds,
-      ...builtinWorkflowTaskExtensions.availableExtensionIds,
-    ]);
-    const workflowTaskBaseline = resolveActorExtensionState({
-      actor: "workflow-task",
-    });
-    const workflowTaskBaselineIds = new Set<string>([
-      ...workflowTaskBaseline.loadedExtensionIds,
-      ...workflowTaskBaseline.availableExtensionIds,
-    ]);
     const userGeneratedExtensions = new Set(
       [...extensionExportIds].filter((extensionId) => !isBuiltinExtensionId(extensionId)),
     );
-    for (const extensionId of extensions ?? []) {
+    const resolvedBuiltinOverrides = resolveActorExtensionState({
+      actor: "workflow-task",
+      overrides: Object.fromEntries(
+        Object.entries(overrides ?? {}).filter(([extensionId]) =>
+          isBuiltinExtensionId(extensionId),
+        ),
+      ),
+    });
+    const resolvedBuiltinOverrideIds = new Set([
+      ...resolvedBuiltinOverrides.loadedExtensionIds,
+      ...resolvedBuiltinOverrides.availableExtensionIds,
+    ]);
+    for (const [extensionId, state] of Object.entries(overrides ?? {})) {
       const builtinAllowed =
         isBuiltinExtensionId(extensionId) &&
-        availableBuiltinExtensions.has(extensionId) &&
-        workflowTaskBaselineIds.has(extensionId);
-      const userAllowed = userGeneratedExtensions.has(extensionId);
+        (state === "unavailable" || resolvedBuiltinOverrideIds.has(extensionId));
+      const userAllowed =
+        userGeneratedExtensions.has(extensionId) ||
+        (state === "unavailable" && !isBuiltinExtensionId(extensionId));
       if (!extensionExportIds.has(extensionId) || (!builtinAllowed && !userAllowed)) {
         diagnostics.push({
           code: "invalid_agent_extension",
@@ -1670,6 +1661,7 @@ function writeAgentsIndex(
       "",
       "export type ReasoningEffort = ThinkingLevel;",
       "export type TaskAgentExtensionId = ExtensionId;",
+      'export type TaskAgentExtensionOverrideState = "loaded" | "available" | "unavailable";',
       "export interface TaskAgentParameters {",
       "  id: string;",
       "  label: string;",
@@ -1677,7 +1669,7 @@ function writeAgentsIndex(
       "  model: string;",
       "  reasoningEffort: ReasoningEffort;",
       "  instructions: string;",
-      "  extensions: readonly TaskAgentExtensionId[];",
+      "  overrides?: Record<TaskAgentExtensionId, TaskAgentExtensionOverrideState>;",
       "}",
       "export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): T {",
       "  return parameters;",
@@ -1702,15 +1694,21 @@ function writeAgentsIndex(
 }
 
 function serializeAgentParameters(parameters: Record<string, unknown>): string {
-  const { extensions, extensionUsage: _extensionUsage, ...rest } = parameters;
-  const extensionIds = Array.isArray(extensions)
-    ? extensions.filter((extension): extension is string => typeof extension === "string")
+  const { overrides, ...rest } = parameters;
+  const overrideEntries = isRecord(overrides)
+    ? Object.entries(overrides).filter(
+        (entry): entry is [string, TaskAgentExtensionOverrideState] =>
+          isTaskAgentExtensionOverrideState(entry[1]),
+      )
     : [];
   const prefix = JSON.stringify(rest, null, 2).replace(/\n}$/, "");
+  if (overrideEntries.length === 0) {
+    return `${prefix}\n}`;
+  }
   const separator = prefix === "{" ? "" : ",";
   return [
     prefix,
-    `${separator}\n  "extensions": [${extensionIds.map((id) => `Extensions[${JSON.stringify(id)}]`).join(", ")}]`,
+    `${separator}\n  "overrides": {${overrideEntries.map(([id, state]) => `\n    [Extensions[${JSON.stringify(id)}]]: ${JSON.stringify(state)},`).join("")}\n  }`,
     "}",
   ].join("");
 }
@@ -1810,11 +1808,6 @@ function isValidExportName(exportName: string): boolean {
 function stringProperty(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function stringArrayProperty(record: Record<string, unknown>, key: string): string[] | null {
-  const value = record[key];
-  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
 }
 
 export class WorkflowLibraryError extends Error {

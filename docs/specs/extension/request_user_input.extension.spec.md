@@ -66,8 +66,8 @@ Default usage state:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | default_loaded |
-| Handler | default_loaded |
+| Orchestrator | loaded |
+| Handler | loaded |
 | Workflow task agent | unavailable |
 
 Workflow task agents do not receive this extension by default. A workflow task agent runs under

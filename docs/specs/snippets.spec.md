@@ -30,7 +30,7 @@ Baseline behavior:
 - expand Snippets through `svvy`, not through pi, Claude, Codex, or another host runtime
 - keep host slash-command execution disabled
 
-Snippets do nothing until the user inserts one. They are not default-loaded instructions, so they do
+Snippets do nothing until the user inserts one. They are not loaded by default instructions, so they do
 not need actor toggles, extension usage states, generated agent context refresh, or runtime command
 surfaces.
 

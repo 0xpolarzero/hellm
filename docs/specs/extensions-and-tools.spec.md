@@ -60,28 +60,34 @@ loaded-contributor lifecycle, no generated outputs, and no reset/delete controls
 
 | Extension | Interface | Orchestrator | Handler thread | Workflow task agent |
 | --- | --- | --- | --- | --- |
-| `base-common` | instructions | default_loaded | default_loaded | default_loaded |
-| `base-orchestrator` | instructions | default_loaded | unavailable | unavailable |
-| `base-handler` | instructions | unavailable | default_loaded | unavailable |
-| `base-workflow-task` | instructions | unavailable | unavailable | default_loaded |
-| `shell` | native_tool | default_loaded | default_loaded | default_loaded |
-| `apply-patch` | native_tool | default_loaded | default_loaded | default_loaded |
-| `execute-typescript` | native_tool | default_loaded | default_loaded | default_loaded |
-| `extension-loading` | native_tool | default_loaded | default_loaded | default_loaded |
+| `base-common` | instructions | loaded | loaded | loaded |
+| `base-orchestrator` | instructions | loaded | unavailable | unavailable |
+| `base-handler` | instructions | unavailable | loaded | unavailable |
+| `base-workflow-task` | instructions | unavailable | unavailable | loaded |
+| `shell` | native_tool | loaded | loaded | loaded |
+| `apply-patch` | native_tool | loaded | loaded | loaded |
+| `execute-typescript` | native_tool | loaded | loaded | loaded |
+| `extension-loading` | native_tool | loaded | loaded | loaded |
 | `extension-managing` | native_tool | available | available | unavailable |
-| `request-user-input` | native_tool | default_loaded | default_loaded | unavailable |
-| `thread-orchestration` | native_tool | default_loaded | unavailable | unavailable |
-| `thread-handling` | native_tool | unavailable | default_loaded | unavailable |
-| `cx` | instructions | default_loaded | default_loaded | default_loaded |
-| `git` | instructions | default_loaded | default_loaded | default_loaded |
-| `github` | instructions | default_loaded | default_loaded | available |
-| `web` | instructions | default_loaded when `networkAccess` is true | default_loaded when `networkAccess` is true | default_loaded when `networkAccess` is true |
-| `smithers` | instructions | available | default_loaded | unavailable |
-| `workflows` | svvyx | available | default_loaded | unavailable |
-| `artifacts` | svvyx | default_loaded | default_loaded | default_loaded |
+| `request-user-input` | native_tool | loaded | loaded | unavailable |
+| `thread-orchestration` | native_tool | loaded | unavailable | unavailable |
+| `thread-handling` | native_tool | unavailable | loaded | unavailable |
+| `cx` | instructions | loaded | loaded | loaded |
+| `git` | instructions | loaded | loaded | loaded |
+| `github` | instructions | loaded | loaded | available |
+| `web` | instructions | loaded when `networkAccess` is true | loaded when `networkAccess` is true | loaded when `networkAccess` is true |
+| `smithers` | instructions | available | loaded | unavailable |
+| `workflows` | svvyx | available | loaded | unavailable |
+| `artifacts` | svvyx | loaded | loaded | loaded |
 | external instructions | instructions | configurable | configurable | configurable |
 
 The builtin extension inventory above is exhaustive for the base design.
+
+Usage states are `loaded`, `available`, and `unavailable`. `unavailable` means the extension is
+configured off for that actor's resolved default or profile binding; it is not by itself a hard
+actor boundary. Configurable extensions may be moved between loaded, available, and unavailable for
+a target actor/profile through the normal usage controls unless the extension is fixed by product
+contract. Extension Loading is the fixed always-loaded control.
 
 ## Smithers Boundary
 

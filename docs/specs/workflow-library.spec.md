@@ -317,7 +317,10 @@ const reviewerTaskAgent = Agents.defineTaskAgent({
   model: "gpt-5.4",
   reasoningEffort: "medium",
   instructions: "Review the implementation for correctness.",
-  extensions: [Extensions.git, Extensions.github],
+  overrides: {
+    [Extensions.git.id]: "loaded",
+    [Extensions.github.id]: "loaded",
+  },
 });
 ```
 
@@ -338,8 +341,9 @@ The command writes a structured source record under:
 ~/.config/svvy/workflows/agents/reviewerAgent.agent.json
 ```
 
-The saved record contains the task-agent parameters, including extension ids, provider, model,
-reasoning effort, label, and instructions. It does not contain arbitrary TypeScript.
+The saved record contains the task-agent parameters, including sparse extension usage overrides,
+provider, model, reasoning effort, label, and instructions. It does not contain arbitrary
+TypeScript.
 
 If the selected export cannot be statically parsed into task-agent parameters, `save` fails with a
 structured diagnostic. It must not execute the source file to discover parameters.
@@ -349,7 +353,7 @@ Accepted static forms include:
 - plain object literal parameters
 - literal string, boolean, number, array, and object values
 - spreads from known saved agents imported from `@svvy/workflows`
-- extension references imported from `@svvy/extensions`
+- extension override keys imported from `@svvy/extensions`
 
 Rejected forms include:
 
@@ -382,7 +386,10 @@ Canonical source files are structured JSON:
   "model": "gpt-5.4",
   "reasoningEffort": "medium",
   "instructions": "Review the implementation for correctness.",
-  "extensions": ["git", "github"]
+  "overrides": {
+    "git": "loaded",
+    "github": "loaded"
+  }
 }
 ```
 
@@ -394,10 +401,11 @@ Required fields:
 - `model`
 - `reasoningEffort`
 - `instructions`
-- `extensions`
 
-`extensions` is the complete extension composition for that task agent. There is no separate
-`toolSurface` field. Tools, prompt guidance, and generated clients come from extension usage.
+`overrides` is an optional sparse map from extension id to usage state (`loaded`, `available`, or
+`unavailable`) for values that differ from the resolved workflow task-agent defaults. There is no
+separate `toolSurface` field. Tools, prompt guidance, and generated clients come from resolved
+extension usage.
 
 The default agent is an ordinary parameter record named `defaultAgent`. Other agents may use it as a
 base at authoring time:
@@ -434,12 +442,13 @@ Build order:
 1. build and validate Extensions
 2. generate or refresh `@svvy/extensions`
 3. read and validate Workflows source files
-4. validate workflow agent provider/model/reasoning/extension fields
+4. validate workflow agent provider/model/reasoning and extension usage override fields
 5. generate `@svvy/workflows`
 6. link `@svvy/workflows` and `@svvy/extensions` into opened workspace `.smithers/node_modules`
 
 The Workflows build must fail if Extensions are invalid or not buildable. Workflow source that
-imports extension values depends on fully typed generated `@svvy/extensions` output.
+imports extension values for usage override keys depends on fully typed generated
+`@svvy/extensions` output.
 
 The builder must not silently drop invalid source files. A generated package is current only when
 all required validation passes.
@@ -476,16 +485,18 @@ allowed reasoning values for that model.
 
 ## Extension Validation
 
-For every agent parameter record, build validates each listed extension id:
+For every agent parameter record, build validates each extension id present in `overrides`:
 
 - the extension exists
 - the extension has a successful current build when it needs one
-- the extension can be used by workflow task agents
+- the extension can be configured for workflow task agents
 - the generated `@svvy/extensions` package exports the referenced extension value
 
-Build fails on unknown, unavailable, invalid, or not-ready extensions.
+Build fails on unknown, invalid, or not-ready extension override targets. A default `unavailable`
+state means configured off; it is not an actor-boundary failure by itself.
 
-Generated agent files import extension values from `@svvy/extensions`, not from string literals:
+Generated agent files import extension values from `@svvy/extensions` for override keys, not from
+string literals:
 
 ```ts
 import { Extensions } from "@svvy/extensions";
@@ -497,7 +508,10 @@ export const reviewerAgent = {
   model: "gpt-5.4",
   reasoningEffort: "medium",
   instructions: "Review the implementation for correctness.",
-  extensions: [Extensions.git, Extensions.github],
+  overrides: {
+    [Extensions.git.id]: "loaded",
+    [Extensions.github.id]: "loaded",
+  },
 } satisfies TaskAgentParameters;
 ```
 
@@ -581,6 +595,6 @@ The Workflows public API is limited to the source-library command family defined
 - generated Workflows output as editable source
 - arbitrary TypeScript as the persisted source of truth for Agents-pane workflow agents
 - bidirectional parsing of unconstrained TypeScript back into Agents-pane state
-- `toolSurface` as a workflow-agent field separate from `extensions`
+- `toolSurface` as a workflow-agent field separate from extension usage overrides
 - title or summary inference in `svvyx workflows list`
 - public metadata APIs or `__exports` arrays in the `@svvy/workflows` agent-facing surface

@@ -121,10 +121,8 @@ describe("thread_start tool", () => {
     const store = createStore();
     const runtime = createOrchestratorRuntime(store);
     const observedHistoryModes: string[] = [];
-    const observedExtensions: Array<Record<
-      string,
-      "default_loaded" | "available" | "unavailable"
-    > | null> = [];
+    const observedOverrides: Array<Record<string, "loaded" | "available" | "unavailable"> | null> =
+      [];
     let observedLoadedByCommandId: string | null = null;
     const appLogEvents: AppLoggerEvent[] = [];
 
@@ -135,7 +133,7 @@ describe("thread_start tool", () => {
       bridge: {
         async createHandlerThread(input) {
           observedHistoryModes.push(input.historyMode);
-          observedExtensions.push(input.extensions);
+          observedOverrides.push(input.overrides);
           observedLoadedByCommandId = input.loadedByCommandId;
           const thread = store.createThread({
             turnId: input.turnId,
@@ -156,7 +154,7 @@ describe("thread_start tool", () => {
         {
           objective: "Create or update the reusable workflow when requested.",
           history: "forked",
-          extensions: {
+          overrides: {
             smithers: "available",
             workflows: "unavailable",
           },
@@ -171,7 +169,7 @@ describe("thread_start tool", () => {
     );
 
     expect(observedHistoryModes).toEqual(["forked"]);
-    expect(observedExtensions).toEqual([
+    expect(observedOverrides).toEqual([
       {
         smithers: "available",
         workflows: "unavailable",
@@ -196,7 +194,7 @@ describe("thread_start tool", () => {
           {
             objective: "Create or update the reusable workflow when requested.",
             historyMode: "forked",
-            extensions: {
+            overrides: {
               smithers: "available",
               workflows: "unavailable",
             },

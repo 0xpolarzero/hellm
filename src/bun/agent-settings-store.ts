@@ -41,11 +41,6 @@ import {
   writeTextFileAtomically,
 } from "./file-backed-resource";
 import type { FileBackedSaveMode } from "../shared/file-backed-edit";
-import {
-  BUILTIN_EXTENSIONS,
-  resolveActorExtensionState,
-  type ExtensionUsageState,
-} from "../shared/extensions";
 
 export type AgentSettingsStore = {
   getState(): AgentSettingsState;
@@ -274,8 +269,7 @@ function readWorkflowAgentSourceRecords(
         model: typeof raw.model === "string" ? raw.model : "",
         reasoningEffort: raw.reasoningEffort as WorkflowAgentSettings["reasoningEffort"],
         instructions: typeof raw.instructions === "string" ? raw.instructions : "",
-        extensions: Array.isArray(raw.extensions) ? raw.extensions : [],
-        extensionUsage: normalizeExtensionUsage(raw.extensionUsage),
+        overrides: normalizeExtensionUsage(raw.overrides),
         extensionOrder: normalizeExtensionOrder(raw.extensionOrder),
         sourceVersion,
       });
@@ -299,8 +293,7 @@ function workflowAgentSourceContent(settings: WorkflowAgentSettings): string {
       model: settings.model,
       reasoningEffort: settings.reasoningEffort,
       instructions: settings.instructions,
-      extensions: settings.extensions,
-      extensionUsage: settings.extensionUsage,
+      overrides: settings.overrides ?? {},
       extensionOrder: settings.extensionOrder ?? [],
     },
     null,
@@ -492,7 +485,7 @@ function normalizeExtensionUsage(
   for (const [rawId, rawState] of Object.entries(input ?? {})) {
     const id = rawId.trim();
     if (!id) continue;
-    if (rawState === "default_loaded" || rawState === "available" || rawState === "unavailable") {
+    if (rawState === "loaded" || rawState === "available" || rawState === "unavailable") {
       usage[id] = rawState;
     }
   }
@@ -525,7 +518,6 @@ function normalizeWorkflowAgentSettings(
   key: WorkflowAgentKey,
   input: WorkflowAgentSettings,
 ): WorkflowAgentSettings {
-  const extensionUsage = normalizeWorkflowAgentExtensionUsage(input);
   return assertWorkflowAgentSettingsAssignableToParameters({
     id: key,
     label: requireNonEmpty(input.label, "label"),
@@ -533,58 +525,16 @@ function normalizeWorkflowAgentSettings(
     model: requireNonEmpty(input.model, "model"),
     reasoningEffort: input.reasoningEffort,
     instructions: requireNonEmpty(input.instructions, "instructions"),
-    extensions: workflowTaskLoadedExtensionIds(extensionUsage),
-    extensionUsage,
+    overrides: normalizeExtensionUsage(input.overrides),
     extensionOrder: normalizeExtensionOrder(input.extensionOrder),
     sourceVersion: input.sourceVersion,
   });
 }
 
 function assertWorkflowAgentSettingsAssignableToParameters<T extends Agents.TaskAgentParameters>(
-  settings: T & { extensionUsage: Record<string, ExtensionUsageState> },
-): T & { extensionUsage: Record<string, ExtensionUsageState> } {
+  settings: T,
+): T {
   return settings;
-}
-
-function normalizeWorkflowAgentExtensionUsage(
-  input: WorkflowAgentSettings,
-): WorkflowAgentSettings["extensionUsage"] {
-  const usage = normalizeExtensionUsage(input.extensionUsage);
-  for (const rawId of input.extensions ?? []) {
-    const id = rawId.trim();
-    if (id && usage[id] === undefined) {
-      usage[id] = "default_loaded";
-    }
-  }
-  return usage;
-}
-
-const BUILTIN_EXTENSION_IDS: Set<string> = new Set(
-  BUILTIN_EXTENSIONS.map((extension) => extension.id),
-);
-
-function workflowTaskLoadedExtensionIds(
-  extensionUsage: Record<string, ExtensionUsageState>,
-): string[] {
-  const loaded = new Set<string>();
-  for (const [rawId, state] of Object.entries(extensionUsage)) {
-    const id = rawId.trim();
-    if (!id || state !== "default_loaded") {
-      continue;
-    }
-    if (!BUILTIN_EXTENSION_IDS.has(id)) {
-      loaded.add(id);
-      continue;
-    }
-    const builtinState = resolveActorExtensionState({
-      actor: "workflow-task",
-      profileExtensionUsage: { [id]: "default_loaded" },
-    });
-    if (builtinState.loadedExtensionIds.includes(id)) {
-      loaded.add(id);
-    }
-  }
-  return [...loaded].toSorted();
 }
 
 function normalizeWorkflowAgentSettingsRecords(

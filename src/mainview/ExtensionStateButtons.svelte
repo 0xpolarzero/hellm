@@ -16,7 +16,7 @@
   };
 
   const STATES: Array<{ state: ExtensionUsageState; label: string }> = [
-    { state: "default_loaded", label: "Loaded" },
+    { state: "loaded", label: "Loaded" },
     { state: "available", label: "Available" },
     { state: "unavailable", label: "Off" },
   ];
@@ -48,7 +48,7 @@
           disabled={unavailable}
           onclick={() => onSelect(option.state)}
         >
-          {#if option.state === "default_loaded"}
+          {#if option.state === "loaded"}
             <CheckCircleIcon aria-hidden="true" size={13} strokeWidth={1.9} />
           {:else if option.state === "available"}
             <CircleDashedIcon aria-hidden="true" size={13} strokeWidth={1.9} />

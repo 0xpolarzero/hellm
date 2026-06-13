@@ -34,7 +34,7 @@ The Web v1 model is:
 - `web` is a builtin extension.
 - `web` uses `interface: "instructions"`.
 - `web` is prompt-only.
-- `web` is default-loaded for eligible actors only while `networkAccess` is enabled.
+- `web` is loaded by default for eligible actors only while `networkAccess` is enabled.
 - `web` teaches agents to use the official TinyFish CLI directly through ordinary shell commands.
 - `web` generates its upstream TinyFish CLI instruction file from the exact
   `@tiny-fish/cli@0.1.6` npm package artifact.
@@ -86,11 +86,11 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` when `networkAccess` is true; `unavailable` when false |
-| Handler thread | `default_loaded` when `networkAccess` is true; `unavailable` when false |
-| Workflow task agent | `default_loaded` when `networkAccess` is true; `unavailable` when false |
+| Orchestrator | `loaded` when `networkAccess` is true; `unavailable` when false |
+| Handler thread | `loaded` when `networkAccess` is true; `unavailable` when false |
+| Workflow task agent | `loaded` when `networkAccess` is true; `unavailable` when false |
 
-The Web extension being default-loaded means the generated actor prompt includes the loaded Web
+The Web extension being loaded by default means the generated actor prompt includes the loaded Web
 instructions. It does not mean any additional model-callable tool is registered.
 
 `networkAccess` defaults to true in the execution settings defined by
@@ -500,7 +500,7 @@ Firecrawl is not part of Web v1.
 - a Web provider settings row
 - a native Web tool adapter
 - a generated Web client
-- a default-loaded Web instruction source
+- a loaded by default Web instruction source
 - a hidden fallback when TinyFish is unavailable
 
 Future Firecrawl support requires a separate product decision that names its concrete surface:
@@ -559,7 +559,7 @@ Required doc/extension tests:
 - Web declares `generatedInstructions` with output
   `instructions/full/010-tinyfish-cli.generated.md`, script `scripts/generate-tinyfish-cli.ts`, and
   `versionCliRequirementId: "tinyfish"`.
-- Web is default-loaded for orchestrator, handler-thread, and workflow task-agent actors when
+- Web is loaded by default for orchestrator, handler-thread, and workflow task-agent actors when
   `networkAccess` is true.
 - Web is unavailable and absent from generated actor context when `networkAccess` is false.
 - Generated actor context includes the generated TinyFish CLI instructions only when Web is loaded.
@@ -612,7 +612,7 @@ key.
 
 - Web v1 is a prompt-only builtin extension.
 - Web v1 is TinyFish-only.
-- Web v1 is default-loaded for eligible actors only when `networkAccess` is true.
+- Web v1 is loaded by default for eligible actors only when `networkAccess` is true.
 - Web v1 is disabled and contributes no prompt guidance when `networkAccess` is false.
 - Web v1 teaches the official TinyFish CLI.
 - Web v1 generates its TinyFish CLI instruction file from selected exact-version `@tiny-fish/cli`
