@@ -155,6 +155,10 @@ describe("removed product contracts", () => {
     }
     expect(byId.get("workflows")).toMatchObject({ interface: "svvyx" });
     expect(byId.get("artifacts")).toMatchObject({ interface: "svvyx" });
+    expect(byId.get("extension-managing")).toMatchObject({
+      interface: "svvyx",
+      typescriptApiEnabled: false,
+    });
   });
 
   it("keeps thread_start on the grouped threads schema instead of the removed single-objective contract", () => {

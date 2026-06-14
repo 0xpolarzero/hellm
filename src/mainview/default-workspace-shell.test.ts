@@ -839,6 +839,10 @@ describe("default workspace renderer shell", () => {
       new URL("./ExtensionInstructionFileEditor.svelte", import.meta.url),
       "utf8",
     );
+    const commandOutputPanelSource = await readFile(
+      new URL("./CommandOutputPanel.svelte", import.meta.url),
+      "utf8",
+    );
     const sourceMetadataTextAreaSource = await readFile(
       new URL("./ui/SourceMetadataTextArea.svelte", import.meta.url),
       "utf8",
@@ -923,6 +927,15 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("footerControls");
     expect(extensionsPaneSource).toContain("ExtensionGeneratedFileViewer");
     expect(extensionsPaneSource).toContain("extension-tooling-files");
+    expect(extensionsPaneSource).toContain("showDragHandle={false}");
+    expect(extensionsPaneSource).toContain("showLeading={false}");
+    expect(extensionsPaneSource).toContain("confirmingResetExtensionId");
+    expect(extensionsPaneSource).toContain("Confirm reset");
+    expect(extensionsPaneSource).toContain("confirmingResetOrder");
+    expect(extensionsPaneSource).toContain("Confirm reset default extension order");
+    expect(extensionListRowSource).toContain("showDragHandle?: boolean");
+    expect(extensionListRowSource).toContain("showLeading?: boolean");
+    expect(extensionListRowSource).toContain("> .shared-extension-main");
     expect(extensionsPaneSource).not.toContain("extension-collapsible-block");
     expect(extensionInstructionEditorSource).not.toContain("source loaded");
     expect(extensionInstructionEditorSource).not.toContain("source skipped");
@@ -932,6 +945,11 @@ describe("default workspace renderer shell", () => {
     expect(extensionInstructionEditorSource).toContain("SourceMetadataTextArea");
     expect(sourceMetadataTextAreaSource).toContain("footerLeading");
     expect(extensionsPaneSource).toContain("runtime.setExtensionTypescriptApi");
+    expect(extensionsPaneSource).toContain("function extensionCanBuild");
+    expect(extensionsPaneSource).toContain(
+      "return extensionNeedsBuild(extension) && !extensionHasCliIssue(extension);",
+    );
+    expect(extensionsPaneSource).toContain("return inventoryRows().filter(extensionCanBuild);");
     expect(extensionListRowSource).toContain('class="shared-extension-disclosure"');
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
@@ -950,6 +968,19 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("updateAvailable");
     expect(extensionsPaneSource).toContain("installCommand");
     expect(extensionsPaneSource).toContain("updateCommand");
+    expect(contractSource).toContain("runExtensionCliRequirementAction");
+    expect(contractSource).toContain("ExtensionCliRequirementActionUpdateMessage");
+    expect(contractSource).toContain("sendExtensionCliRequirementActionUpdate");
+    expect(runtimeSource).toContain("runExtensionCliRequirementAction");
+    expect(runtimeSource).toContain("subscribeExtensionCliRequirementActionUpdate");
+    expect(extensionsPaneSource).toContain("runtime.runExtensionCliRequirementAction");
+    expect(extensionsPaneSource).toContain("runId");
+    expect(extensionsPaneSource).toContain("runtime.subscribeExtensionCliRequirementActionUpdate");
+    expect(extensionsPaneSource).toContain("CommandOutputPanel");
+    expect(extensionsPaneSource).toContain("closeCliRequirementLivePanel");
+    expect(commandOutputPanelSource).toContain("Waiting for output...");
+    expect(commandOutputPanelSource).toContain("onClose");
+    expect(extensionsPaneSource).not.toContain("copyCliCommand");
     expect(extensionsPaneSource).not.toContain(
       'extension.cliRequirements.map((requirement) => requirement.binary).join(", ")}</code>',
     );

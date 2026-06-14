@@ -248,7 +248,7 @@ acceptance rows stay unchecked until their implementation and tests land.
 - [x] Let extensions declare required global PATH CLIs with binary name, optional package name, default target version, version-check command, and reusable exact-version install/update command template. Sources: `docs/features.ts`, `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Report missing, unknown, available, detected/current/latest versions, and update-available status through Extension Managing inspect/build and the Extensions UI. Sources: `docs/features.ts`.
 - [x] Fail build with ordinary structured errors when a required CLI is missing or unknown, while using the detected installed version when a global PATH binary is available. Sources: `docs/features.ts`.
-- [x] Keep CLI installation as ordinary `exec_command` work: `approvalMode` controls auto-review, user approval, or full-access behavior before execution, and approved commands then run under managed sandbox/network policy unless full-access omits it. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Keep extension CLI installation/update split by initiator: user-clicked Extensions UI actions run directly through the app backend with readiness feedback, while agent-initiated setup remains ordinary Shell work. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Declare default target CLI versions for `cx-cli@0.7.1`, `smithers-orchestrator@0.22.0` exposing binary `smithers`, and `@tiny-fish/cli@0.1.6`; keep Git and GitHub CLI requirements unversioned. Sources: `docs/features.ts`, `docs/specs/extension/cx.extension.spec.md`, `docs/specs/extension/web.extension.spec.md`, `docs/specs/extension/smithers.extension.spec.md`.
 
 ## Direct Tools, Shell, Apply Patch, And Sandbox

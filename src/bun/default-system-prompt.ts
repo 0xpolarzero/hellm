@@ -172,9 +172,10 @@ export const EXTENSION_LOADING_CONTEXT_BODY = [
 ].join("\n");
 
 export const EXTENSION_MANAGING_CONTEXT_BODY = [
-  "Loaded native extension: Extension Managing.",
+  "Loaded svvyx extension: Extension Managing.",
   "",
-  "Use extension-management commands only for local extension source, build, snapshot, readiness, and inspection work.",
+  "Run Extension Managing through Shell as `svvyx extensions <command> ...` for local extension source, build, snapshot, readiness, and inspection work.",
+  "Extension Managing has no separate native model-facing tools.",
   "Do not treat Extension Managing as actor-local runtime capability loading; use Extension Loading for actor-local list_extensions and load_extension work.",
 ].join("\n");
 

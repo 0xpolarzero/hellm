@@ -178,7 +178,7 @@ export const BUILTIN_EXTENSIONS = [
   {
     id: "extension-managing",
     category: "builtin",
-    interface: "native_tool",
+    interface: "svvyx",
     title: "Extension Managing",
     description: "Local extension source, build, and inspection controls.",
     instructionSourceFiles: [],

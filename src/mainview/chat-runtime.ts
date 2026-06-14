@@ -55,6 +55,7 @@ import {
   type CreateExtensionRequest,
   type DeleteExtensionRequest,
   type DuplicateExtensionRequest,
+  type ExtensionCliRequirementActionUpdateMessage,
   type ExtensionsInventoryReadModel,
   type OpenExtensionInstructionFileInEditorRequest,
   type ProviderAuthInfo,
@@ -64,6 +65,8 @@ import {
   type ReorderExtensionDefaultsRequest,
   type ReorderExtensionInstructionFilesRequest,
   type ResetExtensionRequest,
+  type RunExtensionCliRequirementActionRequest,
+  type RunExtensionCliRequirementActionResponse,
   type SetAgentProfileExtensionUsageRequest,
   type SetExtensionDefaultUsageRequest,
   type SetExtensionEnvOverrideRequest,
@@ -354,6 +357,7 @@ export interface ChatRuntimeRpcClient {
     deleteExtension: typeof rpc.request.deleteExtension;
     resetExtension: typeof rpc.request.resetExtension;
     buildExtension: typeof rpc.request.buildExtension;
+    runExtensionCliRequirementAction: typeof rpc.request.runExtensionCliRequirementAction;
     setExtensionTypescriptApi: typeof rpc.request.setExtensionTypescriptApi;
     setExtensionDefaultUsage: typeof rpc.request.setExtensionDefaultUsage;
     reorderExtensionDefaults: typeof rpc.request.reorderExtensionDefaults;
@@ -495,6 +499,9 @@ export interface ChatRuntime {
   dispose: () => void;
   subscribe: (listener: ChatRuntimeListener) => () => void;
   subscribeAppLogUpdate: (listener: (payload: AppLogUpdateMessage) => void) => () => void;
+  subscribeExtensionCliRequirementActionUpdate: (
+    listener: (payload: ExtensionCliRequirementActionUpdateMessage) => void,
+  ) => () => void;
   subscribeAppMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
   getPane: (panelId: string) => ChatPaneState | undefined;
@@ -623,6 +630,9 @@ export interface ChatRuntime {
   buildExtension: (
     input: Omit<BuildExtensionRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
+  runExtensionCliRequirementAction: (
+    input: Omit<RunExtensionCliRequirementActionRequest, "workspaceId">,
+  ) => Promise<RunExtensionCliRequirementActionResponse>;
   setExtensionTypescriptApi: (
     input: Omit<SetExtensionTypescriptApiRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
@@ -1561,6 +1571,9 @@ export async function createChatRuntime(
   const storage = storageOverride ?? initializeStorage();
   const listeners = new Set<ChatRuntimeListener>();
   const appLogUpdateListeners = new Set<(payload: AppLogUpdateMessage) => void>();
+  const extensionCliRequirementActionUpdateListeners = new Set<
+    (payload: ExtensionCliRequirementActionUpdateMessage) => void
+  >();
   const surfaceControllers = new Map<string, ChatSurfaceControllerInternal>();
   let sessions: WorkspaceSessionSummary[] = [];
   let sessionNavigation: WorkspaceSessionNavigationReadModel = buildWorkspaceSessionNavigation([]);
@@ -2453,9 +2466,24 @@ export async function createChatRuntime(
     emit();
   };
 
+  const extensionCliRequirementActionUpdateListener = (
+    payload: ExtensionCliRequirementActionUpdateMessage,
+  ) => {
+    if (payload.workspaceId !== workspaceInfo.workspaceId) {
+      return;
+    }
+    for (const listener of extensionCliRequirementActionUpdateListeners) {
+      listener(payload);
+    }
+  };
+
   rpcClient.addMessageListener("sendWorkspaceSync", workspaceSyncListener);
   rpcClient.addMessageListener("sendSurfaceSync", surfaceSyncListener);
   rpcClient.addMessageListener("sendAppLogUpdate", appLogUpdateListener);
+  rpcClient.addMessageListener(
+    "sendExtensionCliRequirementActionUpdate",
+    extensionCliRequirementActionUpdateListener,
+  );
   recordFocusedSession();
 
   const runtime: ChatRuntime = {
@@ -2525,10 +2553,15 @@ export async function createChatRuntime(
       rpcClient.removeMessageListener("sendWorkspaceSync", workspaceSyncListener);
       rpcClient.removeMessageListener("sendSurfaceSync", surfaceSyncListener);
       rpcClient.removeMessageListener("sendAppLogUpdate", appLogUpdateListener);
+      rpcClient.removeMessageListener(
+        "sendExtensionCliRequirementActionUpdate",
+        extensionCliRequirementActionUpdateListener,
+      );
       for (const controller of surfaceControllers.values()) {
         controller.dispose();
       }
       appLogUpdateListeners.clear();
+      extensionCliRequirementActionUpdateListeners.clear();
       listeners.clear();
     },
     subscribe: (listener) => {
@@ -2542,6 +2575,12 @@ export async function createChatRuntime(
       appLogUpdateListeners.add(listener);
       return () => {
         appLogUpdateListeners.delete(listener);
+      };
+    },
+    subscribeExtensionCliRequirementActionUpdate: (listener) => {
+      extensionCliRequirementActionUpdateListeners.add(listener);
+      return () => {
+        extensionCliRequirementActionUpdateListeners.delete(listener);
       };
     },
     subscribeAppMenuAction: (listener) => {
@@ -3062,6 +3101,11 @@ export async function createChatRuntime(
         "extensionsInventory",
         await rpcClient.request.buildExtension(scoped(input)),
       )!,
+    runExtensionCliRequirementAction: async (input) => {
+      const result = await rpcClient.request.runExtensionCliRequirementAction(scoped(input));
+      setWorkspaceCache("extensionsInventory", result.inventory);
+      return result;
+    },
     setExtensionTypescriptApi: async (input) =>
       setWorkspaceCache(
         "extensionsInventory",

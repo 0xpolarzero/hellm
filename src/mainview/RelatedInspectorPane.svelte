@@ -15,6 +15,7 @@
     getCommandProgressSections,
     getWorkspaceCommandStatusPresentation,
   } from "./command-inspector";
+  import CommandOutputPanel from "./CommandOutputPanel.svelte";
   import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import Badge from "./ui/Badge.svelte";
 
@@ -248,17 +249,11 @@
     {#each getCommandOutputSections(content) as section (section.id)}
       <section class="inspector-section">
         <h4>{section.title}</h4>
-        <div class="command-output-events">
-          {#each section.events as event (event.eventId)}
-            <article class={`command-output-event ${event.stream}`}>
-              <div>
-                <span>{event.source}</span>
-                <time datetime={event.at}>{event.at}</time>
-              </div>
-              <pre>{event.text}</pre>
-            </article>
-          {/each}
-        </div>
+        <CommandOutputPanel
+          title={section.title}
+          events={section.events}
+          tone={content.status === "failed" ? "danger" : content.status === "succeeded" ? "success" : "neutral"}
+        />
       </section>
     {/each}
     {#each getCommandInspectorSections(content) as section (section.id)}
@@ -489,11 +484,6 @@
     font-size: var(--text-sm);
   }
 
-  .command-output-events {
-    display: grid;
-    gap: 0.44rem;
-  }
-
   .command-progress-events {
     display: grid;
     gap: 0.44rem;
@@ -609,46 +599,6 @@
     color: var(--ui-text-primary);
     font-family: var(--font-mono);
     white-space: nowrap;
-  }
-
-  .command-output-event {
-    display: grid;
-    gap: 0;
-    overflow: hidden;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
-  }
-
-  .command-output-event > div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.7rem;
-    min-width: 0;
-    padding: 0.34rem 0.55rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
-
-  .command-output-event > div span,
-  .command-output-event > div time {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .command-output-event.stderr {
-    border-color: color-mix(in oklab, var(--ui-warning) 30%, var(--ui-border-soft));
-  }
-
-  .command-output-event pre {
-    border: 0;
-    border-radius: 0;
-    background: transparent;
   }
 
   .command-progress-event {

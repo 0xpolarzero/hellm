@@ -624,7 +624,6 @@ export async function readBuiltinExtensionsInventory(
       envRequirements,
       [...dependencies, ...trustedDependencies],
       extensionBuildCurrentPath(extension.id, undefined, input.extensionsRoot),
-      input.cwd ?? process.cwd(),
     );
     extensions.push({
       id: extension.id,
@@ -867,6 +866,12 @@ function extensionToolingReadModel(
   extensionsRoot: string | undefined,
 ): ExtensionToolingReadModel {
   const typescriptApiDeclaration = extensionTypescriptApiDeclaration(extension, cwd);
+  if (isAppOwnedBuiltinSvvyxCommandNamespace(extension)) {
+    return {
+      svvyxCommandSchema: extensionManagingCommandSchemaReadModel(),
+      typescriptApiStatus: "disabled",
+    };
+  }
   return {
     ...(extension.interface === "native_tool"
       ? {
@@ -890,6 +895,107 @@ function extensionToolingReadModel(
         }
       : { typescriptApiStatus: "disabled" }),
   };
+}
+
+const EXTENSION_MANAGING_COMMAND_MANIFEST: SvvyxCommandManifest = {
+  version: "incur.v1",
+  commands: [
+    extensionManagingCommand(
+      "inspect",
+      "Inspect one extension's source paths, readiness, usage, build state, and generated artifacts.",
+    ),
+    extensionManagingCommand("create", "Create a user extension source skeleton."),
+    extensionManagingCommand(
+      "duplicate",
+      "Duplicate a non-native extension into a user extension source skeleton.",
+    ),
+    extensionManagingCommand(
+      "configure",
+      "Change extension manifest-level configuration such as TypeScript API enablement.",
+    ),
+    extensionManagingCommand("instructions add", "Add a loaded instruction source file."),
+    extensionManagingCommand(
+      "instructions remove",
+      "Remove a loaded instruction source file and move app-owned source into trash.",
+    ),
+    extensionManagingCommand("instructions rename", "Rename a loaded instruction source file."),
+    extensionManagingCommand("instructions reorder", "Reorder loaded instruction source files."),
+    extensionManagingCommand(
+      "instructions configure",
+      "Configure loaded instruction source state such as bypassed or active.",
+    ),
+    extensionManagingCommand(
+      "build",
+      "Build or validate an extension and regenerate scripted instructions, command schemas, and TypeScript declarations when applicable.",
+    ),
+    extensionManagingCommand(
+      "set-usage",
+      "Set extension usage state for actor defaults or profile overrides.",
+    ),
+    extensionManagingCommand(
+      "defaults",
+      "Inspect or reset default extension order and default usage policy.",
+    ),
+    extensionManagingCommand(
+      "delete",
+      "Delete a user extension by moving its source into app-owned trash.",
+    ),
+    extensionManagingCommand(
+      "reset",
+      "Reset a builtin extension source scope to its packaged default.",
+    ),
+    extensionManagingCommand("revert", "Revert a reversible Extension Managing change by id."),
+    extensionManagingCommand("snapshots list", "List local Extension Managing snapshots."),
+    extensionManagingCommand("snapshots save", "Save a local Extension Managing snapshot."),
+    extensionManagingCommand(
+      "snapshots load",
+      "Restore a local Extension Managing snapshot and run the normal build/readiness pipeline.",
+    ),
+    extensionManagingCommand("snapshots rename", "Rename a local Extension Managing snapshot."),
+    extensionManagingCommand("snapshots delete", "Delete a local Extension Managing snapshot."),
+  ],
+};
+
+function extensionManagingCommand(name: string, description: string): SvvyxCommandManifestEntry {
+  return {
+    name,
+    description,
+    schema: {
+      options: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          json: {
+            type: "boolean",
+            description: "Return structured JSON output. Required for agent-facing use.",
+          },
+        },
+      },
+      output: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+  };
+}
+
+function extensionManagingCommandSchemaReadModel(): ExtensionGeneratedReadonlyBlockReadModel {
+  return generatedReadonlyBlock({
+    content: JSON.stringify(EXTENSION_MANAGING_COMMAND_MANIFEST, null, 2) + "\n",
+    name: "commands.json",
+    openable: false,
+    path: "generated/app-owned/extension-managing/commands.json",
+  });
+}
+
+function isAppOwnedBuiltinSvvyxCommandNamespace(
+  extension: Pick<ExtensionRecord, "category" | "id" | "interface">,
+): boolean {
+  return (
+    extension.category === "builtin" &&
+    extension.interface === "svvyx" &&
+    extension.id === "extension-managing"
+  );
 }
 
 function generatedReadonlyBlock(input: {
@@ -2547,7 +2653,6 @@ async function runInspectCommand(
     envRequirements,
     [...dependencies, ...trustedDependencies],
     paths.buildCurrent,
-    options.cwd ?? process.cwd(),
   );
   const hasCurrentBuild = extensionHasCurrentBuild(extension, paths.buildCurrent, issues);
   const draftChanged = issues.some((issue) => issue.code === "BUILD_REQUIRED");
@@ -2683,10 +2788,12 @@ function extensionHasCurrentBuild(
   buildCurrent: string,
   issues: readonly ExtensionIssue[],
 ): boolean {
-  if (
-    extension.category === "user" ||
-    (extension.category === "builtin" && extension.interface === "svvyx")
-  ) {
+  if (isAppOwnedBuiltinSvvyxCommandNamespace(extension)) {
+    return !issues.some(
+      (issue) => issue.code === "CLI_MISSING" || issue.code === "CLI_STATUS_UNKNOWN",
+    );
+  }
+  if (extensionSourceBuildIsTracked(extension)) {
     return existsSync(buildCurrent);
   }
   return !issues.some(
@@ -2755,11 +2862,11 @@ async function runBuildCommand(
         cli: blockingCli,
         nextSteps: missing
           ? [
-              "Run the install command through exec_command if the user wants this CLI installed.",
+              "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
               `Rerun \`svvyx extensions build ${extension.id} --json\` after installation.`,
             ]
           : [
-              "Inspect the CLI manually or reinstall it through exec_command if the user wants this CLI repaired.",
+              "Inspect the CLI manually, or repair it from the Extensions UI or Shell.",
               `Rerun \`svvyx extensions build ${extension.id} --json\` after repair.`,
             ],
       },
@@ -2978,7 +3085,11 @@ async function runBuildCommand(
   mkdirSync(stagingPath, { recursive: true });
   let runtimeModule: string | null = null;
   let commandManifest: SvvyxCommandManifest | null = null;
-  if (extension.interface === "svvyx" && extension.sourceRoot) {
+  if (
+    extension.interface === "svvyx" &&
+    extension.sourceRoot &&
+    !isAppOwnedBuiltinSvvyxCommandNamespace(extension)
+  ) {
     const sourcePath = join(
       extension.sourceRoot ?? extensionSourceRoot(options.extensionsRoot, extension.id),
       "source",
@@ -3102,7 +3213,7 @@ async function runBuildCommand(
       ? {
           nextSteps: [
             "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-            "Run the update command through exec_command only when updating this CLI is appropriate.",
+            "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup.",
           ],
         }
       : {}),
@@ -3238,6 +3349,10 @@ async function runResetCommand(
   scaffoldBuiltinSvvyxSource(packaged, paths);
 
   const manifest = readJsonObject(paths.manifest);
+  manifest.interface = packaged.interface;
+  manifest.title = packaged.title;
+  manifest.description = packaged.description;
+  manifest.typescriptApiEnabled = packaged.typescriptApiEnabled;
   manifest.instructionFiles = builtinDefaultInstructionEntries(packaged, defaultFiles);
   if (packaged.generatedInstructions && packaged.generatedInstructions.length > 0) {
     manifest.generatedInstructions = packaged.generatedInstructions;
@@ -4582,7 +4697,7 @@ export function validateExtensionBuildInput(
       );
     }
   }
-  if (extension.interface === "svvyx") {
+  if (extension.interface === "svvyx" && !isAppOwnedBuiltinSvvyxCommandNamespace(extension)) {
     const sourcePath = paths.extensionSource
       ? join(paths.extensionSource, "index.ts")
       : join(paths.sourceRoot, "source", "index.ts");
@@ -5456,10 +5571,7 @@ function readBuiltinSourceRecord(
     );
   }
   if (manifest.interface !== builtin.interface) {
-    throw extensionsCommandError(
-      "invalid_manifest",
-      `Builtin source interface must match packaged extension: ${builtin.id}`,
-    );
+    manifest.interface = builtin.interface;
   }
   let instructionFiles = readManifestInstructionFiles(manifest);
   const envDeclarations = readManifestEnvDeclarations(manifest);
@@ -5688,19 +5800,23 @@ function scaffoldBuiltinSource(
       mkdirSync(dirname(paths.instructionsMinimal), { recursive: true });
       writeFileSync(paths.instructionsMinimal, extension.minimalLoadingHint + "\n");
     }
-    const sourceRecord = readBuiltinSourceRecord(extension, options.extensionsRoot);
-    if (sourceRecord?.extensionBuildFingerprint && sourceRecord.interface !== "svvyx") {
-      writeExtensionBuildFingerprint(
-        paths.buildCurrent,
-        sourceRecord.id,
-        sourceRecord.interface,
-        sourceRecord.extensionBuildFingerprint,
-      );
-    }
   }
   scaffoldBuiltinGeneratedInstructionScripts(packaged, paths, options.cwd ?? process.cwd());
   scaffoldBuiltinSvvyxSource(packaged, paths);
-  return readBuiltinSourceRecord(extension, options.extensionsRoot) ?? extension;
+  const sourceRecord = readBuiltinSourceRecord(extension, options.extensionsRoot) ?? extension;
+  if (
+    createdSource &&
+    sourceRecord.extensionBuildFingerprint &&
+    sourceRecord.interface !== "svvyx"
+  ) {
+    writeExtensionBuildFingerprint(
+      paths.buildCurrent,
+      sourceRecord.id,
+      sourceRecord.interface,
+      sourceRecord.extensionBuildFingerprint,
+    );
+  }
+  return sourceRecord;
 }
 
 function scaffoldBuiltinGeneratedInstructionScripts(
@@ -7636,6 +7752,9 @@ function editableExtensionInspectPaths(
   const instructionFiles = readManifestInstructionFiles(manifest);
   return {
     ...paths,
+    extensionSource: isAppOwnedBuiltinSvvyxCommandNamespace(extension)
+      ? null
+      : paths.extensionSource,
     typescriptTypes: extension.typescriptApiEnabled
       ? join(paths.generatedRoot, "types.d.ts")
       : null,
@@ -7976,13 +8095,9 @@ function extensionIssues(
   envRequirements: readonly EnvRequirementStatus[],
   dependencies: readonly DependencyRequirementStatus[],
   buildCurrent: string,
-  cwd: string,
 ): ExtensionIssue[] {
   const issues: ExtensionIssue[] = [];
-  if (
-    extension.category === "user" ||
-    (extension.category === "builtin" && extension.interface === "svvyx")
-  ) {
+  if (extensionSourceBuildIsTracked(extension)) {
     if (!existsSync(buildCurrent)) {
       issues.push({
         code: "NO_CURRENT_BUILD",
@@ -7993,17 +8108,6 @@ function extensionIssues(
         message: `${extension.title} must be built before it can be loaded.`,
       });
     } else if (extensionBuildIsOutdated(extension, buildCurrent)) {
-      issues.push({
-        code: "BUILD_REQUIRED",
-        message: `${extension.title} has source changes that have not been built.`,
-      });
-    }
-  } else if (
-    extension.category === "builtin" &&
-    extension.sourceRoot &&
-    extensionCustomized(extension, cwd)
-  ) {
-    if (extensionBuildIsOutdated(extension, buildCurrent)) {
       issues.push({
         code: "BUILD_REQUIRED",
         message: `${extension.title} has source changes that have not been built.`,
@@ -8051,6 +8155,15 @@ function extensionIssues(
     }
   }
   return issues;
+}
+
+function extensionSourceBuildIsTracked(extension: ResolvedExtensionRecord): boolean {
+  if (isAppOwnedBuiltinSvvyxCommandNamespace(extension)) {
+    return false;
+  }
+  return (
+    extension.category === "user" || (extension.category === "builtin" && !!extension.sourceRoot)
+  );
 }
 
 function extensionBuildIsOutdated(

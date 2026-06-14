@@ -68,7 +68,7 @@ loaded-contributor lifecycle, no generated outputs, and no reset/delete controls
 | `apply-patch` | native_tool | loaded | loaded | loaded |
 | `execute-typescript` | native_tool | loaded | loaded | loaded |
 | `extension-loading` | native_tool | loaded | loaded | loaded |
-| `extension-managing` | native_tool | available | available | unavailable |
+| `extension-managing` | svvyx | available | available | unavailable |
 | `request-user-input` | native_tool | loaded | loaded | unavailable |
 | `thread-orchestration` | native_tool | loaded | unavailable | unavailable |
 | `thread-handling` | native_tool | unavailable | loaded | unavailable |

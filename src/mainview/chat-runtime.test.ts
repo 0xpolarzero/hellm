@@ -9,6 +9,7 @@ import {
   type AppLogSummary,
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
+  type ExtensionCliRequirementActionUpdateMessage,
   type PromptTarget,
   type RequestUserInputAnswerRequest,
   type SendPromptRequest,
@@ -108,6 +109,9 @@ type FakeRpcHarness = {
   branchListRequests: string[];
   branchSwitchRequests: Array<{ workspaceId: string; branch: string }>;
   emitAppLogUpdate: (payload: AppLogUpdateMessage) => void;
+  emitExtensionCliRequirementActionUpdate: (
+    payload: ExtensionCliRequirementActionUpdateMessage,
+  ) => void;
   commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
   handlerThreadListRequests: string[];
   handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }>;
@@ -624,6 +628,9 @@ function createFakeRpc(input: {
   const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
   const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
   const appLogUpdateListeners = new Set<(payload: AppLogUpdateMessage) => void>();
+  const extensionCliRequirementActionUpdateListeners = new Set<
+    (payload: ExtensionCliRequirementActionUpdateMessage) => void
+  >();
   const summaries = new Map(
     input.sessions.map((summary) => [summary.id, structuredClone(summary)]),
   );
@@ -782,6 +789,14 @@ function createFakeRpc(input: {
       ...payload.entries.filter((entry) => !known.has(entry.id)),
     ].toSorted((left, right) => left.seq - right.seq);
     for (const listener of appLogUpdateListeners) {
+      listener(structuredClone(payload));
+    }
+  };
+
+  const emitExtensionCliRequirementActionUpdate = (
+    payload: ExtensionCliRequirementActionUpdateMessage,
+  ): void => {
+    for (const listener of extensionCliRequirementActionUpdateListeners) {
       listener(structuredClone(payload));
     }
   };
@@ -997,6 +1012,20 @@ function createFakeRpc(input: {
           extensions: [],
           reversibleChanges: [],
           snapshots: [],
+        }),
+        runExtensionCliRequirementAction: async () => ({
+          runId: "test-cli-run",
+          inventory: {
+            extensions: [],
+            reversibleChanges: [],
+            snapshots: [],
+          },
+          command: "npm install -g example-cli@1.0.0",
+          status: "success",
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
         }),
         setExtensionTypescriptApi: async () => ({
           extensions: [],
@@ -2043,6 +2072,12 @@ function createFakeRpc(input: {
         }
         if (messageName === "sendAppLogUpdate") {
           appLogUpdateListeners.add(listener as (payload: AppLogUpdateMessage) => void);
+          return;
+        }
+        if (messageName === "sendExtensionCliRequirementActionUpdate") {
+          extensionCliRequirementActionUpdateListeners.add(
+            listener as (payload: ExtensionCliRequirementActionUpdateMessage) => void,
+          );
         }
       },
       removeMessageListener: (messageName: string, listener: unknown) => {
@@ -2056,6 +2091,12 @@ function createFakeRpc(input: {
         }
         if (messageName === "sendAppLogUpdate") {
           appLogUpdateListeners.delete(listener as (payload: AppLogUpdateMessage) => void);
+          return;
+        }
+        if (messageName === "sendExtensionCliRequirementActionUpdate") {
+          extensionCliRequirementActionUpdateListeners.delete(
+            listener as (payload: ExtensionCliRequirementActionUpdateMessage) => void,
+          );
         }
       },
     },
@@ -2083,6 +2124,7 @@ function createFakeRpc(input: {
     emitWorkspaceSync,
     emitSurfaceSync,
     emitAppLogUpdate,
+    emitExtensionCliRequirementActionUpdate,
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
       structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
@@ -5227,6 +5269,50 @@ describe("createChatRuntime", () => {
 
     expect(runtime.appLogSummary.unread.total).toBe(0);
 
+    runtime.dispose();
+  });
+
+  it("delivers extension CLI requirement action updates for the active workspace only", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const updates: ExtensionCliRequirementActionUpdateMessage[] = [];
+    const unsubscribe = runtime.subscribeExtensionCliRequirementActionUpdate((payload) => {
+      updates.push(payload);
+    });
+
+    const update: ExtensionCliRequirementActionUpdateMessage = {
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      runId: "run-1",
+      extensionId: "cx",
+      requirementId: "cx-cli",
+      action: "install",
+      command: "npm install -g cx-cli@0.7.1",
+      status: "output",
+      at: "2026-05-13T10:00:00.000Z",
+      outputEvent: {
+        eventId: "run-1:1",
+        at: "2026-05-13T10:00:00.000Z",
+        stream: "stdout",
+        source: "extension-cli",
+        text: "installing\n",
+      },
+    };
+    harness.emitExtensionCliRequirementActionUpdate({
+      ...update,
+      workspaceId: "workspace:other",
+    });
+    harness.emitExtensionCliRequirementActionUpdate(update);
+
+    expect(updates).toEqual([update]);
+    unsubscribe();
     runtime.dispose();
   });
 });

@@ -246,12 +246,16 @@ export function buildNativeToolSchemaJsonForExtension(
 }
 
 function nativeToolSchemaForExtension(extension: NativeToolSchemaExtension) {
+  const tools = nativeToolDefinitionsByExtensionId[extension.id];
+  if (!tools) {
+    throw new Error(`Missing native tool schema definitions for extension: ${extension.id}`);
+  }
   return {
     id: extension.id,
     title: extension.title,
     description: extension.description,
     category: extension.category,
-    tools: nativeToolDefinitionsByExtensionId[extension.id] ?? [],
+    tools,
   };
 }
 

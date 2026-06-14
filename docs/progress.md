@@ -163,9 +163,9 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage. Commit(s): pending local changes
 - [x] Keep Web v1 limited to prompt-only TinyFish CLI guidance, without Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, or self-hosted web search. Commit(s): pending local changes
 - [x] Declare TinyFish as a Web extension CLI requirement with a default target version and reusable
-      exact-version install/update command template; keep installation and updates as ordinary
-      `exec_command` work after build or inspect reports a missing or unknown required binary, or after
-      the UI/agent chooses to update an available detected binary, while TinyFish CLI owns
+      exact-version install/update command template; run user-clicked install/update from the
+      Extensions UI as direct app backend actions with live closeable stdout/stderr output and
+      readiness feedback, keep agent-initiated install/update as Shell work, and let TinyFish CLI own
       authentication, status, search, fetch, browser-backed commands, and API key storage through
       TinyFish-owned CLI commands. Commit(s): pending local changes
 - [x] Fail `svvyx extensions build web --json` with structured JSON errors when TinyFish is missing

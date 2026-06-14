@@ -22,6 +22,8 @@ import type {
   ChatRPCSchema,
   ComposerAttachment,
   ComposerMentionKind,
+  ExtensionCliRequirementAction,
+  ExtensionCliRequirementActionUpdateMessage,
   ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
@@ -89,6 +91,7 @@ const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const extensionEnvSecretStore = createMacOsKeychainExtensionEnvSecretStore();
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
+const EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT = 20000;
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [
@@ -212,6 +215,136 @@ async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command:
     envSecretStore: extensionEnvSecretStore,
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
     structuredSessionStore: runtime.catalog.getStructuredSessionStore(),
+  });
+}
+
+function truncateExtensionCliOutput(output: string): string {
+  if (output.length <= EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT) return output;
+  return `${output.slice(0, EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT)}\n[output truncated]`;
+}
+
+async function runExtensionCliRequirementCommand(
+  runtime: WorkspaceRuntime,
+  input: {
+    runId: string;
+    workspaceId: string;
+    extensionId: string;
+    requirementId: string;
+    action: ExtensionCliRequirementAction;
+    command: string;
+    onUpdate: (message: ExtensionCliRequirementActionUpdateMessage) => void;
+  },
+) {
+  const timeoutMs = Math.max(10_000, getRpcRequestTimeoutMs() - 5_000);
+  let outputEventIndex = 0;
+  const publish = (
+    update: Omit<
+      ExtensionCliRequirementActionUpdateMessage,
+      "workspaceId" | "runId" | "extensionId" | "requirementId" | "action" | "command" | "at"
+    >,
+  ) => {
+    input.onUpdate({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      extensionId: input.extensionId,
+      requirementId: input.requirementId,
+      action: input.action,
+      command: input.command,
+      at: new Date().toISOString(),
+      ...update,
+    });
+  };
+
+  publish({ status: "started" });
+
+  return new Promise<{
+    exitCode: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+  }>((fulfill, reject) => {
+    const child = spawn(input.command, {
+      cwd: runtime.cwd,
+      env: process.env,
+      shell: true,
+      windowsHide: true,
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      child.kill("SIGTERM");
+      const text = `Command timed out after ${Math.round(timeoutMs / 1000)}s.`;
+      stderr.push(Buffer.from(text));
+      publish({
+        status: "output",
+        outputEvent: {
+          eventId: `${input.runId}:${++outputEventIndex}`,
+          at: new Date().toISOString(),
+          stream: "stderr",
+          source: "extension-cli",
+          text,
+        },
+      });
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      stdout.push(chunk);
+      publish({
+        status: "output",
+        outputEvent: {
+          eventId: `${input.runId}:${++outputEventIndex}`,
+          at: new Date().toISOString(),
+          stream: "stdout",
+          source: "extension-cli",
+          text,
+        },
+      });
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      stderr.push(chunk);
+      publish({
+        status: "output",
+        outputEvent: {
+          eventId: `${input.runId}:${++outputEventIndex}`,
+          at: new Date().toISOString(),
+          stream: "stderr",
+          source: "extension-cli",
+          text,
+        },
+      });
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      publish({
+        status: "failed",
+        exitCode: null,
+        signal: null,
+        error: error.message,
+      });
+      reject(error);
+    });
+    child.on("close", (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      publish({
+        status: exitCode === 0 ? "success" : "failed",
+        exitCode,
+        signal,
+      });
+      fulfill({
+        exitCode,
+        signal,
+        stdout: truncateExtensionCliOutput(Buffer.concat(stdout).toString("utf8")),
+        stderr: truncateExtensionCliOutput(Buffer.concat(stderr).toString("utf8")),
+      });
+    });
   });
 }
 
@@ -1063,6 +1196,95 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           extensionId: input.extensionId,
         });
         return readWorkspaceExtensionsInventory(runtime);
+      },
+      runExtensionCliRequirementAction: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const inventory = await readWorkspaceExtensionsInventory(runtime);
+        const extension = inventory.extensions.find((item) => item.id === input.extensionId);
+        if (!extension) {
+          throw new Error(`Unknown extension: ${input.extensionId}`);
+        }
+        const requirement = extension.requirements.cliRequirements.find(
+          (item) => item.id === input.requirementId,
+        );
+        if (!requirement) {
+          throw new Error(
+            `Unknown CLI requirement ${input.requirementId} for extension ${input.extensionId}.`,
+          );
+        }
+        const command =
+          input.action === "install"
+            ? requirement.status === "missing"
+              ? requirement.installCommand
+              : null
+            : requirement.updateAvailable
+              ? requirement.updateCommand
+              : null;
+        if (!command) {
+          throw new Error(
+            `CLI requirement ${requirement.id} does not have a ${input.action} command available.`,
+          );
+        }
+
+        runtime.appLog.info("settings", "Extension CLI requirement action started from UI.", {
+          extensionId: extension.id,
+          requirementId: requirement.id,
+          action: input.action,
+          command,
+        });
+        const result = await runExtensionCliRequirementCommand(runtime, {
+          runId: input.runId,
+          workspaceId: input.workspaceId,
+          extensionId: extension.id,
+          requirementId: requirement.id,
+          action: input.action,
+          command,
+          onUpdate: (message) => {
+            try {
+              rpc.send.sendExtensionCliRequirementActionUpdate(message);
+            } catch (error) {
+              recordDevBrowserToolsError(
+                "rpc",
+                "Unable to send extension CLI requirement update to the main view.",
+                "rpc",
+                { workspaceId: input.workspaceId, runId: input.runId },
+                error,
+              );
+            }
+          },
+        });
+        const status = result.exitCode === 0 ? "success" : "failed";
+        const logDetails = {
+          extensionId: extension.id,
+          requirementId: requirement.id,
+          action: input.action,
+          command,
+          exitCode: result.exitCode,
+          signal: result.signal,
+        };
+        if (status === "success") {
+          runtime.appLog.info(
+            "settings",
+            "Extension CLI requirement action completed from UI.",
+            logDetails,
+          );
+        } else {
+          runtime.appLog.error(
+            "settings",
+            "Extension CLI requirement action failed from UI.",
+            logDetails,
+          );
+        }
+        return {
+          runId: input.runId,
+          inventory: await readWorkspaceExtensionsInventory(runtime),
+          command,
+          status,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
       },
       setExtensionTypescriptApi: async (input) => {
         const runtime = getWorkspaceRuntime(input);

@@ -1163,6 +1163,8 @@
 
   .sidebar-shortcut-slot {
     display: grid;
+    align-self: stretch;
+    place-items: center end;
     justify-items: end;
     min-width: max-content;
   }
@@ -1775,14 +1777,16 @@
     justify-self: end;
     gap: 0.16rem;
     min-width: 0;
+    min-height: 1rem;
     font-variant-numeric: tabular-nums;
+    transform: translateY(0.34rem);
   }
 
   .log-badge {
     display: inline-grid;
     place-items: center;
     min-width: 1rem;
-    height: 0.92rem;
+    height: 1rem;
     padding: 0 0.18rem;
     border-radius: var(--ui-radius-xs);
     font-family: var(--font-mono);

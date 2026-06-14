@@ -2188,7 +2188,9 @@ describe("svvyx extensions command", () => {
   });
 
   it("projects live external instruction sources into the Extensions inventory read model", async () => {
+    const extensionsRoot = createTempDir();
     const inventory = await readBuiltinExtensionsInventory({
+      extensionsRoot,
       externalInstructionSources: [
         {
           id: "0:/repo/AGENTS.md",
@@ -2369,6 +2371,23 @@ describe("svvyx extensions command", () => {
     expect(shell?.tooling.nativeToolSchema?.content).toContain('"exec_command"');
     expect(shell?.tooling.nativeToolSchema?.content).toContain('"write_stdin"');
     expect(shell?.tooling.nativeToolSchema?.content).toContain('"parameters"');
+    const extensionManaging = inventory.extensions.find(
+      (extension) => extension.id === "extension-managing",
+    );
+    expect(extensionManaging).toMatchObject({
+      interface: "svvyx",
+      tooling: {
+        svvyxCommandSchema: {
+          name: "commands.json",
+          openable: false,
+        },
+        typescriptApiStatus: "disabled",
+      },
+    });
+    expect(extensionManaging?.tooling.nativeToolSchema).toBeUndefined();
+    expect(extensionManaging?.tooling.svvyxCommandSource).toBeUndefined();
+    expect(extensionManaging?.tooling.svvyxCommandSchema?.content).toContain('"inspect"');
+    expect(extensionManaging?.tooling.svvyxCommandSchema?.content).toContain('"snapshots load"');
     expect(artifacts).toMatchObject({
       tooling: {
         typescriptApiStatus: "emitted",
@@ -2714,8 +2733,15 @@ describe("svvyx extensions command", () => {
     expect(baseCommon).toMatchObject({
       customized: false,
       state: {
-        ready: true,
-        issues: [],
+        ready: false,
+        issues: [
+          {
+            code: "NO_CURRENT_BUILD",
+          },
+          {
+            code: "BUILD_REQUIRED",
+          },
+        ],
       },
       loadedInstructionContributors: [
         {
@@ -2840,6 +2866,77 @@ describe("svvyx extensions command", () => {
       "You are svvy, a pragmatic software engineering assistant",
     );
     expect(readFileSync(baseFile, "utf8")).not.toContain("Use a local edit.");
+  });
+
+  it("requires rebuilding when builtin source returns to defaults after a custom build", async () => {
+    const extensionsRoot = createTempDir();
+    const inspect = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions inspect base-common --json",
+      extensionsRoot,
+    });
+    const sourceRoot = join(extensionsRoot, "sources", "builtin", "base-common");
+    const baseFile = join(sourceRoot, "instructions", "full", "010-base-common.md");
+    const defaultSource = readFileSync(baseFile, "utf8");
+
+    expect((inspect.output as any).extension.state).toMatchObject({
+      draftChanged: false,
+      buildRequired: false,
+    });
+
+    writeFileSync(baseFile, "# Edited Base\n\nUse a local edit.\n");
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions build base-common --json",
+      extensionsRoot,
+    });
+
+    const afterCustomBuild = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions inspect base-common --json",
+      extensionsRoot,
+    });
+    expect((afterCustomBuild.output as any).extension.state).toMatchObject({
+      draftChanged: false,
+      buildRequired: false,
+    });
+
+    writeFileSync(baseFile, defaultSource);
+
+    const inventory = await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    const restoredBaseCommon = inventory.extensions.find(
+      (extension) => extension.id === "base-common",
+    );
+    expect(restoredBaseCommon).toMatchObject({
+      customized: false,
+      state: {
+        ready: false,
+        issues: [
+          {
+            code: "BUILD_REQUIRED",
+            message: "Base Common has source changes that have not been built.",
+          },
+        ],
+      },
+    });
+
+    const restoredInspect = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions inspect base-common --json",
+      extensionsRoot,
+    });
+    expect((restoredInspect.output as any).extension.state).toMatchObject({
+      draftChanged: true,
+      buildRequired: true,
+      currentBuild: {
+        status: "ready",
+      },
+      ready: false,
+      issues: [
+        {
+          code: "BUILD_REQUIRED",
+        },
+      ],
+    });
   });
 
   it("rejects reset for user extensions and unsupported reset scopes", async () => {
@@ -5799,7 +5896,9 @@ describe("svvyx extensions command", () => {
   });
 
   it("projects builtin CLI readiness into the Extensions inventory read model", async () => {
+    const extensionsRoot = createTempDir();
     const inventory = await readBuiltinExtensionsInventory({
+      extensionsRoot,
       cliProbe: (requirement) => {
         if (requirement.id === "tinyfish") {
           return cliStatus(requirement, { status: "missing" });
@@ -7205,6 +7304,36 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
       customized: true,
     });
+
+    const manifestPath = join(extensionsRoot, "sources", "builtin", "web", "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.title = "Custom Web";
+    manifest.description = "Custom Web description.";
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
+      customized: true,
+    });
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions reset web --scope instructions --json",
+      cwd,
+      extensionsRoot,
+    });
+    inventory = await readBuiltinExtensionsInventory({
+      cwd,
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    expect(inventory.extensions.find((extension) => extension.id === "web")).toMatchObject({
+      title: "Web",
+      description: "Prompt-only TinyFish CLI guidance.",
+      customized: false,
+    });
   });
 
   it("inspects builtin extensions with CLI readiness, global usage, and build issues", async () => {
@@ -7878,7 +8007,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionId: "web",
         cli: tinyfishStatus({ status: "missing" }),
         nextSteps: [
-          "Run the install command through exec_command if the user wants this CLI installed.",
+          "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
           "Rerun `svvyx extensions build web --json` after installation.",
         ],
       },
@@ -7999,12 +8128,12 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(output.requirements.cliRequirements).toEqual([available]);
     expect(output.nextSteps).toEqual([
       "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-      "Run the update command through exec_command only when updating this CLI is appropriate.",
+      "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup.",
     ]);
     expect(existsSync(join(buildRoot, "web", "current"))).toBe(true);
   });
 
-  it("keeps CLI install and update as ordinary exec_command work", async () => {
+  it("keeps CLI install and update out of Extension Managing commands", async () => {
     const extensionsRoot = createTempDir();
     await expect(
       runSvvyxExtensionsCommand({
@@ -8028,7 +8157,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       "npm install -g @tiny-fish/cli@0.1.6",
     );
     expect((missing.output as any).error.nextSteps).toContain(
-      "Run the install command through exec_command if the user wants this CLI installed.",
+      "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
     );
 
     const updateable = await runSvvyxExtensionsCommand({

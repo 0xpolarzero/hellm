@@ -9,7 +9,7 @@
     description: string;
     draggable?: boolean;
     dragging?: boolean;
-    dragLabel: string;
+    dragLabel?: string;
     expanded: boolean;
     expandedContent?: Snippet;
     expandedInset?: boolean;
@@ -23,6 +23,7 @@
     controlActionVisible?: boolean;
     stateControls?: Snippet;
     showDragHandle?: boolean;
+    showLeading?: boolean;
     subdued?: boolean;
     target?: boolean;
     title: string;
@@ -36,7 +37,7 @@
     description,
     draggable = true,
     dragging = false,
-    dragLabel,
+    dragLabel = "Drag row",
     expanded,
     expandedContent,
     expandedInset = true,
@@ -50,6 +51,7 @@
     controlActionVisible = false,
     stateControls,
     showDragHandle = true,
+    showLeading = true,
     subdued = false,
     target = false,
     title,
@@ -60,7 +62,7 @@
 </script>
 
 <article
-  class={`shared-extension-row ${expanded ? "expanded" : ""} ${marked || markerVisible ? "is-marked" : ""} ${controlAction && controlActionVisible ? "has-control-action" : ""} ${showDragHandle ? "" : "no-drag-handle"} ${leading ? "" : "no-leading"} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
+  class={`shared-extension-row ${expanded ? "expanded" : ""} ${marked || markerVisible ? "is-marked" : ""} ${controlAction && controlActionVisible ? "has-control-action" : ""} ${showDragHandle ? "" : "no-drag-handle"} ${leading && showLeading ? "" : "no-leading"} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
   data-extension-id={id}
 >
   <div class="shared-extension-main">
@@ -75,7 +77,7 @@
         <GripVerticalIcon size={13} aria-hidden="true" />
       </button>
     {/if}
-    {#if leading}
+    {#if leading && showLeading}
       <div class="shared-extension-leading">
         {@render leading()}
       </div>
@@ -223,12 +225,84 @@
     grid-column: 9;
   }
 
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-main,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-main {
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle).has-control-action
+    .shared-extension-main,
+  .shared-extension-row.no-drag-handle:not(.no-leading).has-control-action
+    .shared-extension-main {
+    grid-template-columns: auto minmax(0, 1fr) auto auto 1rem auto auto auto;
+  }
+
   .shared-extension-row.no-drag-handle.no-leading .shared-extension-main {
     grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
   }
 
   .shared-extension-row.no-drag-handle.no-leading.has-control-action .shared-extension-main {
     grid-template-columns: minmax(0, 1fr) auto auto 1rem auto auto auto;
+  }
+
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-leading {
+    grid-column: 1;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-copy,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-copy {
+    grid-column: 2;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-token-count,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-token-count {
+    grid-column: 3;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-meta,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-meta {
+    grid-column: 4;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle)
+    .shared-extension-control-action,
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-controls,
+  .shared-extension-row.no-drag-handle:not(.no-leading)
+    .shared-extension-control-action,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-controls {
+    grid-column: 5;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-actions,
+  .shared-extension-row.no-drag-handle:not(.no-leading) .shared-extension-actions {
+    grid-column: 6;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle) .shared-extension-disclosure,
+  .shared-extension-row.no-drag-handle:not(.no-leading)
+    .shared-extension-disclosure {
+    grid-column: 7;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle).has-control-action
+    .shared-extension-controls,
+  .shared-extension-row.no-drag-handle:not(.no-leading).has-control-action
+    .shared-extension-controls {
+    grid-column: 6;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle).has-control-action
+    .shared-extension-actions,
+  .shared-extension-row.no-drag-handle:not(.no-leading).has-control-action
+    .shared-extension-actions {
+    grid-column: 7;
+  }
+
+  .shared-extension-row.no-leading:not(.no-drag-handle).has-control-action
+    .shared-extension-disclosure,
+  .shared-extension-row.no-drag-handle:not(.no-leading).has-control-action
+    .shared-extension-disclosure {
+    grid-column: 8;
   }
 
   .shared-extension-row.no-drag-handle.no-leading .shared-extension-copy {
@@ -346,7 +420,10 @@
     color: var(--ui-text-primary);
   }
 
-  .shared-extension-row.is-marked .shared-extension-title {
+  .shared-extension-row.is-marked
+    > .shared-extension-main
+    .shared-extension-title-line
+    .shared-extension-title {
     background-image: linear-gradient(var(--ui-accent), var(--ui-accent));
   }
 

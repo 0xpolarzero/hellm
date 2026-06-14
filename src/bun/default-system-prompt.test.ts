@@ -116,8 +116,9 @@ describe("default system prompt", () => {
       loadedExtensionIds: ["extension-managing"],
       loadedExtensionRecords: [extensionManaging!],
     });
-    expect(extensionManagingPrompt).toContain("Loaded native extension: Extension Managing.");
-    expect(extensionManagingPrompt).toContain("local extension source");
+    expect(extensionManagingPrompt).toContain("Loaded svvyx extension: Extension Managing.");
+    expect(extensionManagingPrompt).toContain("svvyx extensions <command>");
+    expect(extensionManagingPrompt).toContain("no separate native model-facing tools");
 
     const orchestratorWorkflowsPrompt = buildSystemPrompt("orchestrator", {
       loadedExtensionIds: ["workflows"],

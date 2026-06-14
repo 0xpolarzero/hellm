@@ -22,11 +22,14 @@
   import { DEFAULT_EXTERNAL_INSTRUCTION_ACTORS } from "../shared/agent-settings";
   import type {
     AgentContextPreviewResponse,
+    ExtensionCliRequirementAction,
+    ExtensionCliRequirementActionUpdateMessage,
     ExtensionCliRequirementReadiness,
     ExtensionEnvRequirementReadiness,
     ExtensionInventoryItemReadModel,
     ExtensionSnapshotReadModel,
     ExtensionsInventoryReadModel,
+    WorkspaceCommandOutputEvent,
   } from "../shared/workspace-contract";
   import { BUILTIN_EXTENSIONS } from "../shared/extensions";
   import type { ExtensionInterfaceKind } from "../shared/extensions";
@@ -38,6 +41,7 @@
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
+  import CommandOutputPanel from "./CommandOutputPanel.svelte";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
   import ExtensionGeneratedFileViewer from "./ExtensionGeneratedFileViewer.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
@@ -68,7 +72,9 @@
   let renameSnapshotName = $state("");
   let confirmingDeleteSnapshotId = $state<string | null>(null);
   let confirmingDeleteExtensionId = $state<string | null>(null);
+  let confirmingResetExtensionId = $state<string | null>(null);
   let confirmingDeleteInstructionKey = $state<string | null>(null);
+  let confirmingResetOrder = $state(false);
   let snapshotAction = $state<"save" | "rename" | "delete" | "load" | null>(null);
   let snapshotNameInput = $state<HTMLInputElement | null>(null);
   let renameSnapshotInput = $state<HTMLInputElement | null>(null);
@@ -76,6 +82,22 @@
   let expandedToolingIds = $state<Set<string>>(new Set());
   let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
   let pendingExtensionActions = $state<Set<string>>(new Set());
+  let cliRequirementActionResults = $state<Record<string, { message: string }>>({});
+  type CliRequirementLivePanel = {
+    runId: string;
+    extensionId: string;
+    requirementId: string;
+    action: ExtensionCliRequirementAction;
+    binary: string;
+    command: string;
+    status: ExtensionCliRequirementActionUpdateMessage["status"];
+    events: WorkspaceCommandOutputEvent[];
+    exitCode: number | null;
+    signal: string | null;
+    error: string | null;
+  };
+  let cliRequirementLivePanels = $state<Record<string, CliRequirementLivePanel>>({});
+  let closedCliRequirementRunIds = $state<Set<string>>(new Set());
   let extensionInventoryMutationGeneration = 0;
   let appliedExtensionInventoryMutationGeneration = 0;
   let extensionInventoryNeedsSettledRefresh = false;
@@ -235,6 +257,10 @@
     );
   }
 
+  function extensionCanBuild(extension: ExtensionInventoryItemReadModel): boolean {
+    return extensionNeedsBuild(extension) && !extensionHasCliIssue(extension);
+  }
+
   function instructionActionKey(extensionId: string, name: string, action: string): string {
     return `instruction:${action}:${extensionId}:${name}`;
   }
@@ -243,8 +269,24 @@
     return `${extensionId}:${name}`;
   }
 
+  function cliRequirementResultKey(extensionId: string, requirementId: string): string {
+    return `${extensionId}:${requirementId}`;
+  }
+
+  function cliRequirementLivePanelKey(extensionId: string, requirementId: string): string {
+    return `${extensionId}:${requirementId}`;
+  }
+
+  function cliRequirementActionKey(
+    extensionId: string,
+    requirementId: string,
+    action: ExtensionCliRequirementAction,
+  ): string {
+    return `cli:${action}:${extensionId}:${requirementId}`;
+  }
+
   function buildRequiredExtensions(): ExtensionInventoryItemReadModel[] {
-    return inventoryRows().filter(extensionNeedsBuild);
+    return inventoryRows().filter(extensionCanBuild);
   }
 
   function isExtensionActionPending(key: string): boolean {
@@ -372,25 +414,42 @@
     if (extension.category === "builtin" || isExtensionActionPending(`delete:${extension.id}`)) {
       return;
     }
+    confirmingResetExtensionId = null;
     confirmingDeleteExtensionId = extension.id;
   }
 
-  function cancelDeleteExtensionConfirmation(): void {
+  function cancelExtensionActionConfirmation(): void {
     confirmingDeleteExtensionId = null;
+    confirmingResetExtensionId = null;
   }
 
   async function resetExtension(extension: ExtensionInventoryItemReadModel) {
     const actionKey = `reset:${extension.id}`;
-    if (isExtensionActionPending(actionKey) || extension.category !== "builtin") return;
+    if (
+      isExtensionActionPending(actionKey) ||
+      extension.category !== "builtin" ||
+      confirmingResetExtensionId !== extension.id
+    ) {
+      return;
+    }
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
       await applyExtensionInventoryMutation(runtime.resetExtension({ extensionId: extension.id }));
+      confirmingResetExtensionId = null;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to reset extension.";
     } finally {
       finishExtensionAction(actionKey);
     }
+  }
+
+  function requestResetExtension(extension: ExtensionInventoryItemReadModel): void {
+    if (extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)) {
+      return;
+    }
+    confirmingDeleteExtensionId = null;
+    confirmingResetExtensionId = extension.id;
   }
 
   async function buildExtension(extensionId: string) {
@@ -501,32 +560,6 @@
     }
   }
 
-  async function copyCliCommand(command: string): Promise<void> {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(command);
-        return;
-      }
-    } catch {
-      // Fall back to the document command below.
-    }
-    const fallback = document.createElement("textarea");
-    fallback.value = command;
-    fallback.setAttribute("readonly", "true");
-    fallback.style.position = "fixed";
-    fallback.style.top = "0";
-    fallback.style.left = "0";
-    fallback.style.opacity = "0";
-    document.body.appendChild(fallback);
-    fallback.focus();
-    fallback.select();
-    try {
-      document.execCommand("copy");
-    } finally {
-      document.body.removeChild(fallback);
-    }
-  }
-
   async function setExtensionTypescriptApi(extension: ExtensionInventoryItemReadModel, enabled: boolean) {
     const actionKey = `typescript-api:${extension.id}`;
     if (isExtensionActionPending(actionKey) || extension.interface !== "svvyx") return;
@@ -550,16 +583,26 @@
 
   async function resetExtensionOrder(): Promise<void> {
     const actionKey = "order";
-    if (isExtensionActionPending(actionKey)) return;
+    if (isExtensionActionPending(actionKey) || !confirmingResetOrder) return;
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
       await applyExtensionInventoryMutation(runtime.reorderExtensionDefaults({ extensionIds: [] }));
+      confirmingResetOrder = false;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to reset extension order.";
     } finally {
       finishExtensionAction(actionKey);
     }
+  }
+
+  function requestResetExtensionOrder(): void {
+    if (isExtensionActionPending("order")) return;
+    confirmingResetOrder = true;
+  }
+
+  function cancelResetExtensionOrderConfirmation(): void {
+    confirmingResetOrder = false;
   }
 
   function addExtensionDragListeners() {
@@ -759,10 +802,172 @@
     return null;
   }
 
+  function cliRequirementAction(
+    requirement: ExtensionCliRequirementReadiness,
+  ): ExtensionCliRequirementAction | null {
+    if (requirement.status === "missing" && requirement.installCommand) return "install";
+    if (requirement.updateAvailable && requirement.updateCommand) return "update";
+    return null;
+  }
+
   function cliRequirementActionLabel(requirement: ExtensionCliRequirementReadiness): string {
     if (requirement.status === "missing") return "Install";
     if (requirement.updateAvailable) return "Update";
-    return "Copy command";
+    return "Ready";
+  }
+
+  function cliRequirementPendingLabel(action: ExtensionCliRequirementAction): string {
+    return action === "install" ? "Installing..." : "Updating...";
+  }
+
+  function createCliRequirementRunId(): string {
+    return globalThis.crypto?.randomUUID?.() ?? `cli-${Date.now()}-${Math.random()}`;
+  }
+
+  function cliRequirementRunStatusLabel(panel: CliRequirementLivePanel): string {
+    if (panel.status === "started" || panel.status === "output") {
+      return panel.action === "install" ? "Installing" : "Updating";
+    }
+    if (panel.status === "success") {
+      return panel.action === "install" ? "Installed" : "Updated";
+    }
+    if (panel.exitCode !== null) {
+      return `Failed (${panel.exitCode})`;
+    }
+    return panel.signal ? `Failed (${panel.signal})` : "Failed";
+  }
+
+  function cliRequirementRunTone(panel: CliRequirementLivePanel): "running" | "success" | "danger" {
+    if (panel.status === "success") return "success";
+    if (panel.status === "failed") return "danger";
+    return "running";
+  }
+
+  function closeCliRequirementLivePanel(extensionId: string, requirementId: string): void {
+    const key = cliRequirementLivePanelKey(extensionId, requirementId);
+    const panel = cliRequirementLivePanels[key];
+    if (panel) {
+      closedCliRequirementRunIds = new Set([...closedCliRequirementRunIds, panel.runId]);
+    }
+    const next = { ...cliRequirementLivePanels };
+    delete next[key];
+    cliRequirementLivePanels = next;
+  }
+
+  function applyCliRequirementActionUpdate(
+    update: ExtensionCliRequirementActionUpdateMessage,
+  ): void {
+    if (closedCliRequirementRunIds.has(update.runId)) return;
+    const key = cliRequirementLivePanelKey(update.extensionId, update.requirementId);
+    const existing = cliRequirementLivePanels[key];
+    const binary =
+      extensionsInventory?.extensions
+        .find((extension) => extension.id === update.extensionId)
+        ?.requirements.cliRequirements.find((requirement) => requirement.id === update.requirementId)
+        ?.binary ?? update.requirementId;
+    const events = update.outputEvent
+      ? [...(existing?.events ?? []), update.outputEvent].slice(-80)
+      : (existing?.events ?? []);
+
+    cliRequirementLivePanels = {
+      ...cliRequirementLivePanels,
+      [key]: {
+        runId: update.runId,
+        extensionId: update.extensionId,
+        requirementId: update.requirementId,
+        action: update.action,
+        binary: existing?.binary ?? binary,
+        command: update.command,
+        status: update.status,
+        events,
+        exitCode: update.exitCode ?? existing?.exitCode ?? null,
+        signal: update.signal ?? existing?.signal ?? null,
+        error: update.error ?? existing?.error ?? null,
+      },
+    };
+  }
+
+  function cliRequirementOutputSummary(stdout: string, stderr: string): string {
+    const output = `${stderr}\n${stdout}`
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(0);
+    if (!output) return "";
+    return output.length > 160 ? `${output.slice(0, 157)}...` : output;
+  }
+
+  async function runCliRequirementAction(
+    extensionId: string,
+    requirement: ExtensionCliRequirementReadiness,
+  ): Promise<void> {
+    const action = cliRequirementAction(requirement);
+    if (!action) return;
+    const actionKey = cliRequirementActionKey(extensionId, requirement.id, action);
+    if (isExtensionActionPending(actionKey)) return;
+    const resultKey = cliRequirementResultKey(extensionId, requirement.id);
+    const runId = createCliRequirementRunId();
+    closedCliRequirementRunIds.delete(runId);
+    closedCliRequirementRunIds = new Set(closedCliRequirementRunIds);
+    const command = cliRequirementCommand(requirement) ?? "";
+    cliRequirementLivePanels = {
+      ...cliRequirementLivePanels,
+      [cliRequirementLivePanelKey(extensionId, requirement.id)]: {
+        runId,
+        extensionId,
+        requirementId: requirement.id,
+        action,
+        binary: requirement.binary,
+        command,
+        status: "started",
+        events: [],
+        exitCode: null,
+        signal: null,
+        error: null,
+      },
+    };
+    startExtensionAction(actionKey);
+    inventoryError = null;
+    const clearedActionResults = { ...cliRequirementActionResults };
+    delete clearedActionResults[resultKey];
+    cliRequirementActionResults = clearedActionResults;
+    try {
+      const result = await runtime.runExtensionCliRequirementAction({
+        runId,
+        extensionId,
+        requirementId: requirement.id,
+        action,
+      });
+      extensionsInventory = result.inventory;
+      extensionInventoryNeedsSettledRefresh = true;
+      const summary = cliRequirementOutputSummary(result.stdout, result.stderr);
+      if (result.status === "success") {
+        const nextActionResults = { ...cliRequirementActionResults };
+        delete nextActionResults[resultKey];
+        cliRequirementActionResults = nextActionResults;
+      } else {
+        cliRequirementActionResults = {
+          ...cliRequirementActionResults,
+          [resultKey]: {
+            message: `${requirement.binary} ${action} failed${
+              result.exitCode === null ? "" : ` (${result.exitCode})`
+            }${summary ? `: ${summary}` : "."}`,
+          },
+        };
+      }
+    } catch (error) {
+      cliRequirementActionResults = {
+        ...cliRequirementActionResults,
+        [resultKey]: {
+          message:
+            error instanceof Error
+              ? error.message
+              : `Unable to ${action} ${requirement.binary}.`,
+        },
+      };
+    } finally {
+      finishExtensionAction(actionKey);
+    }
   }
 
   function declaredCliRequirementBinaries(extensionId: string): string[] {
@@ -1179,10 +1384,16 @@
 
   onMount(() => {
     const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
+    const unsubscribeCliUpdates = runtime.subscribeExtensionCliRequirementActionUpdate(
+      applyCliRequirementActionUpdate,
+    );
     void loadSettings();
     void loadAppPreferences();
     void loadExtensionsInventory();
-    return unsubscribeRuntime;
+    return () => {
+      unsubscribeCliUpdates();
+      unsubscribeRuntime();
+    };
   });
 
   $effect(() => {
@@ -1234,17 +1445,32 @@
     <section class="extension-toolbar" aria-label="Extension controls">
       <div class="extension-toolbar-row extension-toolbar-history-row">
         <div class="extension-toolbar-spacer" aria-hidden="true"></div>
-        <Tooltip label="Reset default extension order">
-          <button
-            type="button"
-            class="extension-toolbar-action"
-            disabled={isExtensionActionPending("order")}
-            onclick={() => void resetExtensionOrder()}
-          >
-            <RotateCcwIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-            Order
-          </button>
-        </Tooltip>
+        <div
+          use:dismissConfirmation={{
+            active: confirmingResetOrder,
+            onDismiss: cancelResetExtensionOrderConfirmation,
+          }}
+        >
+          <Tooltip label={confirmingResetOrder ? "Confirm reset default extension order" : "Reset default extension order"}>
+            <button
+              type="button"
+              class="extension-toolbar-action"
+              disabled={isExtensionActionPending("order")}
+              onclick={() =>
+                confirmingResetOrder
+                  ? void resetExtensionOrder()
+                  : requestResetExtensionOrder()}
+            >
+              {#if confirmingResetOrder}
+                <CheckIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+                Confirm
+              {:else}
+                <RotateCcwIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+                Order
+              {/if}
+            </button>
+          </Tooltip>
+        </div>
         <div
           class="extension-snapshot-controls"
           use:dismissConfirmation={{
@@ -1524,11 +1750,13 @@
             <div
               class="extension-row-action-confirmation"
               use:dismissConfirmation={{
-                active: confirmingDeleteExtensionId === extension.id,
-                onDismiss: cancelDeleteExtensionConfirmation,
+                active:
+                  confirmingDeleteExtensionId === extension.id ||
+                  confirmingResetExtensionId === extension.id,
+                onDismiss: cancelExtensionActionConfirmation,
               }}
             >
-              {#if extensionNeedsBuild(extension)}
+              {#if extensionCanBuild(extension)}
                 <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
                   <button
                     type="button"
@@ -1552,17 +1780,31 @@
                   <CopyPlusIcon size={13} aria-hidden="true" />
                 </button>
               </Tooltip>
-              <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
-                <button
-                  type="button"
-                  class="extension-icon-action"
-                  disabled={extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)}
-                  aria-label={`Reset ${extension.title}`}
-                  onclick={() => resetExtension(extension)}
-                >
-                  <RotateCcwIcon size={13} aria-hidden="true" />
-                </button>
-              </Tooltip>
+              {#if confirmingResetExtensionId === extension.id}
+                <Tooltip label="Confirm reset">
+                  <button
+                    type="button"
+                    class="extension-icon-action"
+                    disabled={isExtensionActionPending(`reset:${extension.id}`)}
+                    aria-label={`Confirm resetting ${extension.title}`}
+                    onclick={() => resetExtension(extension)}
+                  >
+                    <CheckIcon size={13} aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              {:else}
+                <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
+                  <button
+                    type="button"
+                    class="extension-icon-action"
+                    disabled={extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)}
+                    aria-label={`Reset ${extension.title}`}
+                    onclick={() => requestResetExtension(extension)}
+                  >
+                    <RotateCcwIcon size={13} aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              {/if}
               {#if confirmingDeleteExtensionId === extension.id}
                 <Tooltip label="Confirm delete">
                   <button
@@ -1680,22 +1922,48 @@
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
               {#each cliRequirements as requirement (requirement.id)}
                 {@const command = cliRequirementCommand(requirement)}
+                {@const action = cliRequirementAction(requirement)}
+                {@const actionKey = action ? cliRequirementActionKey(extension.id, requirement.id, action) : null}
+                {@const actionPending = actionKey ? isExtensionActionPending(actionKey) : false}
+                {@const actionResult = cliRequirementActionResults[cliRequirementResultKey(extension.id, requirement.id)]}
+                {@const livePanel = cliRequirementLivePanels[cliRequirementLivePanelKey(extension.id, requirement.id)]}
                 <div class="extension-cli-requirement">
-                  <Badge tone={cliRequirementTone(requirement)}>
-                    {cliRequirementLabel(requirement)}
-                  </Badge>
-                  <span>{cliRequirementVersions(requirement)}</span>
-                  {#if command}
-                    <Tooltip label={command}>
-                      <button
-                        type="button"
-                        class="extension-cli-command-action"
-                        onclick={() => void copyCliCommand(command)}
-                      >
-                        <TerminalIcon size={12} aria-hidden="true" />
-                        {cliRequirementActionLabel(requirement)}
-                      </button>
-                    </Tooltip>
+                  <div class="extension-cli-requirement-main">
+                    <Badge tone={cliRequirementTone(requirement)}>
+                      {cliRequirementLabel(requirement)}
+                    </Badge>
+                    <span>{cliRequirementVersions(requirement)}</span>
+                    {#if command && action}
+                      <Tooltip label={command}>
+                        <button
+                          type="button"
+                          class="extension-cli-command-action"
+                          disabled={actionPending}
+                          aria-busy={actionPending}
+                          onclick={() => void runCliRequirementAction(extension.id, requirement)}
+                        >
+                          <TerminalIcon size={12} aria-hidden="true" />
+                          {actionPending ? cliRequirementPendingLabel(action) : cliRequirementActionLabel(requirement)}
+                        </button>
+                      </Tooltip>
+                    {/if}
+                    {#if actionResult}
+                      <span class="extension-cli-action-result">
+                        {actionResult.message}
+                      </span>
+                    {/if}
+                  </div>
+                  {#if livePanel}
+                    <CommandOutputPanel
+                      title={`${livePanel.binary} ${livePanel.action}`}
+                      command={livePanel.command}
+                      events={livePanel.events}
+                      status={cliRequirementRunStatusLabel(livePanel)}
+                      tone={cliRequirementRunTone(livePanel)}
+                      closeLabel={`Close ${livePanel.binary} install output`}
+                      onClose={() =>
+                        closeCliRequirementLivePanel(extension.id, requirement.id)}
+                    />
                   {/if}
                 </div>
               {/each}
@@ -1830,17 +2098,19 @@
                         onSaved={() => void loadExtensionsInventory()}
                       >
                         {#snippet footerControls()}
-                          <Tooltip label={`Build generated instruction with ${contributor.regenerateCommand}`}>
-                            <button
-                              type="button"
-                              class="extension-footer-text-action"
-                              disabled={isExtensionActionPending(`build:${extension.id}`)}
-                              onclick={() => void buildExtension(extension.id)}
-                            >
-                              <RotateCcwIcon size={12} aria-hidden="true" />
-                              Build
-                            </button>
-                          </Tooltip>
+                          {#if extensionCanBuild(extension)}
+                            <Tooltip label={`Build generated instruction with ${contributor.regenerateCommand}`}>
+                              <button
+                                type="button"
+                                class="extension-footer-text-action"
+                                disabled={isExtensionActionPending(`build:${extension.id}`)}
+                                onclick={() => void buildExtension(extension.id)}
+                              >
+                                <RotateCcwIcon size={12} aria-hidden="true" />
+                                Build
+                              </button>
+                            </Tooltip>
+                          {/if}
                         {/snippet}
                       </ExtensionInstructionFileEditor>
                       <ExtensionInstructionFileEditor
@@ -1895,6 +2165,7 @@
               expanded={expandedToolingIds.has(extension.id)}
               expandedInset={false}
               showDragHandle={false}
+              showLeading={false}
               onToggle={() => toggleToolingExpanded(extension.id)}
             >
               {#snippet meta()}
@@ -1911,7 +2182,7 @@
                 {/if}
               {/snippet}
               {#snippet actions()}
-                {#if extensionNeedsBuild(extension)}
+                {#if extensionCanBuild(extension)}
                   <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
                     <button
                       type="button"
@@ -2380,8 +2651,8 @@
 
   .extension-status-action:hover:not(:disabled),
   .extension-status-action:focus-visible:not(:disabled),
-  .extension-cli-command-action:hover,
-  .extension-cli-command-action:focus-visible {
+  .extension-cli-command-action:hover:not(:disabled),
+  .extension-cli-command-action:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-hover-bg);
     color: var(--ui-text-primary);
@@ -2392,7 +2663,8 @@
     box-shadow: var(--ui-focus-ring);
   }
 
-  .extension-status-action:disabled {
+  .extension-status-action:disabled,
+  .extension-cli-command-action:disabled {
     cursor: default;
     opacity: 0.58;
   }
@@ -2743,12 +3015,17 @@
     gap: 0.24rem;
   }
 
-  .extension-cli-requirement,
+  .extension-cli-requirement {
+    display: grid;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
   .extension-env-requirement {
     min-width: 0;
   }
 
-  .extension-cli-requirement,
+  .extension-cli-requirement-main,
   .extension-env-requirement-meta {
     display: flex;
     flex-wrap: wrap;
@@ -2763,6 +3040,12 @@
   .extension-cli-error {
     color: var(--ui-text-tertiary);
     font-size: 0.72rem;
+  }
+
+  .extension-cli-action-result {
+    color: var(--ui-danger);
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 
   .extension-cli-requirement code {

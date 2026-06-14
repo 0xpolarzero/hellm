@@ -386,6 +386,43 @@ export interface BuildExtensionRequest extends WorkspaceScopedRequest {
   extensionId: string;
 }
 
+export type ExtensionCliRequirementAction = "install" | "update";
+
+export interface RunExtensionCliRequirementActionRequest extends WorkspaceScopedRequest {
+  runId: string;
+  extensionId: string;
+  requirementId: string;
+  action: ExtensionCliRequirementAction;
+}
+
+export interface RunExtensionCliRequirementActionResponse {
+  runId: string;
+  inventory: ExtensionsInventoryReadModel;
+  command: string;
+  status: "success" | "failed";
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+}
+
+export type ExtensionCliRequirementActionUpdateStatus = "started" | "output" | "success" | "failed";
+
+export interface ExtensionCliRequirementActionUpdateMessage {
+  workspaceId: string;
+  runId: string;
+  extensionId: string;
+  requirementId: string;
+  action: ExtensionCliRequirementAction;
+  command: string;
+  status: ExtensionCliRequirementActionUpdateStatus;
+  at: string;
+  outputEvent?: WorkspaceCommandOutputEvent;
+  exitCode?: number | null;
+  signal?: string | null;
+  error?: string | null;
+}
+
 export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest {
   extensionId: string;
   enabled: boolean;
@@ -1760,6 +1797,10 @@ export interface ChatRPCSchema {
         params: BuildExtensionRequest;
         response: ExtensionsInventoryReadModel;
       };
+      runExtensionCliRequirementAction: {
+        params: RunExtensionCliRequirementActionRequest;
+        response: RunExtensionCliRequirementActionResponse;
+      };
       setExtensionTypescriptApi: {
         params: SetExtensionTypescriptApiRequest;
         response: ExtensionsInventoryReadModel;
@@ -2097,6 +2138,7 @@ export interface ChatRPCSchema {
       sendWorkspaceSync: WorkspaceSyncMessage;
       sendSurfaceSync: SurfaceSyncMessage;
       sendAppLogUpdate: AppLogUpdateMessage;
+      sendExtensionCliRequirementActionUpdate: ExtensionCliRequirementActionUpdateMessage;
       sendAppMenuAction: { action: AppMenuAction };
     };
   };

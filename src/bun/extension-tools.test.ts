@@ -132,6 +132,9 @@ describe("builtin extension registry", () => {
     const threadHandling = BUILTIN_EXTENSIONS.find(
       (extension) => extension.id === "thread-handling",
     );
+    const extensionManaging = BUILTIN_EXTENSIONS.find(
+      (extension) => extension.id === "extension-managing",
+    );
     expect(threadOrchestration).toMatchObject({
       interface: "native_tool",
       instructionSourceFiles: [],
@@ -139,6 +142,10 @@ describe("builtin extension registry", () => {
     expect(threadHandling).toMatchObject({
       interface: "native_tool",
       instructionSourceFiles: [],
+    });
+    expect(extensionManaging).toMatchObject({
+      interface: "svvyx",
+      typescriptApiEnabled: false,
     });
     expect(builtinLoadedInstructionDefaults("thread-orchestration")).toEqual([
       expect.objectContaining({ name: "010-thread-orchestration.md" }),

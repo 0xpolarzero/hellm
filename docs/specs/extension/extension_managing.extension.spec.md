@@ -19,6 +19,8 @@ dependencies, and secrets are defined in `docs/specs/extensions-and-tools.spec.m
 Live rendering for `svvyx extensions ...` commands is defined in
 `docs/specs/live-tool-projection.spec.md`. Those commands remain ordinary `exec_command`
 invocations; Extension Managing does not gain a separate model-facing tool surface.
+Its extension interface is `svvyx`, not `native_tool`: actors reach it through Shell as
+`svvyx extensions ...`, and it must not emit a native tool schema.
 
 ## Product Role
 
@@ -502,6 +504,11 @@ File-level revert rules:
 Build behavior:
 
 - Ordinary agent file edits do not auto-build.
+- `BUILD_REQUIRED` is based on the current source fingerprint differing from the last successful
+  current build fingerprint, not on whether the source differs from packaged defaults. If a user
+  builds a customized builtin and then manually edits the source back to its packaged default, the
+  extension is no longer customized but still requires a build before that restored source becomes
+  the active generated context.
 - User/product-triggered source or config changes may auto-build immediately after the action. This
   includes revert, reset when it changes build inputs, and loading a snapshot.
 - Auto-builds use the same `build` implementation and dependency approval gate as a normal explicit
@@ -549,6 +556,11 @@ native `list_extensions` tool:
 
 - `list_extensions` answers what the current actor has loaded or can load.
 - `svvyx extensions ...` manages extension definitions and usage.
+
+Extension Managing is an app-owned builtin `svvyx` namespace. Its command schema is exposed as a
+read-only app-owned generated contract for UI and prompt inspection. It does not have editable
+extension runtime source under `source/index.ts`; its implementation remains the product's Bun-side
+Extension Managing command handler.
 
 ## Extension Managing Loaded Instruction Files
 
@@ -1415,10 +1427,16 @@ type ExtensionIssue = {
 ```
 
 `CliRequirementStatus.installCommand` and `CliRequirementStatus.updateCommand` are directly runnable
-through `exec_command` when non-null. The manifest stores one reusable exact-version template;
-inspect and build-error output resolve `{{version}}` before returning the status object. Missing
-requirements resolve the template with `defaultVersion`. Update actions resolve it with the UI- or
-agent-selected target version.
+shell commands when non-null. The Extensions UI treats install/update as explicit user-initiated
+product actions: the renderer asks the app backend to run the resolved command for that exact
+extension requirement, opens a closeable inline command-output panel under that requirement,
+streams stdout/stderr into that panel while the process runs, shows pending/success/failure state,
+and refreshes inventory afterward. Closing the panel only hides the displayed output; it does not
+cancel the user-initiated install/update process.
+Agent-initiated installs are still ordinary Shell work. The manifest stores one reusable
+exact-version template; inspect and build-error output resolve `{{version}}` before returning the
+status object. Missing requirements resolve the template with `defaultVersion`. Update actions
+resolve it with the UI- or agent-selected target version.
 
 `usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
 Extension Managing because the command is a management surface. Native `list_extensions` must not
@@ -2270,8 +2288,9 @@ required CLI status cannot be determined, build fails with an ordinary JSON erro
 whose detected version differs from the manifest default does not fail build; build uses the
 detected version and reports update metadata for the UI. Build must not create a dependency approval
 request, must not run the declared install command, and must not leave a blocked build that can
-resume automatically. The agent or user can run the returned install/update command through
-`exec_command` and then rerun build.
+resume automatically. The user can run the returned install/update command through the Extensions
+UI action, or an agent can run it from Shell when the agent is explicitly handling setup, then rerun
+build.
 
 Missing CLI example:
 
@@ -2299,7 +2318,7 @@ Missing CLI example:
       "updateCommand": null
     },
     "nextSteps": [
-      "Run the install command through exec_command if the user wants this CLI installed.",
+      "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
       "Rerun `svvyx extensions build web --json` after installation."
     ]
   }
@@ -2333,7 +2352,7 @@ Different installed version example:
   },
   "nextSteps": [
     "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-    "Run the update command through exec_command only when updating this CLI is appropriate."
+    "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup."
   ]
 }
 ```
@@ -2412,8 +2431,10 @@ and the approval ledger before using that dependency state. A stale or inconsist
 validation problem to report, not a reason to use best-effort dependency state.
 
 When a build succeeds, `buildRequired` becomes `false`. When the build is blocked by dependency
-approval, fails validation, or fails during install/build, `buildRequired` remains `true` and the UI
-continues to show a Build action.
+approval, fails validation, or fails during install/build, `buildRequired` remains `true`. The UI
+continues to show a Build action only when another build attempt can make progress; prerequisite
+blockers such as `CLI_MISSING` or `CLI_STATUS_UNKNOWN` keep readiness visible through the CLI
+requirement row instead of exposing a Build action that can only fail again.
 
 Dependency identity and approval rules:
 
