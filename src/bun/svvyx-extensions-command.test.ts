@@ -2234,7 +2234,7 @@ describe("svvyx extensions command", () => {
             path: "/repo/AGENTS.md",
             content: "# Repo Standards\n\nUse the repo contract.",
             editable: false,
-            skipped: false,
+            bypassed: false,
           },
         },
       ],
@@ -2321,7 +2321,7 @@ describe("svvyx extensions command", () => {
         {
           kind: "scripted",
           name: "010-tinyfish-cli.generated.md",
-          skipped: false,
+          bypassed: false,
           output: {
             name: "010-tinyfish-cli.generated.md",
             editable: false,
@@ -2365,6 +2365,10 @@ describe("svvyx extensions command", () => {
       }),
     ]);
     expect(shell?.tooling.nativeToolSchema?.content).toContain('"id": "shell"');
+    expect(shell?.tooling.nativeToolSchema?.content).toContain('"tools"');
+    expect(shell?.tooling.nativeToolSchema?.content).toContain('"exec_command"');
+    expect(shell?.tooling.nativeToolSchema?.content).toContain('"write_stdin"');
+    expect(shell?.tooling.nativeToolSchema?.content).toContain('"parameters"');
     expect(artifacts).toMatchObject({
       tooling: {
         typescriptApiStatus: "emitted",
@@ -2427,6 +2431,56 @@ describe("svvyx extensions command", () => {
         },
       ],
     });
+  });
+
+  it("keeps a deleted builtin instruction deleted until reset restores it", async () => {
+    const extensionsRoot = createTempDir();
+    await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+
+    const remove = await runSvvyxExtensionsCommand({
+      command: "svvyx extensions instructions remove base-common --name 010-base-common.md --json",
+      extensionsRoot,
+    });
+    expect(remove.output).toMatchObject({
+      ok: true,
+      extensionId: "base-common",
+      removed: {
+        name: "010-base-common.md",
+      },
+    });
+
+    const afterRemove = await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    const removedBaseCommon = afterRemove.extensions.find(
+      (extension) => extension.id === "base-common",
+    );
+    expect(removedBaseCommon?.loadedInstructionContributors).toEqual([]);
+
+    await runSvvyxExtensionsCommand({
+      command: "svvyx extensions reset base-common --scope instructions --json",
+      extensionsRoot,
+    });
+    const afterReset = await readBuiltinExtensionsInventory({
+      extensionsRoot,
+      includeUserExtensions: true,
+    });
+    const resetBaseCommon = afterReset.extensions.find(
+      (extension) => extension.id === "base-common",
+    );
+    expect(resetBaseCommon?.loadedInstructionContributors).toEqual([
+      expect.objectContaining({
+        kind: "source",
+        file: expect.objectContaining({
+          name: "010-base-common.md",
+          bypassed: false,
+        }),
+      }),
+    ]);
   });
 
   it("inspects live external instruction records without exposing editable extension lifecycle", async () => {

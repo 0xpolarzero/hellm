@@ -39,6 +39,7 @@
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
+  import ExtensionGeneratedFileViewer from "./ExtensionGeneratedFileViewer.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
   import ExtensionListRow from "./ExtensionListRow.svelte";
   import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
@@ -66,10 +67,13 @@
   let renamingSnapshotId = $state<string | null>(null);
   let renameSnapshotName = $state("");
   let confirmingDeleteSnapshotId = $state<string | null>(null);
+  let confirmingDeleteExtensionId = $state<string | null>(null);
+  let confirmingDeleteInstructionKey = $state<string | null>(null);
   let snapshotAction = $state<"save" | "rename" | "delete" | "load" | null>(null);
   let snapshotNameInput = $state<HTMLInputElement | null>(null);
   let renameSnapshotInput = $state<HTMLInputElement | null>(null);
   let expandedExtensionIds = $state<Set<string>>(new Set());
+  let expandedToolingIds = $state<Set<string>>(new Set());
   let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
   let pendingExtensionActions = $state<Set<string>>(new Set());
   let extensionInventoryMutationGeneration = 0;
@@ -118,7 +122,7 @@
         path: "",
         content: extension.minimalLoadingHint,
         sourceVersion: "",
-        skipped: false,
+        bypassed: false,
         editable: extension.interface !== "native_tool",
         tokenCount: {
           tokens: 0,
@@ -183,6 +187,15 @@
     expandedExtensionIds = new Set(expandedExtensionIds);
   }
 
+  function toggleToolingExpanded(extensionId: string) {
+    if (expandedToolingIds.has(extensionId)) {
+      expandedToolingIds.delete(extensionId);
+    } else {
+      expandedToolingIds.add(extensionId);
+    }
+    expandedToolingIds = new Set(expandedToolingIds);
+  }
+
   function extensionKindTitle(kind: ExtensionInterfaceKind): string {
     if (kind === "native_tool") return "Native tool";
     if (kind === "svvyx") return "svvyx extension";
@@ -195,10 +208,10 @@
     return "Prompt extensions add instruction text and loading hints.";
   }
 
-  function contributorSkipped(
+  function contributorBypassed(
     contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
   ): boolean {
-    return contributor.kind === "source" ? contributor.file.skipped : contributor.skipped;
+    return contributor.kind === "source" ? contributor.file.bypassed : contributor.bypassed;
   }
 
   function generatedApiLabel(extension: ExtensionInventoryItemReadModel): string | null {
@@ -216,18 +229,26 @@
     );
   }
 
+  function extensionHasCliIssue(extension: ExtensionInventoryItemReadModel): boolean {
+    return extension.state.issues.some(
+      (issue) => issue.code === "CLI_MISSING" || issue.code === "CLI_STATUS_UNKNOWN",
+    );
+  }
+
+  function instructionActionKey(extensionId: string, name: string, action: string): string {
+    return `instruction:${action}:${extensionId}:${name}`;
+  }
+
+  function instructionDeleteKey(extensionId: string, name: string): string {
+    return `${extensionId}:${name}`;
+  }
+
   function buildRequiredExtensions(): ExtensionInventoryItemReadModel[] {
     return inventoryRows().filter(extensionNeedsBuild);
   }
 
   function isExtensionActionPending(key: string): boolean {
     return pendingExtensionActions.has(key);
-  }
-
-  function extensionActionPending(extensionId: string): boolean {
-    return [...pendingExtensionActions].some(
-      (key) => key.includes(`:${extensionId}:`) || key.endsWith(`:${extensionId}`),
-    );
   }
 
   function startExtensionAction(key: string): void {
@@ -328,11 +349,18 @@
 
   async function deleteExtension(extension: ExtensionInventoryItemReadModel) {
     const actionKey = `delete:${extension.id}`;
-    if (extensionActionPending(extension.id) || extension.category === "builtin") return;
+    if (
+      isExtensionActionPending(actionKey) ||
+      extension.category === "builtin" ||
+      confirmingDeleteExtensionId !== extension.id
+    ) {
+      return;
+    }
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
       await applyExtensionInventoryMutation(runtime.deleteExtension({ extensionId: extension.id }));
+      confirmingDeleteExtensionId = null;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to delete extension.";
     } finally {
@@ -340,9 +368,20 @@
     }
   }
 
+  function requestDeleteExtension(extension: ExtensionInventoryItemReadModel): void {
+    if (extension.category === "builtin" || isExtensionActionPending(`delete:${extension.id}`)) {
+      return;
+    }
+    confirmingDeleteExtensionId = extension.id;
+  }
+
+  function cancelDeleteExtensionConfirmation(): void {
+    confirmingDeleteExtensionId = null;
+  }
+
   async function resetExtension(extension: ExtensionInventoryItemReadModel) {
     const actionKey = `reset:${extension.id}`;
-    if (extensionActionPending(extension.id) || extension.category !== "builtin") return;
+    if (isExtensionActionPending(actionKey) || extension.category !== "builtin") return;
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
@@ -391,7 +430,7 @@
   }
 
   async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
-    const actionKey = `instruction:${extension.id}`;
+    const actionKey = `instruction:add:${extension.id}`;
     if (isExtensionActionPending(actionKey)) return;
     const nextIndex = extension.loadedInstructionContributors.length + 1;
     const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.md`;
@@ -413,7 +452,9 @@
   }
 
   async function removeInstructionFile(extensionId: string, name: string) {
-    const actionKey = `instruction:${extensionId}`;
+    const deleteKey = instructionDeleteKey(extensionId, name);
+    const actionKey = instructionActionKey(extensionId, name, "remove");
+    if (confirmingDeleteInstructionKey !== deleteKey) return;
     if (isExtensionActionPending(actionKey)) return;
     startExtensionAction(actionKey);
     inventoryError = null;
@@ -421,6 +462,7 @@
       await applyExtensionInventoryMutation(
         runtime.removeExtensionInstructionFile({ extensionId, name }),
       );
+      confirmingDeleteInstructionKey = null;
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to remove instruction file.";
@@ -429,8 +471,17 @@
     }
   }
 
-  async function setInstructionSkipped(extensionId: string, name: string, skipped: boolean) {
-    const actionKey = `instruction:${extensionId}`;
+  function requestDeleteInstructionFile(extensionId: string, name: string): void {
+    if (isExtensionActionPending(instructionActionKey(extensionId, name, "remove"))) return;
+    confirmingDeleteInstructionKey = instructionDeleteKey(extensionId, name);
+  }
+
+  function cancelDeleteInstructionConfirmation(): void {
+    confirmingDeleteInstructionKey = null;
+  }
+
+  async function setInstructionBypassed(extensionId: string, name: string, bypassed: boolean) {
+    const actionKey = instructionActionKey(extensionId, name, "bypass");
     if (isExtensionActionPending(actionKey)) return;
     startExtensionAction(actionKey);
     inventoryError = null;
@@ -439,7 +490,7 @@
         runtime.configureExtensionInstructionFile({
           extensionId,
           name,
-          skipped,
+          bypassed,
         }),
       );
     } catch (error) {
@@ -447,6 +498,32 @@
         error instanceof Error ? error.message : "Unable to update instruction file.";
     } finally {
       finishExtensionAction(actionKey);
+    }
+  }
+
+  async function copyCliCommand(command: string): Promise<void> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+        return;
+      }
+    } catch {
+      // Fall back to the document command below.
+    }
+    const fallback = document.createElement("textarea");
+    fallback.value = command;
+    fallback.setAttribute("readonly", "true");
+    fallback.style.position = "fixed";
+    fallback.style.top = "0";
+    fallback.style.left = "0";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.focus();
+    fallback.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(fallback);
     }
   }
 
@@ -680,6 +757,12 @@
     if (requirement.status === "missing") return requirement.installCommand;
     if (requirement.updateAvailable) return requirement.updateCommand;
     return null;
+  }
+
+  function cliRequirementActionLabel(requirement: ExtensionCliRequirementReadiness): string {
+    if (requirement.status === "missing") return "Install";
+    if (requirement.updateAvailable) return "Update";
+    return "Copy command";
   }
 
   function declaredCliRequirementBinaries(extensionId: string): string[] {
@@ -1329,7 +1412,7 @@
                 onclick={() => void buildRequiredExtensionSet()}
               >
                 <RotateCcwIcon aria-hidden="true" size={13} strokeWidth={2} />
-                <span>Build</span>
+                <span>Build all</span>
               </Button>
             </Tooltip>
           {/if}
@@ -1431,44 +1514,81 @@
             {#if generatedApiLabel(extension)}
               <Badge tone="info">{generatedApiLabel(extension)}</Badge>
             {/if}
-            {#if !extension.state.ready}
-              <Badge tone="warning">{extension.state.issues[0]?.code ?? "issue"}</Badge>
+            {#if extensionHasCliIssue(extension)}
+              <Badge tone="danger">CLI</Badge>
+            {:else if extension.state.issues.length > 0 && !extensionNeedsBuild(extension)}
+              <Badge tone="warning">Issue</Badge>
             {/if}
           {/snippet}
           {#snippet actions()}
-            <Tooltip label={extension.interface === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
-              <button
-                type="button"
-                class="extension-icon-action"
-                disabled={extension.interface === "native_tool" || isExtensionActionPending(`duplicate:${extension.id}`)}
-                aria-label={`Duplicate ${extension.title}`}
-                onclick={() => duplicateExtension(extension)}
-              >
-                <CopyPlusIcon size={13} aria-hidden="true" />
-              </button>
-            </Tooltip>
-            <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
-              <button
-                type="button"
-                class="extension-icon-action"
-                disabled={extension.category !== "builtin" || extensionActionPending(extension.id)}
-                aria-label={`Reset ${extension.title}`}
-                onclick={() => resetExtension(extension)}
-              >
-                <RotateCcwIcon size={13} aria-hidden="true" />
-              </button>
-            </Tooltip>
-            <Tooltip label={extension.category === "builtin" ? "builtin extensions cannot be deleted" : "Delete extension"}>
-              <button
-                type="button"
-                class="extension-icon-action danger"
-                disabled={extension.category === "builtin" || extensionActionPending(extension.id)}
-                aria-label={`Delete ${extension.title}`}
-                onclick={() => deleteExtension(extension)}
-              >
-                <Trash2Icon size={13} aria-hidden="true" />
-              </button>
-            </Tooltip>
+            <div
+              class="extension-row-action-confirmation"
+              use:dismissConfirmation={{
+                active: confirmingDeleteExtensionId === extension.id,
+                onDismiss: cancelDeleteExtensionConfirmation,
+              }}
+            >
+              {#if extensionNeedsBuild(extension)}
+                <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
+                  <button
+                    type="button"
+                    class="extension-status-action"
+                    disabled={isExtensionActionPending(`build:${extension.id}`)}
+                    onclick={() => void buildExtension(extension.id)}
+                  >
+                    <RotateCcwIcon size={12} aria-hidden="true" />
+                    Build
+                  </button>
+                </Tooltip>
+              {/if}
+              <Tooltip label={extension.interface === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
+                <button
+                  type="button"
+                  class="extension-icon-action"
+                  disabled={extension.interface === "native_tool" || isExtensionActionPending(`duplicate:${extension.id}`)}
+                  aria-label={`Duplicate ${extension.title}`}
+                  onclick={() => duplicateExtension(extension)}
+                >
+                  <CopyPlusIcon size={13} aria-hidden="true" />
+                </button>
+              </Tooltip>
+              <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
+                <button
+                  type="button"
+                  class="extension-icon-action"
+                  disabled={extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)}
+                  aria-label={`Reset ${extension.title}`}
+                  onclick={() => resetExtension(extension)}
+                >
+                  <RotateCcwIcon size={13} aria-hidden="true" />
+                </button>
+              </Tooltip>
+              {#if confirmingDeleteExtensionId === extension.id}
+                <Tooltip label="Confirm delete">
+                  <button
+                    type="button"
+                    class="extension-icon-action danger"
+                    disabled={isExtensionActionPending(`delete:${extension.id}`)}
+                    aria-label={`Confirm deleting ${extension.title}`}
+                    onclick={() => deleteExtension(extension)}
+                  >
+                    <CheckIcon size={13} aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              {:else}
+                <Tooltip label={extension.category === "builtin" ? "builtin extensions cannot be deleted" : "Delete extension"}>
+                  <button
+                    type="button"
+                    class="extension-icon-action danger"
+                    disabled={extension.category === "builtin" || isExtensionActionPending(`delete:${extension.id}`)}
+                    aria-label={`Delete ${extension.title}`}
+                    onclick={() => requestDeleteExtension(extension)}
+                  >
+                    <Trash2Icon size={13} aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              {/if}
+            </div>
           {/snippet}
           {#snippet expandedContent()}
           {#if extension.interface === "svvyx"}
@@ -1496,60 +1616,96 @@
                 <p class="extension-settings-error" role="alert">{settingsError}</p>
               {/if}
               {#if agentSettings}
-                <div class="request-input-mode">
-                  <Tooltip label="The agent can continue working while the user prompt is open.">
-                    <Button
-                      size="xs"
-                      variant={agentSettings.requestUserInput.mode === "nonblocking" ? "primary" : "ghost"}
-                      disabled={pendingSettings}
-                      onclick={() => updateRequestUserInputSettings({ mode: "nonblocking" })}
-                    >
-                      Nonblocking
-                    </Button>
-                  </Tooltip>
-                  <Tooltip label="The agent waits for the user answer before continuing.">
-                    <Button
-                      size="xs"
-                      variant={agentSettings.requestUserInput.mode === "blocking" ? "primary" : "ghost"}
-                      disabled={pendingSettings}
-                      onclick={() => updateRequestUserInputSettings({ mode: "blocking" })}
-                    >
-                      Blocking
-                    </Button>
-                  </Tooltip>
+                <div class="request-input-settings">
+                  <span class="request-input-settings-label">request_user_input behavior</span>
+                  <div class="request-input-mode" role="group" aria-label="Request User Input behavior">
+                    <Tooltip label="Creates a user prompt and immediately returns default answers so the agent can continue. Later user answers arrive as queued follow-up.">
+                      <button
+                        type="button"
+                        class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "nonblocking" ? "active" : ""}`.trim()}
+                        aria-pressed={agentSettings.requestUserInput.mode === "nonblocking"}
+                        disabled={pendingSettings}
+                        onclick={() => updateRequestUserInputSettings({ mode: "nonblocking" })}
+                      >
+                        Nonblocking
+                      </button>
+                    </Tooltip>
+                    <Tooltip label="Creates a user prompt and waits for the user answer or configured timeout before returning.">
+                      <button
+                        type="button"
+                        class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "blocking" ? "active" : ""}`.trim()}
+                        aria-pressed={agentSettings.requestUserInput.mode === "blocking"}
+                        disabled={pendingSettings}
+                        onclick={() => updateRequestUserInputSettings({ mode: "blocking" })}
+                      >
+                        Blocking
+                      </button>
+                    </Tooltip>
+                  </div>
+                  {#if agentSettings.requestUserInput.mode === "blocking"}
+                    <label class="request-input-timeout-toggle">
+                      <Checkbox
+                        size="sm"
+                        checked={agentSettings.requestUserInput.blockingTimeout.enabled}
+                        disabled={pendingSettings}
+                        onchange={(event) =>
+                          updateRequestUserInputSettings({
+                            blockingTimeout: {
+                              enabled: (event.currentTarget as HTMLInputElement).checked,
+                            },
+                          })}
+                      />
+                      <span>Timeout</span>
+                    </label>
+                    <label class="request-input-timeout-field">
+                      <span>Seconds</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        disabled={pendingSettings || !agentSettings.requestUserInput.blockingTimeout.enabled}
+                        value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
+                        onchange={(event) =>
+                          updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
+                      />
+                    </label>
+                  {/if}
                 </div>
-                {#if agentSettings.requestUserInput.mode === "blocking"}
-                  <label class="request-input-timeout-toggle">
-                    <Checkbox
-                      size="sm"
-                      checked={agentSettings.requestUserInput.blockingTimeout.enabled}
-                      disabled={pendingSettings}
-                      onchange={(event) =>
-                        updateRequestUserInputSettings({
-                          blockingTimeout: {
-                            enabled: (event.currentTarget as HTMLInputElement).checked,
-                          },
-                        })}
-                    />
-                    <span>Timeout</span>
-                  </label>
-                  <label class="request-input-timeout-field">
-                    <span>Seconds</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      disabled={pendingSettings || !agentSettings.requestUserInput.blockingTimeout.enabled}
-                      value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
-                      onchange={(event) =>
-                        updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
-                    />
-                  </label>
-                {/if}
               {:else}
                 <span class="extension-settings-loading">Loading</span>
               {/if}
             </section>
+          {/if}
+          {#if cliRequirements.length}
+            <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
+              {#each cliRequirements as requirement (requirement.id)}
+                {@const command = cliRequirementCommand(requirement)}
+                <div class="extension-cli-requirement">
+                  <Badge tone={cliRequirementTone(requirement)}>
+                    {cliRequirementLabel(requirement)}
+                  </Badge>
+                  <span>{cliRequirementVersions(requirement)}</span>
+                  {#if command}
+                    <Tooltip label={command}>
+                      <button
+                        type="button"
+                        class="extension-cli-command-action"
+                        onclick={() => void copyCliCommand(command)}
+                      >
+                        <TerminalIcon size={12} aria-hidden="true" />
+                        {cliRequirementActionLabel(requirement)}
+                      </button>
+                    </Tooltip>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else if declaredCliBinaries.length && loadingInventory}
+            <span class="extension-cli-loading">
+              Checking {declaredCliBinaries.join(", ")}
+            </span>
+          {:else if declaredCliBinaries.length && inventoryError}
+            <span class="extension-cli-error">{inventoryError}</span>
           {/if}
           {#if extension.externalInstruction}
             <div class="external-instruction-readonly" aria-label={`${extension.title} external instruction source`}>
@@ -1579,34 +1735,10 @@
                 extensionId={extension.id}
                 kind="minimal"
                 file={extension.minimalInstruction}
-                label="source"
                 editor={appPreferences?.preferredExternalEditor}
-                disabled={extensionActionPending(extension.id)}
                 onSaved={() => void loadExtensionsInventory()}
               />
             </div>
-          {/if}
-          {#if cliRequirements.length}
-            <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
-              {#each cliRequirements as requirement (requirement.id)}
-                {@const command = cliRequirementCommand(requirement)}
-                <div class="extension-cli-requirement">
-                  <Badge tone={cliRequirementTone(requirement)}>
-                    {cliRequirementLabel(requirement)}
-                  </Badge>
-                  <span>{cliRequirementVersions(requirement)}</span>
-                  {#if command}
-                    <code>{command}</code>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {:else if declaredCliBinaries.length && loadingInventory}
-            <span class="extension-cli-loading">
-              Checking {declaredCliBinaries.join(", ")}
-            </span>
-          {:else if declaredCliBinaries.length && inventoryError}
-            <span class="extension-cli-error">{inventoryError}</span>
           {/if}
           {#if extension.loadedInstructionContributors.length}
             <div class="extension-instruction-list">
@@ -1615,7 +1747,7 @@
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={isExtensionActionPending(`instruction:${extension.id}`) || extension.category === "external_instruction"}
+                  disabled={isExtensionActionPending(`instruction:add:${extension.id}`) || extension.category === "external_instruction"}
                   onclick={() => addInstructionFile(extension)}
                 >
                   <PlusIcon size={13} aria-hidden="true" />
@@ -1629,39 +1761,61 @@
                       runtime={runtime}
                       extensionId={extension.id}
                       file={contributor.file}
-                      label="source"
                       editor={appPreferences?.preferredExternalEditor}
-                      disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                       onSaved={() => void loadExtensionsInventory()}
                     >
                       {#snippet footerControls()}
-                        <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
+                        <Tooltip label={contributorBypassed(contributor) ? "Include in context" : "Bypass without deleting"}>
                           <button
                             type="button"
-                            class="extension-footer-icon-action"
-                            disabled={isExtensionActionPending(`instruction:${extension.id}`)}
-                            aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
+                            class={`extension-footer-icon-action ${contributorBypassed(contributor) ? "is-bypassed" : ""}`.trim()}
+                            disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "bypass"))}
+                            aria-label={contributorBypassed(contributor) ? "Include contributor" : "Bypass contributor"}
                             onclick={() =>
-                              setInstructionSkipped(
+                              setInstructionBypassed(
                                 extension.id,
                                 contributor.file.name,
-                                !contributorSkipped(contributor),
+                                !contributorBypassed(contributor),
                               )}
                           >
                             <BanIcon size={12} aria-hidden="true" />
                           </button>
                         </Tooltip>
-                        <Tooltip label={contributor.file.editable ? "Remove file to app-managed trash" : "Only source instruction files can be removed"}>
-                          <button
-                            type="button"
-                            class="extension-footer-icon-action danger"
-                            disabled={isExtensionActionPending(`instruction:${extension.id}`) || !contributor.file.editable}
-                            aria-label="Remove instruction contributor"
-                            onclick={() => removeInstructionFile(extension.id, contributor.file.name)}
-                          >
-                            <Trash2Icon size={12} aria-hidden="true" />
-                          </button>
-                        </Tooltip>
+                        <span
+                          class="extension-footer-confirmation"
+                          use:dismissConfirmation={{
+                            active:
+                              confirmingDeleteInstructionKey ===
+                              instructionDeleteKey(extension.id, contributor.file.name),
+                            onDismiss: cancelDeleteInstructionConfirmation,
+                          }}
+                        >
+                          {#if confirmingDeleteInstructionKey === instructionDeleteKey(extension.id, contributor.file.name)}
+                            <Tooltip label="Confirm delete">
+                              <button
+                                type="button"
+                                class="extension-footer-icon-action danger"
+                                disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "remove"))}
+                                aria-label="Confirm deleting instruction contributor"
+                                onclick={() => removeInstructionFile(extension.id, contributor.file.name)}
+                              >
+                                <CheckIcon size={12} aria-hidden="true" />
+                              </button>
+                            </Tooltip>
+                          {:else}
+                            <Tooltip label={contributor.file.editable ? "Delete instruction file" : "Only source instruction files can be removed"}>
+                              <button
+                                type="button"
+                                class="extension-footer-icon-action danger"
+                                disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "remove")) || !contributor.file.editable}
+                                aria-label="Delete instruction contributor"
+                                onclick={() => requestDeleteInstructionFile(extension.id, contributor.file.name)}
+                              >
+                                <Trash2Icon size={12} aria-hidden="true" />
+                              </button>
+                            </Tooltip>
+                          {/if}
+                        </span>
                       {/snippet}
                     </ExtensionInstructionFileEditor>
                   {:else}
@@ -1671,10 +1825,8 @@
                         extensionId={extension.id}
                         kind="script"
                         file={contributor.script}
-                        label="generator"
                         showTokenCount={false}
                         editor={appPreferences?.preferredExternalEditor}
-                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
                       >
                         {#snippet footerControls()}
@@ -1695,23 +1847,21 @@
                         runtime={runtime}
                         extensionId={extension.id}
                         file={contributor.output}
-                        label="last generated"
                         editor={appPreferences?.preferredExternalEditor}
-                        disabled={isExtensionActionPending(`instruction:${extension.id}`)}
                         onSaved={() => void loadExtensionsInventory()}
                       >
                         {#snippet footerControls()}
-                          <Tooltip label={contributorSkipped(contributor) ? "Include in context" : "Skip without deleting it"}>
+                          <Tooltip label={contributorBypassed(contributor) ? "Include in context" : "Bypass without deleting"}>
                             <button
                               type="button"
-                              class="extension-footer-icon-action"
-                              disabled={isExtensionActionPending(`instruction:${extension.id}`)}
-                              aria-label={contributorSkipped(contributor) ? "Include contributor" : "Skip contributor"}
+                              class={`extension-footer-icon-action ${contributorBypassed(contributor) ? "is-bypassed" : ""}`.trim()}
+                              disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.output.name, "bypass"))}
+                              aria-label={contributorBypassed(contributor) ? "Include contributor" : "Bypass contributor"}
                               onclick={() =>
-                                setInstructionSkipped(
+                                setInstructionBypassed(
                                   extension.id,
                                   contributor.output.name,
-                                  !contributorSkipped(contributor),
+                                  !contributorBypassed(contributor),
                                 )}
                             >
                               <BanIcon size={12} aria-hidden="true" />
@@ -1728,7 +1878,7 @@
             <Button
               size="xs"
               variant="ghost"
-              disabled={isExtensionActionPending(`instruction:${extension.id}`) || extension.category === "external_instruction"}
+              disabled={isExtensionActionPending(`instruction:add:${extension.id}`) || extension.category === "external_instruction"}
               onclick={() => addInstructionFile(extension)}
             >
               <PlusIcon size={13} aria-hidden="true" />
@@ -1736,40 +1886,62 @@
             </Button>
           {/if}
           {#if extension.tooling.nativeToolSchema || extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema || extension.tooling.typescriptApiStatus !== "disabled"}
-            <div class="extension-tooling-section" aria-label={`${extension.title} tooling`}>
-              <div class="extension-instruction-list-header">
-                <strong>Tooling</strong>
-              </div>
-              {#if extension.tooling.nativeToolSchema}
-                <details class="extension-collapsible-block">
-                  <summary>
-                    <span>Tool schema</span>
-                    <Badge tone="neutral">native</Badge>
-                  </summary>
-                  <div class="extension-readonly-block">
-                    <div class="extension-readonly-block-bar">
-                      <strong>{extension.tooling.nativeToolSchema.name}</strong>
-                      <span>generated</span>
-                    </div>
-                    <pre>{extension.tooling.nativeToolSchema.content}</pre>
-                  </div>
-                </details>
-              {/if}
-              {#if extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema}
-                <details class="extension-collapsible-block">
-                  <summary>
-                    <span>svvyx commands</span>
-                    <Badge tone="info">schema</Badge>
-                  </summary>
+            <ExtensionListRow
+              id={`${extension.id}:tooling`}
+              title="Tooling"
+              description="Tool schemas, command source, generated command schema, and TypeScript API output."
+              draggable={false}
+              dragLabel={`${extension.title} tooling`}
+              expanded={expandedToolingIds.has(extension.id)}
+              expandedInset={false}
+              showDragHandle={false}
+              onToggle={() => toggleToolingExpanded(extension.id)}
+            >
+              {#snippet meta()}
+                {#if extension.tooling.nativeToolSchema}
+                  <Badge tone="neutral">Native</Badge>
+                {/if}
+                {#if extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema}
+                  <Badge tone="info">svvyx</Badge>
+                {/if}
+                {#if extension.tooling.typescriptApiDeclaration}
+                  <Badge tone="info">TS API</Badge>
+                {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
+                  <Badge tone="warning">TS API pending</Badge>
+                {/if}
+              {/snippet}
+              {#snippet actions()}
+                {#if extensionNeedsBuild(extension)}
+                  <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
+                    <button
+                      type="button"
+                      class="extension-status-action"
+                      disabled={isExtensionActionPending(`build:${extension.id}`)}
+                      onclick={() => void buildExtension(extension.id)}
+                    >
+                      <RotateCcwIcon size={12} aria-hidden="true" />
+                      Build
+                    </button>
+                  </Tooltip>
+                {/if}
+              {/snippet}
+              {#snippet expandedContent()}
+                <div class="extension-tooling-files" aria-label={`${extension.title} tooling files`}>
+                  {#if extension.tooling.nativeToolSchema}
+                    <ExtensionGeneratedFileViewer
+                      runtime={runtime}
+                      extensionId={extension.id}
+                      block={extension.tooling.nativeToolSchema}
+                      editor={appPreferences?.preferredExternalEditor}
+                    />
+                  {/if}
                   {#if extension.tooling.svvyxCommandSource}
                     <ExtensionInstructionFileEditor
                       runtime={runtime}
                       extensionId={extension.id}
                       file={extension.tooling.svvyxCommandSource}
-                      label="command source"
                       showTokenCount={false}
                       editor={appPreferences?.preferredExternalEditor}
-                      disabled={extensionActionPending(extension.id)}
                       onSaved={() => void loadExtensionsInventory()}
                     >
                       {#snippet footerControls()}
@@ -1788,57 +1960,28 @@
                     </ExtensionInstructionFileEditor>
                   {/if}
                   {#if extension.tooling.svvyxCommandSchema}
-                    <div class="extension-readonly-block">
-                      <div class="extension-readonly-block-bar">
-                        <strong>{extension.tooling.svvyxCommandSchema.name}</strong>
-                        <span>generated command schema</span>
-                      </div>
-                      <pre>{extension.tooling.svvyxCommandSchema.content}</pre>
-                    </div>
+                    <ExtensionGeneratedFileViewer
+                      runtime={runtime}
+                      extensionId={extension.id}
+                      block={extension.tooling.svvyxCommandSchema}
+                      editor={appPreferences?.preferredExternalEditor}
+                    />
                   {/if}
-                </details>
-              {/if}
-              {#if extension.tooling.typescriptApiDeclaration || extension.tooling.typescriptApiStatus === "not_emitted"}
-                <details class="extension-collapsible-block">
-                  <summary>
-                    <span>TypeScript API</span>
-                    <Badge tone={extension.tooling.typescriptApiDeclaration ? "info" : "warning"}>
-                      {extension.tooling.typescriptApiDeclaration ? "generated" : "not emitted"}
-                    </Badge>
-                  </summary>
                   {#if extension.tooling.typescriptApiDeclaration}
-                    <div class="extension-readonly-block">
-                      <div class="extension-readonly-block-bar">
-                        <strong>{extension.tooling.typescriptApiDeclaration.name}</strong>
-                        <span>generated TypeScript API</span>
-                      </div>
-                      <pre>{extension.tooling.typescriptApiDeclaration.content}</pre>
-                    </div>
-                  {:else}
-                    <div class="extension-readonly-block">
-                      <div class="extension-readonly-block-bar">
-                        <strong>TypeScript API</strong>
-                        <span>enabled, not emitted</span>
-                      </div>
-                      <pre>Generated TypeScript API declarations are not emitted for this extension in the current runtime.</pre>
+                    <ExtensionGeneratedFileViewer
+                      runtime={runtime}
+                      extensionId={extension.id}
+                      block={extension.tooling.typescriptApiDeclaration}
+                      editor={appPreferences?.preferredExternalEditor}
+                    />
+                  {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
+                    <div class="extension-tooling-note">
+                      TypeScript API is enabled, but this extension has not emitted declarations yet.
                     </div>
                   {/if}
-                </details>
-              {/if}
-              {#if extensionNeedsBuild(extension)}
-                <Tooltip label="Build generated instruction, command schema, and TypeScript API output for this extension.">
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={isExtensionActionPending(`build:${extension.id}`)}
-                    onclick={() => void buildExtension(extension.id)}
-                  >
-                    <RotateCcwIcon size={13} aria-hidden="true" />
-                    Build required
-                  </Button>
-                </Tooltip>
-              {/if}
-            </div>
+                </div>
+              {/snippet}
+            </ExtensionListRow>
           {/if}
           {#if envRequirements.length}
             <div class="extension-env-requirements" aria-label={`${extension.title} env readiness`}>
@@ -2206,6 +2349,54 @@
     opacity: 0.48;
   }
 
+  .extension-row-action-confirmation {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.16rem;
+    min-width: 0;
+  }
+
+  .extension-status-action,
+  .extension-cli-command-action {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    place-items: center;
+    align-items: center;
+    gap: 0.22rem;
+    height: 1.32rem;
+    min-width: 0;
+    padding: 0 0.36rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-muted) 34%, transparent);
+    color: var(--ui-text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .extension-status-action:hover:not(:disabled),
+  .extension-status-action:focus-visible:not(:disabled),
+  .extension-cli-command-action:hover,
+  .extension-cli-command-action:focus-visible {
+    outline: none;
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+  }
+
+  .extension-status-action:focus-visible,
+  .extension-cli-command-action:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .extension-status-action:disabled {
+    cursor: default;
+    opacity: 0.58;
+  }
+
   .extension-kind-icon {
     display: grid;
     place-items: center;
@@ -2272,10 +2463,20 @@
   }
 
   .scripted-instruction-contributor,
-  .extension-tooling-section {
+  .extension-tooling-files {
     display: grid;
     gap: 0.42rem;
     min-width: 0;
+  }
+
+  .extension-tooling-note {
+    padding: 0.42rem 0.5rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.35;
   }
 
   .extension-footer-icon-action,
@@ -2293,6 +2494,18 @@
 
   .extension-footer-icon-action {
     width: 1.16rem;
+  }
+
+  .extension-footer-icon-action.is-bypassed {
+    color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
+    background: color-mix(in oklab, var(--ui-warning) 10%, transparent);
+  }
+
+  .extension-footer-confirmation {
+    display: inline-flex;
+    align-items: center;
+    height: 1.16rem;
+    min-width: 0;
   }
 
   .extension-footer-text-action {
@@ -2323,102 +2536,6 @@
   .extension-footer-text-action:disabled {
     cursor: default;
     opacity: 0.48;
-  }
-
-  .extension-collapsible-block {
-    display: grid;
-    gap: 0.38rem;
-    min-width: 0;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 70%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 40%, transparent);
-  }
-
-  .extension-collapsible-block > summary {
-    display: flex;
-    align-items: center;
-    gap: 0.42rem;
-    min-height: 1.9rem;
-    padding: 0.3rem 0.48rem;
-    color: var(--ui-text-secondary);
-    cursor: pointer;
-    font-size: var(--text-xs);
-    font-weight: 700;
-    list-style: none;
-  }
-
-  .extension-collapsible-block > summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .extension-collapsible-block > summary::after {
-    content: "";
-    width: 0.42rem;
-    height: 0.42rem;
-    margin-left: auto;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    transform: rotate(45deg) translateY(-0.08rem);
-    opacity: 0.7;
-  }
-
-  .extension-collapsible-block[open] > summary::after {
-    transform: rotate(225deg) translateY(-0.08rem);
-  }
-
-  .extension-collapsible-block[open] {
-    padding-bottom: 0.42rem;
-  }
-
-  .extension-collapsible-block > :not(summary) {
-    margin-inline: 0.42rem;
-  }
-
-  .extension-readonly-block {
-    display: grid;
-    gap: 0.34rem;
-    min-width: 0;
-    padding: 0.42rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
-  }
-
-  .extension-readonly-block-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.38rem;
-    min-width: 0;
-  }
-
-  .extension-readonly-block-bar strong {
-    overflow: hidden;
-    color: var(--ui-text-primary);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .extension-readonly-block-bar span {
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
-  .extension-readonly-block pre {
-    max-height: 14rem;
-    overflow: auto;
-    margin: 0;
-    padding: 0.55rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: var(--ui-surface);
-    color: var(--ui-text-primary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-    white-space: pre-wrap;
   }
 
   .snapshot-popover {
@@ -2469,12 +2586,68 @@
     font-size: var(--text-xs);
   }
 
-  .request-input-mode,
+  .request-input-settings,
   .request-input-timeout-toggle,
   .request-input-timeout-field {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+  }
+
+  .request-input-settings {
+    flex-wrap: wrap;
+    gap: 0.34rem 0.48rem;
+    min-width: 0;
+  }
+
+  .request-input-settings-label {
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 650;
+  }
+
+  .request-input-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.16rem;
+    padding: 0.12rem;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-muted) 24%, transparent);
+  }
+
+  .request-input-mode-button {
+    min-height: 1.32rem;
+    padding: 0 0.46rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 650;
+    line-height: 1;
+  }
+
+  .request-input-mode-button:hover:not(:disabled),
+  .request-input-mode-button:focus-visible:not(:disabled) {
+    outline: none;
+    background: color-mix(in oklab, var(--ui-surface-muted) 45%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  .request-input-mode-button:focus-visible {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .request-input-mode-button.active {
+    background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
+    color: var(--ui-text-primary);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-border-soft) 70%, transparent);
+  }
+
+  .request-input-mode-button:disabled {
+    cursor: default;
+    opacity: 0.58;
   }
 
   .request-input-timeout-toggle,

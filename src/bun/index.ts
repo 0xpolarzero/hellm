@@ -1133,12 +1133,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const runtime = getWorkspaceRuntime(input);
         await runWorkspaceExtensionsCommand(
           runtime,
-          `svvyx extensions instructions configure ${quoteSvvyxCommandArg(input.extensionId)} --file ${quoteSvvyxCommandArg(input.name)} --bypassed ${input.skipped ? "true" : "false"} --json`,
+          `svvyx extensions instructions configure ${quoteSvvyxCommandArg(input.extensionId)} --file ${quoteSvvyxCommandArg(input.name)} --bypassed ${input.bypassed ? "true" : "false"} --json`,
         );
         runtime.appLog.info("settings", "Extension instruction file configured from UI.", {
           extensionId: input.extensionId,
           name: input.name,
-          skipped: input.skipped,
+          bypassed: input.bypassed,
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
@@ -1180,8 +1180,30 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const extension = inventory.extensions.find(
           (candidate) => candidate.id === input.extensionId,
         );
+        const inventoryPaths = new Set<string>();
+        if (extension?.minimalInstruction?.path) {
+          inventoryPaths.add(extension.minimalInstruction.path);
+        }
+        for (const contributor of extension?.loadedInstructionContributors ?? []) {
+          if (contributor.kind === "source") {
+            inventoryPaths.add(contributor.file.path);
+          } else {
+            inventoryPaths.add(contributor.script.path);
+            inventoryPaths.add(contributor.output.path);
+          }
+        }
+        for (const block of [
+          extension?.tooling.nativeToolSchema,
+          extension?.tooling.svvyxCommandSource,
+          extension?.tooling.svvyxCommandSchema,
+          extension?.tooling.typescriptApiDeclaration,
+        ]) {
+          if (block?.path) inventoryPaths.add(block.path);
+        }
+        const requestedPath = input.path && inventoryPaths.has(input.path) ? input.path : null;
         const path =
-          input.kind === "minimal"
+          requestedPath ??
+          (input.kind === "minimal"
             ? extension?.minimalInstruction?.path
             : input.kind === "script"
               ? extension?.loadedInstructionContributors
@@ -1189,7 +1211,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                   .find((contributor) => contributor.script.name === input.name)?.script.path
               : extension?.loadedInstructionContributors
                   .filter((contributor) => contributor.kind === "source")
-                  .find((contributor) => contributor.file.name === input.name)?.file.path;
+                  .find((contributor) => contributor.file.name === input.name)?.file.path);
         if (path && !existsSync(path) && extension && input.kind !== "script") {
           const content =
             input.kind === "minimal"
@@ -1210,6 +1232,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           throw new Error(
             `Extension instruction file not found: ${input.extensionId}/${input.name}`,
           );
+        }
+        if (input.path && !requestedPath) {
+          throw new Error(`Extension source file not found: ${input.extensionId}/${input.name}`);
+        }
+        if (input.path && !existsSync(path)) {
+          throw new Error(`Extension source file does not exist: ${path}`);
         }
         const result = openPathInPreferredEditor(runtime, path);
         runtime.appLog.info(

@@ -22,6 +22,7 @@
     controlAction?: Snippet;
     controlActionVisible?: boolean;
     stateControls?: Snippet;
+    showDragHandle?: boolean;
     subdued?: boolean;
     target?: boolean;
     title: string;
@@ -48,6 +49,7 @@
     controlAction,
     controlActionVisible = false,
     stateControls,
+    showDragHandle = true,
     subdued = false,
     target = false,
     title,
@@ -58,19 +60,21 @@
 </script>
 
 <article
-  class={`shared-extension-row ${expanded ? "expanded" : ""} ${marked || markerVisible ? "is-marked" : ""} ${controlAction && controlActionVisible ? "has-control-action" : ""} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
+  class={`shared-extension-row ${expanded ? "expanded" : ""} ${marked || markerVisible ? "is-marked" : ""} ${controlAction && controlActionVisible ? "has-control-action" : ""} ${showDragHandle ? "" : "no-drag-handle"} ${leading ? "" : "no-leading"} ${subdued ? "is-subdued" : ""} ${dragging ? "dragging" : ""} ${target ? "target" : ""}`.trim()}
   data-extension-id={id}
 >
   <div class="shared-extension-main">
-    <button
-      type="button"
-      class="shared-extension-drag"
-      aria-label={dragLabel}
-      disabled={!draggable}
-      onpointerdown={onDragPointerDown}
-    >
-      <GripVerticalIcon size={13} aria-hidden="true" />
-    </button>
+    {#if showDragHandle}
+      <button
+        type="button"
+        class="shared-extension-drag"
+        aria-label={dragLabel}
+        disabled={!draggable}
+        onpointerdown={onDragPointerDown}
+      >
+        <GripVerticalIcon size={13} aria-hidden="true" />
+      </button>
+    {/if}
     {#if leading}
       <div class="shared-extension-leading">
         {@render leading()}
@@ -217,6 +221,54 @@
 
   .shared-extension-row.has-control-action .shared-extension-disclosure {
     grid-column: 9;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-main {
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading.has-control-action .shared-extension-main {
+    grid-template-columns: minmax(0, 1fr) auto auto 1rem auto auto auto;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-copy {
+    grid-column: 1;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-token-count {
+    grid-column: 2;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-meta {
+    grid-column: 3;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-control-action,
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-controls {
+    grid-column: 4;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-actions {
+    grid-column: 5;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading .shared-extension-disclosure {
+    grid-column: 6;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading.has-control-action
+    .shared-extension-controls {
+    grid-column: 5;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading.has-control-action
+    .shared-extension-actions {
+    grid-column: 6;
+  }
+
+  .shared-extension-row.no-drag-handle.no-leading.has-control-action
+    .shared-extension-disclosure {
+    grid-column: 7;
   }
 
   .shared-extension-drag:not(:disabled):hover,

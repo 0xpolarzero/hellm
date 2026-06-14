@@ -24,7 +24,6 @@
     footerControls?: Snippet;
     file: ExtensionInstructionFileReadModel;
     kind?: "full" | "minimal" | "script";
-    label?: string;
     showTokenCount?: boolean;
     runtime: ChatRuntime;
     onSaved: () => void;
@@ -39,7 +38,6 @@
     footerControls,
     file,
     kind = "full",
-    label = "editable",
     showTokenCount = true,
     runtime,
     onSaved,
@@ -147,7 +145,12 @@
   }
 
   async function openExternal() {
-    await runtime.openExtensionInstructionFileInEditor({ extensionId, kind, name: file.name });
+    await runtime.openExtensionInstructionFileInEditor({
+      extensionId,
+      kind,
+      name: file.name,
+      path: file.path,
+    });
   }
 
   function autosaveStatusLabel(input: AutosaveStatus): string {
@@ -159,7 +162,7 @@
   }
 </script>
 
-<div class={`extension-instruction-editor ${file.skipped ? "is-skipped" : ""}`.trim()}>
+<div class={`extension-instruction-editor ${file.bypassed ? "is-bypassed" : ""}`.trim()}>
   <SourceMetadataTextArea
     value={draft}
     status={status}
@@ -208,8 +211,9 @@
       {#if footerControls}
         {@render footerControls()}
       {/if}
-      <span>{file.editable ? label : "read-only"}</span>
-      <span>{file.skipped ? "skipped" : "loaded"}</span>
+      {#if file.bypassed}
+        <span class="extension-bypassed-chip">Bypassed</span>
+      {/if}
     {/snippet}
   </SourceMetadataTextArea>
   {#if errorMessage}
@@ -224,15 +228,29 @@
     min-width: 0;
   }
 
-  .extension-instruction-editor.is-skipped {
-    opacity: 0.74;
+  .extension-instruction-editor.is-bypassed {
+    opacity: 0.82;
   }
 
-  .extension-instruction-editor :global(.source-metadata-textarea-footer-start > span),
+  .extension-instruction-editor.is-bypassed :global(.source-metadata-textarea) {
+    border-color: color-mix(in oklab, var(--ui-warning) 46%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-warning) 8%, var(--ui-bg-elevated));
+  }
+
+  .extension-bypassed-chip,
   .extension-instruction-status {
     color: var(--ui-text-tertiary);
     font-size: var(--text-xs);
     font-weight: 600;
+  }
+
+  .extension-bypassed-chip {
+    padding: 0.05rem 0.3rem;
+    border: 1px solid color-mix(in oklab, var(--ui-warning) 40%, var(--ui-border-soft));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-warning) 12%, transparent);
+    color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
+    line-height: 1.05;
   }
 
   .extension-instruction-status.error,

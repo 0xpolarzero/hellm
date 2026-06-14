@@ -256,7 +256,7 @@ export interface ExtensionInstructionFileReadModel {
   path: string;
   content: string;
   sourceVersion: string;
-  skipped: boolean;
+  bypassed: boolean;
   editable: boolean;
   tokenCount: {
     tokens: number;
@@ -272,7 +272,7 @@ export type ExtensionLoadedInstructionContributorReadModel =
   | {
       kind: "scripted";
       name: string;
-      skipped: boolean;
+      bypassed: boolean;
       script: ExtensionInstructionFileReadModel;
       output: ExtensionInstructionFileReadModel;
       regenerateCommand: string;
@@ -281,6 +281,7 @@ export type ExtensionLoadedInstructionContributorReadModel =
 export interface ExtensionGeneratedReadonlyBlockReadModel {
   name: string;
   path: string;
+  openable?: boolean;
   content: string;
   tokenCount: {
     tokens: number;
@@ -413,7 +414,7 @@ export interface RemoveExtensionInstructionFileRequest extends WorkspaceScopedRe
 export interface ConfigureExtensionInstructionFileRequest extends WorkspaceScopedRequest {
   extensionId: string;
   name: string;
-  skipped: boolean;
+  bypassed: boolean;
 }
 
 export interface ReorderExtensionInstructionFilesRequest extends WorkspaceScopedRequest {
@@ -434,6 +435,7 @@ export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceSc
   extensionId: string;
   kind?: "full" | "minimal" | "script";
   name: string;
+  path?: string;
 }
 
 export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {

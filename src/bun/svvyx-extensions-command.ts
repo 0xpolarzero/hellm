@@ -79,6 +79,7 @@ import {
   WORKFLOWS_CLIENT_DECLARATION,
 } from "./execute-typescript-api-declaration";
 import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
+import { buildNativeToolSchemaJsonForExtension } from "./native-tool-schemas";
 
 export type CliRequirementStatus = {
   id: string;
@@ -710,7 +711,7 @@ function extensionLoadedInstructionContributors(
           editable: true,
           name: file.name,
           path,
-          skipped: configByName.get(file.name) ?? false,
+          bypassed: configByName.get(file.name) ?? false,
         }),
       });
     }
@@ -726,7 +727,7 @@ function extensionLoadedInstructionContributors(
           editable: extension.category !== "external_instruction",
           name,
           path,
-          skipped: configByName.get(name) ?? false,
+          bypassed: configByName.get(name) ?? false,
         }),
       });
     }
@@ -749,20 +750,20 @@ function extensionLoadedInstructionContributors(
     contributors.set(name, {
       kind: "scripted",
       name,
-      skipped: configByName.get(name) ?? false,
+      bypassed: configByName.get(name) ?? false,
       script: instructionFileReadModel({
         content: scriptContent,
         editable: true,
         name: basename(instruction.script),
         path: scriptPath,
-        skipped: false,
+        bypassed: false,
       }),
       output: instructionFileReadModel({
         content: outputContent,
         editable: false,
         name,
         path: outputPath,
-        skipped: configByName.get(name) ?? false,
+        bypassed: configByName.get(name) ?? false,
       }),
       regenerateCommand: `svvyx extensions build ${extension.id} --json`,
     });
@@ -795,14 +796,14 @@ function instructionFileReadModel(input: {
   editable: boolean;
   name: string;
   path: string;
-  skipped: boolean;
+  bypassed: boolean;
 }): ExtensionInstructionFileReadModel {
   return {
     name: input.name,
     path: input.path,
     content: input.content,
     sourceVersion: readFileBackedVersion(input.path),
-    skipped: input.skipped,
+    bypassed: input.bypassed,
     editable: input.editable,
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
   };
@@ -870,16 +871,7 @@ function extensionToolingReadModel(
     ...(extension.interface === "native_tool"
       ? {
           nativeToolSchema: generatedReadonlyBlock({
-            content: `${JSON.stringify(
-              {
-                id: extension.id,
-                title: extension.title,
-                description: extension.description,
-                category: extension.category,
-              },
-              null,
-              2,
-            )}\n`,
+            content: buildNativeToolSchemaJsonForExtension(extension),
             name: "tool-schema.json",
             path: `generated/native-tools/${extension.id}.schema.json`,
           }),
@@ -903,11 +895,13 @@ function extensionToolingReadModel(
 function generatedReadonlyBlock(input: {
   content: string;
   name: string;
+  openable?: boolean;
   path: string;
 }): ExtensionGeneratedReadonlyBlockReadModel {
   return {
     name: input.name,
     path: input.path,
+    ...(input.openable === false ? { openable: false } : {}),
     content: input.content,
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
   };
@@ -933,7 +927,7 @@ function extensionSvvyxCommandSourceReadModel(
     editable: extension.category !== "external_instruction",
     name: "source/index.ts",
     path,
-    skipped: false,
+    bypassed: false,
   });
 }
 
@@ -959,12 +953,13 @@ function extensionSvvyxCommandSchemaReadModel(
           "commands.json",
         )
       : resolve(cwd, "generated", "extensions", extension.id, "commands.json");
+  const generatedContent = readOptionalFile(generatedPath);
   const content =
-    readOptionalFile(generatedPath) ||
-    readCurrentBuildCommandManifestContent(extension.id, extensionsRoot);
+    generatedContent || readCurrentBuildCommandManifestContent(extension.id, extensionsRoot);
   return generatedReadonlyBlock({
     content: content || "{}\n",
     name: "commands.json",
+    openable: Boolean(generatedContent),
     path: generatedPath,
   });
 }
@@ -992,14 +987,14 @@ function extensionTypescriptApiDeclaration(
     return generatedReadonlyBlock({
       content: ARTIFACTS_CLIENT_DECLARATION,
       name: "artifacts.types.d.ts",
-      path: "generated/execute-typescript-api.generated.ts",
+      path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
   }
   if (extension.id === "workflows") {
     return generatedReadonlyBlock({
       content: WORKFLOWS_CLIENT_DECLARATION,
       name: "workflows.types.d.ts",
-      path: "generated/execute-typescript-api.generated.ts",
+      path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
   }
   const path = resolve(cwd, "generated", "extensions", extension.id, "types.d.ts");
@@ -1034,7 +1029,7 @@ function extensionMinimalInstructionReadModel(
     content,
     sourceVersion:
       path && existsSync(path) ? readFileBackedVersion(path) : fileBackedTextVersion(content),
-    skipped: false,
+    bypassed: false,
     editable: extension.category !== "external_instruction",
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: content }),
   };
@@ -1096,7 +1091,7 @@ function externalInstructionInventoryItem(
           editable: false,
           name: basename(source.path),
           path: source.path,
-          skipped: !source.enabled || !readable,
+          bypassed: !source.enabled || !readable,
         }),
       },
     ],
@@ -5477,8 +5472,14 @@ function readBuiltinSourceRecord(
   );
   const paths = builtinSourcePaths(builtin.id, extensionsRoot, builtin.interface);
   const packagedGeneratedInstructions = builtin.generatedInstructions ?? [];
+  const hadStaleGeneratedInstructionMetadata =
+    !packagedGeneratedInstructions.length &&
+    (instructionFiles.some((instruction) => instruction.file.endsWith(".generated.md")) ||
+      (Array.isArray(manifest.generatedInstructions) && manifest.generatedInstructions.length > 0));
   instructionFiles = normalizeBuiltinSourceInstructionFiles(builtin, instructionFiles);
-  ensureBuiltinSourceDefaultInstructionFiles(builtin, paths, instructionFiles);
+  ensureBuiltinSourceDefaultInstructionFiles(builtin, paths, instructionFiles, {
+    restoreMissingDirectDefaults: hadStaleGeneratedInstructionMetadata,
+  });
   if (writeNormalizedBuiltinSourceManifest(manifestPath, manifest, builtin, instructionFiles)) {
     instructionFiles = readManifestInstructionFiles(readJsonObject(manifestPath));
   }
@@ -5539,10 +5540,12 @@ function ensureBuiltinSourceDefaultInstructionFiles(
   builtin: ExtensionRecord,
   paths: ReturnType<typeof builtinSourcePaths>,
   instructionFiles: ExtensionInstructionFile[],
+  options: { restoreMissingDirectDefaults: boolean },
 ): void {
   const names = new Set(instructionFiles.map((instruction) => instruction.file));
   for (const file of builtinDirectDefaultInstructionFiles(builtin)) {
     if (!names.has(file.name)) {
+      if (!options.restoreMissingDirectDefaults) continue;
       instructionFiles.push({ file: file.name, bypassed: false });
       names.add(file.name);
     }

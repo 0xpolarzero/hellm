@@ -149,6 +149,7 @@ import {
   setExtensionUsage,
   type ResolvedExtensionRecord,
 } from "./svvyx-extensions-command";
+import { buildNativeToolSchemasJson } from "./native-tool-schemas";
 import { discoverExternalInstructionSources } from "./external-instructions";
 import {
   createGeneratedAgentContextStore,
@@ -6336,24 +6337,6 @@ function buildGeneratedSvvyxGuidance(records: readonly ResolvedExtensionRecord[]
         .join("\n"),
     )
     .join("\n\n");
-}
-
-function buildNativeToolSchemasJson(records: readonly ResolvedExtensionRecord[]): string {
-  return `${JSON.stringify(
-    {
-      nativeTools: records
-        .filter((record) => record.interface === "native_tool")
-        .map((record) => ({
-          id: record.id,
-          title: record.title,
-          description: record.description,
-          category: record.category,
-        }))
-        .toSorted((left, right) => left.id.localeCompare(right.id)),
-    },
-    null,
-    2,
-  )}\n`;
 }
 
 function createPromptSettingsFingerprint(input: {

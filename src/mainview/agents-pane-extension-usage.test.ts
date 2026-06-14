@@ -22,7 +22,7 @@ function extensionInventoryItem(
       path: "",
       content: "",
       sourceVersion: "",
-      skipped: false,
+      bypassed: false,
       editable: false,
       tokenCount: {
         tokens: 0,
