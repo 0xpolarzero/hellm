@@ -4,6 +4,7 @@
   import Code2Icon from "@lucide/svelte/icons/code-2";
   import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
+  import HammerIcon from "@lucide/svelte/icons/hammer";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
@@ -1444,7 +1445,6 @@
   <div class="extensions-inventory">
     <section class="extension-toolbar" aria-label="Extension controls">
       <div class="extension-toolbar-row extension-toolbar-history-row">
-        <div class="extension-toolbar-spacer" aria-hidden="true"></div>
         <div
           use:dismissConfirmation={{
             active: confirmingResetOrder,
@@ -1637,7 +1637,7 @@
                 disabled={isExtensionActionPending("build-all")}
                 onclick={() => void buildRequiredExtensionSet()}
               >
-                <RotateCcwIcon aria-hidden="true" size={13} strokeWidth={2} />
+                <HammerIcon aria-hidden="true" size={13} strokeWidth={2} />
                 <span>Build all</span>
               </Button>
             </Tooltip>
@@ -1764,7 +1764,7 @@
                     disabled={isExtensionActionPending(`build:${extension.id}`)}
                     onclick={() => void buildExtension(extension.id)}
                   >
-                    <RotateCcwIcon size={12} aria-hidden="true" />
+                    <HammerIcon size={12} aria-hidden="true" />
                     Build
                   </button>
                 </Tooltip>
@@ -2106,7 +2106,7 @@
                                 disabled={isExtensionActionPending(`build:${extension.id}`)}
                                 onclick={() => void buildExtension(extension.id)}
                               >
-                                <RotateCcwIcon size={12} aria-hidden="true" />
+                                <HammerIcon size={12} aria-hidden="true" />
                                 Build
                               </button>
                             </Tooltip>
@@ -2190,7 +2190,7 @@
                       disabled={isExtensionActionPending(`build:${extension.id}`)}
                       onclick={() => void buildExtension(extension.id)}
                     >
-                      <RotateCcwIcon size={12} aria-hidden="true" />
+                      <HammerIcon size={12} aria-hidden="true" />
                       Build
                     </button>
                   </Tooltip>
@@ -2223,7 +2223,7 @@
                             disabled={isExtensionActionPending(`build:${extension.id}`)}
                             onclick={() => void buildExtension(extension.id)}
                           >
-                            <RotateCcwIcon size={12} aria-hidden="true" />
+                            <HammerIcon size={12} aria-hidden="true" />
                             Build
                           </button>
                         </Tooltip>
@@ -2365,6 +2365,10 @@
   }
 
   .extension-toolbar-action-row {
+    justify-content: space-between;
+  }
+
+  .extension-toolbar-history-row {
     justify-content: space-between;
   }
 

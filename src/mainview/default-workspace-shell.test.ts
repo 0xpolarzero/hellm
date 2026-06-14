@@ -905,16 +905,13 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("width: 18rem");
     expect(extensionsPaneSource).toContain("min-width: 30rem");
     expect(extensionsPaneSource).toContain("max-width: min(54rem, calc(100vw - 2rem))");
-    expect(extensionsPaneSource.indexOf("extension-toolbar-spacer")).toBeLessThan(
-      extensionsPaneSource.indexOf('class="extension-toolbar-action"'),
-    );
     expect(extensionsPaneSource.indexOf('class="extension-toolbar-action"')).toBeLessThan(
       extensionsPaneSource.indexOf('ariaLabel="Load extension snapshot"'),
     );
     expect(extensionsPaneSource.indexOf('class="extension-filter-group"')).toBeLessThan(
       extensionsPaneSource.indexOf('class="new-extension-button"'),
     );
-    expect(extensionsPaneSource).toContain("extension-toolbar-spacer");
+    expect(extensionsPaneSource).toContain(".extension-toolbar-history-row");
     expect(extensionsPaneSource).toContain("Select a snapshot to rename");
     expect(extensionsPaneSource).toContain("Select a snapshot to delete");
     expect(extensionsPaneSource).not.toContain("CompactSelect");
