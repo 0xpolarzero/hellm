@@ -952,6 +952,11 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvOverride");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvOverride");
+    expect(extensionsPaneSource).toContain("pendingRequestUserInputSetting");
+    expect(extensionsPaneSource).toContain("request-input-timeout-controls");
+    expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "mode"');
+    expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "timeout-enabled"');
+    expect(extensionsPaneSource).not.toContain("disabled={pendingSettings}");
     expect(extensionsPaneSource).toContain("ExtensionEnvValueForm");
     expect(extensionEnvFormSource).toContain("createForm");
     expect(extensionEnvFormSource).toContain("Unable to save extension env value.");

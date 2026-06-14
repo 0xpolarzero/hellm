@@ -63,6 +63,9 @@
   let settingsError = $state<string | null>(null);
   let inventoryError = $state<string | null>(null);
   let pendingSettings = $state(false);
+  let pendingRequestUserInputSetting = $state<
+    "mode" | "timeout-enabled" | "timeout-duration" | null
+  >(null);
   let loadingPreview = $state(false);
   let loadingInventory = $state(true);
   let pendingExternalInstructionPath = $state<string | null>(null);
@@ -1101,6 +1104,7 @@
     patch: Partial<RequestUserInputSettings> & {
       blockingTimeout?: Partial<RequestUserInputSettings["blockingTimeout"]>;
     },
+    pendingKey: "mode" | "timeout-enabled" | "timeout-duration",
   ): Promise<void> {
     if (!agentSettings || pendingSettings) return;
     const current = agentSettings.requestUserInput;
@@ -1112,6 +1116,7 @@
       },
     };
     pendingSettings = true;
+    pendingRequestUserInputSetting = pendingKey;
     settingsError = null;
     try {
       agentSettings = await runtime.updateRequestUserInputSettings(next);
@@ -1119,15 +1124,19 @@
       settingsError = error instanceof Error ? error.message : "Unable to save settings.";
     } finally {
       pendingSettings = false;
+      pendingRequestUserInputSetting = null;
     }
   }
 
   function updateBlockingTimeoutSeconds(value: string): void {
     const seconds = Number(value);
     if (!Number.isFinite(seconds)) return;
-    void updateRequestUserInputSettings({
-      blockingTimeout: { durationMs: Math.max(1, Math.floor(seconds)) * 1000 },
-    });
+    void updateRequestUserInputSettings(
+      {
+        blockingTimeout: { durationMs: Math.max(1, Math.floor(seconds)) * 1000 },
+      },
+      "timeout-duration",
+    );
   }
 
   function defaultSnapshotName(date = new Date()): string {
@@ -1866,8 +1875,9 @@
                         type="button"
                         class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "nonblocking" ? "active" : ""}`.trim()}
                         aria-pressed={agentSettings.requestUserInput.mode === "nonblocking"}
-                        disabled={pendingSettings}
-                        onclick={() => updateRequestUserInputSettings({ mode: "nonblocking" })}
+                        disabled={pendingRequestUserInputSetting === "mode"}
+                        onclick={() =>
+                          updateRequestUserInputSettings({ mode: "nonblocking" }, "mode")}
                       >
                         Nonblocking
                       </button>
@@ -1877,25 +1887,31 @@
                         type="button"
                         class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "blocking" ? "active" : ""}`.trim()}
                         aria-pressed={agentSettings.requestUserInput.mode === "blocking"}
-                        disabled={pendingSettings}
-                        onclick={() => updateRequestUserInputSettings({ mode: "blocking" })}
+                        disabled={pendingRequestUserInputSetting === "mode"}
+                        onclick={() => updateRequestUserInputSettings({ mode: "blocking" }, "mode")}
                       >
                         Blocking
                       </button>
                     </Tooltip>
                   </div>
-                  {#if agentSettings.requestUserInput.mode === "blocking"}
+                  <div
+                    class={`request-input-timeout-controls ${agentSettings.requestUserInput.mode === "blocking" ? "active" : ""}`.trim()}
+                    aria-hidden={agentSettings.requestUserInput.mode !== "blocking"}
+                  >
                     <label class="request-input-timeout-toggle">
                       <Checkbox
                         size="sm"
                         checked={agentSettings.requestUserInput.blockingTimeout.enabled}
-                        disabled={pendingSettings}
+                        disabled={agentSettings.requestUserInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-enabled"}
                         onchange={(event) =>
-                          updateRequestUserInputSettings({
-                            blockingTimeout: {
-                              enabled: (event.currentTarget as HTMLInputElement).checked,
+                          updateRequestUserInputSettings(
+                            {
+                              blockingTimeout: {
+                                enabled: (event.currentTarget as HTMLInputElement).checked,
+                              },
                             },
-                          })}
+                            "timeout-enabled",
+                          )}
                       />
                       <span>Timeout</span>
                     </label>
@@ -1905,13 +1921,13 @@
                         type="number"
                         min="1"
                         step="1"
-                        disabled={pendingSettings || !agentSettings.requestUserInput.blockingTimeout.enabled}
+                        disabled={agentSettings.requestUserInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-duration" || !agentSettings.requestUserInput.blockingTimeout.enabled}
                         value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
                         onchange={(event) =>
                           updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
                       />
                     </label>
-                  {/if}
+                  </div>
                 </div>
               {:else}
                 <span class="extension-settings-loading">Loading</span>
@@ -2871,8 +2887,10 @@
   }
 
   .request-input-settings {
+    align-items: center;
     flex-wrap: wrap;
     gap: 0.34rem 0.48rem;
+    min-height: 1.72rem;
     min-width: 0;
   }
 
@@ -2886,6 +2904,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.16rem;
+    min-height: 1.56rem;
     padding: 0.12rem;
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-muted) 24%, transparent);
@@ -2933,9 +2952,25 @@
     font-size: var(--text-xs);
   }
 
+  .request-input-timeout-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.72rem;
+    min-width: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .request-input-timeout-controls.active {
+    visibility: visible;
+    pointer-events: auto;
+  }
+
   .request-input-timeout-field input {
     width: 5.2rem;
-    padding: 0.28rem 0.38rem;
+    height: 1.56rem;
+    padding: 0 0.38rem;
     border: 1px solid var(--ui-border-soft);
     border-radius: var(--ui-radius-sm);
     background: var(--ui-surface);
