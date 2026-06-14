@@ -1163,8 +1163,7 @@
 
   .sidebar-shortcut-slot {
     display: grid;
-    align-self: stretch;
-    place-items: center end;
+    align-items: center;
     justify-items: end;
     min-width: max-content;
   }
@@ -1762,8 +1761,14 @@
   }
 
   .reference-nav-row {
+    height: var(--sidebar-row-height);
+    min-height: var(--sidebar-row-height);
     font-size: var(--text-sm);
     font-weight: 500;
+  }
+
+  .logs-nav-row {
+    position: relative;
   }
 
   .logs-nav-row.has-errors {
@@ -1772,14 +1777,16 @@
   }
 
   .log-unread-badges {
+    position: absolute;
+    top: 50%;
+    right: 0.34rem;
     display: inline-flex;
     align-items: center;
-    justify-self: end;
     gap: 0.16rem;
     min-width: 0;
     min-height: 1rem;
     font-variant-numeric: tabular-nums;
-    transform: translateY(0.34rem);
+    transform: translateY(-50%);
   }
 
   .log-badge {
