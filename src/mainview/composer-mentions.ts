@@ -65,6 +65,19 @@ export function getActiveMentionQuery(
   return { start: atIndex, end: selectionStart, query };
 }
 
+export function isActiveMentionSelected(input: {
+  value: string;
+  query: MentionQuery | null;
+  paths: readonly WorkspacePathIndexEntry[];
+}): boolean {
+  return Boolean(
+    input.query &&
+    input.query.query.length > 0 &&
+    input.value.slice(input.query.start, input.query.end) === `@${input.query.query}` &&
+    input.paths.some((entry) => entry.workspaceRelativePath === input.query?.query),
+  );
+}
+
 export function searchMentionPaths(
   entries: readonly WorkspacePathIndexEntry[],
   query: string,

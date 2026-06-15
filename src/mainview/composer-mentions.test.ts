@@ -4,6 +4,7 @@ import {
   commitTypedSnippetMention,
   expandComposerSnippetMention,
   getActiveMentionQuery,
+  isActiveMentionSelected,
   nextSnippetArgumentKeyboardTarget,
   parseTranscriptMentionLinks,
   removeComposerSnippetMentionToken,
@@ -57,6 +58,33 @@ describe("composer mention query detection", () => {
         "Open @docs/progress.md please".length,
       ),
     ).toBeNull();
+  });
+});
+
+describe("composer mention selection detection", () => {
+  it("does not treat a bare @ trigger as selected when a root path is indexed", () => {
+    const query = getActiveMentionQuery("@", 1);
+
+    expect(
+      isActiveMentionSelected({
+        value: "@",
+        query,
+        paths: [{ kind: "folder", workspaceRelativePath: "" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("treats a complete non-empty indexed path mention as selected", () => {
+    const value = "@docs/progress.md";
+    const query = getActiveMentionQuery(value, value.length);
+
+    expect(
+      isActiveMentionSelected({
+        value,
+        query,
+        paths: [{ kind: "file", workspaceRelativePath: "docs/progress.md" }],
+      }),
+    ).toBe(true);
   });
 });
 

@@ -26,6 +26,7 @@
 		commitTypedSnippetMention,
 		getActiveMentionQuery,
 		expandComposerSnippetMention,
+		isActiveMentionSelected,
 		nextSnippetArgumentKeyboardTarget,
 		removeComposerSnippetMentionToken,
 		searchComposerMentionResults,
@@ -203,11 +204,7 @@
 	const mentionQuery = $derived(getActiveMentionQuery(draft, caretPosition));
 	const mentionQueryKey = $derived(mentionQuery ? `${mentionQuery.start}:${mentionQuery.query}` : null);
 	const activeMentionIsSelected = $derived(
-		Boolean(
-			mentionQuery &&
-				draft.slice(mentionQuery.start, mentionQuery.end) === `@${mentionQuery.query}` &&
-				workspacePaths.some((entry) => entry.workspaceRelativePath === mentionQuery.query),
-		),
+		isActiveMentionSelected({ value: draft, query: mentionQuery, paths: workspacePaths }),
 	);
 	const mentionResults = $derived<ComposerMentionPickerResult[]>(
 		mentionQuery && (workspacePathsLoaded || snippetsLoaded)
@@ -256,7 +253,7 @@
 	});
 
 	$effect(() => {
-		const targetKey = `${sessionName}\u0000${targetLabel}\u0000${worktreeLabel}`;
+		const targetKey = `${draftStorageKey}\u0000${targetLabel}\u0000${worktreeLabel}`;
 		if (targetKey !== workspacePathTargetKey) {
 			workspacePathTargetKey = targetKey;
 			workspacePaths = [];
@@ -414,8 +411,18 @@
 
 	function syncCaretFromTextarea(target: EventTarget | null) {
 		if (!(target instanceof HTMLTextAreaElement)) return;
-		caretPosition = target.selectionStart;
-		if (getActiveMentionQuery(target.value, target.selectionStart, target.selectionEnd)) {
+		let selectionStart = target.selectionStart;
+		let selectionEnd = target.selectionEnd;
+		if (selectionStart === 0 && selectionEnd === 0) {
+			const endMentionQuery = getActiveMentionQuery(target.value, target.value.length);
+			if (endMentionQuery) {
+				selectionStart = target.value.length;
+				selectionEnd = target.value.length;
+				target.setSelectionRange(selectionStart, selectionEnd);
+			}
+		}
+		caretPosition = selectionStart;
+		if (getActiveMentionQuery(target.value, selectionStart, selectionEnd)) {
 			void ensureMentionSources();
 		}
 	}
@@ -432,8 +439,9 @@
 	}
 
 	function handleDraftInput(event: Event) {
-		syncCaretFromTextarea(event.currentTarget);
-		commitTypedSnippetMentionFromTextarea(event.currentTarget);
+		const target = event.currentTarget;
+		syncCaretFromTextarea(target);
+		commitTypedSnippetMentionFromTextarea(target);
 		syncDraftTextareaHeight();
 	}
 
@@ -488,6 +496,7 @@
 		} catch (error) {
 			mentionError = error instanceof Error ? error.message : "Mentions unavailable.";
 		} finally {
+			syncCaretFromTextarea(draftElement);
 			mentionLoading = false;
 			if (pendingTypedSnippetCommit && snippetsLoaded && snippets) {
 				pendingTypedSnippetCommit = false;

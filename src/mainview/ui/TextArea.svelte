@@ -12,11 +12,22 @@
 		resize = "vertical",
 		element = $bindable(null),
 		class: className = "",
+		oninput,
 		...rest
 	}: Props = $props();
+
+	function handleInput(event: Event) {
+		oninput?.(event);
+	}
 </script>
 
-<textarea {...rest} bind:this={element} bind:value class={`ui-textarea resize-${resize} ${className}`.trim()}></textarea>
+<textarea
+	{...rest}
+	bind:this={element}
+	bind:value
+	oninput={handleInput}
+	class={`ui-textarea resize-${resize} ${className}`.trim()}
+></textarea>
 
 <style>
 	.ui-textarea {
