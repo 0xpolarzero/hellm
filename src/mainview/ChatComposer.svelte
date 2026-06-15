@@ -554,6 +554,24 @@
 		focusComposerAt(caretAfterSnippetMentionToken(draft, mention));
 	}
 
+	function shouldFocusComposerFromFrame(target: EventTarget | null) {
+		if (!(target instanceof Element)) return;
+		if (target.closest(".composer-row-actions")) return;
+		if (target.closest("button, input, select, textarea, a, [role='button']")) return;
+		return true;
+	}
+
+	function prepareComposerFrameFocus(event: PointerEvent) {
+		if (!shouldFocusComposerFromFrame(event.target)) return;
+		event.preventDefault();
+	}
+
+	function focusComposerFromFrame(event: PointerEvent) {
+		if (!shouldFocusComposerFromFrame(event.target)) return;
+		event.preventDefault();
+		window.requestAnimationFrame(() => moveCaretToDraftEnd(draft));
+	}
+
 	async function expandSnippetMention(mention: ComposerSnippetMention) {
 		const selection = expandComposerSnippetMention(draft, mention);
 		draft = selection.draft;
@@ -938,7 +956,12 @@
 		{/if}
 
 		<div class="composer-main-row">
-			<div class="composer-input-wrap">
+			<div
+				class="composer-input-wrap"
+				role="presentation"
+				onpointerdown={prepareComposerFrameFocus}
+				onpointerup={focusComposerFromFrame}
+			>
 				{#if editDraft}
 					<section class="composer-edit-row" aria-label="Editing message">
 						<span>Editing message</span>
@@ -1054,6 +1077,15 @@
 					onselect={(event) => syncCaretFromTextarea(event.currentTarget)}
 				/>
 
+				<div class="focused-context-budget">
+					<ContextBudgetBar
+						budget={contextBudget ?? null}
+						variant="full"
+						label="Context"
+						tooltipLabel={contextBudgetTooltip}
+						tooltipDetails={contextBudgetTooltipDetails}
+					/>
+				</div>
 				<div class="composer-row-actions">
 					<div class="composer-control-cluster" aria-label="Runtime controls">
 						<CompactCombobox
@@ -1125,15 +1157,6 @@
 							</Tooltip>
 						{/if}
 					</div>
-				</div>
-				<div class="focused-context-budget">
-					<ContextBudgetBar
-						budget={contextBudget ?? null}
-						variant="full"
-						label="Context"
-						tooltipLabel={contextBudgetTooltip}
-						tooltipDetails={contextBudgetTooltipDetails}
-					/>
 				</div>
 			</div>
 		</div>
@@ -1348,11 +1371,12 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
-		min-height: 0;
+		min-height: 8.55rem;
 		overflow: visible;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
 		border-radius: var(--ui-radius-md);
 		background: color-mix(in oklab, var(--ui-surface-subtle) 38%, transparent);
+		cursor: text;
 		transition:
 			border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
 			background-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
@@ -1417,7 +1441,7 @@
 	}
 
 	.composer-row-actions {
-		margin-top: 0;
+		margin-top: auto;
 		padding: 0.28rem 0.32rem 0.32rem 0.44rem;
 		border-radius: 0 0 var(--ui-radius-md) var(--ui-radius-md);
 		background: transparent;
@@ -1426,6 +1450,7 @@
 		gap: 0.4rem;
 		flex-wrap: wrap;
 		width: 100%;
+		cursor: default;
 	}
 
 	.composer-control-cluster,
@@ -1654,8 +1679,11 @@
 	@container (max-width: 420px) {
 		.composer-main-row {
 			grid-template-columns: 1fr;
-			min-height: 6.1rem;
 			padding: 0.48rem 0.56rem 0.42rem;
+		}
+
+		.composer-input-wrap {
+			min-height: 8.95rem;
 		}
 
 		:global(.composer-shell .ui-textarea) {

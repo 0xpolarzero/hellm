@@ -1208,6 +1208,44 @@ describe("default workspace renderer shell", () => {
     expect(panelHostSource).toContain("onStop={stopAgent}");
   });
 
+  it("keeps composer controls pinned to the bottom of the input frame", async () => {
+    const composerSource = await readFile(
+      new URL("./ChatComposer.svelte", import.meta.url),
+      "utf8",
+    );
+    const contextBudgetIndex = composerSource.indexOf('class="focused-context-budget"');
+    const actionRowIndex = composerSource.indexOf('class="composer-row-actions"');
+
+    expect(composerSource).toContain("min-height: 8.55rem;");
+    expect(composerSource).toContain("flex: 1 1 auto;");
+    expect(composerSource).toContain("margin-top: auto;");
+    expect(contextBudgetIndex).toBeGreaterThanOrEqual(0);
+    expect(actionRowIndex).toBeGreaterThan(contextBudgetIndex);
+  });
+
+  it("focuses the composer textarea from the input frame without hijacking footer controls", async () => {
+    const composerSource = await readFile(
+      new URL("./ChatComposer.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(composerSource).toContain(
+      "function shouldFocusComposerFromFrame(target: EventTarget | null)",
+    );
+    expect(composerSource).toContain("function prepareComposerFrameFocus(event: PointerEvent)");
+    expect(composerSource).toContain("event.preventDefault();");
+    expect(composerSource).toContain("function focusComposerFromFrame(event: PointerEvent)");
+    expect(composerSource).toContain('target.closest(".composer-row-actions")');
+    expect(composerSource).toContain(
+      "window.requestAnimationFrame(() => moveCaretToDraftEnd(draft))",
+    );
+    expect(composerSource).toContain("onpointerdown={prepareComposerFrameFocus}");
+    expect(composerSource).toContain('role="presentation"');
+    expect(composerSource).toContain("onpointerup={focusComposerFromFrame}");
+    expect(composerSource).toContain("cursor: text;");
+    expect(composerSource).toContain("cursor: default;");
+  });
+
   it("keeps non-empty transcript rows visible when virtualizer total size is temporarily zero", async () => {
     const transcriptSource = await readFile(
       new URL("./ChatTranscript.svelte", import.meta.url),
