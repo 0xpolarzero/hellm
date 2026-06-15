@@ -1967,6 +1967,8 @@ export class WorkspaceSessionCatalog {
     });
 
     if (session.activePrompt) {
+      this.syncManagedState(session);
+      this.persistManagedSessionSnapshot(session);
       if (profileChanged) {
         await this.emitWorkspaceSync("workspace.updated");
       }

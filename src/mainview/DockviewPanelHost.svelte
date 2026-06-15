@@ -182,6 +182,7 @@
     controller?.target.surface === "thread" ? "handler" : "orchestrator",
   );
   const composerExtensionUsage = $derived.by<Record<string, ExtensionUsageState>>(() => {
+    void controllerRevision;
     if (!controller) return {};
     const usage: Record<string, ExtensionUsageState> = {};
     for (const extensionId of controller.loadedExtensionIds) {

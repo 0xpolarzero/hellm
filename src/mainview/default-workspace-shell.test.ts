@@ -455,6 +455,10 @@ describe("default workspace renderer shell", () => {
       new URL("./WorkflowAgentRowForm.svelte", import.meta.url),
       "utf8",
     );
+    const dockviewHostSource = await readFile(
+      new URL("./DockviewPanelHost.svelte", import.meta.url),
+      "utf8",
+    );
     const extensionUsageControlSource = await readFile(
       new URL("./ExtensionUsageControl.svelte", import.meta.url),
       "utf8",
@@ -607,6 +611,10 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).not.toContain(
       'errorMessage =\n        error instanceof Error ? error.message : "Unable to load generated context preview."',
     );
+    expect(dockviewHostSource).toContain(
+      "const composerExtensionUsage = $derived.by<Record<string, ExtensionUsageState>>(() => {",
+    );
+    expect(dockviewHostSource).toContain("void controllerRevision;");
     expect(profileExtensionEditorSource).not.toContain("Generated context preview");
     expect(profileExtensionEditorSource).not.toContain("Actor:");
     expect(profileExtensionEditorSource).not.toContain("profileName");
