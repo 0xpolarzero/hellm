@@ -36,6 +36,7 @@ import type {
   QueuedSurfaceMessage,
   SurfaceStreamPatch,
   SurfaceStreamPatchInput,
+  SurfaceMutationResponse,
   SurfaceSyncMessage,
   UpdateComposerDraftRequest,
   WorkspaceMutationResponse,
@@ -1865,6 +1866,8 @@ export class WorkspaceSessionCatalog {
     });
 
     if (session.activePrompt) {
+      this.syncManagedState(session);
+      this.persistManagedSessionSnapshot(session);
       if (profileChanged) {
         await this.emitWorkspaceSync("workspace.updated");
       }
@@ -1931,10 +1934,96 @@ export class WorkspaceSessionCatalog {
     return { ok: true, target: structuredClone(target) };
   }
 
+  async setSurfaceExtensionUsage(input: {
+    target: PromptTarget;
+    extensionId: string;
+    state: ExtensionUsageState;
+  }): Promise<SurfaceMutationResponse> {
+    const session = this.managedSurfaces.get(input.target.surfacePiSessionId);
+    if (!session) {
+      return { ok: false, target: structuredClone(input.target) };
+    }
+
+    const previousBinding = {
+      systemPrompt: session.systemPrompt,
+      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      loadedExtensionIds: [...session.loadedExtensionIds],
+      availableExtensionIds: [...session.availableExtensionIds],
+      externalSourceHashes: [...session.externalSourceHashes],
+    };
+    const extensionState = applyExtensionUsageState(
+      {
+        loadedExtensionIds: session.loadedExtensionIds,
+        availableExtensionIds: session.availableExtensionIds,
+      },
+      input.extensionId,
+      input.state,
+    );
+    session.loadedExtensionIds = extensionState.loadedExtensionIds;
+    session.availableExtensionIds = extensionState.availableExtensionIds;
+    session.recreateOnNextPrompt = true;
+    const profileChanged = this.updateOrchestratorProfileFromComposer(input.target, session, {
+      extensionUsage: { [input.extensionId]: input.state },
+    });
+
+    if (session.activePrompt) {
+      if (profileChanged) {
+        await this.emitWorkspaceSync("workspace.updated");
+      }
+      await this.emitSurfaceSync({
+        reason: "surface.updated",
+        session,
+        target: input.target,
+      });
+      return {
+        ok: true,
+        target: structuredClone(input.target),
+        snapshot: await this.buildSurfaceSnapshot(session, input.target),
+      };
+    }
+
+    const externalContextSources = await this.buildCurrentExternalContextSources();
+    const aggregate = this.buildAggregateForTarget(input.target, {
+      extensionState,
+      externalInstructionSources: externalContextSources,
+    });
+    const refreshed = await this.recreateManagedSurface(session, {
+      actorKind: getActorKindForTarget(input.target),
+      systemPrompt: aggregate.outputs.prompt,
+      generatedAgentContextAggregateKey: aggregate.cacheKey,
+      generatedAgentContextAggregate: aggregate.outputs,
+      generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
+      loadedExtensionIds: extensionState.loadedExtensionIds,
+      availableExtensionIds: extensionState.availableExtensionIds,
+      externalContextSources,
+    });
+    refreshed.recreateOnNextPrompt = false;
+    this.syncManagedState(refreshed);
+    this.syncGeneratedAgentContextBindingForTarget(input.target, refreshed);
+    this.recordAgentContextUpdatedEvent(input.target, previousBinding, refreshed);
+    this.persistManagedSessionSnapshot(refreshed);
+    if (input.target.surface === "orchestrator") {
+      this.syncStructuredPiSessionFromOrchestratorSession(refreshed);
+    }
+    await this.emitSurfaceSync({
+      reason: "surface.updated",
+      session: refreshed,
+      target: input.target,
+    });
+    await this.emitWorkspaceSync("workspace.updated");
+    return {
+      ok: true,
+      target: structuredClone(input.target),
+      snapshot: await this.buildSurfaceSnapshot(refreshed, input.target),
+    };
+  }
+
   private updateOrchestratorProfileFromComposer(
     target: PromptTarget,
     session: ManagedSession,
-    updates: Partial<Pick<AgentProfileSettings, "provider" | "model" | "reasoningEffort">>,
+    updates: Partial<
+      Pick<AgentProfileSettings, "provider" | "model" | "reasoningEffort" | "extensionUsage">
+    >,
   ): boolean {
     if (target.surface !== "orchestrator") {
       return false;
@@ -1945,11 +2034,19 @@ export class WorkspaceSessionCatalog {
     if (!profile?.updateFromComposer) {
       return false;
     }
-    const nextProfile = { ...profile, ...updates };
+    const nextProfile = {
+      ...profile,
+      ...updates,
+      extensionUsage: {
+        ...profile.extensionUsage,
+        ...updates.extensionUsage,
+      },
+    };
     if (
       nextProfile.provider === profile.provider &&
       nextProfile.model === profile.model &&
-      nextProfile.reasoningEffort === profile.reasoningEffort
+      nextProfile.reasoningEffort === profile.reasoningEffort &&
+      sameExtensionUsage(nextProfile.extensionUsage, profile.extensionUsage)
     ) {
       return false;
     }
@@ -2469,6 +2566,8 @@ export class WorkspaceSessionCatalog {
       model: session.model,
       reasoningEffort: session.thinkingLevel,
       agentProfileId: session.agentProfileId,
+      loadedExtensionIds: [...session.loadedExtensionIds],
+      availableExtensionIds: [...session.availableExtensionIds],
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
       externalContextSources: structuredClone(session.externalContextSources),
@@ -6380,6 +6479,39 @@ function createGeneratedAgentContextFingerprint(input: {
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameExtensionUsage(
+  left: Record<string, ExtensionUsageState>,
+  right: Record<string, ExtensionUsageState>,
+): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function applyExtensionUsageState(
+  current: { loadedExtensionIds: readonly string[]; availableExtensionIds: readonly string[] },
+  extensionId: string,
+  state: ExtensionUsageState,
+): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
+  const loaded = new Set(current.loadedExtensionIds);
+  const available = new Set(current.availableExtensionIds);
+  loaded.delete(extensionId);
+  available.delete(extensionId);
+  if (state === "loaded") {
+    loaded.add(extensionId);
+  } else if (state === "available") {
+    available.add(extensionId);
+  }
+  return {
+    loadedExtensionIds: [...loaded],
+    availableExtensionIds: [...available],
+  };
 }
 
 function diffStringSet(

@@ -2722,6 +2722,42 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         }
         return result;
       },
+      setSurfaceExtensionUsage: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        const { target, extensionId, state } = input;
+        const result = await runtime.catalog.setSurfaceExtensionUsage({
+          target,
+          extensionId,
+          state,
+        });
+        if (result.ok) {
+          recordDevBrowserToolsEvent("surface.extension.changed", {
+            extensionId,
+            state,
+            surfacePiSessionId: target.surfacePiSessionId,
+            threadId: target.threadId ?? null,
+            workspaceSessionId: target.workspaceSessionId,
+          });
+          runtime.appLog.info("surface", "Surface extension usage changed.", {
+            extensionId,
+            state,
+            workspaceSessionId: target.workspaceSessionId,
+            surfacePiSessionId: target.surfacePiSessionId,
+            threadId: target.threadId,
+          });
+        } else {
+          runtime.appLog.error(
+            "surface",
+            `Surface pi session ${target.surfacePiSessionId} was not found for extension usage update.`,
+            {
+              extensionId,
+              state,
+              surfacePiSessionId: target.surfacePiSessionId,
+            },
+          );
+        }
+        return result;
+      },
       listProviderAuths: async (): Promise<ProviderAuthInfo[]> => listProviderAuthSummaries(),
       setProviderApiKey: async ({
         providerId,

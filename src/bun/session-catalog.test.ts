@@ -44,6 +44,7 @@ import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import type { StructuredSessionStateStore } from "./structured-session-state";
 import { createThreadReportTool } from "./thread-report-tool";
+import type { ExtensionUsageState } from "../shared/extensions";
 
 const tempDirs: string[] = [];
 
@@ -459,6 +460,25 @@ async function setSurfaceThoughtLevel(
     return;
   }
   await setSurfaceThoughtLevelFn.call(catalog, target, level);
+}
+
+async function setSurfaceExtensionUsage(
+  catalog: WorkspaceSessionCatalog,
+  target: PromptTarget,
+  extensionId: string,
+  state: ExtensionUsageState,
+): Promise<void> {
+  const setSurfaceExtensionUsageFn = (
+    catalog as unknown as {
+      setSurfaceExtensionUsage: (...args: unknown[]) => Promise<unknown>;
+    }
+  ).setSurfaceExtensionUsage;
+  const source = String(setSurfaceExtensionUsageFn);
+  if (source.includes(".target")) {
+    await setSurfaceExtensionUsageFn.call(catalog, { target, extensionId, state });
+    return;
+  }
+  await setSurfaceExtensionUsageFn.call(catalog, target, extensionId, state);
 }
 
 function getCatalogAgentProfiles(catalog: WorkspaceSessionCatalog): AgentProfileSettings[] {
@@ -5337,6 +5357,7 @@ describe("WorkspaceSessionCatalog", () => {
       );
       await setSurfaceModel(catalog, synced.target, "gpt-4.1-mini");
       await setSurfaceThoughtLevel(catalog, synced.target, "high");
+      await setSurfaceExtensionUsage(catalog, synced.target, "smithers", "loaded");
 
       const syncedAfter = getCatalogAgentProfiles(catalog).find(
         (profile) => profile.id === syncedProfile.id,
@@ -5346,6 +5367,7 @@ describe("WorkspaceSessionCatalog", () => {
         model: "gpt-4.1-mini",
         reasoningEffort: "high",
       });
+      expect(syncedAfter?.extensionUsage.smithers).toBe("loaded");
 
       const fixed = await catalog.createSession(
         { title: "Fixed profile", agentProfileId: fixedProfile.id },
@@ -5359,6 +5381,11 @@ describe("WorkspaceSessionCatalog", () => {
       );
       await setSurfaceModel(catalog, fixed.target, "gpt-4.1-mini");
       await setSurfaceThoughtLevel(catalog, fixed.target, "high");
+      const fixedExtensionResult = await catalog.setSurfaceExtensionUsage({
+        target: fixed.target,
+        extensionId: "smithers",
+        state: "loaded",
+      });
 
       const fixedAfter = getCatalogAgentProfiles(catalog).find(
         (profile) => profile.id === fixedProfile.id,
@@ -5368,6 +5395,8 @@ describe("WorkspaceSessionCatalog", () => {
         model: "gpt-4o",
         reasoningEffort: "medium",
       });
+      expect(fixedAfter?.extensionUsage.smithers).toBeUndefined();
+      expect(fixedExtensionResult.snapshot?.loadedExtensionIds).toContain("smithers");
     } finally {
       await catalog.dispose();
     }

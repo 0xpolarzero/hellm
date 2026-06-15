@@ -290,6 +290,8 @@ function createSurfaceSnapshot(input: {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   agentProfileId?: ConversationSurfaceSnapshot["agentProfileId"];
+  loadedExtensionIds?: ConversationSurfaceSnapshot["loadedExtensionIds"];
+  availableExtensionIds?: ConversationSurfaceSnapshot["availableExtensionIds"];
   systemPrompt?: string;
   resolvedSystemPrompt?: string;
   externalContextSources?: ConversationSurfaceSnapshot["externalContextSources"];
@@ -313,6 +315,8 @@ function createSurfaceSnapshot(input: {
     model: input.model ?? "gpt-4o",
     reasoningEffort: input.reasoningEffort ?? "medium",
     agentProfileId: input.agentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID,
+    loadedExtensionIds: structuredClone(input.loadedExtensionIds ?? []),
+    availableExtensionIds: structuredClone(input.availableExtensionIds ?? []),
     systemPrompt,
     resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
     externalContextSources: structuredClone(input.externalContextSources ?? []),
@@ -2030,6 +2034,35 @@ function createFakeRpc(input: {
             });
           });
           return { ok: true, target: cloneTarget(target) };
+        },
+        setSurfaceExtensionUsage: async ({ target, extensionId, state }) => {
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          const loaded = new Set(record.snapshot.loadedExtensionIds);
+          const available = new Set(record.snapshot.availableExtensionIds);
+          loaded.delete(extensionId);
+          available.delete(extensionId);
+          if (state === "loaded") {
+            loaded.add(extensionId);
+          } else if (state === "available") {
+            available.add(extensionId);
+          }
+          record.snapshot = {
+            ...record.snapshot,
+            loadedExtensionIds: [...loaded],
+            availableExtensionIds: [...available],
+          };
+          queueMicrotask(() => {
+            emitSurfaceSync({
+              reason: "surface.updated",
+              target: cloneTarget(target),
+              snapshot: structuredClone(record.snapshot),
+            });
+          });
+          return {
+            ok: true,
+            target: cloneTarget(target),
+            snapshot: structuredClone(record.snapshot),
+          };
         },
         cancelPrompt: async ({ target }) => {
           cancelRequests.push(cloneTarget(target));

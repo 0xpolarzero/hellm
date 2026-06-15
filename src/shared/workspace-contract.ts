@@ -646,6 +646,12 @@ export interface SetSurfaceThoughtLevelRequest {
   level: ReasoningEffort;
 }
 
+export interface SetSurfaceExtensionUsageRequest {
+  target: PromptTarget;
+  extensionId: string;
+  state: ExtensionUsageState;
+}
+
 export interface UpdateComposerDraftRequest {
   target: PromptTarget;
   draft: {
@@ -1419,6 +1425,8 @@ export interface ConversationSurfaceSnapshot {
   model: string;
   reasoningEffort: ReasoningEffort;
   agentProfileId: AgentProfileId;
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
   systemPrompt: string;
   resolvedSystemPrompt: string;
   externalContextSources: GeneratedAgentContextExternalSource[];
@@ -2107,6 +2115,10 @@ export interface ChatRPCSchema {
       };
       setSurfaceThoughtLevel: {
         params: WorkspaceScoped<SetSurfaceThoughtLevelRequest>;
+        response: SurfaceMutationResponse;
+      };
+      setSurfaceExtensionUsage: {
+        params: WorkspaceScoped<SetSurfaceExtensionUsageRequest>;
         response: SurfaceMutationResponse;
       };
       cancelPrompt: {

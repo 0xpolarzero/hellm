@@ -37,6 +37,7 @@
 		type WorkspacePathIndexEntry,
 	} from "./composer-mentions";
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
+	import ExtensionUsageControl from "./ExtensionUsageControl.svelte";
 	import TextArea from "./ui/TextArea.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import CompactSelect from "./ui/CompactSelect.svelte";
@@ -44,6 +45,8 @@
 	import { formatWorkingElapsed, formatWorkingElapsedTooltip } from "./working-timer";
 	import QueuedMessagesStrip from "./QueuedMessagesStrip.svelte";
 	import type { QueuedPrompt } from "./chat-runtime";
+	import type { AgentContextActor, ExtensionUsageControlItem } from "./agents-pane-extension-usage";
+	import type { ExtensionUsageState } from "../shared/extensions";
 	import type { ComposerAttachment, ComposerDraft } from "../shared/workspace-contract";
 	import type {
 		ComposerSnippetMention,
@@ -105,6 +108,10 @@
 		onReorderQueuedMessage?: (promptId: string, beforePromptId: string | null) => void;
 		onCancelEditMessage?: () => void;
 		onThinkingChange: (level: ThinkingLevel) => void;
+		extensionActor?: AgentContextActor;
+		extensionUsageItems?: ExtensionUsageControlItem[];
+		onExtensionUsageChange?: (extensionId: string, state: ExtensionUsageState) => void | Promise<void>;
+		onOpenExtension?: (extensionId: string) => void;
 		listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
 		listSnippets: () => Promise<SnippetsReadModel>;
 		pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
@@ -139,6 +146,10 @@
 		onReorderQueuedMessage = () => {},
 		onCancelEditMessage = () => {},
 		onThinkingChange,
+		extensionActor = "orchestrator",
+		extensionUsageItems = [],
+		onExtensionUsageChange = () => {},
+		onOpenExtension = () => {},
 		listWorkspacePaths,
 		listSnippets,
 		pickWorkspaceAttachments,
@@ -1111,6 +1122,15 @@
 							textTransform="lowercase"
 							onSelect={(level) => onThinkingChange(level as ThinkingLevel)}
 						/>
+						{#if extensionUsageItems.length > 0}
+							<ExtensionUsageControl
+								ariaLabel="Extension usage"
+								actor={extensionActor}
+								items={extensionUsageItems}
+								onOpenExtension={onOpenExtension}
+								onStateChange={onExtensionUsageChange}
+							/>
+						{/if}
 					</div>
 					<div class="composer-action-cluster" aria-label="Composer actions">
 						<Tooltip label="Attach file context">

@@ -105,6 +105,7 @@ import {
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import type { AppMenuAction } from "../shared/shortcut-registry";
+import type { ExtensionUsageState } from "../shared/extensions";
 import {
   addDockviewPanel,
   bindPane,
@@ -289,6 +290,8 @@ export interface ChatSurfaceController {
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
   agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
   externalContextSources: GeneratedAgentContextExternalSource[];
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
   agentProfileId: AgentProfileId;
   promptStatus: PromptStatus;
   activeTurnId: string | null;
@@ -310,6 +313,7 @@ export interface ChatSurfaceController {
   reorderQueuedPrompt: (promptId: string, beforePromptId: string | null) => Promise<boolean>;
   steerQueuedPrompt: (promptId: string) => Promise<boolean>;
   queuePromptRefresh: () => Promise<boolean>;
+  setExtensionUsage: (extensionId: string, state: ExtensionUsageState) => Promise<void>;
   abort: () => Promise<void>;
   subscribe: (listener: ChatRuntimeListener) => () => void;
 }
@@ -449,6 +453,7 @@ export interface ChatRuntimeRpcClient {
     queuePromptRefresh: typeof rpc.request.queuePromptRefresh;
     setSurfaceModel: typeof rpc.request.setSurfaceModel;
     setSurfaceThoughtLevel: typeof rpc.request.setSurfaceThoughtLevel;
+    setSurfaceExtensionUsage: typeof rpc.request.setSurfaceExtensionUsage;
     cancelPrompt: typeof rpc.request.cancelPrompt;
     listProviderAuths: typeof rpc.request.listProviderAuths;
     setProviderApiKey: typeof rpc.request.setProviderApiKey;
@@ -953,6 +958,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
   agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
   externalContextSources: GeneratedAgentContextExternalSource[];
+  loadedExtensionIds: string[] = [];
+  availableExtensionIds: string[] = [];
   agentProfileId: AgentProfileId;
   promptStatus: PromptStatus;
   activeTurnId: string | null;
@@ -988,6 +995,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.promptBinding = snapshot.promptBinding;
     this.agentContextUpdate = snapshot.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshot.externalContextSources ?? []);
+    this.loadedExtensionIds = [...snapshot.loadedExtensionIds];
+    this.availableExtensionIds = [...snapshot.availableExtensionIds];
     this.agentProfileId = snapshot.agentProfileId;
     this.promptStatus = snapshot.promptStatus;
     this.activeTurnId = snapshot.activeTurnId;
@@ -1081,6 +1090,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.promptBinding = snapshotForAgent.promptBinding;
     this.agentContextUpdate = snapshotForAgent.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshotForAgent.externalContextSources ?? []);
+    this.loadedExtensionIds = [...snapshotForAgent.loadedExtensionIds];
+    this.availableExtensionIds = [...snapshotForAgent.availableExtensionIds];
     this.agentProfileId = snapshotForAgent.agentProfileId;
     this.promptStatus = snapshotForAgent.promptStatus;
     this.activeTurnId = snapshotForAgent.activeTurnId;
@@ -1507,6 +1518,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
         (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
         DEFAULT_AGENT_SETTINGS.reasoningEffort,
       agentProfileId: this.agentProfileId,
+      loadedExtensionIds: [...this.loadedExtensionIds],
+      availableExtensionIds: [...this.availableExtensionIds],
       systemPrompt: this.agent.state.systemPrompt,
       resolvedSystemPrompt: this.resolvedSystemPrompt,
       externalContextSources: structuredClone(this.externalContextSources),
@@ -1551,6 +1564,35 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       }
     } catch (error) {
       console.error("Failed to sync session thought level:", error);
+    }
+  }
+
+  async setExtensionUsage(extensionId: string, state: ExtensionUsageState): Promise<void> {
+    await this.syncSurfaceExtensionUsage(extensionId, state);
+  }
+
+  private async syncSurfaceExtensionUsage(
+    extensionId: string,
+    state: ExtensionUsageState,
+  ): Promise<void> {
+    try {
+      const response = await this.rpcClient.request.setSurfaceExtensionUsage({
+        workspaceId: this.workspaceId,
+        target: this.target,
+        extensionId,
+        state,
+      });
+      if (response.ok) {
+        this.target = normalizePromptTarget(response.target);
+        this.agent.sessionId = response.target.surfacePiSessionId;
+        if (response.snapshot) {
+          this.applySnapshot(response.snapshot);
+        } else {
+          this.emit();
+        }
+      }
+    } catch (error) {
+      console.error("Failed to sync session extension usage:", error);
     }
   }
 }

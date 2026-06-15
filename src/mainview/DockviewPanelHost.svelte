@@ -28,7 +28,17 @@
   import type { ChatRuntime } from "./chat-runtime";
   import type { ChatSurfaceController } from "./chat-runtime";
   import type { QueuedPrompt } from "./chat-runtime";
-  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
+  import {
+    DEFAULT_AGENT_SETTINGS_STATE,
+    type AgentSettingsState,
+    type AppAppearance,
+  } from "../shared/agent-settings";
+  import {
+    extensionUsageItems as buildExtensionUsageItems,
+    type AgentContextActor,
+    type ExtensionUsageControlItem,
+  } from "./agents-pane-extension-usage";
+  import type { ExtensionUsageState } from "../shared/extensions";
   import type {
     WorkspaceHandlerThreadSummary,
     WorkspaceSessionSummary,
@@ -168,6 +178,40 @@
   });
   const editingUserMessageTimestamp = $derived(editDraft?.messageTimestamp ?? null);
   const activeSystemPrompt = $derived(resolvedSystemPrompt.trim());
+  const composerExtensionActor = $derived<AgentContextActor>(
+    controller?.target.surface === "thread" ? "handler" : "orchestrator",
+  );
+  const composerExtensionUsage = $derived.by<Record<string, ExtensionUsageState>>(() => {
+    if (!controller) return {};
+    const usage: Record<string, ExtensionUsageState> = {};
+    for (const extensionId of controller.loadedExtensionIds) {
+      usage[extensionId] = "loaded";
+    }
+    for (const extensionId of controller.availableExtensionIds) {
+      if (usage[extensionId] === undefined) {
+        usage[extensionId] = "available";
+      }
+    }
+    const inventoryIds = new Set(
+      runtime.extensionsInventorySnapshot?.extensions.map((extension) => extension.id) ?? [],
+    );
+    for (const extensionId of inventoryIds) {
+      if (usage[extensionId] === undefined) {
+        usage[extensionId] = "unavailable";
+      }
+    }
+    return usage;
+  });
+  const composerExtensionUsageItems = $derived<ExtensionUsageControlItem[]>(
+    buildExtensionUsageItems({
+      actor: composerExtensionActor,
+      profileId: controller?.agentProfileId ?? "composer-surface",
+      usage: composerExtensionUsage,
+      extensionInventoryItems: runtime.extensionsInventorySnapshot?.extensions ?? [],
+      extensionDefaults: agentSettings?.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults,
+      networkAccess: agentSettings?.appPreferences.networkAccess ?? true,
+    }),
+  );
   const hasSurfaceMetadata = $derived(
     Boolean(promptBinding?.stale || terminalPromptRefresh || activeSystemPrompt),
   );
@@ -253,6 +297,17 @@
         if (loadToken !== handlerThreadLoadToken) return;
         handlerThreads = [];
       });
+  }
+
+  function openExtension(extensionId: string): void {
+    void runtime.openSurface(
+      {
+        surface: "extensions",
+        view: "inventory",
+        targetExtensionId: extensionId,
+      },
+      { kind: "focused-panel" },
+    );
   }
 
   function transcriptSplitTarget() {
@@ -661,6 +716,11 @@
       onReorderQueuedMessage={(promptId, beforePromptId) =>
         void controller.reorderQueuedPrompt(promptId, beforePromptId)}
       onThinkingChange={(level) => controller?.agent.setThinkingLevel(level)}
+      extensionActor={composerExtensionActor}
+      extensionUsageItems={composerExtensionUsageItems}
+      onExtensionUsageChange={(extensionId, state) =>
+        controller?.setExtensionUsage(extensionId, state)}
+      onOpenExtension={openExtension}
       listWorkspacePaths={(options) => runtime.listWorkspacePaths(options)}
       pickWorkspaceAttachments={() => runtime.pickWorkspaceAttachments()}
       importComposerAttachments={(files) => runtime.importComposerAttachments(files)}
