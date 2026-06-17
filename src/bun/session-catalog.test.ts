@@ -1938,7 +1938,9 @@ describe("WorkspaceSessionCatalog", () => {
           created.target.workspaceSessionId,
         ).pi;
         expect(titleState.title).toBe("New Session");
-        expect(titleState.titleGenerationError).toBe("Provided authentication token is expired.");
+        expect(titleState.titleGenerationError).toBe(
+          "Title namer openai-codex/gpt-5.4-mini failed: Provided authentication token is expired.",
+        );
         expect(titleLogs).toEqual([
           {
             level: "info",
@@ -1954,7 +1956,8 @@ describe("WorkspaceSessionCatalog", () => {
             level: "warning",
             status: "failed",
             sessionId: created.target.workspaceSessionId,
-            error: "Provided authentication token is expired.",
+            error:
+              "Title namer openai-codex/gpt-5.4-mini failed: Provided authentication token is expired.",
           },
         ]);
       } finally {

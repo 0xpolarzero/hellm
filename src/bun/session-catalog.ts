@@ -112,7 +112,8 @@ import {
   type LoadExtensionDetails,
 } from "./extension-tools";
 import { createRequestUserInputTool, RequestUserInputRuntime } from "./request-user-input-tool";
-import { resolveApiKey } from "./auth-store";
+import { getCredential, resolveApiKey, resolveAuthState } from "./auth-store";
+import { getOAuthRefreshError, refreshIfNeeded, supportsOAuth } from "./oauth-login";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { countPromptTokens } from "./token-count";
 import { createStreamingCommandTracker } from "./streaming-command-tracker";
@@ -4794,7 +4795,9 @@ export class WorkspaceSessionCatalog {
       if (!this.getStructuredSnapshot(sessionId)) {
         return;
       }
-      const message = error instanceof Error ? error.message : "Title generation failed.";
+      const settings = this.agentSettingsStore.getState().agents.titleNamer;
+      const cause = error instanceof Error ? error.message : "Title generation failed.";
+      const message = `Title namer ${settings.provider}/${settings.model} failed: ${cause}`;
       this.structuredSessionStore.failTitleGeneration({
         sessionId,
         error: message,
@@ -4846,6 +4849,7 @@ export class WorkspaceSessionCatalog {
   }): Promise<string> {
     const state = this.agentSettingsStore.getState();
     const settings = state.agents.titleNamer;
+    await ensureProviderAuthForManagedSession(settings.provider);
     const sessionManager = SessionManager.create(this.cwd, this.namerSessionDir);
     sessionManager.appendSessionInfo(input.subjectLabel);
     const namer = await createManagedSession({
@@ -6799,6 +6803,38 @@ function syncAuthStorage(authStorage: AuthStorage): void {
       authStorage.removeRuntimeApiKey(provider);
     }
   }
+}
+
+async function ensureProviderAuthForManagedSession(provider: string): Promise<string | undefined> {
+  if (supportsOAuth(provider)) {
+    const credential = getCredential(provider);
+    if (credential?.type === "oauth" && credential.credentials.expires <= Date.now()) {
+      const refreshed = await refreshIfNeeded(provider);
+      if (!refreshed) {
+        const reason = getOAuthRefreshError(provider) ?? "OAuth refresh failed.";
+        throw new Error(
+          `OAuth credentials for ${provider} expired and could not be refreshed. ${reason}`,
+        );
+      }
+      return refreshed;
+    }
+  }
+
+  const apiKey = resolveApiKey(provider);
+  if (!apiKey) {
+    const state = resolveAuthState(provider);
+    if (state.keyType === "oauth") {
+      if (state.refreshFailure) {
+        throw new Error(
+          `OAuth credentials for ${provider} expired and could not be refreshed. ${state.refreshFailure.message}`,
+        );
+      }
+      throw new Error(
+        `OAuth credentials for ${provider} are expired. Reconnect the provider in Settings.`,
+      );
+    }
+  }
+  return apiKey;
 }
 
 export function resolveRestoredSessionDefaults(

@@ -5,7 +5,16 @@ import { join } from "node:path";
 
 export type StoredCredential =
   | { type: "apikey"; key: string }
-  | { type: "oauth"; credentials: OAuthCredentials };
+  | {
+      type: "oauth";
+      credentials: OAuthCredentials;
+      refreshFailure?: OAuthRefreshFailure | null;
+    };
+
+export interface OAuthRefreshFailure {
+  occurredAt: string;
+  message: string;
+}
 
 export type AuthStoreData = Record<string, StoredCredential>;
 
@@ -87,11 +96,37 @@ export function getCredential(providerId: string): StoredCredential | undefined 
   return readStore()[providerId];
 }
 
+export function getOAuthRefreshFailure(providerId: string): OAuthRefreshFailure | null {
+  const stored = getCredential(providerId);
+  if (!stored || stored.type !== "oauth") return null;
+  return stored.refreshFailure ?? null;
+}
+
+export function recordOAuthRefreshFailure(providerId: string, message: string): void {
+  const store = readStore();
+  const stored = store[providerId];
+  if (!stored || stored.type !== "oauth") return;
+  store[providerId] = {
+    ...stored,
+    refreshFailure: {
+      occurredAt: new Date().toISOString(),
+      message,
+    },
+  };
+  writeStore(store);
+}
+
 export function resolveApiKey(providerId: string): string | undefined {
   const stored = getCredential(providerId);
   if (stored) {
     if (stored.type === "apikey") return stored.key;
-    if (stored.type === "oauth") return stored.credentials.access;
+    if (
+      stored.type === "oauth" &&
+      stored.credentials.expires > Date.now() &&
+      !stored.refreshFailure
+    ) {
+      return stored.credentials.access;
+    }
   }
   const envVar = PROVIDER_ENV_VARS[providerId];
   if (envVar) {
@@ -106,12 +141,27 @@ export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export function resolveAuthState(providerId: string): {
   connected: boolean;
   keyType: AuthKeyType;
+  usable: boolean;
+  expiresAt?: string | null;
+  refreshFailure?: OAuthRefreshFailure | null;
 } {
   const stored = getCredential(providerId);
-  if (stored) return { connected: true, keyType: stored.type };
+  if (stored?.type === "apikey") return { connected: true, keyType: "apikey", usable: true };
+  if (stored?.type === "oauth") {
+    const expiresAt = new Date(stored.credentials.expires).toISOString();
+    return {
+      connected: true,
+      keyType: "oauth",
+      usable: stored.credentials.expires > Date.now() && !stored.refreshFailure,
+      expiresAt,
+      refreshFailure: stored.refreshFailure ?? null,
+    };
+  }
   const envVar = PROVIDER_ENV_VARS[providerId];
-  if (envVar && process.env[envVar]?.trim()) return { connected: true, keyType: "env" };
-  return { connected: false, keyType: "none" };
+  if (envVar && process.env[envVar]?.trim()) {
+    return { connected: true, keyType: "env", usable: true };
+  }
+  return { connected: false, keyType: "none", usable: false };
 }
 
 export function getProviderEnvVar(providerId: string): string | undefined {

@@ -87,6 +87,8 @@
 
 	function providerStatus(info: ProviderAuthInfo) {
 		if (!info.hasKey) return { text: "Not configured", tone: "neutral" as const };
+		if (info.authHealth === "oauth-refresh-failed") return { text: "Reconnect", tone: "danger" as const };
+		if (info.authHealth === "oauth-expired") return { text: "Expired", tone: "warning" as const };
 		if (info.keyType === "oauth") return { text: "OAuth", tone: "success" as const };
 		if (info.keyType === "env") return { text: "Env var", tone: "warning" as const };
 		return { text: "API key", tone: "info" as const };
@@ -120,14 +122,50 @@
 	function providerCredentialLabel(info: ProviderAuthInfo): string {
 		if (!info.hasKey) return info.supportsOAuth ? "OAuth or API key available" : "API key required";
 		if (info.keyType === "env") return "Loaded from environment";
-		if (info.keyType === "oauth") return "Connected with OAuth";
+		if (info.keyType === "oauth") {
+			if (info.authHealth === "oauth-refresh-failed") return "OAuth refresh failed";
+			if (info.authHealth === "oauth-expired") return "OAuth token expired";
+			return "Connected with OAuth";
+		}
 		return "Stored API key";
 	}
 
 	function providerSectionLabel(info: ProviderAuthInfo): string {
 		if (info.hasKey && info.keyType === "env") return "Environment-backed credentials";
+		if (info.authHealth === "oauth-refresh-failed" || info.authHealth === "oauth-expired") {
+			return "OAuth attention needed";
+		}
 		if (info.hasKey && info.keyType === "oauth") return "OAuth connections";
 		return "AI providers";
+	}
+
+	function formatProviderExpiry(expiresAt: string | null | undefined): string | null {
+		if (!expiresAt) return null;
+		const date = new Date(expiresAt);
+		if (Number.isNaN(date.getTime())) return null;
+		return date.toLocaleString(undefined, {
+			month: "short",
+			day: "numeric",
+			hour: "2-digit",
+			minute: "2-digit",
+		});
+	}
+
+	function providerAuthDetail(info: ProviderAuthInfo): string | null {
+		if (info.authHealth === "oauth-refresh-failed") {
+			return info.authError
+				? `Reconnect OAuth. Last refresh failed: ${info.authError}`
+				: "Reconnect OAuth. Last refresh failed.";
+		}
+		if (info.authHealth === "oauth-expired") {
+			const expiresAt = formatProviderExpiry(info.expiresAt);
+			return expiresAt ? `OAuth token expired at ${expiresAt}.` : "OAuth token expired.";
+		}
+		if (info.keyType === "oauth") {
+			const expiresAt = formatProviderExpiry(info.expiresAt);
+			return expiresAt ? `Access token expires at ${expiresAt}.` : null;
+		}
+		return null;
 	}
 
 	function providerInfo(providerId: string): ProviderAuthInfo | null {
@@ -150,6 +188,10 @@
 					status.text,
 					info.supportsOAuth ? "oauth api key" : "api key only",
 					info.keyType,
+					info.authHealth,
+					info.authError ?? "",
+					providerCredentialLabel(info),
+					providerAuthDetail(info) ?? "",
 				]
 					.join(" ")
 					.toLowerCase();
@@ -169,11 +211,28 @@
 	});
 
 	const providerGroups = $derived.by(() => {
-		const aiProviders = filteredProviders.filter((info) => info.keyType !== "env");
+		const attentionProviders = filteredProviders.filter(
+			(info) => info.authHealth === "oauth-refresh-failed" || info.authHealth === "oauth-expired",
+		);
+		const aiProviders = filteredProviders.filter(
+			(info) =>
+				info.keyType !== "env" &&
+				info.authHealth !== "oauth-refresh-failed" &&
+				info.authHealth !== "oauth-expired",
+		);
 		const envProviders = filteredProviders.filter((info) => info.keyType === "env");
 		return [
-			{ title: "AI Providers", providers: aiProviders, warning: false },
-			{ title: "Environment-backed Credentials", providers: envProviders, warning: true },
+			{
+				title: "OAuth Attention Needed",
+				providers: attentionProviders,
+				note: "Reconnect these providers before using their models.",
+			},
+			{ title: "AI Providers", providers: aiProviders, note: "" },
+			{
+				title: "Environment-backed Credentials",
+				providers: envProviders,
+				note: "Loaded from the shell environment. Edit them outside svvy.",
+			},
 		].filter((group) => group.providers.length > 0);
 	});
 
@@ -350,22 +409,23 @@
 									<h3>{group.title}</h3>
 									<span>{group.providers.length}</span>
 								</div>
-								{#if group.warning}
+								{#if group.note}
 									<div class="settings-section-note tone-warning">
 										<ShieldIcon aria-hidden="true" size={15} strokeWidth={1.8} />
-										<p>Loaded from the shell environment. Edit them outside svvy.</p>
+										<p>{group.note}</p>
 									</div>
 								{/if}
 								<div class="settings-row-stack">
 									{#each group.providers as info (info.provider)}
-										{@const status = providerStatus(info)}
+											{@const status = providerStatus(info)}
+											{@const authDetail = providerAuthDetail(info)}
 										{@const isEditing = editingProvider === info.provider}
 										{@const isConfirmingRemoval = confirmingProviderRemoval === info.provider}
 										<article class="provider-row">
 											<div class="provider-main">
 												<div class="provider-heading">
 													<span class={`provider-icon tone-${status.tone}`} aria-hidden="true">
-														{#if info.hasKey}
+														{#if info.authHealth === "available"}
 															<CheckCircle2Icon size={14} strokeWidth={1.9} />
 														{:else}
 															<CircleIcon size={14} strokeWidth={1.9} />
@@ -378,11 +438,16 @@
 													<span>{providerSectionLabel(info)}</span>
 													<span>{providerCredentialLabel(info)}</span>
 												</p>
-												{#if saveMessage[info.provider]}
-													<p class={`save-msg ${isConfirmingRemoval ? "tone-danger" : ""}`.trim()}>
-														{saveMessage[info.provider]}
-													</p>
-												{/if}
+													{#if saveMessage[info.provider]}
+														<p class={`save-msg ${isConfirmingRemoval ? "tone-danger" : ""}`.trim()}>
+															{saveMessage[info.provider]}
+														</p>
+													{/if}
+													{#if authDetail}
+														<p class={`save-msg ${info.authHealth === "oauth-refresh-failed" ? "tone-danger" : ""}`.trim()}>
+															{authDetail}
+														</p>
+													{/if}
 											</div>
 
 											<div

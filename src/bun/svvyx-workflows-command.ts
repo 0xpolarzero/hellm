@@ -470,7 +470,7 @@ export function readDefaultModelCatalog(): SvvyxWorkflowsModelChoice[] {
       items.push({
         providerId,
         modelId: model.id,
-        providerAuthenticated: authState.connected,
+        providerAuthenticated: authState.usable,
         authSource: authState.keyType === "none" ? "missing" : authState.keyType,
         supportedReasoning: getSupportedThinkingLevels(model) as ReasoningEffort[],
         capabilities: {

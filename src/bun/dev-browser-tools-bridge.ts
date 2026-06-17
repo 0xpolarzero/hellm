@@ -79,7 +79,7 @@ type MountDevBrowserToolsBridgeOptions = {
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceBranch: (cwd: string) => string | undefined;
   getOpenWorkspaces: () => WorkspaceInfoResponse[];
-  listProviderAuthSummaries: () => ProviderAuthInfo[];
+  listProviderAuthSummaries: () => Promise<ProviderAuthInfo[]>;
   listOpenSurfaceSnapshots: () => Promise<OpenSurfaceSnapshot[]>;
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
   mainWindow: BrowserWindow;
@@ -110,7 +110,7 @@ export async function mountDevBrowserToolsBridge(
     const defaults = options.getDefaultAgentSettings();
     const sessions = activeWorkspace ? await options.listWorkspaceSessions() : { sessions: [] };
     const openSurfaces = activeWorkspace ? await options.listOpenSurfaceSnapshots() : [];
-    const providerAuths = options.listProviderAuthSummaries();
+    const providerAuths = await options.listProviderAuthSummaries();
     const openWorkspaces = options.getOpenWorkspaces();
 
     return {

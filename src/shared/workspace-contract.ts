@@ -691,6 +691,10 @@ export interface AuthStateResponse {
   connected: boolean;
   accountId?: string;
   message?: string;
+  authHealth?: "missing" | "available" | "oauth-expired" | "oauth-refresh-failed";
+  expiresAt?: string | null;
+  authError?: string;
+  authFailedAt?: string | null;
 }
 
 export type WorkspaceKind = "default" | "user";
@@ -882,6 +886,10 @@ export interface ProviderAuthInfo {
   hasKey: boolean;
   keyType: AuthKeyType;
   supportsOAuth: boolean;
+  authHealth: "missing" | "available" | "oauth-expired" | "oauth-refresh-failed";
+  expiresAt?: string | null;
+  authError?: string;
+  authFailedAt?: string | null;
 }
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";

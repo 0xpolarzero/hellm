@@ -2115,7 +2115,14 @@ function createFakeRpc(input: {
           return { ok: true };
         },
         listProviderAuths: async () => [
-          { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
+          {
+            provider: "openai",
+            hasKey: true,
+            keyType: "oauth",
+            supportsOAuth: true,
+            authHealth: "available",
+            expiresAt: null,
+          },
         ],
         setProviderApiKey: async () => ({ ok: true }),
         startOAuth: async () => ({ ok: true }),

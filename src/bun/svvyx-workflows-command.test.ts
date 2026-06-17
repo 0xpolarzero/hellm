@@ -108,6 +108,28 @@ describe("agent model selection validation", () => {
     }
     throw new Error("Expected unauthenticated provider model to fail.");
   });
+
+  it("rejects OAuth-backed models when the provider is connected but unusable", () => {
+    try {
+      assertAgentModelSelection(
+        { providerId: "openai-codex", modelId: "gpt-5.4-mini", reasoningEffort: "low" },
+        [
+          modelChoice({
+            providerId: "openai-codex",
+            modelId: "gpt-5.4-mini",
+            providerAuthenticated: false,
+            authSource: "oauth",
+            supportedReasoning: ["low", "medium"],
+          }),
+        ],
+      );
+    } catch (error) {
+      expect(error).toBeInstanceOf(AgentModelSelectionError);
+      expect((error as AgentModelSelectionError).code).toBe("invalid_agent_provider_auth");
+      return;
+    }
+    throw new Error("Expected unusable OAuth-backed provider model to fail.");
+  });
 });
 
 describe("svvyx workflows build", () => {

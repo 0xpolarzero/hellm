@@ -3,7 +3,13 @@ import {
   type OAuthCredentials,
   type OAuthLoginCallbacks,
 } from "@mariozechner/pi-ai/oauth";
-import { getCredential, setOAuthCredentials, updateOAuthCredentials } from "./auth-store";
+import {
+  getCredential,
+  getOAuthRefreshFailure,
+  recordOAuthRefreshFailure,
+  setOAuthCredentials,
+  updateOAuthCredentials,
+} from "./auth-store";
 
 const refreshPromises = new Map<string, Promise<OAuthCredentials | null>>();
 
@@ -38,6 +44,10 @@ export async function startOAuthLogin(providerId: string): Promise<void> {
   setOAuthCredentials(providerId, credentials);
 }
 
+export function getOAuthRefreshError(providerId: string): string | undefined {
+  return getOAuthRefreshFailure(providerId)?.message;
+}
+
 export async function refreshIfNeeded(providerId: string): Promise<string | undefined> {
   const pending = refreshPromises.get(providerId);
   if (pending) return (await pending)?.access ?? undefined;
@@ -46,7 +56,10 @@ export async function refreshIfNeeded(providerId: string): Promise<string | unde
   if (!stored || stored.type !== "oauth") return undefined;
 
   const { credentials } = stored;
-  if (credentials.expires > Date.now()) return credentials.access;
+  if (stored.refreshFailure) return undefined;
+  if (credentials.expires > Date.now()) {
+    return credentials.access;
+  }
 
   const provider = getOAuthProviders().find((entry) => entry.id === providerId);
   if (!provider) return undefined;
@@ -57,6 +70,8 @@ export async function refreshIfNeeded(providerId: string): Promise<string | unde
       updateOAuthCredentials(providerId, refreshed);
       return refreshed;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      recordOAuthRefreshFailure(providerId, message);
       console.error(`Token refresh failed for ${providerId}:`, error);
       return null;
     } finally {

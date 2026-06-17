@@ -45,13 +45,19 @@ import {
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import {
+  getCredential,
   getProviderEnvVar,
   removeCredential,
   resolveApiKey,
   resolveAuthState,
   setApiKey as storeApiKey,
 } from "./auth-store";
-import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
+import {
+  getOAuthRefreshError,
+  refreshIfNeeded,
+  startOAuthLogin,
+  supportsOAuth,
+} from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import {
   getSvvyAgentDir,
@@ -594,12 +600,33 @@ function createAuthState(provider: string): AuthStateResponse {
     return {
       connected: false,
       message: getApiKeyMissingError(provider),
+      authHealth: "missing",
+    };
+  }
+
+  if (!state.usable) {
+    const authHealth =
+      state.keyType === "oauth" && state.refreshFailure
+        ? "oauth-refresh-failed"
+        : state.keyType === "oauth"
+          ? "oauth-expired"
+          : "missing";
+    return {
+      connected: false,
+      accountId: `${provider}-${state.keyType}`,
+      message: getProviderAuthUnavailableMessage(provider),
+      authHealth,
+      expiresAt: state.expiresAt ?? null,
+      authError: state.refreshFailure?.message,
+      authFailedAt: state.refreshFailure?.occurredAt ?? null,
     };
   }
 
   return {
     connected: true,
     accountId: `${provider}-${state.keyType}`,
+    authHealth: "available",
+    expiresAt: state.expiresAt ?? null,
   };
 }
 
@@ -888,17 +915,88 @@ function openPathInPreferredEditor(
   }
 }
 
-function listProviderAuthSummaries(): ProviderAuthInfo[] {
+function providerOAuthExpiresAt(provider: string): string | null | undefined {
+  const credential = getCredential(provider);
+  if (!credential || credential.type !== "oauth") return undefined;
+  return new Date(credential.credentials.expires).toISOString();
+}
+
+async function ensureUsableProviderAuth(provider: string): Promise<string | undefined> {
+  if (supportsOAuth(provider)) {
+    const credential = getCredential(provider);
+    if (credential?.type === "oauth" && credential.credentials.expires <= Date.now()) {
+      const refreshed = await refreshIfNeeded(provider);
+      return refreshed;
+    }
+  }
+  return resolveApiKey(provider);
+}
+
+function getProviderAuthUnavailableMessage(provider: string): string {
+  const state = resolveAuthState(provider);
+  if (state.keyType === "oauth") {
+    const reason = state.refreshFailure?.message ?? getOAuthRefreshError(provider);
+    if (state.refreshFailure) {
+      return `OAuth credentials for ${provider} expired and could not be refreshed. ${reason}`;
+    }
+    return `OAuth credentials for ${provider} are expired. Reconnect the provider in Settings.`;
+  }
+  return getApiKeyMissingError(provider);
+}
+
+async function listProviderAuthSummaries(
+  options: { refreshOAuth?: boolean } = {},
+): Promise<ProviderAuthInfo[]> {
   const providerIds = getProviders();
-  return providerIds.map((provider) => {
-    const state = resolveAuthState(provider);
-    return {
-      provider,
-      hasKey: state.connected,
-      keyType: state.keyType,
-      supportsOAuth: supportsOAuth(provider),
-    };
-  });
+  return Promise.all(
+    providerIds.map(async (provider) => {
+      const state = resolveAuthState(provider);
+      let authHealth: ProviderAuthInfo["authHealth"] = state.usable ? "available" : "missing";
+      let expiresAt = providerOAuthExpiresAt(provider);
+      let authError: string | undefined;
+      let authFailedAt: string | undefined;
+
+      if (state.keyType === "oauth") {
+        const credential = getCredential(provider);
+        const expired = Boolean(
+          credential?.type === "oauth" && credential.credentials.expires <= Date.now(),
+        );
+        if (state.refreshFailure) {
+          authHealth = "oauth-refresh-failed";
+          authError = state.refreshFailure.message;
+          authFailedAt = state.refreshFailure.occurredAt;
+        } else if (expired) {
+          authHealth = "oauth-expired";
+          if (options.refreshOAuth) {
+            const refreshed = await refreshIfNeeded(provider);
+            if (refreshed) {
+              authHealth = "available";
+              expiresAt = providerOAuthExpiresAt(provider);
+            } else {
+              authHealth = "oauth-refresh-failed";
+              const refreshedState = resolveAuthState(provider);
+              authError =
+                refreshedState.refreshFailure?.message ??
+                getOAuthRefreshError(provider) ??
+                "OAuth refresh failed.";
+              authFailedAt = refreshedState.refreshFailure?.occurredAt ?? undefined;
+            }
+          }
+        }
+      }
+
+      return {
+        provider,
+        hasKey: state.connected,
+        keyType: state.keyType,
+        supportsOAuth: supportsOAuth(provider),
+        authHealth,
+        expiresAt: expiresAt ?? null,
+        ...(authError ? { authError } : {}),
+        ...(authFailedAt ? { authFailedAt } : {}),
+      };
+    }),
+  );
 }
 
 let devBrowserToolsRecorder: DevBrowserToolsRecorder = {
@@ -2344,13 +2442,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
         const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
 
-        if (supportsOAuth(resolved.provider)) {
-          await refreshIfNeeded(resolved.provider);
-        }
-
-        const apiKey = resolveApiKey(resolved.provider);
+        const apiKey = await ensureUsableProviderAuth(resolved.provider);
         if (!apiKey) {
-          const message = getApiKeyMissingError(resolved.provider);
+          const message = getProviderAuthUnavailableMessage(resolved.provider);
           runtime.appLog.warning(
             "auth.provider",
             "Configured provider is not connected for prompt.",
@@ -2534,13 +2628,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
         const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
 
-        if (supportsOAuth(resolved.provider)) {
-          await refreshIfNeeded(resolved.provider);
-        }
-
-        const apiKey = resolveApiKey(resolved.provider);
+        const apiKey = await ensureUsableProviderAuth(resolved.provider);
         if (!apiKey) {
-          const message = getApiKeyMissingError(resolved.provider);
+          const message = getProviderAuthUnavailableMessage(resolved.provider);
           runtime.appLog.warning(
             "auth.provider",
             "Configured provider is not connected for prompt steering.",
@@ -2840,7 +2930,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         }
         return result;
       },
-      listProviderAuths: async (): Promise<ProviderAuthInfo[]> => listProviderAuthSummaries(),
+      listProviderAuths: async (): Promise<ProviderAuthInfo[]> =>
+        listProviderAuthSummaries({ refreshOAuth: true }),
       setProviderApiKey: async ({
         providerId,
         apiKey,
