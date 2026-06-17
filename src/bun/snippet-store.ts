@@ -5,6 +5,7 @@ import type {
   CreateManagedSnippetRequest,
   DeleteManagedSnippetRequest,
   ManagedSnippet,
+  SetSnippetEnabledRequest,
   SnippetMetadata,
   UpdateManagedSnippetRequest,
 } from "../shared/snippets";
@@ -14,6 +15,8 @@ export type SnippetStore = {
   createManaged(input: CreateManagedSnippetRequest): ManagedSnippet;
   updateManaged(input: UpdateManagedSnippetRequest): ManagedSnippet;
   deleteManaged(input: DeleteManagedSnippetRequest): void;
+  setEnabled(input: SetSnippetEnabledRequest): void;
+  listDisabledSnippetIds(): string[];
   getPath(): string;
 };
 
@@ -22,6 +25,7 @@ interface SnippetStoreState {
   revision: number;
   updatedAt: string;
   snippets: ManagedSnippet[];
+  disabledSnippetIds: string[];
 }
 
 const SNIPPETS_FILENAME = "snippets.json";
@@ -63,7 +67,14 @@ export function createSnippetStore(input: { agentDir: string }): SnippetStore {
   };
 
   return {
-    listManaged: () => readState().snippets,
+    listManaged: () => {
+      const state = readState();
+      const disabledIds = new Set(state.disabledSnippetIds);
+      return state.snippets.map((snippet) => ({
+        ...snippet,
+        enabled: !disabledIds.has(snippet.id),
+      }));
+    },
     createManaged: (request) => {
       const now = new Date().toISOString();
       const snippet: ManagedSnippet = {
@@ -75,6 +86,7 @@ export function createSnippetStore(input: { agentDir: string }): SnippetStore {
           description: request.description,
           argumentHint: request.argumentHint,
         }),
+        enabled: true,
         createdAt: now,
         updatedAt: now,
         readOnly: false,
@@ -125,9 +137,29 @@ export function createSnippetStore(input: { agentDir: string }): SnippetStore {
         if (snippets.length === state.snippets.length) {
           throw new Error("Managed snippet not found.");
         }
-        return { ...state, snippets };
+        return {
+          ...state,
+          snippets,
+          disabledSnippetIds: state.disabledSnippetIds.filter((id) => id !== request.snippetId),
+        };
       });
     },
+    setEnabled: (request) => {
+      updateState((state) => {
+        const snippetId = normalizeSnippetId(request.snippetId);
+        const disabledIds = new Set(state.disabledSnippetIds);
+        if (request.enabled) {
+          disabledIds.delete(snippetId);
+        } else {
+          disabledIds.add(snippetId);
+        }
+        return {
+          ...state,
+          disabledSnippetIds: [...disabledIds].toSorted((left, right) => left.localeCompare(right)),
+        };
+      });
+    },
+    listDisabledSnippetIds: () => readState().disabledSnippetIds,
     getPath: () => storePath,
   };
 }
@@ -138,6 +170,7 @@ function createEmptyState(): SnippetStoreState {
     revision: 1,
     updatedAt: new Date().toISOString(),
     snippets: [],
+    disabledSnippetIds: [],
   };
 }
 
@@ -153,6 +186,7 @@ function normalizeState(input: Partial<SnippetStoreState>): SnippetStoreState {
       .toSorted(
         (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
       ),
+    disabledSnippetIds: normalizeStringList(input.disabledSnippetIds),
   };
 }
 
@@ -173,10 +207,25 @@ function normalizeManagedSnippet(input: unknown): ManagedSnippet | null {
     title,
     body: typeof record.body === "string" ? record.body : "",
     metadata: normalizeMetadata(record.metadata),
+    enabled: record.enabled !== false,
     createdAt: normalizeTimestamp(record.createdAt, now),
     updatedAt: normalizeTimestamp(record.updatedAt, now),
     readOnly: false,
   };
+}
+
+function normalizeSnippetId(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Snippet id is required.");
+  }
+  return value.trim();
+}
+
+function normalizeStringList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.map((value) => (typeof value === "string" ? value.trim() : "")))]
+    .filter(Boolean)
+    .toSorted((left, right) => left.localeCompare(right));
 }
 
 function normalizeTitle(value: unknown): string {

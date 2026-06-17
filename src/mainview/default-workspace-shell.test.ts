@@ -429,6 +429,7 @@ describe("default workspace renderer shell", () => {
     expect(sourceMetadataTextAreaSource).toContain("showTokenCount?: boolean");
     expect(sourceMetadataTextAreaSource).toContain("source-metadata-textarea-token-count");
     expect(sourceMetadataTextAreaSource).toContain("source-metadata-textarea-source-filename");
+    expect(sourceMetadataTextAreaSource).toContain("line-height: 1.28");
     expect(openExternalButtonSource).toContain(
       'import ExternalLinkIcon from "@lucide/svelte/icons/external-link";',
     );

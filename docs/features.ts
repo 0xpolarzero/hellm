@@ -59,7 +59,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Snippets Prompt Macros",
     status: "in-progress",
     summary:
-      "Defines product-owned Snippets as explicit user-inserted prompt macros, with managed and read-only discovered Markdown records, a Snippets pane, composer `@` picker insertion, argument placeholders, editable expansion before send, transcript provenance metadata, and host runtime prompt-template or slash-command expansion kept disabled so snippets never grant tools, change actor capability, alter generated agent context, or add command guidance.",
+      "Defines product-owned Snippets as explicit user-inserted prompt macros, with managed and read-only discovered Markdown records, a Snippets pane with source-filtered browsing for all, managed svvy, Claude, and pi snippets, per-snippet enablement that keeps disabled snippets visible in the pane while excluding them from composer `@` picker and typed mention commits, argument placeholders, editable expansion before send, transcript provenance metadata, and host runtime prompt-template or slash-command expansion kept disabled so snippets never grant tools, change actor capability, alter generated agent context, or add command guidance.",
     sourceSpecs: ["docs/specs/snippets.spec.md"],
   },
   {

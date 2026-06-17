@@ -49,7 +49,7 @@
 		background: color-mix(in oklab, var(--ui-surface-muted) 68%, transparent);
 		color: var(--ui-text-secondary);
 		font-size: var(--text-xs);
-		line-height: 1;
+		line-height: 1.28;
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
@@ -68,6 +68,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		font-weight: 600;
+		line-height: inherit;
 	}
 
 	.tone-info {

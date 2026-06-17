@@ -97,7 +97,9 @@
           <span class="shared-extension-marker">{markerLabel}</span>
         {/if}
       </div>
-      <p>{description}</p>
+      {#if description}
+        <p>{description}</p>
+      {/if}
     </div>
     {#if tokenLabel}
       <span class="shared-extension-token-count">{tokenLabel}</span>

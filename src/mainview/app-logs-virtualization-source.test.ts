@@ -47,7 +47,8 @@ describe("AppLogsPane virtualized log list contract", () => {
     expect(paneSource).toContain(
       "onSelect={(value) => (levelFilter = value as typeof levelFilter)}",
     );
-    expect(paneSource).toContain("logs-severity-tabs .ui-pane-filter-tab.active");
+    expect(paneSource).toContain("count: readModel ? levelFilterCount(filter.level) : null");
+    expect(paneSource).not.toContain("logs-severity-tabs .ui-pane-filter-tab.active");
     expect(paneSource).not.toContain("showDots");
     expect(paneSource).toContain("<CompactSelect");
     expect(paneSource).toContain("function highestVisibleLogSeq(): number");

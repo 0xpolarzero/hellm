@@ -80,9 +80,21 @@ function discoverMarkdownFiles(input: {
       path,
       body: parsed.body,
       metadata: parsed.metadata,
+      enabled: true,
       readOnly: true,
     };
   });
+}
+
+export function applySnippetEnablement<T extends DiscoveredSnippet | ManagedSnippet>(
+  snippets: readonly T[],
+  disabledSnippetIds: readonly string[],
+): T[] {
+  const disabledIds = new Set(disabledSnippetIds);
+  return snippets.map((snippet) => ({
+    ...snippet,
+    enabled: !disabledIds.has(snippet.id),
+  }));
 }
 
 function listMarkdownFiles(root: string, recursive: boolean): string[] {

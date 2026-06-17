@@ -18,6 +18,7 @@ describe("managed snippet store", () => {
 
       expect(created.source).toBe("svvy");
       expect(created.readOnly).toBe(false);
+      expect(created.enabled).toBe(true);
       expect(created.title).toBe("Review");
       expect(created.metadata).toEqual({
         description: "Reusable review prompt",
@@ -26,6 +27,32 @@ describe("managed snippet store", () => {
 
       const secondStore = createSnippetStore({ agentDir: root });
       expect(secondStore.listManaged()).toEqual([created]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists snippet enablement for managed and external snippets", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-managed-snippets-"));
+    try {
+      const firstStore = createSnippetStore({ agentDir: root });
+      const created = firstStore.createManaged({
+        title: "Review",
+        body: "Review $1",
+      });
+
+      firstStore.setEnabled({ snippetId: created.id, enabled: false });
+      firstStore.setEnabled({ snippetId: "claude:user:/tmp/review.md", enabled: false });
+
+      const secondStore = createSnippetStore({ agentDir: root });
+      expect(secondStore.listManaged()).toEqual([{ ...created, enabled: false }]);
+      expect(secondStore.listDisabledSnippetIds().toSorted()).toEqual(
+        ["claude:user:/tmp/review.md", created.id].toSorted(),
+      );
+
+      secondStore.setEnabled({ snippetId: created.id, enabled: true });
+      expect(secondStore.listManaged()).toEqual([created]);
+      expect(secondStore.listDisabledSnippetIds()).toEqual(["claude:user:/tmp/review.md"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

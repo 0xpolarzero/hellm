@@ -29,6 +29,7 @@ import type {
   CreateManagedSnippetRequest,
   DeleteManagedSnippetRequest,
   ManagedSnippet,
+  SetSnippetEnabledRequest,
   SnippetsReadModel,
   UpdateManagedSnippetRequest,
 } from "./snippets";
@@ -1732,6 +1733,10 @@ export interface ChatRPCSchema {
       };
       deleteManagedSnippet: {
         params: WorkspaceScoped<DeleteManagedSnippetRequest>;
+        response: { ok: true };
+      };
+      setSnippetEnabled: {
+        params: WorkspaceScoped<SetSnippetEnabledRequest>;
         response: { ok: true };
       };
       openSnippetExternalSourceInEditor: {

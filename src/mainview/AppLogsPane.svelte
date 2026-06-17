@@ -799,45 +799,7 @@
   }
 
   :global(.logs-severity-tabs) {
-    background: transparent;
-    padding: 0;
-    gap: 0.22rem;
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab) {
-    min-height: 1.58rem;
-    padding-inline: 0.52rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 62%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
-    color: var(--ui-text-secondary);
-    box-shadow: none;
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab:hover) {
-    border-color: color-mix(in oklab, var(--ui-border-strong) 48%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-raised) 96%, transparent);
-    color: var(--ui-text-primary);
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab.active) {
-    border-color: color-mix(in oklab, var(--ui-accent) 32%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-accent-soft) 22%, var(--ui-surface-raised));
-    color: var(--ui-text-primary);
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-info.active) {
-    border-color: color-mix(in oklab, var(--ui-info) 30%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-info-soft) 36%, var(--ui-surface-raised));
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-warning.active) {
-    border-color: color-mix(in oklab, var(--ui-warning) 32%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-warning-soft) 42%, var(--ui-surface-raised));
-  }
-
-  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-danger.active) {
-    border-color: color-mix(in oklab, var(--ui-danger) 34%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-danger-soft) 44%, var(--ui-surface-raised));
+    flex: 0 1 auto;
   }
 
   :global(.logs-source-select) {

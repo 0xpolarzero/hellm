@@ -1,26 +1,23 @@
 <script lang="ts">
-  import FileTextIcon from "@lucide/svelte/icons/file-text";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SaveIcon from "@lucide/svelte/icons/save";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import { onMount } from "svelte";
   import type { AppPreferences } from "../shared/agent-settings";
   import {
     inferSnippetArgumentCount,
-    type DiscoveredSnippet,
-    type ManagedSnippet,
     type SnippetRecord,
     type SnippetsReadModel,
   } from "../shared/snippets";
   import type { ChatRuntime } from "./chat-runtime";
-  import Badge from "./ui/Badge.svelte";
+  import ExtensionListRow from "./ExtensionListRow.svelte";
   import Button from "./ui/Button.svelte";
+  import Checkbox from "./ui/Checkbox.svelte";
   import Input from "./ui/Input.svelte";
   import MetadataChip from "./ui/MetadataChip.svelte";
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
-  import PaneHeader from "./ui/PaneHeader.svelte";
-  import PaneListRow from "./ui/PaneListRow.svelte";
+  import PaneFilterTabs, { type PaneFilterTabOption } from "./ui/PaneFilterTabs.svelte";
+  import SourceMetadataTextArea from "./ui/SourceMetadataTextArea.svelte";
   import StatusCard from "./ui/StatusCard.svelte";
   import TextArea from "./ui/TextArea.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
@@ -40,7 +37,10 @@
   let error = $state<string | null>(null);
   let actionMessage = $state<string | null>(null);
   let query = $state("");
+  let sourceFilter = $state<SnippetRecord["source"] | "all">("all");
   let confirmingDeleteSnippetId = $state<string | null>(null);
+  let detachedDraftSnippet = $state<SnippetRecord | null>(null);
+  let pendingSnippetEnablementIds = $state<Set<string>>(new Set());
   let draft = $state({
     title: "",
     description: "",
@@ -48,26 +48,44 @@
     body: "",
   });
 
-  const managedSnippets = $derived(
-    snippets.filter((snippet): snippet is ManagedSnippet => snippet.source === "svvy"),
-  );
-  const discoveredSnippets = $derived(
-    snippets.filter((snippet): snippet is DiscoveredSnippet => snippet.source !== "svvy"),
-  );
-  const visibleManagedSnippets = $derived(
-    managedSnippets.filter((snippet) => snippetMatchesQuery(snippet, query)),
-  );
-  const visibleDiscoveredSnippets = $derived(
-    discoveredSnippets.filter((snippet) => snippetMatchesQuery(snippet, query)),
+  const SOURCE_FILTERS: Array<{
+    value: SnippetRecord["source"] | "all";
+    label: string;
+    tone?: PaneFilterTabOption["tone"];
+  }> = [
+    { value: "all", label: "All" },
+    { value: "svvy", label: "Managed", tone: "success" },
+    { value: "claude", label: "Claude", tone: "info" },
+    { value: "pi", label: "pi", tone: "warning" },
+  ];
+
+  const visibleSnippets = $derived(
+    snippets.filter(
+      (snippet) =>
+        (sourceFilter === "all" || snippet.source === sourceFilter) &&
+        snippetMatchesQuery(snippet, query),
+    ),
   );
   const selectedSnippet = $derived(
-    snippets.find((snippet) => snippet.id === selectedId) ?? snippets[0] ?? null,
+    snippets.find((snippet) => snippet.id === selectedId) ??
+      (detachedDraftSnippet?.id === selectedId ? detachedDraftSnippet : null) ??
+      null,
   );
   const managedSelected = $derived(
     selectedSnippet?.source === "svvy" ? selectedSnippet : null,
   );
-  const discoveredSelected = $derived(
-    selectedSnippet && selectedSnippet.source !== "svvy" ? selectedSnippet : null,
+
+  function sourceFilterCount(source: SnippetRecord["source"] | "all"): number {
+    return source === "all"
+      ? snippets.length
+      : snippets.filter((snippet) => snippet.source === source).length;
+  }
+
+  const sourceFilterOptions = $derived(
+    SOURCE_FILTERS.map((filter) => ({
+      ...filter,
+      count: sourceFilterCount(filter.value),
+    })),
   );
   const draftDirty = $derived(
     managedSelected
@@ -88,7 +106,6 @@
       snippet.metadata.argumentHint,
       snippet.source,
       "path" in snippet ? snippet.path : "",
-      "scope" in snippet ? snippet.scope : "",
     ]
       .filter(Boolean)
       .some((part) => String(part).toLowerCase().includes(needle));
@@ -108,41 +125,106 @@
     return "pi";
   }
 
-  function snippetMentionToken(snippet: SnippetRecord): string {
-    return `@${snippet.title}`;
-  }
-
-  function snippetArgumentLabel(snippet: SnippetRecord): string {
+  function snippetArgumentInsight(snippet: SnippetRecord): string | null {
+    const hint = snippet.metadata.argumentHint?.trim() ?? "";
+    if (!hint) return null;
     const count = inferSnippetArgumentCount(snippet);
-    if (count === 0) return "no args";
-    return `${count} arg${count === 1 ? "" : "s"}`;
+    const usesRestArgs = /\$@|\$ARGUMENTS\b|\$\{@:\d+\}/.test(snippet.body);
+    const countLabel = usesRestArgs
+      ? "args"
+      : count > 0
+        ? `${count} arg${count === 1 ? "" : "s"}`
+        : "args";
+    return `${countLabel}: ${hint}`;
   }
 
-  function selectSnippet(snippet: SnippetRecord): void {
+  function syncDraftFromSnippet(snippet: SnippetRecord): void {
+    if (snippet.source !== "svvy") return;
+    draft = {
+      title: snippet.title,
+      description: snippet.metadata.description ?? "",
+      argumentHint: snippet.metadata.argumentHint ?? "",
+      body: snippet.body,
+    };
+  }
+
+  function selectSnippet(snippet: SnippetRecord, options: { force?: boolean } = {}): void {
+    if (!options.force && draftDirty && managedSelected && snippet.id !== managedSelected.id) {
+      actionMessage = "Save or discard your current changes before switching snippets.";
+      return;
+    }
     selectedId = snippet.id;
+    detachedDraftSnippet = null;
     confirmingDeleteSnippetId = null;
     if (snippet.source === "svvy") {
-      draft = {
-        title: snippet.title,
-        description: snippet.metadata.description ?? "",
-        argumentHint: snippet.metadata.argumentHint ?? "",
-        body: snippet.body,
-      };
+      syncDraftFromSnippet(snippet);
     }
     actionMessage = null;
   }
 
+  function toggleSnippet(snippet: SnippetRecord): void {
+    if (selectedId === snippet.id) {
+      if (draftDirty && managedSelected?.id === snippet.id) {
+        actionMessage = "Save or discard your current changes before collapsing this snippet.";
+        return;
+      }
+      selectedId = null;
+      detachedDraftSnippet = null;
+      confirmingDeleteSnippetId = null;
+      actionMessage = null;
+      return;
+    }
+    selectSnippet(snippet);
+  }
+
+  function discardDraftChanges(): void {
+    if (!managedSelected) return;
+    syncDraftFromSnippet(managedSelected);
+    confirmingDeleteSnippetId = null;
+    actionMessage = null;
+  }
+
   function applyReadModel(readModel: SnippetsReadModel): void {
+    const previousManagedSelected = managedSelected;
+    const previousManagedSelectedId = managedSelected?.id ?? null;
+    const hadDirtyDraft = draftDirty;
     snippets = readModel.snippets;
     hasReadModel = true;
     loading = false;
-    const nextSelected =
-      snippets.find((snippet) => snippet.id === selectedId) ?? snippets[0] ?? null;
+    const nextSelected = selectedId ? snippets.find((snippet) => snippet.id === selectedId) ?? null : null;
+    const preservesDirtyDraft =
+      Boolean(hadDirtyDraft && previousManagedSelectedId && nextSelected?.id === previousManagedSelectedId);
+    if (hadDirtyDraft && previousManagedSelected && !nextSelected) {
+      detachedDraftSnippet = previousManagedSelected;
+      selectedId = previousManagedSelected.id;
+      confirmingDeleteSnippetId = null;
+      actionMessage = "This snippet is no longer in the latest source list. Save or discard your current changes.";
+      return;
+    }
+    detachedDraftSnippet = null;
     selectedId = nextSelected?.id ?? null;
-    if (nextSelected?.source === "svvy") {
-      selectSnippet(nextSelected);
+    confirmingDeleteSnippetId = null;
+    if (nextSelected?.source === "svvy" && !preservesDirtyDraft) {
+      syncDraftFromSnippet(nextSelected);
     }
   }
+
+  function syncSelectionToVisibleSnippets(): void {
+    if (visibleSnippets.some((snippet) => snippet.id === selectedId)) return;
+    if (draftDirty && managedSelected) {
+      if (!actionMessage) {
+        actionMessage = "Current edited snippet is outside the active filters. Save or discard it before switching.";
+      }
+      return;
+    }
+    selectedId = null;
+    confirmingDeleteSnippetId = null;
+    actionMessage = null;
+  }
+
+  $effect(() => {
+    syncSelectionToVisibleSnippets();
+  });
 
   async function loadSnippets(): Promise<void> {
     loading = !hasReadModel;
@@ -159,6 +241,10 @@
   }
 
   async function createSnippet(): Promise<void> {
+    if (draftDirty) {
+      actionMessage = "Save or discard your current changes before creating another snippet.";
+      return;
+    }
     saving = true;
     error = null;
     actionMessage = null;
@@ -169,7 +255,7 @@
       });
       await loadSnippets();
       const snippet = snippets.find((candidate) => candidate.id === created.id);
-      if (snippet) selectSnippet(snippet);
+      if (snippet) selectSnippet(snippet, { force: true });
       actionMessage = "Snippet created.";
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to create snippet.";
@@ -229,13 +315,36 @@
     confirmingDeleteSnippetId = null;
   }
 
-  async function openDiscoveredSnippet(): Promise<void> {
-    if (!discoveredSelected) return;
+  async function setSnippetEnabled(snippet: SnippetRecord, enabled: boolean): Promise<void> {
+    if (pendingSnippetEnablementIds.has(snippet.id)) return;
+    pendingSnippetEnablementIds = new Set([...pendingSnippetEnablementIds, snippet.id]);
+    actionMessage = null;
+    const previousSnippets = snippets;
+    snippets = snippets.map((candidate) =>
+      candidate.id === snippet.id ? { ...candidate, enabled } : candidate,
+    );
+    try {
+      await runtime.setSnippetEnabled({ snippetId: snippet.id, enabled });
+      actionMessage = enabled
+        ? "Snippet enabled for composer mentions."
+        : "Snippet hidden from composer mentions.";
+    } catch (err) {
+      snippets = previousSnippets;
+      actionMessage = err instanceof Error ? err.message : "Unable to update snippet.";
+    } finally {
+      const nextPendingIds = new Set(pendingSnippetEnablementIds);
+      nextPendingIds.delete(snippet.id);
+      pendingSnippetEnablementIds = nextPendingIds;
+    }
+  }
+
+  async function openDiscoveredSnippet(snippet: SnippetRecord): Promise<void> {
+    if (snippet.source === "svvy") return;
     actionMessage = null;
     try {
-      const opened = await runtime.openSnippetExternalSourceInEditor(discoveredSelected.path);
+      const opened = await runtime.openSnippetExternalSourceInEditor(snippet.path);
       actionMessage = opened
-        ? `Opened ${discoveredSelected.path}`
+        ? `Opened ${snippet.path}`
         : "Could not open snippet source. Check the configured external editor.";
     } catch (err) {
       actionMessage = err instanceof Error ? err.message : "Unable to open snippet source.";
@@ -263,21 +372,24 @@
 </script>
 
 <section class="snippets-pane" aria-label="Snippets">
-  <PaneHeader
-    eyebrow="Snippets"
-    title="Prompt macros"
-    subtitle={`${snippets.length} total · ${managedSnippets.length} managed · ${discoveredSnippets.length} discovered`}
-  >
-    {#snippet actions()}
-      <Button size="sm" variant="ghost" iconOnly aria-label="Refresh snippets" onclick={loadSnippets} disabled={loading || saving}>
-        <RefreshCwIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+  <div class="snippets-header">
+    <div class="snippets-filter-row">
+      <PaneFilterTabs
+        class="snippets-source-tabs"
+        value={sourceFilter}
+        options={sourceFilterOptions}
+        aria-label="Snippet source filters"
+        onSelect={(value) => (sourceFilter = value as typeof sourceFilter)}
+      />
+      <Button class="category-action" size="xs" variant="ghost" onclick={createSnippet} disabled={loading || saving}>
+        <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
+        <span>New</span>
       </Button>
-      <Button size="sm" variant="primary" onclick={createSnippet} disabled={loading || saving}>
-        <PlusIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-        New
-      </Button>
-    {/snippet}
-  </PaneHeader>
+    </div>
+    <div class="snippets-search-row">
+      <Input bind:value={query} placeholder="Search snippets, paths, or body text" aria-label="Search snippets" />
+    </div>
+  </div>
 
   {#if error}
     <div class="snippets-status">
@@ -286,99 +398,44 @@
   {:else if loading}
     <p class="snippets-message">Loading snippets...</p>
   {:else}
-    <div class="snippets-toolbar">
-      <Input bind:value={query} placeholder="Search snippets, paths, or body text" aria-label="Search snippets" />
-    </div>
     <div class="snippets-body">
-      <nav class="snippets-list" aria-label="Snippet list">
-        <section>
-          <header class="group-header">
-            <span>Managed</span>
-            <strong>{visibleManagedSnippets.length}/{managedSnippets.length}</strong>
-          </header>
-          {#if managedSnippets.length === 0}
-            <p class="empty-list">No managed snippets yet.</p>
-          {:else if visibleManagedSnippets.length === 0}
-            <p class="empty-list">No managed snippets match.</p>
-          {/if}
-          {#each visibleManagedSnippets as snippet (snippet.id)}
-            <PaneListRow
-              title={snippet.title}
-              description={snippet.metadata.description}
-              active={selectedSnippet?.id === snippet.id}
-              onclick={() => selectSnippet(snippet)}
-            >
-              {#snippet leading()}
-                <FileTextIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-              {/snippet}
-              {#snippet meta()}
-                <Badge tone={sourceTone(snippet.source)}>{sourceLabel(snippet.source)}</Badge>
-              {/snippet}
-              {#snippet subtitle()}
-                <code>{snippetMentionToken(snippet)}</code>
-                <span>{snippetArgumentLabel(snippet)}</span>
-              {/snippet}
-            </PaneListRow>
-          {/each}
-        </section>
-
-        <section>
-          <header class="group-header">
-            <span>Discovered</span>
-            <strong>{visibleDiscoveredSnippets.length}/{discoveredSnippets.length}</strong>
-          </header>
-          {#if discoveredSnippets.length === 0}
-            <p class="empty-list">No Claude or pi snippet files found.</p>
-          {:else if visibleDiscoveredSnippets.length === 0}
-            <p class="empty-list">No discovered snippets match.</p>
-          {/if}
-          {#each visibleDiscoveredSnippets as snippet (snippet.id)}
-            <PaneListRow
-              title={snippet.title}
-              active={selectedSnippet?.id === snippet.id}
-              onclick={() => selectSnippet(snippet)}
-            >
-              {#snippet leading()}
-                <FileTextIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-              {/snippet}
-              {#snippet meta()}
-                <Badge tone={sourceTone(snippet.source)}>{sourceLabel(snippet.source)}</Badge>
-              {/snippet}
-              {#snippet subtitle()}
-                <code>{snippet.scope}</code>
-                <span>{snippetArgumentLabel(snippet)}</span>
-              {/snippet}
-            </PaneListRow>
-          {/each}
-        </section>
-      </nav>
-
-      <article class="snippet-detail">
-        {#if selectedSnippet}
-          <header class="detail-header">
-            <div>
-              <p>{sourceLabel(selectedSnippet.source)}</p>
-              <h3>{selectedSnippet.title}</h3>
-              <div class="detail-chip-row">
-                <MetadataChip label="token" value={snippetMentionToken(selectedSnippet)} />
-                <MetadataChip label="args" value={snippetArgumentLabel(selectedSnippet)} />
-                {#if managedSelected}
-                  <MetadataChip label="state" value={draftDirty ? "unsaved" : "saved"} tone={draftDirty ? "warning" : "success"} />
-                {:else if discoveredSelected}
-                  <MetadataChip label="scope" value={discoveredSelected.scope} />
+      <section class="snippets-list" aria-label="Snippet list">
+        {#if snippets.length === 0}
+          <p class="empty-list">Create a managed snippet or add a supported Claude or pi snippet file.</p>
+        {:else if visibleSnippets.length === 0}
+          <p class="empty-list">No snippets match these filters.</p>
+        {/if}
+        {#each visibleSnippets as snippet (snippet.id)}
+          {@const expanded = selectedSnippet?.id === snippet.id}
+          <ExtensionListRow
+            id={snippet.id}
+            expanded={expanded}
+            expandedInset={false}
+            showDragHandle={false}
+            showLeading={false}
+            subdued={!snippet.enabled}
+            title={snippet.title}
+            description={snippet.metadata.description ?? ""}
+            onToggle={() => toggleSnippet(snippet)}
+          >
+            {#snippet meta()}
+              <MetadataChip class="snippet-source-chip" value={sourceLabel(snippet.source)} tone={sourceTone(snippet.source)} mono={false} />
+            {/snippet}
+            {#snippet actions()}
+              <Checkbox
+                size="sm"
+                checked={snippet.enabled}
+                disabled={pendingSnippetEnablementIds.has(snippet.id)}
+                aria-label={snippet.enabled ? `Disable ${snippet.title} in composer` : `Enable ${snippet.title} in composer`}
+                onchange={(event) =>
+                  void setSnippetEnabled(snippet, (event.currentTarget as HTMLInputElement).checked)}
+              />
+              {#if snippet.source === "svvy" && expanded && managedSelected?.id === snippet.id}
+                {#if draftDirty}
+                  <Button size="sm" variant="secondary" onclick={discardDraftChanges} disabled={saving}>
+                    Discard
+                  </Button>
                 {/if}
-              </div>
-            </div>
-            <div class="detail-actions">
-              {#if discoveredSelected}
-                <OpenExternalButton
-                  size="sm"
-                  iconSize={14}
-                  editor={appPreferences?.preferredExternalEditor}
-                  targetLabel={discoveredSelected.path}
-                  onclick={openDiscoveredSnippet}
-                />
-              {:else if managedSelected}
                 <Button size="sm" variant="primary" onclick={saveSnippet} disabled={saving || !draftDirty}>
                   <SaveIcon aria-hidden="true" size={14} strokeWidth={1.9} />
                   Save
@@ -405,59 +462,52 @@
                   </Button>
                 </span>
               {/if}
-            </div>
-          </header>
-
-          {#if actionMessage}
-            <p class="snippets-message inline">{actionMessage}</p>
-          {/if}
-
-          {#if managedSelected}
-            <div class="snippet-form">
-              <label>
-                <span>Title</span>
-                <Input bind:value={draft.title} placeholder="Snippet title" />
-              </label>
-              <label>
-                <span>Description</span>
-                <Input bind:value={draft.description} placeholder="Short picker description" />
-              </label>
-              <label>
-                <span>Argument hint</span>
-                <Input bind:value={draft.argumentHint} placeholder="Expected arguments" />
-              </label>
-              <label class="body-field">
-                <span>Body</span>
-                <TextArea bind:value={draft.body} class="snippet-body-input" placeholder="Prompt text" />
-              </label>
-            </div>
-          {:else if discoveredSelected}
-            <div class="readonly-meta">
-              <span>Path</span>
-              <code>{discoveredSelected.path}</code>
-              <span>Description</span>
-              <strong>{discoveredSelected.metadata.description ?? "None"}</strong>
-              <span>Argument hint</span>
-              <strong>{discoveredSelected.metadata.argumentHint ?? "None"}</strong>
-            </div>
-            <section class="preview">
-              <h4>Preview</h4>
-              <pre>{discoveredSelected.body}</pre>
-            </section>
-          {/if}
-        {:else}
-          <StatusCard
-            eyebrow="Snippets"
-            title="No snippets available"
-            message="Create a managed prompt macro or add a supported Claude or pi snippet file."
-          >
-            <Button size="sm" variant="primary" onclick={createSnippet}>
-              <PlusIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-              New Snippet
-            </Button>
-          </StatusCard>
-        {/if}
-      </article>
+            {/snippet}
+            {#snippet expandedContent()}
+              {#if actionMessage && selectedSnippet?.id === snippet.id}
+                <p class="snippets-message inline">{actionMessage}</p>
+              {/if}
+              {#if snippet.source === "svvy" && managedSelected?.id === snippet.id}
+                <div class="snippet-form">
+                  <label>
+                    <span>Title</span>
+                    <Input bind:value={draft.title} placeholder="Snippet title" />
+                  </label>
+                  <label>
+                    <span>Description</span>
+                    <Input bind:value={draft.description} placeholder="Short picker description" />
+                  </label>
+                  <label>
+                    <span>Argument hint</span>
+                    <Input bind:value={draft.argumentHint} placeholder="Expected arguments" />
+                  </label>
+                  <label class="body-field">
+                    <span>Body</span>
+                    <TextArea bind:value={draft.body} class="snippet-body-input" placeholder="Prompt text" />
+                  </label>
+                </div>
+              {:else if snippet.source !== "svvy"}
+                {@const argumentInsight = snippetArgumentInsight(snippet)}
+                <SourceMetadataTextArea
+                  value={snippet.body}
+                  readonly
+                  showTokenCount={false}
+                  sourceLabel={snippet.path}
+                  sourceEditor={appPreferences?.preferredExternalEditor}
+                  aria-label={`${snippet.title} snippet source`}
+                  onOpenSource={() => void openDiscoveredSnippet(snippet)}
+                >
+                  {#snippet footerLeading()}
+                    {#if argumentInsight}
+                      <span class="snippet-source-meta">{argumentInsight}</span>
+                    {/if}
+                  {/snippet}
+                </SourceMetadataTextArea>
+              {/if}
+            {/snippet}
+          </ExtensionListRow>
+        {/each}
+      </section>
     </div>
   {/if}
 </section>
@@ -466,17 +516,63 @@
   .snippets-pane {
     container-type: inline-size;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     height: 100%;
     color: var(--ui-text-primary);
     background: var(--ui-panel);
   }
 
-  .snippets-toolbar {
-    padding: 0.42rem 0.78rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-    background: color-mix(in oklab, var(--ui-surface) 92%, transparent);
+  .snippets-header {
+    display: grid;
+    gap: 0.42rem;
+    min-width: 0;
+    padding: 0.58rem 0.72rem 0.62rem;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-panel) 82%, var(--ui-surface));
+  }
+
+  .snippets-filter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .snippets-search-row {
+    min-width: 0;
+  }
+
+  :global(.snippets-source-tabs) {
+    flex: 0 1 auto;
+  }
+
+  :global(.category-action) {
+    flex: 0 0 auto;
+    height: 1.42rem;
+    min-height: 1.42rem;
+    padding-block: 0;
+    text-transform: none;
+    line-height: 1;
+  }
+
+  :global(.category-action .ui-button-content) {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    height: 100%;
+    align-items: center;
+    line-height: 1;
+  }
+
+  :global(.category-action .ui-button-content > svg) {
+    display: block;
+  }
+
+  :global(.category-action .ui-button-content > span) {
+    display: block;
+    line-height: 1;
   }
 
   .snippets-message {
@@ -499,52 +595,18 @@
 
   .snippets-body {
     display: grid;
-    grid-template-columns: minmax(14rem, 0.36fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }
 
   .snippets-list {
     display: grid;
     align-content: start;
-    gap: 0.42rem;
+    gap: 0.34rem;
     min-height: 0;
     overflow: auto;
     padding: 0.45rem;
-    border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
     background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
-  }
-
-  .snippets-list section {
-    display: grid;
-    gap: 0.25rem;
-  }
-
-  .group-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.38rem 0.4rem 0.18rem;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 650;
-    text-transform: uppercase;
-  }
-
-  .group-header strong {
-    color: var(--ui-text-secondary);
-    font-weight: 650;
-  }
-
-  .snippets-list code {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .empty-list {
@@ -553,58 +615,21 @@
     font-size: var(--text-xs);
   }
 
-  .snippet-detail {
-    display: grid;
-    align-content: start;
-    gap: 0.68rem;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    padding: 0.72rem;
+  .snippets-list :global(.ui-metadata-chip) {
+    font-family: var(--font-sans);
   }
 
-  .detail-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.7rem;
-    min-width: 0;
+  .snippets-list :global(.shared-extension-meta) {
+    display: inline-flex;
+    align-items: center;
   }
 
-  .detail-header p {
-    margin: 0;
-    color: var(--ui-text-secondary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 650;
-    text-transform: uppercase;
-  }
-
-  .detail-header h3 {
-    margin: 0.12rem 0 0;
-    color: var(--ui-text-primary);
-    font-size: var(--text-base);
-    font-weight: 650;
-    line-height: 1.25;
-  }
-
-  .detail-chip-row,
-  .detail-actions,
   .delete-confirmation {
     display: inline-flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.35rem;
     min-width: 0;
-  }
-
-  .detail-chip-row {
-    margin-top: 0.42rem;
-  }
-
-  .detail-actions {
-    justify-content: flex-end;
-    flex: 0 0 auto;
   }
 
   .snippet-form {
@@ -623,10 +648,8 @@
 
   .snippet-form label span {
     color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-weight: 650;
-    text-transform: uppercase;
   }
 
   .body-field {
@@ -639,53 +662,20 @@
     font-size: var(--text-sm);
   }
 
-  .readonly-meta {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 0.45rem 0.7rem;
-    padding: 0.58rem 0.62rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 68%, transparent);
-    font-size: var(--text-sm);
-  }
-
-  .readonly-meta span {
-    color: var(--ui-text-tertiary);
-    font-size: var(--text-xs);
-  }
-
-  .readonly-meta code,
-  .readonly-meta strong {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .preview {
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .preview h4 {
-    margin: 0;
-    color: var(--ui-text-secondary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-  }
-
-  .preview pre {
-    margin: 0;
+  .snippets-list :global(.source-metadata-textarea-input) {
     min-height: 20rem;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-inset) 92%, transparent);
-    padding: 0.68rem;
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     line-height: 1.5;
+  }
+
+  .snippet-source-meta {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    line-height: 1.28;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   @container (max-width: 48rem) {

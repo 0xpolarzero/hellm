@@ -94,6 +94,7 @@ import type {
   CreateManagedSnippetRequest,
   ManagedSnippet,
   SentSnippetProvenance,
+  SetSnippetEnabledRequest,
   SnippetsReadModel,
   UpdateManagedSnippetRequest,
 } from "../shared/snippets";
@@ -594,6 +595,7 @@ export interface ChatRuntimeRpcClient {
     createManagedSnippet: typeof rpc.request.createManagedSnippet;
     updateManagedSnippet: typeof rpc.request.updateManagedSnippet;
     deleteManagedSnippet: typeof rpc.request.deleteManagedSnippet;
+    setSnippetEnabled: typeof rpc.request.setSnippetEnabled;
     openSnippetExternalSourceInEditor: typeof rpc.request.openSnippetExternalSourceInEditor;
     updateAgentProfile: typeof rpc.request.updateAgentProfile;
     deleteAgentProfile: typeof rpc.request.deleteAgentProfile;
@@ -918,6 +920,7 @@ export interface ChatRuntime {
   createManagedSnippet: (input: CreateManagedSnippetRequest) => Promise<ManagedSnippet>;
   updateManagedSnippet: (input: UpdateManagedSnippetRequest) => Promise<ManagedSnippet>;
   deleteManagedSnippet: (snippetId: string) => Promise<void>;
+  setSnippetEnabled: (input: SetSnippetEnabledRequest) => Promise<void>;
   openSnippetExternalSourceInEditor: (path: string) => Promise<boolean>;
 }
 
@@ -3547,6 +3550,10 @@ export async function createChatRuntime(
     },
     deleteManagedSnippet: async (snippetId) => {
       await rpcClient.request.deleteManagedSnippet(scoped({ snippetId }));
+      void refreshSnippets().catch(() => undefined);
+    },
+    setSnippetEnabled: async (input) => {
+      await rpcClient.request.setSnippetEnabled(scoped(input));
       void refreshSnippets().catch(() => undefined);
     },
     openSnippetExternalSourceInEditor: async (path) => {

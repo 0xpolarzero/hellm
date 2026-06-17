@@ -2600,8 +2600,10 @@
     gap: 0.22rem;
     min-height: 0;
     min-width: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: scroll;
     padding: 0.52rem 0.72rem 1rem;
+    scrollbar-gutter: stable;
   }
 
   .extension-icon-action {

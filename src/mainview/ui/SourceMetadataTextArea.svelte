@@ -128,12 +128,12 @@
 		justify-content: space-between;
 		gap: 0.36rem;
 		min-width: 0;
-		min-height: 1.08rem;
-		padding: 0 0.36rem 0.22rem 0.5rem;
+		min-height: 1.34rem;
+		padding: 0.08rem 0.36rem 0.24rem 0.5rem;
 		color: var(--ui-text-tertiary);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		line-height: 1;
+		line-height: 1.28;
 	}
 
 	.source-metadata-textarea-footer-start {
@@ -165,6 +165,7 @@
 		align-items: center;
 		min-width: 0;
 		min-height: 1.24rem;
+		line-height: 1.28;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

@@ -115,6 +115,7 @@ export function searchMentionSnippets(
 ): SnippetMentionPickerResult[] {
   const normalizedQuery = normalizeQuery(query);
   return snippets
+    .filter((snippet) => snippet.enabled)
     .map((snippet) => scoreSnippet(snippet, normalizedQuery))
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .toSorted(
@@ -179,6 +180,7 @@ export function commitTypedSnippetMention(input: {
   if (!trailingWhitespace) return null;
   const tokenEnd = input.caret - trailingWhitespace.length;
   const candidates = input.snippets
+    .filter((snippet) => snippet.enabled)
     .map((snippet) => ({ snippet, token: `@${snippet.title}` }))
     .filter(({ token }) => tokenEnd >= token.length)
     .toSorted((left, right) => right.token.length - left.token.length);

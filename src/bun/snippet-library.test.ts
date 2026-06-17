@@ -112,6 +112,7 @@ Review $ARGUMENTS`);
         path: "/tmp/review.md",
         body: "Review $1",
         metadata: { description: "Review", argumentHint: "file" },
+        enabled: true,
         readOnly: true,
       },
     ];
@@ -122,6 +123,7 @@ Review $ARGUMENTS`);
         title: "Plan",
         body: "Plan $ARGUMENTS",
         metadata: { description: null, argumentHint: "scope" },
+        enabled: true,
         createdAt: new Date(0).toISOString(),
         updatedAt: new Date(0).toISOString(),
         readOnly: false,

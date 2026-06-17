@@ -26,6 +26,7 @@ Baseline behavior:
 - discover known Markdown prompt macro files from supported hosts
 - show discovered Snippets as read-only external files
 - allow `svvy`-owned Snippets to be created, edited, renamed, and deleted in the Snippets pane
+- allow individual managed or discovered Snippets to be enabled or disabled for composer insertion
 - insert Snippets explicitly from the composer through `@` fuzzy matching
 - expand Snippets through `svvy`, not through pi, Claude, Codex, or another host runtime
 - keep host slash-command execution disabled
@@ -93,14 +94,21 @@ The pane shows:
 - managed Snippets
 - discovered Claude command files
 - discovered pi prompt-template files
+- source filters for all, managed `svvy`, Claude, and pi Snippets with counts; filtering changes
+  only the pane view and never changes snippet content, source ownership, actor capability, or
+  generated agent context
+- shared collapsible rows that expand inline for managed editing or discovered Snippet preview
 - source badge: `svvy`, `Claude`, or `pi`
+- enable checkbox controlling whether the Snippet appears in composer `@` results
 - title
 - description when available
 - argument hint when available
 - absolute path for discovered Snippets
 - read-only live preview for discovered Snippets
 - editor for managed Snippets
-- open-external-editor action for discovered Snippets
+- unsaved-change protection so list selection, creation, or live refresh cannot silently discard a
+  dirty managed Snippet draft
+- open-external-editor action for discovered Snippets from the expanded source preview
 
 The pane does not show:
 
@@ -110,6 +118,11 @@ The pane does not show:
 - tool grants
 - package or plugin controls
 - skill import controls
+
+Disabled Snippets remain visible and expandable in the Snippets pane, but they are subdued and are
+excluded from composer `@` picker results and typed `@Snippet Name` commits. Disabling a discovered
+Snippet does not modify the external Markdown file; `svvy` persists that visibility choice in its
+own Snippets state.
 
 ## Format
 
@@ -149,7 +162,8 @@ only supported argument placeholders.
 
 ## Composer UX
 
-The composer `@` picker searches files, folders, and Snippets together in one fuzzy result list.
+The composer `@` picker searches files, folders, and enabled Snippets together in one fuzzy result
+list.
 
 Snippet results are not placed in a separate picker mode. They use different visual treatment so the
 user can distinguish them while still getting the best overall fuzzy match:
@@ -159,8 +173,8 @@ user can distinguish them while still getting the best overall fuzzy match:
 - description or argument hint
 - path subtitle for discovered Snippets
 
-Accepting a Snippet inserts a structured inline mention into the composer. The composer displays the
-mention chip, not the full expanded Markdown body.
+Accepting an enabled Snippet inserts a structured inline mention into the composer. The composer
+displays the mention chip, not the full expanded Markdown body.
 
 If the Snippet has arguments, the mention exposes inline argument fields:
 

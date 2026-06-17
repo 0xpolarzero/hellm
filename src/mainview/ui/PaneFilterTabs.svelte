@@ -87,7 +87,7 @@
 	.ui-pane-filter-tab {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.34rem;
+		gap: 0.28rem;
 		min-height: 1.32rem;
 		padding: 0 0.46rem;
 		border: 0;
@@ -123,20 +123,17 @@
 	}
 
 	.ui-pane-filter-tab strong {
-		min-width: 1.1rem;
-		padding: 0.08rem 0.24rem;
-		border-radius: var(--ui-radius-xs);
-		background: color-mix(in oklab, var(--ui-code) 78%, transparent);
+		min-width: 0;
 		color: var(--ui-text-tertiary);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
+		font-weight: 500;
 		font-variant-numeric: tabular-nums;
 		text-align: center;
 	}
 
 	.ui-pane-filter-tab.active strong {
-		background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
-		color: var(--ui-text-primary);
+		color: var(--ui-text-secondary);
 	}
 
 	.ui-pane-filter-dot {

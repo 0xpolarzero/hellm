@@ -35,6 +35,7 @@ const SNIPPET: ManagedSnippet = {
     description: "Ask for a review plan",
     argumentHint: "target",
   },
+  enabled: true,
   createdAt: "2026-06-10T10:00:00.000Z",
   updatedAt: "2026-06-10T10:00:00.000Z",
   readOnly: false,
@@ -122,6 +123,17 @@ describe("composer mention picker search", () => {
         disambiguation: "Ask for a review plan",
       },
     ]);
+  });
+
+  it("does not show disabled snippets in mention search", () => {
+    const results = searchComposerMentionResults({
+      paths: [],
+      snippets: [{ ...SNIPPET, enabled: false }],
+      query: "review",
+      limit: 5,
+    });
+
+    expect(results).toEqual([]);
   });
 });
 
@@ -256,6 +268,16 @@ describe("composer mention serialization", () => {
         value: "Please @docs/progress.md ",
         caret: "Please @docs/progress.md ".length,
         snippets: [SNIPPET],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not structure disabled typed snippet mentions", () => {
+    expect(
+      commitTypedSnippetMention({
+        value: "Please @Review Plan ",
+        caret: "Please @Review Plan ".length,
+        snippets: [{ ...SNIPPET, enabled: false }],
       }),
     ).toBeNull();
   });

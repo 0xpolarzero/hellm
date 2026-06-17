@@ -33,7 +33,7 @@
 		white-space: nowrap;
 		border: 1px solid transparent;
 		font-variant-numeric: tabular-nums;
-		line-height: 1;
+		line-height: 1.28;
 		box-shadow: none;
 	}
 

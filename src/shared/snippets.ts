@@ -15,6 +15,7 @@ export interface DiscoveredSnippet {
   path: string;
   body: string;
   metadata: SnippetMetadata;
+  enabled: boolean;
   readOnly: true;
 }
 
@@ -24,6 +25,7 @@ export interface ManagedSnippet {
   title: string;
   body: string;
   metadata: SnippetMetadata;
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
   readOnly: false;
@@ -78,6 +80,11 @@ export interface UpdateManagedSnippetRequest {
 
 export interface DeleteManagedSnippetRequest {
   snippetId: string;
+}
+
+export interface SetSnippetEnabledRequest {
+  snippetId: string;
+  enabled: boolean;
 }
 
 export function parseSnippetMarkdown(markdown: string): {

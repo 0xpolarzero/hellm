@@ -158,12 +158,17 @@ import {
   createGeneratedAgentContextStore,
   type GeneratedAgentContextStore,
 } from "./generated-agent-context-store";
-import { buildSnippetsReadModel, discoverSnippets } from "./snippet-library";
+import {
+  applySnippetEnablement,
+  buildSnippetsReadModel,
+  discoverSnippets,
+} from "./snippet-library";
 import { createSnippetStore, type SnippetStore } from "./snippet-store";
 import type {
   CreateManagedSnippetRequest,
   DeleteManagedSnippetRequest,
   ManagedSnippet,
+  SetSnippetEnabledRequest,
   SnippetsReadModel,
   UpdateManagedSnippetRequest,
 } from "../shared/snippets";
@@ -1000,10 +1005,13 @@ export class WorkspaceSessionCatalog {
   getSnippets(): SnippetsReadModel {
     return buildSnippetsReadModel({
       managed: this.snippetStore.listManaged(),
-      discovered: discoverSnippets({
-        homeDir: homedir(),
-        workspaceDir: this.cwd,
-      }),
+      discovered: applySnippetEnablement(
+        discoverSnippets({
+          homeDir: homedir(),
+          workspaceDir: this.cwd,
+        }),
+        this.snippetStore.listDisabledSnippetIds(),
+      ),
     });
   }
 
@@ -1017,6 +1025,10 @@ export class WorkspaceSessionCatalog {
 
   deleteManagedSnippet(input: DeleteManagedSnippetRequest): void {
     this.snippetStore.deleteManaged(input);
+  }
+
+  setSnippetEnabled(input: SetSnippetEnabledRequest): void {
+    this.snippetStore.setEnabled(input);
   }
 
   private async buildCurrentExternalContextSources(): Promise<

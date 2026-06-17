@@ -1762,6 +1762,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return { ok: true as const };
       },
+      setSnippetEnabled: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        runtime.catalog.setSnippetEnabled(input);
+        runtime.appLog.info("settings", input.enabled ? "Snippet enabled." : "Snippet disabled.", {
+          snippetId: input.snippetId,
+        });
+        return { ok: true as const };
+      },
       openSnippetExternalSourceInEditor: (input) => {
         const runtime = getWorkspaceRuntime(input);
         const snippet = runtime.catalog
