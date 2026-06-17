@@ -1184,10 +1184,10 @@
   }
 
   .agent-category-heading {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
+    column-gap: 0.5rem;
     min-width: 0;
     color: var(--ui-text-secondary);
     font-size: var(--text-xs);
@@ -1220,30 +1220,43 @@
   .agent-category-actions {
     display: inline-flex;
     align-items: center;
-    gap: 0.36rem;
-    flex: 0 0 auto;
+    justify-self: end;
+    min-width: 0;
   }
 
   :global(.category-action) {
+    box-sizing: border-box;
     height: 1.42rem;
     min-height: 1.42rem;
-    width: max-content;
-    min-width: max-content;
+    width: 3.48rem;
+    min-width: 3.48rem;
+    overflow: hidden;
     padding-block: 0;
-    padding-inline: 0.42rem;
+    padding-inline: 0.36rem;
     text-transform: none;
     line-height: 1;
   }
 
+  :global(.category-action .ui-button-content) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.22rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
   :global(.category-action .ui-button-content > svg) {
     flex: 0 0 auto;
-    display: block;
   }
 
   :global(.category-action .ui-button-content > span) {
-    flex: 0 0 auto;
-    display: block;
+    min-width: 0;
+    overflow: hidden;
     line-height: 1;
+    text-overflow: clip;
   }
 
   .agent-rows {
