@@ -135,7 +135,7 @@
   .context-budget-track {
     height: 0.38rem;
     overflow: hidden;
-    border-radius: 999px;
+    border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
   }
 
