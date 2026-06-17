@@ -259,25 +259,34 @@ function readWorkflowAgentSourceRecords(
     if (!entry.endsWith(".agent.json")) continue;
     const path = join(agentsDir, entry);
     try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<WorkflowAgentSettings>;
+      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
       const id = basename(entry, ".agent.json");
       const sourceVersion = readFileBackedVersion(path);
-      records[id] = normalizeWorkflowAgentSettings(id, {
+      const normalized = normalizeWorkflowAgentSettings(id, {
         id,
         label: typeof raw.label === "string" ? raw.label : id,
         provider: typeof raw.provider === "string" ? raw.provider : "",
         model: typeof raw.model === "string" ? raw.model : "",
         reasoningEffort: raw.reasoningEffort as WorkflowAgentSettings["reasoningEffort"],
         instructions: typeof raw.instructions === "string" ? raw.instructions : "",
-        overrides: normalizeExtensionUsage(raw.overrides),
-        extensionOrder: normalizeExtensionOrder(raw.extensionOrder),
+        overrides: normalizeExtensionUsage(raw.overrides as WorkflowAgentSettings["overrides"]),
+        extensionOrder: normalizeExtensionOrder(
+          raw.extensionOrder as WorkflowAgentSettings["extensionOrder"],
+        ),
         sourceVersion,
       });
+      records[id] = hasObsoleteWorkflowAgentSourceFields(raw)
+        ? writeWorkflowAgentSourceRecord(workflowsSourceRoot, normalized)
+        : normalized;
     } catch (error) {
       throw new Error(`Workflow agent source is not valid JSON: ${path}`, { cause: error });
     }
   }
   return Object.keys(records).length > 0 ? records : fallback;
+}
+
+function hasObsoleteWorkflowAgentSourceFields(raw: Record<string, unknown>): boolean {
+  return Object.hasOwn(raw, "extensions") || Object.hasOwn(raw, "extensionUsage");
 }
 
 function workflowAgentSourcePath(workflowsSourceRoot: string, id: string): string {

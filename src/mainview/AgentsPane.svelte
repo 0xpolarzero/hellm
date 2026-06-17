@@ -32,6 +32,7 @@
   import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
   import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
+  import { createWorkflowAgentId as createWorkflowAgentExportId } from "./agent-profile-ids";
 
   type Props = {
     runtime: ChatRuntime;
@@ -517,20 +518,7 @@
   }
 
   function createWorkflowAgentId(baseName: string): WorkflowAgentKey {
-    const slug = baseName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 36);
-    const prefix = slug || "workflow-agent";
-    const existingIds = new Set(Object.keys(settings?.workflowAgents ?? {}));
-    let index = workflowAgents.length + 1;
-    let id = `${prefix}-${index}`;
-    while (existingIds.has(id)) {
-      index += 1;
-      id = `${prefix}-${index}`;
-    }
-    return id;
+    return createWorkflowAgentExportId(baseName, Object.keys(settings?.workflowAgents ?? {}));
   }
 
   async function createOrchestratorProfile(source?: AgentProfileSettings) {

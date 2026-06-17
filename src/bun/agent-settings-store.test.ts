@@ -354,6 +354,63 @@ describe("agent profile settings", () => {
     });
   });
 
+  it("canonicalizes obsolete workflow-agent source fields before Workflows builds read them", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-source-canonical-"));
+    const workflowsSourceRoot = join(root, "workflows");
+    const sourcePath = join(workflowsSourceRoot, "agents", "explorer.agent.json");
+    mkdirSync(join(workflowsSourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      JSON.stringify(
+        {
+          id: "explorer",
+          label: "Explorer",
+          provider: "zai",
+          model: "glm-5-turbo",
+          reasoningEffort: "medium",
+          instructions: "Inspect the repository.",
+          extensions: ["base-common", "base-workflow-task"],
+          extensionUsage: {
+            "base-common": "default_loaded",
+            "base-workflow-task": "default_loaded",
+          },
+          extensionOrder: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const store = createAgentSettingsStore({
+      cwd: root,
+      agentDir: join(root, ".agent"),
+      workflowsSourceRoot,
+    });
+
+    expect(store.getState().workflowAgents.explorer).toEqual(
+      expect.objectContaining({
+        id: "explorer",
+        label: "Explorer",
+        provider: "zai",
+        model: "glm-5-turbo",
+        reasoningEffort: "medium",
+        instructions: "Inspect the repository.",
+        overrides: {},
+        extensionOrder: [],
+      }),
+    );
+    expect(JSON.parse(readFileSync(sourcePath, "utf8"))).toEqual({
+      id: "explorer",
+      label: "Explorer",
+      provider: "zai",
+      model: "glm-5-turbo",
+      reasoningEffort: "medium",
+      instructions: "Inspect the repository.",
+      overrides: {},
+      extensionOrder: [],
+    });
+  });
+
   it("rejects workflow-agent saves when the source changed after the editor base version", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-cas-"));
     const workflowsSourceRoot = join(root, "workflows");

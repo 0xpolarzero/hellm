@@ -1871,6 +1871,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
               {
                 reason: "workflow-agent-settings",
                 workflowDiagnosticCount: build.diagnostics.length,
+                workflowDiagnostics: build.diagnostics,
               },
             );
             if (previous) {

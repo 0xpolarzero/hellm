@@ -38,6 +38,7 @@ import type {
   WorkspaceWorkflowsGeneratedReadModel,
 } from "../../shared/workspace-contract";
 import type { SvvyxWorkflowsModelChoice } from "../svvyx-workflows-command";
+import { isValidWorkflowExportName } from "../../shared/workflows-export-name";
 
 const WORKFLOW_NAMESPACE_BY_DIR = {
   agents: { kind: "agent", namespace: "Agents" },
@@ -1919,7 +1920,7 @@ function assertValidExportName(exportName: string): void {
 }
 
 function isValidExportName(exportName: string): boolean {
-  return /^[A-Za-z_$][\w$]*$/.test(exportName);
+  return isValidWorkflowExportName(exportName);
 }
 
 function stringProperty(record: Record<string, unknown>, key: string): string | null {
