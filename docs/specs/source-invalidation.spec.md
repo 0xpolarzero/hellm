@@ -136,7 +136,8 @@ Each invalidation batch runs in this order:
 4. Keep the last ready generated package active if a rebuild fails.
 5. Surface diagnostics through app logs and relevant read models.
 6. Refresh renderer warm caches for affected domains.
-7. Queue `agent_context_refresh` work for open surfaces whose prompt binding fingerprint changed.
+7. Mark open surfaces stale by generated-context fingerprint mismatch; opted-in surfaces refresh
+   automatically before their next prompt-bearing dispatch.
 
 Invalid source must not be silently skipped or interpreted as deletion. If a source file exists but
 is unreadable or invalid, the product reports that state and keeps the previous ready generated

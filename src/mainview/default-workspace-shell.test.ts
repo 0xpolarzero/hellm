@@ -1548,20 +1548,20 @@ describe("default workspace renderer shell", () => {
     expect(commandPaletteSource).not.toContain("onOpenSettings?:");
   });
 
-  it("keeps updating context refresh rows visible but not cancellable from the stale banner", async () => {
+  it("renders stale extension context as a checkbox-controlled banner", async () => {
     const dockviewHostSource = await readFile(
       new URL("./DockviewPanelHost.svelte", import.meta.url),
       "utf8",
     );
 
-    expect(dockviewHostSource).toContain('queuedPromptRefresh.status !== "dispatching"');
-    expect(dockviewHostSource).toContain('queuedPromptRefresh.status !== "failed"');
     expect(dockviewHostSource).toContain(
-      'queuedPromptRefresh?.agentContextUpdate?.state === "failed"',
+      "Extensions changed and will require system prompt to refresh.",
     );
-    expect(dockviewHostSource).toContain("Agent context update failed.");
-    expect(dockviewHostSource).toContain("Retry update");
-    expect(dockviewHostSource).toContain("{#if queuedPromptRefreshCancellable}");
-    expect(dockviewHostSource).toContain("controller.deleteQueuedPrompt(queuedPromptRefresh.id)");
+    expect(dockviewHostSource).toContain("Update before next turn");
+    expect(dockviewHostSource).toContain("controller.setExtensionContextAutoUpdate");
+    expect(dockviewHostSource).not.toContain("queuedPromptRefresh");
+    expect(dockviewHostSource).not.toContain("Agent context update failed.");
+    expect(dockviewHostSource).not.toContain("Retry update");
+    expect(dockviewHostSource).not.toContain(["Update", "agent context"].join(" "));
   });
 });

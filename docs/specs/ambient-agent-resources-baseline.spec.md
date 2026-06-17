@@ -244,7 +244,8 @@ File changes can alter the generated agent context fingerprint even when no sett
 
 Existing surfaces store the generated agent context fingerprint they received. If current external
 instructions or resolved generated context output differ from the bound generated agent context, the
-normal automatic `agent_context_refresh` flow applies. External instruction changes do not use a
+surface becomes stale by fingerprint mismatch and follows the normal checked-by-default
+update-before-next-turn pre-dispatch refresh rule. External instruction changes do not use a
 separate manual warning or update flow.
 
 ### Pi Standards Opt-Out

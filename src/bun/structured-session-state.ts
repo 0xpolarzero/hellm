@@ -132,6 +132,7 @@ export interface StructuredPiSessionRecord {
   orchestratorAgentProfileId?: AgentProfileId;
   orchestratorAgentProfileJson?: string | null;
   generatedAgentContextFingerprint?: string | null;
+  updateExtensionContextBeforeNextTurn?: boolean;
   loadedExtensionIds?: string[];
   availableExtensionIds?: string[];
   titleNamerAgentJson?: string | null;
@@ -208,6 +209,7 @@ export interface StructuredThreadRecord {
   worktree?: string;
   agentProfileJson?: string | null;
   generatedAgentContextFingerprint?: string | null;
+  updateExtensionContextBeforeNextTurn: boolean;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -483,7 +485,6 @@ export type StructuredSurfaceQueuedMessageStatus =
 
 export type StructuredSurfaceQueueItemKind =
   | "user_message"
-  | "agent_context_refresh"
   | "initial_handler_start"
   | "thread_followup"
   | "report_request"
@@ -1030,6 +1031,14 @@ export interface StructuredSessionStateStore {
   completeTitleGeneration(input: { sessionId: string; title: string }): StructuredPiSessionRecord;
   failTitleGeneration(input: { sessionId: string; error: string }): StructuredPiSessionRecord;
   markManualTitleOverride(input: { sessionId: string; title: string }): StructuredPiSessionRecord;
+  setSessionExtensionContextAutoUpdate(input: {
+    sessionId: string;
+    enabled: boolean;
+  }): StructuredPiSessionRecord;
+  setThreadExtensionContextAutoUpdate(input: {
+    threadId: string;
+    enabled: boolean;
+  }): StructuredThreadRecord;
   getComposerDraft(surfacePiSessionId: string): StructuredComposerDraftRecord | null;
   setComposerDraft(input: {
     sessionId: string;
@@ -1050,6 +1059,7 @@ type SessionRow = {
   orchestrator_agent_profile_id: AgentProfileId | null;
   orchestrator_agent_profile_json: string | null;
   generated_agent_context_fingerprint: string | null;
+  update_extension_context_before_next_turn: number | null;
   loaded_extension_ids_json: string | null;
   available_extension_ids_json: string | null;
   title_namer_agent_json: string | null;
@@ -1153,6 +1163,7 @@ type ThreadRow = {
   worktree: string | null;
   agent_profile_json: string | null;
   generated_agent_context_fingerprint: string | null;
+  update_extension_context_before_next_turn: number | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -1546,6 +1557,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            orchestrator_agent_profile_id,
            orchestrator_agent_profile_json,
            generated_agent_context_fingerprint,
+           update_extension_context_before_next_turn,
            loaded_extension_ids_json,
            available_extension_ids_json,
            title_namer_agent_json,
@@ -1571,7 +1583,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pi.sessionId,
@@ -1584,6 +1596,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         pi.generatedAgentContextFingerprint ??
           existing?.generated_agent_context_fingerprint ??
           null,
+        pi.updateExtensionContextBeforeNextTurn === undefined
+          ? (existing?.update_extension_context_before_next_turn ?? 1)
+          : pi.updateExtensionContextBeforeNextTurn
+            ? 1
+            : 0,
         pi.loadedExtensionIds === undefined
           ? (existing?.loaded_extension_ids_json ?? null)
           : toJson(normalizeStringList(pi.loadedExtensionIds)),
@@ -1941,6 +1958,60 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mapPiSession(this.mustFindSessionRow(input.sessionId));
   }
 
+  setSessionExtensionContextAutoUpdate(input: {
+    sessionId: string;
+    enabled: boolean;
+  }): StructuredPiSessionRecord {
+    const existing = this.mustFindSessionRow(input.sessionId);
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE session
+         SET update_extension_context_before_next_turn = ?,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(input.enabled ? 1 : 0, timestamp, input.sessionId);
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.extension_context_auto_update.updated",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      data: {
+        surfacePiSessionId: existing.orchestrator_pi_session_id,
+        enabled: input.enabled,
+      },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(input.sessionId));
+  }
+
+  setThreadExtensionContextAutoUpdate(input: {
+    threadId: string;
+    enabled: boolean;
+  }): StructuredThreadRecord {
+    const existing = this.mustFindThreadRow(input.threadId);
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE thread
+         SET update_extension_context_before_next_turn = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(input.enabled ? 1 : 0, timestamp, input.threadId);
+    this.recordEvent({
+      sessionId: existing.session_id,
+      kind: "thread.extension_context_auto_update.updated",
+      subjectKind: "thread",
+      subjectId: input.threadId,
+      data: {
+        surfacePiSessionId: existing.surface_pi_session_id,
+        enabled: input.enabled,
+      },
+    });
+    return this.mustFindThreadRecord(input.threadId);
+  }
+
   getComposerDraft(surfacePiSessionId: string): StructuredComposerDraftRecord | null {
     const row =
       (this.db
@@ -2218,10 +2289,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            worktree,
            agent_profile_json,
            generated_agent_context_fingerprint,
+           update_extension_context_before_next_turn,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, 1, ?, ?, NULL)`,
       )
       .run(
         threadId,
@@ -4316,12 +4388,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           .query(
             `SELECT * FROM surface_message_queue
              WHERE surface_pi_session_id = ? AND status IN ('queued', 'steering')
-             ORDER BY
-               CASE
-                 WHEN kind = 'agent_context_refresh' THEN 0
-                 WHEN kind = 'request_user_input_answer' THEN 1
-                 ELSE 2
-               END ASC,
+           ORDER BY
+             CASE
+               WHEN kind = 'request_user_input_answer' THEN 0
+               ELSE 2
+             END ASC,
                CASE
                  WHEN status = 'steering' THEN 0
                  ELSE 1
@@ -5259,8 +5330,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
          ORDER BY
            CASE
              WHEN status = 'failed' THEN 3
-             WHEN kind = 'agent_context_refresh' THEN 0
-             WHEN kind = 'request_user_input_answer' THEN 1
+             WHEN kind = 'request_user_input_answer' THEN 0
              ELSE 2
            END ASC,
            position ASC,
@@ -5494,6 +5564,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       orchestratorAgentProfileId: row.orchestrator_agent_profile_id ?? undefined,
       orchestratorAgentProfileJson: row.orchestrator_agent_profile_json,
       generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
+      updateExtensionContextBeforeNextTurn:
+        row.update_extension_context_before_next_turn === null
+          ? true
+          : Boolean(row.update_extension_context_before_next_turn),
       loadedExtensionIds: row.loaded_extension_ids_json
         ? (fromJson<string[]>(row.loaded_extension_ids_json) ?? [])
         : undefined,
@@ -5634,6 +5708,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       worktree: row.worktree ?? undefined,
       agentProfileJson: row.agent_profile_json,
       generatedAgentContextFingerprint: row.generated_agent_context_fingerprint,
+      updateExtensionContextBeforeNextTurn:
+        row.update_extension_context_before_next_turn === null
+          ? true
+          : Boolean(row.update_extension_context_before_next_turn),
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
@@ -5944,6 +6022,7 @@ function initializeSchema(db: Database): void {
       orchestrator_agent_profile_id TEXT,
       orchestrator_agent_profile_json TEXT,
       generated_agent_context_fingerprint TEXT,
+      update_extension_context_before_next_turn INTEGER NOT NULL DEFAULT 1,
       loaded_extension_ids_json TEXT,
       available_extension_ids_json TEXT,
       title_namer_agent_json TEXT,
@@ -6022,6 +6101,7 @@ function initializeSchema(db: Database): void {
       worktree TEXT,
       agent_profile_json TEXT,
       generated_agent_context_fingerprint TEXT,
+      update_extension_context_before_next_turn INTEGER NOT NULL DEFAULT 1,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       finished_at TEXT
@@ -6301,6 +6381,12 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "session", "orchestrator_agent_profile_id", "TEXT");
   ensureColumn(db, "session", "orchestrator_agent_profile_json", "TEXT");
   ensureColumn(db, "session", "generated_agent_context_fingerprint", "TEXT");
+  ensureColumn(
+    db,
+    "session",
+    "update_extension_context_before_next_turn",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
   ensureColumn(db, "session", "loaded_extension_ids_json", "TEXT");
   ensureColumn(db, "session", "available_extension_ids_json", "TEXT");
   ensureColumn(db, "session", "title_namer_agent_json", "TEXT");
@@ -6342,6 +6428,12 @@ function initializeSchema(db: Database): void {
   );
   ensureColumn(db, "thread", "agent_profile_json", "TEXT");
   ensureColumn(db, "thread", "generated_agent_context_fingerprint", "TEXT");
+  ensureColumn(
+    db,
+    "thread",
+    "update_extension_context_before_next_turn",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
   ensureColumn(db, "thread", "thread_group_id", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "thread", "history_mode", "TEXT NOT NULL DEFAULT 'isolated'");
   ensureColumn(db, "thread", "objective_state", "TEXT NOT NULL DEFAULT 'active'");

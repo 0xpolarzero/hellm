@@ -521,13 +521,13 @@ Build behavior:
 - Dependency approval is checked at install time, not based on whether the change came from
   `apply_patch`, direct user editing, reset, revert, or snapshot restore.
 - Build, dependency approval, missing required env, install failure, validation failure, and startup
-  rebuild failure are build/readiness states. They happen before any `Update agent context` work is
-  queued. They must not create failed `agent_context_refresh` rows.
-- Only a successful context-ready generated agent context can enqueue or apply
-  `agent_context_refresh`. Runtime readiness blockers such as missing required env values block load
-  or invocation, not generated context activation.
+  rebuild failure are build/readiness states. They happen before any generated-context fingerprint
+  change can affect a surface. They must not create failed context-refresh queue rows.
+- Only a successful context-ready generated agent context can make affected surfaces stale by
+  fingerprint mismatch. Runtime readiness blockers such as missing required env values block load or
+  invocation, not generated context activation.
 - After a successful build changes an extension context fingerprint, affected sessions and workflow
-  task-agent attempts receive automatic `agent_context_refresh` work according to
+  task-agent attempts follow automatic fingerprint staleness and pre-dispatch refresh according to
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/queued-messages.spec.md`.
 
 Conversation-visible UI events:
@@ -2158,7 +2158,7 @@ Rules:
   `buildRequired: true`, and leaves existing generated contexts active until the next successful
   `build`
 - after the next successful build, changed bypass state affects generated-context fingerprints and
-  queues affected sessions for safe-boundary `agent_context_refresh`
+  affected sessions become stale until the normal update-before-next-turn refresh rule applies
 
 ## `build`
 
@@ -2189,7 +2189,7 @@ Build results split context readiness from runtime readiness:
 - `runtimeReady` means all runtime prerequisites for loading or invoking the extension are satisfied,
   including required app-managed env values and required installed dependencies or external binaries.
 - A successful build with `contextReady: true` and `runtimeReady: false` still activates the new
-  generated context and may enqueue `agent_context_refresh` for affected bindings. The affected
+  generated context and may make affected bindings stale by fingerprint mismatch. The affected
   actor may see updated instructions, declarations, and readiness issues, but runtime invocation or
   `load_extension` still fails until the runtime blocker is resolved.
 
@@ -2552,8 +2552,8 @@ Use case: change whether an extension is loaded, available, or unavailable for a
 Any actor session with the Extension Managing extension loaded may change extension usage for any
 agent profile, not only the profile currently bound to that actor session. This is a profile
 management command. It mutates the target agent profile's persistent extension usage state and may
-enqueue `agent_context_refresh` work for existing sessions or task attempts that are bound to the
-affected profile and whose generated agent context fingerprint changes.
+report existing sessions or task attempts that are bound to the affected profile and whose generated
+agent context fingerprint changes.
 
 `set-usage` must not mutate the calling session's current loaded/available binding directly. If the
 calling session is also affected by the profile change, it receives the same generated-context
@@ -2598,11 +2598,11 @@ Example output:
   "agentContextImpact": {
     "affectsNewTurns": true,
     "activeRunsChangeAtNextSafeBoundary": true,
-    "queuedUpdates": [
+    "affectedSurfaces": [
       {
         "surfacePiSessionId": "thread_8HD2",
-        "kind": "agent_context_refresh",
-        "label": "Update agent context",
+        "kind": "extension_context_changed",
+        "label": "Extensions changed",
         "reason": "extension_usage_changed"
       }
     ]
@@ -2978,8 +2978,8 @@ runtime approval state for `exec_command`, `apply_patch`, `svvyx`, or workflow t
 
 Loading a snapshot must leave current builds in place until replacement builds succeed. If a
 snapshot removes an extension that an existing session had loaded or available, that session drops
-the missing extension exactly as it would after extension deletion and then receives an
-`agent_context_refresh`.
+the missing extension exactly as it would after extension deletion and then becomes stale by
+fingerprint mismatch.
 
 Load success example:
 
@@ -3002,11 +3002,11 @@ Load success example:
     }
   ],
   "agentContextImpact": {
-    "queuedUpdates": [
+    "affectedSurfaces": [
       {
         "surfacePiSessionId": "thread_8HD2",
-        "kind": "agent_context_refresh",
-        "label": "Update agent context",
+        "kind": "extension_context_changed",
+        "label": "Extensions changed",
         "reason": "snapshot_loaded"
       }
     ]

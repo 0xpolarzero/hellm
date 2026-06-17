@@ -2546,12 +2546,39 @@ describe("WorkspaceSessionCatalog", () => {
       const stale = await catalog.openSurface(handler.target);
       expect(stale.promptBinding?.stale).toBe(true);
 
-      await catalog.queuePromptRefresh({ target: handler.target });
+      const promptPrototype = Object.getPrototypeOf(
+        getManagedSurface(catalog, handler.surfacePiSessionId).session,
+      ) as {
+        prompt(promptText: string): Promise<void>;
+      };
+      const systemPromptsSeen: string[] = [];
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        systemPromptsSeen.push(this.agent.state.systemPrompt ?? "");
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Handler refreshed."),
+        ]);
+      });
+      try {
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: handler.target,
+          messages: [userMessage("Run after extension change.")],
+          onEvent: () => {},
+        });
+        await waitFor(() => !getManagedSurface(catalog, handler.surfacePiSessionId).activePrompt);
+      } finally {
+        promptSpy.mockRestore();
+      }
       const storedThread = getStructuredSessionStore(catalog)
         .getSessionState(created.target.workspaceSessionId)
         .threads.find((thread) => thread.id === handler.threadId);
       const refreshed = await catalog.openSurface(handler.target);
 
+      expect(systemPromptsSeen[0]).toContain("Changed before refresh.");
       expect(storedThread?.generatedAgentContextFingerprint).toBe(
         refreshed.promptBinding?.currentFingerprint,
       );
@@ -2615,6 +2642,7 @@ describe("WorkspaceSessionCatalog", () => {
       );
 
       expect(created.promptBinding?.stale).toBe(false);
+      expect(created.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
       expect(created.systemPrompt).not.toContain("## Orchestrator Profile");
       expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
     } finally {
@@ -2625,7 +2653,6 @@ describe("WorkspaceSessionCatalog", () => {
   it("marks prompt binding stale when the orchestrator profile removes an extension", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
     const profile: AgentProfileSettings = {
       id: "extension-drift-orchestrator",
       kind: "orchestrator",
@@ -2639,6 +2666,7 @@ describe("WorkspaceSessionCatalog", () => {
       builtin: false,
       locked: false,
     };
+    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
 
     try {
       setCatalogAgentProfile(catalog, profile);
@@ -2663,160 +2691,50 @@ describe("WorkspaceSessionCatalog", () => {
       expect(reopened.promptBinding?.boundSystemPrompt).toContain(smithersLoadedMarker);
       expect(reopened.promptBinding?.currentSystemPrompt).not.toContain(smithersLoadedMarker);
 
-      await catalog.queuePromptRefresh({ target: created.target });
-      const refreshed = await catalog.openSurface(created.target);
-      expect(refreshed.promptBinding?.stale).toBe(false);
-      expect(refreshed.resolvedSystemPrompt).not.toContain(smithersLoadedMarker);
-      expect(refreshed.queuedMessages).toEqual([]);
-      expect(refreshed.agentContextUpdate).toMatchObject({
-        state: "applied",
-        requestedRevision: expect.any(Number),
-        currentRevision: expect.any(Number),
-        systemPromptChanged: true,
-      });
-      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
-        expect.objectContaining({
-          title: "Agent context update applied",
-          summary: expect.stringContaining("Agent context update applied"),
-          details: expect.objectContaining({
-            state: "applied",
-            surfacePiSessionId: created.target.surfacePiSessionId,
-          }),
-        }),
-      );
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("projects cancelled context refreshes without keeping stale active queue rows", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Cancel Context Refresh" }, DEFAULTS);
-      await catalog.openSurface(created.target);
-      const queued = getStructuredSessionStore(catalog).enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        kind: "agent_context_refresh",
-        idempotencyKey: "agent_context_refresh:test-cancelled-terminal",
-        messageJson: "{}",
-        payloadJson: JSON.stringify({
-          requestedRevision: 7,
-          requestedAt: "2026-06-10T12:00:00.000Z",
-          reason: "test cancellation",
-        }),
-        requestSummary: "Update agent context",
-        position: "front",
-      });
-
-      const cancelled = await catalog.deleteQueuedSurfaceMessage({
-        target: created.target,
-        queuedMessageId: queued.id,
-      });
-
-      expect(cancelled.snapshot?.queuedMessages).toEqual([]);
-      expect(cancelled.snapshot?.agentContextUpdate).toMatchObject({
-        state: "cancelled",
-        queueMessageId: queued.id,
-        requestedRevision: 7,
-        reason: "test cancellation",
-      });
-      expect(
-        getStructuredSessionStore(catalog)
-          .listQueuedSurfaceMessages({ surfacePiSessionId: created.target.surfacePiSessionId })
-          .map((message) => message.id),
-      ).toEqual([]);
-      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
-        expect.objectContaining({
-          title: "Agent context update cancelled",
-          summary: expect.stringContaining("Agent context update cancelled"),
-          details: expect.objectContaining({
-            state: "cancelled",
-            queueMessageId: queued.id,
-            surfacePiSessionId: created.target.surfacePiSessionId,
-          }),
-        }),
-      );
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("records cancelled context refreshes when edit-and-resend clears queued rows", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Edit Cancels Refresh" }, DEFAULTS);
-      const original = {
-        ...userMessage("Original request"),
-        timestamp: 101,
-      };
-      appendMessagesToSession(
+      const promptPrototype = Object.getPrototypeOf(
         getManagedSurface(catalog, created.target.surfacePiSessionId).session,
-        [original, assistantMessage("Original answer.")],
-      );
-      const queued = getStructuredSessionStore(catalog).enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        kind: "agent_context_refresh",
-        idempotencyKey: "agent_context_refresh:test-edit-cancelled-terminal",
-        messageJson: "{}",
-        payloadJson: JSON.stringify({
-          requestedRevision: 8,
-          requestedAt: "2026-06-10T12:30:00.000Z",
-          reason: "edit resend",
-        }),
-        requestSummary: "Update agent context",
-        position: "front",
-      });
-      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
-      const promptPrototype = Object.getPrototypeOf(managed.session) as {
+      ) as {
         prompt(promptText: string): Promise<void>;
       };
+      const systemPromptsSeen: string[] = [];
       const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
         this: PromptableSession,
         promptText: string,
       ) {
+        systemPromptsSeen.push(this.agent.state.systemPrompt ?? "");
         appendMessagesToSession(this, [
           userMessage(promptText),
-          assistantMessage("Edited answer."),
+          assistantMessage("Refreshed answer."),
         ]);
       });
-
       try {
-        await catalog.editCommittedUserMessage({
+        await catalog.sendPrompt({
+          ...DEFAULTS,
           target: created.target,
-          messageTimestamp: original.timestamp,
-          message: userMessage("Edited request"),
+          messages: [userMessage("Run after extension change.")],
           onEvent: () => {},
         });
-
         await waitFor(
           () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
         );
       } finally {
         promptSpy.mockRestore();
       }
-
-      const reopened = await catalog.openSurface(created.target);
-      expect(reopened.queuedMessages).toEqual([]);
-      expect(reopened.agentContextUpdate).toMatchObject({
-        state: "cancelled",
-        queueMessageId: queued.id,
-        requestedRevision: 8,
-        reason: "edit resend",
-      });
-      expect((await catalog.listSessions()).sessions[0]?.productEvents).toContainEqual(
+      const refreshed = await catalog.openSurface(created.target);
+      expect(refreshed.promptBinding?.stale).toBe(false);
+      expect(refreshed.resolvedSystemPrompt).not.toContain(smithersLoadedMarker);
+      expect(refreshed.queuedMessages).toEqual([]);
+      expect(systemPromptsSeen[0]).not.toContain(smithersLoadedMarker);
+      expect(
+        getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId)
+          .events,
+      ).toContainEqual(
         expect.objectContaining({
-          title: "Agent context update cancelled",
-          details: expect.objectContaining({
-            state: "cancelled",
-            queueMessageId: queued.id,
-            surfacePiSessionId: created.target.surfacePiSessionId,
-          }),
+          kind: "Agent context updated",
+          subject: {
+            kind: "session",
+            id: created.target.workspaceSessionId,
+          },
         }),
       );
     } finally {
@@ -2824,67 +2742,14 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("projects dispatching context refreshes as updating without exposing prompt-bearing dispatch rows", async () => {
+  it("does not refresh stale extension context before the next turn when auto-update is disabled", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Updating Context Refresh" }, DEFAULTS);
-      await catalog.openSurface(created.target);
-      const store = getStructuredSessionStore(catalog);
-      const refresh = store.enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        kind: "agent_context_refresh",
-        idempotencyKey: "agent_context_refresh:test-updating",
-        messageJson: "{}",
-        payloadJson: JSON.stringify({
-          requestedRevision: 9,
-          requestedAt: "2026-06-10T13:00:00.000Z",
-        }),
-        requestSummary: "Update agent context",
-        position: "front",
-      });
-      store.enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        kind: "user_message",
-        idempotencyKey: "user_message:test-dispatch-hidden",
-        messageJson: JSON.stringify(userMessage("Hidden dispatching prompt.")),
-        requestSummary: "Hidden dispatching prompt.",
-        position: "back",
-      });
-      expect(
-        store.claimNextQueuedSurfaceMessage({
-          surfacePiSessionId: created.target.surfacePiSessionId,
-        })?.id,
-      ).toBe(refresh.id);
-      const userDispatch = store.claimNextQueuedSurfaceMessage({
-        surfacePiSessionId: created.target.surfacePiSessionId,
-      });
-      expect(userDispatch?.kind).toBe("user_message");
-
-      const snapshot = await catalog.openSurface(created.target);
-
-      expect(snapshot.queuedMessages.map((message) => [message.id, message.status])).toEqual([
-        [refresh.id, "dispatching"],
-      ]);
-      expect(snapshot.queuedMessages[0]?.agentContextUpdate).toMatchObject({
-        state: "updating",
-        requestedRevision: 9,
-      });
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("keeps failed context refreshes visible with grouped context details", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const smithersLoadedMarker = "Loaded always-on prompt context: Smithers workflow routing.";
     const profile: AgentProfileSettings = {
-      id: "failed-refresh-extension-drift",
+      id: "disabled-refresh-extension-drift",
       kind: "orchestrator",
-      name: "Failed refresh extension drift",
+      name: "Disabled refresh extension drift",
       provider: DEFAULTS.provider,
       model: DEFAULTS.model,
       reasoningEffort: DEFAULTS.thinkingLevel,
@@ -2899,57 +2764,54 @@ describe("WorkspaceSessionCatalog", () => {
       setCatalogAgentProfile(catalog, profile);
       const created = await catalog.createSession(
         {
-          title: "Failed Context Refresh",
+          title: "Disabled Context Refresh",
           agentProfileId: profile.id,
         },
         DEFAULTS,
       );
-      await catalog.openSurface(created.target);
+      expect(created.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
+      await catalog.setExtensionContextAutoUpdate({
+        target: created.target,
+        enabled: false,
+      });
       setCatalogAgentProfile(catalog, {
         ...profile,
         extensionUsage: {},
       });
-      const refreshSpy = spyOn(
-        catalog as unknown as {
-          refreshManagedSurfacePromptBinding(...args: unknown[]): Promise<unknown>;
-        },
-        "refreshManagedSurfacePromptBinding",
-      ).mockRejectedValue(new Error("Generated context refresh failed."));
-
+      const stale = await catalog.openSurface(created.target);
+      expect(stale.promptBinding?.stale).toBe(true);
+      expect(stale.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(false);
+      const promptPrototype = Object.getPrototypeOf(
+        getManagedSurface(catalog, created.target.surfacePiSessionId).session,
+      ) as {
+        prompt(promptText: string): Promise<void>;
+      };
+      const systemPromptsSeen: string[] = [];
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        systemPromptsSeen.push(this.agent.state.systemPrompt ?? "");
+        appendMessagesToSession(this, [userMessage(promptText), assistantMessage("Old context.")]);
+      });
       try {
-        await expect(catalog.queuePromptRefresh({ target: created.target })).rejects.toThrow(
-          "Generated context refresh failed.",
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: created.target,
+          messages: [userMessage("Run without refresh.")],
+          onEvent: () => {},
+        });
+        await waitFor(
+          () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
         );
       } finally {
-        refreshSpy.mockRestore();
+        promptSpy.mockRestore();
       }
 
-      const snapshot = await catalog.openSurface(created.target);
-      expect(snapshot.queuedMessages).toHaveLength(1);
-      expect(snapshot.queuedMessages[0]).toMatchObject({
-        kind: "agent_context_refresh",
-        status: "failed",
-        failureError: "Generated context refresh failed.",
-        agentContextUpdate: {
-          state: "failed",
-          loadedExtensionIds: {
-            added: [],
-            removed: ["smithers"],
-          },
-          availableExtensionIds: {
-            added: ["smithers"],
-            removed: [],
-          },
-        },
-      });
-
-      await catalog.queuePromptRefresh({ target: created.target });
-      await waitFor(
-        async () => (await catalog.openSurface(created.target)).promptBinding?.stale === false,
-      );
-      const retried = await catalog.openSurface(created.target);
-      expect(retried.queuedMessages).toEqual([]);
-      expect(retried.promptBinding?.stale).toBe(false);
+      const reopened = await catalog.openSurface(created.target);
+      expect(systemPromptsSeen[0]).toContain(smithersLoadedMarker);
+      expect(reopened.promptBinding?.stale).toBe(true);
+      expect(reopened.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(false);
     } finally {
       await catalog.dispose();
     }
@@ -2985,7 +2847,33 @@ describe("WorkspaceSessionCatalog", () => {
       expect(stale.promptBinding?.stale).toBe(true);
       expect(stale.promptBinding?.currentSystemPrompt).toContain(smithersLoadedMarker);
 
-      await catalog.queuePromptRefresh({ target: created.target });
+      const promptPrototype = Object.getPrototypeOf(
+        getManagedSurface(catalog, created.target.surfacePiSessionId).session,
+      ) as {
+        prompt(promptText: string): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Actor-local refreshed."),
+        ]);
+      });
+      try {
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: created.target,
+          messages: [userMessage("Run after actor-local extension change.")],
+          onEvent: () => {},
+        });
+        await waitFor(
+          () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
+        );
+      } finally {
+        promptSpy.mockRestore();
+      }
       const refreshed = await catalog.openSurface(created.target);
 
       expect(refreshed.promptBinding?.stale).toBe(false);
@@ -3464,15 +3352,33 @@ describe("WorkspaceSessionCatalog", () => {
         "# Project Standards",
       );
 
-      await waitFor(
-        () =>
-          getStructuredSessionStore(catalog)
-            .getSessionState(created.target.workspaceSessionId)
-            .queuedMessages?.some(
-              (message) =>
-                message.kind === "agent_context_refresh" && message.status === "delivered",
-            ) === true,
-      );
+      const promptPrototype = Object.getPrototypeOf(
+        getManagedSurface(catalog, created.target.surfacePiSessionId).session,
+      ) as {
+        prompt(promptText: string): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("External instructions refreshed."),
+        ]);
+      });
+      try {
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: created.target,
+          messages: [userMessage("Run after external instruction change.")],
+          onEvent: () => {},
+        });
+        await waitFor(
+          () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
+        );
+      } finally {
+        promptSpy.mockRestore();
+      }
 
       const refreshed = await catalog.openSurface(created.target);
       expect(refreshed.promptBinding?.stale).toBe(false);
@@ -3528,55 +3434,38 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("applies an idle prompt refresh through the durable surface queue", async () => {
+  it("persists extension context auto-update per surface", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
 
     try {
-      const created = await catalog.createSession({ title: "Idle Prompt Refresh" }, DEFAULTS);
-      const freshMarker = "Fresh prompt marker for idle refresh.";
-      appendGeneratedAgentContextMarker(catalog, freshMarker);
-      const stale = await catalog.openSurface(created.target);
-      expect(stale.promptBinding?.stale).toBe(true);
-
-      const refreshed = await catalog.queuePromptRefresh({ target: created.target });
-
-      expect(refreshed.snapshot?.queuedMessages).toEqual([]);
+      const created = await catalog.createSession({ title: "Auto Update Preference" }, DEFAULTS);
+      const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
+        title: "auto-update-handler",
+        objective: "Check independent auto-update preference.",
+      });
+      expect(created.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
       expect(
-        surfaceSyncs.some(
-          (payload) =>
-            payload.reason === "surface.updated" &&
-            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
-            payload.snapshot?.queuedMessages.some(
-              (message) => message.kind === "agent_context_refresh",
-            ),
-        ),
+        (await catalog.openSurface(handler.target)).promptBinding
+          ?.updateExtensionContextBeforeNextTurn,
+      ).toBe(true);
+
+      await catalog.setExtensionContextAutoUpdate({ target: created.target, enabled: false });
+
+      expect(
+        (await catalog.openSurface(created.target)).promptBinding
+          ?.updateExtensionContextBeforeNextTurn,
       ).toBe(false);
-      await waitFor(
-        () =>
-          getStructuredSessionStore(catalog)
-            .getSessionState(created.target.workspaceSessionId)
-            .queuedMessages?.every((message) => message.status === "delivered") === true,
-      );
-      const applied = await catalog.openSurface(created.target);
-      expect(applied.promptBinding?.stale).toBe(false);
-      expect(applied.resolvedSystemPrompt).toContain(freshMarker);
       expect(
-        getStructuredSessionStore(catalog)
-          .getSessionState(created.target.workspaceSessionId)
-          .queuedMessages?.map((message) => message.status),
-      ).toEqual(["delivered"]);
+        (await catalog.openSurface(handler.target)).promptBinding
+          ?.updateExtensionContextBeforeNextTurn,
+      ).toBe(true);
     } finally {
-      catalog.setSurfaceSyncListener(null);
       await catalog.dispose();
     }
   });
 
-  it("queues a prompt refresh and applies it before the next queued user message", async () => {
+  it("refreshes stale extension context before the next queued user message", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
@@ -3621,30 +3510,11 @@ describe("WorkspaceSessionCatalog", () => {
         );
 
         appendGeneratedAgentContextMarker(catalog, freshMarker);
-        const refresh = await catalog.queuePromptRefresh({ target: created.target });
-        expect(refresh.snapshot?.queuedMessages.map((message) => message.kind)).toEqual([
-          "agent_context_refresh",
-        ]);
-        const queuedRefresh = refresh.snapshot?.queuedMessages[0];
-        expect(queuedRefresh?.summary).toContain("system prompt");
-        expect(queuedRefresh?.agentContextUpdate).toMatchObject({
-          state: "queued",
-          requestedRevision: catalog.getGeneratedAgentContextState().revision,
-          currentRevision: catalog.getGeneratedAgentContextState().revision,
-          systemPromptChanged: true,
-        });
-
         const newerMarker = "Superseding prompt marker for queued refresh.";
         appendGeneratedAgentContextMarker(catalog, newerMarker);
         const superseded = await catalog.openSurface(created.target);
-        const supersededRefresh = superseded.queuedMessages.find(
-          (message) => message.kind === "agent_context_refresh",
-        );
-        expect(supersededRefresh?.agentContextUpdate?.state).toBe("out_of_date");
-        expect(supersededRefresh?.agentContextUpdate?.currentRevision).toBe(
-          catalog.getGeneratedAgentContextState().revision,
-        );
-        expect(supersededRefresh?.summary).toContain("Out-of-date context update");
+        expect(superseded.promptBinding?.stale).toBe(true);
+        expect(superseded.queuedMessages).toEqual([]);
 
         await catalog.sendPrompt({
           ...DEFAULTS,
@@ -3656,7 +3526,7 @@ describe("WorkspaceSessionCatalog", () => {
           getStructuredSessionStore(catalog)
             .getSessionState(created.target.workspaceSessionId)
             .queuedMessages?.map((message) => message.kind),
-        ).toEqual(["agent_context_refresh", "user_message", "user_message"]);
+        ).toEqual(["user_message", "user_message"]);
 
         firstPromptGate.resolve();
         await waitFor(() => orchestratorPromptCount === 2);

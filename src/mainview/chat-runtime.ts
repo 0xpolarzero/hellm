@@ -288,7 +288,6 @@ export interface ChatSurfaceController {
   target: PromptTarget;
   resolvedSystemPrompt: string;
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
-  agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
   externalContextSources: GeneratedAgentContextExternalSource[];
   loadedExtensionIds: string[];
   availableExtensionIds: string[];
@@ -312,7 +311,7 @@ export interface ChatSurfaceController {
   deleteQueuedPrompt: (promptId: string) => Promise<boolean>;
   reorderQueuedPrompt: (promptId: string, beforePromptId: string | null) => Promise<boolean>;
   steerQueuedPrompt: (promptId: string) => Promise<boolean>;
-  queuePromptRefresh: () => Promise<boolean>;
+  setExtensionContextAutoUpdate: (enabled: boolean) => Promise<boolean>;
   setExtensionUsage: (extensionId: string, state: ExtensionUsageState) => Promise<void>;
   abort: () => Promise<void>;
   subscribe: (listener: ChatRuntimeListener) => () => void;
@@ -450,7 +449,7 @@ export interface ChatRuntimeRpcClient {
     answerRequestUserInput: typeof rpc.request.answerRequestUserInput;
     answerRuntimeApprovalRequest: typeof rpc.request.answerRuntimeApprovalRequest;
     setRequestUserInputTimerPaused: typeof rpc.request.setRequestUserInputTimerPaused;
-    queuePromptRefresh: typeof rpc.request.queuePromptRefresh;
+    setExtensionContextAutoUpdate: typeof rpc.request.setExtensionContextAutoUpdate;
     setSurfaceModel: typeof rpc.request.setSurfaceModel;
     setSurfaceThoughtLevel: typeof rpc.request.setSurfaceThoughtLevel;
     setSurfaceExtensionUsage: typeof rpc.request.setSurfaceExtensionUsage;
@@ -956,7 +955,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   target: PromptTarget;
   resolvedSystemPrompt: string;
   promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
-  agentContextUpdate?: ConversationSurfaceSnapshot["agentContextUpdate"];
   externalContextSources: GeneratedAgentContextExternalSource[];
   loadedExtensionIds: string[] = [];
   availableExtensionIds: string[] = [];
@@ -993,7 +991,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.target = normalizePromptTarget(snapshot.target);
     this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
     this.promptBinding = snapshot.promptBinding;
-    this.agentContextUpdate = snapshot.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshot.externalContextSources ?? []);
     this.loadedExtensionIds = [...snapshot.loadedExtensionIds];
     this.availableExtensionIds = [...snapshot.availableExtensionIds];
@@ -1088,7 +1085,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.target = normalizePromptTarget(snapshotForAgent.target);
     this.resolvedSystemPrompt = snapshotForAgent.resolvedSystemPrompt;
     this.promptBinding = snapshotForAgent.promptBinding;
-    this.agentContextUpdate = snapshotForAgent.agentContextUpdate;
     this.externalContextSources = structuredClone(snapshotForAgent.externalContextSources ?? []);
     this.loadedExtensionIds = [...snapshotForAgent.loadedExtensionIds];
     this.availableExtensionIds = [...snapshotForAgent.availableExtensionIds];
@@ -1366,10 +1362,11 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     return response.ok;
   }
 
-  async queuePromptRefresh(): Promise<boolean> {
-    const response = await this.rpcClient.request.queuePromptRefresh({
+  async setExtensionContextAutoUpdate(enabled: boolean): Promise<boolean> {
+    const response = await this.rpcClient.request.setExtensionContextAutoUpdate({
       workspaceId: this.workspaceId,
       target: this.target,
+      enabled,
     });
     if (response.snapshot) {
       this.applySnapshot(response.snapshot);
@@ -1523,7 +1520,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       systemPrompt: this.agent.state.systemPrompt,
       resolvedSystemPrompt: this.resolvedSystemPrompt,
       externalContextSources: structuredClone(this.externalContextSources),
-      agentContextUpdate: this.agentContextUpdate,
       promptBinding: this.promptBinding,
       promptStatus: this.promptStatus,
       activeTurnId: this.activeTurnId,

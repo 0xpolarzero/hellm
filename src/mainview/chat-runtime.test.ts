@@ -295,6 +295,7 @@ function createSurfaceSnapshot(input: {
   systemPrompt?: string;
   resolvedSystemPrompt?: string;
   externalContextSources?: ConversationSurfaceSnapshot["externalContextSources"];
+  promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
   promptStatus?: ConversationSurfaceSnapshot["promptStatus"];
   activeTurnId?: string | null;
   activeTurnStartedAt?: string | null;
@@ -320,6 +321,7 @@ function createSurfaceSnapshot(input: {
     systemPrompt,
     resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
     externalContextSources: structuredClone(input.externalContextSources ?? []),
+    promptBinding: input.promptBinding ? structuredClone(input.promptBinding) : undefined,
     promptStatus: input.promptStatus ?? "idle",
     activeTurnId: input.activeTurnId ?? null,
     activeTurnStartedAt: input.activeTurnStartedAt ?? null,
@@ -1956,28 +1958,17 @@ function createFakeRpc(input: {
           }
           return { ok: true };
         },
-        queuePromptRefresh: async ({ target }) => {
+        setExtensionContextAutoUpdate: async ({ target, enabled }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          const existing = record.snapshot.queuedMessages.find(
-            (message) => message.kind === "agent_context_refresh",
-          );
-          if (!existing) {
-            record.snapshot = {
-              ...record.snapshot,
-              queuedMessages: [
-                {
-                  id: `queued-${record.snapshot.queuedMessages.length + 1}`,
-                  kind: "agent_context_refresh",
-                  text: "Update agent context",
-                  summary: "Context revision 2",
-                  status: "queued",
-                  createdAt: "2026-04-10T10:12:00.000Z",
-                  updatedAt: "2026-04-10T10:12:00.000Z",
-                },
-                ...record.snapshot.queuedMessages,
-              ],
-            };
-          }
+          record.snapshot = {
+            ...record.snapshot,
+            promptBinding: record.snapshot.promptBinding
+              ? {
+                  ...record.snapshot.promptBinding,
+                  updateExtensionContextBeforeNextTurn: enabled,
+                }
+              : undefined,
+          };
           queueMicrotask(() =>
             emitSurfaceSync({
               reason: "surface.updated",
@@ -3243,7 +3234,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("queues and cancels prompt refresh control items through the surface controller", async () => {
+  it("updates extension context auto-update through the surface controller", async () => {
     const session = createSummary("session-1", "Parser", "Initial");
     const target = createOrchestratorTarget(session.id);
     const harness = createFakeRpc({
@@ -3252,6 +3243,17 @@ describe("createChatRuntime", () => {
         createSurfaceSnapshot({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
+          promptBinding: {
+            currentRevision: 1,
+            boundSystemPrompt: "old",
+            currentSystemPrompt: "new",
+            boundFingerprint: "old-fingerprint",
+            currentFingerprint: "new-fingerprint",
+            boundExternalSourceHashes: [],
+            currentExternalSourceHashes: [],
+            updateExtensionContextBeforeNextTurn: true,
+            stale: true,
+          },
         }),
       ],
     });
@@ -3260,16 +3262,9 @@ describe("createChatRuntime", () => {
     expect(controller).not.toBeNull();
     if (!controller) return;
 
-    expect(await controller.queuePromptRefresh()).toBe(true);
-    expect(controller.queuedPrompts.map((prompt) => [prompt.kind, prompt.text])).toEqual([
-      ["agent_context_refresh", "Update agent context"],
-    ]);
-    const refresh = controller.queuedPrompts[0];
-    expect(refresh).toBeDefined();
-    if (!refresh) return;
-
-    expect(await controller.deleteQueuedPrompt(refresh.id)).toBe(true);
-    expect(controller.queuedPrompts).toEqual([]);
+    expect(controller.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
+    expect(await controller.setExtensionContextAutoUpdate(false)).toBe(true);
+    expect(controller.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(false);
 
     runtime.dispose();
   });

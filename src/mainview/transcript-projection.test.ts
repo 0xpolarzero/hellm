@@ -146,24 +146,24 @@ describe("transcript projection", () => {
     });
   });
 
-  it("projects terminal agent context updates as semantic product events only", () => {
+  it("projects supplied product events as semantic transcript blocks", () => {
     const blocks = buildTranscriptSemanticBlocks({
       session: {
         ...sessionWithWait(),
         wait: undefined,
         productEvents: [
           {
-            eventId: "event-context-cancelled",
+            eventId: "event-extension-revert",
             at: "2026-06-10T10:03:00.000Z",
-            title: "Agent context update cancelled",
-            summary: "Agent context update cancelled: r3->r4.",
+            title: "Extension change reverted",
+            summary: "User reverted extension file change chg_abc_123 for linear.",
             subject: {
               kind: "session" as const,
               id: "session-1",
             },
             details: {
-              state: "cancelled",
-              queueMessageId: "sqm-context-001",
+              changeId: "chg_abc_123",
+              extensionId: "linear",
             },
           },
         ],
@@ -173,11 +173,11 @@ describe("transcript projection", () => {
     expect(blocks).toEqual([
       expect.objectContaining({
         kind: "product-event",
-        key: "product-event:event-context-cancelled",
+        key: "product-event:event-extension-revert",
         event: expect.objectContaining({
-          title: "Agent context update cancelled",
+          title: "Extension change reverted",
           details: expect.objectContaining({
-            state: "cancelled",
+            changeId: "chg_abc_123",
           }),
         }),
       }),

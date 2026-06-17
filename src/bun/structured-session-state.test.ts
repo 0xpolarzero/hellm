@@ -1169,20 +1169,6 @@ describe("structured session state write API", () => {
       messageJson: JSON.stringify({ role: "user", content: "Ordinary follow-up" }),
       requestSummary: "Ordinary follow-up",
     });
-    const refresh = store.enqueueSurfaceMessage({
-      sessionId: "session-rui-answer",
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-      kind: "agent_context_refresh",
-      idempotencyKey: "agent_context_refresh:pi-thread-rui-answer",
-      messageJson: JSON.stringify({ role: "user", content: "Refresh" }),
-      payloadJson: JSON.stringify({
-        requestedRevision: 7,
-        requestedAt: "2026-04-18T09:00:00.000Z",
-      }),
-      requestSummary: "Update agent context",
-    });
-
     const answered = store.answerRequestUserInput({
       sessionId: "session-rui-answer",
       surfacePiSessionId: thread.surfacePiSessionId,
@@ -1196,7 +1182,7 @@ describe("structured session state write API", () => {
     expect(answered.request).toMatchObject({
       requestId: request.requestId,
       status: "completed",
-      completedAt: "2026-04-18T09:00:06.000Z",
+      completedAt: "2026-04-18T09:00:05.000Z",
     });
     expect(answered.answer).toMatchObject({
       answeredBy: "user",
@@ -1232,9 +1218,6 @@ describe("structured session state write API", () => {
       },
     });
 
-    expect(
-      store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: thread.surfacePiSessionId })?.id,
-    ).toBe(refresh.id);
     expect(
       store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: thread.surfacePiSessionId })?.id,
     ).toBe(answered.queuedMessage!.id);

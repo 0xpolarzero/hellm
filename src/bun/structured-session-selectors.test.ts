@@ -105,6 +105,7 @@ function createSessionSnapshot(
         wait: null,
         loadedExtensionIds: [],
         availableExtensionIds: [],
+        updateExtensionContextBeforeNextTurn: true,
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",
         finishedAt: "2026-04-18T07:01:00.000Z",
@@ -1228,20 +1229,20 @@ describe("structured session selectors", () => {
     ]);
   });
 
-  it("projects durable agent context update terminal product events into the session view", () => {
+  it("does not project obsolete agent context update terminal events into the session view", () => {
     const snapshot = createSessionSnapshot({
       events: [
         {
           id: "event-context-applied",
           at: "2026-06-10T10:02:00.000Z",
-          kind: "Agent context update applied",
+          kind: "Removed context update applied",
           subject: {
             kind: "session",
             id: "session-001",
           },
           data: {
-            title: "Agent context update applied",
-            summary: "Agent context update applied: r3->r4, 2 changes.",
+            title: "Removed context update applied",
+            summary: "Removed context update applied: r3->r4, 2 changes.",
             state: "applied",
             surface: "orchestrator",
             surfacePiSessionId: "session-001",
@@ -1258,14 +1259,14 @@ describe("structured session selectors", () => {
         {
           id: "event-context-cancelled",
           at: "2026-06-10T10:03:00.000Z",
-          kind: "Agent context update cancelled",
+          kind: "Removed context update cancelled",
           subject: {
             kind: "thread",
             id: "thread-001",
           },
           data: {
-            title: "Agent context update cancelled",
-            summary: "Agent context update cancelled: r3->r4.",
+            title: "Removed context update cancelled",
+            summary: "Removed context update cancelled: r3->r4.",
             state: "cancelled",
             surface: "thread",
             surfacePiSessionId: "pi-thread-001",
@@ -1278,38 +1279,7 @@ describe("structured session selectors", () => {
       ],
     });
 
-    expect(buildStructuredSessionView(snapshot).productEvents).toEqual([
-      expect.objectContaining({
-        eventId: "event-context-applied",
-        title: "Agent context update applied",
-        summary: "Agent context update applied: r3->r4, 2 changes.",
-        subject: {
-          kind: "session",
-          id: "session-001",
-        },
-        details: expect.objectContaining({
-          state: "applied",
-          queueMessageId: "sqm-context-001",
-          loadedExtensionIds: {
-            added: ["linear"],
-            removed: [],
-          },
-        }),
-      }),
-      expect.objectContaining({
-        eventId: "event-context-cancelled",
-        title: "Agent context update cancelled",
-        summary: "Agent context update cancelled: r3->r4.",
-        subject: {
-          kind: "thread",
-          id: "thread-001",
-        },
-        details: expect.objectContaining({
-          state: "cancelled",
-          queueMessageId: "sqm-context-002",
-        }),
-      }),
-    ]);
+    expect(buildStructuredSessionView(snapshot).productEvents).toEqual([]);
   });
 
   it("projects apply_patch final facts through the command inspector read model", () => {

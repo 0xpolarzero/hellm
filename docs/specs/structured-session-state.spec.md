@@ -196,7 +196,6 @@ Surface queues are keyed by `surfacePiSessionId`.
 Queue item kinds include:
 
 - `user_message`
-- `agent_context_refresh`
 - `initial_handler_start`
 - `thread_followup`
 - `report_request`

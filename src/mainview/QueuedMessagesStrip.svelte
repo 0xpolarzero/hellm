@@ -47,12 +47,8 @@
   function getStatusLabel(prompt: QueuedPrompt): string {
     if (prompt.status === "failed") return "Failed";
     if (prompt.status === "steering") return "Steering";
-    if (prompt.status === "dispatching") {
-      return prompt.kind === "agent_context_refresh" ? "Updating" : "Sending";
-    }
-    if (prompt.agentContextUpdate?.state === "out_of_date") return "Out of date";
+    if (prompt.status === "dispatching") return "Sending";
     if (prompt.kind === "thread_report_notification") return "Report";
-    if (prompt.kind === "agent_context_refresh") return "Context";
     if (prompt.kind === "report_request") return "Report request";
     return "Queued";
   }
@@ -64,28 +60,7 @@
 
   function getItemText(prompt: QueuedPrompt): string {
     if (prompt.kind === "thread_report_notification" && prompt.summary) return prompt.summary;
-    if (prompt.kind === "agent_context_refresh") return prompt.summary ?? "Update agent context";
     return prompt.text;
-  }
-
-  function getContextChangeCount(prompt: QueuedPrompt): number {
-    const update = prompt.agentContextUpdate;
-    if (!update) return 0;
-    return [
-      update.systemPromptChanged ? 1 : 0,
-      update.loadedExtensionIds.added.length,
-      update.loadedExtensionIds.removed.length,
-      update.availableExtensionIds.added.length,
-      update.availableExtensionIds.removed.length,
-      update.externalSourceHashes.added.length,
-      update.externalSourceHashes.removed.length,
-    ].reduce((sum, count) => sum + count, 0);
-  }
-
-  function getContextRevisionLabel(prompt: QueuedPrompt): string | null {
-    const update = prompt.agentContextUpdate;
-    if (!update) return null;
-    return `r${update.requestedRevision}->r${update.currentRevision}`;
   }
 
   function getDropTarget(clientY: number): string | null {
@@ -219,7 +194,7 @@
     <div class="queued-strip-scroll" role="list" bind:this={stripElement}>
       {#each displayedQueuedMessages as prompt, index (prompt.id)}
         <article
-          class={`queued-message ${prompt.id === draggedPromptId ? "dragging" : ""} ${isLocked(prompt) ? "locked" : ""} ${prompt.kind === "thread_report_notification" ? "thread-report" : ""} ${prompt.kind === "agent_context_refresh" ? "prompt-refresh" : ""}`.trim()}
+          class={`queued-message ${prompt.id === draggedPromptId ? "dragging" : ""} ${isLocked(prompt) ? "locked" : ""} ${prompt.kind === "thread_report_notification" ? "thread-report" : ""}`.trim()}
           data-prompt-id={prompt.id}
           data-reorderable={isLocked(prompt) ? "false" : "true"}
           role="listitem"
@@ -246,21 +221,8 @@
               <span class="queued-kind">Report</span>
             {:else if prompt.kind === "report_request"}
               <span class="queued-kind">Request</span>
-            {:else if prompt.kind === "agent_context_refresh"}
-              <span class="queued-kind">Context</span>
             {/if}
             {getItemText(prompt)}
-            {#if prompt.kind === "agent_context_refresh" && prompt.agentContextUpdate}
-              <span class={`context-update-state ${prompt.agentContextUpdate.state}`}>
-                {getStatusLabel(prompt)}
-              </span>
-              {#if getContextChangeCount(prompt) > 0}
-                <span class="context-update-detail">{getContextChangeCount(prompt)} changes</span>
-              {/if}
-              {#if getContextRevisionLabel(prompt)}
-                <span class="context-update-detail">{getContextRevisionLabel(prompt)}</span>
-              {/if}
-            {/if}
           </span>
           {#if isLocked(prompt)}
             <div class="queued-locked-controls">
@@ -293,14 +255,12 @@
             </div>
           {:else}
             <div class="queued-actions">
-              {#if prompt.kind !== "agent_context_refresh"}
-                <Tooltip label="Steer at next safe boundary">
-                  <button class="queued-steer-button" type="button" aria-label="Steer queued message" onclick={() => steer(prompt.id)}>
-                    <CornerUpRightIcon size={12} aria-hidden="true" />
-                    <span>Steer</span>
-                  </button>
-                </Tooltip>
-              {/if}
+              <Tooltip label="Steer at next safe boundary">
+                <button class="queued-steer-button" type="button" aria-label="Steer queued message" onclick={() => steer(prompt.id)}>
+                  <CornerUpRightIcon size={12} aria-hidden="true" />
+                  <span>Steer</span>
+                </button>
+              </Tooltip>
               {#if prompt.kind === "user_message"}
                 <Tooltip label="Edit">
                   <button class="queued-icon-button" type="button" aria-label="Edit queued message" onclick={() => onEdit(prompt.id)}>
@@ -325,8 +285,8 @@
                   </button>
                 </Tooltip>
               {:else}
-                <Tooltip label="Cancel context update">
-                  <button class="queued-reject-button" type="button" aria-label="Cancel context update" onclick={() => onDelete(prompt.id)}>
+                <Tooltip label="Cancel queued item">
+                  <button class="queued-reject-button" type="button" aria-label="Cancel queued item" onclick={() => onDelete(prompt.id)}>
                     Cancel
                   </button>
                 </Tooltip>
@@ -479,34 +439,6 @@
     font-size: 0.62rem;
     font-weight: 700;
     text-transform: uppercase;
-  }
-
-  .context-update-state,
-  .context-update-detail {
-    display: inline-grid;
-    place-items: center;
-    margin-left: 0.34rem;
-    padding: 0.08rem 0.28rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
-    border-radius: var(--ui-radius-xs);
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    font-weight: 700;
-    line-height: 1;
-    text-transform: uppercase;
-    vertical-align: 0.08rem;
-  }
-
-  .context-update-state.queued,
-  .context-update-state.updating {
-    border-color: color-mix(in oklab, var(--ui-warning-border, var(--ui-border-soft)) 50%, transparent);
-    color: color-mix(in oklab, var(--ui-warning-text, var(--ui-text-secondary)) 74%, var(--ui-text-primary));
-  }
-
-  .context-update-state.out_of_date {
-    border-color: color-mix(in oklab, var(--ui-danger) 48%, transparent);
-    color: var(--ui-danger);
   }
 
   .queued-message.locked .queued-copy {

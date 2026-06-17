@@ -2637,13 +2637,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return result;
       },
-      queuePromptRefresh: async (input) => {
+      setExtensionContextAutoUpdate: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.queuePromptRefresh(input);
-        runtime.appLog.info("prompt", "Queued surface context update.", {
+        const result = await runtime.catalog.setExtensionContextAutoUpdate(input);
+        runtime.appLog.info("prompt", "Surface extension context auto-update changed.", {
           workspaceSessionId: input.target.workspaceSessionId,
           surfacePiSessionId: input.target.surfacePiSessionId,
           threadId: input.target.threadId,
+          enabled: input.enabled,
         });
         return result;
       },

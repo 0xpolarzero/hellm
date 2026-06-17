@@ -536,7 +536,6 @@ export interface SendPromptResponse {
 export type QueuedSurfaceMessageStatus = "queued" | "steering" | "dispatching" | "failed";
 export type QueuedSurfaceMessageKind =
   | "user_message"
-  | "agent_context_refresh"
   | "initial_handler_start"
   | "thread_followup"
   | "report_request"
@@ -549,7 +548,6 @@ export interface QueuedSurfaceMessage {
   text: string;
   title?: string;
   summary?: string;
-  agentContextUpdate?: QueuedAgentContextUpdateProjection;
   threadId?: string;
   episodeId?: string;
   sourceCommandId?: string;
@@ -557,38 +555,6 @@ export interface QueuedSurfaceMessage {
   failureError?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export type QueuedAgentContextUpdateState = "queued" | "updating" | "out_of_date" | "failed";
-export type AgentContextUpdateTerminalState = "applied" | "cancelled";
-
-export interface QueuedAgentContextUpdateDiff {
-  added: string[];
-  removed: string[];
-}
-
-export interface QueuedAgentContextUpdateProjection {
-  state: QueuedAgentContextUpdateState;
-  requestedRevision: number;
-  currentRevision: number;
-  requestedAt: string;
-  reason?: string;
-  requestedFingerprint?: string;
-  currentFingerprint: string;
-  previousFingerprint: string | null;
-  systemPromptChanged: boolean;
-  loadedExtensionIds: QueuedAgentContextUpdateDiff;
-  availableExtensionIds: QueuedAgentContextUpdateDiff;
-  externalSourceHashes: QueuedAgentContextUpdateDiff;
-}
-
-export interface AgentContextUpdateTerminalProjection extends Omit<
-  QueuedAgentContextUpdateProjection,
-  "state"
-> {
-  state: AgentContextUpdateTerminalState;
-  completedAt: string;
-  queueMessageId?: string;
 }
 
 export interface ComposerDraft {
@@ -611,8 +577,9 @@ export interface QueuedSurfaceMessageRequest {
   queuedMessageId: string;
 }
 
-export interface QueuePromptRefreshRequest {
+export interface SetExtensionContextAutoUpdateRequest {
   target: PromptTarget;
+  enabled: boolean;
 }
 
 export interface ReorderQueuedSurfaceMessageRequest extends QueuedSurfaceMessageRequest {
@@ -1430,7 +1397,6 @@ export interface ConversationSurfaceSnapshot {
   systemPrompt: string;
   resolvedSystemPrompt: string;
   externalContextSources: GeneratedAgentContextExternalSource[];
-  agentContextUpdate?: AgentContextUpdateTerminalProjection;
   promptBinding?: {
     currentRevision: number;
     boundSystemPrompt: string;
@@ -1439,6 +1405,7 @@ export interface ConversationSurfaceSnapshot {
     currentFingerprint: string;
     boundExternalSourceHashes: string[];
     currentExternalSourceHashes: string[];
+    updateExtensionContextBeforeNextTurn: boolean;
     stale: boolean;
   };
   promptStatus: "idle" | "streaming";
@@ -2105,8 +2072,8 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<SetRequestUserInputTimerPausedRequest>;
         response: WorkspaceMutationResponse;
       };
-      queuePromptRefresh: {
-        params: WorkspaceScoped<QueuePromptRefreshRequest>;
+      setExtensionContextAutoUpdate: {
+        params: WorkspaceScoped<SetExtensionContextAutoUpdateRequest>;
         response: SurfaceMutationResponse;
       };
       setSurfaceModel: {

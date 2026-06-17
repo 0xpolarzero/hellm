@@ -2132,7 +2132,7 @@ export function setExtensionUsage(input: {
     beforeState,
     afterState: input.state,
   });
-  const queuedUpdates = queueUsageAgentContextRefreshes({
+  const affectedSurfaces = listUsageAgentContextAffectedSurfaces({
     store: input.structuredSessionStore,
     agentProfile: target.agentProfileName,
     profileId: target.profile.id,
@@ -2156,7 +2156,7 @@ export function setExtensionUsage(input: {
       agentContextImpact: {
         affectsNewTurns: true,
         activeRunsChangeAtNextSafeBoundary: true,
-        queuedUpdates,
+        affectedSurfaces,
       },
     },
     commandFacts: {
@@ -2165,7 +2165,7 @@ export function setExtensionUsage(input: {
       agentProfile: target.agentProfileName,
       beforeUsageState: beforeState,
       afterUsageState: input.state,
-      queuedAgentContextRefreshes: queuedUpdates.length,
+      affectedAgentContextSurfaces: affectedSurfaces.length,
     },
   };
 }
@@ -2385,80 +2385,50 @@ function assertUsageStateAllowedForActor(input: {
   void input;
 }
 
-function queueUsageAgentContextRefreshes(input: {
+function listUsageAgentContextAffectedSurfaces(input: {
   store?: StructuredSessionStateStore;
   agentProfile: string;
   profileId: string;
   changeId: string;
 }): Array<{
   surfacePiSessionId: string;
-  kind: "agent_context_refresh";
-  label: "Update agent context";
+  kind: "extension_context_changed";
+  label: "Extensions changed";
   reason: "extension_usage_changed";
 }> {
   if (!input.store) {
     return [];
   }
-  const queued: Array<{
+  const affected: Array<{
     surfacePiSessionId: string;
-    kind: "agent_context_refresh";
-    label: "Update agent context";
+    kind: "extension_context_changed";
+    label: "Extensions changed";
     reason: "extension_usage_changed";
   }> = [];
   for (const snapshot of input.store.listSessionStates()) {
     if (snapshot.pi.orchestratorAgentProfileId === input.profileId) {
-      input.store.enqueueSurfaceMessage({
-        sessionId: snapshot.session.id,
+      affected.push({
         surfacePiSessionId: snapshot.pi.sessionId,
-        threadId: null,
-        kind: "agent_context_refresh",
-        idempotencyKey: `agent_context_refresh:${snapshot.pi.sessionId}:extension_usage_changed:${input.changeId}`,
-        messageJson: "{}",
-        payloadJson: JSON.stringify({
-          reason: "extension_usage_changed",
-          changeId: input.changeId,
-          agentProfile: input.agentProfile,
-        }),
-        requestSummary: "Update agent context",
-        position: "front",
-      });
-      queued.push({
-        surfacePiSessionId: snapshot.pi.sessionId,
-        kind: "agent_context_refresh",
-        label: "Update agent context",
+        kind: "extension_context_changed",
+        label: "Extensions changed",
         reason: "extension_usage_changed",
       });
     }
     if (input.agentProfile === "threadHandler") {
       for (const thread of snapshot.threads) {
-        input.store.enqueueSurfaceMessage({
-          sessionId: snapshot.session.id,
+        affected.push({
           surfacePiSessionId: thread.surfacePiSessionId,
-          threadId: thread.id,
-          kind: "agent_context_refresh",
-          idempotencyKey: `agent_context_refresh:${thread.surfacePiSessionId}:extension_usage_changed:${input.changeId}`,
-          messageJson: "{}",
-          payloadJson: JSON.stringify({
-            reason: "extension_usage_changed",
-            changeId: input.changeId,
-            agentProfile: input.agentProfile,
-          }),
-          requestSummary: "Update agent context",
-          position: "front",
-        });
-        queued.push({
-          surfacePiSessionId: thread.surfacePiSessionId,
-          kind: "agent_context_refresh",
-          label: "Update agent context",
+          kind: "extension_context_changed",
+          label: "Extensions changed",
           reason: "extension_usage_changed",
         });
       }
     }
   }
-  return queued;
+  return affected;
 }
 
-function queueSnapshotAgentContextRefreshes(input: {
+function listSnapshotAgentContextAffectedSurfaces(input: {
   store?: StructuredSessionStateStore;
   snapshotId: string;
   affectedExtensionIds: readonly string[];
@@ -2466,8 +2436,8 @@ function queueSnapshotAgentContextRefreshes(input: {
   removedUserExtensionIds: readonly string[];
 }): Array<{
   surfacePiSessionId: string;
-  kind: "agent_context_refresh";
-  label: "Update agent context";
+  kind: "extension_context_changed";
+  label: "Extensions changed";
   reason: "snapshot_loaded";
 }> {
   if (!input.store) {
@@ -2483,10 +2453,10 @@ function queueSnapshotAgentContextRefreshes(input: {
   ) {
     return [];
   }
-  const queued: Array<{
+  const affected: Array<{
     surfacePiSessionId: string;
-    kind: "agent_context_refresh";
-    label: "Update agent context";
+    kind: "extension_context_changed";
+    label: "Extensions changed";
     reason: "snapshot_loaded";
   }> = [];
   for (const snapshot of input.store.listSessionStates()) {
@@ -2503,17 +2473,10 @@ function queueSnapshotAgentContextRefreshes(input: {
         loadedExtensionIds: nextPiLoaded,
         availableExtensionIds: nextPiAvailable,
       });
-      enqueueSnapshotAgentContextRefresh({
-        store: input.store,
-        sessionId: snapshot.session.id,
+      affected.push({
         surfacePiSessionId: snapshot.pi.sessionId,
-        threadId: null,
-        snapshotId: input.snapshotId,
-      });
-      queued.push({
-        surfacePiSessionId: snapshot.pi.sessionId,
-        kind: "agent_context_refresh",
-        label: "Update agent context",
+        kind: "extension_context_changed",
+        label: "Extensions changed",
         reason: "snapshot_loaded",
       });
     }
@@ -2537,45 +2500,15 @@ function queueSnapshotAgentContextRefreshes(input: {
         loadedExtensionIds: nextThreadLoaded,
         availableExtensionIds: nextThreadAvailable,
       });
-      enqueueSnapshotAgentContextRefresh({
-        store: input.store,
-        sessionId: snapshot.session.id,
+      affected.push({
         surfacePiSessionId: thread.surfacePiSessionId,
-        threadId: thread.id,
-        snapshotId: input.snapshotId,
-      });
-      queued.push({
-        surfacePiSessionId: thread.surfacePiSessionId,
-        kind: "agent_context_refresh",
-        label: "Update agent context",
+        kind: "extension_context_changed",
+        label: "Extensions changed",
         reason: "snapshot_loaded",
       });
     }
   }
-  return queued;
-}
-
-function enqueueSnapshotAgentContextRefresh(input: {
-  store: StructuredSessionStateStore;
-  sessionId: string;
-  surfacePiSessionId: string;
-  threadId: string | null;
-  snapshotId: string;
-}): void {
-  input.store.enqueueSurfaceMessage({
-    sessionId: input.sessionId,
-    surfacePiSessionId: input.surfacePiSessionId,
-    threadId: input.threadId,
-    kind: "agent_context_refresh",
-    idempotencyKey: `agent_context_refresh:${input.surfacePiSessionId}:snapshot_loaded:${input.snapshotId}`,
-    messageJson: "{}",
-    payloadJson: JSON.stringify({
-      reason: "snapshot_loaded",
-      snapshotId: input.snapshotId,
-    }),
-    requestSummary: "Update agent context",
-    position: "front",
-  });
+  return affected;
 }
 
 function extensionListsIntersect(
@@ -3735,7 +3668,7 @@ async function loadExtensionSnapshot(
       };
     }
   }
-  const queuedUpdates = queueSnapshotAgentContextRefreshes({
+  const affectedSurfaces = listSnapshotAgentContextAffectedSurfaces({
     store: options.structuredSessionStore,
     snapshotId,
     affectedExtensionIds: [
@@ -3759,7 +3692,7 @@ async function loadExtensionSnapshot(
       },
       builds: buildResults,
       agentContextImpact: {
-        queuedUpdates,
+        affectedSurfaces,
       },
     },
     commandFacts: {
@@ -7346,7 +7279,7 @@ function revertExtensionUsageChange(
     beforeState: change.after.state,
     afterState: change.before.state,
   });
-  const queuedUpdates = queueUsageAgentContextRefreshes({
+  const affectedSurfaces = listUsageAgentContextAffectedSurfaces({
     store: options.structuredSessionStore,
     agentProfile: target.agentProfileName,
     profileId: target.profile.id,
@@ -7366,7 +7299,7 @@ function revertExtensionUsageChange(
         agentContextImpact: {
           affectsNewTurns: true,
           activeRunsChangeAtNextSafeBoundary: true,
-          queuedUpdates,
+          affectedSurfaces,
         },
       },
     },
@@ -7376,7 +7309,7 @@ function revertExtensionUsageChange(
       revertedChangeId: change.id,
       revertChangeId,
       revertedChangeKind: "extension_usage",
-      queuedAgentContextRefreshes: queuedUpdates.length,
+      affectedAgentContextSurfaces: affectedSurfaces.length,
     },
   };
 }

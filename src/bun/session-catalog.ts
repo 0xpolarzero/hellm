@@ -32,8 +32,8 @@ import type {
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
-  QueuedAgentContextUpdateProjection,
   QueuedSurfaceMessage,
+  SetExtensionContextAutoUpdateRequest,
   SurfaceStreamPatch,
   SurfaceStreamPatchInput,
   SurfaceMutationResponse,
@@ -293,13 +293,6 @@ interface ThreadReportNotificationQueuePayload {
   summary: string;
   episodeId: string;
   outcome: "succeeded" | "failed" | "cancelled" | null;
-}
-
-interface AgentContextRefreshQueuePayload {
-  requestedRevision: number;
-  requestedAt: string;
-  reason?: string;
-  currentFingerprint?: string;
 }
 
 interface InitialHandlerStartQueuePayload {
@@ -639,18 +632,15 @@ export class WorkspaceSessionCatalog {
   updateAppPreferences(preferences: AppPreferences): AgentSettingsState {
     const next = this.agentSettingsStore.setAppPreferences(preferences);
     void this.emitOpenSurfacePromptBindingUpdates();
-    void this.queueOpenSurfacePromptRefreshes("app_preferences_changed");
     return next;
   }
 
   async notifyAppPreferencesChanged(): Promise<void> {
     await this.emitOpenSurfacePromptBindingUpdates();
-    await this.queueOpenSurfacePromptRefreshes("app_preferences_changed");
   }
 
-  async notifySourceInputsChanged(reason: string): Promise<void> {
+  async notifySourceInputsChanged(_reason: string): Promise<void> {
     await this.emitOpenSurfacePromptBindingUpdates();
-    await this.queueOpenSurfacePromptRefreshes(reason);
   }
 
   resetGeneratedAgentContextState(): GeneratedAgentContextState {
@@ -1518,14 +1508,6 @@ export class WorkspaceSessionCatalog {
       surfacePiSessionId: options.target.surfacePiSessionId,
     })) {
       if (queued.status === "queued" || queued.status === "steering") {
-        if (queued.kind === "agent_context_refresh") {
-          this.recordAgentContextUpdateTerminalEvent({
-            state: "cancelled",
-            target: options.target,
-            queued,
-            session,
-          });
-        }
         this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
       }
     }
@@ -1559,60 +1541,42 @@ export class WorkspaceSessionCatalog {
     queuedMessageId: string;
   }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
-    const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
-    if (queued.kind === "agent_context_refresh") {
-      this.recordAgentContextUpdateTerminalEvent({
-        state: "cancelled",
-        target: input.target,
-        queued,
-        session: this.managedSurfaces.get(input.target.surfacePiSessionId) ?? null,
-      });
-    }
+    this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
     this.structuredSessionStore.cancelSurfaceMessage({ id: input.queuedMessageId });
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, target: structuredClone(input.target), snapshot };
   }
 
-  async queuePromptRefresh(input: {
-    target: PromptTarget;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  async setExtensionContextAutoUpdate(
+    input: SetExtensionContextAutoUpdateRequest,
+  ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
-    const queuedMessages = this.structuredSessionStore.listQueuedSurfaceMessages({
-      surfacePiSessionId: input.target.surfacePiSessionId,
-    });
-    const existing = queuedMessages.find((message) => message.kind === "agent_context_refresh");
-    if (existing?.status === "failed") {
-      this.structuredSessionStore.markSurfaceMessageQueued({
-        id: existing.id,
-        position: "front",
+    if (input.target.surface === "thread") {
+      if (!input.target.threadId) {
+        throw new Error("Thread id is required for handler extension context settings.");
+      }
+      this.structuredSessionStore.setThreadExtensionContextAutoUpdate({
+        threadId: input.target.threadId,
+        enabled: input.enabled,
       });
-    } else if (!existing) {
-      this.structuredSessionStore.enqueueSurfaceMessage({
+    } else {
+      this.structuredSessionStore.setSessionExtensionContextAutoUpdate({
         sessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId ?? null,
-        kind: "agent_context_refresh",
-        idempotencyKey: `agent_context_refresh:${input.target.surfacePiSessionId}:${this.generatedAgentContextStore.getState().revision}`,
-        messageJson: "{}",
-        payloadJson: JSON.stringify({
-          requestedRevision: this.generatedAgentContextStore.getState().revision,
-          requestedAt: new Date().toISOString(),
-        } satisfies AgentContextRefreshQueuePayload),
-        requestSummary: "Update agent context",
-        position: "front",
+        enabled: input.enabled,
       });
     }
-
-    const started = await this.drainNextQueuedSurfacePrompt(input.target, {
-      awaitPrompt: false,
-    });
     const session = this.managedSurfaces.get(input.target.surfacePiSessionId);
-    const snapshot = session ? await this.buildSurfaceSnapshot(session, input.target) : undefined;
-    if (!started) {
-      await this.emitQueuedSurfaceUpdate(input.target);
-      this.wakeSurfaceQueue(input.target);
-    } else if (!session?.activePrompt) {
-      this.wakeSurfaceQueue(input.target);
+    const snapshot = session
+      ? await this.buildSurfaceSnapshot(session, input.target, { refreshExternalSources: true })
+      : undefined;
+    await this.emitWorkspaceSync("structured.updated");
+    if (session) {
+      await this.emitSurfaceSync({
+        session,
+        reason: "surface.updated",
+        target: input.target,
+        refreshExternalSources: true,
+      });
     }
     return { ok: true, target: structuredClone(input.target), snapshot };
   }
@@ -1656,10 +1620,7 @@ export class WorkspaceSessionCatalog {
     queuedMessageId: string;
   }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
-    const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
-    if (queued.kind === "agent_context_refresh") {
-      throw new Error("Queued context updates cannot be steered.");
-    }
+    this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
     this.structuredSessionStore.markSurfaceMessageQueued({
       id: input.queuedMessageId,
       position: "front",
@@ -2178,26 +2139,33 @@ export class WorkspaceSessionCatalog {
     >,
   ): Promise<ManagedSession> {
     const actorKind = getActorKindForTarget(options.target);
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildAggregateForTarget(options.target, {
-      externalInstructionSources: externalContextSources,
-    });
-    const resolvedSystemPrompt = aggregate.outputs.prompt;
     if (
       session.actorKind !== actorKind ||
       session.provider !== options.provider ||
       session.model !== options.model ||
-      session.systemPrompt !== resolvedSystemPrompt ||
       session.recreateOnNextPrompt
     ) {
+      const actorChanged = session.actorKind !== actorKind;
+      const externalContextSources = actorChanged
+        ? await this.buildCurrentExternalContextSources()
+        : session.externalContextSources;
+      const aggregate = actorChanged
+        ? this.buildAggregateForTarget(options.target, {
+            externalInstructionSources: externalContextSources,
+          })
+        : null;
       const recreated = await this.recreateManagedSurface(session, {
         actorKind,
         provider: options.provider,
         model: options.model,
         thinkingLevel: options.thinkingLevel,
-        systemPrompt: resolvedSystemPrompt,
-        generatedAgentContextAggregateKey: aggregate.cacheKey,
-        generatedAgentContextAggregate: aggregate.outputs,
+        ...(aggregate
+          ? {
+              systemPrompt: aggregate.outputs.prompt,
+              generatedAgentContextAggregateKey: aggregate.cacheKey,
+              generatedAgentContextAggregate: aggregate.outputs,
+            }
+          : {}),
         externalContextSources,
       });
       this.syncGeneratedAgentContextBindingForTarget(options.target, recreated);
@@ -2573,13 +2541,12 @@ export class WorkspaceSessionCatalog {
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
       externalContextSources: structuredClone(session.externalContextSources),
-      agentContextUpdate: this.buildSurfaceAgentContextUpdateTerminalProjection(target),
       promptBinding,
       messages,
       pendingUserMessage: session.pendingUserMessage
         ? structuredClone(session.pendingUserMessage.message)
         : null,
-      queuedMessages: this.buildQueuedSurfaceMessages(target, session, promptBinding),
+      queuedMessages: this.buildQueuedSurfaceMessages(target),
       composerDraft: this.buildComposerDraft(target.surfacePiSessionId),
       streamMessage: session.activeStreamMessage
         ? structuredClone(session.activeStreamMessage)
@@ -2685,24 +2652,14 @@ export class WorkspaceSessionCatalog {
     return timings;
   }
 
-  private buildQueuedSurfaceMessages(
-    target: PromptTarget,
-    session?: ManagedSession,
-    promptBinding?: ConversationSurfaceSnapshot["promptBinding"],
-  ): QueuedSurfaceMessage[] {
+  private buildQueuedSurfaceMessages(target: PromptTarget): QueuedSurfaceMessage[] {
     return this.structuredSessionStore
       .listQueuedSurfaceMessages({ surfacePiSessionId: target.surfacePiSessionId })
-      .filter(
-        (message) => message.status !== "dispatching" || message.kind === "agent_context_refresh",
-      )
+      .filter((message) => message.status !== "dispatching")
       .map((message) => {
         const payload =
           message.kind === "thread_report_notification"
             ? this.parseThreadReportNotificationQueuePayload(message)
-            : null;
-        const promptRefreshPayload =
-          message.kind === "agent_context_refresh"
-            ? this.parseAgentContextRefreshQueuePayload(message)
             : null;
         const followupPayload =
           message.kind === "thread_followup" ? this.parseThreadFollowupQueuePayload(message) : null;
@@ -2712,22 +2669,11 @@ export class WorkspaceSessionCatalog {
           message.kind === "request_user_input_answer"
             ? this.parseRequestUserInputAnswerQueuePayload(message)
             : null;
-        const agentContextUpdate =
-          promptRefreshPayload && session && promptBinding
-            ? this.buildQueuedAgentContextUpdateProjection(
-                message,
-                promptRefreshPayload,
-                target,
-                session,
-                promptBinding,
-              )
-            : undefined;
         return {
           id: message.id,
           kind: message.kind,
-          text: promptRefreshPayload
-            ? "Update agent context"
-            : message.kind === "initial_handler_start"
+          text:
+            message.kind === "initial_handler_start"
               ? "Start handler thread"
               : followupPayload
                 ? followupPayload.message
@@ -2743,16 +2689,13 @@ export class WorkspaceSessionCatalog {
             : requestUserInputAnswerPayload
               ? "User answer"
               : undefined,
-          summary: promptRefreshPayload
-            ? formatQueuedAgentContextUpdateSummary(agentContextUpdate)
-            : followupPayload?.message
-              ? followupPayload.message
-              : reportRequestPayload?.request
-                ? reportRequestPayload.request
-                : requestUserInputAnswerPayload
-                  ? this.getQueuedMessageText(message.messageJson)
-                  : payload?.summary,
-          agentContextUpdate,
+          summary: followupPayload?.message
+            ? followupPayload.message
+            : reportRequestPayload?.request
+              ? reportRequestPayload.request
+              : requestUserInputAnswerPayload
+                ? this.getQueuedMessageText(message.messageJson)
+                : payload?.summary,
           threadId:
             payload?.threadId ??
             followupPayload?.threadId ??
@@ -2775,218 +2718,6 @@ export class WorkspaceSessionCatalog {
       });
   }
 
-  private buildQueuedAgentContextUpdateProjection(
-    message: StructuredSurfaceQueuedMessageRecord,
-    payload: AgentContextRefreshQueuePayload,
-    target: PromptTarget,
-    session: ManagedSession,
-    promptBinding: NonNullable<ConversationSurfaceSnapshot["promptBinding"]>,
-  ): QueuedAgentContextUpdateProjection {
-    const boundContext = this.structuredSessionStore.getGeneratedAgentContextBinding({
-      surfacePiSessionId: session.sessionId,
-      generatedAgentContextFingerprint: promptBinding.boundFingerprint,
-    });
-    const requestedFingerprint = payload.currentFingerprint;
-    const currentFingerprint = promptBinding.currentFingerprint;
-    const currentRevision = this.generatedAgentContextStore.getState().revision;
-    const outOfDate =
-      (requestedFingerprint !== undefined && requestedFingerprint !== currentFingerprint) ||
-      payload.requestedRevision < currentRevision;
-    const state: QueuedAgentContextUpdateProjection["state"] =
-      message.status === "failed"
-        ? "failed"
-        : message.status === "dispatching"
-          ? "updating"
-          : outOfDate
-            ? "out_of_date"
-            : "queued";
-    const currentExtensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
-      includeManagedLoadedExtensions: false,
-    });
-
-    return {
-      state,
-      requestedRevision: payload.requestedRevision,
-      currentRevision,
-      requestedAt: payload.requestedAt,
-      ...(payload.reason ? { reason: payload.reason } : {}),
-      ...(requestedFingerprint ? { requestedFingerprint } : {}),
-      currentFingerprint,
-      previousFingerprint: promptBinding.boundFingerprint,
-      systemPromptChanged: promptBinding.boundSystemPrompt !== promptBinding.currentSystemPrompt,
-      loadedExtensionIds: diffStringSet(
-        boundContext?.loadedExtensionIds ?? [],
-        currentExtensionState.loadedExtensionIds,
-      ),
-      availableExtensionIds: diffStringSet(
-        boundContext?.availableExtensionIds ?? [],
-        currentExtensionState.availableExtensionIds,
-      ),
-      externalSourceHashes: diffStringSet(
-        promptBinding.boundExternalSourceHashes,
-        promptBinding.currentExternalSourceHashes,
-      ),
-    };
-  }
-
-  private buildAgentContextUpdateEventData(input: {
-    state: "applied" | "cancelled";
-    target: PromptTarget;
-    queued: StructuredSurfaceQueuedMessageRecord;
-    session: ManagedSession | null;
-  }): Record<string, unknown> {
-    const payload = this.parseAgentContextRefreshQueuePayload(input.queued);
-    const promptBinding = input.session
-      ? this.buildPromptBinding(input.session, input.target, input.session.externalContextSources)
-      : undefined;
-    const update =
-      payload && input.session && promptBinding
-        ? this.buildQueuedAgentContextUpdateProjection(
-            input.queued,
-            payload,
-            input.target,
-            input.session,
-            promptBinding,
-          )
-        : null;
-    const stateLabel = input.state === "applied" ? "applied" : "cancelled";
-    const currentRevision =
-      update?.currentRevision ?? this.generatedAgentContextStore.getState().revision;
-    const requestedRevision =
-      update?.requestedRevision ?? payload?.requestedRevision ?? currentRevision;
-    const changeCount = update
-      ? [
-          update.systemPromptChanged ? 1 : 0,
-          update.loadedExtensionIds.added.length,
-          update.loadedExtensionIds.removed.length,
-          update.availableExtensionIds.added.length,
-          update.availableExtensionIds.removed.length,
-          update.externalSourceHashes.added.length,
-          update.externalSourceHashes.removed.length,
-        ].reduce((sum, count) => sum + count, 0)
-      : 0;
-    return {
-      title:
-        input.state === "applied"
-          ? "Agent context update applied"
-          : "Agent context update cancelled",
-      summary: `Agent context update ${stateLabel}: r${requestedRevision}->r${currentRevision}${
-        changeCount > 0 ? `, ${changeCount} ${changeCount === 1 ? "change" : "changes"}` : ""
-      }.`,
-      state: input.state,
-      surface: input.target.surface,
-      surfacePiSessionId: input.target.surfacePiSessionId,
-      ...(input.target.threadId ? { threadId: input.target.threadId } : {}),
-      queueMessageId: input.queued.id,
-      requestedRevision,
-      currentRevision,
-      requestedAt: update?.requestedAt ?? payload?.requestedAt ?? input.queued.createdAt,
-      ...(update?.reason
-        ? { reason: update.reason }
-        : payload?.reason
-          ? { reason: payload.reason }
-          : {}),
-      ...(update?.requestedFingerprint
-        ? { requestedFingerprint: update.requestedFingerprint }
-        : payload?.currentFingerprint
-          ? { requestedFingerprint: payload.currentFingerprint }
-          : {}),
-      ...(update?.currentFingerprint ? { currentFingerprint: update.currentFingerprint } : {}),
-      previousFingerprint: update?.previousFingerprint ?? promptBinding?.boundFingerprint ?? null,
-      systemPromptChanged: update?.systemPromptChanged ?? false,
-      loadedExtensionIds: update?.loadedExtensionIds ?? { added: [], removed: [] },
-      availableExtensionIds: update?.availableExtensionIds ?? { added: [], removed: [] },
-      externalSourceHashes: update?.externalSourceHashes ?? { added: [], removed: [] },
-    };
-  }
-
-  private recordAgentContextUpdateTerminalEvent(input: {
-    state: "applied" | "cancelled";
-    target: PromptTarget;
-    queued: StructuredSurfaceQueuedMessageRecord;
-    session: ManagedSession | null;
-  }): void {
-    const data = this.buildAgentContextUpdateEventData(input);
-    this.structuredSessionStore.recordLifecycleEvent({
-      sessionId: input.target.workspaceSessionId,
-      kind:
-        input.state === "applied"
-          ? "Agent context update applied"
-          : "Agent context update cancelled",
-      subjectKind:
-        input.target.surface === "thread" && input.target.threadId ? "thread" : "session",
-      subjectId:
-        input.target.surface === "thread" && input.target.threadId
-          ? input.target.threadId
-          : input.target.workspaceSessionId,
-      data,
-    });
-  }
-
-  private buildSurfaceAgentContextUpdateTerminalProjection(
-    target: PromptTarget,
-  ): ConversationSurfaceSnapshot["agentContextUpdate"] {
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    const event = snapshot?.events
-      .filter(
-        (candidate) =>
-          (candidate.kind === "Agent context update applied" ||
-            candidate.kind === "Agent context update cancelled") &&
-          candidate.data?.surfacePiSessionId === target.surfacePiSessionId,
-      )
-      .toSorted((left, right) => right.at.localeCompare(left.at))[0];
-    if (!event) {
-      return undefined;
-    }
-    const data = event.data ?? {};
-    const state =
-      event.kind === "Agent context update applied"
-        ? "applied"
-        : event.kind === "Agent context update cancelled"
-          ? "cancelled"
-          : null;
-    const requestedRevision = Number(data.requestedRevision);
-    const currentRevision = Number(data.currentRevision);
-    const requestedAt = typeof data.requestedAt === "string" ? data.requestedAt : event.at;
-    const currentFingerprint =
-      typeof data.currentFingerprint === "string" ? data.currentFingerprint : "";
-    if (!state || !Number.isFinite(requestedRevision) || !Number.isFinite(currentRevision)) {
-      return undefined;
-    }
-    const readDiff = (value: unknown): { added: string[]; removed: string[] } => {
-      if (!isObjectRecord(value)) {
-        return { added: [], removed: [] };
-      }
-      return {
-        added: Array.isArray(value.added)
-          ? value.added.filter((item): item is string => typeof item === "string")
-          : [],
-        removed: Array.isArray(value.removed)
-          ? value.removed.filter((item): item is string => typeof item === "string")
-          : [],
-      };
-    };
-    return {
-      state,
-      completedAt: event.at,
-      ...(typeof data.queueMessageId === "string" ? { queueMessageId: data.queueMessageId } : {}),
-      requestedRevision,
-      currentRevision,
-      requestedAt,
-      ...(typeof data.reason === "string" ? { reason: data.reason } : {}),
-      ...(typeof data.requestedFingerprint === "string"
-        ? { requestedFingerprint: data.requestedFingerprint }
-        : {}),
-      currentFingerprint,
-      previousFingerprint:
-        typeof data.previousFingerprint === "string" ? data.previousFingerprint : null,
-      systemPromptChanged: data.systemPromptChanged === true,
-      loadedExtensionIds: readDiff(data.loadedExtensionIds),
-      availableExtensionIds: readDiff(data.availableExtensionIds),
-      externalSourceHashes: readDiff(data.externalSourceHashes),
-    };
-  }
-
   private parseThreadReportNotificationQueuePayload(
     message: StructuredSurfaceQueuedMessageRecord,
   ): ThreadReportNotificationQueuePayload | null {
@@ -3001,26 +2732,6 @@ export class WorkspaceSessionCatalog {
         typeof payload.turnId !== "string" ||
         typeof payload.summary !== "string" ||
         typeof payload.episodeId !== "string"
-      ) {
-        return null;
-      }
-      return payload;
-    } catch {
-      return null;
-    }
-  }
-
-  private parseAgentContextRefreshQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): AgentContextRefreshQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      const payload = JSON.parse(message.payloadJson) as AgentContextRefreshQueuePayload;
-      if (
-        typeof payload.requestedRevision !== "number" ||
-        typeof payload.requestedAt !== "string"
       ) {
         return null;
       }
@@ -3240,50 +2951,6 @@ export class WorkspaceSessionCatalog {
         target: this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
         refreshExternalSources: true,
       });
-    }
-  }
-
-  private async queueOpenSurfacePromptRefreshes(reason: string): Promise<void> {
-    if (this.closed) {
-      return;
-    }
-    const currentExternalSources = await this.buildCurrentExternalContextSources();
-    for (const session of this.managedSurfaces.values()) {
-      const target = this.resolvePromptTargetForSurfacePiSessionId(session.sessionId);
-      const binding = this.buildPromptBinding(session, target, currentExternalSources);
-      if (!binding.stale) {
-        continue;
-      }
-      const existing = this.structuredSessionStore
-        .listQueuedSurfaceMessages({
-          surfacePiSessionId: target.surfacePiSessionId,
-        })
-        .find((message) => message.kind === "agent_context_refresh");
-      if (existing?.status === "failed") {
-        this.structuredSessionStore.markSurfaceMessageQueued({
-          id: existing.id,
-          position: "front",
-        });
-      } else if (!existing) {
-        this.structuredSessionStore.enqueueSurfaceMessage({
-          sessionId: target.workspaceSessionId,
-          surfacePiSessionId: target.surfacePiSessionId,
-          threadId: target.threadId ?? null,
-          kind: "agent_context_refresh",
-          idempotencyKey: `agent_context_refresh:${target.surfacePiSessionId}:${reason}:${binding.currentFingerprint}`,
-          messageJson: "{}",
-          payloadJson: JSON.stringify({
-            reason,
-            currentFingerprint: binding.currentFingerprint,
-            requestedRevision: this.generatedAgentContextStore.getState().revision,
-            requestedAt: new Date().toISOString(),
-          } satisfies AgentContextRefreshQueuePayload),
-          requestSummary: "Update agent context",
-          position: "front",
-        });
-      }
-      await this.emitQueuedSurfaceUpdate(target);
-      this.wakeSurfaceQueue(target);
     }
   }
 
@@ -3996,16 +3663,22 @@ export class WorkspaceSessionCatalog {
       currentFingerprint,
       boundExternalSourceHashes,
       currentExternalSourceHashes,
-      stale:
-        session.generatedAgentContextFingerprint !== currentFingerprint ||
-        session.systemPrompt !== currentSystemPrompt ||
-        !sameStringList(session.loadedExtensionIds, currentExtensionState.loadedExtensionIds) ||
-        !sameStringList(
-          session.availableExtensionIds,
-          currentExtensionState.availableExtensionIds,
-        ) ||
-        !sameStringList(boundExternalSourceHashes, currentExternalSourceHashes),
+      updateExtensionContextBeforeNextTurn:
+        this.getExtensionContextAutoUpdateForTarget(target) ?? true,
+      stale: session.generatedAgentContextFingerprint !== currentFingerprint,
     };
+  }
+
+  private getExtensionContextAutoUpdateForTarget(target: PromptTarget): boolean | null {
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+    if (!snapshot) {
+      return null;
+    }
+    if (target.surface === "thread") {
+      const thread = snapshot.threads.find((candidate) => candidate.id === target.threadId);
+      return thread?.updateExtensionContextBeforeNextTurn ?? true;
+    }
+    return snapshot.pi.updateExtensionContextBeforeNextTurn ?? true;
   }
 
   private resolveOrchestratorProfileSettingsFromSnapshot(
@@ -5742,6 +5415,27 @@ export class WorkspaceSessionCatalog {
     }
   }
 
+  private async refreshSurfaceExtensionContextBeforeNextTurnIfNeeded(
+    session: ManagedSession,
+    target: PromptTarget,
+  ): Promise<ManagedSession> {
+    const currentExternalSources = await this.buildCurrentExternalContextSources();
+    const binding = this.buildPromptBinding(session, target, currentExternalSources);
+    if (!binding.stale || !binding.updateExtensionContextBeforeNextTurn) {
+      return session;
+    }
+
+    const refreshed = await this.refreshManagedSurfacePromptBinding(session, target);
+    await this.emitSurfaceSync({
+      session: refreshed,
+      reason: "surface.updated",
+      target,
+      refreshExternalSources: true,
+    });
+    await this.emitWorkspaceSync("structured.updated");
+    return refreshed;
+  }
+
   private async drainNextQueuedSurfacePrompt(
     target: PromptTarget,
     options: { awaitPrompt: boolean },
@@ -5751,7 +5445,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const currentTarget = this.resolvePromptTargetForSurfacePiSessionId(target.surfacePiSessionId);
-    const session = await this.retainManagedSurface(currentTarget);
+    let session = await this.retainManagedSurface(currentTarget);
     if (session.activePrompt) {
       const activePromptDone = session.activePromptDone;
       if (options.awaitPrompt && activePromptDone) {
@@ -5767,51 +5461,25 @@ export class WorkspaceSessionCatalog {
       return false;
     }
 
+    const hasPromptBearingQueuedMessage = this.structuredSessionStore
+      .listQueuedSurfaceMessages({ surfacePiSessionId: currentTarget.surfacePiSessionId })
+      .some((message) => message.status === "queued" || message.status === "steering");
+    if (!hasPromptBearingQueuedMessage) {
+      await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
+      return false;
+    }
+
+    session = await this.refreshSurfaceExtensionContextBeforeNextTurnIfNeeded(
+      session,
+      currentTarget,
+    );
+
     const queued = this.structuredSessionStore.claimNextQueuedSurfaceMessage({
       surfacePiSessionId: currentTarget.surfacePiSessionId,
     });
     if (!queued) {
       await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
       return false;
-    }
-
-    if (queued.kind === "agent_context_refresh") {
-      try {
-        const appliedEventData = this.buildAgentContextUpdateEventData({
-          state: "applied",
-          target: currentTarget,
-          queued,
-          session,
-        });
-        const refreshed = await this.refreshManagedSurfacePromptBinding(session, currentTarget);
-        this.structuredSessionStore.markSurfaceMessageDelivered({ id: queued.id });
-        this.structuredSessionStore.recordLifecycleEvent({
-          sessionId: currentTarget.workspaceSessionId,
-          kind: "Agent context update applied",
-          subjectKind:
-            currentTarget.surface === "thread" && currentTarget.threadId ? "thread" : "session",
-          subjectId:
-            currentTarget.surface === "thread" && currentTarget.threadId
-              ? currentTarget.threadId
-              : currentTarget.workspaceSessionId,
-          data: appliedEventData,
-        });
-        await this.emitSurfaceSync({
-          session: refreshed,
-          reason: "surface.updated",
-          target: currentTarget,
-        });
-        await this.emitWorkspaceSync("structured.updated");
-        return true;
-      } catch (error) {
-        const failureError =
-          error instanceof Error ? error.message : "Queued agent context refresh failed.";
-        this.structuredSessionStore.markSurfaceMessageFailed({ id: queued.id, failureError });
-        await this.emitQueuedSurfaceUpdate(currentTarget);
-        throw error;
-      } finally {
-        await this.releaseManagedSurface(currentTarget.surfacePiSessionId);
-      }
     }
 
     let message: Message;
@@ -6479,10 +6147,6 @@ function createGeneratedAgentContextFingerprint(input: {
     .digest("hex");
 }
 
-function sameStringList(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 function sameExtensionUsage(
   left: Record<string, ExtensionUsageState>,
   right: Record<string, ExtensionUsageState>,
@@ -6526,45 +6190,6 @@ function diffStringSet(
     added: current.filter((value) => !previousSet.has(value)).toSorted(),
     removed: previous.filter((value) => !currentSet.has(value)).toSorted(),
   };
-}
-
-function formatQueuedAgentContextUpdateSummary(
-  update: QueuedAgentContextUpdateProjection | undefined,
-): string {
-  if (!update) {
-    return "Context update";
-  }
-  const groups: string[] = [];
-  if (update.systemPromptChanged) {
-    groups.push("system prompt");
-  }
-  const loadedChanges =
-    update.loadedExtensionIds.added.length + update.loadedExtensionIds.removed.length;
-  if (loadedChanges > 0) {
-    groups.push(`${loadedChanges} loaded extension ${loadedChanges === 1 ? "change" : "changes"}`);
-  }
-  const availableChanges =
-    update.availableExtensionIds.added.length + update.availableExtensionIds.removed.length;
-  if (availableChanges > 0) {
-    groups.push(
-      `${availableChanges} available extension ${availableChanges === 1 ? "change" : "changes"}`,
-    );
-  }
-  const externalChanges =
-    update.externalSourceHashes.added.length + update.externalSourceHashes.removed.length;
-  if (externalChanges > 0) {
-    groups.push(
-      `${externalChanges} external source ${externalChanges === 1 ? "change" : "changes"}`,
-    );
-  }
-  const summary = groups.length > 0 ? groups.join(", ") : "fingerprint refresh";
-  if (update.state === "out_of_date") {
-    return `Out-of-date context update: ${summary}`;
-  }
-  if (update.state === "updating") {
-    return `Updating context: ${summary}`;
-  }
-  return `Context update: ${summary}`;
 }
 
 function flattenUserMessageContent(content: Message["content"]): string {

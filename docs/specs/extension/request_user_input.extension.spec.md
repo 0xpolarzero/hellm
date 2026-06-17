@@ -98,9 +98,9 @@ variant's instructions and runtime behavior, not in tool results.
 When the active variant changes:
 
 - the extension's generated context fingerprint changes
-- every orchestrator or handler surface that has this extension loaded receives normal
-  `agent_context_refresh` queue work before later prompt-bearing delivery or at the next safe active
-  run boundary
+- every orchestrator or handler surface that has this extension loaded becomes stale by fingerprint
+  mismatch and follows the normal checked-by-default update-before-next-turn pre-dispatch refresh
+  rule
 - already-created request records keep their original behavior and do not change variant mid-flight
 - new tool calls use the newly active variant
 
@@ -603,7 +603,7 @@ Queue rules:
 - `request_user_input_answer` items belong to the same `surfacePiSessionId` that created the
   original request.
 - answer queue items outrank ordinary `user_message` rows.
-- answer queue items do not bypass required `agent_context_refresh` work.
+- answer queue items do not bypass required opted-in extension context refresh checks.
 - within `request_user_input_answer`, ordering is FIFO by answer creation time unless the user
   cancels a row before delivery.
 - `delivery: "steer"` uses the existing queue steering semantics and status values.

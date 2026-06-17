@@ -4593,23 +4593,23 @@ describe("svvyx extensions command", () => {
         },
       ],
       agentContextImpact: {
-        queuedUpdates: [
+        affectedSurfaces: [
           {
             surfacePiSessionId: "session-snapshot-loaded",
-            kind: "agent_context_refresh",
-            label: "Update agent context",
+            kind: "extension_context_changed",
+            label: "Extensions changed",
             reason: "snapshot_loaded",
           },
           {
             surfacePiSessionId: "thread-snapshot-loaded",
-            kind: "agent_context_refresh",
-            label: "Update agent context",
+            kind: "extension_context_changed",
+            label: "Extensions changed",
             reason: "snapshot_loaded",
           },
           {
             surfacePiSessionId: "session-snapshot-usage-only",
-            kind: "agent_context_refresh",
-            label: "Update agent context",
+            kind: "extension_context_changed",
+            label: "Extensions changed",
             reason: "snapshot_loaded",
           },
         ],
@@ -4651,17 +4651,17 @@ describe("svvyx extensions command", () => {
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "session-snapshot-loaded" })
         .map((message) => message.kind),
-    ).toEqual(["agent_context_refresh"]);
+    ).toEqual([]);
     expect(
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "thread-snapshot-loaded" })
         .map((message) => message.kind),
-    ).toEqual(["agent_context_refresh"]);
+    ).toEqual([]);
     expect(
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "session-snapshot-usage-only" })
         .map((message) => message.kind),
-    ).toEqual(["agent_context_refresh"]);
+    ).toEqual([]);
     expect(JSON.parse(readFileSync(join(notesRoot, "manifest.json"), "utf8"))).toMatchObject({
       title: "Notes",
     });
@@ -7469,11 +7469,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentContextImpact: {
         affectsNewTurns: true,
         activeRunsChangeAtNextSafeBoundary: true,
-        queuedUpdates: [
+        affectedSurfaces: [
           {
             surfacePiSessionId: "session-set-usage",
-            kind: "agent_context_refresh",
-            label: "Update agent context",
+            kind: "extension_context_changed",
+            label: "Extensions changed",
             reason: "extension_usage_changed",
           },
         ],
@@ -7486,7 +7486,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "session-set-usage" })
         .map((message) => message.kind),
-    ).toEqual(["agent_context_refresh"]);
+    ).toEqual([]);
 
     const reverted = await runSvvyxExtensionsCommand({
       agentSettingsStore,
@@ -7572,7 +7572,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "session-set-usage-helper" })
         .map((message) => message.kind),
-    ).toEqual(["agent_context_refresh"]);
+    ).toEqual([]);
 
     const restored = setExtensionUsage({
       agentSettingsStore,
@@ -7711,7 +7711,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentContextImpact: {
         affectsNewTurns: true,
         activeRunsChangeAtNextSafeBoundary: true,
-        queuedUpdates: [],
+        affectedSurfaces: [],
       },
     });
     expect(agentSettingsStore.getState().workflowAgents.reviewer).toMatchObject({

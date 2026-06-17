@@ -69,10 +69,11 @@ Current scheduler kinds include:
 - `workflows_build_refresh`
 - `app_log_projection`
 
-Queued surface work such as `report_request`, `request_user_input_answer`, and
-`agent_context_refresh` remains typed queue state. Recovery schedules one `queue_drain` record per
-affected surface and drains those queued item kinds through the ordinary queue runner instead of
-creating separate scheduler kinds for each queue item type.
+Queued surface work such as `report_request` and `request_user_input_answer` remains typed queue
+state. Recovery schedules one `queue_drain` record per affected surface and drains those queued item
+kinds through the ordinary queue runner instead of creating separate scheduler kinds for each queue
+item type. Extension context refresh is recovered through the same per-surface bound fingerprint and
+update-before-next-turn setting used during normal pre-dispatch checks.
 
 ## Startup Order
 

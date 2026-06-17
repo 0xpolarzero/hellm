@@ -21,7 +21,6 @@ session row.
 Current queue item kinds:
 
 - `user_message`
-- `agent_context_refresh`
 - `initial_handler_start`
 - `thread_followup`
 - `report_request`
@@ -64,12 +63,16 @@ user messages so handler/orchestrator coordination preserves order.
 `thread_followup({ activate: true })` may reactivate a concluded handler objective before queue
 delivery.
 
-## Agent Context Refresh
+## Extension Context Refresh
 
-`agent_context_refresh` updates the generated agent-context binding before later prompt-bearing
-items run.
+Generated extension context refresh is not queued work. A surface snapshot is stale only when its
+bound generated-context fingerprint differs from the current fingerprint.
 
-It does not create transcript content.
+Stale surfaces show “Extensions changed and will require system prompt to refresh.” with a durable,
+checked-by-default “Update before next turn” checkbox. Before prompt-bearing queue work dispatches,
+the backend recomputes the current fingerprint. If the fingerprint still differs and the checkbox is
+enabled, it refreshes the binding first and records `Agent context updated`. If the checkbox is
+disabled, dispatch uses the bound context and the stale banner remains visible.
 
 ## Restart Recovery
 

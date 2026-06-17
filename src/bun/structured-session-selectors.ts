@@ -730,22 +730,12 @@ function buildProductEvents(
 ): StructuredProductEvent[] {
   return session.events
     .flatMap((event): StructuredProductEvent[] => {
-      if (
-        event.kind !== "Extension change reverted" &&
-        event.kind !== "Agent context update applied" &&
-        event.kind !== "Agent context update cancelled"
-      ) {
+      if (event.kind !== "Extension change reverted") {
         return [];
       }
       const data = event.data ?? {};
-      const fallbackTitle =
-        event.kind === "Extension change reverted" ? "Extension change reverted" : event.kind;
-      const fallbackSummary =
-        event.kind === "Extension change reverted"
-          ? "A user reverted an extension change from the Extensions pane."
-          : event.kind === "Agent context update applied"
-            ? "Agent context update applied."
-            : "Agent context update cancelled.";
+      const fallbackTitle = "Extension change reverted";
+      const fallbackSummary = "A user reverted an extension change from the Extensions pane.";
       const title =
         typeof data.title === "string" && data.title.trim() ? data.title : fallbackTitle;
       const summary =

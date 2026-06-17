@@ -152,30 +152,6 @@
       ? message
       : undefined;
   });
-  const queuedPromptRefresh = $derived(
-    queuedMessages.find((message) => message.kind === "agent_context_refresh") ?? null,
-  );
-  const queuedPromptRefreshCancellable = $derived(
-    Boolean(
-      queuedPromptRefresh &&
-        queuedPromptRefresh.status !== "dispatching" &&
-        queuedPromptRefresh.status !== "failed",
-    ),
-  );
-  const terminalPromptRefresh = $derived(controller?.agentContextUpdate ?? null);
-  const queuedPromptRefreshChangeCount = $derived.by(() => {
-    const update = queuedPromptRefresh?.agentContextUpdate;
-    if (!update) return 0;
-    return [
-      update.systemPromptChanged ? 1 : 0,
-      update.loadedExtensionIds.added.length,
-      update.loadedExtensionIds.removed.length,
-      update.availableExtensionIds.added.length,
-      update.availableExtensionIds.removed.length,
-      update.externalSourceHashes.added.length,
-      update.externalSourceHashes.removed.length,
-    ].reduce((sum, count) => sum + count, 0);
-  });
   const editingUserMessageTimestamp = $derived(editDraft?.messageTimestamp ?? null);
   const activeSystemPrompt = $derived(resolvedSystemPrompt.trim());
   const composerExtensionActor = $derived<AgentContextActor>(
@@ -214,7 +190,7 @@
     }),
   );
   const hasSurfaceMetadata = $derived(
-    Boolean(promptBinding?.stale || terminalPromptRefresh || activeSystemPrompt),
+    Boolean(promptBinding?.stale || activeSystemPrompt),
   );
 
   function syncSurfaceState() {
@@ -594,54 +570,17 @@
         {#if promptBinding?.stale}
           <div class="prompt-stale-banner" role="status">
             <span>
-              {#if queuedPromptRefresh?.agentContextUpdate?.state === "failed"}
-                Agent context update failed.
-              {:else if queuedPromptRefresh?.agentContextUpdate?.state === "out_of_date"}
-                Agent context update is out of date.
-              {:else if queuedPromptRefresh}
-                Agent context update queued for this surface.
-              {:else}
-                This surface is using older instructions than the current generated agent context.
-              {/if}
-              {#if queuedPromptRefresh?.agentContextUpdate}
-                <small>
-                  r{queuedPromptRefresh.agentContextUpdate.requestedRevision}->r{queuedPromptRefresh.agentContextUpdate.currentRevision}
-                  {#if queuedPromptRefreshChangeCount > 0}
-                    , {queuedPromptRefreshChangeCount} {queuedPromptRefreshChangeCount === 1 ? "change" : "changes"}
-                  {/if}
-                </small>
-              {/if}
-              {#if queuedPromptRefresh?.status === "failed" && queuedPromptRefresh.failureError}
-                <small>{queuedPromptRefresh.failureError}</small>
-              {/if}
+              Extensions changed and will require system prompt to refresh.
             </span>
-            {#if queuedPromptRefreshCancellable}
-              <button type="button" onclick={() => void controller.deleteQueuedPrompt(queuedPromptRefresh.id)}>
-                Cancel update
-              </button>
-            {:else if queuedPromptRefresh?.status === "failed"}
-              <button type="button" onclick={() => void controller.queuePromptRefresh()}>
-                Retry update
-              </button>
-            {:else}
-              <button type="button" onclick={() => void controller.queuePromptRefresh()}>
-                Update agent context
-              </button>
-            {/if}
-          </div>
-        {/if}
-        {#if terminalPromptRefresh && !queuedPromptRefresh}
-          <div class={`agent-context-terminal-banner ${terminalPromptRefresh.state}`} role="status">
-            <span>
-              {#if terminalPromptRefresh.state === "applied"}
-                Agent context update applied.
-              {:else}
-                Agent context update cancelled.
-              {/if}
-              <small>
-                r{terminalPromptRefresh.requestedRevision}->r{terminalPromptRefresh.currentRevision}
-              </small>
-            </span>
+            <label class="prompt-stale-checkbox">
+              <input
+                type="checkbox"
+                checked={promptBinding.updateExtensionContextBeforeNextTurn}
+                onchange={(event) =>
+                  void controller.setExtensionContextAutoUpdate(event.currentTarget.checked)}
+              />
+              <span>Update before next turn</span>
+            </label>
           </div>
         {/if}
         {#if activeSystemPrompt}
@@ -804,37 +743,6 @@
     font-size: var(--text-xs);
   }
 
-  .agent-context-terminal-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.38rem 0.75rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-    background: color-mix(in oklab, var(--ui-surface) 74%, var(--ui-surface-subtle));
-    color: var(--ui-text-secondary);
-    font-size: var(--text-xs);
-  }
-
-  .agent-context-terminal-banner.cancelled {
-    background: color-mix(in oklab, var(--ui-warning-surface, var(--ui-surface-subtle)) 28%, var(--ui-surface));
-  }
-
-  .agent-context-terminal-banner span {
-    display: flex;
-    align-items: baseline;
-    min-width: 0;
-    gap: 0.45rem;
-    font-weight: 650;
-  }
-
-  .agent-context-terminal-banner small {
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 700;
-  }
-
   .prompt-stale-banner span {
     display: flex;
     align-items: baseline;
@@ -842,28 +750,28 @@
     min-width: 0;
   }
 
-  .prompt-stale-banner small {
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    white-space: nowrap;
-  }
-
-  .prompt-stale-banner button {
+  .prompt-stale-checkbox {
     flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     border: 1px solid color-mix(in oklab, var(--ui-warning-border, var(--ui-border-soft)) 82%, transparent);
     border-radius: 0.25rem;
     background: var(--ui-surface);
     color: var(--ui-text-primary);
     font: inherit;
     font-weight: 700;
-    padding: 0.25rem 0.5rem;
+    padding: 0.24rem 0.5rem;
     cursor: pointer;
   }
 
-  .prompt-stale-banner button:hover {
+  .prompt-stale-checkbox:hover {
     border-color: var(--ui-border-strong);
     background: var(--ui-surface-hover);
+  }
+
+  .prompt-stale-checkbox input {
+    margin: 0;
   }
 
   .surface-prompt-metadata {
