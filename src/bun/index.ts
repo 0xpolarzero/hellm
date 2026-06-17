@@ -2047,17 +2047,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return { ok: true };
       },
       getWorkspaceUiRestore: async ({ workspaceId }) => {
-        const runtime = getWorkspaceRuntime({ workspaceId });
-        if (runtime.kind === "default") {
-          return null;
-        }
         return appWorkspaceUiRestoreStore.getState(workspaceId);
       },
       setWorkspaceUiRestore: async ({ workspaceId, state }) => {
-        const runtime = getWorkspaceRuntime({ workspaceId });
-        if (runtime.kind !== "default") {
-          appWorkspaceUiRestoreStore.setState(workspaceId, state);
-        }
+        appWorkspaceUiRestoreStore.setState(workspaceId, state);
         return { ok: true };
       },
       setActiveWorkspace: async ({ workspaceId }) => {

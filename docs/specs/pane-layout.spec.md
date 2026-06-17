@@ -55,7 +55,7 @@ It can be opened in Dockview like any other static pane. It does not create a li
 
 ## Layout Slots
 
-Each user workspace has three durable layout slots:
+Each workspace has three durable layout slots:
 
 - `A`
 - `B`
@@ -63,7 +63,7 @@ Each user workspace has three durable layout slots:
 
 Slots are keyed by `(workspaceId, layoutId)`.
 
-Default workspace tabs do not persist durable layout slots.
+The default workspace uses the same durable layout slots as user workspaces. Its only layout-specific exception is that opening an empty selected default-workspace slot creates one `Open Workspace` pane.
 
 ## Restore
 

@@ -708,7 +708,6 @@ export interface ChatRuntime {
   paneLayout: ChatPaneLayoutState;
   activeLayoutId: WorkspaceLayoutSlotId;
   layoutSlots: WorkspaceLayoutSlotSummary[];
-  layoutSlotsEnabled: boolean;
   primaryPaneId: string;
   dispose: () => void;
   subscribe: (listener: ChatRuntimeListener) => () => void;
@@ -1762,7 +1761,6 @@ export async function createChatRuntime(
   let rendererTelemetryOrdinal = 0;
   let rendererAppLogSeenSeq = 0;
   let paneLayout = createEmptyPaneLayout();
-  const durableLayoutEnabled = workspaceInfo.kind !== "default";
   const workspaceTabLayoutId =
     "activeLayoutId" in workspaceInfo && isWorkspaceLayoutSlotId(workspaceInfo.activeLayoutId)
       ? workspaceInfo.activeLayoutId
@@ -1903,7 +1901,7 @@ export async function createChatRuntime(
   };
 
   const persistWorkspaceUiRestore = (): void => {
-    if (disposed || !durableLayoutEnabled) {
+    if (disposed) {
       return;
     }
 
@@ -2345,12 +2343,12 @@ export async function createChatRuntime(
   await syncProviderAuthPromise;
   refreshWarmReadModels();
 
-  const restoreState = durableLayoutEnabled
-    ? ((await rpcClient.request.getWorkspaceUiRestore(scoped()).catch((error: unknown) => {
-        console.error("Failed to load workspace UI restore state:", error);
-        return null;
-      })) as WorkspaceUiRestoreState | null)
-    : null;
+  const restoreState = (await rpcClient.request
+    .getWorkspaceUiRestore(scoped())
+    .catch((error: unknown) => {
+      console.error("Failed to load workspace UI restore state:", error);
+      return null;
+    })) as WorkspaceUiRestoreState | null;
   const canUseOpenWorkspaceSurface = workspaceInfo.kind === "default";
   const normalizeRestoredLayout = (
     layout: WorkspaceDockviewLayoutState | null,
@@ -2474,8 +2472,7 @@ export async function createChatRuntime(
   if (restoreState) {
     savedLayouts = normalizeRestoredLayouts(restoreState);
   }
-  const activeRestoreSlotSaved =
-    durableLayoutEnabled && !!restoreState && restoreState.layouts[activeLayoutId] !== null;
+  const activeRestoreSlotSaved = !!restoreState && restoreState.layouts[activeLayoutId] !== null;
   const activeRestoreLayout = savedLayouts[activeLayoutId];
   let restoredPaneIds: string[] = [];
   if (activeRestoreLayout?.panels.length) {
@@ -2506,7 +2503,14 @@ export async function createChatRuntime(
     persistWorkspaceUiRestore();
     emit();
   } else if (activeRestoreSlotSaved) {
-    if (!activeRestoreLayout?.panels.length) {
+    if (workspaceInfo.kind === "default" && !activeRestoreLayout?.panels.length) {
+      paneLayout = addDockviewPanel(
+        createEmptyPaneLayout(),
+        { surface: "open-workspace" },
+        PRIMARY_CHAT_PANE_ID,
+      );
+      persistWorkspaceUiRestore();
+    } else if (!activeRestoreLayout?.panels.length) {
       paneLayout = activeRestoreLayout ?? createEmptyPaneLayout();
     }
     emit();
@@ -2825,9 +2829,6 @@ export async function createChatRuntime(
     get layoutSlots() {
       return currentLayoutSlots();
     },
-    get layoutSlotsEnabled() {
-      return durableLayoutEnabled;
-    },
     dispose: () => {
       disposed = true;
       activeRuntimeEmitters.delete(runtimeCacheEmitter);
@@ -2944,7 +2945,7 @@ export async function createChatRuntime(
       recordFocusedSession();
     },
     syncWorkspaceLayoutState: async (state) => {
-      if (!durableLayoutEnabled || disposed) {
+      if (disposed) {
         return;
       }
       savedLayouts = normalizeRestoredLayouts(state);
@@ -2958,14 +2959,17 @@ export async function createChatRuntime(
               ? activeLayout.focusedPanelId
               : restoredPaneIds[0]!,
         };
+      } else if (workspaceInfo.kind === "default" && !paneLayout.panels.length) {
+        paneLayout = addDockviewPanel(
+          createEmptyPaneLayout(),
+          { surface: "open-workspace" },
+          PRIMARY_CHAT_PANE_ID,
+        );
       }
       emit();
       recordFocusedSession();
     },
     switchWorkspaceLayout: async (layoutId) => {
-      if (!durableLayoutEnabled) {
-        return;
-      }
       if (layoutId === activeLayoutId) {
         return;
       }
@@ -2974,6 +2978,13 @@ export async function createChatRuntime(
       await hydrateActiveLayout(
         savedLayouts[layoutId] ? normalizePaneLayout(savedLayouts[layoutId]!) : null,
       );
+      if (workspaceInfo.kind === "default" && !paneLayout.panels.length) {
+        paneLayout = addDockviewPanel(
+          createEmptyPaneLayout(),
+          { surface: "open-workspace" },
+          PRIMARY_CHAT_PANE_ID,
+        );
+      }
       savedLayouts = {
         ...savedLayouts,
         [layoutId]: structuredClone(paneLayout),

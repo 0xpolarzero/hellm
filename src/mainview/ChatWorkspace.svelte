@@ -177,7 +177,6 @@
   });
   let activeLayoutId = $state<WorkspaceLayoutSlotId>("A");
   let layoutSlots = $state<WorkspaceLayoutSlotSummary[]>([]);
-  let layoutSlotsEnabled = $state(true);
   let currentPane = $state<ChatPaneState | null>(null);
   let focusedPanelId = $state(PRIMARY_CHAT_PANE_ID);
   let focusedSurfaceTarget = $state<PromptTarget | null>(null);
@@ -717,7 +716,6 @@
   }
 
   async function handleSwitchLayout(layoutId: WorkspaceLayoutSlotId) {
-    if (!layoutSlotsEnabled) return;
     await runSessionMutation(() => runtime.switchWorkspaceLayout(layoutId));
   }
 
@@ -1411,7 +1409,6 @@
     paneLayout = runtime.paneLayout;
     activeLayoutId = runtime.activeLayoutId;
     layoutSlots = runtime.layoutSlots;
-    layoutSlotsEnabled = runtime.layoutSlotsEnabled;
     requestUserInputRequests = runtime.getRequestUserInputRequests();
     runtimeApprovalRequests = runtime.getRuntimeApprovalRequests();
     focusedPanelId = paneLayout.focusedPanelId ?? PRIMARY_CHAT_PANE_ID;
@@ -1534,9 +1531,7 @@
         {#each layoutSlots as slot (slot.id)}
           <Tooltip
             label={
-              layoutSlotsEnabled
-                ? `Layout ${slot.id}: ${slot.initialized ? "switch to this saved pane arrangement" : "start a new pane arrangement"}`
-                : "Layout slots are unavailable in the default workspace"
+              `Layout ${slot.id}: ${slot.initialized ? "switch to this saved pane arrangement" : "start a new pane arrangement"}`
             }
             side="bottom"
           >
@@ -1544,13 +1539,10 @@
               type="button"
               role="tab"
               aria-label={
-                layoutSlotsEnabled
-                  ? `Layout ${slot.id}: ${slot.initialized ? "switch to this saved pane arrangement" : "start a new pane arrangement"}`
-                  : `Layout ${slot.id}: unavailable in the default workspace`
+                `Layout ${slot.id}: ${slot.initialized ? "switch to this saved pane arrangement" : "start a new pane arrangement"}`
               }
               aria-selected={slot.id === activeLayoutId}
-              disabled={!layoutSlotsEnabled}
-              class={`workspace-layout-tab ${slot.id === activeLayoutId ? "active" : ""} ${slot.initialized ? "initialized" : "empty"} ${layoutSlotsEnabled ? "" : "disabled"}`.trim()}
+              class={`workspace-layout-tab ${slot.id === activeLayoutId ? "active" : ""} ${slot.initialized ? "initialized" : "empty"}`.trim()}
               onclick={() => void handleSwitchLayout(slot.id)}
             >
               {slot.id}

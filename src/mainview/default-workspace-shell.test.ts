@@ -125,7 +125,7 @@ describe("default workspace renderer shell", () => {
     expect(appSource).toContain("await setActiveWorkspace(tab.workspace.workspaceTabId);");
   });
 
-  it("creates default New Tab entries after the active tab and keeps them ephemeral", async () => {
+  it("creates default New Tab entries after the active tab with normal layout persistence", async () => {
     const appSource = await readFile(new URL("./App.svelte", import.meta.url), "utf8");
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
 
@@ -134,9 +134,9 @@ describe("default workspace renderer shell", () => {
     expect(appSource).toContain("...tabs.slice(0, activeIndex + 1)");
     expect(appSource).toContain("...tabs.slice(activeIndex + 1)");
     expect(appSource).toContain("await setActiveWorkspace(tab.workspace.workspaceTabId);");
-    expect(runtimeSource).toContain(
-      'const durableLayoutEnabled = workspaceInfo.kind !== "default"',
-    );
+    expect(runtimeSource).not.toContain('workspaceInfo.kind !== "default"');
+    expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
+    expect(runtimeSource).toContain("setWorkspaceUiRestore(scoped({ state }))");
     expect(runtimeSource).toContain('} else if (workspaceInfo.kind === "default")');
     expect(runtimeSource).toContain('{ surface: "open-workspace" }');
   });
@@ -211,7 +211,7 @@ describe("default workspace renderer shell", () => {
       "const scoped = <T extends object>(request?: T): T & { workspaceId: string } => ({",
     );
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId");
-    expect(runtimeSource).toContain("rpcClient.request.getWorkspaceUiRestore(scoped())");
+    expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
     expect(runtimeSource).toContain("getAppLogs: refreshAppLogs");
     expect(runtimeSource).toContain("rpcClient.request.getWorkflowsGenerated(scoped())");
     expect(runtimeSource).toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
@@ -1470,19 +1470,11 @@ describe("default workspace renderer shell", () => {
     expect(workspaceSource).toContain("runtime.openSurface");
   });
 
-  it("mutes layout slot controls for the default workspace", async () => {
+  it("keeps layout slot controls active for the default workspace", async () => {
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
-    const workspaceSource = await readFile(
-      new URL("./ChatWorkspace.svelte", import.meta.url),
-      "utf8",
-    );
 
-    expect(runtimeSource).toContain(
-      'const durableLayoutEnabled = workspaceInfo.kind !== "default"',
-    );
-    expect(runtimeSource).toContain("get layoutSlotsEnabled()");
-    expect(workspaceSource).toContain("disabled={!layoutSlotsEnabled}");
-    expect(workspaceSource).toContain("Layout slots are unavailable in the default workspace");
+    expect(runtimeSource).not.toContain('workspaceInfo.kind !== "default"');
+    expect(runtimeSource).toContain("get layoutSlots()");
   });
 
   it("keeps default workspace product surfaces wired through the normal shell", async () => {

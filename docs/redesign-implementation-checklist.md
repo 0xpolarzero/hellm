@@ -567,13 +567,13 @@ acceptance rows stay unchecked until their implementation and tests land.
 - [x] Store default workspace root under app-managed support data, e.g. `<svvy app data dir>/default-workspace`; create on demand and keep stable across restart. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Do not require default workspace to be a git repo, run repository discovery upward from it, place it under repo-root `workflows/`, or treat it as user source. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Give default workspace metadata `kind: "default"` and label `Default Workspace`; keep `Open Workspace` as panel/action name, not workspace label. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Initialize every new default workspace tab with exactly one `Open Workspace` pane. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Make default workspace tabs ephemeral for layout slots; no durable A/B/C layout persistence for default tabs. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Initialize an empty selected default-workspace layout slot with exactly one `Open Workspace` pane. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Persist default workspace layout slots with the same A/B/C restore model as user workspaces. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Support default workspace sessions, command palette, Context/Logs/Agents/Extensions/Settings, app logs, provider settings, prompt history, artifacts, and read-only app-global Workflows visibility. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Do not fabricate workspace-local Smithers source or runnable Workflows entries in the default workspace. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Implement `Open Workspace` as a normal Dockview workbench panel, not a modal-only or full-app empty page. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] `Open Workspace` retargets the current visual tab to the selected user workspace; preserve tab id/order, acquire runtime, load active layout slot, focus tab, and persist state. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] `New Tab` creates another default workspace tab with exactly one `Open Workspace` pane and no durable layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] `New Tab` creates another default workspace tab over the shared default runtime and selected durable layout slot. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] `Open Workspace in New Tab` creates a selected user workspace tab from the picker. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Implement app menu/shortcut actions `workspace.open`, `workspace.newTab`, and `workspace.openInNewTab`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Bind default workspace shortcuts through the shortcut registry/app-menu path: `Cmd+O` for Open Workspace, `Cmd+T` for New Tab, and `Cmd+Shift+O` for Open Workspace in New Tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
@@ -594,9 +594,9 @@ acceptance rows stay unchecked until their implementation and tests land.
   - [x] Support bindable surface kinds: orchestrator, handler-thread, artifact inspector, command inspector, Logs, Agents, Extensions, Workflows, and Open Workspace.
   - [x] Add Settings as a Dockview-bindable pane target and renderer branch.
 - [x] Persist Dockview serialized layout plus svvy panel metadata, panel-to-surface bindings, focused panel, panel-local scroll/display preferences, restore state, and minimum panel policy. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
-- [x] Add fixed user workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, pinned at the far right of workspace chrome. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Add fixed workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, pinned at the far right of workspace chrome. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
 - [x] Make empty layout slots muted but selectable, not disabled. Sources: `docs/prd.md`, `docs/features.ts`.
-- [x] Autosave selected user workspace layout slot after meaningful pane changes. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Autosave selected workspace layout slot after meaningful pane changes. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
 - [x] Keep panel-to-surface bindings separate from live surface runtime state. Sources: `docs/specs/pane-layout.spec.md`.
 - [ ] Support split, resize, close, tab placement, panel/group drag placement, root-edge placement, edge groups, floating groups, and popouts through svvy placement commands. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
   - [x] Preserve svvy open-target placement intent for tab, root-edge, floating, and popout panes through runtime pane state and the Dockview adapter instead of degrading them to ordinary split panels.

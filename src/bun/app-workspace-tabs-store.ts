@@ -85,8 +85,7 @@ function parseWorkspaceTab(input: unknown, path: string): WorkspaceTabInfo {
     );
   }
   const activeLayoutId =
-    raw.kind === "user" &&
-    (raw.activeLayoutId === "A" || raw.activeLayoutId === "B" || raw.activeLayoutId === "C")
+    raw.activeLayoutId === "A" || raw.activeLayoutId === "B" || raw.activeLayoutId === "C"
       ? raw.activeLayoutId
       : undefined;
   return {

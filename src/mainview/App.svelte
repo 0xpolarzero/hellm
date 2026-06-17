@@ -139,16 +139,14 @@
 			{
 				workspaceInfo: workspaceTab,
 				workspaceTabId: workspaceTab.workspaceTabId,
-				initialLayoutId: workspaceTab.kind === "user" ? workspaceTab.activeLayoutId : undefined,
+				initialLayoutId: workspaceTab.activeLayoutId,
 				onActiveLayoutChange: (layoutId) => {
-					if (workspaceTab.kind !== "user") return;
 					workspaceTab.activeLayoutId = layoutId;
 					if (tab) tab.workspace.activeLayoutId = layoutId;
 					tabs = [...tabs];
 					void persistWorkspaceTabs();
 				},
 				onWorkspaceLayoutPersist: (state) => {
-					if (workspaceTab.kind !== "user") return;
 					void syncOpenWorkspaceLayouts(workspaceTab.workspaceId, state, tab);
 				},
 				onMissingProviderAccess: () => {
@@ -179,7 +177,7 @@
 	) {
 		await Promise.all(
 			tabs
-				.filter((candidate) => candidate !== sourceTab && candidate.workspace.workspaceId === workspaceId && candidate.workspace.kind === "user")
+				.filter((candidate) => candidate !== sourceTab && candidate.workspace.workspaceId === workspaceId)
 				.map((candidate) => candidate.runtime.syncWorkspaceLayoutState(state)),
 		);
 	}

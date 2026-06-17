@@ -4891,7 +4891,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("starts default workspace tabs with only the Open Workspace pane", async () => {
+  it("restores default workspace panes and keeps durable layout slots enabled", async () => {
     const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
@@ -4926,11 +4926,41 @@ describe("createChatRuntime", () => {
     const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
 
     expect(runtime.sessions).toHaveLength(0);
-    expect(runtime.getPane("primary")?.target).toEqual({ surface: "open-workspace" });
-    expect(runtime.layoutSlotsEnabled).toBe(false);
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "app-logs" });
     await runtime.switchWorkspaceLayout("B");
-    expect(runtime.activeLayoutId).toBe("A");
+    expect(runtime.activeLayoutId).toBe("B");
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "open-workspace" });
+
+    runtime.dispose();
+  });
+
+  it("seeds an empty persisted default workspace layout with Open Workspace", async () => {
+    const storage = createMemoryStorage();
+    const defaultWorkspaceInfo: WorkspaceTabInfo = {
+      ...TEST_WORKSPACE_INFO,
+      workspaceTabId: "default-tab-1",
+      workspaceId: "workspace:default",
+      cwd: "/tmp/svvy/default-workspace",
+      workspaceLabel: "Default Workspace",
+      kind: "default",
+      branch: undefined,
+    };
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    harness.setWorkspaceUiRestore(
+      defaultWorkspaceInfo.workspaceId,
+      createWorkspaceRestoreState({
+        dockview: null,
+        compactSurfaces: [],
+        panels: [],
+        focusedPanelId: null,
+        updatedAt: "2026-04-27T00:00:00.000Z",
+      }),
+    );
+
+    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+
+    expect(runtime.getPane("primary")?.target).toEqual({ surface: "open-workspace" });
+    expect(runtime.paneLayout.focusedPanelId).toBe("primary");
 
     runtime.dispose();
   });

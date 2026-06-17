@@ -130,7 +130,7 @@ describe("app workspace tabs store", () => {
     expect(state.tabs.filter((tab) => tab.workspaceId === "shared-runtime")).toHaveLength(2);
   });
 
-  it("stores default workspace tabs as real tabs without durable layout slots", () => {
+  it("stores default workspace tabs as real tabs with selected layout slots", () => {
     const store = createAppWorkspaceTabsStore({ agentDir: tempAgentDir() });
 
     const state = store.setState({
@@ -157,7 +157,7 @@ describe("app workspace tabs store", () => {
       workspaceLabel: "Default Workspace",
       kind: "default",
     });
-    expect(state.tabs[0]?.activeLayoutId).toBeUndefined();
+    expect(state.tabs[0]?.activeLayoutId).toBe("A");
   });
 
   it("drops an active workspace tab id that is not in the open tab list", () => {
