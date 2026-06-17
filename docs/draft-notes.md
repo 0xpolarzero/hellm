@@ -38,6 +38,7 @@
 - need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what handler threads and workflow runs are active, what context made it into which worker, and what is the overall status
   - maybe a good starting point is to run a small model alongside the orchestrator visiting the transcript/session state at frequent intervals and appending a one-sentence high-level overview
   - show list of files read and websites visited for a session; basically everything that made it into the context
+  - everything that made it into context should be on the side and appear at each message so scrolling can dynamically add each context item in a sticky way
 
 - write javascript tools api in Effect internally
 
