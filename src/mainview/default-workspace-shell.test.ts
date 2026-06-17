@@ -728,12 +728,24 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(workflowsPaneSource).toContain("Generated Code");
-    expect(workflowsPaneSource).toContain("selectedItem.sourcePath");
-    expect(workflowsPaneSource).toContain("selectedItem.generatedPath");
-    expect(workflowsPaneSource).toContain("selectedItem.qualifiedName");
+    expect(workflowsPaneSource).toContain("<ExtensionListRow");
+    expect(workflowsPaneSource).toContain("<SourceMetadataTextArea");
+    expect(workflowsPaneSource).toContain("item.sourcePath");
+    expect(workflowsPaneSource).toContain("item.generatedPath");
+    expect(workflowsPaneSource).toContain("item.qualifiedName");
+    expect(workflowsPaneSource).toContain("sourceLabel={fileName(item.sourcePath)}");
+    expect(workflowsPaneSource).toContain("sourceLabel={fileName(item.generatedPath)}");
+    expect(workflowsPaneSource).toContain("workflow-expanded-meta");
+    expect(workflowsPaneSource).toContain("updatedLabel(readModel.updatedAt)");
+    expect(workflowsPaneSource).toContain("workflow-agent-parameters-preview");
+    expect(workflowsPaneSource).toContain("workflow-generated-code-preview");
     expect(workflowsPaneSource).toContain("onOpenAgentProfile");
-    expect(workflowsPaneSource).toContain("Customize Agent");
+    expect(workflowsPaneSource).toContain("Refresh generated workflows");
+    expect(workflowsPaneSource).not.toContain("{#snippet meta()}");
+    expect(workflowsPaneSource).not.toContain("Opened ${path}");
+    expect(workflowsPaneSource).not.toContain("workflow-export-meta");
+    expect(workflowsPaneSource).not.toContain("workflow-source-target");
+    expect(workflowsPaneSource).not.toContain("<PaneListRow");
     expect(workflowsPaneSource).toContain("runtime.workflowsGeneratedSnapshot");
     expect(workflowsPaneSource).not.toContain("runtime.subscribeAppLogUpdate");
     expect(runtimeSource).toContain("Generated Workflows package rebuilt.");
@@ -762,7 +774,9 @@ describe("default workspace renderer shell", () => {
     expect(workspaceRegistrySource).toContain("this.listOpenWorkspaces().map");
     expect(workflowsPaneSource).not.toContain("svvyx workflows run");
     expect(workflowsPaneSource).not.toContain("delete");
-    expect(workflowsPaneSource).not.toContain("textarea");
+    expect(workflowsPaneSource).not.toContain("save");
+    expect(workflowsPaneSource).toContain("<SourceMetadataTextArea");
+    expect(workflowsPaneSource).toContain("readonly");
   });
 
   it("wires Workflows generated agent rows to focused Agents pane records", async () => {

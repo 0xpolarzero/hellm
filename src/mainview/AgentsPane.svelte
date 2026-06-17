@@ -901,9 +901,11 @@
   {:else if settings}
     <div class="agent-category">
       <div class="agent-category-heading">
-        <span>Orchestrators</span>
-        <div class="agent-category-actions">
+        <div class="agent-category-title">
+          <span>Orchestrators</span>
           <small>{orchestrators.length}</small>
+        </div>
+        <div class="agent-category-actions">
           <Button
             variant="ghost"
             size="xs"
@@ -933,8 +935,10 @@
 
     <div class="agent-category">
       <div class="agent-category-heading">
-        <span>Special Profiles</span>
-        <small>builtin</small>
+        <div class="agent-category-title">
+          <span>Special Profiles</span>
+          <small>builtin</small>
+        </div>
       </div>
       <div class="agent-rows">
         {#if threadHandler}
@@ -953,9 +957,11 @@
 
     <div class="agent-category">
       <div class="agent-category-heading">
-        <span>Workflow Agents</span>
-        <div class="agent-category-actions">
+        <div class="agent-category-title">
+          <span>Workflow Agents</span>
           <small>{workflowAgents.length}</small>
+        </div>
+        <div class="agent-category-actions">
           <Button
             variant="ghost"
             size="xs"
@@ -1182,10 +1188,25 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+    min-width: 0;
     color: var(--ui-text-secondary);
     font-size: var(--text-xs);
     font-weight: 650;
     text-transform: uppercase;
+  }
+
+  .agent-category-title {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.36rem;
+    min-width: 0;
+  }
+
+  .agent-category-title > span {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .agent-category-heading small {
@@ -1200,30 +1221,27 @@
     display: inline-flex;
     align-items: center;
     gap: 0.36rem;
+    flex: 0 0 auto;
   }
 
   :global(.category-action) {
     height: 1.42rem;
     min-height: 1.42rem;
+    width: max-content;
+    min-width: max-content;
     padding-block: 0;
+    padding-inline: 0.42rem;
     text-transform: none;
     line-height: 1;
   }
 
-  :global(.category-action .ui-button-content) {
-    display: inline-grid;
-    grid-auto-flow: column;
-    grid-auto-columns: max-content;
-    height: 100%;
-    align-items: center;
-    line-height: 1;
-  }
-
   :global(.category-action .ui-button-content > svg) {
+    flex: 0 0 auto;
     display: block;
   }
 
   :global(.category-action .ui-button-content > span) {
+    flex: 0 0 auto;
     display: block;
     line-height: 1;
   }
