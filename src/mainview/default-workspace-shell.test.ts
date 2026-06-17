@@ -1232,7 +1232,8 @@ describe("default workspace renderer shell", () => {
     expect(composerSource).toContain("flex: 1 1 auto;");
     expect(composerSource).toContain("margin-top: auto;");
     expect(contextBudgetIndex).toBeGreaterThanOrEqual(0);
-    expect(actionRowIndex).toBeGreaterThan(contextBudgetIndex);
+    expect(contextBudgetIndex).toBeGreaterThan(actionRowIndex);
+    expect(composerSource).toContain("showCopy={false}");
   });
 
   it("focuses the composer textarea from the input frame without hijacking footer controls", async () => {

@@ -14,6 +14,7 @@
     budget: ContextBudget | null;
     variant?: Variant;
     label?: string;
+    showCopy?: boolean;
     showTooltip?: boolean;
     tooltipLabel?: string;
     tooltipDetails?: TooltipDetail[];
@@ -23,6 +24,7 @@
     budget,
     variant = "full",
     label = "Context",
+    showCopy = true,
     showTooltip = true,
     tooltipLabel,
     tooltipDetails = [],
@@ -42,7 +44,7 @@
 
 {#if budget}
   <div
-    class={`context-budget context-budget-${variant} tone-${budget.tone}`.trim()}
+    class={`context-budget context-budget-${variant} ${variant === "full" && !showCopy ? "is-bar-only" : ""} tone-${budget.tone}`.trim()}
     role="meter"
     aria-label={`${label} budget`}
     aria-valuemin="0"
@@ -62,11 +64,13 @@
           <span style={`width: ${budget.percent}%`}></span>
         </div>
       {/if}
-      <div class="context-budget-copy">
-        <span>{label}</span>
-        <strong>{budget.label}</strong>
-        <small>{budget.detail}</small>
-      </div>
+      {#if showCopy}
+        <div class="context-budget-copy">
+          <span>{label}</span>
+          <strong>{budget.label}</strong>
+          <small>{budget.detail}</small>
+        </div>
+      {/if}
     {:else if showTooltip}
       <Tooltip label={detailText} details={tooltipDetails} delayMs={250} block>
         <div class="context-budget-hover-target">
@@ -109,6 +113,23 @@
     gap: 0.55rem;
     width: 100%;
     min-height: 1.45rem;
+  }
+
+  .context-budget-full.is-bar-only {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0.95rem;
+  }
+
+  .context-budget-full.is-bar-only :global(.ui-tooltip-anchor) {
+    display: grid;
+    align-items: center;
+    min-height: 0.95rem;
+  }
+
+  .context-budget-full.is-bar-only .context-budget-track {
+    height: 0.22rem;
+    width: 100%;
+    background: color-mix(in oklab, var(--context-budget-soft) 44%, var(--ui-border-soft));
   }
 
   .context-budget-track {

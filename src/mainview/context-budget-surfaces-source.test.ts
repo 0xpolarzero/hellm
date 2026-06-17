@@ -32,6 +32,7 @@ describe("context budget UI surfaces", () => {
     expect(chatWorkspaceSource).toContain("getPaneContextBudget(paneController)");
     expect(composerSource).toContain('class="focused-context-budget"');
     expect(composerSource).toContain('variant="full"');
+    expect(composerSource).toContain("showCopy={false}");
     expect(composerSource).toContain("tooltipDetails={contextBudgetTooltipDetails}");
     expect(sessionListItemSource).toContain('class="session-context-budget"');
     expect(sessionListItemSource).toContain('variant="compact"');

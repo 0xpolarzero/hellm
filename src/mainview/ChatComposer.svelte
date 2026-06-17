@@ -1265,15 +1265,6 @@
 					onselect={(event) => syncCaretFromTextarea(event.currentTarget)}
 				/>
 
-				<div class="focused-context-budget">
-					<ContextBudgetBar
-						budget={contextBudget ?? null}
-						variant="full"
-						label="Context"
-						tooltipLabel={contextBudgetTooltip}
-						tooltipDetails={contextBudgetTooltipDetails}
-					/>
-				</div>
 				<div class="composer-row-actions">
 					<div class="composer-control-cluster" aria-label="Runtime controls">
 						<CompactCombobox
@@ -1354,6 +1345,16 @@
 							</Tooltip>
 						{/if}
 					</div>
+				</div>
+				<div class="focused-context-budget">
+					<ContextBudgetBar
+						budget={contextBudget ?? null}
+						variant="full"
+						label="Context"
+						showCopy={false}
+						tooltipLabel={contextBudgetTooltip}
+						tooltipDetails={contextBudgetTooltipDetails}
+					/>
 				</div>
 			</div>
 		</div>
@@ -1753,8 +1754,12 @@
 	}
 
 	.focused-context-budget {
-		min-height: 1.7rem;
-		margin-top: 0.42rem;
+		padding: 0 0.44rem 0.34rem;
+		cursor: default;
+	}
+
+	.focused-context-budget :global(.ui-tooltip-anchor) {
+		cursor: default;
 	}
 
 	.mention-picker {

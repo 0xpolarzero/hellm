@@ -1545,24 +1545,19 @@
 	.assistant-turn-duration {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.2rem;
+		gap: 0.18rem;
 		min-width: 0;
-		height: 1.38rem;
-		padding: 0 0.34rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 60%, transparent);
-		color: var(--ui-text-secondary);
+		color: var(--ui-text-tertiary);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		font-variant-numeric: tabular-nums;
-		line-height: 1;
+		line-height: inherit;
 		white-space: nowrap;
 	}
 
 	.assistant-turn-duration-icon {
 		flex: 0 0 auto;
-		color: color-mix(in oklab, var(--ui-warning) 76%, var(--ui-text-secondary));
+		color: currentColor;
 	}
 
 	.assistant-bubble:hover .assistant-message-footer,
