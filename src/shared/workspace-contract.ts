@@ -517,6 +517,42 @@ export type WorkspacePaneSurfaceTarget =
   | OpenWorkspacePaneTarget
   | StaticInspectorPaneTarget;
 
+export interface PromptClientSubmissionMetadata {
+  submissionId?: string;
+  correlationId?: string;
+  clientRequestId?: string;
+  source?: string;
+  submittedAt?: string;
+  sequence?: number;
+  panelId?: string;
+  draftLength?: number;
+  trimmedDraftLength?: number;
+  serializedTextLength?: number;
+  attachmentCount?: number;
+  snippetMentionCount?: number;
+  snippetProvenanceCount?: number;
+  isEdit?: boolean;
+}
+
+export interface RendererTelemetryRequest {
+  eventName: string;
+  level?: AppLogLevel;
+  message?: string;
+  target?: PromptTarget;
+  panelId?: string;
+  correlationId?: string;
+  details?: Record<string, unknown>;
+  error?: {
+    name?: string;
+    message: string;
+    stack?: string;
+  };
+}
+
+export interface RendererTelemetryResponse {
+  ok: true;
+}
+
 export interface SendPromptRequest {
   messages: Message[];
   provider?: string;
@@ -525,11 +561,13 @@ export interface SendPromptRequest {
   target: PromptTarget;
   systemPrompt?: string;
   queueOnly?: boolean;
+  clientSubmission?: PromptClientSubmissionMetadata;
 }
 
 export interface SendPromptResponse {
   target: PromptTarget;
   queued?: boolean;
+  queuedMessageId?: string;
   snapshot?: ConversationSurfaceSnapshot;
 }
 
@@ -2031,6 +2069,10 @@ export interface ChatRPCSchema {
       sendPrompt: {
         params: WorkspaceScoped<SendPromptRequest>;
         response: SendPromptResponse;
+      };
+      recordRendererTelemetry: {
+        params: WorkspaceScoped<RendererTelemetryRequest>;
+        response: RendererTelemetryResponse;
       };
       updateComposerDraft: {
         params: WorkspaceScoped<UpdateComposerDraftRequest>;

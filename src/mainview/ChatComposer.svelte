@@ -47,7 +47,11 @@
 	import type { QueuedPrompt } from "./chat-runtime";
 	import type { AgentContextActor, ExtensionUsageControlItem } from "./agents-pane-extension-usage";
 	import type { ExtensionUsageState } from "../shared/extensions";
-	import type { ComposerAttachment, ComposerDraft } from "../shared/workspace-contract";
+	import type {
+		ComposerAttachment,
+		ComposerDraft,
+		PromptClientSubmissionMetadata,
+	} from "../shared/workspace-contract";
 	import type {
 		ComposerSnippetMention,
 		SentSnippetProvenance,
@@ -60,6 +64,28 @@
 		snippetMentions?: ComposerSnippetMention[];
 		snippetProvenance?: SentSnippetProvenance[];
 		editMessageTimestamp?: string | number;
+		telemetryCorrelationId?: string;
+		clientSubmission?: PromptClientSubmissionMetadata;
+	};
+
+	export type ComposerSubmitTelemetryEvent = {
+		eventName:
+			| "composer.submit.blocked"
+			| "composer.submit.accepted"
+			| "composer.submit.serialized"
+			| "composer.submit.sent"
+			| "composer.submit.rejected"
+			| "composer.submit.failed";
+		correlationId: string;
+		level: "debug" | "info" | "warn" | "error";
+		message: string;
+		details: Record<string, unknown>;
+		clientSubmission?: PromptClientSubmissionMetadata;
+		error?: {
+			name?: string;
+			message: string;
+			stack?: string;
+		};
 	};
 
 	export type ComposerEditDraft = {
@@ -92,6 +118,7 @@
 		onModelChange: (model: Model<any>) => void;
 		onSend: (input: ComposerSubmit) => Promise<boolean> | boolean;
 		onStop: () => Promise<void> | void;
+		onTelemetry?: (event: ComposerSubmitTelemetryEvent) => void;
 		onDraftChange?: (draft: {
 			text: string;
 			attachments: ComposerAttachment[];
@@ -138,6 +165,7 @@
 		onModelChange,
 		onSend,
 		onStop,
+		onTelemetry = () => {},
 		onDraftChange = () => {},
 		onBufferChange = () => {},
 		onEditQueuedMessage = () => {},
@@ -186,6 +214,7 @@
 	let loadedComposerDraftKey = $state<string | null>(null);
 	let lastPersistedDraftPayloadKey = $state<string | null>(null);
 	let draftPersistenceReady = $state(false);
+	let submitTelemetrySequence = 0;
 	const modelValue = $derived(currentModel ? `${currentModel.provider}:${currentModel.id}` : "no-surface");
 	const availableThinkingLevels = $derived.by(() => {
 		if (!currentModel) return [thinkingLevel];
@@ -205,6 +234,91 @@
 			arguments: [...mention.arguments],
 			metadata: { ...mention.metadata },
 		}));
+	}
+
+	function createSubmitTelemetryCorrelationId(): string {
+		submitTelemetrySequence += 1;
+		return `composer-submit-${Date.now().toString(36)}-${submitTelemetrySequence}`;
+	}
+
+	function normalizeTelemetryError(error: unknown): ComposerSubmitTelemetryEvent["error"] {
+		if (error instanceof Error) {
+			return {
+				name: error.name || undefined,
+				message: error.message || "Unknown error",
+				stack: error.stack,
+			};
+		}
+		return { message: typeof error === "string" ? error : "Unknown error" };
+	}
+
+	function attachmentKindCounts(input: readonly ComposerAttachment[]): Record<string, number> {
+		return input.reduce<Record<string, number>>((counts, attachment) => {
+			counts[attachment.kind] = (counts[attachment.kind] ?? 0) + 1;
+			return counts;
+		}, {});
+	}
+
+	function composerSubmitTelemetryDetails(extra: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			surfacePiSessionId: draftStorageKey,
+			draftLength: draft.length,
+			trimmedDraftLength: draft.trim().length,
+			attachmentCount: attachments.length,
+			attachmentKindCounts: attachmentKindCounts(attachments),
+			snippetMentionCount: snippetMentions.length,
+			isEdit: editDraft?.messageTimestamp !== undefined,
+			canSubmit,
+			isSubmitting,
+			...extra,
+		};
+	}
+
+	function createSubmissionMetadata(input: {
+		correlationId: string;
+		text: string;
+		visibleDraft: string;
+		attachments: readonly ComposerAttachment[];
+		snippetMentions: readonly ComposerSnippetMention[];
+		snippetProvenance: readonly SentSnippetProvenance[];
+		isEdit: boolean;
+	}): PromptClientSubmissionMetadata {
+		return {
+			submissionId: input.correlationId,
+			correlationId: input.correlationId,
+			clientRequestId: input.correlationId,
+			source: "surface-composer",
+			submittedAt: new Date().toISOString(),
+			sequence: submitTelemetrySequence,
+			draftLength: input.visibleDraft.length,
+			trimmedDraftLength: input.visibleDraft.trim().length,
+			serializedTextLength: input.text.length,
+			attachmentCount: input.attachments.length,
+			snippetMentionCount: input.snippetMentions.length,
+			snippetProvenanceCount: input.snippetProvenance.length,
+			isEdit: input.isEdit,
+		};
+	}
+
+	function submissionTelemetryDetails(
+		clientSubmission: PromptClientSubmissionMetadata,
+		extra: Record<string, unknown> = {},
+	): Record<string, unknown> {
+		return {
+			surfacePiSessionId: draftStorageKey,
+			draftLength: clientSubmission.draftLength ?? 0,
+			trimmedDraftLength: clientSubmission.trimmedDraftLength ?? 0,
+			serializedTextLength: clientSubmission.serializedTextLength ?? 0,
+			attachmentCount: clientSubmission.attachmentCount ?? 0,
+			snippetMentionCount: clientSubmission.snippetMentionCount ?? 0,
+			snippetProvenanceCount: clientSubmission.snippetProvenanceCount ?? 0,
+			isEdit: clientSubmission.isEdit ?? false,
+			...extra,
+		};
+	}
+
+	function emitSubmitTelemetry(event: ComposerSubmitTelemetryEvent): void {
+		onTelemetry(event);
 	}
 	const visibleModelOptions = $derived.by<CompactComboboxOption[]>(() => {
 		if (!currentModel) return [{ value: "no-surface", label: "No surface", disabled: true }];
@@ -657,13 +771,55 @@
 	}
 
 	async function submit() {
-		if (!canSubmit || isSubmitting) return;
+		if (!canSubmit || isSubmitting) {
+			const correlationId = createSubmitTelemetryCorrelationId();
+			emitSubmitTelemetry({
+				eventName: "composer.submit.blocked",
+				correlationId,
+				level: "debug",
+				message: "Composer submit blocked before send.",
+				details: composerSubmitTelemetryDetails({
+					reason: !canSubmit ? "empty-draft" : "already-submitting",
+				}),
+			});
+			return;
+		}
+		const correlationId = createSubmitTelemetryCorrelationId();
+		emitSubmitTelemetry({
+			eventName: "composer.submit.accepted",
+			correlationId,
+			level: "debug",
+			message: "Composer submit accepted.",
+			details: composerSubmitTelemetryDetails(),
+		});
 		const editingMessageTimestamp = editDraft?.messageTimestamp;
 		const serialized = serializeComposerDraft(draft, snippetMentions);
 		const nextDraft = serialized.text;
 		const nextVisibleDraft = draft;
 		const nextAttachments = attachments;
 		const nextSnippetMentions = snippetMentions;
+		const clientSubmission = createSubmissionMetadata({
+			correlationId,
+			text: nextDraft,
+			visibleDraft: nextVisibleDraft,
+			attachments: nextAttachments,
+			snippetMentions: nextSnippetMentions,
+			snippetProvenance: serialized.snippetProvenance,
+			isEdit: editingMessageTimestamp !== undefined,
+		});
+		emitSubmitTelemetry({
+			eventName: "composer.submit.serialized",
+			correlationId,
+			level: "debug",
+			message: "Composer submit serialized draft.",
+			clientSubmission,
+			details: submissionTelemetryDetails(clientSubmission, {
+				serializedTrimmedTextLength: nextDraft.trim().length,
+				submittedAttachmentCount: nextAttachments.length,
+				submittedAttachmentKindCounts: attachmentKindCounts(nextAttachments),
+				submittedSnippetMentionCount: nextSnippetMentions.length,
+			}),
+		});
 		draft = "";
 		attachments = [];
 		snippetMentions = [];
@@ -676,19 +832,46 @@
 				snippetMentions: nextSnippetMentions,
 				snippetProvenance: serialized.snippetProvenance,
 				editMessageTimestamp: editingMessageTimestamp,
+				telemetryCorrelationId: correlationId,
+				clientSubmission,
 			});
 			if (sent) {
+				emitSubmitTelemetry({
+					eventName: "composer.submit.sent",
+					correlationId,
+					level: "info",
+					message: "Composer submit completed.",
+					clientSubmission,
+					details: submissionTelemetryDetails(clientSubmission),
+				});
 				resetHistoryNavigation();
 				if (editingMessageTimestamp !== undefined) {
 					loadedEditDraftKey = null;
 					onCancelEditMessage();
 				}
 			} else {
+				emitSubmitTelemetry({
+					eventName: "composer.submit.rejected",
+					correlationId,
+					level: "warn",
+					message: "Composer submit was rejected by the surface host.",
+					clientSubmission,
+					details: submissionTelemetryDetails(clientSubmission),
+				});
 				await restoreDraftBuffer(nextVisibleDraft);
 				attachments = nextAttachments;
 				snippetMentions = nextSnippetMentions;
 			}
-		} catch {
+		} catch (error) {
+			emitSubmitTelemetry({
+				eventName: "composer.submit.failed",
+				correlationId,
+				level: "error",
+				message: "Composer submit failed before the draft could be handed off.",
+				clientSubmission,
+				details: submissionTelemetryDetails(clientSubmission),
+				error: normalizeTelemetryError(error),
+			});
 			await restoreDraftBuffer(nextVisibleDraft);
 			attachments = nextAttachments;
 			snippetMentions = nextSnippetMentions;

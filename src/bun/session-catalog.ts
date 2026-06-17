@@ -32,6 +32,7 @@ import type {
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
+  PromptClientSubmissionMetadata,
   QueuedSurfaceMessage,
   SetExtensionContextAutoUpdateRequest,
   SurfaceStreamPatch,
@@ -220,6 +221,137 @@ const byTimestampDesc = (
   right: string | null | undefined,
 ): number => new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
 
+function telemetryString(value: unknown, maxLength = 256): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.slice(0, maxLength);
+}
+
+function telemetryNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export function normalizePromptClientSubmissionMetadata(
+  metadata: PromptClientSubmissionMetadata | undefined,
+): PromptClientSubmissionMetadata | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+  const normalized: PromptClientSubmissionMetadata = {
+    submissionId: telemetryString(metadata.submissionId),
+    correlationId: telemetryString(metadata.correlationId),
+    clientRequestId: telemetryString(metadata.clientRequestId),
+    source: telemetryString(metadata.source, 96),
+    submittedAt: telemetryString(metadata.submittedAt, 64),
+    sequence: telemetryNumber(metadata.sequence),
+    panelId: telemetryString(metadata.panelId, 128),
+    draftLength: telemetryNumber(metadata.draftLength),
+    trimmedDraftLength: telemetryNumber(metadata.trimmedDraftLength),
+    serializedTextLength: telemetryNumber(metadata.serializedTextLength),
+    attachmentCount: telemetryNumber(metadata.attachmentCount),
+    snippetMentionCount: telemetryNumber(metadata.snippetMentionCount),
+    snippetProvenanceCount: telemetryNumber(metadata.snippetProvenanceCount),
+    isEdit: typeof metadata.isEdit === "boolean" ? metadata.isEdit : undefined,
+  };
+  const compact = Object.fromEntries(
+    Object.entries(normalized).filter(([, value]) => value !== undefined),
+  ) as PromptClientSubmissionMetadata;
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
+export function promptClientSubmissionLogDetails(
+  metadata: PromptClientSubmissionMetadata | undefined,
+): Record<string, unknown> {
+  const normalized = normalizePromptClientSubmissionMetadata(metadata);
+  if (!normalized) {
+    return {};
+  }
+  return {
+    ...(normalized.submissionId ? { clientSubmissionId: normalized.submissionId } : {}),
+    ...(normalized.correlationId ? { clientCorrelationId: normalized.correlationId } : {}),
+    ...(normalized.clientRequestId ? { clientRequestId: normalized.clientRequestId } : {}),
+    ...(normalized.source ? { clientSubmissionSource: normalized.source } : {}),
+    ...(normalized.submittedAt ? { clientSubmittedAt: normalized.submittedAt } : {}),
+    ...(normalized.sequence !== undefined ? { clientSubmissionSequence: normalized.sequence } : {}),
+    ...(normalized.panelId ? { clientPanelId: normalized.panelId } : {}),
+    ...(normalized.draftLength !== undefined ? { draftLength: normalized.draftLength } : {}),
+    ...(normalized.trimmedDraftLength !== undefined
+      ? { trimmedDraftLength: normalized.trimmedDraftLength }
+      : {}),
+    ...(normalized.serializedTextLength !== undefined
+      ? { serializedTextLength: normalized.serializedTextLength }
+      : {}),
+    ...(normalized.attachmentCount !== undefined
+      ? { attachmentCount: normalized.attachmentCount }
+      : {}),
+    ...(normalized.snippetMentionCount !== undefined
+      ? { snippetMentionCount: normalized.snippetMentionCount }
+      : {}),
+    ...(normalized.snippetProvenanceCount !== undefined
+      ? { snippetProvenanceCount: normalized.snippetProvenanceCount }
+      : {}),
+    ...(normalized.isEdit !== undefined ? { isEdit: normalized.isEdit } : {}),
+  };
+}
+
+export function summarizePromptMessagesForTelemetry(messages: readonly Message[]): {
+  messageCount: number;
+  userMessageCount: number;
+  textBlockCount: number;
+  imageCount: number;
+} {
+  let userMessageCount = 0;
+  let textBlockCount = 0;
+  let imageCount = 0;
+  for (const message of messages) {
+    if (message.role !== "user") {
+      continue;
+    }
+    userMessageCount += 1;
+    if (typeof message.content === "string") {
+      if (message.content.trim()) {
+        textBlockCount += 1;
+      }
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type === "text") {
+        if (block.text.trim()) {
+          textBlockCount += 1;
+        }
+      } else if (block.type === "image") {
+        imageCount += 1;
+      }
+    }
+  }
+  return {
+    messageCount: messages.length,
+    userMessageCount,
+    textBlockCount,
+    imageCount,
+  };
+}
+
+function isPromptTelemetrySummary(
+  value: unknown,
+): value is ReturnType<typeof summarizePromptMessagesForTelemetry> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<ReturnType<typeof summarizePromptMessagesForTelemetry>>;
+  return (
+    telemetryNumber(candidate.messageCount) !== undefined &&
+    telemetryNumber(candidate.userMessageCount) !== undefined &&
+    telemetryNumber(candidate.textBlockCount) !== undefined &&
+    telemetryNumber(candidate.imageCount) !== undefined
+  );
+}
+
 type ManagedActorKind = SvvyActorKind | "namer";
 
 interface ManagedSession {
@@ -271,11 +403,14 @@ export interface SendAgentPromptOptions {
   onEvent?: (event: AssistantMessageEvent) => void;
   queueOnly?: boolean;
   queuedMessageId?: string | null;
+  clientSubmission?: PromptClientSubmissionMetadata;
+  promptTelemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
 }
 
 export interface SendAgentPromptResult {
   target: PromptTarget;
   queued?: boolean;
+  queuedMessageId?: string;
   snapshot?: ConversationSurfaceSnapshot;
 }
 
@@ -327,6 +462,11 @@ interface RequestUserInputAnswerDeliveryPayload {
   question: string;
   originalAnswer: StructuredRequestUserInputAnswer;
   userAnswer: StructuredRequestUserInputAnswer;
+}
+
+interface UserPromptQueuePayload {
+  clientSubmission?: PromptClientSubmissionMetadata;
+  telemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
 }
 
 interface CreateManagedSessionOptions {
@@ -1442,6 +1582,7 @@ export class WorkspaceSessionCatalog {
     return {
       target: structuredClone(queued.target),
       queued: true,
+      queuedMessageId: queued.queuedMessageId,
       snapshot,
     };
   }
@@ -3910,15 +4051,83 @@ export class WorkspaceSessionCatalog {
       throw new Error("No user message to queue.");
     }
 
+    const clientSubmission = normalizePromptClientSubmissionMetadata(options.clientSubmission);
+    const telemetry = summarizePromptMessagesForTelemetry(options.messages);
+    const queuePayload: UserPromptQueuePayload = {
+      ...(clientSubmission ? { clientSubmission } : {}),
+      telemetry,
+    };
     const queued = this.structuredSessionStore.enqueueSurfaceMessage({
       sessionId: options.target.workspaceSessionId,
       surfacePiSessionId: options.target.surfacePiSessionId,
       threadId: options.target.threadId ?? null,
       messageJson: JSON.stringify(message),
+      payloadJson: JSON.stringify(queuePayload),
       requestSummary: summarizePromptForTurn(text),
+    });
+    this.emitPromptQueueLog("Prompt queued for surface delivery.", {
+      target: options.target,
+      queuedMessageId: queued.id,
+      queueStatus: queued.status,
+      queueKind: queued.kind,
+      provider: options.provider,
+      model: options.model,
+      telemetry,
+      clientSubmission,
     });
 
     return { target: structuredClone(options.target), queuedMessageId: queued.id };
+  }
+
+  private parseUserPromptQueuePayload(
+    message: StructuredSurfaceQueuedMessageRecord,
+  ): UserPromptQueuePayload | null {
+    if (!message.payloadJson) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(message.payloadJson) as Partial<UserPromptQueuePayload>;
+      return {
+        clientSubmission: normalizePromptClientSubmissionMetadata(payload.clientSubmission),
+        telemetry: isPromptTelemetrySummary(payload.telemetry) ? payload.telemetry : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private emitPromptQueueLog(
+    message: string,
+    input: {
+      target: PromptTarget;
+      queuedMessageId: string;
+      queueKind: string;
+      queueStatus: string;
+      provider: string;
+      model: string;
+      telemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
+      clientSubmission?: PromptClientSubmissionMetadata;
+      reason?: string;
+    },
+  ): void {
+    this.emitAppLog({
+      level: "info",
+      source: "prompt",
+      message,
+      details: {
+        queuedMessageId: input.queuedMessageId,
+        queueKind: input.queueKind,
+        queueStatus: input.queueStatus,
+        model: input.model,
+        provider: input.provider,
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...input.telemetry,
+        ...promptClientSubmissionLogDetails(input.clientSubmission),
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId,
+      },
+    });
   }
 
   private async queueThreadReportNotification(
@@ -5356,6 +5565,25 @@ export class WorkspaceSessionCatalog {
               session.lastPromptRestoredQueueItem = true;
             }
           }
+          const settledQueued = this.structuredSessionStore.getSurfaceQueuedMessage({
+            id: options.queuedMessageId,
+          });
+          this.emitPromptQueueLog("Prompt queue delivery settled.", {
+            target: options.target,
+            queuedMessageId: options.queuedMessageId,
+            queueKind: settledQueued.kind,
+            queueStatus: settledQueued.status,
+            provider: options.provider,
+            model: options.model,
+            telemetry:
+              options.promptTelemetry ?? summarizePromptMessagesForTelemetry(options.messages),
+            clientSubmission: options.clientSubmission,
+            reason: suppressQueuedDrain
+              ? "cancelled"
+              : session.lastPromptRestoredQueueItem
+                ? "restored"
+                : "settled",
+          });
         }
         this.syncManagedState(session);
         this.syncGeneratedAgentContextBindingForTarget(options.target, session);
@@ -5483,6 +5711,7 @@ export class WorkspaceSessionCatalog {
     }
 
     let message: Message;
+    let userPromptQueuePayload: UserPromptQueuePayload | null = null;
     if (queued.kind === "thread_report_notification") {
       try {
         const prompt = this.buildThreadReportNotificationQueuedPrompt(queued);
@@ -5538,6 +5767,7 @@ export class WorkspaceSessionCatalog {
       }
     } else {
       try {
+        userPromptQueuePayload = this.parseUserPromptQueuePayload(queued);
         message = JSON.parse(queued.messageJson) as Message;
       } catch (error) {
         return this.failQueuedSurfaceDelivery(
@@ -5564,7 +5794,20 @@ export class WorkspaceSessionCatalog {
         thinkingLevel: session.thinkingLevel,
         messages: [...convertToLlmMessages(session.session.agent.state.messages), message],
         queuedMessageId: queued.id,
+        clientSubmission: userPromptQueuePayload?.clientSubmission,
+        promptTelemetry:
+          userPromptQueuePayload?.telemetry ?? summarizePromptMessagesForTelemetry([message]),
       };
+      this.emitPromptQueueLog("Prompt queue delivery started.", {
+        target: currentTarget,
+        queuedMessageId: queued.id,
+        queueKind: queued.kind,
+        queueStatus: queued.status,
+        provider: promptOptions.provider,
+        model: promptOptions.model,
+        telemetry: promptOptions.promptTelemetry,
+        clientSubmission: promptOptions.clientSubmission,
+      });
       const promptExecution = this.createPromptExecutionContext(session, promptOptions);
       if (
         (queued.kind === "thread_followup" || queued.kind === "report_request") &&

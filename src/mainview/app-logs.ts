@@ -85,10 +85,10 @@ export function filterAppLogEntries(
 export type AppLogLiveMode = "live" | "frozen";
 
 export function mergeAppLogEntries(current: AppLogEntry[], incoming: AppLogEntry[]): AppLogEntry[] {
-  const bySeq = new Map<number, AppLogEntry>();
-  for (const entry of current) bySeq.set(entry.seq, entry);
-  for (const entry of incoming) bySeq.set(entry.seq, entry);
-  return [...bySeq.values()].toSorted((a, b) => a.seq - b.seq);
+  const byId = new Map<string, AppLogEntry>();
+  for (const entry of current) byId.set(entry.id, entry);
+  for (const entry of incoming) byId.set(entry.id, entry);
+  return [...byId.values()].toSorted((a, b) => a.seq - b.seq || a.id.localeCompare(b.id));
 }
 
 export function applyAppLogLiveUpdate({

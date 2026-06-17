@@ -11,6 +11,7 @@ import {
   type ConversationSurfaceSnapshot,
   type ExtensionCliRequirementActionUpdateMessage,
   type PromptTarget,
+  type RendererTelemetryRequest,
   type RequestUserInputAnswerRequest,
   type SendPromptRequest,
   type SetRequestUserInputTimerPausedRequest,
@@ -99,6 +100,7 @@ type FakeRpcHarness = {
   openedTargets: PromptTarget[];
   closeRequests: PromptTarget[];
   promptRequests: SendPromptRequest[];
+  rendererTelemetryRequests: Array<WorkspaceScoped<RendererTelemetryRequest>>;
   modelUpdates: Array<{ target: PromptTarget; model: string }>;
   thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }>;
   cancelRequests: PromptTarget[];
@@ -653,6 +655,7 @@ function createFakeRpc(input: {
   const openedTargets: PromptTarget[] = [];
   const closeRequests: PromptTarget[] = [];
   const promptRequests: SendPromptRequest[] = [];
+  const rendererTelemetryRequests: Array<WorkspaceScoped<RendererTelemetryRequest>> = [];
   const modelUpdates: Array<{ target: PromptTarget; model: string }> = [];
   const thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }> = [];
   const cancelRequests: PromptTarget[] = [];
@@ -1721,6 +1724,10 @@ function createFakeRpc(input: {
 
           return { target: cloneTarget(request.target) };
         },
+        recordRendererTelemetry: async (request) => {
+          rendererTelemetryRequests.push(structuredClone(request));
+          return { ok: true };
+        },
         editCommittedUserMessage: async ({ target, messageTimestamp, message, workspaceId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
           const messages = record.snapshot.messages as AgentMessage[];
@@ -2127,6 +2134,7 @@ function createFakeRpc(input: {
     openedTargets,
     closeRequests,
     promptRequests,
+    rendererTelemetryRequests,
     modelUpdates,
     thoughtLevelUpdates,
     cancelRequests,
@@ -5259,6 +5267,92 @@ describe("createChatRuntime", () => {
     await runtime.markAppLogsSeen(1);
     expect(harness.appLogSeenRequests).toEqual([1]);
     expect(runtime.appLogSummary.unread.total).toBe(0);
+
+    runtime.dispose();
+  });
+
+  it("records renderer send telemetry as local structured app logs", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    runtime.recordRendererTelemetry({
+      eventName: "surface_composer.send.failed",
+      correlationId: "composer-submit-test-1",
+      level: "error",
+      message: "Surface composer send failed before backend handoff completed.",
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
+      details: {
+        panelId: "primary",
+        textLength: 42,
+        trimmedTextLength: 40,
+        attachmentCount: 1,
+        snippetMentionCount: 2,
+      },
+      error: {
+        name: "Error",
+        message: "focus failed",
+      },
+    });
+
+    expect(runtime.appLogSummary.unread.error).toBe(1);
+    const logs = await runtime.getAppLogs({ sources: ["renderer"] });
+    expect(logs.entries).toHaveLength(1);
+    expect(logs.entries[0]).toMatchObject({
+      level: "error",
+      source: "renderer",
+      message: "Surface composer send failed before backend handoff completed.",
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
+      details: {
+        eventName: "surface_composer.send.failed",
+        correlationId: "composer-submit-test-1",
+        panelId: "primary",
+        textLength: 42,
+        trimmedTextLength: 40,
+        attachmentCount: 1,
+        snippetMentionCount: 2,
+      },
+      error: {
+        name: "Error",
+        message: "focus failed",
+      },
+    });
+    await Promise.resolve();
+    expect(harness.rendererTelemetryRequests).toHaveLength(1);
+    expect(harness.rendererTelemetryRequests[0]).toMatchObject({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      eventName: "surface_composer.send.failed",
+      level: "error",
+      message: "Surface composer send failed before backend handoff completed.",
+      correlationId: "composer-submit-test-1",
+      target: {
+        workspaceSessionId: "session-1",
+        surface: "orchestrator",
+        surfacePiSessionId: "session-1",
+      },
+      details: {
+        panelId: "primary",
+        textLength: 42,
+      },
+      error: {
+        name: "Error",
+        message: "focus failed",
+      },
+    });
+
+    await runtime.markAppLogsSeen(runtime.appLogSummary.latestSeq);
+    expect(harness.appLogSeenRequests).toEqual([]);
+    expect(runtime.appLogSummary.unread.error).toBe(0);
 
     runtime.dispose();
   });

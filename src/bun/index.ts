@@ -53,7 +53,13 @@ import {
 } from "./auth-store";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import { getSvvyAgentDir, type SessionDefaults } from "./session-catalog";
+import {
+  getSvvyAgentDir,
+  normalizePromptClientSubmissionMetadata,
+  promptClientSubmissionLogDetails,
+  summarizePromptMessagesForTelemetry,
+  type SessionDefaults,
+} from "./session-catalog";
 import {
   buildWorkflowsGeneratedPackage,
   getWorkflowsSourceRoot,
@@ -2334,6 +2340,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
         const runtime = getWorkspaceRuntime(payload);
         const resolved = resolveSendDefaults(runtime, payload);
+        const clientSubmission = normalizePromptClientSubmissionMetadata(payload.clientSubmission);
+        const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
+        const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
 
         if (supportsOAuth(resolved.provider)) {
           await refreshIfNeeded(resolved.provider);
@@ -2347,6 +2356,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             "Configured provider is not connected for prompt.",
             {
               provider: resolved.provider,
+              ...promptCorrelationDetails,
               workspaceSessionId: payload.target.workspaceSessionId,
               surfacePiSessionId: payload.target.surfacePiSessionId,
               threadId: payload.target.threadId,
@@ -2362,22 +2372,27 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         let surfacePiSessionId = payload.target.surfacePiSessionId;
 
         recordDevBrowserToolsEvent("prompt.requested", {
-          messageCount: payload.messages.length,
+          ...promptTelemetry,
+          ...promptCorrelationDetails,
           model: model.id,
           provider: resolved.provider,
+          queueOnly: payload.queueOnly ?? false,
           requestedSurfacePiSessionId: payload.target.surfacePiSessionId,
           requestedWorkspaceSessionId: payload.target.workspaceSessionId,
           requestedThreadId: payload.target.threadId ?? null,
         });
         runtime.appLog.info("prompt", "Prompt requested.", {
-          messageCount: payload.messages.length,
+          ...promptTelemetry,
+          ...promptCorrelationDetails,
           model: model.id,
           provider: resolved.provider,
+          queueOnly: payload.queueOnly ?? false,
           workspaceSessionId: payload.target.workspaceSessionId,
           surfacePiSessionId: payload.target.surfacePiSessionId,
           threadId: payload.target.threadId,
         });
 
+        let queuedMessageId: string | undefined;
         const session = await runtime.catalog.sendPrompt({
           target: payload.target,
           provider: resolved.provider,
@@ -2385,9 +2400,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           thinkingLevel: resolved.reasoningEffort,
           messages: payload.messages,
           queueOnly: payload.queueOnly ?? false,
+          clientSubmission,
+          promptTelemetry,
           onEvent: (event) => {
             if (event.type === "start") {
               recordDevBrowserToolsEvent("prompt.started", {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 surfacePiSessionId,
@@ -2395,6 +2415,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                 threadId: payload.target.threadId ?? null,
               });
               runtime.appLog.info("prompt", "Prompt started.", {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 workspaceSessionId: payload.target.workspaceSessionId,
@@ -2403,6 +2426,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
               });
             } else if (event.type === "done") {
               recordDevBrowserToolsEvent("prompt.finished", {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 reason: event.reason,
@@ -2411,6 +2437,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                 threadId: payload.target.threadId ?? null,
               });
               runtime.appLog.info("prompt", "Prompt finished.", {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 reason: event.reason,
@@ -2423,6 +2452,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                 event.error.content.find((block) => block.type === "text")?.text ||
                 "Prompt failed.";
               recordDevBrowserToolsEvent("prompt.failed", {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 reason: event.reason,
@@ -2431,6 +2463,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                 threadId: payload.target.threadId ?? null,
               });
               runtime.appLog.error("prompt", message, {
+                ...promptTelemetry,
+                ...promptCorrelationDetails,
+                queuedMessageId,
                 model: model.id,
                 provider: resolved.provider,
                 reason: event.reason,
@@ -2443,6 +2478,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
 
         surfacePiSessionId = session.target.surfacePiSessionId;
+        queuedMessageId = session.queuedMessageId;
         runtime.appLog.info(
           "prompt",
           session.queued ? "Prompt queued for active surface." : "Prompt dispatched to pi runtime.",
@@ -2450,6 +2486,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             model: model.id,
             provider: resolved.provider,
             queued: session.queued ?? false,
+            queuedMessageId: session.queuedMessageId,
+            ...promptTelemetry,
+            ...promptCorrelationDetails,
             surfacePiSessionId,
             workspaceSessionId: session.target.workspaceSessionId,
             threadId: session.target.threadId,
@@ -2457,9 +2496,43 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         );
         return session;
       },
+      recordRendererTelemetry: async (payload) => {
+        const runtime = getWorkspaceRuntime(payload);
+        const level = payload.level ?? "debug";
+        const details = {
+          eventName: payload.eventName,
+          correlationId: payload.correlationId ?? null,
+          panelId: payload.panelId ?? null,
+          ...payload.details,
+          workspaceSessionId: payload.target?.workspaceSessionId,
+          surfacePiSessionId: payload.target?.surfacePiSessionId,
+          surface: payload.target?.surface,
+          threadId: payload.target?.threadId,
+        };
+        recordDevBrowserToolsEvent(`renderer.${payload.eventName}`, {
+          level,
+          ...details,
+          errorName: payload.error?.name,
+          errorMessage: payload.error?.message,
+        });
+        const message = payload.message ?? `Renderer telemetry: ${payload.eventName}`;
+        if (level === "error") {
+          runtime.appLog.error("renderer", message, payload.error, details);
+        } else if (level === "warn") {
+          runtime.appLog.warning("renderer", message, details);
+        } else if (level === "info") {
+          runtime.appLog.info("renderer", message, details);
+        } else {
+          runtime.appLog.debug("renderer", message, details);
+        }
+        return { ok: true };
+      },
       steerPrompt: async (payload): Promise<SendPromptResponse> => {
         const runtime = getWorkspaceRuntime(payload);
         const resolved = resolveSendDefaults(runtime, payload);
+        const clientSubmission = normalizePromptClientSubmissionMetadata(payload.clientSubmission);
+        const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
+        const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
 
         if (supportsOAuth(resolved.provider)) {
           await refreshIfNeeded(resolved.provider);
@@ -2473,6 +2546,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             "Configured provider is not connected for prompt steering.",
             {
               provider: resolved.provider,
+              ...promptCorrelationDetails,
               workspaceSessionId: payload.target.workspaceSessionId,
               surfacePiSessionId: payload.target.surfacePiSessionId,
               threadId: payload.target.threadId,
@@ -2486,7 +2560,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           resolved.model as Parameters<typeof getModel>[1],
         );
         recordDevBrowserToolsEvent("prompt.steer.requested", {
-          messageCount: payload.messages.length,
+          ...promptTelemetry,
+          ...promptCorrelationDetails,
           model: model.id,
           provider: resolved.provider,
           requestedSurfacePiSessionId: payload.target.surfacePiSessionId,
@@ -2494,7 +2569,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           requestedThreadId: payload.target.threadId ?? null,
         });
         runtime.appLog.info("prompt", "Prompt steer requested.", {
-          messageCount: payload.messages.length,
+          ...promptTelemetry,
+          ...promptCorrelationDetails,
           model: model.id,
           provider: resolved.provider,
           workspaceSessionId: payload.target.workspaceSessionId,
@@ -2508,11 +2584,16 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           model: model.id,
           thinkingLevel: resolved.reasoningEffort,
           messages: payload.messages,
+          clientSubmission,
+          promptTelemetry,
         });
 
         runtime.appLog.info("prompt", "Prompt steer dispatched to pi runtime.", {
           model: model.id,
           provider: resolved.provider,
+          queuedMessageId: session.queuedMessageId,
+          ...promptTelemetry,
+          ...promptCorrelationDetails,
           surfacePiSessionId: session.target.surfacePiSessionId,
           workspaceSessionId: session.target.workspaceSessionId,
           threadId: session.target.threadId,

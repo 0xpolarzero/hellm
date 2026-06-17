@@ -4,6 +4,7 @@
 		ComposerEditDraft,
 		ComposerModelOption,
 		ComposerSubmit,
+		ComposerSubmitTelemetryEvent,
 	} from "./ChatComposer.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
   import RelatedInspectorPane from "./RelatedInspectorPane.svelte";
@@ -291,22 +292,179 @@
     return { kind: "split" as const, panelId, direction: "right" as const };
   }
 
-	async function send(input: ComposerSubmit): Promise<boolean> {
-		if (!controller || (!input.text.trim() && input.attachments.length === 0)) return false;
-		await runtime.focusPane(panelId);
-		if (input.editMessageTimestamp !== undefined) {
-			await controller.editCommittedUserMessage(input.editMessageTimestamp, input);
-		} else {
-			await controller.sendPrompt(input);
-		}
-		promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
-		return true;
-	}
+  function normalizeTelemetryError(error: unknown): {
+    name?: string;
+    message: string;
+    stack?: string;
+  } {
+    if (error instanceof Error) {
+      return {
+        name: error.name || undefined,
+        message: error.message || "Unknown error",
+        stack: error.stack,
+      };
+    }
+    return { message: typeof error === "string" ? error : "Unknown error" };
+  }
 
-	async function stopAgent(): Promise<void> {
-		if (!controller) return;
-		await controller.abort();
-	}
+  function composerSubmitInputTelemetry(input: ComposerSubmit): Record<string, unknown> {
+    const attachmentKindCounts = input.attachments.reduce<Record<string, number>>(
+      (counts, attachment) => {
+        counts[attachment.kind] = (counts[attachment.kind] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+    return {
+      textLength: input.text.length,
+      trimmedTextLength: input.text.trim().length,
+      attachmentCount: input.attachments.length,
+      attachmentKindCounts,
+      snippetMentionCount: input.snippetMentions?.length ?? 0,
+      snippetProvenanceCount: input.snippetProvenance?.length ?? 0,
+      isEdit: input.editMessageTimestamp !== undefined,
+    };
+  }
+
+  function surfaceSendTelemetryDetails(
+    input: ComposerSubmit,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      panelId,
+      workspaceId: runtime.workspaceId,
+      workspaceSessionId: controller?.target.workspaceSessionId ?? null,
+      surfacePiSessionId: controller?.target.surfacePiSessionId ?? null,
+      surface: controller?.target.surface ?? null,
+      threadId: controller?.target.threadId ?? null,
+      promptStatus: controller?.promptStatus ?? null,
+      queuedMessageCount: controller?.queuedPrompts.length ?? null,
+      ownerPaneCount: controller?.ownerPaneIds.length ?? null,
+      ...composerSubmitInputTelemetry(input),
+      ...extra,
+    };
+  }
+
+  function recordComposerTelemetry(event: ComposerSubmitTelemetryEvent): void {
+    runtime.recordRendererTelemetry({
+      ...event,
+      workspaceId: runtime.workspaceId,
+      workspaceSessionId: controller?.target.workspaceSessionId,
+      surfacePiSessionId: controller?.target.surfacePiSessionId,
+      threadId: controller?.target.threadId,
+    });
+  }
+
+  async function send(input: ComposerSubmit): Promise<boolean> {
+    const correlationId =
+      input.telemetryCorrelationId ?? `dockview-send-${Date.now().toString(36)}`;
+    runtime.recordRendererTelemetry({
+      eventName: "surface_composer.send.started",
+      correlationId,
+      level: "debug",
+      source: "renderer",
+      message: "Surface composer send started.",
+      workspaceId: runtime.workspaceId,
+      workspaceSessionId: controller?.target.workspaceSessionId,
+      surfacePiSessionId: controller?.target.surfacePiSessionId,
+      threadId: controller?.target.threadId,
+      details: surfaceSendTelemetryDetails(input),
+    });
+    if (!controller || (!input.text.trim() && input.attachments.length === 0)) {
+      runtime.recordRendererTelemetry({
+        eventName: "surface_composer.send.rejected",
+        correlationId,
+        level: "warn",
+        source: "renderer",
+        message: "Surface composer send rejected before dispatch.",
+        workspaceId: runtime.workspaceId,
+        workspaceSessionId: controller?.target.workspaceSessionId,
+        surfacePiSessionId: controller?.target.surfacePiSessionId,
+        threadId: controller?.target.threadId,
+        details: surfaceSendTelemetryDetails(input, {
+          reason: !controller ? "missing-controller" : "empty-input",
+        }),
+      });
+      return false;
+    }
+    const sendInput: ComposerSubmit = {
+      ...input,
+      clientSubmission: input.clientSubmission
+        ? {
+            ...input.clientSubmission,
+            panelId,
+          }
+        : undefined,
+    };
+    try {
+      await runtime.focusPane(panelId);
+      runtime.recordRendererTelemetry({
+        eventName: "surface_composer.send.focused",
+        correlationId,
+        level: "debug",
+        source: "renderer",
+        message: "Surface composer send focused the target pane.",
+        workspaceId: runtime.workspaceId,
+        workspaceSessionId: controller.target.workspaceSessionId,
+        surfacePiSessionId: controller.target.surfacePiSessionId,
+        threadId: controller.target.threadId,
+        details: surfaceSendTelemetryDetails(sendInput),
+      });
+      if (sendInput.editMessageTimestamp !== undefined) {
+        await controller.editCommittedUserMessage(sendInput.editMessageTimestamp, sendInput);
+      } else {
+        await controller.sendPrompt(sendInput);
+      }
+      runtime.recordRendererTelemetry({
+        eventName: "surface_composer.send.dispatched",
+        correlationId,
+        level: "info",
+        source: "renderer",
+        message: "Surface composer send dispatched to the surface controller.",
+        workspaceId: runtime.workspaceId,
+        workspaceSessionId: controller.target.workspaceSessionId,
+        surfacePiSessionId: controller.target.surfacePiSessionId,
+        threadId: controller.target.threadId,
+        details: surfaceSendTelemetryDetails(sendInput),
+      });
+      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
+      runtime.recordRendererTelemetry({
+        eventName: "surface_composer.send.prompt_history_refreshed",
+        correlationId,
+        level: "debug",
+        source: "renderer",
+        message: "Surface composer send refreshed prompt history.",
+        workspaceId: runtime.workspaceId,
+        workspaceSessionId: controller.target.workspaceSessionId,
+        surfacePiSessionId: controller.target.surfacePiSessionId,
+        threadId: controller.target.threadId,
+        details: surfaceSendTelemetryDetails(sendInput, {
+          promptHistoryCount: promptHistory.length,
+        }),
+      });
+      return true;
+    } catch (error) {
+      runtime.recordRendererTelemetry({
+        eventName: "surface_composer.send.failed",
+        correlationId,
+        level: "error",
+        source: "renderer",
+        message: "Surface composer send failed before backend handoff completed.",
+        workspaceId: runtime.workspaceId,
+        workspaceSessionId: controller?.target.workspaceSessionId,
+        surfacePiSessionId: controller?.target.surfacePiSessionId,
+        threadId: controller?.target.threadId,
+        details: surfaceSendTelemetryDetails(sendInput),
+        error: normalizeTelemetryError(error),
+      });
+      throw error;
+    }
+  }
+
+  async function stopAgent(): Promise<void> {
+    if (!controller) return;
+    await controller.abort();
+  }
 
   function startEditingUserMessage(message: UserMessage, text: string): void {
     editDraft = {
@@ -642,6 +800,7 @@
         controller?.agent.setModel(model);
       }}
       onSend={send}
+      onTelemetry={recordComposerTelemetry}
       onStop={stopAgent}
       onDraftChange={(draft) => void controller.updateComposerDraft(draft)}
       onBufferChange={(draft) => {

@@ -12,8 +12,11 @@ import {
   composerAttachmentPromptText,
   serializeComposerAttachmentTextSignature,
   type AppWorkspaceUiRestoreState,
+  type AppLogEntry,
+  type AppLogLevel,
   type AppLogQuery,
   type AppLogReadModel,
+  type AppLogSource,
   type AppLogSummary,
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
@@ -23,7 +26,9 @@ import {
   type CreateSessionRequest,
   type EditCommittedUserMessageRequest,
   type PromptTarget,
+  type PromptClientSubmissionMetadata,
   type QueuedSurfaceMessage,
+  type RendererTelemetryRequest,
   type SendPromptRequest,
   type SurfaceStreamPatch,
   type SurfaceSyncMessage,
@@ -38,6 +43,7 @@ import {
   type RequestUserInputAnswerRequest,
   type SetRequestUserInputTimerPausedRequest,
   type WorkspaceSessionNavigationReadModel,
+  type WorkspaceScoped,
   type WorkspaceRequestUserInputRequest,
   type WorkspaceRuntimeApprovalRequest,
   type WorkspaceSessionSummary,
@@ -219,6 +225,77 @@ function notifyReadModelCachesChanged(workspaceId?: string): void {
   }
 }
 
+function emptyAppLogSummary(): AppLogSummary {
+  return {
+    latestSeq: 0,
+    seenSeq: 0,
+    unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+  };
+}
+
+function appLogEntryMatchesQuery(entry: AppLogEntry, query?: AppLogQuery): boolean {
+  if (!query) return true;
+  if (query.afterSeq !== undefined && entry.seq <= query.afterSeq) return false;
+  if (query.beforeSeq !== undefined && entry.seq >= query.beforeSeq) return false;
+  if (query.levels?.length && !query.levels.includes(entry.level)) return false;
+  if (query.sources?.length && !query.sources.includes(entry.source)) return false;
+  const search = query.query?.trim().toLowerCase();
+  if (!search) return true;
+  return [
+    entry.message,
+    entry.source,
+    entry.level,
+    entry.workspaceSessionId,
+    entry.surfacePiSessionId,
+    entry.threadId,
+    entry.workflowRunId,
+    entry.workflowTaskAttemptId,
+    entry.commandId,
+    entry.artifactId,
+    entry.details ? JSON.stringify(entry.details) : "",
+    entry.error?.message ?? "",
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(search);
+}
+
+function summarizeRendererAppLogs(
+  backendSummary: AppLogSummary,
+  rendererEntries: readonly AppLogEntry[],
+  rendererSeenSeq: number,
+): AppLogSummary {
+  const summary = structuredClone(backendSummary);
+  for (const entry of rendererEntries) {
+    summary.latestSeq = Math.max(summary.latestSeq, entry.seq);
+    summary.totals.total += 1;
+    summary.totals[entry.level] += 1;
+    if (entry.seq > rendererSeenSeq) {
+      summary.unread.total += 1;
+      summary.unread[entry.level] += 1;
+    }
+  }
+  summary.seenSeq = Math.max(summary.seenSeq, rendererSeenSeq);
+  return summary;
+}
+
+function mergeRendererAppLogs(
+  backendReadModel: AppLogReadModel,
+  rendererEntries: readonly AppLogEntry[],
+  rendererSeenSeq: number,
+  query?: AppLogQuery,
+): AppLogReadModel {
+  const matchingRendererEntries = rendererEntries.filter((entry) =>
+    appLogEntryMatchesQuery(entry, query),
+  );
+  const limit = query?.limit ?? 600;
+  return {
+    entries: mergeAppLogEntries(backendReadModel.entries, matchingRendererEntries).slice(-limit),
+    summary: summarizeRendererAppLogs(backendReadModel.summary, rendererEntries, rendererSeenSeq),
+  };
+}
+
 function buildUserMessage(input: ComposerPromptSubmission): Message {
   const text = input.text.trim();
   const content: Array<TextContent | ImageContent> = [];
@@ -270,6 +347,22 @@ export type ComposerPromptSubmission = {
   attachments: ComposerAttachment[];
   snippetMentions?: ComposerSnippetMention[];
   snippetProvenance?: SentSnippetProvenance[];
+  telemetryCorrelationId?: string;
+  clientSubmission?: PromptClientSubmissionMetadata;
+};
+
+export type RendererTelemetryEvent = {
+  eventName: string;
+  correlationId: string;
+  level: AppLogLevel;
+  source?: AppLogSource;
+  message: string;
+  workspaceId?: string;
+  workspaceSessionId?: string;
+  surfacePiSessionId?: string;
+  threadId?: string;
+  details?: Record<string, unknown>;
+  error?: AppLogEntry["error"];
 };
 
 export interface ChatPaneState {
@@ -440,6 +533,7 @@ export interface ChatRuntimeRpcClient {
     setArchivedGroupCollapsed: typeof rpc.request.setArchivedGroupCollapsed;
     setSessionNavigationSectionState: typeof rpc.request.setSessionNavigationSectionState;
     sendPrompt: typeof rpc.request.sendPrompt;
+    recordRendererTelemetry: typeof rpc.request.recordRendererTelemetry;
     updateComposerDraft: typeof rpc.request.updateComposerDraft;
     editCommittedUserMessage: typeof rpc.request.editCommittedUserMessage;
     deleteQueuedSurfaceMessage: typeof rpc.request.deleteQueuedSurfaceMessage;
@@ -546,6 +640,7 @@ export interface ChatRuntime {
   getAppLogs: (query?: AppLogQuery) => Promise<AppLogReadModel>;
   getAppLogSummary: () => Promise<AppLogSummary>;
   markAppLogsSeen: (throughSeq: number) => Promise<AppLogSummary>;
+  recordRendererTelemetry: (event: RendererTelemetryEvent) => void;
   writeClipboardText: (text: string) => Promise<void>;
   createSession: (
     request?: CreateSessionRequest,
@@ -1389,6 +1484,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       target: this.target,
       systemPrompt: this.agent.state.systemPrompt,
       queueOnly: true,
+      clientSubmission: input.clientSubmission,
       workspaceId: this.workspaceId,
     });
     this.target = normalizePromptTarget(response.target);
@@ -1412,6 +1508,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       reasoningEffort,
       target: this.target,
       systemPrompt: this.agent.state.systemPrompt,
+      clientSubmission: input.clientSubmission,
     };
 
     this.promptDispatchInFlight = true;
@@ -1617,12 +1714,11 @@ export async function createChatRuntime(
   let sessionNavigation: WorkspaceSessionNavigationReadModel = buildWorkspaceSessionNavigation([]);
   let requestUserInputRequests: WorkspaceRequestUserInputRequest[] = [];
   let runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[] = [];
-  let appLogSummary: AppLogSummary = {
-    latestSeq: 0,
-    seenSeq: 0,
-    unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
-    totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
-  };
+  let backendAppLogSummary: AppLogSummary = emptyAppLogSummary();
+  let appLogSummary: AppLogSummary = emptyAppLogSummary();
+  let rendererTelemetryEntries: AppLogEntry[] = [];
+  let rendererTelemetryOrdinal = 0;
+  let rendererAppLogSeenSeq = 0;
   let paneLayout = createEmptyPaneLayout();
   const durableLayoutEnabled = workspaceInfo.kind !== "default";
   const workspaceTabLayoutId =
@@ -1709,7 +1805,19 @@ export async function createChatRuntime(
     setWorkspaceCache("snippets", await rpcClient.request.getSnippets(scoped()))!;
 
   const refreshAppLogs = async (query?: AppLogQuery): Promise<AppLogReadModel> => {
-    const next = await rpcClient.request.getAppLogs(scoped(query ?? {}));
+    const backendReadModel = await rpcClient.request.getAppLogs(scoped(query ?? {}));
+    backendAppLogSummary = backendReadModel.summary;
+    appLogSummary = summarizeRendererAppLogs(
+      backendAppLogSummary,
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+    );
+    const next = mergeRendererAppLogs(
+      backendReadModel,
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+      query,
+    );
     const isDefaultQuery =
       !query?.afterSeq &&
       !query?.beforeSeq &&
@@ -2184,7 +2292,12 @@ export async function createChatRuntime(
   sessionNavigation = initialCatalog.navigation;
   requestUserInputRequests = initialCatalog.requestUserInputRequests;
   runtimeApprovalRequests = initialCatalog.runtimeApprovalRequests;
-  appLogSummary = initialAppLogSummary;
+  backendAppLogSummary = initialAppLogSummary;
+  appLogSummary = summarizeRendererAppLogs(
+    backendAppLogSummary,
+    rendererTelemetryEntries,
+    rendererAppLogSeenSeq,
+  );
 
   const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
   await syncProviderAuthPromise;
@@ -2447,13 +2560,22 @@ export async function createChatRuntime(
     if (payload.workspaceId !== workspaceInfo.workspaceId) {
       return;
     }
-    appLogSummary = payload.summary;
+    backendAppLogSummary = payload.summary;
+    appLogSummary = summarizeRendererAppLogs(
+      backendAppLogSummary,
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+    );
     const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
     if (cache.appLogs) {
-      cache.appLogs = {
-        ...cache.appLogs,
+      const backendReadModel = {
         entries: mergeAppLogEntries(cache.appLogs.entries, payload.entries).slice(-600),
         summary: payload.summary,
+      };
+      cache.appLogs = {
+        ...mergeRendererAppLogs(backendReadModel, rendererTelemetryEntries, rendererAppLogSeenSeq, {
+          limit: 600,
+        }),
       };
     }
     if (
@@ -2523,6 +2645,85 @@ export async function createChatRuntime(
     extensionCliRequirementActionUpdateListener,
   );
   recordFocusedSession();
+
+  const recordRendererTelemetry = (event: RendererTelemetryEvent): void => {
+    if (event.workspaceId && event.workspaceId !== workspaceInfo.workspaceId) {
+      return;
+    }
+    rendererTelemetryOrdinal += 1;
+    const lastRendererSeq = rendererTelemetryEntries.at(-1)?.seq ?? 0;
+    const seq = Math.max(backendAppLogSummary.latestSeq, lastRendererSeq) + 0.000001;
+    const entry: AppLogEntry = {
+      id: `renderer-${workspaceInfo.workspaceId}-${Date.now().toString(36)}-${rendererTelemetryOrdinal}`,
+      seq,
+      createdAt: new Date().toISOString(),
+      level: event.level,
+      source: event.source ?? "renderer",
+      message: event.message,
+      details: {
+        eventName: event.eventName,
+        correlationId: event.correlationId,
+        ...event.details,
+      },
+      ...(event.error ? { error: event.error } : {}),
+      ...(event.workspaceSessionId ? { workspaceSessionId: event.workspaceSessionId } : {}),
+      ...(event.surfacePiSessionId ? { surfacePiSessionId: event.surfacePiSessionId } : {}),
+      ...(event.threadId ? { threadId: event.threadId } : {}),
+    };
+    rendererTelemetryEntries = [...rendererTelemetryEntries, entry].slice(-600);
+    appLogSummary = summarizeRendererAppLogs(
+      backendAppLogSummary,
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+    );
+    const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
+    const currentReadModel = cache.appLogs ?? {
+      entries: [],
+      summary: backendAppLogSummary,
+    };
+    cache.appLogs = mergeRendererAppLogs(
+      {
+        entries: mergeAppLogEntries(currentReadModel.entries, [entry]).slice(-600),
+        summary: backendAppLogSummary,
+      },
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+      { limit: 600 },
+    );
+    const update: AppLogUpdateMessage = {
+      workspaceId: workspaceInfo.workspaceId,
+      entries: [entry],
+      summary: appLogSummary,
+    };
+    for (const listener of appLogUpdateListeners) {
+      listener(structuredClone(update));
+    }
+    const backendRequest: WorkspaceScoped<RendererTelemetryRequest> = {
+      workspaceId: workspaceInfo.workspaceId,
+      eventName: event.eventName,
+      level: event.level,
+      message: event.message,
+      correlationId: event.correlationId,
+      details: {
+        localProjectionId: entry.id,
+        ...event.details,
+      },
+      error: event.error,
+      target:
+        event.workspaceSessionId && event.surfacePiSessionId
+          ? {
+              workspaceSessionId: event.workspaceSessionId,
+              surface: event.threadId ? "thread" : "orchestrator",
+              surfacePiSessionId: event.surfacePiSessionId,
+              threadId: event.threadId,
+            }
+          : undefined,
+    };
+    void rpcClient.request.recordRendererTelemetry(backendRequest).catch((error) => {
+      console.error("Failed to record renderer telemetry:", error);
+    });
+    emit();
+  };
 
   const runtime: ChatRuntime = {
     storage,
@@ -2767,7 +2968,12 @@ export async function createChatRuntime(
     },
     getAppLogs: refreshAppLogs,
     getAppLogSummary: async () => {
-      appLogSummary = await rpcClient.request.getAppLogSummary(scoped());
+      backendAppLogSummary = await rpcClient.request.getAppLogSummary(scoped());
+      appLogSummary = summarizeRendererAppLogs(
+        backendAppLogSummary,
+        rendererTelemetryEntries,
+        rendererAppLogSeenSeq,
+      );
       emit();
       return structuredClone(appLogSummary);
     },
@@ -2775,10 +2981,31 @@ export async function createChatRuntime(
       if (throughSeq <= appLogSummary.seenSeq) {
         return structuredClone(appLogSummary);
       }
-      appLogSummary = await rpcClient.request.markAppLogsSeen(scoped({ throughSeq }));
+      rendererAppLogSeenSeq = Math.max(rendererAppLogSeenSeq, throughSeq);
+      if (throughSeq > backendAppLogSummary.seenSeq) {
+        const backendThroughSeq = Math.min(throughSeq, backendAppLogSummary.latestSeq);
+        if (backendThroughSeq > backendAppLogSummary.seenSeq) {
+          backendAppLogSummary = await rpcClient.request.markAppLogsSeen(
+            scoped({ throughSeq: backendThroughSeq }),
+          );
+        }
+      }
+      appLogSummary = summarizeRendererAppLogs(
+        backendAppLogSummary,
+        rendererTelemetryEntries,
+        rendererAppLogSeenSeq,
+      );
+      const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
+      if (cache.appLogs) {
+        cache.appLogs = {
+          ...cache.appLogs,
+          summary: appLogSummary,
+        };
+      }
       emit();
       return structuredClone(appLogSummary);
     },
+    recordRendererTelemetry,
     writeClipboardText: async (text) => {
       await rpcClient.request.writeClipboardText({ text });
     },

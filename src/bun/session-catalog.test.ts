@@ -42,6 +42,7 @@ import {
 } from "./session-catalog";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { createAgentSettingsStore } from "./agent-settings-store";
+import type { AppLoggerEvent } from "./app-logger";
 import type { StructuredSessionStateStore } from "./structured-session-state";
 import { createThreadReportTool } from "./thread-report-tool";
 import type { ExtensionUsageState } from "../shared/extensions";
@@ -4421,6 +4422,136 @@ describe("WorkspaceSessionCatalog", () => {
       }
     } finally {
       catalog.setSurfaceSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
+  it("carries client submission telemetry through prompt queue lifecycle logs", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const appLogEvents: AppLoggerEvent[] = [];
+    catalog.setAppLogListener((event) => {
+      appLogEvents.push(structuredClone(event));
+    });
+
+    const promptText = "Correlate this send without logging text.";
+    const imageData = "aW1hZ2U=";
+
+    try {
+      const created = await catalog.createSession({ title: "Correlated Prompt" }, DEFAULTS);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const promptPrototype = Object.getPrototypeOf(managed.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        submittedPrompt: string,
+      ) {
+        const surface = findManagedSurfaceBySession(catalog, this);
+        if (surface?.actorKind === "namer") {
+          appendMessagesToSession(this, [userMessage("Name the session."), assistantMessage("")]);
+          return;
+        }
+        appendMessagesToSession(this, [
+          userMessage(submittedPrompt),
+          assistantMessage("Correlated prompt finished."),
+        ]);
+      });
+
+      try {
+        const response = await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: created.target,
+          messages: [
+            {
+              role: "user",
+              timestamp: Date.now(),
+              content: [
+                { type: "text", text: promptText },
+                { type: "image", data: imageData, mimeType: "image/png" },
+              ],
+            },
+          ],
+          clientSubmission: {
+            submissionId: "submission-123",
+            correlationId: "correlation-abc",
+            clientRequestId: "request-xyz",
+            source: "composer",
+            submittedAt: "2026-06-17T12:00:00.000Z",
+            sequence: 7,
+          },
+          onEvent: () => {},
+        });
+
+        expect(response.queuedMessageId).toBeTruthy();
+        if (!response.queuedMessageId) {
+          throw new Error("Expected a queued message id.");
+        }
+        await waitFor(
+          () => !getManagedSurface(catalog, created.target.surfacePiSessionId).activePrompt,
+        );
+
+        const queued = getStructuredSessionStore(catalog).getSurfaceQueuedMessage({
+          id: response.queuedMessageId,
+        });
+        const queuedPayload = JSON.parse(queued.payloadJson ?? "{}");
+        expect(queuedPayload).toEqual({
+          clientSubmission: {
+            submissionId: "submission-123",
+            correlationId: "correlation-abc",
+            clientRequestId: "request-xyz",
+            source: "composer",
+            submittedAt: "2026-06-17T12:00:00.000Z",
+            sequence: 7,
+          },
+          telemetry: {
+            messageCount: 1,
+            userMessageCount: 1,
+            textBlockCount: 1,
+            imageCount: 1,
+          },
+        });
+        expect(queued.payloadJson).not.toContain(promptText);
+        expect(queued.payloadJson).not.toContain(imageData);
+
+        const lifecycleLogs = appLogEvents.filter(
+          (event) =>
+            event.source === "prompt" &&
+            (event.message === "Prompt queued for surface delivery." ||
+              event.message === "Prompt queue delivery started." ||
+              event.message === "Prompt queue delivery settled."),
+        );
+        expect(lifecycleLogs.map((event) => event.message)).toEqual([
+          "Prompt queued for surface delivery.",
+          "Prompt queue delivery started.",
+          "Prompt queue delivery settled.",
+        ]);
+        for (const event of lifecycleLogs) {
+          expect(event.details).toMatchObject({
+            queuedMessageId: response.queuedMessageId,
+            queueKind: "user_message",
+            clientSubmissionId: "submission-123",
+            clientCorrelationId: "correlation-abc",
+            clientRequestId: "request-xyz",
+            clientSubmissionSource: "composer",
+            clientSubmittedAt: "2026-06-17T12:00:00.000Z",
+            clientSubmissionSequence: 7,
+            messageCount: 1,
+            userMessageCount: 1,
+            textBlockCount: 1,
+            imageCount: 1,
+            workspaceSessionId: created.target.workspaceSessionId,
+            surfacePiSessionId: created.target.surfacePiSessionId,
+          });
+          const serialized = JSON.stringify(event.details);
+          expect(serialized).not.toContain(promptText);
+          expect(serialized).not.toContain(imageData);
+        }
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      catalog.setAppLogListener(null);
       await catalog.dispose();
     }
   });
