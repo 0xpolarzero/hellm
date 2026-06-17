@@ -17,6 +17,7 @@ export const APP_LOG_SOURCES: AppLogSource[] = [
   "workspace",
   "session",
   "session.title",
+  "source.graph",
   "surface",
   "prompt",
   "thread",

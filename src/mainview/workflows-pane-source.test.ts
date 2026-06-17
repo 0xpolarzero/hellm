@@ -15,4 +15,16 @@ describe("Workflows pane source contract", () => {
     expect(source).not.toContain("runtime.subscribeAppLogUpdate");
     expect(source).not.toContain("$effect(() => {\n    void loadWorkflows();");
   });
+
+  it("keeps generated output read-only and routes generated agents back to Agents", async () => {
+    const source = await readFile(join(SOURCE_ROOT, "WorkflowsPane.svelte"), "utf8");
+
+    expect(source).toContain("<PaneHeader");
+    expect(source).toContain("<PaneFilterTabs");
+    expect(source).toContain("<PaneListRow");
+    expect(source).toContain("Generated Code (read-only)");
+    expect(source).toContain('targetLabel="read-only generated code"');
+    expect(source).toContain("Customize Agent");
+    expect(source).not.toContain("svvyx workflows run");
+  });
 });

@@ -26,8 +26,13 @@
   } from "./app-logs";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
+  import CompactSelect from "./ui/CompactSelect.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Input from "./ui/Input.svelte";
+  import MetadataChip from "./ui/MetadataChip.svelte";
+  import PaneFilterTabs, { type PaneFilterTabOption } from "./ui/PaneFilterTabs.svelte";
+  import PaneHeader from "./ui/PaneHeader.svelte";
+  import StatusCard from "./ui/StatusCard.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
 
   type Props = {
@@ -116,6 +121,28 @@
     if (!readModel) return 0;
     return level === "all" ? readModel.summary.totals.total : readModel.summary.totals[level];
   }
+
+  function levelFilterTone(level: AppLogLevel | "all"): PaneFilterTabOption["tone"] {
+    if (level === "error") return "danger";
+    if (level === "warn") return "warning";
+    if (level === "info") return "info";
+    return "neutral";
+  }
+
+  const levelFilterOptions = $derived(
+    LEVEL_FILTERS.map((filter) => ({
+      value: filter.level,
+      label: filter.shortLabel,
+      count: readModel ? levelFilterCount(filter.level) : null,
+      tone: levelFilterTone(filter.level),
+      ariaLabel: `${filter.label}: ${levelFilterCount(filter.level)} log${levelFilterCount(filter.level) === 1 ? "" : "s"}`,
+    })),
+  );
+
+  const sourceFilterOptions = $derived([
+    { value: "all", label: "All sources" },
+    ...APP_LOG_SOURCES.map((source) => ({ value: source, label: source })),
+  ]);
 
   function formatTime(value: string): string {
     return new Intl.DateTimeFormat(undefined, {
@@ -524,12 +551,12 @@
 </script>
 
 <section class="app-logs-pane" aria-label="App logs">
-  <header class="logs-header">
-    <div>
-      <p>App Logs</p>
-      <h2>{readModel ? `${readModel.summary.totals.total} entries` : "Loading logs"}</h2>
-    </div>
-    <div class="header-actions">
+  <PaneHeader
+    eyebrow="App Logs"
+    title={readModel ? `${readModel.summary.totals.total} entries` : "Loading logs"}
+    subtitle={readModel ? `Latest #${readModel.summary.latestSeq} · seen #${readModel.summary.seenSeq}` : "Structured product observability"}
+  >
+    {#snippet actions()}
       <Tooltip label={liveMode === "live" ? "Freeze log updates" : "Resume live log updates"}>
         <Button
           size="sm"
@@ -562,40 +589,34 @@
           {/if}
         </Button>
       </Tooltip>
-    </div>
-  </header>
+    {/snippet}
+  </PaneHeader>
 
   <div class="logs-toolbar">
-    <div class="severity-filter" aria-label="Severity filters">
-      <span class="filter-label">Severity</span>
-      {#each LEVEL_FILTERS as filter (filter.level)}
-        <button
-          type="button"
-          class:active={levelFilter === filter.level}
-          class={`severity-option severity-${filter.level}`.trim()}
-          aria-pressed={levelFilter === filter.level}
-          aria-label={`${filter.label}: ${levelFilterCount(filter.level)} log${levelFilterCount(filter.level) === 1 ? "" : "s"}`}
-          onclick={() => (levelFilter = filter.level)}
-        >
-          <span class="severity-dot" aria-hidden="true"></span>
-          <span>{filter.shortLabel}</span>
-          {#if readModel}
-            <strong>{levelFilterCount(filter.level)}</strong>
-          {/if}
-        </button>
-      {/each}
-    </div>
+    <PaneFilterTabs
+      label="Severity"
+      value={levelFilter}
+      options={levelFilterOptions}
+      showDots
+      aria-label="Severity filters"
+      onSelect={(value) => (levelFilter = value as typeof levelFilter)}
+    />
     <Input bind:value={query} placeholder="Search message, source, id" aria-label="Search app logs" />
-    <select bind:value={sourceFilter} aria-label="Filter app logs by source">
-      <option value="all">All sources</option>
-      {#each APP_LOG_SOURCES as source (source)}
-        <option value={source}>{source}</option>
-      {/each}
-    </select>
+    <CompactSelect
+      value={sourceFilter}
+      options={sourceFilterOptions}
+      ariaLabel="Filter app logs by source"
+      triggerClass="logs-source-select"
+      menuClass="logs-source-menu"
+      placement="below"
+      onSelect={(value) => (sourceFilter = value as typeof sourceFilter)}
+    />
   </div>
 
   {#if error}
-    <p class="logs-message error">{error}</p>
+    <div class="logs-status">
+      <StatusCard eyebrow="App logs" title="Unable to load logs" message={error} tone="error" />
+    </div>
   {:else if loading && !readModel}
     <p class="logs-message">Loading app logs...</p>
   {:else if readModel}
@@ -641,13 +662,13 @@
                       </span>
                       {#if relatedIds(entry).length > 0}
                         <span class="related-chips">
-                          {#each relatedIds(entry) as related (`${entry.id}:${related.label}`)}
+                            {#each relatedIds(entry) as related (`${entry.id}:${related.label}`)}
                             {#if related.action}
                               <button type="button" onclick={(event) => { event.stopPropagation(); void openRelated(entry, related); }}>
-                                <em>{related.label}</em><code>{related.value}</code>
+                                <MetadataChip label={related.label} value={related.value} tone="accent" />
                               </button>
                             {:else}
-                              <span><em>{related.label}</em><code>{related.value}</code></span>
+                              <MetadataChip label={related.label} value={related.value} />
                             {/if}
                           {/each}
                         </span>
@@ -741,7 +762,6 @@
     color: var(--ui-text-primary);
   }
 
-  .logs-header,
   .logs-toolbar {
     display: flex;
     align-items: center;
@@ -751,30 +771,12 @@
     border-bottom: 1px solid var(--ui-border-soft);
   }
 
-  .logs-header {
-    justify-content: space-between;
-  }
-
-  .logs-header p,
-  .logs-header h2,
   .logs-message,
   .logs-empty {
     margin: 0;
   }
 
-  .logs-header p {
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-  }
-
-  .logs-header h2 {
-    font-size: var(--text-lg);
-  }
-
   .header-actions,
-  .severity-filter,
   .related-chips {
     display: flex;
     align-items: center;
@@ -786,128 +788,12 @@
     grid-template-columns: auto minmax(0, 1fr) minmax(7rem, 12rem);
   }
 
-  .severity-filter {
-    min-width: max-content;
-    padding: 0.18rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface) 92%, transparent);
-    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--ui-text-primary) 4%, transparent);
-  }
-
-  .filter-label {
-    padding: 0 0.2rem 0 0.32rem;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0;
-    text-transform: uppercase;
-  }
-
-  .severity-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.34rem;
-    min-height: 1.58rem;
-    padding: 0 0.42rem;
-    border: 1px solid transparent;
-    border-radius: var(--ui-radius-xs);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 35%, transparent);
-    color: var(--ui-text-secondary);
-    font: inherit;
-    font-size: var(--text-xs);
-    line-height: 1;
-    cursor: pointer;
-    white-space: nowrap;
-    transition:
-      border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
-      background-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
-      color 150ms cubic-bezier(0.19, 1, 0.22, 1);
-  }
-
-  .severity-option:hover {
-    border-color: color-mix(in oklab, var(--ui-border-strong) 42%, transparent);
+  :global(.logs-source-select) {
+    width: 100%;
+    min-height: 1.95rem;
+    justify-content: space-between;
+    border-color: var(--ui-border-soft);
     background: color-mix(in oklab, var(--ui-surface-raised) 74%, transparent);
-    color: var(--ui-text-primary);
-  }
-
-  .severity-option:focus-visible {
-    outline: none;
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .severity-option.active {
-    border-color: color-mix(in oklab, var(--ui-border-accent) 62%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-accent-soft) 68%, var(--ui-surface));
-    color: var(--ui-text-primary);
-  }
-
-  .severity-option strong {
-    min-width: 1.1rem;
-    padding: 0.08rem 0.24rem;
-    border-radius: var(--ui-radius-xs);
-    background: color-mix(in oklab, var(--ui-code) 78%, transparent);
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-  }
-
-  .severity-option.active strong {
-    color: var(--ui-text-primary);
-    background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
-  }
-
-  .severity-dot {
-    width: 0.42rem;
-    height: 0.42rem;
-    border: 1px solid currentColor;
-    border-radius: 999px;
-    background: currentColor;
-    opacity: 0.72;
-  }
-
-  .severity-all .severity-dot {
-    background: transparent;
-    color: var(--ui-text-tertiary);
-  }
-
-  .severity-info .severity-dot {
-    color: var(--ui-info);
-  }
-
-  .severity-debug .severity-dot {
-    color: var(--ui-text-tertiary);
-  }
-
-  .severity-warn .severity-dot {
-    color: var(--ui-warning);
-  }
-
-  .severity-error .severity-dot {
-    color: var(--ui-danger);
-  }
-
-  .severity-warn.active {
-    border-color: color-mix(in oklab, var(--ui-warning) 42%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
-  }
-
-  .severity-error.active {
-    border-color: color-mix(in oklab, var(--ui-danger) 42%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-danger-soft) 58%, var(--ui-surface));
-  }
-
-  select {
-    min-height: 1.8rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: var(--ui-surface);
-    color: var(--ui-text-secondary);
-    font: inherit;
-    font-size: var(--text-sm);
   }
 
   .logs-body {
@@ -1033,33 +919,20 @@
     color: var(--ui-text-tertiary);
   }
 
-  .related-chips span {
-    display: inline-flex;
-    gap: 0.22rem;
-    align-items: center;
-    max-width: 13rem;
-    padding: 0.08rem 0.24rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-xs);
-  }
-
   .related-chips button {
-    display: inline-flex;
-    gap: 0.22rem;
-    align-items: center;
-    max-width: 13rem;
-    padding: 0.08rem 0.24rem;
-    border: 1px solid color-mix(in oklab, var(--ui-accent) 28%, var(--ui-border-soft));
-    border-radius: var(--ui-radius-xs);
-    background: color-mix(in oklab, var(--ui-accent-soft) 72%, transparent);
-    color: var(--ui-text-secondary);
+    max-width: 15rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: inherit;
     font: inherit;
     cursor: pointer;
   }
 
-  .related-chips button:hover {
-    color: var(--ui-text-primary);
-    border-color: color-mix(in oklab, var(--ui-accent) 44%, var(--ui-border-soft));
+  .related-chips button:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
   }
 
   .related-chips code,
@@ -1145,6 +1018,10 @@
     color: var(--ui-danger);
   }
 
+  .logs-status {
+    padding: 0.7rem;
+  }
+
   .new-logs-button {
     position: sticky;
     bottom: 0.55rem;
@@ -1189,24 +1066,8 @@
   }
 
   @container (max-width: 44rem) {
-    .logs-header {
-      align-items: start;
-      gap: 0.45rem;
-    }
-
-    .header-actions {
-      flex-wrap: wrap;
-      justify-content: end;
-    }
-
     .logs-toolbar {
       grid-template-columns: minmax(0, 1fr);
     }
-
-    .severity-filter {
-      min-width: 0;
-      overflow-x: auto;
-    }
-
   }
 </style>

@@ -41,17 +41,25 @@ describe("AppLogsPane virtualized log list contract", () => {
   });
 
   it("keeps pane filtering, mark-read, expandable detail, and stack trace controls wired", () => {
-    expect(paneSource).toContain('aria-label="Filter app logs by source"');
+    expect(paneSource).toContain('ariaLabel="Filter app logs by source"');
     expect(paneSource).toContain('aria-label="Search app logs"');
-    expect(paneSource).toContain("class:active={levelFilter === filter.level}");
-    expect(paneSource).toContain("onclick={() => (levelFilter = filter.level)}");
-    expect(paneSource).toContain("class={`severity-option severity-${filter.level}`.trim()}");
+    expect(paneSource).toContain("<PaneFilterTabs");
+    expect(paneSource).toContain(
+      "onSelect={(value) => (levelFilter = value as typeof levelFilter)}",
+    );
+    expect(paneSource).toContain("<CompactSelect");
     expect(paneSource).toContain("runtime.markAppLogsSeen(summary.latestSeq)");
     expect(paneSource).toContain("function toggleExpanded(id: string)");
     expect(paneSource).toContain("expandedIds = next");
     expect(paneSource).toContain("toggleExpanded(entry.id)");
     expect(paneSource).toContain("{#if entry.details}");
     expect(paneSource).toContain("{#if entry.error}");
+  });
+
+  it("exposes every contract app-log source in the source filter", async () => {
+    const appLogsSource = await Bun.file(`${import.meta.dir}/app-logs.ts`).text();
+
+    expect(appLogsSource).toContain('"source.graph"');
   });
 
   it("keeps the sidebar Logs action before app-global source-library actions with action-worthy badges", () => {

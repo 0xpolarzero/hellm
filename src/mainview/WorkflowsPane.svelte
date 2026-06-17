@@ -11,7 +11,12 @@
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
+  import MetadataChip from "./ui/MetadataChip.svelte";
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
+  import PaneFilterTabs, { type PaneFilterTabOption } from "./ui/PaneFilterTabs.svelte";
+  import PaneHeader from "./ui/PaneHeader.svelte";
+  import PaneListRow from "./ui/PaneListRow.svelte";
+  import StatusCard from "./ui/StatusCard.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -99,6 +104,22 @@
     return kind === "all" ? readModel.items.length : readModel.counts[kind];
   }
 
+  function filterTone(kind: (typeof FILTERS)[number]["kind"]): PaneFilterTabOption["tone"] {
+    if (kind === "agent") return "info";
+    if (kind === "workflow") return "success";
+    if (kind === "prompt") return "warning";
+    return "neutral";
+  }
+
+  const filterOptions = $derived(
+    FILTERS.map((filter) => ({
+      value: filter.kind,
+      label: filter.label,
+      count: filterCount(filter.kind),
+      tone: filterTone(filter.kind),
+    })),
+  );
+
   function formatDate(value: string): string {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: "medium",
@@ -140,32 +161,31 @@
 </script>
 
 <section class="workflows-pane" aria-label="Workflows">
-  <header class="workflows-header">
-    <div>
-      <p>Workflows</p>
-      <h2>{readModel?.generatedPackagePath ?? "@svvy/workflows"}</h2>
-    </div>
-    <Button size="sm" onclick={loadWorkflows}>
-      <RefreshCwIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-    </Button>
-  </header>
+  <PaneHeader
+    eyebrow="Workflows"
+    title="@svvy/workflows"
+    subtitle={readModel ? `${readModel.items.length} generated exports · updated ${formatDate(readModel.updatedAt)}` : "Generated package visibility"}
+  >
+    {#snippet actions()}
+      <Button size="sm" variant="ghost" iconOnly aria-label="Refresh generated workflows" onclick={loadWorkflows}>
+        <RefreshCwIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+      </Button>
+    {/snippet}
+  </PaneHeader>
 
   {#if error}
-    <p class="workflows-message error">{error}</p>
+    <div class="workflows-status">
+      <StatusCard eyebrow="Workflows" title="Unable to load generated workflows" message={error} tone="error" />
+    </div>
   {:else if loading}
     <p class="workflows-message">Loading generated workflows...</p>
   {:else if readModel}
     <div class="workflows-tabs" aria-label="Workflow export filters">
-      {#each FILTERS as filter (filter.kind)}
-        <button
-          type="button"
-          class:active={activeFilter === filter.kind}
-          onclick={() => (activeFilter = filter.kind)}
-        >
-          <span>{filter.label}</span>
-          <strong>{filterCount(filter.kind)}</strong>
-        </button>
-      {/each}
+      <PaneFilterTabs
+        value={activeFilter}
+        options={filterOptions}
+        onSelect={(value) => (activeFilter = value as typeof activeFilter)}
+      />
     </div>
 
     <div class="workflows-body">
@@ -175,25 +195,25 @@
         {/if}
         {#each visibleGroups as group (group.kind)}
           <section class="workflows-group">
-            <header class="workflows-group-header">
-              <span>{group.label}</span>
-              <strong>{group.items.length}</strong>
-            </header>
+            {#if activeFilter === "all"}
+              <header class="workflows-group-header">
+                <span>{group.label}</span>
+                <strong>{group.items.length}</strong>
+              </header>
+            {/if}
             {#each group.items as item (item.id)}
-              <button
-                type="button"
-                class:active={selectedItem?.id === item.id}
-                class="workflows-row"
+              <PaneListRow
+                title={item.qualifiedName}
+                active={selectedItem?.id === item.id}
                 onclick={() => (selectedId = item.id)}
               >
-                <span class="row-top">
-                  <strong>{item.qualifiedName}</strong>
+                {#snippet meta()}
                   <Badge tone={kindTone(item.kind)}>{item.kind}</Badge>
-                </span>
-                <span class="row-meta">
+                {/snippet}
+                {#snippet subtitle()}
                   <code>{item.namespace}.{item.exportName}</code>
-                </span>
-              </button>
+                {/snippet}
+              </PaneListRow>
             {/each}
           </section>
         {/each}
@@ -205,7 +225,13 @@
             <div>
               <p>{selectedItem.namespace}</p>
               <h3>{selectedItem.exportName}</h3>
-              <code>{selectedItem.qualifiedName}</code>
+              <div class="detail-chip-row">
+                <MetadataChip label="qualified" value={selectedItem.qualifiedName} />
+                <MetadataChip label="kind" value={selectedItem.kind} tone={kindTone(selectedItem.kind)} />
+                {#if selectedItem.agentProfileId}
+                  <MetadataChip label="agent" value={selectedItem.agentProfileId} tone="info" />
+                {/if}
+              </div>
             </div>
             <div class="detail-actions">
               {#if selectedItem.agentProfileId}
@@ -222,14 +248,14 @@
                 size="sm"
                 iconSize={14}
                 editor={appPreferences?.preferredExternalEditor}
-                targetLabel="source"
+                targetLabel="source file"
                 onclick={() => openInEditor(selectedItem.sourcePath, "source")}
               />
               <OpenExternalButton
                 size="sm"
                 iconSize={14}
                 editor={appPreferences?.preferredExternalEditor}
-                targetLabel="generated code"
+                targetLabel="read-only generated code"
                 onclick={() => openInEditor(selectedItem.generatedPath, "generated code")}
               />
             </div>
@@ -252,6 +278,8 @@
             <code>{selectedItem.sourcePath}</code>
             <span>Generated</span>
             <code>{selectedItem.generatedPath}</code>
+            <span>Package</span>
+            <code>{readModel.generatedPackagePath}</code>
             {#if selectedItem.agentProfileId}
               <span>Agent Profile</span>
               <strong>{selectedItem.agentProfileId}</strong>
@@ -268,7 +296,7 @@
           {/if}
 
           <section class="detail-section source">
-            <h4>Generated Code</h4>
+            <h4>Generated Code (read-only)</h4>
             <pre>{selectedItem.generatedCode}</pre>
           </section>
         </article>
@@ -289,18 +317,14 @@
     background: var(--ui-surface);
   }
 
-  .workflows-header,
   .detail-header,
-  .row-top,
-  .row-meta {
+  .detail-chip-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 0.65rem;
     min-width: 0;
   }
 
-  .workflows-header p,
   .detail-header p,
   .detail-section h4 {
     margin: 0;
@@ -310,7 +334,6 @@
     text-transform: uppercase;
   }
 
-  .workflows-header h2,
   .detail-header h3 {
     margin: 0.12rem 0 0;
     font-size: var(--text-base);
@@ -318,40 +341,11 @@
     line-height: 1.2;
   }
 
-  .workflows-header {
-    padding: 0.58rem 0.78rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
-  }
-
   .workflows-tabs {
-    display: flex;
-    gap: 0.22rem;
     overflow-x: auto;
     padding: 0.42rem 0.78rem;
     border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
     background: color-mix(in oklab, var(--ui-surface) 92%, transparent);
-  }
-
-  .workflows-tabs button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    border: 1px solid transparent;
-    border-radius: var(--ui-radius-sm);
-    padding: 0.32rem 0.5rem;
-    background: transparent;
-    color: var(--ui-text-secondary);
-    font: inherit;
-    font-size: var(--text-sm);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .workflows-tabs button.active {
-    border-color: color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-    color: var(--ui-text-primary);
-    background: color-mix(in oklab, var(--ui-surface-raised) 86%, transparent);
   }
 
   .workflows-body {
@@ -400,32 +394,6 @@
     text-transform: uppercase;
   }
 
-  .workflows-row {
-    display: grid;
-    gap: 0.28rem;
-    width: 100%;
-    padding: 0.5rem 0.56rem;
-    border: 1px solid transparent;
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .workflows-row:hover,
-  .workflows-row:focus-visible,
-  .workflows-row.active {
-    outline: none;
-    border-color: color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-raised) 88%, transparent);
-  }
-
-  .workflows-row.active {
-    box-shadow: inset 2px 0 0 var(--ui-accent);
-  }
-
-  .workflows-row strong,
   .detail-grid strong,
   .detail-grid code {
     min-width: 0;
@@ -435,7 +403,6 @@
     font-size: var(--text-sm);
   }
 
-  .row-meta,
   .workflows-message,
   .detail-grid {
     color: var(--ui-text-secondary);
@@ -447,13 +414,6 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--ui-text-tertiary);
-  }
-
-  .row-meta code {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .workflows-detail {
@@ -468,6 +428,17 @@
     flex-wrap: wrap;
     gap: 0.4rem;
     justify-content: flex-end;
+  }
+
+  .detail-header {
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .detail-chip-row {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.42rem;
   }
 
   .detail-grid {
@@ -505,15 +476,15 @@
     margin: 0.7rem;
   }
 
+  .workflows-status {
+    padding: 0.7rem;
+  }
+
   .workflows-message.inline {
     margin: 0;
     padding: 0.48rem 0.58rem;
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 80%, transparent);
-  }
-
-  .workflows-message.error {
-    color: var(--ui-danger);
   }
 
   @media (max-width: 840px) {
