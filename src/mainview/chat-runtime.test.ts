@@ -4,6 +4,7 @@ import { getModel, type AssistantMessage, type Message } from "@mariozechner/pi-
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import {
   parseComposerAttachmentTextSignature,
+  type ComposerAttachment,
   type AppWorkspaceUiRestoreState,
   type AppLogEntry,
   type AppLogSummary,
@@ -27,6 +28,7 @@ import {
   type WorkspaceWorkflowTaskAttemptInspector,
   type WorkspaceTabInfo,
 } from "../shared/workspace-contract";
+import type { ComposerSnippetMention, SentSnippetProvenance } from "../shared/snippets";
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
 import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane-layout";
@@ -142,6 +144,14 @@ type FakeRpcHarness = {
 
 function cloneTarget(target: PromptTarget): PromptTarget {
   return structuredClone(target);
+}
+
+function proxyArray<T>(items: T[]): T[] {
+  return new Proxy(items, {}) as T[];
+}
+
+function proxyObject<T extends object>(item: T): T {
+  return new Proxy(item, {}) as T;
 }
 
 const defaultPromptHandler: PromptHandler = async (request) => ({
@@ -1597,6 +1607,12 @@ function createFakeRpc(input: {
           if (request.queueOnly || record.snapshot.promptStatus === "streaming") {
             record.snapshot = {
               ...record.snapshot,
+              composerDraft: {
+                text: "",
+                attachments: [],
+                snippetMentions: [],
+                updatedAt: "2026-04-10T10:12:00.000Z",
+              },
               queuedMessages: [
                 ...record.snapshot.queuedMessages,
                 {
@@ -1634,6 +1650,12 @@ function createFakeRpc(input: {
             ...record.snapshot,
             target: cloneTarget(request.target),
             pendingUserMessage: pendingUserMessage ? structuredClone(pendingUserMessage) : null,
+            composerDraft: {
+              text: "",
+              attachments: [],
+              snippetMentions: [],
+              updatedAt: "2026-04-10T10:12:00.000Z",
+            },
             streamMessage: null,
             streamSequence: 0,
             promptStatus: "streaming",
@@ -1651,51 +1673,52 @@ function createFakeRpc(input: {
               snapshot: structuredClone(record.snapshot),
             });
           });
-          const promptHandler =
-            promptHandlers.get(request.target.surfacePiSessionId) ?? defaultPromptHandler;
-          const result = await promptHandler(structuredClone(request), harness);
-          const cancelled = cancelledPromptSurfaces.has(request.target.surfacePiSessionId);
-          pendingPromptSurfaces.delete(request.target.surfacePiSessionId);
-          if (cancelled) {
-            cancelledPromptSurfaces.delete(request.target.surfacePiSessionId);
-            return { target: cloneTarget(request.target) };
-          }
-
-          const provider = request.provider ?? record.snapshot.provider;
-          const model = request.model ?? record.snapshot.model;
-          const nextMessages = [
-            ...(request.messages as AgentMessage[]),
-            ...(result.extraMessages ? structuredClone(result.extraMessages) : []),
-            assistantMessage(result.assistantText, { provider, model }),
-          ];
-
-          record.snapshot = {
-            ...record.snapshot,
-            target: cloneTarget(request.target),
-            messages: nextMessages,
-            provider,
-            model,
-            reasoningEffort: request.reasoningEffort ?? record.snapshot.reasoningEffort,
-            systemPrompt: request.systemPrompt ?? record.snapshot.systemPrompt,
-            pendingUserMessage: null,
-            streamMessage: null,
-            promptStatus: "idle",
-            activeTurnId: null,
-            activeTurnStartedAt: null,
-          };
-
-          updateSummary(request.target.workspaceSessionId, (summary) => {
-            summary.preview = result.assistantText;
-            summary.messageCount = nextMessages.length;
-            summary.status = "idle";
-            if (focusedSurfacePiSessionId !== request.target.surfacePiSessionId) {
-              summary.isUnread = true;
-              summary.unreadAt = "2026-04-10T10:12:00.000Z";
-              summary.unreadReason = "assistant-turn-finished";
+          void (async () => {
+            await Bun.sleep(0);
+            const promptHandler =
+              promptHandlers.get(request.target.surfacePiSessionId) ?? defaultPromptHandler;
+            const result = await promptHandler(structuredClone(request), harness);
+            const cancelled = cancelledPromptSurfaces.has(request.target.surfacePiSessionId);
+            pendingPromptSurfaces.delete(request.target.surfacePiSessionId);
+            if (cancelled) {
+              cancelledPromptSurfaces.delete(request.target.surfacePiSessionId);
+              return;
             }
-          });
 
-          queueMicrotask(() => {
+            const provider = request.provider ?? record.snapshot.provider;
+            const model = request.model ?? record.snapshot.model;
+            const nextMessages = [
+              ...(request.messages as AgentMessage[]),
+              ...(result.extraMessages ? structuredClone(result.extraMessages) : []),
+              assistantMessage(result.assistantText, { provider, model }),
+            ];
+
+            record.snapshot = {
+              ...record.snapshot,
+              target: cloneTarget(request.target),
+              messages: nextMessages,
+              provider,
+              model,
+              reasoningEffort: request.reasoningEffort ?? record.snapshot.reasoningEffort,
+              systemPrompt: request.systemPrompt ?? record.snapshot.systemPrompt,
+              pendingUserMessage: null,
+              streamMessage: null,
+              promptStatus: "idle",
+              activeTurnId: null,
+              activeTurnStartedAt: null,
+            };
+
+            updateSummary(request.target.workspaceSessionId, (summary) => {
+              summary.preview = result.assistantText;
+              summary.messageCount = nextMessages.length;
+              summary.status = "idle";
+              if (focusedSurfacePiSessionId !== request.target.surfacePiSessionId) {
+                summary.isUnread = true;
+                summary.unreadAt = "2026-04-10T10:12:00.000Z";
+                summary.unreadReason = "assistant-turn-finished";
+              }
+            });
+
             const surfaceSyncPayload: SurfaceSyncMessage = {
               workspaceId: TEST_WORKSPACE_INFO.workspaceId,
               reason: result.reason ?? "prompt.settled",
@@ -1720,9 +1743,15 @@ function createFakeRpc(input: {
                 ] as Message[],
               });
             }
+          })().catch((error) => {
+            pendingPromptSurfaces.delete(request.target.surfacePiSessionId);
+            throw error;
           });
 
-          return { target: cloneTarget(request.target) };
+          return {
+            target: cloneTarget(request.target),
+            snapshot: structuredClone(record.snapshot),
+          };
         },
         recordRendererTelemetry: async (request) => {
           rendererTelemetryRequests.push(structuredClone(request));
@@ -2595,11 +2624,14 @@ describe("createChatRuntime", () => {
     await secondaryController.updateComposerDraft({ text: "ready to send", attachments: [] });
     const sendPromise = secondaryController.sendPrompt({ text: "ready to send", attachments: [] });
     await waitFor(() => secondaryController.promptStatus === "streaming");
+    await sendPromise;
 
     expect(secondaryController.composerDraft.text).toBe("");
     expect(tertiaryController.composerDraft.text).toBe("");
     expect(hasUserText(secondaryController.agent.state.messages, "ready to send")).toBe(true);
     expect(hasUserText(tertiaryController.agent.state.messages, "ready to send")).toBe(true);
+    await Bun.sleep(160);
+    expect(harness.getSurfaceSnapshot(threadTarget.surfacePiSessionId).composerDraft.text).toBe("");
 
     activeTurn.resolve({ assistantText: "Done" });
     await sendPromise;
@@ -2800,14 +2832,14 @@ describe("createChatRuntime", () => {
 
     handlerGate.resolve();
     await handlerPrompt;
-    await handlerController.agent.waitForIdle();
+    await waitFor(() => handlerController.promptStatus === "idle");
 
     expect(handlerController.promptStatus).toBe("idle");
     expect(orchestratorController.promptStatus).toBe("streaming");
 
     orchestratorGate.resolve();
     await orchestratorPrompt;
-    await orchestratorController.agent.waitForIdle();
+    await waitFor(() => orchestratorController.promptStatus === "idle");
 
     expect(harness.promptRequests.map((request) => request.target.surfacePiSessionId)).toEqual([
       "session-1",
@@ -3064,6 +3096,107 @@ describe("createChatRuntime", () => {
             snippetId: "snippet-review",
             source: "svvy",
             title: "Review Plan",
+            contentHash: "fnv1a32:example",
+            arguments: ["docs/prd.md"],
+            resolvedText: "Review docs/prd.md.",
+          },
+        ],
+      },
+    });
+
+    runtime.dispose();
+  });
+
+  it("serializes composer proxy state into plain backend prompt payloads", async () => {
+    const session = createSummary("session-1", "Proxy", "Initial");
+    const target = createOrchestratorTarget(session.id);
+    const harness = createFakeRpc({
+      sessions: [session],
+      surfaces: [
+        createSurfaceSnapshot({
+          target,
+          messages: [userMessage("Initial"), assistantMessage("Ready")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const controller = runtime.getPaneController("primary");
+    expect(controller).not.toBeNull();
+    if (!controller) return;
+
+    const attachments = proxyArray<ComposerAttachment>([
+      proxyObject({
+        id: "file:docs/prd.md",
+        kind: "file",
+        name: "prd.md",
+        path: "docs/prd.md",
+        workspaceRelativePath: "docs/prd.md",
+        mimeType: "text/markdown",
+        sizeBytes: 42,
+      }),
+    ]);
+    const snippetMentions = proxyArray<ComposerSnippetMention>([
+      proxyObject({
+        id: "mention-1",
+        snippetId: "snippet-review",
+        source: "svvy",
+        title: "Review",
+        token: "@Review",
+        body: "Review $1.",
+        contentHash: "fnv1a32:example",
+        arguments: proxyArray(["docs/prd.md"]),
+        metadata: proxyObject({ description: "Review target", argumentHint: "target" }),
+      }),
+    ]);
+    const snippetProvenance = proxyArray<SentSnippetProvenance>([
+      proxyObject({
+        mentionId: "mention-1",
+        snippetId: "snippet-review",
+        source: "svvy",
+        title: "Review",
+        contentHash: "fnv1a32:example",
+        arguments: proxyArray(["docs/prd.md"]),
+        resolvedText: "Review docs/prd.md.",
+      }),
+    ]);
+
+    await controller.sendPrompt({
+      text: "Please Review docs/prd.md.",
+      attachments,
+      snippetMentions,
+      snippetProvenance,
+      clientSubmission: proxyObject({
+        correlationId: "composer-submit-proxy",
+        source: "composer",
+        draftLength: 27,
+        trimmedDraftLength: 27,
+        serializedTextLength: 27,
+        attachmentCount: 1,
+        snippetMentionCount: 1,
+        snippetProvenanceCount: 1,
+      }),
+    });
+
+    const request = harness.promptRequests[0];
+    const user = request?.messages.findLast((message) => message.role === "user");
+    expect(request?.clientSubmission).toEqual({
+      correlationId: "composer-submit-proxy",
+      source: "composer",
+      draftLength: 27,
+      trimmedDraftLength: 27,
+      serializedTextLength: 27,
+      attachmentCount: 1,
+      snippetMentionCount: 1,
+      snippetProvenanceCount: 1,
+    });
+    expect(user).toMatchObject({
+      svvyMetadata: {
+        snippetProvenance: [
+          {
+            mentionId: "mention-1",
+            snippetId: "snippet-review",
+            source: "svvy",
+            title: "Review",
             contentHash: "fnv1a32:example",
             arguments: ["docs/prd.md"],
             resolvedText: "Review docs/prd.md.",

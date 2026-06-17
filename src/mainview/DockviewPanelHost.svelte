@@ -415,8 +415,8 @@
       } else {
         await controller.sendPrompt(sendInput);
       }
-      runtime.recordRendererTelemetry({
-        eventName: "surface_composer.send.dispatched",
+	      runtime.recordRendererTelemetry({
+	        eventName: "surface_composer.send.dispatched",
         correlationId,
         level: "info",
         source: "renderer",
@@ -425,31 +425,47 @@
         workspaceSessionId: controller.target.workspaceSessionId,
         surfacePiSessionId: controller.target.surfacePiSessionId,
         threadId: controller.target.threadId,
-        details: surfaceSendTelemetryDetails(sendInput),
-      });
-      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
-      runtime.recordRendererTelemetry({
-        eventName: "surface_composer.send.prompt_history_refreshed",
-        correlationId,
-        level: "debug",
-        source: "renderer",
-        message: "Surface composer send refreshed prompt history.",
-        workspaceId: runtime.workspaceId,
-        workspaceSessionId: controller.target.workspaceSessionId,
-        surfacePiSessionId: controller.target.surfacePiSessionId,
-        threadId: controller.target.threadId,
-        details: surfaceSendTelemetryDetails(sendInput, {
-          promptHistoryCount: promptHistory.length,
-        }),
-      });
-      return true;
-    } catch (error) {
-      runtime.recordRendererTelemetry({
-        eventName: "surface_composer.send.failed",
+	        details: surfaceSendTelemetryDetails(sendInput),
+	      });
+	      try {
+	        promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
+	        runtime.recordRendererTelemetry({
+	          eventName: "surface_composer.send.prompt_history_refreshed",
+	          correlationId,
+	          level: "debug",
+	          source: "renderer",
+	          message: "Surface composer send refreshed prompt history.",
+	          workspaceId: runtime.workspaceId,
+	          workspaceSessionId: controller.target.workspaceSessionId,
+	          surfacePiSessionId: controller.target.surfacePiSessionId,
+	          threadId: controller.target.threadId,
+	          details: surfaceSendTelemetryDetails(sendInput, {
+	            promptHistoryCount: promptHistory.length,
+	          }),
+	        });
+	      } catch (error) {
+	        runtime.recordRendererTelemetry({
+	          eventName: "surface_composer.send.prompt_history_refresh_failed",
+	          correlationId,
+	          level: "warn",
+	          source: "renderer",
+	          message: "Surface composer send completed, but prompt history refresh failed.",
+	          workspaceId: runtime.workspaceId,
+	          workspaceSessionId: controller.target.workspaceSessionId,
+	          surfacePiSessionId: controller.target.surfacePiSessionId,
+	          threadId: controller.target.threadId,
+	          details: surfaceSendTelemetryDetails(sendInput),
+	          error: normalizeTelemetryError(error),
+	        });
+	      }
+	      return true;
+	    } catch (error) {
+	      runtime.recordRendererTelemetry({
+	        eventName: "surface_composer.send.failed",
         correlationId,
         level: "error",
         source: "renderer",
-        message: "Surface composer send failed before backend handoff completed.",
+	        message: "Surface composer send failed before backend acceptance completed.",
         workspaceId: runtime.workspaceId,
         workspaceSessionId: controller?.target.workspaceSessionId,
         surfacePiSessionId: controller?.target.surfacePiSessionId,

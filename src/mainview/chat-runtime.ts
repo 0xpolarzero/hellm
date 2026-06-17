@@ -29,7 +29,6 @@ import {
   type PromptClientSubmissionMetadata,
   type QueuedSurfaceMessage,
   type RendererTelemetryRequest,
-  type SendPromptRequest,
   type SurfaceStreamPatch,
   type SurfaceSyncMessage,
   type WorkspaceBranchInfo,
@@ -325,6 +324,121 @@ function buildUserMessage(input: ComposerPromptSubmission): Message {
     };
   }
   return message;
+}
+
+function serializableComposerAttachment(input: ComposerAttachment): ComposerAttachment {
+  return {
+    id: input.id,
+    kind: input.kind,
+    name: input.name,
+    path: input.path,
+    ...(input.workspaceRelativePath !== undefined
+      ? { workspaceRelativePath: input.workspaceRelativePath }
+      : {}),
+    ...(input.mimeType !== undefined ? { mimeType: input.mimeType } : {}),
+    ...(input.sizeBytes !== undefined ? { sizeBytes: input.sizeBytes } : {}),
+    ...(input.dataBase64 !== undefined ? { dataBase64: input.dataBase64 } : {}),
+  };
+}
+
+function serializableSnippetMention(input: ComposerSnippetMention): ComposerSnippetMention {
+  return {
+    id: input.id,
+    snippetId: input.snippetId,
+    source: input.source,
+    title: input.title,
+    token: input.token,
+    body: input.body,
+    ...(input.path !== undefined ? { path: input.path } : {}),
+    contentHash: input.contentHash,
+    arguments: [...input.arguments],
+    metadata: {
+      description: input.metadata.description,
+      argumentHint: input.metadata.argumentHint,
+    },
+  };
+}
+
+function serializableSnippetProvenance(input: SentSnippetProvenance): SentSnippetProvenance {
+  return {
+    mentionId: input.mentionId,
+    snippetId: input.snippetId,
+    source: input.source,
+    title: input.title,
+    ...(input.path !== undefined ? { path: input.path } : {}),
+    contentHash: input.contentHash,
+    arguments: [...input.arguments],
+    resolvedText: input.resolvedText,
+  };
+}
+
+function serializableClientSubmission(
+  input: PromptClientSubmissionMetadata | undefined,
+): PromptClientSubmissionMetadata | undefined {
+  if (!input) return undefined;
+  return {
+    ...(input.submissionId !== undefined ? { submissionId: input.submissionId } : {}),
+    ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
+    ...(input.clientRequestId !== undefined ? { clientRequestId: input.clientRequestId } : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(input.submittedAt !== undefined ? { submittedAt: input.submittedAt } : {}),
+    ...(input.sequence !== undefined ? { sequence: input.sequence } : {}),
+    ...(input.panelId !== undefined ? { panelId: input.panelId } : {}),
+    ...(input.draftLength !== undefined ? { draftLength: input.draftLength } : {}),
+    ...(input.trimmedDraftLength !== undefined
+      ? { trimmedDraftLength: input.trimmedDraftLength }
+      : {}),
+    ...(input.serializedTextLength !== undefined
+      ? { serializedTextLength: input.serializedTextLength }
+      : {}),
+    ...(input.attachmentCount !== undefined ? { attachmentCount: input.attachmentCount } : {}),
+    ...(input.snippetMentionCount !== undefined
+      ? { snippetMentionCount: input.snippetMentionCount }
+      : {}),
+    ...(input.snippetProvenanceCount !== undefined
+      ? { snippetProvenanceCount: input.snippetProvenanceCount }
+      : {}),
+    ...(input.isEdit !== undefined ? { isEdit: input.isEdit } : {}),
+  };
+}
+
+function serializableComposerSubmission(input: ComposerPromptSubmission): ComposerPromptSubmission {
+  return {
+    text: input.text.trim(),
+    attachments: input.attachments.map(serializableComposerAttachment),
+    snippetMentions: (input.snippetMentions ?? []).map(serializableSnippetMention),
+    snippetProvenance: (input.snippetProvenance ?? []).map(serializableSnippetProvenance),
+    ...(input.telemetryCorrelationId !== undefined
+      ? { telemetryCorrelationId: input.telemetryCorrelationId }
+      : {}),
+    ...(input.clientSubmission
+      ? { clientSubmission: serializableClientSubmission(input.clientSubmission) }
+      : {}),
+  };
+}
+
+function serializableComposerDraft(
+  draft: Pick<ComposerDraft, "text" | "attachments" | "snippetMentions">,
+  updatedAt: string | null,
+): ComposerDraft {
+  return {
+    text: draft.text,
+    attachments: draft.attachments.map(serializableComposerAttachment),
+    snippetMentions: (draft.snippetMentions ?? []).map(serializableSnippetMention),
+    updatedAt,
+  };
+}
+
+function messagesArePrefixOfCurrent(
+  candidate: readonly unknown[],
+  current: readonly unknown[],
+): boolean {
+  if (candidate.length >= current.length) {
+    return false;
+  }
+  return candidate.every((message, index) => {
+    return JSON.stringify(message) === JSON.stringify(current[index]);
+  });
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -1075,6 +1189,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   private lastStreamSequence = 0;
   private draftSyncChain: Promise<void> = Promise.resolve();
   private draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftPersistenceGeneration = 0;
   private rendererOwnsDraft = false;
 
   constructor(
@@ -1151,12 +1266,11 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       return;
     }
     if (
-      this.promptDispatchInFlight &&
       this.promptStatus === "streaming" &&
       this.agent.state.isStreaming &&
       snapshot.promptStatus === "idle" &&
       !snapshot.pendingUserMessage &&
-      snapshot.messages.length < this.agent.state.messages.length
+      messagesArePrefixOfCurrent(snapshot.messages, this.agent.state.messages)
     ) {
       return;
     }
@@ -1266,26 +1380,54 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   }
 
   async sendPrompt(input: ComposerPromptSubmission): Promise<void> {
-    const submission = {
-      text: input.text.trim(),
-      attachments: input.attachments,
-      snippetMentions: structuredClone(input.snippetMentions ?? []),
-      snippetProvenance: structuredClone(input.snippetProvenance ?? []),
-    };
+    const submission = serializableComposerSubmission(input);
     if (!submission.text && submission.attachments.length === 0) {
       return;
     }
 
-    await this.persistPromptHistoryEntry(submission.text);
+    const userMessage = buildUserMessage(submission);
+    const provider = this.agent.state.model?.provider ?? DEFAULT_AGENT_SETTINGS.provider;
+    const model = this.agent.state.model?.id ?? DEFAULT_AGENT_SETTINGS.model;
+    const reasoningEffort =
+      (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
+      DEFAULT_AGENT_SETTINGS.reasoningEffort;
 
-    if (this.promptDispatchInFlight || this.promptStatus === "streaming") {
-      await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });
-      await this.enqueuePrompt(submission);
-      return;
+    try {
+      const response = await this.rpcClient.request.sendPrompt({
+        messages: [...(this.agent.state.messages as Message[]), userMessage],
+        provider,
+        model,
+        reasoningEffort,
+        target: this.target,
+        systemPrompt: this.agent.state.systemPrompt,
+        clientSubmission: submission.clientSubmission,
+        workspaceId: this.workspaceId,
+      });
+      this.target = normalizePromptTarget(response.target);
+      this.agent.sessionId = response.target.surfacePiSessionId;
+      await this.persistPromptHistoryEntry(submission.text);
+      this.invalidatePendingDraftPersistence();
+      this.rendererOwnsDraft = false;
+      if (response.snapshot) {
+        this.applySnapshot(response.snapshot);
+      } else {
+        this.composerDraft = {
+          text: "",
+          attachments: [],
+          snippetMentions: [],
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    } catch (error) {
+      setSurfaceAgentStreamState(this.agent, {
+        isStreaming: false,
+        streamMessage: null,
+        error: error instanceof Error ? error.message : "Prompt submission failed.",
+      });
+      throw error;
+    } finally {
+      this.emit();
     }
-
-    await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });
-    await this.dispatchPrompt(submission);
   }
 
   private async persistPromptHistoryEntry(text: string): Promise<void> {
@@ -1305,12 +1447,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   async updateComposerDraft(
     draft: Pick<ComposerDraft, "text" | "attachments" | "snippetMentions">,
   ): Promise<void> {
-    const nextDraft = {
-      text: draft.text,
-      attachments: structuredClone(draft.attachments),
-      snippetMentions: structuredClone(draft.snippetMentions ?? []),
-      updatedAt: new Date().toISOString(),
-    };
+    const nextDraft = serializableComposerDraft(draft, new Date().toISOString());
     this.composerDraft = nextDraft;
     this.rendererOwnsDraft = true;
     this.emit();
@@ -1322,17 +1459,29 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     if (this.draftPersistTimer) {
       clearTimeout(this.draftPersistTimer);
     }
-    const draftToPersist = structuredClone(draft);
+    const draftToPersist = serializableComposerDraft(draft, draft.updatedAt);
+    const generation = ++this.draftPersistenceGeneration;
     this.draftPersistTimer = setTimeout(() => {
       this.draftPersistTimer = null;
-      this.persistComposerDraft(draftToPersist);
+      this.persistComposerDraft(draftToPersist, generation);
     }, 120);
   }
 
-  private persistComposerDraft(draft: ComposerDraft): void {
+  private invalidatePendingDraftPersistence(): void {
+    this.draftPersistenceGeneration += 1;
+    if (this.draftPersistTimer) {
+      clearTimeout(this.draftPersistTimer);
+      this.draftPersistTimer = null;
+    }
+  }
+
+  private persistComposerDraft(draft: ComposerDraft, generation: number): void {
     this.draftSyncChain = this.draftSyncChain
       .catch(() => undefined)
       .then(async () => {
+        if (generation !== this.draftPersistenceGeneration || !this.rendererOwnsDraft) {
+          return;
+        }
         const response = await this.rpcClient.request.updateComposerDraft({
           workspaceId: this.workspaceId,
           target: this.target,
@@ -1469,91 +1618,12 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     return response.ok;
   }
 
-  private async enqueuePrompt(input: ComposerPromptSubmission): Promise<void> {
-    const userMessage = buildUserMessage(input);
-    const provider = this.agent.state.model?.provider ?? DEFAULT_AGENT_SETTINGS.provider;
-    const model = this.agent.state.model?.id ?? DEFAULT_AGENT_SETTINGS.model;
-    const reasoningEffort =
-      (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
-      DEFAULT_AGENT_SETTINGS.reasoningEffort;
-    const response = await this.rpcClient.request.sendPrompt({
-      messages: [...(this.agent.state.messages as Message[]), userMessage],
-      provider,
-      model,
-      reasoningEffort,
-      target: this.target,
-      systemPrompt: this.agent.state.systemPrompt,
-      queueOnly: true,
-      clientSubmission: input.clientSubmission,
-      workspaceId: this.workspaceId,
-    });
-    this.target = normalizePromptTarget(response.target);
-    this.agent.sessionId = response.target.surfacePiSessionId;
-    if (response.snapshot) {
-      this.applySnapshot(response.snapshot);
-    }
-  }
-
-  private async dispatchPrompt(input: ComposerPromptSubmission): Promise<void> {
-    const userMessage = buildUserMessage(input);
-    const provider = this.agent.state.model?.provider ?? DEFAULT_AGENT_SETTINGS.provider;
-    const model = this.agent.state.model?.id ?? DEFAULT_AGENT_SETTINGS.model;
-    const reasoningEffort =
-      (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
-      DEFAULT_AGENT_SETTINGS.reasoningEffort;
-    const request: SendPromptRequest = {
-      messages: [...(this.agent.state.messages as Message[]), userMessage],
-      provider,
-      model,
-      reasoningEffort,
-      target: this.target,
-      systemPrompt: this.agent.state.systemPrompt,
-      clientSubmission: input.clientSubmission,
-    };
-
-    this.promptDispatchInFlight = true;
-    this.promptStatus = "streaming";
-    this.activeTurnId = null;
-    this.activeTurnStartedAt = new Date().toISOString();
-    this.lastStreamSequence = 0;
-    setSurfaceAgentStreamState(this.agent, { isStreaming: true, streamMessage: null });
-    this.agent.replaceMessages(
-      buildDisplayMessages({ ...this.snapshotFromState(), pendingUserMessage: userMessage }),
-    );
-    this.emit();
-
-    try {
-      const response = await this.rpcClient.request.sendPrompt({
-        ...request,
-        workspaceId: this.workspaceId,
-      });
-      this.target = normalizePromptTarget(response.target);
-      this.agent.sessionId = response.target.surfacePiSessionId;
-      if (response.snapshot) {
-        this.applySnapshot(response.snapshot);
-      }
-    } catch (error) {
-      const failure = createFailureMessage(error, provider, model, "error");
-      this.promptStatus = "idle";
-      this.activeTurnId = null;
-      this.activeTurnStartedAt = null;
-      setSurfaceAgentStreamState(this.agent, {
-        isStreaming: false,
-        streamMessage: null,
-        error: failure.errorMessage,
-      });
-      throw error;
-    } finally {
-      this.promptDispatchInFlight = false;
-      this.emit();
-    }
-  }
-
   dispose(): void {
     if (this.draftPersistTimer) {
       clearTimeout(this.draftPersistTimer);
       this.draftPersistTimer = null;
-      this.persistComposerDraft(this.composerDraft);
+      const generation = this.draftPersistenceGeneration;
+      this.persistComposerDraft(this.composerDraft, generation);
     }
     this.disposed = true;
     this.listeners.clear();
@@ -1591,37 +1661,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
         this.emit();
       });
       return stream;
-    };
-  }
-
-  private snapshotFromState(): ConversationSurfaceSnapshot {
-    return {
-      target: this.target,
-      messages: structuredClone(this.agent.state.messages),
-      pendingUserMessage: null,
-      queuedMessages: structuredClone(this.queuedPrompts),
-      composerDraft: structuredClone(this.composerDraft),
-      streamMessage:
-        this.agent.state.streamMessage?.role === "assistant"
-          ? structuredClone(this.agent.state.streamMessage)
-          : null,
-      streamSequence: this.lastStreamSequence,
-      provider: this.agent.state.model?.provider ?? DEFAULT_AGENT_SETTINGS.provider,
-      model: this.agent.state.model?.id ?? DEFAULT_AGENT_SETTINGS.model,
-      reasoningEffort:
-        (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
-        DEFAULT_AGENT_SETTINGS.reasoningEffort,
-      agentProfileId: this.agentProfileId,
-      loadedExtensionIds: [...this.loadedExtensionIds],
-      availableExtensionIds: [...this.availableExtensionIds],
-      systemPrompt: this.agent.state.systemPrompt,
-      resolvedSystemPrompt: this.resolvedSystemPrompt,
-      externalContextSources: structuredClone(this.externalContextSources),
-      promptBinding: this.promptBinding,
-      promptStatus: this.promptStatus,
-      activeTurnId: this.activeTurnId,
-      activeTurnStartedAt: this.activeTurnStartedAt,
-      turnTimings: structuredClone(this.turnTimings),
     };
   }
 

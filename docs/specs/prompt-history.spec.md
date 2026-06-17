@@ -61,7 +61,7 @@ The adopted `svvy` direction is:
 - the composer preserves the user's unsent draft while browsing history
 - history is shared across sessions within the same workspace
 - history is not shared across different workspaces by default
-- non-empty user prompts are recorded when the user explicitly submits them, including failed and provider-blocked attempts
+- non-empty user prompts are recorded only after backend queue acceptance
 - explicit history search is a separate capability and should not be overloaded onto plain arrow navigation
 
 Nothing below should be read as leaving those points open.
@@ -193,6 +193,7 @@ Prompt history stores only prompts that are:
 - user-authored
 - explicitly submitted
 - non-empty after trimming for submit validation
+- accepted by the backend surface queue
 
 The stored value is the exact submitted text.
 
@@ -205,7 +206,10 @@ Recommended metadata:
 
 ### Decision
 
-Failed sends and provider-blocked sends should still create history entries.
+Prompt history is written only after backend queue acceptance. Pre-accept validation failures,
+provider access rejection, target lookup failure, or interrupted backend acceptance must leave the
+live composer draft intact and must not create a history entry. A local prompt-history refresh
+failure after backend acceptance must not turn the accepted send into a rejected composer submit.
 
 ### Decision
 
@@ -300,9 +304,9 @@ Navigating away from a modified recalled entry should not mutate the stored hist
 If the user sends a recalled or edited recalled prompt:
 
 - the current buffer is submitted
-- on successful send, that submitted text becomes the newest history entry
+- after backend queue acceptance, that submitted text becomes the newest history entry
 - history-navigation mode ends
-- the composer returns to the normal empty-draft state after send
+- the composer returns to the normal empty-draft state from the accepted backend snapshot
 
 ### Decision
 

@@ -1112,22 +1112,26 @@ describe("default workspace renderer shell", () => {
     );
   });
 
-  it("keeps submitted prompt history workspace-scoped and records provider-blocked sends", async () => {
-    const chatWorkspaceSource = await readFile(
-      new URL("./ChatWorkspace.svelte", import.meta.url),
-      "utf8",
-    );
+  it("keeps submitted prompt history workspace-scoped after backend acceptance", async () => {
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
     const promptHistorySource = await readFile(
       new URL("./prompt-history.ts", import.meta.url),
       "utf8",
     );
 
+    const backendSendIndex = runtimeSource.indexOf(
+      "const response = await this.rpcClient.request.sendPrompt",
+    );
+    const historyIndex = runtimeSource.indexOf(
+      "await this.persistPromptHistoryEntry(submission.text)",
+    );
+
     expect(runtimeSource).toContain("private async persistPromptHistoryEntry");
-    expect(runtimeSource).toContain("await this.persistPromptHistoryEntry(submission.text)");
-    expect(chatWorkspaceSource).toContain("if (!hasProviderAccess)");
-    expect(chatWorkspaceSource).toContain("runtime.storage.promptHistory.append");
-    expect(chatWorkspaceSource).toContain("workspaceId: runtime.workspaceId");
+    expect(backendSendIndex).toBeGreaterThanOrEqual(0);
+    expect(historyIndex).toBeGreaterThan(backendSendIndex);
+    expect(runtimeSource).not.toContain(
+      'await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });',
+    );
     expect(promptHistorySource).toContain("navigatePromptHistory");
     expect(promptHistorySource).toContain("draftSnapshot");
   });

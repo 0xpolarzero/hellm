@@ -820,9 +820,6 @@
 				submittedSnippetMentionCount: nextSnippetMentions.length,
 			}),
 		});
-		draft = "";
-		attachments = [];
-		snippetMentions = [];
 		isSubmitting = true;
 
 		try {
@@ -836,6 +833,9 @@
 				clientSubmission,
 			});
 			if (sent) {
+				draft = "";
+				attachments = [];
+				snippetMentions = [];
 				emitSubmitTelemetry({
 					eventName: "composer.submit.sent",
 					correlationId,
@@ -858,9 +858,6 @@
 					clientSubmission,
 					details: submissionTelemetryDetails(clientSubmission),
 				});
-				await restoreDraftBuffer(nextVisibleDraft);
-				attachments = nextAttachments;
-				snippetMentions = nextSnippetMentions;
 			}
 		} catch (error) {
 			emitSubmitTelemetry({
@@ -872,9 +869,6 @@
 				details: submissionTelemetryDetails(clientSubmission),
 				error: normalizeTelemetryError(error),
 			});
-			await restoreDraftBuffer(nextVisibleDraft);
-			attachments = nextAttachments;
-			snippetMentions = nextSnippetMentions;
 		} finally {
 			isSubmitting = false;
 		}

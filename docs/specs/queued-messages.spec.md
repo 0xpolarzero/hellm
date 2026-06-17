@@ -39,9 +39,17 @@ or start a concurrent turn.
 
 ## User Messages
 
-Ordinary composer submit writes one durable queue item when the target surface is active.
+Ordinary composer submit writes one durable queue item for the target surface, whether that surface
+is idle or active.
 
-Prompt history is written once at queue time for user messages.
+Backend queue acceptance is the commit point for ordinary composer sends. The renderer first
+serializes composer-owned reactive state into plain submission data. Until acceptance returns, the
+renderer keeps the live composer buffer and writes no prompt history. Acceptance durably creates the
+queue item, clears the durable composer draft, and returns a surface snapshot that the renderer uses
+to clear the visible composer. Acceptance also invalidates older delayed renderer draft persistence
+for that surface so stale pre-send text cannot be written back after the backend clear. Prompt
+history is written once after acceptance for non-empty user messages. Local prompt-history refresh
+failures after acceptance are non-blocking renderer refresh failures, not send rejection.
 
 Queued user messages can be removed, restored to composer, or reordered before delivery.
 
