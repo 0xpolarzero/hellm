@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 const paneSource = await Bun.file(`${import.meta.dir}/AppLogsPane.svelte`).text();
+const workspaceSource = await Bun.file(`${import.meta.dir}/ChatWorkspace.svelte`).text();
 const sidebarSource = await Bun.file(`${import.meta.dir}/SessionSidebar.svelte`).text();
 
 describe("AppLogsPane virtualized log list contract", () => {
@@ -20,14 +21,13 @@ describe("AppLogsPane virtualized log list contract", () => {
     expect(paneSource).toContain('smooth && !prefersReducedMotion() ? "smooth" : "auto"');
   });
 
-  it("keeps older-page loading and live update tail state wired to TanStack helpers", () => {
+  it("keeps older-page loading and persisted scroll state wired to TanStack helpers", () => {
     expect(paneSource).toContain("beforeSeq: firstSeq");
     expect(paneSource).toContain("bottomPinned = instance.isAtEnd(APP_LOG_TAIL_THRESHOLD_PX)");
     expect(paneSource).toContain("instance.getDistanceFromEnd()");
-    expect(paneSource).toContain("instance.scrollToOffset(");
-    expect(paneSource).toContain(
-      'followOnAppend: liveMode === "live" && bottomPinned ? "auto" : false',
-    );
+    expect(paneSource).toContain("get(virtualizer).scrollToOffset(scrollOffset)");
+    expect(paneSource).toContain("LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop)");
+    expect(paneSource).toContain("followOnAppend: false");
     expect(paneSource).not.toContain("scrollHeight");
     expect(paneSource).not.toContain("previousTotalSize");
   });
@@ -40,20 +40,33 @@ describe("AppLogsPane virtualized log list contract", () => {
     expect(paneSource).toContain('surface: "artifact", artifactId: target.value');
   });
 
-  it("keeps pane filtering, mark-read, expandable detail, and stack trace controls wired", () => {
+  it("keeps pane filtering, viewport mark-read, expandable detail, and stack trace controls wired", () => {
     expect(paneSource).toContain('ariaLabel="Filter app logs by source"');
     expect(paneSource).toContain('aria-label="Search app logs"');
     expect(paneSource).toContain("<PaneFilterTabs");
     expect(paneSource).toContain(
       "onSelect={(value) => (levelFilter = value as typeof levelFilter)}",
     );
+    expect(paneSource).toContain("logs-severity-tabs .ui-pane-filter-tab.active");
+    expect(paneSource).not.toContain("showDots");
     expect(paneSource).toContain("<CompactSelect");
-    expect(paneSource).toContain("runtime.markAppLogsSeen(summary.latestSeq)");
+    expect(paneSource).toContain("function highestVisibleLogSeq(): number");
+    expect(paneSource).toContain("row.end <= viewportStart || row.start >= viewportEnd");
+    expect(paneSource).toContain("runtime.markAppLogsSeen(boundedSeq)");
+    expect(paneSource).not.toContain("runtime.markAppLogsSeen(summary.latestSeq)");
     expect(paneSource).toContain("function toggleExpanded(id: string)");
     expect(paneSource).toContain("expandedIds = next");
-    expect(paneSource).toContain("toggleExpanded(entry.id)");
+    expect(paneSource).toContain("<ExtensionListRow");
+    expect(paneSource).toContain("class={`log-row-shell level-${entry.level}`.trim()}");
+    expect(paneSource).not.toContain("log-level-dot");
     expect(paneSource).toContain("{#if entry.details}");
     expect(paneSource).toContain("{#if entry.error}");
+  });
+
+  it("does not mark logs read when the pane is merely opened", () => {
+    expect(workspaceSource).not.toContain(
+      "runtime.markAppLogsSeen(runtime.appLogSummary.latestSeq)",
+    );
   });
 
   it("exposes every contract app-log source in the source filter", async () => {

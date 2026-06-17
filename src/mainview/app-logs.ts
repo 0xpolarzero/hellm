@@ -56,12 +56,13 @@ export function formatAppLogUnreadTitle(summary: AppLogSummary | null | undefine
 
 export function filterAppLogEntries(
   entries: AppLogEntry[],
-  filters: { level: AppLogLevel | "all"; source: AppLogSource | "all"; query: string },
+  filters: { level: AppLogLevel | "all"; sources?: AppLogSource[]; query: string },
 ): AppLogEntry[] {
   const query = filters.query.trim().toLowerCase();
+  const sourceSet = filters.sources?.length ? new Set(filters.sources) : null;
   return entries.filter((entry) => {
     if (filters.level !== "all" && entry.level !== filters.level) return false;
-    if (filters.source !== "all" && entry.source !== filters.source) return false;
+    if (sourceSet && !sourceSet.has(entry.source)) return false;
     if (!query) return true;
     return [
       entry.message,
@@ -83,8 +84,6 @@ export function filterAppLogEntries(
   });
 }
 
-export type AppLogLiveMode = "live" | "frozen";
-
 export function mergeAppLogEntries(current: AppLogEntry[], incoming: AppLogEntry[]): AppLogEntry[] {
   const byId = new Map<string, AppLogEntry>();
   for (const entry of current) byId.set(entry.id, entry);
@@ -96,8 +95,6 @@ export function applyAppLogLiveUpdate({
   current,
   incomingEntries,
   incomingSummary,
-  liveMode,
-  bottomPinned,
   filters,
   currentNewLogsWhileAway,
   maxLoaded,
@@ -105,9 +102,7 @@ export function applyAppLogLiveUpdate({
   current: AppLogReadModel;
   incomingEntries: AppLogEntry[];
   incomingSummary: AppLogSummary;
-  liveMode: AppLogLiveMode;
-  bottomPinned: boolean;
-  filters: { level: AppLogLevel | "all"; source: AppLogSource | "all"; query: string };
+  filters: { level: AppLogLevel | "all"; sources?: AppLogSource[]; query: string };
   currentNewLogsWhileAway: number;
   maxLoaded: number;
 }): {
@@ -119,21 +114,18 @@ export function applyAppLogLiveUpdate({
   const knownIds = new Set(current.entries.map((entry) => entry.id));
   const appendedEntries = incomingEntries.filter((entry) => !knownIds.has(entry.id));
   const matchingNewEntries = filterAppLogEntries(appendedEntries, filters);
-  const shouldAppendToViewport = liveMode === "live";
-  const shouldFollowTail = shouldAppendToViewport && bottomPinned;
-  const readModel = shouldAppendToViewport
-    ? {
-        entries: mergeAppLogEntries(current.entries, matchingNewEntries).slice(-maxLoaded),
-        summary: incomingSummary,
-      }
-    : { ...current, summary: incomingSummary };
+  const shouldFollowTail = false;
+  const readModel = {
+    entries: mergeAppLogEntries(current.entries, matchingNewEntries).slice(-maxLoaded),
+    summary: incomingSummary,
+  };
 
   return {
     readModel,
     matchingNewEntries,
     shouldFollowTail,
     newLogsWhileAway:
-      matchingNewEntries.length > 0 && !shouldFollowTail
+      matchingNewEntries.length > 0
         ? currentNewLogsWhileAway + matchingNewEntries.length
         : currentNewLogsWhileAway,
   };

@@ -54,10 +54,11 @@ Current sources include:
 The Logs pane supports:
 
 - level filters
-- source filters
+- grouped source filters
 - search
-- mark-read state
-- Live/Frozen tail behavior
+- viewport-based mark-read state for unfiltered browsing
+- persisted scroll position while live logs arrive
+- explicit jump-to-latest without automatic tail movement during live updates
 - virtualized long-scroll rendering
 - expandable details
 - normalized errors and stack traces

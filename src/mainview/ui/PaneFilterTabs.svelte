@@ -64,13 +64,12 @@
 	.ui-pane-filter-tabs {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.22rem;
+		gap: 0.16rem;
 		min-width: 0;
-		padding: 0.18rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		padding: 0.12rem;
+		border: 0;
 		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-surface) 90%, transparent);
-		box-shadow: inset 0 1px 0 color-mix(in oklab, var(--ui-text-primary) 4%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-muted) 24%, transparent);
 		overflow-x: auto;
 	}
 
@@ -89,14 +88,15 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.34rem;
-		min-height: 1.58rem;
-		padding: 0 0.42rem;
-		border: 1px solid transparent;
-		border-radius: var(--ui-radius-xs);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 34%, transparent);
-		color: var(--ui-text-secondary);
+		min-height: 1.32rem;
+		padding: 0 0.46rem;
+		border: 0;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-tertiary);
 		font: inherit;
 		font-size: var(--text-xs);
+		font-weight: 650;
 		line-height: 1;
 		cursor: pointer;
 		white-space: nowrap;
@@ -107,8 +107,7 @@
 	}
 
 	.ui-pane-filter-tab:hover {
-		border-color: color-mix(in oklab, var(--ui-border-strong) 42%, transparent);
-		background: color-mix(in oklab, var(--ui-surface-raised) 74%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-muted) 45%, transparent);
 		color: var(--ui-text-primary);
 	}
 
@@ -118,9 +117,9 @@
 	}
 
 	.ui-pane-filter-tab.active {
-		border-color: color-mix(in oklab, var(--ui-border-accent) 62%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-accent-soft) 66%, var(--ui-surface));
+		background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
 		color: var(--ui-text-primary);
+		box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-border-soft) 70%, transparent);
 	}
 
 	.ui-pane-filter-tab strong {
@@ -175,12 +174,10 @@
 	}
 
 	.tone-warning.active {
-		border-color: color-mix(in oklab, var(--ui-warning) 42%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
+		background: color-mix(in oklab, var(--ui-warning-soft) 56%, var(--ui-surface-raised));
 	}
 
 	.tone-danger.active {
-		border-color: color-mix(in oklab, var(--ui-danger) 42%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-danger-soft) 58%, var(--ui-surface));
+		background: color-mix(in oklab, var(--ui-danger-soft) 56%, var(--ui-surface-raised));
 	}
 </style>

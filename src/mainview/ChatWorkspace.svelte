@@ -1159,7 +1159,6 @@
       },
       getSidebarPaneOpenTarget(event),
     );
-    void runtime.markAppLogsSeen(runtime.appLogSummary.latestSeq);
   }
 
   function handleOpenHandlerThread(

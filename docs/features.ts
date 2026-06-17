@@ -432,7 +432,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "App Logs Surface",
     status: "shipped",
     summary:
-      "Provides workspace-scoped product observability through structured, redacted, persisted app logs with monotonic sequence numbers, unread state, live renderer updates, a sidebar Logs entry with compact action-worthy unread badges for warning and error logs only, and a dense Dockview logs pane with TanStack Virtual long-scroll rendering, native end anchoring, older-page loading, level/source/search filtering, mark-read behavior, explicit Live/Frozen tail control, smooth explicit jump-to-latest with reduced-motion fallback, expandable details, normalized errors, stack traces, and related session, surface, thread, workflow, task, command, and artifact ids without making logs canonical product state.",
+      "Provides workspace-scoped product observability through structured, redacted, persisted app logs with monotonic sequence numbers, unread state, live renderer updates, a sidebar Logs entry with compact action-worthy unread badges for warning and error logs only, and a dense Dockview logs pane with TanStack Virtual long-scroll rendering, persisted scroll position during live updates, older-page loading, level/grouped-source/search filtering, viewport-based mark-read behavior for unfiltered browsing, smooth explicit jump-to-latest with reduced-motion fallback, expandable details, normalized errors, stack traces, and related session, surface, thread, workflow, task, command, and artifact ids without making logs canonical product state.",
     sourceSpecs: ["docs/specs/app-logs.spec.md"],
   },
 ];

@@ -96,24 +96,20 @@ describe("filterAppLogEntries", () => {
   ];
 
   it("filters by level and source", () => {
-    expect(filterAppLogEntries(entries, { level: "warn", source: "all", query: "" })).toEqual([
-      entries[1]!,
-    ]);
+    expect(filterAppLogEntries(entries, { level: "warn", query: "" })).toEqual([entries[1]!]);
     expect(
-      filterAppLogEntries(entries, { level: "all", source: "execute_typescript", query: "" }),
+      filterAppLogEntries(entries, { level: "all", sources: ["execute_typescript"], query: "" }),
     ).toEqual([entries[2]!]);
   });
 
   it("searches messages, sources, and related ids", () => {
-    expect(
-      filterAppLogEntries(entries, { level: "all", source: "all", query: "provider" }),
-    ).toEqual([entries[1]!]);
-    expect(filterAppLogEntries(entries, { level: "all", source: "all", query: "cmd-1" })).toEqual([
+    expect(filterAppLogEntries(entries, { level: "all", query: "provider" })).toEqual([
+      entries[1]!,
+    ]);
+    expect(filterAppLogEntries(entries, { level: "all", query: "cmd-1" })).toEqual([entries[2]!]);
+    expect(filterAppLogEntries(entries, { level: "all", query: "artifact-1" })).toEqual([
       entries[2]!,
     ]);
-    expect(
-      filterAppLogEntries(entries, { level: "all", source: "all", query: "artifact-1" }),
-    ).toEqual([entries[2]!]);
   });
 });
 
@@ -126,32 +122,28 @@ describe("applyAppLogLiveUpdate", () => {
     totals: { total: 2, debug: 0, info: 1, warn: 1, error: 0 },
   });
 
-  it("appends matching logs in Live mode without showing the New logs affordance while pinned at the end", () => {
+  it("appends matching logs without requesting automatic tail follow", () => {
     const result = applyAppLogLiveUpdate({
       current: { entries: [currentEntry], summary: appLogSummary() },
       incomingEntries: [nextEntry],
       incomingSummary: nextSummary,
-      liveMode: "live",
-      bottomPinned: true,
-      filters: { level: "all", source: "all", query: "" },
+      filters: { level: "all", query: "" },
       currentNewLogsWhileAway: 0,
       maxLoaded: 2_000,
     });
 
     expect(result.readModel.entries.map((log) => log.id)).toEqual(["1", "2"]);
     expect(result.readModel.summary).toEqual(nextSummary);
-    expect(result.shouldFollowTail).toBe(true);
-    expect(result.newLogsWhileAway).toBe(0);
+    expect(result.shouldFollowTail).toBe(false);
+    expect(result.newLogsWhileAway).toBe(1);
   });
 
-  it("keeps Live mode entries updating while the reader is away from the tail and counts the new logs", () => {
+  it("keeps entries updating while the reader is away from the tail and counts the new logs", () => {
     const result = applyAppLogLiveUpdate({
       current: { entries: [currentEntry], summary: appLogSummary() },
       incomingEntries: [nextEntry],
       incomingSummary: nextSummary,
-      liveMode: "live",
-      bottomPinned: false,
-      filters: { level: "all", source: "all", query: "" },
+      filters: { level: "all", query: "" },
       currentNewLogsWhileAway: 3,
       maxLoaded: 2_000,
     });
@@ -159,24 +151,6 @@ describe("applyAppLogLiveUpdate", () => {
     expect(result.readModel.entries.map((log) => log.id)).toEqual(["1", "2"]);
     expect(result.shouldFollowTail).toBe(false);
     expect(result.newLogsWhileAway).toBe(4);
-  });
-
-  it("freezes the visible entries while still refreshing summary and New logs count", () => {
-    const result = applyAppLogLiveUpdate({
-      current: { entries: [currentEntry], summary: appLogSummary() },
-      incomingEntries: [nextEntry],
-      incomingSummary: nextSummary,
-      liveMode: "frozen",
-      bottomPinned: true,
-      filters: { level: "all", source: "all", query: "" },
-      currentNewLogsWhileAway: 0,
-      maxLoaded: 2_000,
-    });
-
-    expect(result.readModel.entries).toEqual([currentEntry]);
-    expect(result.readModel.summary).toEqual(nextSummary);
-    expect(result.shouldFollowTail).toBe(false);
-    expect(result.newLogsWhileAway).toBe(1);
   });
 
   it("ignores duplicate and filtered-out update entries for viewport and New logs counts", () => {
@@ -187,9 +161,7 @@ describe("applyAppLogLiveUpdate", () => {
         entry({ id: "3", seq: 3, level: "info", source: "workspace", message: "Background info" }),
       ],
       incomingSummary: nextSummary,
-      liveMode: "live",
-      bottomPinned: false,
-      filters: { level: "error", source: "all", query: "" },
+      filters: { level: "error", query: "" },
       currentNewLogsWhileAway: 5,
       maxLoaded: 2_000,
     });

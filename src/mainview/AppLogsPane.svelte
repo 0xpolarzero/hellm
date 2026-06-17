@@ -1,11 +1,10 @@
+<script module lang="ts">
+  const LOG_SCROLL_OFFSET_BY_PANEL = new Map<string, number>();
+</script>
+
 <script lang="ts">
-  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import CheckIcon from "@lucide/svelte/icons/check";
   import CopyIcon from "@lucide/svelte/icons/copy";
-  import PauseIcon from "@lucide/svelte/icons/pause";
-  import RadioIcon from "@lucide/svelte/icons/radio";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import { createVirtualizer } from "@tanstack/svelte-virtual";
   import { onMount, tick, untrack } from "svelte";
   import { get } from "svelte/store";
@@ -16,24 +15,20 @@
     AppLogSource,
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
-  import type { AppLogLiveMode } from "./app-logs";
   import {
-    APP_LOG_SOURCES,
     applyAppLogLiveUpdate,
     filterAppLogEntries,
     formatAppLogCount,
     mergeAppLogEntries,
   } from "./app-logs";
-  import Badge from "./ui/Badge.svelte";
+  import ExtensionListRow from "./ExtensionListRow.svelte";
   import Button from "./ui/Button.svelte";
   import CompactSelect from "./ui/CompactSelect.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Input from "./ui/Input.svelte";
   import MetadataChip from "./ui/MetadataChip.svelte";
   import PaneFilterTabs, { type PaneFilterTabOption } from "./ui/PaneFilterTabs.svelte";
-  import PaneHeader from "./ui/PaneHeader.svelte";
   import StatusCard from "./ui/StatusCard.svelte";
-  import Tooltip from "./ui/Tooltip.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -50,15 +45,54 @@
     { level: "error", label: "Error logs", shortLabel: "Errors" },
   ];
 
+  type SourceFilterId =
+    | "all"
+    | "app"
+    | "sessions"
+    | "prompts"
+    | "threads"
+    | "workflows"
+    | "tools"
+    | "artifacts"
+    | "renderer";
+
+  const SOURCE_FILTERS: Array<{
+    id: SourceFilterId;
+    label: string;
+    sources?: AppLogSource[];
+  }> = [
+    { id: "all", label: "All sources" },
+    {
+      id: "app",
+      label: "App runtime",
+      sources: ["app.lifecycle", "app.bridge", "app.rpc", "auth.provider", "settings", "workspace"],
+    },
+    {
+      id: "sessions",
+      label: "Sessions",
+      sources: ["session", "session.title", "surface", "source.graph"],
+    },
+    { id: "prompts", label: "Prompts", sources: ["prompt"] },
+    { id: "threads", label: "Threads", sources: ["thread"] },
+    {
+      id: "workflows",
+      label: "Workflows",
+      sources: ["smithers", "workflow.library", "workflow.run", "workflow.task"],
+    },
+    { id: "tools", label: "Tools", sources: ["direct-tool", "execute_typescript"] },
+    { id: "artifacts", label: "Artifacts", sources: ["artifact", "external-editor"] },
+    { id: "renderer", label: "Renderer", sources: ["renderer"] },
+  ];
+
+
   let readModel = $state<AppLogReadModel | null>(null);
   let expandedIds = $state(new Set<string>());
   let levelFilter = $state<AppLogLevel | "all">("all");
-  let sourceFilter = $state<AppLogSource | "all">("all");
+  let sourceFilter = $state<SourceFilterId>("all");
   let query = $state("");
   let loading = $state(true);
   let error = $state<string | null>(null);
   let newLogsWhileAway = $state(0);
-  let liveMode = $state<AppLogLiveMode>("live");
   let bottomPinned = $state(true);
   let listElement = $state<HTMLDivElement | null>(null);
   let loadingOlder = $state(false);
@@ -66,6 +100,7 @@
   let copiedTarget = $state<"all" | string | null>(null);
   let showCopyAllWarning = $state(false);
   let skipCopyAllWarning = $state(false);
+  let lastMarkedVisibleSeq = $state(0);
   let copyResetTimer: number | null = null;
   let scrollStateFrame: number | null = null;
   let unsubscribeLogUpdate: (() => void) | null = null;
@@ -76,7 +111,7 @@
   const LOG_MAX_LOADED = 2_000;
   const LOG_COPY_LIMIT = 10_000;
   const COPY_ALL_WARNING_STORAGE_KEY = "svvy.appLogs.copyAllWarningDismissed";
-  const LOG_ROW_ESTIMATE_PX = 76;
+  const LOG_ROW_ESTIMATE_PX = 72;
   const APP_LOG_TAIL_THRESHOLD_PX = 40;
 
   function syncRuntimeSnapshot(): void {
@@ -92,7 +127,7 @@
   const visibleEntries = $derived(
     filterAppLogEntries(readModel?.entries ?? [], {
       level: levelFilter,
-      source: sourceFilter,
+      sources: selectedLogSources(),
       query,
     }),
   );
@@ -139,10 +174,13 @@
     })),
   );
 
-  const sourceFilterOptions = $derived([
-    { value: "all", label: "All sources" },
-    ...APP_LOG_SOURCES.map((source) => ({ value: source, label: source })),
-  ]);
+  const sourceFilterOptions = $derived(
+    SOURCE_FILTERS.map((filter) => ({ value: filter.id, label: filter.label })),
+  );
+
+  function selectedLogSources(): AppLogSource[] | undefined {
+    return SOURCE_FILTERS.find((filter) => filter.id === sourceFilter)?.sources;
+  }
 
   function formatTime(value: string): string {
     return new Intl.DateTimeFormat(undefined, {
@@ -224,17 +262,11 @@
     toggleExpanded(entry.id);
   }
 
-  function handleLogRowKeydown(event: KeyboardEvent, entry: AppLogEntry) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      toggleLogRow(entry);
-    }
-  }
-
-  function syncTailFollowState() {
+  function syncScrollState() {
     if (!listElement) return;
     const instance = get(virtualizer);
     bottomPinned = instance.isAtEnd(APP_LOG_TAIL_THRESHOLD_PX);
+    LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop);
     if (bottomPinned || instance.getDistanceFromEnd() <= 0) {
       newLogsWhileAway = 0;
     }
@@ -246,10 +278,11 @@
     }
     scrollStateFrame = requestAnimationFrame(() => {
       scrollStateFrame = null;
-      syncTailFollowState();
+      syncScrollState();
       if (listElement && listElement.scrollTop < 120) {
         void loadOlderLogs();
       }
+      void markVisibleLogsRead();
     });
   }
 
@@ -265,56 +298,63 @@
       newLogsWhileAway = 0;
       const behavior: ScrollBehavior = smooth && !prefersReducedMotion() ? "smooth" : "auto";
       get(virtualizer).scrollToEnd({ behavior });
+      LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop);
       if (markRead) {
-        void markReadThroughLatest();
+        void markVisibleLogsRead();
       }
     });
   }
 
-  function setLiveMode(nextLive: boolean) {
-    if (nextLive) {
-      liveMode = "live";
-      bottomPinned = true;
-      newLogsWhileAway = 0;
-      void loadLogs({ forceTail: true, smoothTail: true });
-      return;
-    }
-    liveMode = "frozen";
-  }
-
-  function toggleLiveMode() {
-    setLiveMode(liveMode !== "live");
-  }
-
-  async function markReadThroughLatest() {
+  async function markReadThroughSeq(throughSeq: number) {
     const summary = readModel?.summary ?? runtime.appLogSummary;
-    if (summary.latestSeq <= 0 || summary.latestSeq <= summary.seenSeq) {
+    const boundedSeq = Math.min(throughSeq, summary.latestSeq);
+    if (boundedSeq <= 0 || boundedSeq <= summary.seenSeq || boundedSeq <= lastMarkedVisibleSeq) {
       return;
     }
-    const nextSummary = await runtime.markAppLogsSeen(summary.latestSeq);
+    lastMarkedVisibleSeq = boundedSeq;
+    const nextSummary = await runtime.markAppLogsSeen(boundedSeq);
     if (readModel) {
       readModel = { ...readModel, summary: nextSummary };
     }
   }
 
-  function restoreDistanceFromEnd(distanceFromEnd: number) {
+  function highestVisibleLogSeq(): number {
+    if (!listElement || levelFilter !== "all" || sourceFilter !== "all" || query.trim()) {
+      return 0;
+    }
+    const viewportStart = listElement.scrollTop;
+    const viewportEnd = viewportStart + listElement.clientHeight;
+    let highestSeq = 0;
+    for (const row of get(virtualizer).getVirtualItems()) {
+      if (row.end <= viewportStart || row.start >= viewportEnd) continue;
+      const entry = visibleEntries[row.index];
+      if (entry) highestSeq = Math.max(highestSeq, entry.seq);
+    }
+    return highestSeq;
+  }
+
+  async function markVisibleLogsRead() {
+    await markReadThroughSeq(highestVisibleLogSeq());
+  }
+
+  function restoreScrollOffset(scrollOffset: number) {
     requestAnimationFrame(() => {
       if (!listElement) return;
-      const instance = get(virtualizer);
-      instance.scrollToOffset(Math.max(instance.getTotalSize() - instance.getSize() - distanceFromEnd, 0));
+      get(virtualizer).scrollToOffset(scrollOffset);
+      void markVisibleLogsRead();
     });
   }
 
   async function loadLogs(options: { forceTail?: boolean; smoothTail?: boolean } = {}) {
-    const shouldFollowTail = options.forceTail === undefined ? liveMode === "live" && bottomPinned : options.forceTail;
-    const distanceFromEnd = shouldFollowTail || !listElement ? 0 : get(virtualizer).getDistanceFromEnd();
+    const shouldFollowTail = options.forceTail === true;
+    const scrollOffset = listElement?.scrollTop ?? LOG_SCROLL_OFFSET_BY_PANEL.get(panelId) ?? 0;
     loading = !readModel;
     error = null;
     try {
       const next = await runtime.getAppLogs({
         limit: LOG_LIST_LIMIT,
         levels: levelFilter === "all" ? undefined : [levelFilter],
-        sources: sourceFilter === "all" ? undefined : [sourceFilter],
+        sources: selectedLogSources(),
         query: query.trim() || undefined,
       });
       readModel = next;
@@ -322,8 +362,7 @@
       if (shouldFollowTail) {
         scrollToTail({ smooth: options.smoothTail });
       } else {
-        restoreDistanceFromEnd(distanceFromEnd);
-        void markReadThroughLatest();
+        restoreScrollOffset(scrollOffset);
       }
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to load app logs.";
@@ -358,7 +397,7 @@
         limit: LOG_PAGE_LIMIT,
         beforeSeq: firstSeq,
         levels: levelFilter === "all" ? undefined : [levelFilter],
-        sources: sourceFilter === "all" ? undefined : [sourceFilter],
+        sources: selectedLogSources(),
         query: query.trim() || undefined,
       });
       hasOlderLogs = older.entries.length >= LOG_PAGE_LIMIT;
@@ -463,16 +502,14 @@
   }
 
   onMount(() => {
-    void loadLogs({ forceTail: true });
+    void loadLogs({ forceTail: !LOG_SCROLL_OFFSET_BY_PANEL.has(panelId) });
     unsubscribeLogUpdate = runtime.subscribeAppLogUpdate((payload) => {
       if (!readModel) return;
       const next = applyAppLogLiveUpdate({
         current: readModel,
         incomingEntries: payload.entries,
         incomingSummary: payload.summary,
-        liveMode,
-        bottomPinned,
-        filters: { level: levelFilter, source: sourceFilter, query },
+        filters: { level: levelFilter, sources: selectedLogSources(), query },
         currentNewLogsWhileAway: newLogsWhileAway,
         maxLoaded: LOG_MAX_LOADED,
       });
@@ -481,9 +518,6 @@
     });
     unsubscribeRuntime = runtime.subscribe(() => {
       syncRuntimeSnapshot();
-      if (runtime.paneLayout.focusedPanelId === panelId) {
-        void markReadThroughLatest();
-      }
     });
     return () => {
       if (scrollStateFrame !== null) {
@@ -501,7 +535,7 @@
     await tick();
     requestAnimationFrame(() => {
       const instance = get(virtualizer);
-      for (const node of listElement?.querySelectorAll<HTMLDivElement>(".log-row[data-index]") ?? []) {
+      for (const node of listElement?.querySelectorAll<HTMLDivElement>(".log-row-shell[data-index]") ?? []) {
         instance.measureElement(node);
       }
     });
@@ -531,7 +565,7 @@
       getItemKey: (index) => visibleEntries[index]?.seq ?? index,
       anchorTo: "end",
       scrollEndThreshold: APP_LOG_TAIL_THRESHOLD_PX,
-      followOnAppend: liveMode === "live" && bottomPinned ? "auto" : false,
+      followOnAppend: false,
     });
   });
 
@@ -540,7 +574,7 @@
     void sourceFilter;
     void query;
     untrack(() => {
-      void loadLogs({ forceTail: liveMode === "live" && bottomPinned });
+      void loadLogs();
     });
   });
 
@@ -548,69 +582,50 @@
     void expandedIds;
     void measureVisibleLogRows();
   });
+
+  $effect(() => {
+    void virtualRows;
+    void visibleEntries;
+    untrack(() => {
+      void markVisibleLogsRead();
+    });
+  });
 </script>
 
 <section class="app-logs-pane" aria-label="App logs">
-  <PaneHeader
-    eyebrow="App Logs"
-    title={readModel ? `${readModel.summary.totals.total} entries` : "Loading logs"}
-    subtitle={readModel ? `Latest #${readModel.summary.latestSeq} · seen #${readModel.summary.seenSeq}` : "Structured product observability"}
-  >
-    {#snippet actions()}
-      <Tooltip label={liveMode === "live" ? "Freeze log updates" : "Resume live log updates"}>
-        <Button
-          size="sm"
-          variant={liveMode === "live" ? "primary" : "secondary"}
-          aria-pressed={liveMode === "live"}
-          aria-label={liveMode === "live" ? "Freeze log updates" : "Resume live log updates"}
-          onclick={toggleLiveMode}
-        >
-          {#if liveMode === "live"}
-            <RadioIcon aria-hidden="true" size={14} />
-            Live
-          {:else}
-            <PauseIcon aria-hidden="true" size={14} />
-            Frozen
-          {/if}
-        </Button>
-      </Tooltip>
-      <Tooltip label="Refresh logs">
-        <Button size="sm" variant="ghost" iconOnly aria-label="Refresh logs" onclick={() => loadLogs()}>
-          <RefreshCwIcon aria-hidden="true" size={14} />
-        </Button>
-      </Tooltip>
-      <Button size="sm" onclick={markReadThroughLatest}>Mark all read</Button>
-      <Tooltip label="Copy all logs">
-        <Button size="sm" variant="ghost" iconOnly aria-label="Copy all logs" onclick={requestCopyAllLogs}>
-          {#if copiedTarget === "all"}
-            <CheckIcon aria-hidden="true" size={14} />
-          {:else}
-            <CopyIcon aria-hidden="true" size={14} />
-          {/if}
-        </Button>
-      </Tooltip>
-    {/snippet}
-  </PaneHeader>
-
-  <div class="logs-toolbar">
-    <PaneFilterTabs
-      label="Severity"
-      value={levelFilter}
-      options={levelFilterOptions}
-      showDots
-      aria-label="Severity filters"
-      onSelect={(value) => (levelFilter = value as typeof levelFilter)}
-    />
-    <Input bind:value={query} placeholder="Search message, source, id" aria-label="Search app logs" />
-    <CompactSelect
-      value={sourceFilter}
-      options={sourceFilterOptions}
-      ariaLabel="Filter app logs by source"
-      triggerClass="logs-source-select"
-      menuClass="logs-source-menu"
-      placement="below"
-      onSelect={(value) => (sourceFilter = value as typeof sourceFilter)}
-    />
+  <div class="logs-header">
+    <div class="logs-filter-row">
+      <div class="logs-filter-start">
+        <PaneFilterTabs
+          class="logs-severity-tabs"
+          value={levelFilter}
+          options={levelFilterOptions}
+          aria-label="Severity filters"
+          onSelect={(value) => (levelFilter = value as typeof levelFilter)}
+        />
+        <CompactSelect
+          value={sourceFilter}
+          options={sourceFilterOptions}
+          ariaLabel="Filter app logs by source"
+          triggerClass="logs-source-select"
+          menuClass="logs-source-menu"
+          optionClass="logs-source-option"
+          placement="below"
+          onSelect={(value) => (sourceFilter = value as typeof sourceFilter)}
+        />
+      </div>
+      <Button class="copy-all-logs-button" size="xs" variant="ghost" onclick={requestCopyAllLogs}>
+        {#if copiedTarget === "all"}
+          <CheckIcon aria-hidden="true" size={13} />
+        {:else}
+          <CopyIcon aria-hidden="true" size={13} />
+        {/if}
+        <span>copy all logs</span>
+      </Button>
+    </div>
+    <div class="logs-search-row">
+      <Input bind:value={query} placeholder="Search message, source, id, details" aria-label="Search app logs" />
+    </div>
   </div>
 
   {#if error}
@@ -638,70 +653,62 @@
                 <div
                   data-index={row.index}
                   use:measureLogRow
-                  class:expanded={expandedIds.has(entry.id)}
-                  class={`log-row level-${entry.level}`.trim()}
-                  role="button"
-                  tabindex="0"
-                  aria-expanded={expandedIds.has(entry.id)}
-                  onclick={() => toggleLogRow(entry)}
-                  onkeydown={(event) => handleLogRowKeydown(event, entry)}
+                  class={`log-row-shell level-${entry.level}`.trim()}
                 >
-                  <div class="row-main">
-                    <span class="expand-indicator" aria-hidden="true">
-                      {#if expandedIds.has(entry.id)}
-                        <ChevronDownIcon size={14} />
-                      {:else}
-                        <ChevronRightIcon size={14} />
-                      {/if}
-                    </span>
-                    <span class="row-copy">
-                      <span class="row-title">
-                        <Badge tone={levelTone(entry.level)}>{entry.level}</Badge>
-                        <code>{entry.source}</code>
-                        <strong>{entry.message}</strong>
-                      </span>
+                  <ExtensionListRow
+                    id={entry.id}
+                    title={entry.message}
+                    description={`${entry.source} · ${formatTime(entry.createdAt)} · #${entry.seq}`}
+                    expanded={expandedIds.has(entry.id)}
+                    expandedInset={false}
+                    showDragHandle={false}
+                    showLeading={false}
+                    onToggle={() => toggleLogRow(entry)}
+                  >
+                    {#snippet meta()}
+                      <MetadataChip label="level" value={entry.level} tone={levelTone(entry.level)} mono={false} />
+                      <MetadataChip label="source" value={entry.source} mono={false} />
                       {#if relatedIds(entry).length > 0}
-                        <span class="related-chips">
-                            {#each relatedIds(entry) as related (`${entry.id}:${related.label}`)}
-                            {#if related.action}
-                              <button type="button" onclick={(event) => { event.stopPropagation(); void openRelated(entry, related); }}>
-                                <MetadataChip label={related.label} value={related.value} tone="accent" />
-                              </button>
-                            {:else}
-                              <MetadataChip label={related.label} value={related.value} />
-                            {/if}
-                          {/each}
-                        </span>
+                        <MetadataChip label="links" value={String(relatedIds(entry).length)} tone="accent" mono={false} />
                       {/if}
-                    </span>
-                    <span class="row-meta"><time>{formatTime(entry.createdAt)}</time><code>#{entry.seq}</code></span>
-                  </div>
-                  <Tooltip label="Copy log entry" side="left">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      class="row-copy-button"
-                      aria-label="Copy log entry"
-                      onclick={(event) => {
-                        event.stopPropagation();
-                        void copyLogEntry(entry);
-                      }}
-                    >
-                      {#if copiedTarget === entry.id}
-                        <CheckIcon aria-hidden="true" size={13} />
-                      {:else}
-                        <CopyIcon aria-hidden="true" size={13} />
-                      {/if}
-                    </Button>
-                  </Tooltip>
-                  {#if expandedIds.has(entry.id)}
-                    <div class="row-details">
+                    {/snippet}
+                    {#snippet actions()}
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        class="row-copy-button"
+                        aria-label="Copy log entry"
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          void copyLogEntry(entry);
+                        }}
+                      >
+                        {#if copiedTarget === entry.id}
+                          <CheckIcon aria-hidden="true" size={13} />
+                        {:else}
+                          <CopyIcon aria-hidden="true" size={13} />
+                        {/if}
+                      </Button>
+                    {/snippet}
+                    {#snippet expandedContent()}
+                      <div class="row-details">
                       <dl class="row-detail-facts">
                         <dt>Sequence</dt><dd>#{entry.seq}</dd>
                         <dt>Created</dt><dd>{entry.createdAt}</dd>
+                        <dt>Source</dt><dd>{entry.source}</dd>
+                        <dt>Level</dt><dd>{entry.level}</dd>
                         {#each relatedIds(entry) as related (`expanded:${entry.id}:${related.label}`)}
-                          <dt>{related.label}</dt><dd><code>{related.value}</code></dd>
+                          <dt>{related.label}</dt>
+                          <dd>
+                            {#if related.action}
+                              <button type="button" class="related-link-button" onclick={() => void openRelated(entry, related)}>
+                                <MetadataChip value={related.value} tone="accent" />
+                              </button>
+                            {:else}
+                              <code>{related.value}</code>
+                            {/if}
+                          </dd>
                         {/each}
                       </dl>
                       {#if entry.details}
@@ -710,18 +717,16 @@
                       {#if entry.error}
                         <pre class="error-block">{JSON.stringify(entry.error, null, 2)}</pre>
                       {/if}
-                      {#if !entry.details && !entry.error && relatedIds(entry).length === 0}
-                        <span>No extra details.</span>
-                      {/if}
                     </div>
-                  {/if}
+                    {/snippet}
+                  </ExtensionListRow>
                 </div>
               {/if}
             {/each}
           </div>
         </div>
         {#if newLogsWhileAway > 0}
-          <button type="button" class="new-logs-button" onclick={() => setLiveMode(true)}>
+          <button type="button" class="new-logs-button" onclick={() => loadLogs({ forceTail: true, smoothTail: true })}>
             {formatAppLogCount(newLogsWhileAway)} new logs. Jump to latest
           </button>
         {/if}
@@ -755,45 +760,128 @@
   .app-logs-pane {
     container-type: inline-size;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     background: var(--ui-panel);
     color: var(--ui-text-primary);
   }
 
-  .logs-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
+  .logs-header {
+    display: grid;
+    gap: 0.42rem;
     min-width: 0;
-    padding: 0.58rem 0.78rem;
+    padding: 0.58rem 0.72rem 0.62rem;
     border-bottom: 1px solid var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-panel) 82%, var(--ui-surface));
   }
 
-  .logs-message,
-  .logs-empty {
-    margin: 0;
-  }
-
-  .header-actions,
-  .related-chips {
+  .logs-filter-row,
+  .logs-filter-start {
     display: flex;
     align-items: center;
+    min-width: 0;
+  }
+
+  .logs-filter-row {
+    justify-content: space-between;
     gap: 0.35rem;
   }
 
-  .logs-toolbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) minmax(7rem, 12rem);
+  .logs-filter-start {
+    flex: 1 1 auto;
+    gap: 0.42rem;
+    overflow: hidden;
+  }
+
+  .logs-search-row {
+    min-width: 0;
+  }
+
+  :global(.logs-severity-tabs) {
+    background: transparent;
+    padding: 0;
+    gap: 0.22rem;
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab) {
+    min-height: 1.58rem;
+    padding-inline: 0.52rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 62%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
+    color: var(--ui-text-secondary);
+    box-shadow: none;
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab:hover) {
+    border-color: color-mix(in oklab, var(--ui-border-strong) 48%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 96%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab.active) {
+    border-color: color-mix(in oklab, var(--ui-accent) 32%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent-soft) 22%, var(--ui-surface-raised));
+    color: var(--ui-text-primary);
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-info.active) {
+    border-color: color-mix(in oklab, var(--ui-info) 30%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-info-soft) 36%, var(--ui-surface-raised));
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-warning.active) {
+    border-color: color-mix(in oklab, var(--ui-warning) 32%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-warning-soft) 42%, var(--ui-surface-raised));
+  }
+
+  :global(.logs-severity-tabs .ui-pane-filter-tab.tone-danger.active) {
+    border-color: color-mix(in oklab, var(--ui-danger) 34%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-danger-soft) 44%, var(--ui-surface-raised));
   }
 
   :global(.logs-source-select) {
-    width: 100%;
-    min-height: 1.95rem;
+    width: 9.8rem;
+    min-height: 1.58rem;
+    padding: 0 0.42rem;
     justify-content: space-between;
-    border-color: var(--ui-border-soft);
-    background: color-mix(in oklab, var(--ui-surface-raised) 74%, transparent);
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
+    color: var(--ui-text-secondary);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  :global(.logs-source-option) {
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  :global(.logs-source-select:hover),
+  :global(.logs-source-select:focus-visible) {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ui-border-strong) 48%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 96%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  :global(.logs-source-select:focus-visible) {
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  :global(.copy-all-logs-button) {
+    flex: 0 0 auto;
+    height: 1.58rem;
+    min-height: 1.58rem;
+    padding: 0 0.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: none;
   }
 
   .logs-body {
@@ -808,7 +896,7 @@
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
-    padding: 0.5rem;
+    padding: 0.48rem;
   }
 
   .logs-virtual-spacer {
@@ -838,89 +926,98 @@
     text-align: center;
   }
 
-  .log-row {
-    box-sizing: border-box;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+  .log-row-shell {
     width: 100%;
-    border: 1px solid transparent;
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    cursor: pointer;
-    transition:
-      border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
-      background-color 150ms cubic-bezier(0.19, 1, 0.22, 1);
   }
 
-  .log-row:hover {
-    border-color: color-mix(in oklab, var(--ui-border-strong) 45%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
+  .log-row-shell :global(.shared-extension-row) {
+    background: color-mix(in oklab, var(--ui-surface-raised) 74%, transparent);
   }
 
-  .row-main {
-    display: grid;
-    grid-template-columns: 0.9rem minmax(0, 1fr) auto;
-    gap: 0.4rem;
-    width: 100%;
-    min-width: 0;
-    border: 0;
-    background: transparent;
-    color: inherit;
-    text-align: left;
-    padding: 0.42rem;
+  .log-row-shell :global(.shared-extension-row:hover) {
+    border-color: color-mix(in oklab, var(--ui-border-strong) 44%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
   }
 
-  .log-row:focus-visible,
+  .log-row-shell.level-info :global(.shared-extension-row) {
+    background: color-mix(in oklab, var(--ui-info-soft) 16%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-warn :global(.shared-extension-row) {
+    border-color: color-mix(in oklab, var(--ui-warning) 18%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-warning-soft) 28%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-error :global(.shared-extension-row) {
+    border-color: color-mix(in oklab, var(--ui-danger) 22%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-danger-soft) 30%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-debug :global(.shared-extension-row) {
+    background: color-mix(in oklab, var(--ui-surface-muted) 34%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-info :global(.shared-extension-row:hover) {
+    background: color-mix(in oklab, var(--ui-info-soft) 24%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-warn :global(.shared-extension-row:hover) {
+    background: color-mix(in oklab, var(--ui-warning-soft) 38%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell.level-error :global(.shared-extension-row:hover) {
+    background: color-mix(in oklab, var(--ui-danger-soft) 40%, var(--ui-surface-raised));
+  }
+
+  .log-row-shell :global(.shared-extension-expanded.no-inset) {
+    padding-inline: 0;
+  }
+
+  .log-row-shell :global(.ui-metadata-chip) {
+    font-family: var(--font-sans);
+  }
+
   .new-logs-button:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
   }
 
-  .expand-indicator {
-    display: grid;
-    place-items: center;
+  code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
     color: var(--ui-text-tertiary);
   }
 
-  .row-copy {
-    display: grid;
-    gap: 0.25rem;
-    min-width: 0;
-  }
-
-  .row-title {
-    display: flex;
-    align-items: center;
-    gap: 0.38rem;
-    min-width: 0;
-  }
-
-  .row-title strong {
-    min-width: 0;
+  dd code {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-sm);
   }
 
-  code,
-  .row-meta,
-  .related-chips {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
+  .row-copy-button {
+    align-self: center;
   }
 
-  code {
-    color: var(--ui-text-tertiary);
+  .row-details {
+    display: grid;
+    gap: 0.4rem;
+    cursor: auto;
+    padding: 0.12rem 0 0.08rem;
   }
 
-  .related-chips {
-    flex-wrap: wrap;
-    color: var(--ui-text-tertiary);
+  .row-detail-facts {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0.46rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface) 62%, transparent);
+    font-family: var(--font-sans);
   }
 
-  .related-chips button {
-    max-width: 15rem;
+  .related-link-button {
+    max-width: 100%;
     padding: 0;
     border: 0;
     border-radius: var(--ui-radius-sm);
@@ -930,46 +1027,9 @@
     cursor: pointer;
   }
 
-  .related-chips button:focus-visible {
+  .related-link-button:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
-  }
-
-  .related-chips code,
-  dd code {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .row-meta {
-    display: grid;
-    justify-items: end;
-    gap: 0.2rem;
-    color: var(--ui-text-tertiary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .row-copy-button {
-    align-self: start;
-    margin-top: 0.32rem;
-    margin-right: 0.28rem;
-  }
-
-  .row-details {
-    grid-column: 1 / -1;
-    display: grid;
-    gap: 0.4rem;
-    cursor: auto;
-    padding: 0 0.48rem 0.48rem 2.9rem;
-  }
-
-  .row-detail-facts {
-    grid-template-columns: 4.5rem minmax(0, 1fr);
-    padding: 0.46rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface) 62%, transparent);
   }
 
   dl {
@@ -1009,6 +1069,7 @@
 
   .logs-message,
   .logs-empty {
+    margin: 0;
     padding: 0.75rem;
     color: var(--ui-text-tertiary);
     font-size: var(--text-sm);
@@ -1066,8 +1127,20 @@
   }
 
   @container (max-width: 44rem) {
-    .logs-toolbar {
-      grid-template-columns: minmax(0, 1fr);
+    .logs-filter-row,
+    .logs-filter-start {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .logs-filter-row {
+      gap: 0.42rem;
+    }
+
+    :global(.logs-severity-tabs),
+    :global(.logs-source-select),
+    :global(.copy-all-logs-button) {
+      width: 100%;
     }
   }
 </style>
