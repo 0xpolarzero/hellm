@@ -31,6 +31,8 @@ It is the default UI over `@svvy/runtime` and `@svvy/state`.
 - Settings UI.
 - Approval UI.
 - IPC/RPC wiring to runtime and state.
+- Runtime-event subscription adapters.
+- Renderer-friendly projection adapters that combine runtime events with state read models.
 
 ## Does Not Own
 
@@ -42,6 +44,8 @@ It is the default UI over `@svvy/runtime` and `@svvy/state`.
 - Durable state invariants.
 - Smithers or Workflows instruction content.
 - Generated package build/link semantics.
+- Prompt dispatch, queue claiming, or generated-context refresh.
+- pi message-array submission as a backend package contract.
 
 ## Public API Shape
 
@@ -62,10 +66,21 @@ await createDesktopApp({ runtime, state }).start();
 - Panes are projections over state/runtime, not package boundaries.
 - Workflows pane remains read-only generated package visibility.
 - App logs are observability, not canonical state.
+- Composer submission calls `runtime.messages.submit(...)` with the new user message and target. It
+  must not send full pi message arrays, generated system prompts, generated context previews, or
+  renderer `Agent` internals as the package boundary.
+- Live transcript rendering applies `surface.stream` patches for immediate display and refetches
+  read models after `workspace_read_model.changed`, `app_read_model.changed`, or `command.changed`
+  events.
+- Stream patches are ordered by monotonically increasing `sequence`. Desktop ignores duplicate or
+  older patches, applies only the next expected sequence, and refetches/rebaselines the surface read
+  model when a sequence gap is observed.
+- Dockview panel focus, pane layout, and panel bindings remain desktop concerns. They must not be
+  required for headless runtime use.
 
 ## Dependency Rules
 
-- Depends on `@svvy/contracts`.
+- Depends on `@svvy/core`.
 - Depends on `@svvy/state`.
 - Depends on `@svvy/runtime`.
 - May depend on Svelte, Electrobun, Dockview, Lucide, and UI-only libraries.
@@ -85,4 +100,3 @@ Initial extraction candidates:
 - RPC contract tests against fake runtime.
 - Browser/e2e tests through the supported OrbStack lane.
 - Visual verification for high-risk panes.
-

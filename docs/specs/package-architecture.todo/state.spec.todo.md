@@ -45,6 +45,10 @@ It stores facts and projects them. It does not execute work.
 - Smithers or Workflows extension guidance.
 - Lifecycle invariants that are enforced by `@svvy/runtime` or `@svvy/extensions`; state persists
   their results.
+- pi transcript/session implementation details beyond persisted references required to reopen
+  surfaces through `@svvy/pi-adapter`.
+- Runtime event delivery.
+- Prompt or instruction source ownership.
 
 ## Public API Shape
 
@@ -84,6 +88,23 @@ API groups:
 - `migrations`
 - `transactions`
 
+## Port Boundaries
+
+State exposes narrow ports to other packages instead of raw store/database objects.
+
+- `runtimeStatePort()` exposes workspace, session, surface, queue, turn, thread, command,
+  request-input, approval, generated-context binding, recovery, title, and read-model operations
+  needed by `@svvy/runtime`.
+- `extensionStatePort()` exposes extension records, profile/default usage, generated-context
+  source/build facts, env status, dependency readiness, and generated package facts needed by
+  `@svvy/extensions`.
+- `sandboxPolicyPort()` exposes immutable `SandboxPolicySnapshot` resolution defined in
+  `@svvy/core`.
+- `artifactFileStorePort()` exposes physical artifact file creation, copying, reading, immutability,
+  digest, and deletion operations paired with artifact metadata writes.
+
+Ports must not expose SQLite table handles. Ports must return typed domain records and read models.
+
 ## State Rules
 
 - Store authoritative facts, not UI guesses.
@@ -100,12 +121,16 @@ API groups:
 - Artifact files are durable product state. State owns the file-store port and metadata; sandbox
   enforces immutable/generated boundaries; extensions only create validated artifact commands and
   facts.
+- Runtime events are not persisted state. They are notifications derived from runtime actions and
+  state mutations. Recovery uses persisted facts, not event-stream replay.
+- Read models are selectors over authoritative facts. UI-specific layout, panel focus, Dockview
+  split state, and panel-to-surface bindings stay outside structured session state.
 
 ## Dependency Rules
 
-- Depends on `@svvy/contracts`.
+- Depends on `@svvy/core`.
 - May depend on storage and secure-secret-store adapters.
-- Must not depend on `@svvy/runtime`, `@svvy/extensions`, `@svvy/pi-host`, `@svvy/sandbox`,
+- Must not depend on `@svvy/runtime`, `@svvy/extensions`, `@svvy/pi-adapter`, `@svvy/sandbox`,
   `@svvy/desktop`, Svelte, or Electrobun.
 
 ## Migration Sources

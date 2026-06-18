@@ -50,7 +50,7 @@ const pathDecision = sandbox.checkPathAccess({ path, effect: "write" });
 const launchPolicy = sandbox.buildLaunchPolicy({ workspaceId, cwd, networkAccess });
 ```
 
-`policySource` must implement the `SandboxPolicySource` contract from `@svvy/contracts`.
+`policySource` must implement the `SandboxPolicySource` contract from `@svvy/core`.
 
 Snapshot input:
 
@@ -86,7 +86,7 @@ for approval, inspect approval prompts, or read product settings directly.
 
 ## Dependency Rules
 
-- Depends on `@svvy/contracts`.
+- Depends on `@svvy/core`.
 - May depend on native helper artifacts.
 - Must not depend on `@svvy/runtime`, `@svvy/extensions`, `@svvy/state`, `@svvy/desktop`, or UI
   packages.

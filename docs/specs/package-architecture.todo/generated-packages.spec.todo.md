@@ -54,6 +54,9 @@ Rules:
 - It may import `@svvyx/extensions` when generated task-agent source needs extension reference
   values.
 - It must not import public `@svvy/extensions`.
+- Its `Prompts` namespace contains reusable workflow prompt assets saved through the Workflows
+  source library. It is not a public `@svvy/prompts` package and is not the location for default
+  actor prompts or extension instructions.
 
 ## `@svvyx/extensions`
 
@@ -74,7 +77,7 @@ Rules:
   references.
 - It is not the same thing as the public `@svvy/extensions` package.
 - It is not the same thing as the actor-scoped `extensions` object inside `execute_typescript`.
-- It is self-contained unless an explicit type-only import from `@svvy/contracts` is required.
+- It is self-contained unless an explicit type-only import from `@svvy/core` is required.
 - It must not import public `@svvy/extensions`.
 
 ## `execute_typescript` Runtime Object
@@ -131,7 +134,7 @@ The migration must remove the old generated names instead of keeping compatibili
 - Generated packages must not import `@svvy/runtime`, `@svvy/desktop`, public `@svvy/extensions`,
   or source-checkout-relative modules.
 - `@svvyx/extensions` should be self-contained; if implementation needs shared nominal ids, it may
-  use type-only imports from `@svvy/contracts`.
+  use type-only imports from `@svvy/core`.
 - `@svvyx/workflows` may import Smithers workflow-authoring dependencies required by generated
   workflow source and may import `@svvyx/extensions`.
 - Generated packages must resolve from workspace-local links or generated package paths, not ambient
