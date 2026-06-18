@@ -11,7 +11,7 @@
 - Treat any proposed demo renderer, stdout snapshot, or non-pi terminal loop as a regression unless the PRD explicitly labels it as a test helper.
 - If a change implies that svvy owns the interactive terminal instead of pi, stop and rewrite the design around pi's runtime and extension APIs.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
-- Use Effect v4 for Effect code and use `docs/references/effect` plus `docs/references/t3code` as local references for Effect APIs and Effect application patterns.
+- Use Effect v4 for Effect code and use `docs/references/effect-smol` plus `docs/references/t3code` as local references for Effect v4 APIs and Effect application patterns.
 - When working on Smithers code, APIs, architecture, or behavior, read the entire full documentation at `https://smithers.sh/llms-full.txt`.
 - If anything about Smithers is still ambiguous after that, refer to `docs/references/smithers`.
 - Treat repo-root `workflows/` as a Smithers authoring workspace used to build and maintain `svvy` itself, not as the shipped product's workflow runtime, workflow registry, or packaged-app integration path.
