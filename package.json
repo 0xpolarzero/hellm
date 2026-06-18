@@ -23,8 +23,8 @@
     "typecheck": "bun run generate:api && bun run typecheck:root && bun run typecheck:workflows",
     "typecheck:root": "tsgo -p tsconfig.json --noEmit",
     "typecheck:workflows": "bun run --cwd workflows typecheck",
-    "lint": "oxlint . --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
-    "lint:check": "oxlint . --import-plugin --node-plugin --deny-warnings",
+    "lint": "oxlint . --disable-nested-config --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
+    "lint:check": "oxlint . --disable-nested-config --import-plugin --node-plugin --deny-warnings",
     "format": "oxfmt $(rg --files -g '*.ts' -g '*.tsx' -g '*.svelte' -g '*.toml' -g '!docs/references/**')",
     "format:check": "oxfmt --check $(rg --files -g '*.ts' -g '*.tsx' -g '*.svelte' -g '*.toml' -g '!docs/references/**')"
   },
