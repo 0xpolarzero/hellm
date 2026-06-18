@@ -135,7 +135,9 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
     }
 
     if (message.role === "toolResult") {
-      visibleMessages.push(message);
+      if (!toolCallsById.has(message.toolCallId)) {
+        visibleMessages.push(message);
+      }
       lastActivity = message.timestamp;
       toolResultsById.set(message.toolCallId, message);
     }

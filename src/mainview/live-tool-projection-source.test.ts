@@ -7,16 +7,25 @@ describe("live tool projection renderer source contract", () => {
       new URL("./ChatTranscript.svelte", import.meta.url),
       "utf8",
     );
+    const projectionSource = await readFile(
+      new URL("./tool-card-projection.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(transcriptSource).toContain("commandRollupTranscript(");
-    expect(transcriptSource).toContain("command.command.outputEvents");
-    expect(transcriptSource).toContain("command.command.progressEvents");
-    expect(transcriptSource).toContain("command.command.diagnostics");
-    expect(transcriptSource).toContain("command.command.artifacts");
-    expect(transcriptSource).toContain("command.command.arguments");
-    expect(transcriptSource).toContain("command.command.facts");
+    expect(transcriptSource).toContain("commandToolCall(command");
+    expect(transcriptSource).toContain("projectCommandToolCall(command)");
+    expect(projectionSource).toContain("command.outputEvents");
+    expect(projectionSource).toContain("command.progressEvents");
+    expect(projectionSource).toContain("command.diagnostics");
+    expect(projectionSource).toContain("command.artifacts");
+    expect(projectionSource).toContain("command.argumentSnapshots");
+    expect(projectionSource).toContain("command.facts");
+    expect(projectionSource).toContain("sections");
+    expect(projectionSource).toContain("TRANSCRIPT_SECTION_LIMIT");
     expect(transcriptSource).toContain("<ToolCallCard");
     expect(transcriptSource).toContain("toolCall={commandRollupTranscript(row.block)}");
+    expect(transcriptSource).toContain("oninspect={onInspectCommand}");
     expect(transcriptSource).not.toContain("<WorkflowCard");
     expect(transcriptSource).not.toContain("workflow={commandRollupTranscript");
   });

@@ -544,7 +544,7 @@ describe("structured session selectors", () => {
         troubleshooting: ["thread-002"],
       },
       threadIds: ["thread-001", "thread-002", "thread-003"],
-      latestEpisodePreview: null,
+      latestEpisodePreview: "Workflow episode summary",
       latestWorkflowRunSummary: "Workflow waiting for clarification",
       sidebarThreads: [
         {
@@ -574,15 +574,27 @@ describe("structured session selectors", () => {
               repoReads: 2,
             },
             error: null,
-            artifacts: [],
+            artifacts: [
+              {
+                artifactId: "artifact-001",
+                kind: "text",
+                name: "artifact-1.md",
+                createdAt: "2026-04-18T10:01:30.000Z",
+                sourceCommandId: "command-001",
+                producerLabel: "Inspect docs",
+              },
+            ],
             outputEvents: [],
+            argumentSnapshots: [],
             patchSnapshots: [],
             diagnostics: [],
             childCount: 1,
             summaryChildCount: 0,
             traceChildCount: 1,
             summaryChildren: [],
+            startedAt: "2026-04-18T07:00:30.000Z",
             updatedAt: "2026-04-18T10:01:00.000Z",
+            finishedAt: "2026-04-18T07:01:00.000Z",
           },
           updatedAt: "2026-04-18T10:01:00.000Z",
           workflows: [],
@@ -658,13 +670,16 @@ describe("structured session selectors", () => {
             },
           ],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
           childCount: 1,
           summaryChildCount: 0,
           traceChildCount: 1,
           summaryChildren: [],
+          startedAt: "2026-04-18T07:00:30.000Z",
           updatedAt: "2026-04-18T10:01:00.000Z",
+          finishedAt: "2026-04-18T07:01:00.000Z",
         },
       ],
       productEvents: [],
@@ -685,7 +700,7 @@ describe("structured session selectors", () => {
       counts: view.counts,
       wait: snapshot.session.wait,
       threadIds: view.threadIds,
-      latestEpisodePreview: null,
+      latestEpisodePreview: "Workflow episode summary",
       latestWorkflowRunSummary: "Workflow waiting for clarification",
     });
   });
@@ -795,6 +810,7 @@ describe("structured session selectors", () => {
         },
       ],
       outputEvents: [],
+      argumentSnapshots: [],
       patchSnapshots: [],
       diagnostics: [],
       childCount: 2,
@@ -829,6 +845,7 @@ describe("structured session selectors", () => {
             },
           ],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
         },
@@ -851,6 +868,7 @@ describe("structured session selectors", () => {
           finishedAt: "2026-04-18T10:00:20.000Z",
           artifacts: [],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
         },
@@ -968,6 +986,84 @@ describe("structured session selectors", () => {
         text: "1 fail\n",
       },
     ]);
+  });
+
+  it("recovers command argument snapshots in rollups and the command inspector", () => {
+    const snapshot = createSessionSnapshot({
+      commands: [
+        {
+          id: "command-args",
+          toolName: "exec_command",
+          visibility: "summary",
+          title: "Run streamed command",
+          summary: "Arguments streamed before execution.",
+          arguments: {
+            cmd: "bun test",
+          },
+          threadId: "thread-001",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "event-args-1",
+          at: "2026-04-18T10:00:00.000Z",
+          kind: "command.arg_snapshot",
+          subject: {
+            kind: "command",
+            id: "command-args",
+          },
+          data: {
+            source: "streaming",
+            arguments: {
+              cmd: "bun",
+            },
+          },
+        },
+        {
+          id: "event-args-2",
+          at: "2026-04-18T10:00:01.000Z",
+          kind: "command.arg_snapshot",
+          subject: {
+            kind: "command",
+            id: "command-args",
+          },
+          data: {
+            source: "streaming-final",
+            arguments: {
+              cmd: "bun test",
+            },
+          },
+        },
+      ],
+    });
+
+    const expected = [
+      {
+        eventId: "event-args-1",
+        at: "2026-04-18T10:00:00.000Z",
+        source: "streaming",
+        arguments: {
+          cmd: "bun",
+        },
+      },
+      {
+        eventId: "event-args-2",
+        at: "2026-04-18T10:00:01.000Z",
+        source: "streaming-final",
+        arguments: {
+          cmd: "bun test",
+        },
+      },
+    ];
+
+    expect(buildStructuredSessionView(snapshot).commandRollups[0]?.argumentSnapshots).toEqual(
+      expected,
+    );
+    expect(buildStructuredCommandInspector(snapshot, "command-args")?.argumentSnapshots).toEqual(
+      expected,
+    );
   });
 
   it("recovers command progress events in rollups and the command inspector", () => {
@@ -1478,6 +1574,8 @@ describe("structured session selectors", () => {
         surfacePiSessionId: "pi-thread-handler",
         title: "Parser fix thread",
         objective: "Patch the parser bug and add regression coverage.",
+        objectiveState: "active",
+        historyMode: "isolated",
         status: "completed",
         wait: null,
         startedAt: "2026-04-18T07:00:00.000Z",
@@ -1501,8 +1599,20 @@ describe("structured session selectors", () => {
           arguments: null,
           facts: null,
           error: null,
-          artifacts: [],
+          artifacts: [
+            {
+              artifactId: "artifact-handler-1",
+              kind: "file",
+              name: "parser-regression.test.ts",
+              path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
+              createdAt: "2026-04-18T10:03:12.000Z",
+              sourceCommandId: "command-handler-parent",
+              producerLabel: "Patch parser transitions",
+              missingFile: true,
+            },
+          ],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
           childCount: 1,
@@ -1518,7 +1628,9 @@ describe("structured session selectors", () => {
               error: null,
             },
           ],
+          startedAt: "2026-04-18T10:03:00.000Z",
           updatedAt: "2026-04-18T10:03:20.000Z",
+          finishedAt: "2026-04-18T10:03:20.000Z",
         },
         latestWorkflowRun: {
           workflowRunId: "workflow-handler-2",
@@ -1543,6 +1655,8 @@ describe("structured session selectors", () => {
       surfacePiSessionId: "pi-thread-handler",
       title: "Parser fix thread",
       objective: "Patch the parser bug and add regression coverage.",
+      objectiveState: "active",
+      historyMode: "isolated",
       status: "completed",
       wait: null,
       startedAt: "2026-04-18T07:00:00.000Z",
@@ -1566,8 +1680,20 @@ describe("structured session selectors", () => {
         arguments: null,
         facts: null,
         error: null,
-        artifacts: [],
+        artifacts: [
+          {
+            artifactId: "artifact-handler-1",
+            kind: "file",
+            name: "parser-regression.test.ts",
+            path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
+            createdAt: "2026-04-18T10:03:12.000Z",
+            sourceCommandId: "command-handler-parent",
+            producerLabel: "Patch parser transitions",
+            missingFile: true,
+          },
+        ],
         outputEvents: [],
+        argumentSnapshots: [],
         patchSnapshots: [],
         diagnostics: [],
         childCount: 1,
@@ -1583,7 +1709,9 @@ describe("structured session selectors", () => {
             error: null,
           },
         ],
+        startedAt: "2026-04-18T10:03:00.000Z",
         updatedAt: "2026-04-18T10:03:20.000Z",
+        finishedAt: "2026-04-18T10:03:20.000Z",
       },
       latestWorkflowRun: {
         workflowRunId: "workflow-handler-2",
@@ -1614,8 +1742,20 @@ describe("structured session selectors", () => {
           arguments: null,
           facts: null,
           error: null,
-          artifacts: [],
+          artifacts: [
+            {
+              artifactId: "artifact-handler-1",
+              kind: "file",
+              name: "parser-regression.test.ts",
+              path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
+              createdAt: "2026-04-18T10:03:12.000Z",
+              sourceCommandId: "command-handler-parent",
+              producerLabel: "Patch parser transitions",
+              missingFile: true,
+            },
+          ],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
           childCount: 1,
@@ -1631,7 +1771,9 @@ describe("structured session selectors", () => {
               error: null,
             },
           ],
+          startedAt: "2026-04-18T10:03:00.000Z",
           updatedAt: "2026-04-18T10:03:20.000Z",
+          finishedAt: "2026-04-18T10:03:20.000Z",
         },
       ],
       workflowRuns: [
@@ -1813,7 +1955,7 @@ describe("structured session selectors", () => {
     });
     const episodeSummary = buildStructuredSessionSummaryProjection(episodeSnapshot);
     expect(episodeSummary.preview).toBe("");
-    expect(episodeSummary.latestEpisodePreview).toBeNull();
+    expect(episodeSummary.latestEpisodePreview).toBe("Handler completed successfully.");
     expect(buildStructuredSessionView(episodeSnapshot).sidebarThreads[0]?.subtitle).toEqual({
       badge: "text",
       text: "Handler completed successfully.",
@@ -2302,6 +2444,7 @@ describe("structured session selectors", () => {
           error: null,
           artifacts: [],
           outputEvents: [],
+          argumentSnapshots: [],
           patchSnapshots: [],
           diagnostics: [],
           childCount: 1,
@@ -2317,7 +2460,9 @@ describe("structured session selectors", () => {
               error: null,
             },
           ],
+          startedAt: "2026-04-18T07:00:30.000Z",
           updatedAt: "2026-04-18T10:01:25.000Z",
+          finishedAt: "2026-04-18T07:01:00.000Z",
         },
       ],
       artifacts: [

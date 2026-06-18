@@ -8,6 +8,7 @@
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import {
+    getCommandArgumentSections,
     getCommandDiagnosticSections,
     getCommandInspectorSections,
     getCommandOutputSections,
@@ -148,8 +149,12 @@
     <div class="metadata-grid">
       <span>Tool</span>
       <code>{content.toolName}</code>
+      <span>Started</span>
+      <code>{content.startedAt}</code>
       <span>Updated</span>
       <code>{content.updatedAt}</code>
+      <span>Finished</span>
+      <code>{content.finishedAt ?? "Still running"}</code>
       {#if content.workflowRunId}
         <span>Workflow</span>
         <code>{content.workflowRunId}</code>
@@ -162,6 +167,22 @@
     {#if content.error}
       <p class="callout danger">{content.error}</p>
     {/if}
+    {#each getCommandArgumentSections(content) as section (section.id)}
+      <section class="inspector-section">
+        <h4>{section.title}</h4>
+        <div class="argument-snapshots">
+          {#each section.snapshots as snapshot (snapshot.eventId)}
+            <article class="argument-snapshot">
+              <div>
+                <span>{snapshot.source}</span>
+                <time datetime={snapshot.at}>{snapshot.at}</time>
+              </div>
+              <pre>{formatContent(snapshot.arguments)}</pre>
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
     {#each getCommandDiagnosticSections(content) as section (section.id)}
       <section class="inspector-section">
         <h4>{section.title}</h4>
@@ -551,6 +572,47 @@
   .patch-snapshots {
     display: grid;
     gap: 0.44rem;
+  }
+
+  .argument-snapshots {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .argument-snapshot {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .argument-snapshot > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .argument-snapshot > div span,
+  .argument-snapshot > div time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .argument-snapshot pre {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
 
   .patch-snapshot {

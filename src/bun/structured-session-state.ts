@@ -72,6 +72,11 @@ export type StructuredCommandStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
+const TERMINAL_COMMAND_STATUSES = new Set<StructuredCommandStatus>([
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
 export type StructuredRuntimeApprovalStatus = "pending" | "approved" | "denied" | "cancelled";
 export type StructuredRuntimeApprovalMode = "auto-review" | "user";
 export type StructuredRuntimeApprovalToolName =
@@ -2911,6 +2916,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     error?: string | null;
   }): StructuredCommandRecord {
     const existing = this.mustFindCommandRow(input.commandId);
+    if (TERMINAL_COMMAND_STATUSES.has(existing.status as StructuredCommandStatus)) {
+      return this.mustFindCommandRecord(input.commandId);
+    }
     const timestamp = this.now();
     const visibility = input.visibility ?? existing.visibility;
     const factsJson = input.facts === undefined ? existing.facts_json : toJson(input.facts ?? null);

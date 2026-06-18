@@ -4,6 +4,7 @@ import type {
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
 import {
+  getCommandArgumentSections,
   getCommandDiagnosticSections,
   getCommandInspectorSections,
   getCommandOutputSections,
@@ -54,7 +55,9 @@ function createSessionSummary(): WorkspaceSessionSummary {
             error: null,
           },
         ],
+        startedAt: "2026-04-10T10:04:00.000Z",
         updatedAt: "2026-04-10T10:05:00.000Z",
+        finishedAt: "2026-04-10T10:05:00.000Z",
       },
     ],
   };
@@ -93,6 +96,16 @@ function createInspector(): WorkspaceCommandInspector {
         stream: "stderr",
         source: "final-result",
         text: "warning\n",
+      },
+    ],
+    argumentSnapshots: [
+      {
+        eventId: "event-args",
+        at: "2026-04-10T10:01:30.000Z",
+        source: "accepted-arguments",
+        arguments: {
+          typescriptCode: "return 1",
+        },
       },
     ],
     progressEvents: [
@@ -161,6 +174,7 @@ function createInspector(): WorkspaceCommandInspector {
         finishedAt: "2026-04-10T10:02:00.000Z",
         artifacts: [],
         outputEvents: [],
+        argumentSnapshots: [],
         progressEvents: [
           {
             eventId: "event-child-progress",
@@ -192,6 +206,7 @@ function createInspector(): WorkspaceCommandInspector {
         finishedAt: "2026-04-10T10:00:40.000Z",
         artifacts: [],
         outputEvents: [],
+        argumentSnapshots: [],
         patchSnapshots: [],
         diagnostics: [],
       },
@@ -376,6 +391,25 @@ describe("command inspector helpers", () => {
                 code: "2339",
               },
             ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("groups recovered command argument snapshots", () => {
+    expect(getCommandArgumentSections(createInspector())).toEqual([
+      {
+        id: "arguments",
+        title: "Argument snapshots",
+        snapshots: [
+          {
+            eventId: "event-args",
+            at: "2026-04-10T10:01:30.000Z",
+            source: "accepted-arguments",
+            arguments: {
+              typescriptCode: "return 1",
+            },
           },
         ],
       },

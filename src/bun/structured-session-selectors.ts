@@ -36,6 +36,7 @@ export interface StructuredCommandRollup {
   error?: string | null;
   artifacts?: StructuredCommandArtifactLink[];
   outputEvents?: StructuredCommandOutputEvent[];
+  argumentSnapshots?: StructuredCommandArgumentSnapshot[];
   progressEvents?: StructuredCommandProgressEvent[];
   patchSnapshots?: StructuredCommandPatchSnapshot[];
   diagnostics?: StructuredCommandDiagnosticSnapshot[];
@@ -43,7 +44,9 @@ export interface StructuredCommandRollup {
   summaryChildCount: number;
   traceChildCount: number;
   summaryChildren: StructuredCommandRollupChild[];
+  startedAt: string;
   updatedAt: string;
+  finishedAt: string | null;
 }
 
 export interface StructuredCommandArtifactLink {
@@ -77,6 +80,13 @@ export interface StructuredCommandProgressEvent {
   message?: string;
   progress?: number;
   facts?: Record<string, unknown>;
+}
+
+export interface StructuredCommandArgumentSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  arguments: unknown;
 }
 
 export interface StructuredCommandPatchSnapshot {
@@ -130,6 +140,7 @@ export interface StructuredCommandInspectorChild extends StructuredCommandRollup
   finishedAt: string | null;
   artifacts: StructuredCommandArtifactLink[];
   outputEvents: StructuredCommandOutputEvent[];
+  argumentSnapshots: StructuredCommandArgumentSnapshot[];
   progressEvents?: StructuredCommandProgressEvent[];
   patchSnapshots: StructuredCommandPatchSnapshot[];
   diagnostics: StructuredCommandDiagnosticSnapshot[];
@@ -152,6 +163,7 @@ export interface StructuredCommandInspector {
   finishedAt: string | null;
   artifacts: StructuredCommandArtifactLink[];
   outputEvents: StructuredCommandOutputEvent[];
+  argumentSnapshots: StructuredCommandArgumentSnapshot[];
   progressEvents?: StructuredCommandProgressEvent[];
   patchSnapshots: StructuredCommandPatchSnapshot[];
   diagnostics: StructuredCommandDiagnosticSnapshot[];
@@ -240,6 +252,8 @@ export interface StructuredHandlerThreadSummary {
   surfacePiSessionId: string;
   title: string;
   objective: string;
+  objectiveState: StructuredThreadRecord["objectiveState"];
+  historyMode: StructuredThreadRecord["historyMode"];
   status: StructuredThreadRecord["status"];
   wait: StructuredThreadRecord["wait"];
   startedAt: string;
@@ -596,6 +610,41 @@ function parseCommandProgressEvent(
   return parsed;
 }
 
+function buildCommandArgumentSnapshots(
+  session: Pick<StructuredSessionSnapshot, "events">,
+  commandId: string,
+): StructuredCommandArgumentSnapshot[] {
+  return session.events
+    .flatMap((event) => {
+      if (
+        event.kind !== "command.arg_snapshot" ||
+        event.subject.kind !== "command" ||
+        event.subject.id !== commandId
+      ) {
+        return [];
+      }
+      const snapshot = parseCommandArgumentSnapshot(event);
+      return snapshot ? [snapshot] : [];
+    })
+    .toSorted((left, right) => left.at.localeCompare(right.at));
+}
+
+function parseCommandArgumentSnapshot(
+  event: StructuredLifecycleEventRecord,
+): StructuredCommandArgumentSnapshot | null {
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data) || !("arguments" in data)) {
+    return null;
+  }
+  const source = (data as { source?: unknown }).source;
+  return {
+    eventId: event.id,
+    at: event.at,
+    source: typeof source === "string" && source.trim() ? source : "unknown",
+    arguments: (data as { arguments: unknown }).arguments,
+  };
+}
+
 function buildCommandPatchSnapshots(
   session: Pick<StructuredSessionSnapshot, "events">,
   commandId: string,
@@ -807,6 +856,7 @@ function buildCommandInspectorChild(
     finishedAt: command.finishedAt,
     artifacts: buildCommandArtifactLinks(session, command.id),
     outputEvents: buildCommandOutputEvents(session, command.id),
+    argumentSnapshots: buildCommandArgumentSnapshots(session, command.id),
     ...(progressEvents.length > 0 ? { progressEvents } : {}),
     patchSnapshots: buildCommandPatchSnapshots(session, command.id),
     diagnostics: buildCommandDiagnostics(session, command.id),
@@ -861,6 +911,9 @@ function buildCommandRollups(
         outputEvents: session.events
           ? buildCommandOutputEvents({ events: session.events }, command.id)
           : [],
+        argumentSnapshots: session.events
+          ? buildCommandArgumentSnapshots({ events: session.events }, command.id)
+          : [],
         ...(progressEvents.length > 0 ? { progressEvents } : {}),
         patchSnapshots: session.events
           ? buildCommandPatchSnapshots({ events: session.events }, command.id)
@@ -872,7 +925,9 @@ function buildCommandRollups(
         summaryChildCount: summaryChildren.length,
         traceChildCount,
         summaryChildren,
+        startedAt: command.startedAt,
         updatedAt: command.updatedAt,
+        finishedAt: command.finishedAt,
       };
     })
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -1060,6 +1115,7 @@ function buildThreadCommandRollups(
   threadId: string,
 ): StructuredCommandRollup[] {
   return buildCommandRollups({
+    ...session,
     commands: session.commands.filter(
       (command) => command.threadId === threadId && command.workflowTaskAttemptId === null,
     ),
@@ -1130,6 +1186,8 @@ function buildHandlerThreadSummary(
     surfacePiSessionId: thread.surfacePiSessionId,
     title: thread.title,
     objective: thread.objective,
+    objectiveState: thread.objectiveState,
+    historyMode: thread.historyMode,
     status: thread.status,
     wait: structuredClone(thread.wait),
     startedAt: thread.startedAt,
@@ -1162,8 +1220,11 @@ function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {
     .map((thread) => thread.id);
 }
 
-function deriveLatestEpisodePreview(): string | null {
-  return null;
+function deriveLatestEpisodePreview(session: StructuredSessionSnapshot): string | null {
+  return (
+    session.episodes.toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+      ?.summary ?? null
+  );
 }
 
 function deriveLatestWorkflowRunSummary(session: StructuredSessionSnapshot): string | null {
@@ -1257,7 +1318,7 @@ export function buildStructuredSessionView(
   const grouped = groupThreadIdsByStatus(delegatedThreads);
   const commandRollups = buildCommandRollups(session);
   const productEvents = buildProductEvents(session);
-  const latestEpisodePreview = deriveLatestEpisodePreview();
+  const latestEpisodePreview = deriveLatestEpisodePreview(session);
   const latestWorkflowRunSummary = deriveLatestWorkflowRunSummary(session);
 
   return {
@@ -1399,6 +1460,7 @@ export function buildStructuredCommandInspector(
     finishedAt: parentCommand.finishedAt,
     artifacts: buildCommandArtifactLinks(session, parentCommand.id),
     outputEvents: buildCommandOutputEvents(session, parentCommand.id),
+    argumentSnapshots: buildCommandArgumentSnapshots(session, parentCommand.id),
     ...(progressEvents.length > 0 ? { progressEvents } : {}),
     patchSnapshots: buildCommandPatchSnapshots(session, parentCommand.id),
     diagnostics: buildCommandDiagnostics(session, parentCommand.id),

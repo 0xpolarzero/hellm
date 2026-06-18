@@ -1063,19 +1063,37 @@ describe("default workspace renderer shell", () => {
       new URL("./RelatedInspectorPane.svelte", import.meta.url),
       "utf8",
     );
+    const cardProjectionSource = await readFile(
+      new URL("./tool-card-projection.ts", import.meta.url),
+      "utf8",
+    );
 
-    expect(transcriptSource).toContain("command.command.patchSnapshots");
-    expect(transcriptSource).toContain("command.command.outputEvents");
-    expect(transcriptSource).toContain("command.command.progressEvents");
-    expect(transcriptSource).toContain("command.command.diagnostics");
-    expect(transcriptSource).toContain("command.command.artifacts");
-    expect(transcriptSource).toContain("command.command.facts");
-    expect(transcriptSource).toContain("row.block.command.summaryChildren");
+    expect(transcriptSource).toContain("commandToolCall(command");
+    expect(transcriptSource).toContain("projectCommandToolCall(command)");
+    expect(transcriptSource).toContain("representedToolCallIds.has(toolCallId)");
+    expect(transcriptSource).toContain("semanticBlockSortAt(block)");
+    expect(transcriptSource).toContain("id: block.id");
+    expect(transcriptSource).toContain("oninspect={onInspectCommand}");
+    expect(cardProjectionSource).toContain("command.patchSnapshots");
+    expect(cardProjectionSource).toContain("command.outputEvents");
+    expect(cardProjectionSource).toContain("command.progressEvents");
+    expect(cardProjectionSource).toContain("command.diagnostics");
+    expect(cardProjectionSource).toContain("command.artifacts");
+    expect(cardProjectionSource).toContain("command.argumentSnapshots");
+    expect(cardProjectionSource).toContain("command.facts");
+    expect(cardProjectionSource).toContain("command.summaryChildren");
+    expect(cardProjectionSource).toContain("TRANSCRIPT_SECTION_LIMIT");
+    expect(cardProjectionSource).toContain(
+      "event.text.slice(0, TRANSCRIPT_SECTION_LIMIT - text.length)",
+    );
+    expect(inspectorSource).toContain("getCommandArgumentSections(content)");
     expect(inspectorSource).toContain("getCommandDiagnosticSections(content)");
     expect(inspectorSource).toContain("getCommandPatchSections(content)");
     expect(inspectorSource).toContain("getCommandProgressSections(content)");
     expect(inspectorSource).toContain("getCommandOutputSections(content)");
     expect(inspectorSource).toContain("getCommandInspectorSections(content)");
+    expect(inspectorSource).toContain("<span>Started</span>");
+    expect(inspectorSource).toContain("<span>Finished</span>");
     expect(inspectorSource).toContain("childProgressSummary(child)");
     expect(inspectorSource).toContain("<h4>Raw Detail</h4>");
   });
@@ -1171,7 +1189,9 @@ describe("default workspace renderer shell", () => {
     expect(streamingRowStart).toBeLessThan(virtualListEnd);
     expect(transcriptSource).toContain('kind: "streaming"');
     expect(transcriptSource).toContain("streamingAssistant.timestamp");
+    expect(transcriptSource).toContain("commandRollupByToolCallId.get(block.id)");
     expect(transcriptSource).not.toContain("{#if streamingAssistant}");
+    expect(transcriptSource).not.toContain("id: `streaming-${blockIndex}`");
     expect(transcriptSource).not.toContain("scrollTranscriptToBottom");
   });
 

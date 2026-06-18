@@ -2,6 +2,7 @@ import type {
   WorkspaceCommandInspector,
   WorkspaceCommandInspectorChild,
   WorkspaceCommandDiagnosticSnapshot,
+  WorkspaceCommandArgumentSnapshot,
   WorkspaceCommandOutputEvent,
   WorkspaceCommandPatchSnapshot,
   WorkspaceCommandProgressEvent,
@@ -43,6 +44,12 @@ export interface WorkspaceCommandDiagnosticSection {
   id: "diagnostics";
   title: string;
   snapshots: WorkspaceCommandDiagnosticSnapshot[];
+}
+
+export interface WorkspaceCommandArgumentSection {
+  id: "arguments";
+  title: string;
+  snapshots: WorkspaceCommandArgumentSnapshot[];
 }
 
 export function getVisibleCommandRollups(
@@ -165,6 +172,21 @@ export function getCommandDiagnosticSections(
       id: "diagnostics",
       title: "Diagnostics",
       snapshots: inspector.diagnostics,
+    },
+  ];
+}
+
+export function getCommandArgumentSections(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandArgumentSection[] {
+  if (!inspector || inspector.argumentSnapshots.length === 0) {
+    return [];
+  }
+  return [
+    {
+      id: "arguments",
+      title: "Argument snapshots",
+      snapshots: inspector.argumentSnapshots,
     },
   ];
 }

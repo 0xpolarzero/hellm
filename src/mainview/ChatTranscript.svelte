@@ -31,15 +31,22 @@
 	import FailedCard from "./transcript-cards/FailedCard.svelte";
 	import type { TranscriptStatus } from "./transcript-cards/StatusBadge.svelte";
 	import ThreadCard, { type TranscriptThread } from "./transcript-cards/ThreadCard.svelte";
-	import ToolCallCard, { type TranscriptToolCall } from "./transcript-cards/ToolCallCard.svelte";
+	import ToolCallCard from "./transcript-cards/ToolCallCard.svelte";
 	import WaitingCard from "./transcript-cards/WaitingCard.svelte";
+	import {
+		projectCommandToolCall,
+		projectRawToolCall,
+		toolResultText,
+	} from "./tool-card-projection";
 	import type { TranscriptWorkflow } from "./transcript-cards/WorkflowCard.svelte";
+	import type { TranscriptToolCall } from "./transcript-tool-card-model";
 	import {
 		parseComposerAttachmentTextSignature,
 		type ComposerAttachment,
 		type ConversationTurnTiming,
 		type PromptTarget,
 		type SvvyUserMessage,
+		type WorkspaceCommandRollup,
 		type WorkspaceHandlerThreadSummary,
 	} from "../shared/workspace-contract";
 	import type { SentSnippetProvenance } from "../shared/snippets";
@@ -115,6 +122,24 @@
 	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const streamingAssistant = $derived(streamMessage ?? null);
+	const commandRollupByToolCallId = $derived.by(() => {
+		const byToolCallId = new Map<string, WorkspaceCommandRollup>();
+		for (const block of semanticBlocks) {
+			if (block.kind !== "command-rollup") continue;
+			const toolCallId = block.command.facts?.toolCallId;
+			if (typeof toolCallId === "string" && toolCallId) {
+				byToolCallId.set(toolCallId, block.command);
+			}
+		}
+		return byToolCallId;
+	});
+	const representedToolCallIds = $derived.by(() => {
+		const ids = new Set<string>(conversation.toolCallsById.keys());
+		for (const block of streamingAssistant?.content ?? []) {
+			if (block.type === "toolCall") ids.add(block.id);
+		}
+		return ids;
+	});
 	const turnTimingByAssistantTimestamp = $derived.by(() => {
 		const timings = new Map<string, ConversationTurnTiming>();
 		for (const timing of turnTimings) {
@@ -131,25 +156,49 @@
 	}
 
 	type TranscriptRow =
-		| { kind: "semantic"; key: string; block: TranscriptSemanticBlock }
-		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage }
-		| { kind: "streaming"; key: string; message: AssistantMessage };
+		| { kind: "semantic"; key: string; block: TranscriptSemanticBlock; sortAt: number; sequence: number }
+		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage; sortAt: number; sequence: number }
+		| { kind: "streaming"; key: string; message: AssistantMessage; sortAt: number; sequence: number };
 	const transcriptRows = $derived.by<TranscriptRow[]>(() => {
 		const rows: TranscriptRow[] = [];
-		for (const block of semanticBlocks) {
-			rows.push({ kind: "semantic", key: `semantic:${block.key}`, block });
-		}
+		let sequence = 0;
 		for (const message of conversation.visibleMessages) {
-			rows.push({ kind: "message", key: `${message.role}:${message.timestamp}`, message });
+			if (message.role === "toolResult" && conversation.toolCallsById.has(message.toolCallId)) {
+				continue;
+			}
+			rows.push({
+				kind: "message",
+				key: `${message.role}:${message.timestamp}`,
+				message,
+				sortAt: timestampMs(message.timestamp),
+				sequence: sequence++,
+			});
+		}
+		for (const block of semanticBlocks) {
+			if (block.kind === "command-rollup") {
+				const toolCallId = block.command.facts?.toolCallId;
+				if (typeof toolCallId === "string" && representedToolCallIds.has(toolCallId)) {
+					continue;
+				}
+			}
+			rows.push({
+				kind: "semantic",
+				key: `semantic:${block.key}`,
+				block,
+				sortAt: semanticBlockSortAt(block),
+				sequence: sequence++,
+			});
 		}
 		if (streamingAssistant) {
 			rows.push({
 				kind: "streaming",
 				key: `streaming:${streamingAssistant.timestamp}`,
 				message: streamingAssistant,
+				sortAt: timestampMs(streamingAssistant.timestamp),
+				sequence: sequence++,
 			});
 		}
-		return rows;
+		return rows.toSorted((left, right) => left.sortAt - right.sortAt || left.sequence - right.sequence);
 	});
 	const transcriptVirtualizer = createVirtualizer<HTMLDivElement, HTMLElement>({
 		count: 0,
@@ -185,6 +234,26 @@
 		if (row.message.role === "user") return 96;
 		if (row.message.role === "toolResult") return 148;
 		return 172;
+	}
+
+	function timestampMs(value: string | number | null | undefined): number {
+		if (typeof value === "number" && Number.isFinite(value)) return value;
+		if (typeof value === "string") {
+			const parsed = Date.parse(value);
+			if (Number.isFinite(parsed)) return parsed;
+			const numeric = Number(value);
+			if (Number.isFinite(numeric)) return numeric;
+		}
+		return Number.MAX_SAFE_INTEGER;
+	}
+
+	function semanticBlockSortAt(block: TranscriptSemanticBlock): number {
+		if (block.kind === "wait") return timestampMs(block.since);
+		if (block.kind === "command-rollup") return timestampMs(block.command.startedAt ?? block.command.updatedAt);
+		if (block.kind === "product-event") return timestampMs(block.event.at);
+		if (block.kind === "thread") return timestampMs(block.thread.startedAt);
+		if (block.kind === "thread-episode") return timestampMs(block.episode.createdAt);
+		return Number.MAX_SAFE_INTEGER;
 	}
 
 	function userTextLines(message: UserMessage): string[] {
@@ -382,24 +451,8 @@
 		onOpenWorkspacePath(path);
 	}
 
-	function toolResultText(message: ToolResultMessage): string {
-		return message.content
-			.filter((block): block is { type: "text"; text: string } => block.type === "text")
-			.map((block) => block.text)
-			.join("\n")
-			.trim();
-	}
-
 	function resultDetailsText(message: ToolResultMessage): string {
 		return toolResultText(message);
-	}
-
-	function commandStatusLabel(status: string): string {
-		if (status === "succeeded") return "Complete";
-		if (status === "failed") return "Failed";
-		if (status === "cancelled") return "Cancelled";
-		if (status === "requested") return "Queued";
-		return status[0]?.toUpperCase() + status.slice(1);
 	}
 
 	function commandTranscriptStatus(status: string): TranscriptStatus {
@@ -426,57 +479,12 @@
 		};
 	}
 
+	function commandToolCall(command: WorkspaceCommandRollup): TranscriptToolCall {
+		return projectCommandToolCall(command);
+	}
+
 	function commandRollupTranscript(command: TranscriptSemanticBlock & { kind: "command-rollup" }): TranscriptToolCall {
-		const input = command.command.arguments ? JSON.stringify(command.command.arguments, null, 2) : "";
-		const patchPreview = command.command.patchSnapshots
-			?.flatMap((snapshot) =>
-				snapshot.files.map((file) => `${file.changeType}: ${file.path} (+${file.additions} / -${file.deletions})`)
-			)
-			.join("\n")
-			.trim();
-		const output = command.command.outputEvents
-			?.map((event) => `[${event.stream}] ${event.text}`)
-			.join("\n")
-			.trim();
-		const progress = command.command.progressEvents
-			?.map((event) =>
-				[
-					event.phase ? `[${event.phase}]` : "[progress]",
-					event.message || [event.family, event.command].filter(Boolean).join(" · "),
-				]
-					.filter(Boolean)
-					.join(" ")
-			)
-			.join("\n")
-			.trim();
-		const diagnostics = command.command.diagnostics
-			?.flatMap((snapshot) =>
-				snapshot.diagnostics.map((diagnostic) =>
-					`${diagnostic.severity ?? "diagnostic"}: ${diagnostic.message}${
-						diagnostic.file ? ` (${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""})` : ""
-					}`
-				)
-			)
-			.join("\n")
-			.trim();
-		const artifacts = command.command.artifacts
-			?.map((artifact) => `artifact: ${artifact.name}${artifact.path ? ` (${artifact.path})` : ""}`)
-			.join("\n")
-			.trim();
-		const facts = command.command.facts ? JSON.stringify(command.command.facts, null, 2) : "";
-		const detail = [diagnostics, patchPreview, progress, output, artifacts, facts].filter(Boolean).join("\n\n");
-		return {
-			id: command.command.commandId,
-			name: command.command.title,
-			status: commandTranscriptStatus(command.command.status),
-			params: {
-				command: command.command.title,
-				filename: command.command.toolName,
-			},
-			body: input || null,
-			result: detail || command.command.error || command.command.summary,
-			isError: command.command.status === "failed",
-		};
+		return commandToolCall(command.command);
 	}
 
 	function episodeTranscript(block: TranscriptSemanticBlock & { kind: "thread-episode" }): TranscriptEpisode {
@@ -490,13 +498,51 @@
 	}
 
 	function threadTranscript(handlerThread: WorkspaceHandlerThreadSummary): TranscriptThread {
+		const currentActivity = handlerThread.wait
+			? {
+					title: `Waiting on ${handlerThread.wait.owner}`,
+					summary: handlerThread.wait.reason,
+					status: "waiting" as TranscriptStatus,
+					updatedAt: handlerThread.wait.since,
+				}
+			: handlerThread.latestCommandRollup
+				? {
+						title: handlerThread.latestCommandRollup.title,
+						summary: handlerThread.latestCommandRollup.summary,
+						status: commandTranscriptStatus(handlerThread.latestCommandRollup.status),
+						updatedAt: handlerThread.latestCommandRollup.updatedAt,
+						commandId: handlerThread.latestCommandRollup.commandId,
+					}
+				: handlerThread.latestWorkflowRun
+					? {
+							title: handlerThread.latestWorkflowRun.workflowName,
+							summary: handlerThread.latestWorkflowRun.summary,
+							status: commandTranscriptStatus(handlerThread.latestWorkflowRun.status),
+							updatedAt: handlerThread.latestWorkflowRun.updatedAt,
+						}
+					: undefined;
 		return {
 			id: handlerThread.threadId,
 			title: handlerThread.title,
-			objective: handlerThread.latestEpisode?.summary || handlerThread.objective,
+			objective: handlerThread.objective,
 			status: commandTranscriptStatus(handlerThread.status),
 			elapsed: formatTimestamp(handlerThread.updatedAt),
 			model: "handler-thread",
+			currentActivity,
+			latestReport: handlerThread.latestEpisode
+				? {
+						episodeId: handlerThread.latestEpisode.episodeId,
+						kind: handlerThread.latestEpisode.kind,
+						title: handlerThread.latestEpisode.title,
+						summary: handlerThread.latestEpisode.summary,
+						createdAt: formatTimestamp(handlerThread.latestEpisode.createdAt),
+					}
+				: undefined,
+			metrics: [
+				`${handlerThread.commandCount} commands`,
+				`${handlerThread.episodeCount} reports`,
+				`${handlerThread.artifactCount} artifacts`,
+			],
 			latestWorkflowRun: handlerThread.latestWorkflowRun ? workflowTranscript(handlerThread.latestWorkflowRun) : undefined,
 		};
 	}
@@ -516,26 +562,6 @@
 		if (result?.isError) return "error";
 		if (result) return "done";
 		return "pending";
-	}
-
-	function executeTypescriptBody(toolName: string, argumentsValue: unknown): string | null {
-		if (toolName !== "execute_typescript" || !argumentsValue || typeof argumentsValue !== "object") {
-			return null;
-		}
-		const body = (argumentsValue as Record<string, unknown>).typescriptCode;
-		return typeof body === "string" && body.length > 0 ? body : null;
-	}
-
-	function toolInputBody(toolName: string, argumentsValue: unknown): string | null {
-		const executeBody = executeTypescriptBody(toolName, argumentsValue);
-		if (executeBody) return executeBody;
-		if (typeof argumentsValue === "undefined" || argumentsValue === null || argumentsValue === "") return null;
-		if (typeof argumentsValue === "string") return argumentsValue;
-		try {
-			return JSON.stringify(argumentsValue, null, 2);
-		} catch {
-			return String(argumentsValue);
-		}
 	}
 
 	function toolResultPreview(message: ToolResultMessage | undefined): string | null {
@@ -609,11 +635,16 @@
 
 	function measureTranscriptRow(node: HTMLElement) {
 		$transcriptVirtualizer.measureElement(node);
+		const observer = new ResizeObserver(() => {
+			$transcriptVirtualizer.measureElement(node);
+		});
+		observer.observe(node);
 		return {
 			update() {
 				$transcriptVirtualizer.measureElement(node);
 			},
 			destroy() {
+				observer.disconnect();
 				$transcriptVirtualizer.measureElement(null);
 			}
 		};
@@ -751,23 +782,10 @@
 							<div class="reference-command-block">
 								<ToolCallCard
 									toolCall={commandRollupTranscript(row.block)}
+									oninspect={onInspectCommand}
+									onopen={(artifact) => onOpenArtifact({ id: artifact.id, name: artifact.name })}
+									oncopy={copyTextToClipboard}
 								/>
-								<p class="reference-command-summary">{row.block.command.summary}</p>
-								{#if row.block.command.summaryChildren.length > 0}
-									<div class="reference-command-children" aria-label="Summary command details">
-										{#each row.block.command.summaryChildren as child (child.commandId)}
-											<div class="reference-command-child">
-												<strong>{child.title}</strong>
-												<span>{child.summary}</span>
-											</div>
-										{/each}
-									</div>
-								{/if}
-								{#if onInspectCommand}
-									<Button size="sm" variant="ghost" onclick={() => row.block.kind === "command-rollup" && onInspectCommand?.(row.block.command.commandId)}>
-										Inspect {commandStatusLabel(row.block.command.status)}
-									</Button>
-								{/if}
 							</div>
 						{:else if row.block.kind === "product-event"}
 							<div class="product-event-block">
@@ -952,21 +970,33 @@
 							{:else if block.type === "toolCall"}
 								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
 								{@const resultMessage = conversation.toolResultsById.get(block.id)}
+								{@const matchedCommand = commandRollupByToolCallId.get(block.id)}
 								{@const toolArguments = projectedToolCall?.argumentsValue ?? block.arguments}
-								{@const toolBody = toolInputBody(block.name, toolArguments)}
 								{@const status = toolStatus(block.id)}
+								{@const matchedCommandCard = matchedCommand ? commandToolCall(matchedCommand) : null}
 								<ToolCallCard
-									toolCall={{
-										id: block.id,
-										name: block.name,
-										status: status === "done" ? "done" : status === "error" ? "failed" : "running",
-										body: toolBody,
-										result: toolResultPreview(resultMessage),
-										isError: status === "error" || resultMessage?.isError,
-										attempt: projectedToolCall?.attempt,
-										totalAttempts: projectedToolCall?.totalAttempts,
-									}}
-									onopen={onOpenArtifact}
+									toolCall={matchedCommand && matchedCommandCard
+										? {
+												...matchedCommandCard,
+												id: block.id,
+												outcome: matchedCommandCard.outcome ?? toolResultPreview(resultMessage),
+												isError: matchedCommand.status === "failed" || status === "error" || resultMessage?.isError,
+												attempt: projectedToolCall?.attempt,
+												totalAttempts: projectedToolCall?.totalAttempts,
+											}
+										: projectRawToolCall({
+												id: block.id,
+												name: block.name,
+												status: status === "done" ? "done" : status === "error" ? "failed" : "running",
+												result: toolResultPreview(resultMessage),
+												argumentsValue: toolArguments,
+												isError: status === "error" || resultMessage?.isError,
+												attempt: projectedToolCall?.attempt,
+												totalAttempts: projectedToolCall?.totalAttempts,
+											})}
+									oninspect={onInspectCommand}
+									onopen={(artifact) => onOpenArtifact({ id: artifact.id, name: artifact.name })}
+									oncopy={copyTextToClipboard}
 								/>
 							{/if}
 						{/each}
@@ -1056,15 +1086,25 @@
 										</div>
 									</details>
 								{:else if block.type === "toolCall"}
-									{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
+									{@const matchedCommand = commandRollupByToolCallId.get(block.id)}
+									{@const matchedCommandCard = matchedCommand ? commandToolCall(matchedCommand) : null}
 									<ToolCallCard
-										toolCall={{
-											id: `streaming-${blockIndex}`,
-											name: block.name,
-											status: "running",
-											body: toolBody,
-										}}
-										onopen={onOpenArtifact}
+										toolCall={matchedCommand && matchedCommandCard
+											? {
+													...matchedCommandCard,
+													id: block.id,
+													status: "running",
+													isError: matchedCommand.status === "failed",
+												}
+											: projectRawToolCall({
+													id: block.id,
+													name: block.name,
+													status: "running",
+													argumentsValue: block.arguments,
+												})}
+										oninspect={onInspectCommand}
+										onopen={(artifact) => onOpenArtifact({ id: artifact.id, name: artifact.name })}
+										oncopy={copyTextToClipboard}
 									/>
 								{/if}
 							{/each}
@@ -1084,15 +1124,15 @@
 						class="message-row virtual-row tool-row"
 					>
 						<ToolCallCard
-							toolCall={{
+							toolCall={projectRawToolCall({
 								id: message.toolCallId,
 								name: message.toolName,
 								status: message.isError ? "failed" : "done",
-								body: toolInputBody(message.toolName, undefined),
 								result: toolResultPreview(message),
 								isError: message.isError,
-							}}
-							onopen={onOpenArtifact}
+							})}
+							onopen={(artifact) => onOpenArtifact({ id: artifact.id, name: artifact.name })}
+							oncopy={copyTextToClipboard}
 						/>
 					</article>
 				{/if}
@@ -1213,37 +1253,6 @@
 		display: grid;
 		gap: 0.4rem;
 		justify-items: start;
-	}
-
-	.reference-command-summary {
-		margin: 0;
-		padding-inline: 0.2rem;
-		color: var(--ui-text-secondary);
-		font-size: var(--text-sm);
-		line-height: 1.45;
-	}
-
-	.reference-command-children {
-		display: grid;
-		gap: 0.28rem;
-		width: 100%;
-		padding-inline: 0.2rem;
-	}
-
-	.reference-command-child {
-		display: grid;
-		gap: 0.12rem;
-		padding-left: 0.62rem;
-		border-left: 1px solid var(--ui-border-soft);
-		color: var(--ui-text-tertiary);
-		font-size: var(--text-xs);
-	}
-
-	.reference-command-child strong {
-		color: var(--ui-text-secondary);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 600;
 	}
 
 	.product-event-block {

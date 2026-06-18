@@ -32,7 +32,9 @@ function commandRollup(commandId = "command-1"): WorkspaceCommandRollup {
         error: null,
       },
     ],
+    startedAt: "2026-04-29T09:59:00.000Z",
     updatedAt: "2026-04-29T10:00:00.000Z",
+    finishedAt: "2026-04-29T10:00:00.000Z",
   };
 }
 
@@ -69,6 +71,8 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
     surfacePiSessionId: "surface-thread-1",
     title: "Workflow handler",
     objective: "Run delegated workflow.",
+    objectiveState: "concluded",
+    historyMode: "isolated",
     status: "completed",
     wait: null,
     startedAt: "2026-04-29T09:00:00.000Z",
@@ -78,6 +82,7 @@ function handlerThread(): WorkspaceHandlerThreadSummary {
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 0,
+    latestCommandRollup: null,
     latestWorkflowRun: null,
     latestEpisode: {
       episodeId: "episode-1",

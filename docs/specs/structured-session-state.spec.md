@@ -23,9 +23,12 @@ current base product.
 - Persist agent profile choices separately from generated agent-context binding state.
 - Persist one top-level per-turn decision for every surface.
 - Treat every tool call as a command record.
-- Project live tool use through Codex-like turn items: streamed argument snapshots before runtime
-  execution, durable command events after runtime acceptance, and final command facts as the
+- Project live tool use through Codex-like execution-span cards: streamed argument snapshots before
+  runtime execution, durable command events after runtime acceptance, and final command facts as the
   authoritative recovery source.
+- Keep terminal command records immutable after `succeeded`, `failed`, or `cancelled` so prompt-end
+  cleanup and late duplicate callbacks cannot overwrite final facts, summaries, errors, or finished
+  timestamps.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every
   generated client call as a child command record.
 - Keep native control tools small: thread controls, extension loading/inspection, and
@@ -151,6 +154,12 @@ Command records store runtime facts for tool calls and command-family work:
 Shell commands, including official Smithers CLI commands and `svvyx workflows ...`, are ordinary
 command records.
 
+`command.arg_snapshot` lifecycle events are read-model input, not opaque logs. Command rollups and
+command inspectors expose started/updated/finished timestamps plus ordered argument snapshots
+alongside output, progress, patch, diagnostic, artifact, child-command, and final-fact projection
+fields. Transcript cards may derive execution-span duration, compact metrics, grouped output, and
+semantic sections from those fields; inspectors remain the full raw debugger.
+
 ## Artifacts
 
 Artifacts are durable session files linked to sessions, threads, and commands.
@@ -219,6 +228,11 @@ Read models derive:
 
 Read APIs must not repair lifecycle state heuristically from transcript replay, ad hoc refresh
 loops, or renderer polling.
+
+Handler-thread summaries expose objective, objective state, history mode, latest command rollup,
+latest workflow run, latest episode, and counts separately. The UI must not replace the objective
+with latest report text; objective, current activity, and latest report are separate read-model
+concepts.
 
 ## State Boundary
 

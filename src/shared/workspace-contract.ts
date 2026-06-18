@@ -926,6 +926,7 @@ export interface WorkspaceCommandRollup {
   error?: string | null;
   artifacts?: WorkspaceCommandArtifactLink[];
   outputEvents?: WorkspaceCommandOutputEvent[];
+  argumentSnapshots?: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots?: WorkspaceCommandPatchSnapshot[];
   diagnostics?: WorkspaceCommandDiagnosticSnapshot[];
@@ -933,7 +934,9 @@ export interface WorkspaceCommandRollup {
   summaryChildCount: number;
   traceChildCount: number;
   summaryChildren: WorkspaceCommandRollupChild[];
+  startedAt: string;
   updatedAt: string;
+  finishedAt: string | null;
 }
 
 export interface WorkspaceCommandArtifactLink {
@@ -967,6 +970,13 @@ export interface WorkspaceCommandProgressEvent {
   message?: string;
   progress?: number;
   facts?: Record<string, unknown>;
+}
+
+export interface WorkspaceCommandArgumentSnapshot {
+  eventId: string;
+  at: string;
+  source: string;
+  arguments: unknown;
 }
 
 export interface WorkspaceCommandPatchSnapshot {
@@ -1020,6 +1030,7 @@ export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupCh
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
   outputEvents: WorkspaceCommandOutputEvent[];
+  argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots: WorkspaceCommandPatchSnapshot[];
   diagnostics: WorkspaceCommandDiagnosticSnapshot[];
@@ -1042,6 +1053,7 @@ export interface WorkspaceCommandInspector {
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
   outputEvents: WorkspaceCommandOutputEvent[];
+  argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots: WorkspaceCommandPatchSnapshot[];
   diagnostics: WorkspaceCommandDiagnosticSnapshot[];
@@ -1183,6 +1195,8 @@ export interface WorkspaceHandlerThreadSummary {
   surfacePiSessionId: string;
   title: string;
   objective: string;
+  objectiveState: "active" | "concluded";
+  historyMode: "isolated" | "forked";
   status:
     | "idle"
     | "running-handler"
@@ -1205,6 +1219,7 @@ export interface WorkspaceHandlerThreadSummary {
   workflowTaskAttemptCount?: number;
   episodeCount: number;
   artifactCount: number;
+  latestCommandRollup: WorkspaceCommandRollup | null;
   latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
   latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
   workflowTaskAttempts?: WorkspaceWorkflowTaskAttemptSummary[];

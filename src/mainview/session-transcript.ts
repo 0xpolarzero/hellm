@@ -65,11 +65,17 @@ export function buildSessionTranscriptExport(input: SessionTranscriptExportInput
   lines.push("");
   lines.push("## committed transcript");
 
-  if (input.messages.length === 0) {
+  if (conversation.visibleMessages.length === 0) {
     lines.push("(empty)");
   } else {
-    input.messages.forEach((message, index) => {
-      appendMessage(lines, message, index + 1, conversation.toolCallsById);
+    conversation.visibleMessages.forEach((message, index) => {
+      appendMessage(
+        lines,
+        message,
+        index + 1,
+        conversation.toolCallsById,
+        conversation.toolResultsById,
+      );
     });
   }
 
@@ -87,6 +93,7 @@ function appendMessage(
   message: AgentMessage,
   index: number,
   toolCallsById: ReadonlyMap<string, ProjectedToolCall>,
+  toolResultsById: ReadonlyMap<string, ToolResultMessage>,
 ): void {
   if (isUserMessage(message)) {
     appendUserMessage(lines, message, index);
@@ -94,7 +101,7 @@ function appendMessage(
   }
 
   if (isAssistantMessage(message)) {
-    appendAssistantMessage(lines, message, index, toolCallsById);
+    appendAssistantMessage(lines, message, index, toolCallsById, toolResultsById);
     return;
   }
 
@@ -119,6 +126,7 @@ function appendAssistantMessage(
   message: AssistantMessage,
   index: number | "streaming",
   toolCallsById: ReadonlyMap<string, ProjectedToolCall> = new Map(),
+  toolResultsById: ReadonlyMap<string, ToolResultMessage> = new Map(),
 ): void {
   const label = index === "streaming" ? "[streaming]" : `[${index}]`;
   lines.push("");
@@ -166,6 +174,17 @@ function appendAssistantMessage(
     );
     lines.push("arguments:");
     appendCodeBlock(lines, "json", safeJson(block.arguments));
+    const result = toolResultsById.get(block.id);
+    if (result) {
+      lines.push("result:");
+      lines.push(`toolName: ${result.toolName}`);
+      lines.push(`isError: ${result.isError}`);
+      appendContentBlocks(lines, result.content, "result");
+      if (typeof result.details !== "undefined") {
+        lines.push("details:");
+        appendCodeBlock(lines, "json", safeJson(result.details));
+      }
+    }
     if (block.thoughtSignature) {
       lines.push(`thoughtSignature: ${block.thoughtSignature}`);
     }

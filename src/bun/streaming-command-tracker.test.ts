@@ -159,6 +159,20 @@ describe("StreamingCommandTracker", () => {
     const argSnapshots = snapshot.events.filter((e) => e.kind === "command.arg_snapshot");
     expect(argSnapshots.length).toBeGreaterThanOrEqual(1);
     expect(argSnapshots[0]!.data!.source).toBe("streaming");
+    expect(
+      argSnapshots.some((event) => {
+        return (
+          event.data?.source === "streaming" &&
+          JSON.stringify(event.data.arguments) ===
+            JSON.stringify({
+              cmd: "echo hello world this is a longer command argument to exceed threshold",
+            })
+        );
+      }),
+    ).toBe(true);
+    expect(argSnapshots.map((event) => event.at)).toEqual(
+      argSnapshots.map((event) => event.at).toSorted(),
+    );
   });
 
   it("records a streaming-final snapshot on toolcall_end", () => {

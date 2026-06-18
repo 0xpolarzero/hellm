@@ -89,12 +89,18 @@ The target surface may be:
 Everything the agent does is still driven through turns, tools, runtime handlers, and durable state.
 
 Tool use must project live through the same execution model. When a model starts a tool call, the UI
-should render the correct tool item immediately, update large arguments progressively while they are
-being generated, stream runtime output or progress while the handler runs, and then settle the card
-from the authoritative final command facts. `apply_patch` uses a Codex-like structured file-change
-projection with patch snapshots; `exec_command` uses command output deltas; `execute_typescript`
-uses source, diagnostic, runtime, and child-command projection. This is not achieved by asking the
-agent to split coherent work into many tiny tool calls.
+renders the correct execution-span card immediately, updates large arguments progressively while
+they are being generated, streams runtime output or progress while the handler runs, and then settles
+the span from the authoritative final command facts. The collapsed span answers what ran, where it
+acted, what state it reached, how long it took, and the useful outcome. The expanded span shows
+nearby semantic sections such as accepted arguments, command target, file changes, diagnostics,
+progress, grouped stdout/stderr, and child commands, while the card exposes linked artifact actions
+when artifacts exist. The inspector remains the
+full trace/debugger for raw events, complete output, facts, snapshots, and artifacts. `apply_patch`
+uses a Codex-like structured file-change projection with patch snapshots; `exec_command` uses
+grouped command output deltas; `execute_typescript` uses source, diagnostic, runtime, and
+child-command projection. This is not achieved by asking the agent to split coherent work into many
+tiny tool calls.
 
 Before any target surface runs a turn through pi:
 
@@ -1252,7 +1258,7 @@ The main orchestrator surface and a handler thread surface should use the same c
 - artifacts
 - status
 
-Assistant transcript messages render Markdown suitable for coding-agent output, including compact prose, lists, tables, fenced code with syntax highlighting and copy actions, inline and block math, Mermaid diagrams, and escaped raw HTML rather than executable HTML. Long transcript surfaces use TanStack Virtual over system metadata, semantic projection cards, durable messages, tool rows, and active streaming rows so variable-height content preserves pane-local scroll anchors while following the bottom only when the user is pinned there. Live assistant output preserves each provider/runtime stream packet as a visible update, but the bridge sends compact ordered stream patches instead of full surface snapshots for every packet; full snapshots remain the baseline, recovery, and settled-state mechanism.
+Assistant transcript messages render Markdown suitable for coding-agent output, including compact prose, lists, tables, fenced code with syntax highlighting and copy actions, inline and block math, Mermaid diagrams, and escaped raw HTML rather than executable HTML. Long transcript surfaces use TanStack Virtual over system metadata, semantic projection cards, durable messages, tool rows, and active streaming rows so variable-height content preserves pane-local scroll anchors while following the bottom only when the user is pinned there. Tool cards render as execution spans from structured command records: collapsed spans show action, target, status, duration, compact counts, useful outcome, and linked artifact actions when artifacts exist; expanded spans show bounded semantic sections for accepted arguments, command target, file changes, diagnostics, progress, grouped stdout/stderr, and child commands; the inspector remains the full debugger for raw facts, snapshots, and complete output. Matched raw tool-result rows collapse into the tool call instead of creating duplicate transcript cards. Handler-thread cards keep objective, current activity, latest report, and counts as separate fields rather than replacing the objective with report text. Live assistant output preserves each provider/runtime stream packet as a visible update, but the bridge sends compact ordered stream patches instead of full surface snapshots for every packet; full snapshots remain the baseline, recovery, and settled-state mechanism.
 
 Message targeting is simple:
 

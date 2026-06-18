@@ -100,7 +100,6 @@ describe("conversation projection", () => {
     expect(projection.visibleMessages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
-      "toolResult",
       "assistant",
     ]);
     expect(projection.messageCount).toBe(3);
@@ -203,5 +202,24 @@ describe("conversation projection", () => {
       "toolResult",
     ]);
     expect(committed.toolResultsById.has("tool-call-1")).toBe(true);
+  });
+
+  it("keeps matched tool results indexed without rendering duplicate visible rows", () => {
+    const projection = projectConversation([
+      userMessage(1, "Run a command."),
+      assistantMessage(2, "Running", {
+        toolCalls: [toolCall("tool-call-1", "exec_command", { cmd: "pwd" })],
+      }),
+      toolResultMessage(3, "/tmp/project"),
+    ]);
+
+    expect(projection.visibleMessages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(projection.toolResultsById.get("tool-call-1")?.content[0]).toMatchObject({
+      type: "text",
+      text: "/tmp/project",
+    });
   });
 });

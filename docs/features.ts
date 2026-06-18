@@ -122,7 +122,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Live Tool Projection",
     status: "in-progress",
     summary:
-      "Uses a Codex-like turn item model for live tool rendering: show the tool card as soon as the tool name is known, stream large argument snapshots before runtime execution, render `apply_patch` as structured file-change snapshots rather than many tiny patch calls, stream `exec_command` output and runtime progress through durable command events, nest `execute_typescript` generated-client child commands under the parent, and keep `svvyx ...` and prompt-only CLIs such as Smithers as command-family projections over `exec_command` without a workflow-specific renderer.",
+      "Uses a Codex-like turn item model for live tool rendering: show an execution-span card as soon as the tool name is known, stream large argument snapshots before runtime execution, render `apply_patch` as structured file-change snapshots rather than many tiny patch calls, stream `exec_command` output and runtime progress through durable command events, nest `execute_typescript` generated-client child commands under the parent, expose ordered argument snapshots and linked artifacts through command rollups and inspectors, settle spans from immutable terminal command facts, render collapsed spans with action/target/status/duration/counts/outcome, render expanded spans with bounded semantic sections for arguments, command target, file changes, diagnostics, progress, grouped stdout/stderr, child commands, and artifacts, route full output/raw facts through the inspector, and keep `svvyx ...` and prompt-only CLIs such as Smithers as command-family projections over `exec_command` without a workflow-specific renderer.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/live-tool-projection.spec.md",
@@ -365,7 +365,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned product state layer above pi with durable session, surface composer draft, turn, handler thread, command, episode, artifact, saved Workflows generated metadata, attention, and lifecycle projection records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), and workspace-level metadata projection that survives reload while leaving live-surface transcript updates separate from durable workspace read models.",
+      "Adds a workspace-scoped svvy-owned product state layer above pi with durable session, surface composer draft, turn, handler thread, command, episode, artifact, saved Workflows generated metadata, attention, and lifecycle projection records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), immutable terminal command facts, selector-projected argument snapshots, and workspace-level metadata projection that survives reload while leaving live-surface transcript updates separate from durable workspace read models.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/extension/thread_managing.extension.spec.md",
@@ -376,7 +376,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets, request_user_input calls, and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, trace-versus-surface visibility, and ordered command projection events for output, progress, patch/file-change snapshots, approvals, request-user-input waiting, generic waits, child links, workspace diff updates, and terminal facts.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets, request_user_input calls, and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, trace-versus-surface visibility, ordered command projection events for argument snapshots, output, progress, patch/file-change snapshots, approvals, request-user-input waiting, generic waits, child links, workspace diff updates, and terminal facts that cannot be overwritten after a command reaches a terminal state.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/live-tool-projection.spec.md",
@@ -388,7 +388,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with durable thread-group topology, objective, objective state, worktree context, explicit orchestrator follow-up and re-engagement of concluded objectives through `thread_followup({ activate: true })`, pending report requests, and multiple update or conclusion episodes over the thread's lifetime without flattening delegated-work outcome into thread objective state.",
+      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with durable thread-group topology, objective, objective state, history mode, worktree context, explicit orchestrator follow-up and re-engagement of concluded objectives through `thread_followup({ activate: true })`, pending report requests, latest command/workflow/report read-model fields, and multiple update or conclusion episodes over the thread's lifetime without flattening delegated-work outcome into thread objective state or replacing the objective with latest report text.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/extension/thread_managing.extension.spec.md",

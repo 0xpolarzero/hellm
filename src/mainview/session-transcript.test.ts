@@ -112,7 +112,8 @@ describe("session transcript export", () => {
     expect(output).toContain("Need to inspect the transcript path.");
     expect(output).toContain("toolCall[3]: read (tool-call-1)");
     expect(output).toContain('"path": "src/mainview/ChatWorkspace.svelte"');
-    expect(output).toContain("### [3] tool result @ 1970-01-01T00:00:00.003Z");
+    expect(output).toContain("result:\ntoolName: read\nisError: false");
+    expect(output).not.toContain("### [3] tool result @ 1970-01-01T00:00:00.003Z");
     expect(output).toContain('"lineCount": 200');
   });
 

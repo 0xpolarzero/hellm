@@ -63,6 +63,11 @@ How to use this file:
   - [x] Render transcript command rollups through neutral tool-call cards instead of workflow-shaped cards. Commit(s): pending
   - [x] Recover transcript command rollups from durable command output events, retained artifacts, and final command facts after reload without transcript prose parsing. Commit(s): pending
   - [x] Persist accepted command argument snapshots on structured command records and recover them into neutral transcript command cards after reload. Commit(s): pending
+  - [x] Expose ordered command argument snapshots through command rollups and command inspectors so transcript cards and fine-grained inspection use the same durable read model. Commit(s): pending local changes
+  - [x] Expose command rollup started and finished timestamps so transcript execution spans can show duration without renderer guessing. Commit(s): pending local changes
+  - [x] Keep terminal command records immutable after success, failure, or cancellation so prompt cleanup cannot overwrite authoritative final facts. Commit(s): pending local changes
+  - [x] Render transcript tool cards from structured command fields with explicit inspect and artifact actions, while de-duplicating matched tool-result rows. Commit(s): pending local changes
+  - [x] Render transcript tool cards as execution spans with collapsed action/target/status/duration/counts/outcome and expanded bounded semantic sections for arguments, command target, file changes, diagnostics, progress, grouped stdout/stderr, child commands, and artifacts while keeping full raw detail in the command inspector. Commit(s): pending local changes
   - [x] Persist accepted argument snapshots for specialized native control commands (`thread_start`, `thread_followup`, `thread_request_report`, `thread_report`, and `request_user_input`) while preserving their existing authoritative final facts. Commit(s): pending
   - [x] Persist direct command records for Extension Loading and read-only thread state tool executions inside the native tools themselves, including active-runtime validation failures, while the generic pi callback tracker skips those native names to avoid duplicate command cards. Commit(s): pending
   - [x] Persist `request_user_input` created request/question-count command progress and final nonblocking `RequestUserInputResult` facts on the authoritative command record. Commit(s): pending
@@ -192,6 +197,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 
 - [x] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session. Commit(s): `f53c9b8`
 - [x] Persist handler-thread objective state separately from handler activity, workflow activity, waits, and repair context, without flattening workflow failure or cancellation into thread objective conclusion. Commit(s): `f53c9b8`, `fdaf460`, `a02bd48`
+- [x] Present handler-thread transcript cards as objective, current activity, latest report, and counts from structured read models instead of replacing the objective with latest report text. Commit(s): pending local changes
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread clarification, waiting, and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [x] Add runtime-level verification that handler-local command or Smithers failure can continue or rerun on the handler surface without an orchestrator turn unless the handler explicitly calls `thread_report`. Commit(s): pending local changes

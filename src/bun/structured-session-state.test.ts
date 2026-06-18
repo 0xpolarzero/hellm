@@ -633,6 +633,64 @@ describe("structured session state write API", () => {
     ]);
   });
 
+  it("does not mutate terminal command records when finishCommand is called again", () => {
+    const store = createStore();
+    seedSession(store, "session-terminal-commands");
+    const turn = store.startTurn({
+      sessionId: "session-terminal-commands",
+      surfacePiSessionId: "session-terminal-commands",
+      requestSummary: "Run terminal command checks",
+    });
+
+    for (const status of ["succeeded", "failed", "cancelled"] as const) {
+      const command = store.createCommand({
+        turnId: turn.id,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        title: `Terminal ${status}`,
+        summary: "Initial summary.",
+      });
+      store.finishCommand({
+        commandId: command.id,
+        status,
+        summary: `Final ${status}.`,
+        facts: { outcome: status },
+        error: status === "succeeded" ? null : `Initial ${status} error.`,
+      });
+      const first = store
+        .getSessionState("session-terminal-commands")
+        .commands.find((candidate) => candidate.id === command.id);
+      expect(first).toMatchObject({
+        status,
+        summary: `Final ${status}.`,
+        facts: { outcome: status },
+        error: status === "succeeded" ? null : `Initial ${status} error.`,
+      });
+      expect(first?.finishedAt).toBeTruthy();
+
+      store.finishCommand({
+        commandId: command.id,
+        status: "cancelled",
+        summary: "Prompt execution ended before the tool run finished.",
+        facts: { overwritten: true },
+        error: "Cleanup tried to cancel a finished command.",
+      });
+
+      const snapshot = store.getSessionState("session-terminal-commands");
+      const second = snapshot.commands.find((candidate) => candidate.id === command.id);
+      expect(second).toEqual(first);
+      expect(
+        snapshot.events.filter(
+          (event) =>
+            event.kind === "command.finished" &&
+            event.subject.kind === "command" &&
+            event.subject.id === command.id,
+        ),
+      ).toHaveLength(1);
+    }
+  });
+
   it("records ordered update and conclusion episodes per thread", () => {
     const store = createStore();
     seedSession(store, "session-episodes");

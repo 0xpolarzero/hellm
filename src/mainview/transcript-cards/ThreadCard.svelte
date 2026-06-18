@@ -12,6 +12,21 @@
 		progress?: number;
 		worktree?: string;
 		model: string;
+		currentActivity?: {
+			title: string;
+			summary: string;
+			status?: TranscriptStatus;
+			updatedAt?: string;
+			commandId?: string;
+		};
+		latestReport?: {
+			episodeId: string;
+			kind: string;
+			title: string;
+			summary: string;
+			createdAt: string;
+		};
+		metrics?: string[];
 		latestWorkflowRun?: TranscriptWorkflow;
 	};
 </script>
@@ -137,9 +152,34 @@
       id={bodyId}
       transition:slide={{ duration: 150, easing: quintOut }}
     >
-      <p class="text-sm text-muted-foreground leading-relaxed">
-        {thread.objective}
-      </p>
+      <section class="thread-section">
+        <span>Objective</span>
+        <p>{thread.objective}</p>
+      </section>
+
+      {#if thread.currentActivity}
+        <section class="thread-section current-activity">
+          <div class="thread-section-header">
+            <span>Current activity</span>
+            {#if thread.currentActivity.status}
+              <StatusBadge status={thread.currentActivity.status} size="xs" />
+            {/if}
+          </div>
+          <strong>{thread.currentActivity.title}</strong>
+          <p>{thread.currentActivity.summary}</p>
+        </section>
+      {/if}
+
+      {#if thread.latestReport}
+        <section class="thread-section latest-report">
+          <div class="thread-section-header">
+            <span>Latest report</span>
+            <small>{thread.latestReport.kind} · {thread.latestReport.createdAt}</small>
+          </div>
+          <strong>{thread.latestReport.title}</strong>
+          <p>{thread.latestReport.summary}</p>
+        </section>
+      {/if}
 
       {#if thread.latestWorkflowRun}
         <WorkflowCard
@@ -165,6 +205,11 @@
         <div class="footer-item">
           <ClockIcon size={11} strokeWidth={2} />{thread.elapsed}
         </div>
+        {#if thread.metrics && thread.metrics.length > 0}
+          {#each thread.metrics as metric (metric)}
+            <div class="footer-item">{metric}</div>
+          {/each}
+        {/if}
         <ModelBadge model={thread.model} size="xs" />
       </footer>
     </div>
@@ -212,6 +257,55 @@
     flex-direction: column;
     gap: 0.75rem;
     background: color-mix(in oklab, var(--ui-surface-raised) 30%, transparent);
+  }
+
+  .thread-section {
+    display: grid;
+    gap: 0.24rem;
+  }
+
+  .thread-section > span,
+  .thread-section-header span {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .thread-section p {
+    margin: 0;
+    color: var(--ui-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .thread-section strong {
+    color: var(--ui-text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .thread-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  .thread-section-header small {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .current-activity,
+  .latest-report {
+    padding: 0.56rem 0.62rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
   }
 
   footer {
