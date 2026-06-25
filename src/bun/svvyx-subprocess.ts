@@ -1,19 +1,14 @@
+import { createHmac, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { createHmac } from "node:crypto";
 import type { AgentSettingsState } from "../shared/agent-settings";
 import { DEFAULT_AGENT_SETTINGS_STATE } from "../shared/agent-settings";
-import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import type { AppLoggerEvent } from "./app-logger";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
 import {
-  createStructuredSessionStateStore,
-  type StructuredSessionStateStore,
-  type StructuredWorkspaceInput,
-} from "./structured-session-state";
-import {
   formatSvvyxArtifactsError,
-  runSvvyxArtifactsCommand,
+  parseSvvyxArtifactsCommand,
+  type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
 import { formatSvvyxExtensionsError, runSvvyxExtensionsCommand } from "./svvyx-extensions-command";
@@ -27,17 +22,21 @@ import {
   runSvvyxWorkflowsCommand,
   type SvvyxWorkflowsModelChoice,
 } from "./svvyx-workflows-command";
+import type {
+  PromptExecutionExternalInstructionSource,
+  RuntimeExtensionContextImpactStateFacade,
+  SvvyxRuntimeEffectTransportIntent,
+} from "@svvy/core";
 
 type SvvyxSubprocessContext = {
   agentSettingsState?: AgentSettingsState | null;
   canRequestArtifactOpen?: boolean;
   cwd: string;
-  databasePath?: string | null;
   extensionEnvValues?: SvvyxRuntimeEnvValues | null;
   extensionsBuildRoot?: string;
   extensionsGeneratedPackagePath?: string;
   extensionsRoot?: string;
-  externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+  externalInstructionSources?: readonly PromptExecutionExternalInstructionSource[];
   resultPath?: string;
   runtime?: SvvyxArtifactsRuntimeContext | null;
   sourceCommandId?: string | null;
@@ -45,7 +44,6 @@ type SvvyxSubprocessContext = {
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
   workflowsWorkspaceCwds?: readonly string[] | null;
-  workspace?: StructuredWorkspaceInput | null;
   workspaceCwd?: string;
 };
 
@@ -54,7 +52,10 @@ type SvvyxSubprocessResult = {
   appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
   commandFacts?: Record<string, unknown>;
+  intents?: SvvyxSubprocessIntent[];
   ok: boolean;
+  output?: unknown;
+  progressEvents?: SvvyxSubprocessProgressEvent[];
 };
 
 type SvvyxSubprocessAppAction = {
@@ -63,27 +64,40 @@ type SvvyxSubprocessAppAction = {
   sessionId: string;
 };
 
+type SvvyxSubprocessIntent =
+  | {
+      id: string;
+      kind: "artifact.operation";
+      operation: SvvyxArtifactsOperationInput;
+    }
+  | SvvyxRuntimeEffectTransportIntent;
+
+type SvvyxSubprocessProgressEvent = {
+  facts?: Record<string, unknown>;
+  family: string;
+  phase: "failed" | "started" | "succeeded";
+};
+
 async function main(): Promise<number> {
   const context = readContext();
   const argv = Bun.argv.slice(2);
   const command = ["svvyx", ...argv].map(shellQuote).join(" ");
   const appActions: SvvyxSubprocessAppAction[] = [];
   const appLogEvents: AppLoggerEvent[] = [];
-  const store = openStructuredStore(context);
+  const intents: SvvyxSubprocessIntent[] = [];
+  const progressEvents: SvvyxSubprocessProgressEvent[] = [];
   const agentSettingsStore = createSnapshotAgentSettingsStore(context.agentSettingsState);
   const envSecretStore = createMacOsKeychainExtensionEnvSecretStore();
+  const extensionContextImpactState = createTransportRuntimeEffectRequestState(intents);
 
   const recordProgress = (
     phase: "failed" | "started" | "succeeded",
     facts?: Record<string, unknown> | null,
   ) => {
-    recordSvvyxCommandProgress({
-      command,
-      context,
+    progressEvents.push({
       family: commandFamily(argv),
-      facts,
       phase,
-      store,
+      ...(facts ? { facts } : {}),
     });
   };
 
@@ -91,32 +105,19 @@ async function main(): Promise<number> {
     recordProgress("started");
     const namespace = argv[0];
     let output: unknown;
-    let commandFacts: Record<string, unknown>;
+    let commandFacts: Record<string, unknown> | undefined;
 
     if (namespace === "artifacts") {
-      if (!context.runtime || !store || !context.sourceCommandId) {
+      if (!context.runtime || !context.sourceCommandId) {
         throw new Error("Artifacts commands require active prompt command context.");
       }
-      const result = await runSvvyxArtifactsCommand({
-        command,
-        cwd: context.cwd,
-        runtime: context.runtime,
-        sourceCommand: { id: context.sourceCommandId },
-        store,
-        onAppLog: (event) => appLogEvents.push(event),
-        openArtifact: context.canRequestArtifactOpen
-          ? async (request) => {
-              appActions.push({
-                kind: "artifact.open",
-                sessionId: request.sessionId,
-                artifactId: request.artifactId,
-              });
-              return true;
-            }
-          : undefined,
+      const operation = parseSvvyxArtifactsCommand(command);
+      intents.push({
+        id: "artifact.operation",
+        kind: "artifact.operation",
+        operation,
       });
-      output = result.output;
-      commandFacts = result.commandFacts;
+      output = { ok: true };
     } else if (namespace === "workflows") {
       const result = await runSvvyxWorkflowsCommand({
         agentSettingsStore,
@@ -151,9 +152,9 @@ async function main(): Promise<number> {
         command,
         cwd: context.cwd,
         envSecretStore,
+        extensionContextImpactState,
         externalInstructionSources: context.externalInstructionSources ?? [],
         extensionsRoot: context.extensionsRoot,
-        structuredSessionStore: store ?? undefined,
       });
       output = result.output;
       commandFacts = result.commandFacts;
@@ -170,13 +171,22 @@ async function main(): Promise<number> {
 
     recordProgress("succeeded", commandFacts);
     writeStdoutJson(output);
-    writeResult(context, {
-      ...(agentSettingsStore.dirty() ? { agentSettingsState: agentSettingsStore.getState() } : {}),
-      appActions,
-      appLogEvents,
-      commandFacts,
-      ok: true,
-    });
+    writeResult(
+      context,
+      {
+        ...(agentSettingsStore.dirty()
+          ? { agentSettingsState: agentSettingsStore.getState() }
+          : {}),
+        appActions,
+        appLogEvents,
+        ...(commandFacts ? { commandFacts } : {}),
+        ...(intents.length > 0 ? { intents } : {}),
+        ok: true,
+        output,
+        progressEvents,
+      },
+      namespace,
+    );
     return 0;
   } catch (error) {
     const output = formatError(argv[0], error);
@@ -197,16 +207,21 @@ async function main(): Promise<number> {
     }
     recordProgress("failed", commandFacts);
     writeStderrJson({ ...output, ...(commandFacts ? { commandFacts } : {}) });
-    writeResult(context, {
-      ...(agentSettingsStore.dirty() ? { agentSettingsState: agentSettingsStore.getState() } : {}),
-      appActions,
-      appLogEvents,
-      ...(commandFacts ? { commandFacts } : {}),
-      ok: false,
-    });
+    writeResult(
+      context,
+      {
+        ...(agentSettingsStore.dirty()
+          ? { agentSettingsState: agentSettingsStore.getState() }
+          : {}),
+        appActions,
+        appLogEvents,
+        ...(commandFacts ? { commandFacts } : {}),
+        ok: false,
+        progressEvents,
+      },
+      argv[0],
+    );
     return 1;
-  } finally {
-    store?.close();
   }
 }
 
@@ -222,16 +237,6 @@ function readContext(): SvvyxSubprocessContext {
     ...parsed,
     cwd: parsed.cwd || process.cwd(),
   };
-}
-
-function openStructuredStore(context: SvvyxSubprocessContext): StructuredSessionStateStore | null {
-  if (!context.databasePath || context.databasePath === ":memory:" || !context.workspace) {
-    return null;
-  }
-  return createStructuredSessionStateStore({
-    databasePath: context.databasePath,
-    workspace: context.workspace,
-  });
 }
 
 function createSnapshotAgentSettingsStore(
@@ -300,32 +305,6 @@ function commandFamily(argv: readonly string[]): string {
   return "runtime";
 }
 
-function recordSvvyxCommandProgress(input: {
-  command: string;
-  context: SvvyxSubprocessContext;
-  facts?: Record<string, unknown> | null;
-  family: string;
-  phase: "failed" | "started" | "succeeded";
-  store: StructuredSessionStateStore | null;
-}): void {
-  if (!input.store || !input.context.runtime || !input.context.sourceCommandId) {
-    return;
-  }
-  input.store.recordLifecycleEvent({
-    sessionId: input.context.runtime.sessionId,
-    kind: "command.progress",
-    subjectKind: "command",
-    subjectId: input.context.sourceCommandId,
-    data: {
-      command: input.command,
-      family: input.family,
-      phase: input.phase,
-      source: "svvyx-cli-subprocess",
-      ...(input.facts ? { facts: input.facts } : {}),
-    },
-  });
-}
-
 function formatError(
   namespace: string | undefined,
   error: unknown,
@@ -346,6 +325,37 @@ function formatError(
     return formatSvvyxExtensionsError(error);
   }
   return formatSvvyxRuntimeError(error);
+}
+
+function createTransportRuntimeEffectRequestState(
+  intents: SvvyxSubprocessIntent[],
+): RuntimeExtensionContextImpactStateFacade {
+  return {
+    listUsageContextAffectedSurfaces: (input) => {
+      intents.push({
+        id: `runtime-effect-${intents.length + 1}`,
+        kind: "runtime_effect.request",
+        request: {
+          type: "extension_usage.context_impact",
+          input,
+          target: "extension_usage",
+        },
+      });
+      return [];
+    },
+    applySnapshotContextImpact: (input) => {
+      intents.push({
+        id: `runtime-effect-${intents.length + 1}`,
+        kind: "runtime_effect.request",
+        request: {
+          type: "extension_snapshot.context_impact",
+          input,
+          target: "snapshot_load",
+        },
+      });
+      return [];
+    },
+  };
 }
 
 function commandErrorFacts(
@@ -408,18 +418,47 @@ function workflowLogDetails(
   };
 }
 
-function writeResult(context: SvvyxSubprocessContext, result: SvvyxSubprocessResult): void {
+function writeResult(
+  context: SvvyxSubprocessContext,
+  result: SvvyxSubprocessResult,
+  extensionId: string | undefined,
+): void {
   if (!context.resultPath) {
     return;
   }
   const resultKey = process.env.SVVY_SVVYX_SUBPROCESS_RESULT_KEY;
-  if (!resultKey) {
+  if (!resultKey || !context.sourceCommandId) {
     return;
   }
-  const payloadJson = JSON.stringify(result);
+  const payload = {
+    status: result.ok ? "succeeded" : "failed",
+    ...(result.output !== undefined ? { output: result.output } : {}),
+    ...(result.commandFacts ? { commandFacts: result.commandFacts } : {}),
+    ...(result.intents ? { intents: result.intents } : {}),
+    ...(result.progressEvents ? { progressEvents: result.progressEvents } : {}),
+    diagnostics: result.ok ? [] : ["svvyx subprocess command failed"],
+    appActions: result.appActions,
+    appLogEvents: result.appLogEvents,
+    ...(result.agentSettingsState ? { agentSettingsState: result.agentSettingsState } : {}),
+  };
+  const unsignedEnvelope = {
+    envelopeVersion: 1,
+    invocationId: randomUUID(),
+    commandId: context.sourceCommandId,
+    extensionId: extensionId ?? "svvyx",
+    createdAt: new Date().toISOString(),
+    payload,
+  };
+  const digest = createHmac("sha256", resultKey)
+    .update(JSON.stringify(unsignedEnvelope))
+    .digest("base64url");
   const signed = {
-    payload: result,
-    signature: createHmac("sha256", resultKey).update(payloadJson).digest("base64url"),
+    ...unsignedEnvelope,
+    signature: {
+      algorithm: "hmac-sha256",
+      keyId: "svvyx-subprocess-result",
+      digest,
+    },
   };
   writeFileSync(context.resultPath, `${JSON.stringify(signed, null, 2)}\n`);
 }

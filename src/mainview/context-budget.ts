@@ -1,13 +1,13 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Model, Usage } from "@mariozechner/pi-ai";
-import { createContextBudget, type ContextBudget } from "../shared/context-budget";
+import { createContextBudget, type ContextBudget } from "@svvy/core";
 
 export {
   createContextBudget,
   formatContextBudgetTooltip,
   getContextBudgetTone,
   type ContextBudget,
-} from "../shared/context-budget";
+} from "@svvy/core";
 
 export function buildContextBudgetFromUsage(
   usage: Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null | undefined,

@@ -39,11 +39,12 @@ list_extensions()
 load_extension({ extensionId: string })
 ```
 
-Current detailed behavior is defined in:
+Detailed behavior and package ownership are defined across:
 
 - `docs/specs/extensions-and-tools.spec.md`, "`list_extensions`"
 - `docs/specs/extensions-and-tools.spec.md`, "`load_extension`"
-- `docs/specs/extensions-and-tools.spec.md`, "Creation-Time And Invocation-Time Overrides"
+- `docs/specs/extensions-and-tools.spec.md`, "Extension Loading"
+- `docs/specs/package-architecture/extensions.spec.md`, "Extension Service"
 - `docs/specs/live-tool-projection.spec.md`, "Extension Loading Projection"
 
 ## Notes

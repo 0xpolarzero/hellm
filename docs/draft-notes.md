@@ -1,3 +1,7 @@
+Status: exploratory scratchpad. This file is not a current product spec, progress tracker, or
+package-ownership source. Current behavior is defined by `docs/prd.md`, `docs/features.ts`, and
+`docs/specs/**`.
+
 - semantic diffs and merge for LLM to handle that + semantic diff viewer for reviewing:
   - https://github.com/Ataraxy-Labs/sem
   - https://github.com/Ataraxy-Labs/weave
@@ -13,51 +17,44 @@
 
 - figure out reliable diff tracking for both the full session and individual threads; flat changed-file lists are not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
 
-- nice moat but need to nail it:
-  - Project CI as a dedicated check lane for every session
-  - basically same as github workflows on push except it's smithers workflows
-  - likely needs a CI onboarding flow for a new workspace where the AI guides the user through setting up the workspace's CI workflow
-  - that onboarding should end with a reusable workflow configuration for that workspace rather than a one-off conversation artifact
-  - the execution model should stay the same as everything else: it runs on a thread through a workflow, not through a separate CI engine
-  - the difference should mostly be UI and automation: easier setup, better default triggers, and more purpose-built CI displays
-  - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately
-  - should support both automatic post-work runs and manual runs from a clearer UX surface
+- future quality-check ideas:
+  - out of current product scope unless adopted in `docs/features.ts`
+  - must use handler-thread/direct-tool execution, ordinary command facts, and current Workflows
+    source-library boundaries rather than a separate Project CI lane or workflow-specific renderer
 
 - use sandboxing separate from environment
   - https://x.com/nicoalbanese10/status/2043745569278251112
   - route parent `execute_typescript` through the same approval and sandbox classification path as
     other approval-boundary commands before snippet execution
-  - generated loaded-extension client calls inside `execute_typescript` still record child command
+  - generated loaded-extension facade calls inside `execute_typescript` still record child command
     facts and enforce extension readiness, env, redaction, and failure semantics
   - https://github.com/vercel-labs/open-agents
 
-- integration with jjhub/codeplane would make sense, for instance:
-  - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
-  - we don't git commit anymore (or maybe git mode/automatic—jj—mode) where orchestrator decides when to snapshot and push to run ci in cloud
+- jjhub/codeplane CI orchestration is not adopted product scope. Any future cloud CI or VCS
+  automation surface must be promoted into `docs/prd.md`, `docs/features.ts`,
+  `docs/progress.md`, and an owning spec before implementation.
 
 - need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what handler threads and workflow runs are active, what context made it into which worker, and what is the overall status
   - maybe a good starting point is to run a small model alongside the orchestrator visiting the transcript/session state at frequent intervals and appending a one-sentence high-level overview
   - show list of files read and websites visited for a session; basically everything that made it into the context
   - everything that made it into context should be on the side and appear at each message so scrolling can dynamically add each context item in a sticky way
 
-- write javascript tools api in Effect internally
+- If a future VCS `svvyx` extension is adopted, specify its concrete loaded TypeScript facade
+  separately; Git remains prompt-only in v1.
 
-- use jj instead of git inside generated clients if a generated VCS client is ever adopted
-
-- handler-thread context mode needs an explicit design pass:
-  - maybe a handler thread can be spawned either with fresh context (only the orchestrator handoff) or full context (a short-lived fork of the current session context/history)
-  - this might be useful when a worker needs broader discussion history or shared assumptions instead of a tightly scoped handoff
-  - need to decide whether this is actually worth the extra context cost and ambiguity
-  - if we keep it, the orchestrator needs a clear policy for when to choose fresh-context versus full-context delegation
+- Handler threads use `history: "isolated"` by default: the child receives only the explicit
+  orchestrator handoff, referenced artifacts, and generated extension context. `history: "forked"`
+  is an explicit request for a short-lived copy of the current session history when the orchestrator
+  can name the product reason for broader context.
 
 - self-improving worker recovery idea:
-  - if the orchestrator judges an episode as suspicious, low-confidence, inconsistent, or otherwise weird, it could proactively spawn a reviewer workflow
+  - if the orchestrator judges an episode as suspicious, low-confidence, inconsistent, or otherwise weird, it could proactively spawn a reviewer handler thread
   - that reviewer would inspect the prior worker's transcript/artifacts/outputs, explain what likely went wrong, and suggest escalation to the user if it judges it is/might be an upstream issue
   - this could become a useful recovery pattern instead of treating every bad worker result as a dead end; basically agents handle suspected bugs -> suggesting an issue to open on github
 
-- workflow-category-specific UI:
-  - some workflow categories may justify specialized UI treatment instead of a generic workflow card
-  - Project CI is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
+- workflow status exploration:
+  - any future specialized display must still project ordinary command facts, artifacts, app logs,
+    and state read models rather than introducing a workflow-specific renderer
 
 - cron job on a repo that pools for updates on selected dependencies with a short summary so we can update adap
   - especially docs/references/ so we can notice if they changed something we borrowed to something better or added a useful feature
@@ -65,9 +62,14 @@
 - context usage per turn: nice UI thing to get a rough idea of how much context was used in each turn both agent and user
 
 - ship windows/tabs:
-  - the app should support multiple tabs, and likely windows as a follow-on or sibling primitive
+  - workspace tabs are authoritative product scope in `docs/prd.md`, `docs/features.ts`, and
+    `docs/specs/default-workspace-and-open-workspace.spec.md`; future multi-window behavior must be
+    promoted into authoritative docs before implementation
+  - the app should support multiple tabs, with windows only as a future unadopted candidate
   - each tab can open a workspace, including opening the same workspace in multiple tabs
-  - each tab owns its own layout state so a user can keep different pane arrangements for different workspaces or different views of the same workspace
+  - open workspace tabs are visual selectors; duplicate tabs for the same canonical cwd share the
+    same `@svvy/runtime` workspace runtime and durable layout slots keyed by `(workspaceId,
+    layoutId)`; each tab stores only its selected active layout id
   - this should make it convenient to move between several repos while also supporting multiple focused layouts over one repo
   - include useful keyboard shortcuts for tab navigation, tab creation, tab closing, and moving tabs between positions or windows if windows land
 
@@ -76,16 +78,20 @@
 - snitch (TBD); this is one of the best features, but it makes sense to wait for the main product to be working before getting attention
   - small model running at all time alongisde your sessions, focused purely on productivity stuff
   - meaning roughly what you do when you finish a session or during a session (hey write that in AGENTS.md) or more broadly any suggestions that can help
-  - this is separate but maybe not that much separate (?) from the small model running alongside a workflow to give frequent high-level summaries of progress
+  - this is separate but maybe not that much separate (?) from a small model running alongside a handler thread or workflow task-agent attempt surface to give frequent high-level summaries of progress
   - basically it has a session alongside every session, and it is focused purely on watching you discuss with your agent, and runs after an entire turn (user + agent) to figure out if it could help with anything, notice something redundant, weird, maybe even more broadly help with phrasing or understand stuff idk
-  - it could have its own AGENTS.md, even tho it would for instance help maintain main AGENTS.md and docs/instructions, but it would also have its own AGENTS.md with instructions, maybe its memory, basically its own docs surface only reachable by itself and hidden from other agents
+  - it could have explicit extension/default-profile config or visible external_instruction records
+    for its own guidance, even if it also helps maintain main AGENTS.md and docs/instructions
   - maybe it can be the one to decide when to run CI during agent sessions, this kind of stuff
   - this helps agents in sessions focus purely on product and not in anything-harness, so you have clear separation of concerns, and snitch suggesting stuff so you don't have to think too much about this either
   - including maybe having it help on a specific set of surfaces, e.g. its notes, todos, this kind of more user-facing stuff?
 
-- a benefit of svvy-wrapped direct tools is that we can add hooks and programatically enforce rules, which will automatically run and return back diagnostics/output to the agent without expanding conceptual surface
-  - e.g. typecheck on editing workflows through direct `write` or `edit` under `.svvy/workflows/`
-  - e.g. run CI on git commit/push
+- a benefit of runtime/extension-owned command-policy contributions is that generated context and
+  ambient-resource policy can enforce rules and return diagnostics/output to the agent without
+  expanding conceptual surface
+  - e.g. typecheck on edits to workspace `.smithers/` source or app-global Workflows source under `~/.config/svvy/workflows/`
+  - candidate command-policy or CI ideas require promotion into PRD/features/progress and an owning
+    spec before implementation
 
 - "qa" step similar to ci; have an agent look at changes, figure out if there is any new/changed UI surface, test the flow itself by driving the app, take screenshots, examine the screenshots to make sure everything works and displays as expected, and return a structured output
 
@@ -107,7 +113,7 @@
 
 - use codex automatic review as default instead of full approvals
 
-- have a main pain to see current active sessions as graph or tree, with title + first message and maybe ever-updating short overview of what's happening. It should show all sessions that have been active up to x minutes ago, with unread, wait and all kind of state shown. Show as graph for every orchestrator -> handlers -> workflows
+- have a main pain to see current active sessions as graph or tree, with title + first message and maybe ever-updating short overview of what's happening. It should show all sessions that have been active up to x minutes ago, with unread, wait and all kind of state shown. Show as graph for orchestrator sessions -> handler threads -> command, artifact, episode, and Smithers-observed facts
   - need to nail session visualization i.e. a convenient and intuitive way to recognize session, e.g. colors, size on (i) size of first user message (ii) context used/left (iii) complexity or kind of task (iv) tags for regognizable words in the message
   - maybe have naming agent have context on all these sessions to be able to name them/update caption based on overall context
   - opportunity to nail the file viewer as well by showing a graph-kind view with functions and stuff in relation to each other
@@ -125,7 +131,8 @@
   - backlog is like the queue except it doesn't get sent, it just stays there until it is deleted or promoted to the queue (which if there is no queue will send immediately)
   - can be useful when you have multiple questions you want to ask or multiple things to do but for each you want to discuss, you just put them in the backlog, it shows below the queue, and when one item has been discussed and is all good you can push them to the queue
 
-- "life" pane
+- "life" pane is not adopted product scope. It requires promotion into PRD/features/progress and an
+  owning spec before implementation.
   - dual code code/life
   - has a distinct set of "Agents" because it's too vastly different on extensions selection and default agent and stuff
   - otherwise extensions are shared

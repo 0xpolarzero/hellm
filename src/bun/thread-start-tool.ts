@@ -1,14 +1,14 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { Static } from "typebox";
+import type { NativeToolDefinition } from "@svvy/extensions";
+import { Type, type Static } from "typebox";
 import type { AgentProfileSettings } from "../shared/agent-settings";
 import type { AppLoggerEvent } from "./app-logger";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
 import type {
-  StructuredSessionStateStore,
-  StructuredThreadRecord,
-  StructuredThreadHistoryMode,
-} from "./structured-session-state";
+  RuntimeCommandStatePortService,
+  RuntimeTurnStatePortService,
+  StateContractError,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 
 export const START_THREAD_TOOL_NAME = "thread_start";
 
@@ -49,6 +49,7 @@ export const startThreadParamsSchema = Type.Object(
 );
 
 export type StartThreadParams = Static<typeof startThreadParamsSchema>;
+export type ThreadHistoryMode = "isolated" | "forked";
 
 const START_THREAD_DESCRIPTION = [
   "Open a delegated handler thread for a bounded objective.",
@@ -64,19 +65,27 @@ export interface ThreadStartBridge {
     parentSurfacePiSessionId: string;
     threadGroupId: string | null;
     objective: string;
-    historyMode: StructuredThreadHistoryMode;
+    historyMode: ThreadHistoryMode;
     overrides: Record<string, "loaded" | "available" | "unavailable"> | null;
     agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
-  }): Promise<StructuredThreadRecord>;
+  }): Promise<{
+    id: string;
+    threadGroupId: string;
+    surfacePiSessionId: string;
+    objective: string;
+    objectiveState: "active" | "concluded";
+  }>;
 }
 
 export function createStartThreadTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadStartBridge;
   onAppLog?: (event: AppLoggerEvent) => void;
-}): AgentTool<typeof startThreadParamsSchema, Record<string, unknown>> {
+}): NativeToolDefinition<StartThreadParams, Record<string, unknown>> {
   return {
     label: "Thread",
     name: START_THREAD_TOOL_NAME,
@@ -88,11 +97,13 @@ export function createStartThreadTool(options: {
         throw new Error(`${START_THREAD_TOOL_NAME} can only run during an active prompt.`);
       }
 
-      options.store.setTurnDecision({
-        turnId: runtime.turnId!,
-        decision: "thread_start",
-        onlyIfPending: true,
-      });
+      options.runState(
+        options.turnState.setTurnDecision({
+          turnId: runtime.turnId!,
+          decision: "thread_start",
+          onlyIfPending: true,
+        }),
+      );
 
       const requestedThreads = params.threads.map((thread) => ({
         objective: thread.objective.trim(),
@@ -102,41 +113,51 @@ export function createStartThreadTool(options: {
       const emptyObjective = requestedThreads.find((thread) => !thread.objective);
       let threadGroupId = params.threadGroupId?.trim() || null;
       const summary = requestedThreads.map((thread) => thread.objective).join("; ");
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.rootThreadId ?? null,
-        toolName: START_THREAD_TOOL_NAME,
-        executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
-        visibility: "surface",
-        title:
-          requestedThreads.length === 1
-            ? `Start handler thread: ${requestedThreads[0]!.objective}`
-            : `Start ${requestedThreads.length} handler threads`,
-        summary,
-        arguments: {
-          ...(threadGroupId ? { threadGroupId } : {}),
-          threads: requestedThreads,
-        },
-      });
-      options.store.startCommand(command.id);
+      const command = options.runState(
+        options.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.rootThreadId ?? null,
+          toolName: START_THREAD_TOOL_NAME,
+          executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+          visibility: "surface",
+          title:
+            requestedThreads.length === 1
+              ? `Start handler thread: ${requestedThreads[0]!.objective}`
+              : `Start ${requestedThreads.length} handler threads`,
+          summary,
+          arguments: {
+            ...(threadGroupId ? { threadGroupId } : {}),
+            threads: requestedThreads,
+          },
+        }),
+      ).value;
+      options.runState(options.commandState.startCommand({ commandId: command.id }));
       if (emptyObjective) {
         const message = `${START_THREAD_TOOL_NAME} requires every thread objective to be non-empty.`;
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         throw new Error(message);
       }
 
       try {
-        const threads: StructuredThreadRecord[] = [];
+        const threads: Array<{
+          id: string;
+          threadGroupId: string;
+          surfacePiSessionId: string;
+          objective: string;
+          objectiveState: "active" | "concluded";
+        }> = [];
         for (const requestedThread of requestedThreads) {
           const thread = await options.bridge.createHandlerThread({
-            sessionId: runtime.sessionId,
+            sessionId: runtime.workspaceSessionId,
             turnId: runtime.turnId!,
             parentThreadId: runtime.rootThreadId ?? null,
             parentSurfacePiSessionId: runtime.surfacePiSessionId,
@@ -158,25 +179,27 @@ export function createStartThreadTool(options: {
           objectiveState: thread.objectiveState,
         }));
 
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary:
-            threads.length === 1
-              ? `Opened handler thread ${threads[0]!.id} for ${threads[0]!.objective}.`
-              : `Opened ${threads.length} handler threads in group ${threadGroupId}.`,
-          facts: {
-            threadGroupId,
-            threads: resultThreads,
-          },
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "succeeded",
+            summary:
+              threads.length === 1
+                ? `Opened handler thread ${threads[0]!.id} for ${threads[0]!.objective}.`
+                : `Opened ${threads.length} handler threads in group ${threadGroupId}.`,
+            facts: {
+              threadGroupId,
+              threads: resultThreads,
+            },
+          }),
+        );
         options.onAppLog?.({
           level: "info",
           source: "thread",
           message:
             threads.length === 1 ? "Handler thread created." : "Handler thread group created.",
           details: {
-            workspaceSessionId: runtime.sessionId,
+            workspaceSessionId: runtime.workspaceSessionId,
             surfacePiSessionId: runtime.surfacePiSessionId,
             ...(runtime.rootThreadId ? { threadId: runtime.rootThreadId } : {}),
             commandId: command.id,
@@ -202,18 +225,20 @@ export function createStartThreadTool(options: {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to create delegated handler thread.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         options.onAppLog?.({
           level: "warning",
           source: "thread",
           message: "Handler thread creation failed.",
           details: {
-            workspaceSessionId: runtime.sessionId,
+            workspaceSessionId: runtime.workspaceSessionId,
             surfacePiSessionId: runtime.surfacePiSessionId,
             ...(runtime.rootThreadId ? { threadId: runtime.rootThreadId } : {}),
             commandId: command.id,

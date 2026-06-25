@@ -32,8 +32,8 @@
     ExtensionsInventoryReadModel,
     WorkspaceCommandOutputEvent,
   } from "../shared/workspace-contract";
-  import { BUILTIN_EXTENSIONS } from "../shared/extensions";
-  import type { ExtensionInterfaceKind } from "../shared/extensions";
+  import { BUILTIN_EXTENSIONS } from "@svvy/extensions";
+  import type { ExtensionInterfaceKind } from "@svvy/extensions";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -1844,7 +1844,7 @@
           {#snippet expandedContent()}
           {#if extension.interface === "svvyx"}
             <section class="extension-top-controls" aria-label={`${extension.title} TypeScript API`}>
-              <Tooltip label="Adds generated client declarations to the execute_typescript API for this extension. Toggling rebuilds the extension.">
+              <Tooltip label="Adds generated runtime facade declarations to the execute_typescript API for this extension. Toggling rebuilds the extension.">
                 <label class="extension-inline-checkbox">
                   <Checkbox
                     size="sm"

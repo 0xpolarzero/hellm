@@ -26,14 +26,25 @@ This spec defines Smithers prompt guidance only.
     {
       "id": "smithers-orchestrator",
       "package": "smithers-orchestrator",
-      "binary": "smithers",
+      "binary": "bunx",
       "required": true,
       "version": "0.22.0",
-      "versionCommand": "smithers --version",
-      "installCommand": "npm install -g smithers-orchestrator@{{version}}"
+      "versionCommand": "bunx smithers-orchestrator --version"
     }
   ],
   "instructionFiles": [
+    {
+      "file": "010-smithers-core.generated.md",
+      "bypassed": false
+    },
+    {
+      "file": "020-smithers-handler.md",
+      "bypassed": false
+    },
+    {
+      "file": "030-smithers-svvy-boundary.md",
+      "bypassed": false
+    },
     {
       "file": "040-smithers-memory.generated.md",
       "bypassed": true
@@ -42,12 +53,12 @@ This spec defines Smithers prompt guidance only.
   "generatedInstructions": [
     {
       "output": "instructions/full/010-smithers-core.generated.md",
-      "script": "scripts/generate-smithers-fragment.ts",
+      "script": "scripts/generate-instructions.ts",
       "versionCliRequirementId": "smithers-orchestrator"
     },
     {
       "output": "instructions/full/040-smithers-memory.generated.md",
-      "script": "scripts/generate-smithers-fragment.ts",
+      "script": "scripts/generate-instructions.ts",
       "versionCliRequirementId": "smithers-orchestrator"
     }
   ]
@@ -56,13 +67,13 @@ This spec defines Smithers prompt guidance only.
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `available` |
-| Handler thread | `loaded` |
+| Actor kind          | State         |
+| ------------------- | ------------- |
+| Orchestrator        | `available`   |
+| Handler thread      | `loaded`      |
 | Workflow task agent | `unavailable` |
 
-The Smithers extension is prompt-only. It adds no native tools, no generated TypeScript client, and
+The Smithers extension is prompt-only. It adds no native tools, no generated `execute_typescript` facade, and
 no Incur command surface.
 
 ## Agent-Facing Boundary
@@ -73,28 +84,26 @@ Allowed agent-facing Smithers actions are ordinary shell commands against the of
 for example:
 
 ```bash
-smithers init
-smithers workflow run <workflow-id> --prompt "<prompt>"
-smithers ps
-smithers inspect <run-id>
+bunx smithers-orchestrator init
+bunx smithers-orchestrator workflow run <workflow-id> --prompt "<prompt>"
+bunx smithers-orchestrator ps
+bunx smithers-orchestrator inspect <run-id>
+bunx smithers-orchestrator logs <run-id> --tail 20
 ```
 
 The exact command names and flags come from generated Smithers instructions for the current
-`smithers-orchestrator` CLI requirement version resolved by Extension Managing. Upstream Smithers
-documentation may present commands as `bunx smithers-orchestrator ...` because upstream recommends
-project-local Bun execution. `svvy` deliberately uses the same global PATH-binary requirement model
-as cx and Web: Extension Managing checks the global `smithers` binary first, records its detected
-version when present, and exposes an exact package install/update command for package
-`smithers-orchestrator` only when the binary is missing or the user chooses to update. Generated
-`svvy` Smithers instructions must therefore rewrite upstream `bunx smithers-orchestrator` and
-`bunx smithers` command examples to the `smithers` binary, and must not leave external
-agent-facing guidance that tells agents to use `bunx smithers-orchestrator`.
+`smithers-orchestrator` CLI requirement version resolved by Extension Managing. Current upstream
+Smithers documentation presents agent-facing commands as `bunx smithers-orchestrator ...`; generated
+`svvy` Smithers instructions preserve that official surface. They must not rewrite upstream
+examples to a global `smithers` binary, tell agents to install or depend on a global Smithers CLI,
+or rely on repo-root `workflows/node_modules/.bin/smithers`.
 
-The package, import, and JSX runtime names remain `smithers-orchestrator`. The globally installed
-package `smithers-orchestrator` exposes a shell binary named `smithers`; workflow TypeScript still
-imports from `"smithers-orchestrator"`.
+The package, import, JSX runtime, and CLI package names remain `smithers-orchestrator`. Workflow
+TypeScript imports from `"smithers-orchestrator"`, and Shell commands use
+`bunx smithers-orchestrator ...`.
 
-`svvy` must not expose or document product wrapper tools for Smithers execution.
+`svvy` exposes no product-native Smithers execution command. Smithers execution is Shell work
+through official `bunx smithers-orchestrator ...` commands.
 
 Agents invoke Smithers through `exec_command`. Approval, sandboxing, network policy, and command
 projection are the normal Shell extension behavior.
@@ -110,17 +119,18 @@ Smithers workspace authoring lives in:
 The Smithers extension must describe `.smithers/` as the workspace-local Smithers package and must
 not direct agents to use any other workspace-local workflow source layout.
 
-`smithers init` is the normal initialization path. It scaffolds `.smithers/` with a local
+`bunx smithers-orchestrator init` is the normal initialization path. It scaffolds `.smithers/` with a local
 `.smithers/package.json` whose Smithers dependency is `smithers-orchestrator`, so TypeScript imports
 such as `import { createSmithers } from "smithers-orchestrator"` resolve from the workspace
-Smithers package. Agents that manually create `.smithers/` source without `smithers init` must still
-ensure the `.smithers` package declares the Smithers dependency instead of relying on a global CLI
-install for TypeScript module resolution.
+Smithers package. Agents that manually create `.smithers/` source without
+`bunx smithers-orchestrator init` must still ensure the `.smithers` package declares the Smithers
+dependency instead of relying on a global CLI install for TypeScript module resolution.
 
-When agents need reusable svvy-provided workflow material, they import from `@svvy/workflows` inside
-workspace `.smithers/` source files. That package is generated by the Workflows extension and linked
-into `.smithers/node_modules` by the app. Smithers itself still runs as Smithers; `@svvy/workflows`
-only supplies reusable authoring values.
+Reusable svvy workflow assets are documented by the Workflows extension. Smithers itself still runs
+as Smithers; the Smithers extension does not own reusable-source-library save, build, or
+model-selection guidance. It may include only the boundary pointer that reusable svvy workflow
+assets are Workflows-extension material and, inside workspace `.smithers` TypeScript/TSX authoring
+source, are imported from generated `@svvyx/workflows` package exports.
 
 ## Relationship To Workflows Extension
 
@@ -132,17 +142,16 @@ Smithers extension:
 - teaches the workspace `.smithers/` package shape
 - tells agents to run Smithers directly through shell commands
 
-Workflows extension:
-
-- manages app-global reusable agents, prompts, components, and workflows
-- generates `@svvy/workflows`
-- exposes `svvyx workflows list/save/build/models list`
-- validates workflow-agent provider/model/reasoning and extension references
-
-The Smithers extension may mention that reusable values can be imported from `@svvy/workflows` and
-that available provider/model choices are listed through `svvyx workflows models list --json`. It
-must not restate the full Workflows extension command contract; that contract lives in
-`docs/specs/workflow-library.spec.md` and `docs/specs/extension/workflows.extension.spec.md`.
+The Workflows extension owns detailed reusable source-library import examples,
+save/build/model-selection guidance, generated `@svvyx/workflows` authoring imports, and
+workflow-task-safe extension reference values emitted through generated `@svvyx/extensions`.
+`@svvyx/extensions` is not a public `@svvy/*` package, not a reusable workflow asset package, not a
+workflow-authoring SDK, and not an `execute_typescript` runtime facade. Plain generated
+extension-reference values are permitted only where workflow task-agent extension references are
+authored. The Smithers extension may include only the boundary pointer that reusable svvy workflow
+assets are Workflows-extension material and, inside workspace `.smithers` TypeScript/TSX authoring
+source, are imported from generated `@svvyx/workflows`. It must not teach Workflows commands beyond
+that boundary pointer or present generated `@svvyx/*` packages as runtime facades.
 
 ## Generated Instruction Source And Transform
 
@@ -163,7 +172,11 @@ The generator must keep the core authoring and CLI concepts needed for direct Sm
 - JSX workflow authoring
 - prompts, components, workflows, and agents
 - official Smithers CLI commands
-- upstream `bunx smithers-orchestrator ...` command examples rewritten to the `smithers` binary
+- upstream `bunx smithers-orchestrator ...` command examples preserved as the agent-facing command
+  surface
+- upstream dotted `workflow.*` command/tool names omitted or rewritten to official Smithers CLI
+  command examples such as `bunx smithers-orchestrator workflow run ...`,
+  `bunx smithers-orchestrator ps`, and `bunx smithers-orchestrator inspect ...`
 - approvals and resume as Smithers concepts
 - stable task ids, outputs, schemas, and render-loop behavior
 
@@ -175,29 +188,32 @@ excludes:
   current `svvy` product surfaces
 - OpenAPI and low-level Effect authoring fragments
 - claims that `svvy` exposes Smithers through native model-facing tools
-- upstream or external agent-facing instructions to run `bunx smithers-orchestrator ...`,
-  `bunx smithers ...`, or an unverified bare package name instead of the checked `smithers` binary
-- any generated suggestion to use product workflow wrappers or workspace-local svvy workflow source
-  layouts
+- upstream or external agent-facing instructions to run `smithers ...`, `bunx smithers ...`, or an
+  unverified bare package name instead of the official `bunx smithers-orchestrator ...` command
+  surface
+- upstream dotted `workflow.*` names as product APIs, native tools, MCP surfaces, or model-facing
+  operations
+- any generated suggestion to use product-native Smithers execution commands or workspace-local svvy
+  workflow source layouts
 
-The separate svvy-specific Smithers guidance file is:
+The separate svvy-specific Smithers guidance files are:
 
 ```text
-instructions/full/050-smithers-svvy-boundary.md
+instructions/full/020-smithers-handler.md
+instructions/full/030-smithers-svvy-boundary.md
 ```
 
-That hand-authored file must stay small and positive. It should say only:
+Those hand-authored files must stay small and positive. They should say only:
 
 - work in the workspace `.smithers/` package
-- use the checked `smithers` CLI binary through shell
-- import reusable svvy workflow material from `@svvy/workflows`
-- use `svvyx workflows models list --json` when choosing provider/model/reasoning values for saved
-  workflow agents or reusable task-agent parameters
-- use `svvyx workflows save` when promoting reusable material to the app-global Workflows source
-  library
-- generated Workflows output is read-only; edit source and rebuild
+- use official `bunx smithers-orchestrator ...` commands through Shell for workflow
+  initialization, execution, resume, inspection, approval, and debugging
+- use `svvyx workflows ...` only for reusable source-library operations owned by the Workflows
+  extension
+- import reusable svvy workflow assets from generated `@svvyx/workflows` package exports
+- treat runtime task-agent handoff as the narrow generated `runTaskAgent` bridge only
 
-It covers only the current Smithers boundary and omits broad Smithers runtime bridge tools, product
+It covers only the current Smithers boundary and omits Smithers runtime-control APIs or broad bridge tools, product
 UI surfaces, and non-current workspace source paths.
 
 ## Memory Fragment
@@ -222,22 +238,37 @@ Extension Managing commands.
 ## Smithers Product Boundary
 
 Smithers is prompt-only official CLI guidance for handler-thread workflow work. The Smithers product
-boundary is workspace `.smithers/` authoring, checked `smithers` CLI commands through Shell,
-`@svvy/workflows` imports for reusable material, and no native or `svvyx` Smithers runtime surface.
+boundary is workspace `.smithers/` authoring, official `bunx smithers-orchestrator ...` commands
+through Shell, and no native or `svvyx` Smithers runtime surface.
 Smithers task agents created with `Agents.defineTaskAgent(...)` use the narrow authenticated
 `runTaskAgent` bridge described in `docs/specs/workflow-library.spec.md` so Smithers workflow code
-running inside a handler-thread command-scoped environment can ask the app process to run one
-pi-backed task-agent attempt. That bridge is not a Smithers runtime-control surface and does not
-expose workflow graph, shell, settings, orchestrator, or handler controls.
+running inside a handler-thread command-scoped environment can ask `@svvy/runtime` to run one
+pi-backed task-agent attempt. Bridge contract types live in `@svvy/core`; generated
+`@svvyx/workflows` and generated `@svvyx/extensions` are generated workflow-authoring packages for
+workspace `.smithers` packages. Persistent app-global Workflows source under
+`~/.config/svvy/workflows/**` must not import `@svvyx/workflows`; it may import
+`@svvyx/extensions` only where the generated-package import policy allows extension reference
+values. `@svvyx/workflows` provides reusable workflow assets and task-agent helpers;
+`@svvyx/extensions` provides workflow-task-safe extension reference ids. They are not public
+`@svvy/*` packages, reusable SDKs, or `execute_typescript` runtime facades. The generated
+`runTaskAgent` bridge call is narrow internal plumbing and exposes no Smithers runtime-control APIs.
+`@svvy/runtime` owns the authenticated endpoint, token verification, queueing, task-attempt
+lifecycle, task-agent execution handoff, generated-package refresh scheduling, and workspace-link
+repair coordination/recovery; `@svvy/pi-adapter` owns pi session creation and turn delivery;
+`@svvy/sandbox` owns immutable sandbox policy snapshots and launch constraints; `@svvy/state` owns
+persisted command, task-attempt, generated-package, and workspace-link facts; `@svvy/extensions`
+owns generated package content/production and package-safe link plans. That bridge is not a
+Smithers runtime-control surface and does not expose workflow graph, shell, settings, orchestrator,
+or handler controls.
 The Smithers product boundary excludes:
 
 - Smithers as a builtin native-tool extension
 - Smithers as an Incur-backed `svvyx smithers` extension
-- a broad Bun-owned Smithers workflow/runtime bridge
+- a broad `svvy`-owned Smithers workflow/runtime bridge
 - a product abstraction over Smithers execution
 - generated Smithers observability, events, DevTools, Gateway, MCP, or OpenTelemetry instructions as
   default `svvy` product behavior
 - workspace-local svvy workflow source as Smithers source
 - repo-root `workflows/` as the shipped product runtime
-- `bunx smithers-orchestrator` as the agent-facing product contract
+- global `smithers` as the agent-facing product contract
 - relying on a global CLI install for workflow TypeScript imports instead of `.smithers/package.json`

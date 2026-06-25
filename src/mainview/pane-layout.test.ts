@@ -406,7 +406,7 @@ describe("pane layout normalization", () => {
         {
           panelId: "invalid-thread",
           binding: {
-            surface: "thread",
+            surface: "handler",
             workspaceSessionId: "session-1",
             surfacePiSessionId: "thread-session-1",
           } as never,

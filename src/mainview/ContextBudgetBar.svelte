@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatContextBudgetTooltip, type ContextBudget } from "../shared/context-budget";
+  import { formatContextBudgetTooltip, type ContextBudget } from "./context-budget";
   import Tooltip from "./ui/Tooltip.svelte";
 
   type Variant = "full" | "compact" | "inline";

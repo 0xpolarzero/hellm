@@ -27,7 +27,13 @@ import {
 import type { ExtensionEnvSecretKey, ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import { refreshGeneratedExtensionsPackage } from "./generated-extensions-package";
-import type { StructuredSessionStateStore } from "./structured-session-state";
+import type {
+  AgentProfileId,
+  ExtensionId,
+  PromptExecutionExternalInstructionSource,
+  RuntimeExtensionContextImpactStateFacade,
+  RuntimeExtensionUsageProfileKey,
+} from "@svvy/core";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
@@ -49,7 +55,7 @@ import {
   type ExtensionInstructionFile,
   type ExtensionRecord,
   type ExtensionUsageState,
-} from "../shared/extensions";
+} from "@svvy/extensions";
 import type {
   ExtensionDefaultUsageReadModel,
   ExtensionChangeCardReadModel,
@@ -75,11 +81,11 @@ import {
 } from "./file-backed-resource";
 import { countPromptTokens } from "./token-count";
 import {
-  ARTIFACTS_CLIENT_DECLARATION,
-  WORKFLOWS_CLIENT_DECLARATION,
+  ARTIFACTS_FACADE_DECLARATION,
+  WORKFLOWS_FACADE_DECLARATION,
 } from "./execute-typescript-api-declaration";
 import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
-import { buildNativeToolSchemaJsonForExtension } from "./native-tool-schemas";
+import { buildNativeToolSchemaJsonForExtension } from "@svvy/extensions";
 
 export type CliRequirementStatus = {
   id: string;
@@ -210,6 +216,10 @@ export type SvvyxExtensionsCommandResult = {
   commandFacts: Record<string, unknown>;
 };
 
+type SvvyxExternalInstructionSource =
+  | GeneratedAgentContextExternalSource
+  | PromptExecutionExternalInstructionSource;
+
 export async function runSvvyxExtensionsCommand(input: {
   agentSettingsStore?: AgentSettingsStore;
   buildRoot?: string;
@@ -220,9 +230,9 @@ export async function runSvvyxExtensionsCommand(input: {
   dependencyInstaller?: SvvyxExtensionsDependencyInstaller;
   env?: NodeJS.ProcessEnv;
   envSecretStore?: ExtensionEnvSecretStore;
-  externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+  externalInstructionSources?: readonly SvvyxExternalInstructionSource[];
   extensionsRoot?: string;
-  structuredSessionStore?: StructuredSessionStateStore;
+  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
 }): Promise<SvvyxExtensionsCommandResult> {
   const words = splitCommandLine(input.command);
   if (words[0] !== "svvyx" || words[1] !== "extensions") {
@@ -292,7 +302,7 @@ export async function approveExtensionDependencyRequest(input: {
   env?: NodeJS.ProcessEnv;
   envSecretStore?: ExtensionEnvSecretStore;
   extensionsRoot?: string;
-  structuredSessionStore?: StructuredSessionStateStore;
+  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
 }): Promise<{
   ok: true;
   request: ExtensionDependencyApprovalRequest;
@@ -536,7 +546,7 @@ async function resumeDependencyApprovedBuilds(
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
     recordDependencyBlockedOperation?: boolean;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): Promise<SvvyxExtensionsCommandResult> {
   const builds: unknown[] = [];
@@ -581,7 +591,7 @@ export async function readBuiltinExtensionsInventory(
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
-    externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    externalInstructionSources?: readonly SvvyxExternalInstructionSource[];
     includeUserExtensions?: boolean;
   } = {},
 ): Promise<ExtensionsInventoryReadModel> {
@@ -1091,14 +1101,14 @@ function extensionTypescriptApiDeclaration(
   if (!extension.typescriptApiEnabled) return null;
   if (extension.id === "artifacts") {
     return generatedReadonlyBlock({
-      content: ARTIFACTS_CLIENT_DECLARATION,
+      content: ARTIFACTS_FACADE_DECLARATION,
       name: "artifacts.types.d.ts",
       path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
   }
   if (extension.id === "workflows") {
     return generatedReadonlyBlock({
-      content: WORKFLOWS_CLIENT_DECLARATION,
+      content: WORKFLOWS_FACADE_DECLARATION,
       name: "workflows.types.d.ts",
       path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
@@ -1179,9 +1189,10 @@ function extensionDefaultsReadModel(
 }
 
 function externalInstructionInventoryItem(
-  source: GeneratedAgentContextExternalSource,
+  source: SvvyxExternalInstructionSource,
 ): ExtensionInventoryItemReadModel {
   const readable = source.readStatus.status === "readable";
+  const content = "content" in source ? source.content : "";
   return {
     id: externalInstructionExtensionId(source),
     category: "external_instruction",
@@ -1193,7 +1204,7 @@ function externalInstructionInventoryItem(
       {
         kind: "source",
         file: instructionFileReadModel({
-          content: source.content,
+          content,
           editable: false,
           name: basename(source.path),
           path: source.path,
@@ -1206,7 +1217,7 @@ function externalInstructionInventoryItem(
       rootId: source.rootId,
       rootLabel: source.rootLabel,
       path: source.path,
-      content: source.content,
+      content,
       contentHash: source.contentHash,
       order: source.order,
       enabled: source.enabled,
@@ -1429,6 +1440,8 @@ function runCreateCommand(
         description,
         interface: interfaceKind,
         typescriptApiEnabled,
+        workflowTaskAgentReferenceExportEnabled:
+          interfaceKind === "svvyx" && typescriptApiEnabled ? true : undefined,
         instructionFiles: [
           {
             file: instructionFileName,
@@ -1660,6 +1673,7 @@ function runConfigureCommand(
   const manifest = readJsonObject(paths.manifest);
   const before = extension.typescriptApiEnabled;
   manifest.typescriptApiEnabled = typescriptApiEnabled;
+  manifest.workflowTaskAgentReferenceExportEnabled = typescriptApiEnabled;
   writeFileSync(paths.manifest, JSON.stringify(manifest, null, 2) + "\n");
   return {
     output: {
@@ -1940,7 +1954,7 @@ function runSetUsageCommand(
   words: string[],
   options: {
     agentSettingsStore?: AgentSettingsStore;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
     extensionsRoot?: string;
   },
 ): SvvyxExtensionsCommandResult {
@@ -1953,7 +1967,7 @@ function runSetUsageCommand(
   const state = validateUsageState(requireSingleFlagValue(flags, "state"));
   return setExtensionUsage({
     agentSettingsStore: store,
-    structuredSessionStore: options.structuredSessionStore,
+    extensionContextImpactState: options.extensionContextImpactState,
     extensionsRoot: options.extensionsRoot,
     extensionId,
     agentProfile,
@@ -2088,7 +2102,7 @@ export type SetExtensionUsageResult = SvvyxExtensionsCommandResult & {
 
 export function setExtensionUsage(input: {
   agentSettingsStore: AgentSettingsStore;
-  structuredSessionStore?: StructuredSessionStateStore;
+  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   extensionsRoot?: string;
   extensionId: string;
   agentProfile: string;
@@ -2132,12 +2146,11 @@ export function setExtensionUsage(input: {
     beforeState,
     afterState: input.state,
   });
-  const affectedSurfaces = listUsageAgentContextAffectedSurfaces({
-    store: input.structuredSessionStore,
-    agentProfile: target.agentProfileName,
-    profileId: target.profile.id,
-    changeId,
-  });
+  const affectedSurfaces =
+    input.extensionContextImpactState?.listUsageContextAffectedSurfaces({
+      agentProfile: target.agentProfileName,
+      profileId: target.profile.id as AgentProfileId,
+    }) ?? [];
 
   return {
     actor: target.actor,
@@ -2385,153 +2398,6 @@ function assertUsageStateAllowedForActor(input: {
   void input;
 }
 
-function listUsageAgentContextAffectedSurfaces(input: {
-  store?: StructuredSessionStateStore;
-  agentProfile: string;
-  profileId: string;
-  changeId: string;
-}): Array<{
-  surfacePiSessionId: string;
-  kind: "extension_context_changed";
-  label: "Extensions changed";
-  reason: "extension_usage_changed";
-}> {
-  if (!input.store) {
-    return [];
-  }
-  const affected: Array<{
-    surfacePiSessionId: string;
-    kind: "extension_context_changed";
-    label: "Extensions changed";
-    reason: "extension_usage_changed";
-  }> = [];
-  for (const snapshot of input.store.listSessionStates()) {
-    if (snapshot.pi.orchestratorAgentProfileId === input.profileId) {
-      affected.push({
-        surfacePiSessionId: snapshot.pi.sessionId,
-        kind: "extension_context_changed",
-        label: "Extensions changed",
-        reason: "extension_usage_changed",
-      });
-    }
-    if (input.agentProfile === "threadHandler") {
-      for (const thread of snapshot.threads) {
-        affected.push({
-          surfacePiSessionId: thread.surfacePiSessionId,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "extension_usage_changed",
-        });
-      }
-    }
-  }
-  return affected;
-}
-
-function listSnapshotAgentContextAffectedSurfaces(input: {
-  store?: StructuredSessionStateStore;
-  snapshotId: string;
-  affectedExtensionIds: readonly string[];
-  affectedUsageProfiles: readonly string[];
-  removedUserExtensionIds: readonly string[];
-}): Array<{
-  surfacePiSessionId: string;
-  kind: "extension_context_changed";
-  label: "Extensions changed";
-  reason: "snapshot_loaded";
-}> {
-  if (!input.store) {
-    return [];
-  }
-  const affectedExtensionIds = new Set(input.affectedExtensionIds);
-  const affectedUsageProfiles = new Set(input.affectedUsageProfiles);
-  const removedUserExtensionIds = new Set(input.removedUserExtensionIds);
-  if (
-    affectedExtensionIds.size === 0 &&
-    affectedUsageProfiles.size === 0 &&
-    removedUserExtensionIds.size === 0
-  ) {
-    return [];
-  }
-  const affected: Array<{
-    surfacePiSessionId: string;
-    kind: "extension_context_changed";
-    label: "Extensions changed";
-    reason: "snapshot_loaded";
-  }> = [];
-  for (const snapshot of input.store.listSessionStates()) {
-    const piLoaded = snapshot.pi.loadedExtensionIds ?? [];
-    const piAvailable = snapshot.pi.availableExtensionIds ?? [];
-    if (
-      extensionListsIntersect([piLoaded, piAvailable], affectedExtensionIds) ||
-      affectedUsageProfiles.has(`orchestrator:${snapshot.pi.orchestratorAgentProfileId}`)
-    ) {
-      const nextPiLoaded = dropExtensionIds(piLoaded, removedUserExtensionIds);
-      const nextPiAvailable = dropExtensionIds(piAvailable, removedUserExtensionIds);
-      input.store.updatePiSessionExtensionState({
-        sessionId: snapshot.pi.sessionId,
-        loadedExtensionIds: nextPiLoaded,
-        availableExtensionIds: nextPiAvailable,
-      });
-      affected.push({
-        surfacePiSessionId: snapshot.pi.sessionId,
-        kind: "extension_context_changed",
-        label: "Extensions changed",
-        reason: "snapshot_loaded",
-      });
-    }
-    for (const thread of snapshot.threads) {
-      if (
-        !extensionListsIntersect(
-          [thread.loadedExtensionIds, thread.availableExtensionIds],
-          affectedExtensionIds,
-        ) &&
-        !affectedUsageProfiles.has("handler:threadHandler")
-      ) {
-        continue;
-      }
-      const nextThreadLoaded = dropExtensionIds(thread.loadedExtensionIds, removedUserExtensionIds);
-      const nextThreadAvailable = dropExtensionIds(
-        thread.availableExtensionIds,
-        removedUserExtensionIds,
-      );
-      input.store.updateThread({
-        threadId: thread.id,
-        loadedExtensionIds: nextThreadLoaded,
-        availableExtensionIds: nextThreadAvailable,
-      });
-      affected.push({
-        surfacePiSessionId: thread.surfacePiSessionId,
-        kind: "extension_context_changed",
-        label: "Extensions changed",
-        reason: "snapshot_loaded",
-      });
-    }
-  }
-  return affected;
-}
-
-function extensionListsIntersect(
-  lists: readonly (readonly string[] | undefined)[],
-  ids: ReadonlySet<string>,
-): boolean {
-  for (const list of lists) {
-    for (const id of list ?? []) {
-      if (ids.has(id)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function dropExtensionIds(
-  ids: readonly string[] | undefined,
-  removed: ReadonlySet<string>,
-): string[] {
-  return [...(ids ?? [])].filter((id) => !removed.has(id)).toSorted();
-}
-
 async function runInspectCommand(
   words: string[],
   options: {
@@ -2541,7 +2407,7 @@ async function runInspectCommand(
     dependencyApprovalStore?: ExtensionDependencyApprovalStore;
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
-    externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
+    externalInstructionSources?: readonly SvvyxExternalInstructionSource[];
     extensionsRoot?: string;
     agentSettingsStore?: AgentSettingsStore;
   },
@@ -2651,7 +2517,7 @@ async function runInspectCommand(
 
 function inspectExternalInstruction(
   id: string,
-  sources: readonly GeneratedAgentContextExternalSource[] | undefined,
+  sources: readonly SvvyxExternalInstructionSource[] | undefined,
 ): SvvyxExtensionsCommandResult | null {
   const source = sources?.find((candidate) => externalInstructionExtensionId(candidate) === id);
   if (!source) {
@@ -2747,7 +2613,7 @@ async function runBuildCommand(
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
     recordDependencyBlockedOperation?: boolean;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): Promise<SvvyxExtensionsCommandResult> {
   const { id, flags } = parseExtensionCommandArgs(words);
@@ -3226,7 +3092,7 @@ async function runResetCommand(
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): Promise<SvvyxExtensionsCommandResult> {
   const { id, flags } = parseExtensionCommandArgs(words);
@@ -3581,7 +3447,7 @@ async function loadExtensionSnapshot(
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): Promise<SvvyxExtensionsCommandResult> {
   const summary = readSnapshotSummary(root, snapshotId);
@@ -3668,17 +3534,20 @@ async function loadExtensionSnapshot(
       };
     }
   }
-  const affectedSurfaces = listSnapshotAgentContextAffectedSurfaces({
-    store: options.structuredSessionStore,
-    snapshotId,
-    affectedExtensionIds: [
-      ...restoredExtensionIds,
-      ...removedUserExtensionIds,
-      ...removedBuiltinSourceIds,
-    ],
-    affectedUsageProfiles: restoredUsageStates.affectedProfiles,
-    removedUserExtensionIds,
-  });
+  const affectedSurfaces =
+    options.extensionContextImpactState?.applySnapshotContextImpact({
+      affectedExtensionIds: [
+        ...restoredExtensionIds,
+        ...removedUserExtensionIds,
+        ...removedBuiltinSourceIds,
+      ].map((extensionId) => extensionId as ExtensionId),
+      affectedUsageProfiles: toRuntimeExtensionUsageProfileKeys(
+        restoredUsageStates.affectedProfiles,
+      ),
+      removedUserExtensionIds: removedUserExtensionIds.map(
+        (extensionId) => extensionId as ExtensionId,
+      ),
+    }) ?? [];
 
   return {
     output: {
@@ -4091,6 +3960,14 @@ function resolveSnapshotUsageProfile(input: {
     return profile ? { actor: "workflow-task", agentProfileName: profile.id, profile } : null;
   }
   return null;
+}
+
+function toRuntimeExtensionUsageProfileKeys(
+  values: readonly string[],
+): RuntimeExtensionUsageProfileKey[] {
+  return values.filter((value): value is RuntimeExtensionUsageProfileKey => {
+    return value.startsWith("orchestrator:") || value === "handler:threadHandler";
+  });
 }
 
 function isExtensionUsageState(value: unknown): value is ExtensionUsageState {
@@ -4762,6 +4639,150 @@ function buildValidationError(
   };
 }
 
+function formatSvvyxBuildDiagnostics(logs: readonly unknown[]): string[] | undefined {
+  const diagnostics = logs
+    .map((log) => {
+      if (log instanceof Error) {
+        return [log.message, log.stack, errorCauseMessage(log)].filter(Boolean).join("\n");
+      }
+      if (log && typeof log === "object" && "message" in log) {
+        const message = (log as { message?: unknown }).message;
+        return typeof message === "string" ? message : undefined;
+      }
+      return typeof log === "string" ? log : undefined;
+    })
+    .filter((message): message is string => Boolean(message?.trim()))
+    .map((message) => message.trim().slice(0, 1_000));
+  return diagnostics.length > 0 ? diagnostics.slice(0, 8) : undefined;
+}
+
+function errorCauseMessage(error: Error): string | undefined {
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause) {
+    return undefined;
+  }
+  if (cause instanceof Error) {
+    return `Cause: ${cause.message}\n${cause.stack ?? ""}`.trim();
+  }
+  return `Cause: ${String(cause)}`;
+}
+
+function buildSvvyxRuntimeModuleInChild(
+  sourcePath: string,
+  outdir: string,
+): { ok: true; outputPath: string } | { ok: false; diagnostics?: string[] } {
+  mkdirSync(dirname(outdir), { recursive: true });
+  const buildScriptPath = join(dirname(outdir), ".svvy-build-runtime-module.mjs");
+  writeFileSync(
+    buildScriptPath,
+    [
+      `const sourcePath = ${JSON.stringify(sourcePath)};`,
+      `const outdir = ${JSON.stringify(outdir)};`,
+      `const resolveBase = ${JSON.stringify(import.meta.dir)};`,
+      "const formatLogs = (logs) => {",
+      "  const diagnostics = logs.map((log) => {",
+      "    if (log instanceof Error) return log.message;",
+      "    if (log && typeof log === 'object' && typeof log.message === 'string') return log.message;",
+      "    return typeof log === 'string' ? log : undefined;",
+      "  }).filter((message) => message && message.trim()).map((message) => message.trim().slice(0, 1000));",
+      "  return diagnostics.length > 0 ? diagnostics.slice(0, 8) : undefined;",
+      "};",
+      "try {",
+      "  const result = await Bun.build({",
+      "    entrypoints: [sourcePath],",
+      "    format: 'esm',",
+      "    outdir,",
+      "    plugins: [{",
+      "      name: 'svvy-extension-runtime-dependencies',",
+      "      setup(build) {",
+      "        build.onResolve({ filter: /^incur$/ }, () => ({",
+      "          path: Bun.resolveSync('incur', resolveBase),",
+      "        }));",
+      "      },",
+      "    }],",
+      "    target: 'bun',",
+      "  });",
+      "  if (!result.success) {",
+      "    console.log(JSON.stringify({ ok: false, diagnostics: formatLogs(result.logs) }));",
+      "    process.exit(0);",
+      "  }",
+      "  const output = result.outputs.find((artifact) => artifact.path.endsWith('.js'));",
+      "  if (!output) {",
+      "    console.log(JSON.stringify({ ok: false, diagnostics: ['Runtime build did not produce a JavaScript output.'] }));",
+      "    process.exit(0);",
+      "  }",
+      "  console.log(JSON.stringify({ ok: true, outputPath: output.path }));",
+      "} catch (error) {",
+      "  console.log(JSON.stringify({",
+      "    ok: false,",
+      "    diagnostics: formatLogs([error]),",
+      "  }));",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  const result = spawnSync(process.execPath, [buildScriptPath], {
+    encoding: "utf8",
+    env: process.env,
+  });
+  rmSync(buildScriptPath, { force: true });
+  const diagnostics = [
+    ...((result.stderr || "").trim() ? [result.stderr.trim()] : []),
+    ...(result.error ? (formatSvvyxBuildDiagnostics([result.error]) ?? []) : []),
+  ];
+  const lines = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const lastLine = lines.at(-1);
+  if (!lastLine) {
+    return {
+      ok: false,
+      diagnostics: diagnostics.length > 0 ? diagnostics : ["Runtime build did not produce output."],
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lastLine);
+  } catch {
+    return {
+      ok: false,
+      diagnostics: [
+        ...diagnostics,
+        `Runtime build emitted non-JSON output: ${lastLine.slice(0, 1_000)}`,
+      ],
+    };
+  }
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "ok" in parsed &&
+    parsed.ok === true &&
+    "outputPath" in parsed &&
+    typeof parsed.outputPath === "string"
+  ) {
+    return { ok: true, outputPath: parsed.outputPath };
+  }
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "diagnostics" in parsed &&
+    Array.isArray(parsed.diagnostics)
+  ) {
+    return {
+      ok: false,
+      diagnostics: [
+        ...diagnostics,
+        ...parsed.diagnostics.filter((item): item is string => typeof item === "string"),
+      ],
+    };
+  }
+  return {
+    ok: false,
+    diagnostics: diagnostics.length > 0 ? diagnostics : ["Runtime build returned invalid output."],
+  };
+}
+
 async function buildSvvyxRuntimeModule(
   extensionId: string,
   sourcePath: string,
@@ -4781,30 +4802,14 @@ async function buildSvvyxRuntimeModule(
           message: string;
           extensionId: string;
           path: string;
+          diagnostics?: string[];
         };
       };
     }
 > {
   const outdir = join(stagingPath, "source");
-  let result: Bun.BuildOutput;
-  try {
-    result = await Bun.build({
-      entrypoints: [sourcePath],
-      format: "esm",
-      outdir,
-      plugins: [
-        {
-          name: "svvy-extension-runtime-dependencies",
-          setup(build) {
-            build.onResolve({ filter: /^incur$/ }, () => ({
-              path: Bun.resolveSync("incur", import.meta.dir),
-            }));
-          },
-        },
-      ],
-      target: "bun",
-    });
-  } catch {
+  const buildResult = buildSvvyxRuntimeModuleInChild(sourcePath, outdir);
+  if (!buildResult.ok) {
     return {
       ok: false,
       output: {
@@ -4814,42 +4819,14 @@ async function buildSvvyxRuntimeModule(
           message: `${extensionId} source could not be bundled into a runtime build.`,
           extensionId,
           path: sourcePath,
-        },
-      },
-    };
-  }
-  if (!result.success) {
-    return {
-      ok: false,
-      output: {
-        ok: false,
-        error: {
-          code: "BUILD_FAILED",
-          message: `${extensionId} source could not be bundled into a runtime build.`,
-          extensionId,
-          path: sourcePath,
-        },
-      },
-    };
-  }
-  const output = result.outputs.find((artifact) => artifact.path.endsWith(".js"));
-  if (!output) {
-    return {
-      ok: false,
-      output: {
-        ok: false,
-        error: {
-          code: "BUILD_FAILED",
-          message: `${extensionId} runtime build did not produce an importable module.`,
-          extensionId,
-          path: sourcePath,
+          diagnostics: buildResult.diagnostics,
         },
       },
     };
   }
   let commandManifest: SvvyxCommandManifest;
   try {
-    const loaded = await import(`${output.path}?svvyxBuild=${Date.now()}`);
+    const loaded = await import(`${buildResult.outputPath}?svvyxBuild=${Date.now()}`);
     if (!loaded.default || typeof loaded.default.serve !== "function") {
       return {
         ok: false,
@@ -4884,7 +4861,7 @@ async function buildSvvyxRuntimeModule(
   }
   return {
     ok: true,
-    module: `source/${output.path.split("/").at(-1)}`,
+    module: `source/${buildResult.outputPath.split("/").at(-1)}`,
     commandManifest,
   };
 }
@@ -5173,7 +5150,7 @@ export function probeCliRequirement(
     };
   }
 
-  const detectedVersion = detectCliVersion(requirement, env);
+  const detectedVersion = detectCliVersion(requirement, env, path);
   if (!detectedVersion) {
     return {
       id: requirement.id,
@@ -5216,6 +5193,7 @@ export function probeCliRequirement(
 function detectCliVersion(
   requirement: ExtensionCliRequirement,
   env: NodeJS.ProcessEnv,
+  executablePath: string,
 ): string | null {
   if (!requirement.versionCommand) {
     return null;
@@ -5229,10 +5207,11 @@ function detectCliVersion(
   if (words.length === 0 || hasShellControlSyntax(requirement.versionCommand)) {
     return null;
   }
-  const result = spawnSync(words[0]!, words.slice(1), {
+  const command = words[0] === requirement.binary ? executablePath : words[0]!;
+  const result = spawnSync(command, words.slice(1), {
     encoding: "utf8",
     env,
-    timeout: 5_000,
+    timeout: 1_000,
   });
   if (result.status !== 0) {
     return null;
@@ -6811,7 +6790,7 @@ async function runRevertCommand(
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
     extensionsRoot?: string;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): Promise<SvvyxExtensionsCommandResult> {
   const flags = parseFlags(words.slice(1));
@@ -7232,7 +7211,7 @@ function revertExtensionUsageChange(
   options: {
     agentSettingsStore?: AgentSettingsStore;
     extensionsRoot?: string;
-    structuredSessionStore?: StructuredSessionStateStore;
+    extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): SvvyxExtensionsCommandResult {
   const store = requireAgentSettingsStore(options.agentSettingsStore);
@@ -7279,12 +7258,11 @@ function revertExtensionUsageChange(
     beforeState: change.after.state,
     afterState: change.before.state,
   });
-  const affectedSurfaces = listUsageAgentContextAffectedSurfaces({
-    store: options.structuredSessionStore,
-    agentProfile: target.agentProfileName,
-    profileId: target.profile.id,
-    changeId: revertChangeId,
-  });
+  const affectedSurfaces =
+    options.extensionContextImpactState?.listUsageContextAffectedSurfaces({
+      agentProfile: target.agentProfileName,
+      profileId: target.profile.id as AgentProfileId,
+    }) ?? [];
   return {
     output: {
       ok: true,

@@ -1,7 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { createStructuredSessionStateStore } from "../src/bun/structured-session-state";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { createHomeDir, ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
 import {
   assistantTextMessage,

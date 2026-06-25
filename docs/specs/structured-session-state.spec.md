@@ -8,18 +8,18 @@
 ## Scope
 
 This spec defines the durable `svvy` product state that sits above pi transcript state for the
-current base product.
+base product.
 
 ## Adopted Direction
 
-- Keep pi as the canonical transcript and runtime substrate for orchestrator and handler-thread
-  surfaces.
+- Keep pi as the canonical transcript and runtime substrate for orchestrator, handler-thread, and
+  workflow task-agent attempt surfaces.
 - Keep Smithers as the workflow engine used directly through official CLI commands.
 - Keep reusable workflow source and generated import metadata in the Workflows source/build model,
   not in session transcript state.
 - Model sessions, turns, handler threads, thread groups, commands, request-user-input records,
-  episodes, artifacts, generated agent-context bindings, saved Workflows generated metadata, waits,
-  and lifecycle events explicitly.
+  episodes, artifacts, generated agent-context bindings, Workflows generated export metadata,
+  waits, and durable lifecycle facts explicitly.
 - Persist agent profile choices separately from generated agent-context binding state.
 - Persist one top-level per-turn decision for every surface.
 - Treat every tool call as a command record.
@@ -30,33 +30,42 @@ current base product.
   cleanup and late duplicate callbacks cannot overwrite final facts, summaries, errors, or finished
   timestamps.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every
-  generated client call as a child command record.
+  generated facade call as a child command record.
 - Keep native control tools small: thread controls, extension loading/inspection, and
   request-user-input.
-- Treat queued surface work as structured product state keyed by `surfacePiSessionId`.
-- Emit workspace-level read-model updates independently from live surface transcript updates.
+- Treat queued surface work as structured product state addressed through a runtime target and
+  persisted against the resolved `surfacePiSessionId`.
+- Store and select workspace-level read models in `@svvy/state`, while `@svvy/runtime` publishes
+  post-commit invalidation notifications independently from live surface stream patches.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from
   storage details or transcripts.
-- Keep Dockview layout state, panel focus, and panel-to-surface bindings out of structured session
-  state.
+- Keep transient Dockview focus, drag state, open menus, renderer component trees, warm caches,
+  transcript projections, and panel-local view affordances out of structured session state. Persist
+  only durable workspace layout JSON, panel metadata, and panel-to-surface bindings as workspace
+  layout state in `@svvy/state`, separate from live surface runtime identity.
 
 ## Core Records
 
-The durable state layer keeps first-class records for:
+`@svvy/state` keeps first-class SQLite-backed records for:
 
 - workspace sessions
-- live surface bindings
+- durable surface records, persisted pi session references, and recoverable live-registry metadata
 - turns
 - commands
 - thread groups
 - handler threads
 - request-user-input records
+- runtime approval records and approval wait facts
 - surface queue items
 - episodes
 - artifacts
 - generated agent-context bindings
-- saved Workflows generated export metadata
-- waits and lifecycle events
+- generated-package fact rows, workspace-link facts, and generated Workflows export metadata
+- waits and durable lifecycle facts
+
+`@svvy/state` persists durable workspace layout snapshots, panel metadata, and panel-to-surface
+bindings, but does not persist process-local runtime handles, active Effect fibers, pi session
+objects, prompt locks, transient Dockview focus, open menus, or drag state.
 
 ## Surface Identity
 
@@ -67,36 +76,29 @@ The product carries distinct ids:
 - `threadId`: durable handler-thread id, present only for handler surfaces
 - `panelId`: Dockview panel id, never a runtime identity
 
-Backend APIs must carry explicit surface identity. Callers must not overload `session.id` to mean
-both workspace session and pi surface.
+Runtime facade APIs and state ports must carry explicit surface identity. Callers must not overload
+`session.id` to mean both workspace session and pi surface.
 
 ## Turn Decisions
 
-Turn decisions are explicit product facts.
+Turn decisions are explicit product facts. The stable top-level taxonomy is:
 
-Allowed current decisions are:
+- `pending`
+- `reply`
+- `native_tool`
+- `extension_facade`
+- `command_family`
 
-```ts
-type TurnDecision =
-  | "pending"
-  | "reply"
-  | "exec_command"
-  | "write_stdin"
-  | "apply_patch"
-  | "execute_typescript"
-  | "list_extensions"
-  | "load_extension"
-  | "thread_start"
-  | "thread_followup"
-  | "thread_request_report"
-  | "thread_group"
-  | "thread_report"
-  | "thread_episodes"
-  | "request_user_input";
-```
+Native tool ids, command metadata, actor availability, and specialized projection behavior are
+defined by `@svvy/core` native-tool contracts and `@svvy/extensions` metadata/declaration output,
+not duplicated as an open-ended runtime enum. A `native_tool` decision stores the authoritative tool
+id such as `exec_command`, `thread_start`, `thread_list`, `thread_episodes`, or
+`request_user_input`. An `extension_facade` decision stores the loaded extension facade id and
+command id. A `command_family` decision stores the command-family surface such as
+`svvyx workflows ...`.
 
 Smithers CLI usage is represented as `exec_command`. Workflows source-library usage is represented
-as `exec_command` for `svvyx workflows ...` or as generated extension-client child commands when
+as `exec_command` for `svvyx workflows ...` or as generated extension-facade child commands when
 the Workflows extension is loaded in `execute_typescript`.
 
 ## Handler Threads
@@ -114,39 +116,48 @@ Thread records store:
 - history mode: `isolated` or `forked`
 - objective state: `active` or `concluded`
 - worktree context when relevant
-- generated agent-context binding
-- loaded and available extension ids
+- generated agent-context binding fingerprint
+- surface extension binding fingerprint
 - pending report requests
 - latest episode summary
 - created, updated, and concluded timestamps
 
+Loaded, available, and unavailable extension state lives in extension binding rows and read models.
+Thread records reference the binding fingerprints; they do not duplicate the extension usage list.
+
 Thread state tracks delegated ownership and reporting. It is not a lossy proxy for raw Smithers
 runtime state.
 
-## Episodes
+## Thread Episodes
 
-Episodes are durable semantic reports emitted only through `thread_report`.
+Thread episodes are durable semantic reports emitted only through `thread_report`.
 
 `thread_report` without `outcome` creates an update episode.
 
 `thread_report` with `outcome` creates a conclusion episode and marks the current handler objective
 concluded.
 
-Ordinary handler replies, tool calls, command summaries, and artifacts are not episodes.
+Ordinary handler replies, tool calls, command summaries, and artifacts are not thread episodes.
+Orchestrator-local durable episodes are state-persisted product facts created when `@svvy/runtime`
+applies accepted control/effect work through core-owned state ports implemented by `@svvy/state`.
+They must not be
+conflated with handler-thread `thread_report` episodes, and runtime does not own episode
+persistence outside state transaction ports.
 
 ## Commands
 
-Command records store runtime facts for tool calls and command-family work:
+Command records store durable product facts emitted by runtime-owned tool-call and command-family
+work:
 
 - command id
 - owning `workspaceSessionId`
 - owning `surfacePiSessionId`
 - optional `threadId`
-- parent command id for generated-client child commands
+- parent command id for extension-facade child commands
 - tool or command name
 - status
 - arguments snapshot or persisted argument artifact reference when needed
-- output/progress events
+- command output/progress event rows
 - final facts
 - linked artifacts
 - started, updated, and finished timestamps
@@ -154,11 +165,13 @@ Command records store runtime facts for tool calls and command-family work:
 Shell commands, including official Smithers CLI commands and `svvyx workflows ...`, are ordinary
 command records.
 
-`command.arg_snapshot` lifecycle events are read-model input, not opaque logs. Command rollups and
-command inspectors expose started/updated/finished timestamps plus ordered argument snapshots
-alongside output, progress, patch, diagnostic, artifact, child-command, and final-fact projection
-fields. Transcript cards may derive execution-span duration, compact metrics, grouped output, and
-semantic sections from those fields; inspectors remain the full raw debugger.
+`argument_snapshot`, `output`, and `progress` rows are durable command read-model
+input, not runtime event-stream replay and not opaque logs. Command rollups and command inspectors
+expose started/updated/finished timestamps plus ordered argument snapshots alongside output,
+progress, patch, diagnostic, artifact, child-command, and final-fact projection fields. Transcript
+cards may derive execution-span duration, compact metrics, grouped output, and semantic sections from
+those fields; inspectors remain the full command debugger. Runtime events are non-durable
+notifications; recovery uses command facts and state rows, not event replay.
 
 ## Artifacts
 
@@ -180,10 +193,10 @@ Artifact records include:
 
 Artifacts must not depend on transcript parsing.
 
-## Saved Workflows Metadata
+## Workflows Generated Export Metadata
 
-Saved Workflows generated metadata is workspace-visible app state derived from the latest successful
-Workflows build.
+Workflows generated export metadata is workspace-visible product state derived from the latest
+successful `@svvyx/workflows` generated-package facts.
 
 It records generated exports for the Workflows pane:
 
@@ -195,12 +208,18 @@ It records generated exports for the Workflows pane:
 - generated path
 - internal UI-only metadata needed for source/generated links and Agents-pane links
 
-This metadata is internal UI state. It is not a public agent-facing API and must not appear in
-generated import examples or public declarations.
+This metadata is internal read-model metadata projected only through UI read models. It is not a
+public agent-facing API and must not appear in generated import examples or public declarations.
 
 ## Queues And Waits
 
-Surface queues are keyed by `surfacePiSessionId`.
+Surface queue rows are persisted by `@svvy/state`. `@svvy/runtime` resolves public and internal work
+into `RuntimeSurfaceTarget` values and owns queue claiming and dispatch. Persisted queue rows are
+keyed by the resolved `surfacePiSessionId`. Human/composer submission accepts only user-messageable
+orchestrator or handler targets; workflow-task-agent queue rows are inserted only by accepted
+Smithers task-agent bridge calls or runtime-owned coordinators. `PromptTarget` is the human/composer
+submission shape, not the umbrella identity for runtime queue rows, bridge delivery, or
+workflow-task attempts.
 
 Queue item kinds include:
 
@@ -210,6 +229,7 @@ Queue item kinds include:
 - `report_request`
 - `thread_report_notification`
 - `request_user_input_answer`
+- `workflow_task_agent_start`
 
 Wait state belongs to the owning surface and records the durable prerequisite, such as user input,
 execution approval, or external dependency.
@@ -230,9 +250,9 @@ Read APIs must not repair lifecycle state heuristically from transcript replay, 
 loops, or renderer polling.
 
 Handler-thread summaries expose objective, objective state, history mode, latest command rollup,
-latest workflow run, latest episode, and counts separately. The UI must not replace the objective
-with latest report text; objective, current activity, and latest report are separate read-model
-concepts.
+latest workflow-related command rollup, artifact link, episode summary, and counts separately. The UI
+must not replace the objective with latest report text; objective, current activity, and latest
+report are separate read-model concepts.
 
 ## State Boundary
 
@@ -240,12 +260,17 @@ Workflow task-agent attempts are app-owned pi-backed surfaces. `svvy` persists t
 context fingerprint, command facts, approvals, wait state, context-budget usage, bridge-call binding,
 and visible surface projection so they remain inspectable and resumable through the product.
 
-Smithers remains the owner of workflow graph, run, node, iteration, retry, and workflow lifecycle
-state. The authenticated workflow task-agent bridge records only the app-owned attempt binding and
-task-agent execution facts needed for the surface.
+Smithers remains owner of workflow graph execution, scheduling, retry/resume semantics, and
+lifecycle decisions. `@svvy/state` may persist CLI-observed Smithers
+workflow/run/task/node/iteration/attempt bridge facts, command links, artifact/log links,
+retry/resume observations, and workflow status summaries required by product read models, plus
+app-owned workflow-task-attempt surface facts.
 
 Structured session state excludes:
 
-- Smithers workflow/run lifecycle projection
-- workspace-local svvy workflow source/runtime state
+- product-owned Smithers execution control
+- workspace-local Smithers source and Smithers-owned workflow runtime state, except CLI-observed
+  linkage facts required for svvy read models
+- app-global reusable Workflows source, which is represented separately through generated-package
+  facts and Workflows read models
 - `smithers_*` or `workflow_*` wrapper decisions

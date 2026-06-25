@@ -130,7 +130,7 @@ export type CommandRuntime = Pick<
 };
 
 function isPromptTarget(target: WorkspacePaneSurfaceTarget | null): target is PromptTarget {
-  return target?.surface === "orchestrator" || target?.surface === "thread";
+  return target?.surface === "orchestrator" || target?.surface === "handler";
 }
 
 export const COMMAND_PALETTE_NEW_PANE_PREFIX = "command-palette";
@@ -252,7 +252,7 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       id: "workflows.open",
       label: "Open Workflows",
       category: "workflows",
-      aliases: ["generated workflows", "workflow exports", "@svvy/workflows", "workflow library"],
+      aliases: ["generated workflows", "workflow exports", "@svvyx/workflows", "workflow library"],
       shortcut: null,
       availability: { kind: "available" },
       execute: { kind: "open-workflows" },
@@ -496,7 +496,7 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
         kind: "open-surface",
         surface: {
           workspaceSessionId: input.focusedSessionId,
-          surface: "thread",
+          surface: "handler",
           surfacePiSessionId: thread.surfacePiSessionId,
           threadId: thread.threadId,
         },

@@ -12,7 +12,7 @@
 	import { onMount, tick } from "svelte";
 	import type { Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-	import type { ContextBudget } from "../shared/context-budget";
+	import type { ContextBudget } from "./context-budget";
 	import {
 		createPromptHistoryNavigationState,
 		navigatePromptHistory,
@@ -46,7 +46,7 @@
 	import QueuedMessagesStrip from "./QueuedMessagesStrip.svelte";
 	import type { QueuedPrompt } from "./chat-runtime";
 	import type { AgentContextActor, ExtensionUsageControlItem } from "./agents-pane-extension-usage";
-	import type { ExtensionUsageState } from "../shared/extensions";
+	import type { ExtensionUsageState } from "@svvy/extensions";
 	import type {
 		ComposerAttachment,
 		ComposerDraft,

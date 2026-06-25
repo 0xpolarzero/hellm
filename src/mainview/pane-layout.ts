@@ -176,7 +176,7 @@ export function createPanelChrome(
   switch (binding.surface) {
     case "orchestrator":
       return chrome("Orchestrator", binding.workspaceSessionId, "orchestrator", true);
-    case "thread":
+    case "handler":
       return chrome(
         "Handler Thread",
         binding.threadId ?? binding.surfacePiSessionId,
@@ -184,7 +184,7 @@ export function createPanelChrome(
         true,
       );
     case "workflows":
-      return chrome("Workflows", "@svvy/workflows", "workflows", true);
+      return chrome("Workflows", "@svvyx/workflows", "workflows", true);
     case "agents":
       return chrome("Agents", "profiles", "agents", true);
     case "extensions":
@@ -410,7 +410,7 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
             surfacePiSessionId: binding.surfacePiSessionId,
           } satisfies WorkspacePaneSurfaceTarget)
         : null;
-    case "thread":
+    case "handler":
       return typeof binding.workspaceSessionId === "string" &&
         binding.workspaceSessionId.length > 0 &&
         typeof binding.surfacePiSessionId === "string" &&
@@ -419,7 +419,7 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
         binding.threadId.length > 0
         ? ({
             workspaceSessionId: binding.workspaceSessionId,
-            surface: "thread",
+            surface: "handler",
             surfacePiSessionId: binding.surfacePiSessionId,
             threadId: binding.threadId,
           } satisfies WorkspacePaneSurfaceTarget)

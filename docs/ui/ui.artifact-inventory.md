@@ -10,8 +10,10 @@ affordances, and general workbench composition.
 
 Product UI behavior is defined by:
 
-- [ui.prd.md](./ui.prd.md)
-- [ui.progress.md](./ui.progress.md)
 - [../prd.md](../prd.md)
+- [../features.ts](../features.ts)
+- [../progress.md](../progress.md)
+- owning specs under [../specs](../specs)
 
-Product data, Smithers integration, and saved Workflows storage come from current `svvy` specs.
+Files in `docs/ui/` are visual and verification notes only until behavior is promoted into those
+authoritative documents.

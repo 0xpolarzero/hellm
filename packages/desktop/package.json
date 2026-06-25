@@ -1,0 +1,15 @@
+{
+  "name": "@svvy/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@svvy/core": "workspace:*",
+    "@svvy/runtime": "workspace:*",
+    "@svvy/state": "workspace:*",
+    "effect": "4.0.0-beta.84"
+  }
+}

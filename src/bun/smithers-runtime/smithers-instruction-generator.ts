@@ -62,7 +62,7 @@ export function generateSmithersCoreInstructions(upstreamFullDocs: string): stri
   return [
     "Generated Smithers core instructions from smithers-orchestrator@0.22.0 official docs.",
     "",
-    "svvy uses the checked global `smithers` binary through Shell. TypeScript workflow source still imports from `smithers-orchestrator`.",
+    "svvy uses official `bunx smithers-orchestrator ...` commands through Shell. TypeScript workflow source still imports from `smithers-orchestrator`.",
     "",
     body,
     "",
@@ -103,9 +103,7 @@ function extractMarkdownRange(markdown: string, startHeading: string, endHeading
 }
 
 function rewriteSmithersCliExamples(markdown: string): string {
-  return markdown
-    .replace(/\bbunx\s+smithers-orchestrator\b/g, "smithers")
-    .replace(/\bbunx\s+smithers\b/g, "smithers");
+  return markdown.replace(/\bbunx\s+smithers(?!-orchestrator)\b/g, "bunx smithers-orchestrator");
 }
 
 function removeForbiddenPromptLines(markdown: string): string {
@@ -120,8 +118,10 @@ function assertGeneratedSmithersPrompt(prompt: string, label: string): void {
   if (!prompt.trim()) {
     throw new Error(`Generated Smithers ${label} instructions are empty.`);
   }
-  if (/\bbunx\s+smithers(?:-orchestrator)?\b/.test(prompt)) {
-    throw new Error(`Generated Smithers ${label} instructions still contain bunx commands.`);
+  if (/\bsmithers\s+(init|workflow|ps|inspect|logs|up|approve|supervise|starters)\b/.test(prompt)) {
+    throw new Error(
+      `Generated Smithers ${label} instructions still contain bare smithers commands.`,
+    );
   }
   const forbidden = FORBIDDEN_SMITHERS_PROMPT_PATTERNS.find((pattern) => pattern.test(prompt));
   if (forbidden) {

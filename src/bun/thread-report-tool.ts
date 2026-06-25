@@ -1,11 +1,21 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { NativeToolDefinition } from "@svvy/extensions";
+import { Type, type Static } from "typebox";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
 import type {
-  StructuredEpisodeRecord,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
+  RuntimeCommandStatePortService,
+  RuntimeEpisodeRecord,
+  RuntimeEpisodeStatePortService,
+  RuntimeReadModelStatePortService,
+  RuntimeTurnStatePortService,
+  StateContractError,
+  ArtifactId,
+  CommandId,
+  RuntimeEpisodeKind,
+  ThreadGroupId,
+  ThreadId,
+  WorkspaceSessionId,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 
 export const THREAD_REPORT_TOOL_NAME = "thread_report";
 
@@ -29,9 +39,9 @@ export const threadReportParamsSchema = Type.Object(
 export type ThreadReportParams = Static<typeof threadReportParamsSchema>;
 
 export interface ThreadReportNotificationRequest {
-  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]> & { surfaceThreadId: string };
+  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]> & { threadId: string };
   commandId: string;
-  episode: StructuredEpisodeRecord;
+  episode: RuntimeEpisodeRecord;
   outcome: "succeeded" | "failed" | "cancelled" | null;
 }
 
@@ -43,9 +53,13 @@ const THREAD_REPORT_DESCRIPTION = [
 
 export function createThreadReportTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  episodeState: RuntimeEpisodeStatePortService;
+  readModelState: RuntimeReadModelStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   queueThreadReportNotification: (request: ThreadReportNotificationRequest) => Promise<void>;
-}): AgentTool<typeof threadReportParamsSchema, Record<string, unknown>> {
+}): NativeToolDefinition<ThreadReportParams, Record<string, unknown>> {
   return {
     label: "Thread Report",
     name: THREAD_REPORT_TOOL_NAME,
@@ -53,78 +67,96 @@ export function createThreadReportTool(options: {
     parameters: threadReportParamsSchema,
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveHandlerRuntime(options.runtime);
-      const threadId = runtime.surfaceThreadId;
+      const threadId = runtime.threadId;
       const summary = params.summary.trim();
       const details = params.details?.trim() || summary;
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId,
-        toolName: THREAD_REPORT_TOOL_NAME,
-        executor: "handler",
-        visibility: "surface",
-        title: params.outcome ? `Conclude thread: ${summary}` : `Report thread update: ${summary}`,
-        summary,
-        arguments: {
+      const command = options.runState(
+        options.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId,
+          toolName: THREAD_REPORT_TOOL_NAME,
+          executor: "handler",
+          visibility: "surface",
+          title: params.outcome
+            ? `Conclude thread: ${summary}`
+            : `Report thread update: ${summary}`,
           summary,
-          details,
-          ...(params.outcome ? { outcome: params.outcome } : {}),
-          relatedArtifactIds: params.relatedArtifactIds ?? [],
-          relatedCommandIds: params.relatedCommandIds ?? [],
-        },
-      });
-      options.store.startCommand(command.id);
+          arguments: {
+            summary,
+            details,
+            ...(params.outcome ? { outcome: params.outcome } : {}),
+            relatedArtifactIds: params.relatedArtifactIds ?? [],
+            relatedCommandIds: params.relatedCommandIds ?? [],
+          },
+        }),
+      ).value;
+      options.runState(options.commandState.startCommand({ commandId: command.id }));
       if (!summary) {
         const message = `${THREAD_REPORT_TOOL_NAME} requires a non-empty summary.`;
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         throw new Error(message);
       }
+
+      let threadGroupId: string;
       try {
-        validateRelatedReferences(options.store, runtime.sessionId, {
-          relatedArtifactIds: params.relatedArtifactIds ?? [],
-          relatedCommandIds: params.relatedCommandIds ?? [],
-        });
+        const thread = options.runState(
+          options.readModelState.getCurrentThread({
+            workspaceSessionId: runtime.workspaceSessionId as WorkspaceSessionId,
+            threadId: threadId as ThreadId,
+          }),
+        );
+        threadGroupId = thread.threadGroupId;
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to validate related references.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        const message = error instanceof Error ? error.message : "Failed to load handler thread.";
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         throw error;
       }
 
       try {
-        const episode = options.store.createEpisode({
-          threadId,
-          sourceCommandId: command.id,
-          kind: runtime.rootEpisodeKind,
-          title: summary,
-          summary,
-          body: details,
-        });
+        const episodeResult = options.runState(
+          options.episodeState.recordHandlerThreadEpisode({
+            scope: "handler-thread",
+            workspaceSessionId: runtime.workspaceSessionId as WorkspaceSessionId,
+            threadId: threadId as ThreadId,
+            threadGroupId: threadGroupId as ThreadGroupId,
+            sourceCommandId: command.id as CommandId,
+            kind: params.outcome ? "conclusion" : toHandlerEpisodeKind(runtime.rootEpisodeKind),
+            summary,
+            body: details,
+            ...(params.outcome
+              ? {
+                  outcome: params.outcome === "succeeded" ? "completed" : params.outcome,
+                  notifyOrchestrator: true,
+                }
+              : {}),
+            relatedArtifactIds: (params.relatedArtifactIds ?? []) as ArtifactId[],
+            relatedCommandIds: (params.relatedCommandIds ?? []) as CommandId[],
+          }),
+        );
+        const episode = episodeResult.value;
 
-        if (params.outcome) {
-          options.store.updateThread({
-            threadId,
-            objectiveState: "concluded",
-            status: "completed",
-            wait: null,
-          });
-        }
-
-        options.store.setTurnDecision({
-          turnId: runtime.turnId!,
-          decision: "thread_report",
-        });
+        options.runState(
+          options.turnState.setTurnDecision({
+            turnId: runtime.turnId!,
+            decision: "thread_report",
+          }),
+        );
 
         let notificationQueued = true;
         let notificationError: string | null = null;
@@ -141,20 +173,22 @@ export function createThreadReportTool(options: {
             error instanceof Error ? error.message : "Failed to queue thread report notification.";
         }
 
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary,
-          facts: {
-            threadId,
-            episodeId: episode.id,
-            outcome: params.outcome ?? null,
-            relatedArtifactIds: params.relatedArtifactIds ?? [],
-            relatedCommandIds: params.relatedCommandIds ?? [],
-            notificationQueued,
-            notificationError,
-          },
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "succeeded",
+            summary,
+            facts: {
+              threadId,
+              episodeId: episode.id,
+              outcome: params.outcome ?? null,
+              relatedArtifactIds: params.relatedArtifactIds ?? [],
+              relatedCommandIds: params.relatedCommandIds ?? [],
+              notificationQueued,
+              notificationError,
+            },
+          }),
+        );
 
         return {
           content: [
@@ -180,65 +214,39 @@ export function createThreadReportTool(options: {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to record handler thread report.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                commandId: command.id,
-                error: message,
-              }),
-            },
-          ],
-          details: {
+        options.runState(
+          options.commandState.finishCommand({
             commandId: command.id,
+            status: "failed",
+            summary: message,
             error: message,
-          },
-        };
+          }),
+        );
+        throw error;
       }
     },
   };
 }
 
-function validateRelatedReferences(
-  store: StructuredSessionStateStore,
-  sessionId: string,
-  input: { relatedArtifactIds: string[]; relatedCommandIds: string[] },
-): void {
-  const snapshot = store.getSessionState(sessionId);
-  const commandIds = new Set(snapshot.commands.map((command) => command.id));
-  const artifactIds = new Set(snapshot.artifacts.map((artifact) => artifact.id));
-  for (const commandId of input.relatedCommandIds) {
-    if (!commandIds.has(commandId)) {
-      throw new Error(`thread_report related command is not durable or inspectable: ${commandId}`);
-    }
-  }
-  for (const artifactId of input.relatedArtifactIds) {
-    if (!artifactIds.has(artifactId)) {
-      throw new Error(
-        `thread_report related artifact is not durable or inspectable: ${artifactId}`,
-      );
-    }
-  }
+function toHandlerEpisodeKind(kind: string): RuntimeEpisodeKind {
+  return kind === "change" ||
+    kind === "clarification" ||
+    kind === "report" ||
+    kind === "handoff" ||
+    kind === "conclusion"
+    ? kind
+    : "report";
 }
 
 function requireActiveHandlerRuntime(
   runtimeHandle: PromptExecutionRuntimeHandle,
-): NonNullable<PromptExecutionRuntimeHandle["current"]> & { surfaceThreadId: string } {
+): NonNullable<PromptExecutionRuntimeHandle["current"]> & { threadId: string } {
   const runtime = runtimeHandle.current;
   if (!runtime) {
     throw new Error(`${THREAD_REPORT_TOOL_NAME} can only run during an active prompt.`);
   }
-  if (runtime.surfaceKind !== "handler" || !runtime.surfaceThreadId) {
+  if (runtime.surfaceKind !== "handler" || !runtime.threadId) {
     throw new Error(`${THREAD_REPORT_TOOL_NAME} can only run from a handler thread.`);
   }
-  return runtime as NonNullable<PromptExecutionRuntimeHandle["current"]> & {
-    surfaceThreadId: string;
-  };
+  return runtime as NonNullable<PromptExecutionRuntimeHandle["current"]> & { threadId: string };
 }

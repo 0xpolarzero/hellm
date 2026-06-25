@@ -6,13 +6,13 @@
 - Status: resolved extension API spec
 - Scope:
   - define Artifacts as a builtin Incur-backed `svvyx` extension
-  - define the complete v1 `svvyx artifacts ...` command API
-  - define the generated `execute_typescript` client surface for the extension
+  - define the complete `svvyx artifacts ...` command API
+  - define the generated `execute_typescript` facade surface for the extension
   - define file-backed storage, mutability boundaries, product-state linkage, preview, deletion, and
     settings rules
 
 This file is the source of truth for the agent-facing Artifacts API. Other specs may describe
-artifact projection or durable storage, but they must point back here for command and generated-client
+artifact projection or durable storage, but they must point back here for command and extension-facade
 contracts.
 
 ## Extension Record
@@ -36,15 +36,17 @@ Default usage:
 | Handler thread | `loaded` |
 | Workflow task agent | `loaded` |
 
-Artifacts is a `svvyx` extension because v1 requires both a stable CLI command family and generated
-TypeScript clients inside `execute_typescript`. Native-tool extensions do not enable
+Artifacts is a `svvyx` extension because the current product surface requires both a stable CLI
+command family and generated TypeScript facades inside `execute_typescript`. Native-tool extensions do not enable
 `typescriptApiEnabled`.
 
-## Generated Extension Instructions
+## Loaded Extension Instructions
 
-When the Artifacts extension is loaded, the generated actor context includes one loaded instruction
-block for this extension. The loaded instruction block must be generated from the current command and
-TypeScript contracts in this spec rather than hand-maintained separately.
+When the Artifacts extension is loaded, the generated actor context includes one editable MDX loaded
+instruction contributor from `@svvy/extensions` source, conventionally
+`instructions/full/010-artifacts.mdx`. Command schemas, command metadata, and generated
+`execute_typescript` facade declarations are generated and validated from contracts separately; the
+loaded prompt guidance is not a fake generated-output source.
 
 Generated loaded instruction content:
 
@@ -118,14 +120,14 @@ session. It may filter by `--thread-id`. It does not support `--command-id`.
 `inspect` returns metadata and the artifact path; it does not print file contents. You may read the
 returned artifact path directly when you need to inspect content.
 
-`open` opens or focuses the product artifact inspector. It is a UI action and does not return
-metadata.
+`open` records or emits a declarative artifact-open intent for desktop consumers. It does not return
+artifact metadata and does not synchronously report pane state.
 
 `delete` is an explicit artifact lifecycle command. It tombstones the artifact record and removes the
 artifact file when present. Do not use delete to hide failed work or remove evidence unless the user
 asked for deletion or the task explicitly requires cleaning up an artifact.
 
-When writing TypeScript inside `execute_typescript`, prefer the generated client:
+When writing TypeScript inside `execute_typescript`, prefer the generated facade:
 
 ```ts
 await extensions.artifacts.run("create", {
@@ -145,7 +147,7 @@ await extensions.artifacts.run("delete", {
 });
 ```
 
-Generated client failures reject with `Client.ClientError` from `incur/client`.
+Generated facade failures reject with `Client.ClientError` from `incur/client`.
 
 HTML artifact previews are sandboxed by the product. You cannot loosen preview sandbox permissions
 through command flags, TypeScript inputs, MIME type overrides, or artifact content.
@@ -157,7 +159,7 @@ minimal available instruction:
 ```md
 Artifacts can create, inspect, open, list, and delete durable session files through `svvyx artifacts
 ...`; once Artifacts is loaded, `execute_typescript` also receives the generated
-`extensions.artifacts.run(...)` TypeScript client. Load Artifacts when you need to preserve
+`extensions.artifacts.run(...)` TypeScript facade. Load Artifacts when you need to preserve
 implementation plans, review notes, screenshots, logs, reports, previews, Smithers exports, or
 other large inspectable outputs outside the repository tree.
 ```
@@ -199,6 +201,27 @@ For an existing source file, the agent calls `svvyx artifacts create --path <fil
 session artifact directory and records app-owned product state. The original source path is not the
 artifact. If `--immutable` is present, the artifact is created under the session `immutable/`
 directory and ordinary command execution must not mutate it afterward.
+
+Artifacts command and facade handlers return `ExtensionHandlerResult` values containing one
+model-facing result plus ordered `ExtensionRuntimeOperation` items wrapping closed artifact/command
+`RuntimeEffectRequest` values or immutable artifact `ExtensionExecutionPlan` values. `@svvy/runtime`
+applies those wrapped requests/plans through artifact storage and `@svvy/state` ports, owns command
+envelope/lifecycle facts, and publishes notifications only after commit. Handler prose below
+describes the required product outcomes; it must not be read as permission for extension handlers to
+write structured state, delete product records, or bypass
+runtime-owned artifact file-effect routing directly.
+
+Shell `svvyx artifacts ...` invocations may run through an app-owned subprocess for CLI parsing and
+sandboxed command-family execution, but that subprocess must not open SQLite, construct state ports,
+run Effect programs, create artifact records, write artifact metadata, open artifact panes, or emit
+artifact operation transport intents. The subprocess returns parsed command output and parse/build
+evidence only; the parent runtime records durable command facts. Artifact metadata, validation,
+file effects, model-facing command results, and state updates use the normal extension-handler
+result path: ordered `ExtensionRuntimeOperation` items and artifact `ExtensionExecutionPlan` values
+are applied by `@svvy/runtime` through artifact storage, runtime command lifecycle, and
+`@svvy/state` ports. Generated `execute_typescript` facade calls such as
+`extensions.artifacts.run(...)` execute as runtime-owned child commands under the already accepted
+`execute_typescript` parent command.
 
 ## Storage
 
@@ -263,12 +286,23 @@ Rules:
 
 Artifact creation is a product-state mutation.
 
+Artifacts command and facade handlers return `ExtensionHandlerResult` values containing one
+model-facing result plus ordered `ExtensionRuntimeOperation` items wrapping closed artifact/command
+`RuntimeEffectRequest` values or immutable artifact `ExtensionExecutionPlan` values. `@svvy/runtime`
+applies those wrapped requests/plans through artifact storage and `@svvy/state` command ports, but
+SQL transactions remain short SQL-critical sections. Copying, hashing, statting, and deleting files
+must not run while a SQLite transaction is open.
+Implementations stage or resolve file effects outside the SQL transaction, then commit artifact
+metadata, lifecycle, linkage, and command facts in short state transactions with cleanup/recovery for
+partial file effects. State returns after-commit invalidation descriptors from the committed
+transaction; runtime publishes the corresponding read-model notifications after commit.
+
 `svvyx artifacts create` must automatically link the artifact to the current runtime context:
 
 - `sessionId`: always set from the current session
 - `threadId`: set when the current surface belongs to a handler thread
 - `sourceCommandId`: set to the command record for the `svvyx artifacts create` invocation or to
-  the generated-client child command when invoked from `execute_typescript`
+  the extension-facade child command when invoked from `execute_typescript`
 
 The agent must not provide ownership fields such as `sessionId`, `threadId`, or `sourceCommandId` to
 `create`. Those are runtime-derived facts.
@@ -339,7 +373,6 @@ type ArtifactErrorResult = {
       | "ARTIFACT_DELETED"
       | "ARTIFACT_FILE_MISSING"
       | "DELETE_FAILED"
-      | "UI_UNAVAILABLE"
       | "INTERNAL_ERROR";
     message: string;
     path?: string;
@@ -355,7 +388,7 @@ Error rules:
 - `path` is present only for path-specific failures.
 - `name` is present only for artifact-name-specific failures.
 - `id` is present only for id-specific failures.
-- errors must be redacted before persistence, transcript display, logs, generated client results, and
+- errors must be redacted before persistence, transcript display, logs, generated facade results, and
   artifacts.
 - commands must use a nonzero process exit status when returning an error.
 
@@ -367,7 +400,7 @@ The command family is:
 svvyx artifacts <command> ... --json
 ```
 
-The v1 commands are:
+The commands are:
 
 ```sh
 svvyx artifacts create --name <filename-with-extension> [--immutable] [--mime-type <mime>] --json
@@ -378,7 +411,7 @@ svvyx artifacts open --id <artifact_id> --json
 svvyx artifacts delete --id <artifact_id> --json
 ```
 
-No other `svvyx artifacts` commands are part of v1.
+No other `svvyx artifacts` commands are part of the Artifacts extension.
 
 ### `create`
 
@@ -440,10 +473,9 @@ Behavior:
 - creates immutable artifacts under `<artifactDir>/<sessionId>/immutable/`
 - copies the source file into the artifact store when `--path` is present
 - computes `bytes` and `sha256` from the artifact file after creation or copy
-- records the artifact row and linkage in structured state
-- emits `artifact.created`
-- records final command facts containing artifact id, path, exact name, immutable flag, MIME type,
-  byte size, digest, and linkage
+- returns an artifact creation plan for runtime execution
+- runtime commits artifact metadata/linkage and terminal command facts through `@svvy/state`
+- after commit, runtime publishes the artifact-created notification
 
 The command does not accept inline content. To create a text, JSON, HTML, image, or log artifact from
 new content, the agent creates an empty artifact with `create --name <filename-with-extension>`, then
@@ -550,7 +582,8 @@ Success:
 ```json
 {
   "id": "artifact_01JZ3R9YH0V8C8V6K4F6N1HX4A",
-  "opened": true
+  "intent": "open_artifact_inspector",
+  "accepted": true
 }
 ```
 
@@ -559,12 +592,15 @@ Behavior:
 - resolves the artifact record from product state
 - rejects deleted artifacts with `ARTIFACT_DELETED`
 - opens a missing-file inspector row when the product record exists but the artifact file is missing
-- asks the current app surface to open or focus the artifact inspector pane
-- keys the inspector by artifact id plus owning workspace and session context
+- returns an immutable artifact-open intent/fact keyed by artifact id, workspace, and session
+  context
+- `@svvy/runtime` commits the command outcome and publishes the after-commit notification for
+  desktop consumers
+- lets desktop consume the intent, refetch artifact/read-model state, and decide whether to open or
+  focus an inspector pane
 - does not mutate artifact metadata or artifact file content
-- returns `UI_UNAVAILABLE` when no app UI is attached to the current runtime
 
-`open` is a UI action command. It is not a read API and does not return artifact metadata.
+`open` is a desktop intent command. It is not a read API and does not return artifact metadata.
 
 ### `delete`
 
@@ -586,14 +622,15 @@ Behavior:
 - resolves the artifact record from product state
 - rejects artifacts outside the current workspace and current structured session scope with
   `ARTIFACT_NOT_FOUND`
-- marks the artifact deleted in structured state
-- removes the artifact file from the artifact store when it exists
+- returns an artifact deletion plan for runtime execution
+- runtime tombstones through `@svvy/state` and removes the artifact file from the artifact store
+  when it exists through the runtime-owned file-effect lane
 - when the artifact is immutable, performs only the exact tombstone and file removal operation for
   the resolved current-session artifact path; it must not grant writable access to any other file in
   the session `immutable/` directory
 - tombstones successfully when the product record exists and the artifact file is already missing
-- emits `artifact.deleted`
-- records final command facts containing the deleted artifact id
+- records terminal command facts containing the deleted artifact id
+- publishes deletion notifications after commit
 - leaves historical command and thread links intact
 
 Delete is a tombstone lifecycle transition, not silent record erasure. Product inspectors may still
@@ -603,10 +640,10 @@ show that a historical artifact existed and was deleted, but `list` omits delete
 Deleting an already-deleted artifact is idempotent and returns `deleted: true` if the artifact id is
 known. Deleting an unknown artifact returns `ARTIFACT_NOT_FOUND`.
 
-## Generated TypeScript API
+## Generated Execute TypeScript Facade
 
-When Artifacts is loaded for an actor, `execute_typescript` receives an Incur-compatible generated
-client at `extensions.artifacts`. The exact helper type names are generated, but the command map must
+When Artifacts is loaded for an actor, `execute_typescript` receives an Incur-compatible injected
+facade at `extensions.artifacts`. The exact helper type names are generated, but the command map must
 be equivalent to:
 
 ```ts
@@ -663,7 +700,8 @@ type ArtifactsCommands = {
     };
     output: {
       id: string;
-      opened: true;
+      intent: "open_artifact_inspector";
+      accepted: true;
     };
   };
   delete: {
@@ -679,11 +717,11 @@ type ArtifactsCommands = {
 };
 
 declare const extensions: {
-  artifacts: IncurExtensionClient<ArtifactsCommands>;
+  artifacts: IncurExtensionFacade<ArtifactsCommands>;
 };
 ```
 
-Agent-authored snippets use the generated client with Incur command ids and `options`:
+Agent-authored snippets use the generated facade with Incur command ids and `options`:
 
 ```ts
 const created = await extensions.artifacts.run("create", {
@@ -738,15 +776,15 @@ try {
 }
 ```
 
-Generated-client calls:
+Generated facade calls:
 
 - use the same Incur command contracts as `svvyx artifacts ...`
 - reject with `Client.ClientError` on command failure rather than resolving an `{ error }` union
 - apply the same readiness checks, env injection, redaction, command facts, and failure semantics as
   shell dispatch
 - create child command records under the parent `execute_typescript` command
-- expose only the per-loaded-extension client under `extensions.artifacts`; do not expose
-  generic Incur transports, local actions, generated-client internals, or a broad all-extension
+- expose only the per-loaded-extension facade under `extensions.artifacts`; do not expose
+  generic Incur transports, local actions, generated internals, or a broad all-extension
   Incur client
 
 ## Preview And UX
@@ -761,7 +799,7 @@ Projection rules:
 - script-capable HTML previews may grant `allow-scripts`
 - HTML preview sandboxes must not include `allow-same-origin`, top navigation, popups, form
   submission, downloads, pointer-lock, presentation, or parent/app escape permissions
-- the agent cannot loosen preview sandbox permissions through CLI flags, TypeScript client input, MIME
+- the agent cannot loosen preview sandbox permissions through CLI flags, TypeScript facade input, MIME
   type overrides, artifact content, or metadata
 
 Command projection:
@@ -776,8 +814,15 @@ Command projection:
 
 ## Redaction And Policy
 
-Artifacts commands are `svvyx` commands and therefore ordinary `exec_command` input for policy,
-approval, sandbox, output caps, command records, and projection.
+Shell invocations of `svvyx artifacts ...` are ordinary `exec_command` input for policy, approval,
+sandbox, output caps, command records, and projection. Product mutations from that shell path are
+represented through the normal extension-handler result path: ordered `ExtensionRuntimeOperation`
+items and artifact `ExtensionExecutionPlan` values applied by `@svvy/runtime` through artifact
+storage and `@svvy/state` ports. Injected `extensions.artifacts.run(...)` calls are child commands
+under an already-approved
+`execute_typescript` parent; they share contracts, readiness checks, redaction, and command facts,
+but do not enter Shell approval, shell command parsing, or the Shell signed subprocess-result
+transport.
 
 Rules:
 
@@ -786,7 +831,7 @@ Rules:
 - Explicit `create --name` without `--path` creates an empty artifact file. Its initial `sha256` is
   the SHA-256 digest of the empty file and changes only when ordinary artifact editing changes the
   artifact content.
-- Command output, errors, logs, command facts, generated TypeScript declarations, generated-client
+- Command output, errors, logs, command facts, generated TypeScript declarations, extension-facade
   results, and metadata pass through the same extension redaction layer as other `svvyx` extension
   invocations.
 - Runtime-created artifacts that capture command output, extension output, logs, or generated
@@ -802,11 +847,11 @@ Rules:
   not `svvyx artifacts` command mutations, and they must still be projected and recorded as ordinary
   file-change command facts.
 - no command may expose extension env secrets, app secrets, or redacted values through JSON output,
-  human output, command facts, logs, previews, or generated-client errors.
+  human output, command facts, logs, previews, or extension-facade errors.
 
 ## Non-Goals
 
-V1 does not include:
+The Artifacts extension does not include:
 
 - `artifact_write_text`
 - `artifact_write_json`

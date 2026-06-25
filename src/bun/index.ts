@@ -5,7 +5,19 @@ import {
   Utils,
   defineElectrobunRPC,
 } from "electrobun/bun";
-import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type {
+  AbortPromptInput,
+  CommandId,
+  RequestInputOptionId,
+  RequestInputQuestionId,
+  RequestInputRequestId,
+  RuntimeApprovalId,
+  RequestUserInputAnswer,
+  SteerQueuedMessageInput,
+  SubmitMessageInput,
+  SurfacePiSessionId,
+} from "@svvy/core";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -27,7 +39,6 @@ import type {
   ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
-  SendPromptRequest,
   SendPromptResponse,
   SwitchWorkspaceBranchResponse,
 } from "../shared/workspace-contract";
@@ -59,13 +70,7 @@ import {
   supportsOAuth,
 } from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import {
-  getSvvyAgentDir,
-  normalizePromptClientSubmissionMetadata,
-  promptClientSubmissionLogDetails,
-  summarizePromptMessagesForTelemetry,
-  type SessionDefaults,
-} from "./session-catalog";
+import { getSvvyAgentDir, type SessionDefaults } from "./session-catalog";
 import {
   buildWorkflowsGeneratedPackage,
   getWorkflowsSourceRoot,
@@ -75,10 +80,6 @@ import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-work
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
-import type {
-  SourceInvalidationDomain,
-  SourceInvalidationEvent,
-} from "./source-invalidation-coordinator";
 import {
   FILE_BACKED_EDIT_CONFLICT_CODE,
   isFileBackedEditConflictError,
@@ -98,6 +99,7 @@ import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
 
 const DEV_SERVER_PORT = 5173;
+
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const extensionEnvSecretStore = createMacOsKeychainExtensionEnvSecretStore();
@@ -225,8 +227,8 @@ async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command:
     command,
     cwd: runtime.cwd,
     envSecretStore: extensionEnvSecretStore,
+    extensionContextImpactState: runtime.catalog.getRuntimeExtensionContextImpactState(),
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
-    structuredSessionStore: runtime.catalog.getStructuredSessionStore(),
   });
 }
 
@@ -360,84 +362,6 @@ async function runExtensionCliRequirementCommand(
   });
 }
 
-function sourceInvalidationRequiresWorkflowsBuild(
-  domains: readonly SourceInvalidationDomain[],
-): boolean {
-  return domains.includes("extensions") || domains.includes("workflows");
-}
-
-function sourceInvalidationAffectsPromptContext(
-  domains: readonly SourceInvalidationDomain[],
-): boolean {
-  return domains.some((domain) =>
-    ["agent-settings", "extensions", "external-instructions", "workflows"].includes(domain),
-  );
-}
-
-async function handleSourceInvalidation(event: SourceInvalidationEvent): Promise<void> {
-  const openWorkspaces = workspaceRuntimeRegistry.listOpenWorkspaces();
-  const runtimes = openWorkspaces.map((workspace) =>
-    workspaceRuntimeRegistry.getRuntime(workspace.workspaceId),
-  );
-  if (sourceInvalidationRequiresWorkflowsBuild(event.domains)) {
-    for (const runtime of runtimes) {
-      runtime.appLog.info("workflow.library", "Source invalidation started Workflows rebuild.", {
-        domains: event.domains,
-        reason: event.reason,
-      });
-    }
-    try {
-      const build = await buildWorkflowsGeneratedPackage({
-        modelCatalog: readDefaultModelCatalog(),
-        workspaceCwds: openWorkspaces.map((workspace) => workspace.cwd),
-      });
-      if (build.ok) {
-        for (const runtime of runtimes) {
-          runtime.appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
-            reason: "source-invalidation",
-            sourceDomains: event.domains,
-            workflowDiagnosticCount: build.diagnostics.length,
-            workflowExportCount: build.items.length,
-            workflowLinkedWorkspaceCount: build.linkedWorkspaces.length,
-          });
-        }
-      } else {
-        for (const runtime of runtimes) {
-          runtime.appLog.warning(
-            "workflow.library",
-            "Source invalidation left Workflows package stale because rebuild failed.",
-            {
-              diagnostics: build.diagnostics,
-              reason: "source-invalidation",
-              sourceDomains: event.domains,
-              workflowDiagnosticCount: build.diagnostics.length,
-            },
-          );
-        }
-      }
-    } catch (error) {
-      for (const runtime of runtimes) {
-        runtime.appLog.error(
-          "workflow.library",
-          "Source invalidation left Workflows package stale because rebuild errored.",
-          error,
-          {
-            reason: "source-invalidation",
-            sourceDomains: event.domains,
-          },
-        );
-      }
-    }
-  }
-  if (sourceInvalidationAffectsPromptContext(event.domains)) {
-    await Promise.all(
-      runtimes.map((runtime) =>
-        runtime.catalog.notifySourceInputsChanged(`source_invalidation:${event.domains.join(",")}`),
-      ),
-    );
-  }
-}
-
 type DevBrowserToolsRecorder = {
   recordError: (
     kind: "app" | "rpc",
@@ -509,15 +433,6 @@ async function getMainViewUrl(channel: string): Promise<string> {
     console.log("Vite dev server not running. Run `bun run dev`.");
   }
   return "views://mainview/index.html";
-}
-
-function resolveSendDefaults(runtime: WorkspaceRuntime, request: SendPromptRequest): AgentDefaults {
-  const defaults = getDefaultAgentSettings(runtime);
-  return {
-    provider: request.provider || defaults.provider,
-    model: request.model || defaults.model,
-    reasoningEffort: request.reasoningEffort || defaults.reasoningEffort,
-  };
 }
 
 function getDefaultAgentSettings(runtime?: WorkspaceRuntime): AgentDefaults {
@@ -1022,6 +937,11 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
     }
     recordDevBrowserToolsLog(level, message, source, details);
   },
+  runtimeDependencies: {
+    ensureUsableProviderAuth,
+    getProviderAuthUnavailableMessage,
+    recordDevBrowserToolsEvent,
+  },
   onAppLogUpdate: (workspaceId, payload) => {
     try {
       rpc.send.sendAppLogUpdate({
@@ -1064,8 +984,8 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
       );
     }
   },
-  onSourceInvalidation: handleSourceInvalidation,
 });
+await workspaceRuntimeRegistry.ready();
 
 function recordAppRuntimeLog(
   level: "info" | "warning",
@@ -1668,7 +1588,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
       },
       getAppPreferences: async () => {
-        return workspaceRuntimeRegistry.getDefaultWorkspace().agentSettingsStore.getState()
+        return (await workspaceRuntimeRegistry.getDefaultWorkspace()).agentSettingsStore.getState()
           .appPreferences;
       },
       getGeneratedAgentContext: async (input) => {
@@ -1982,7 +1902,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           appAppearance: preferences.appAppearance,
           preferredExternalEditor: preferences.preferredExternalEditor,
         });
-        const defaultRuntime = workspaceRuntimeRegistry.getDefaultWorkspace();
+        const defaultRuntime = await workspaceRuntimeRegistry.getDefaultWorkspace();
         const next = defaultRuntime.catalog.updateAppPreferences(preferences);
         for (const workspace of workspaceRuntimeRegistry.listOpenWorkspaces()) {
           if (workspace.workspaceId === defaultRuntime.workspaceId) {
@@ -2028,7 +1948,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             })
           )[0];
         if (!selectedCwd) return { workspace: null };
-        const runtime = workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);
+        const runtime = await workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);
         runtime.appLog.info("workspace", "Workspace opened.", { workspaceId: runtime.workspaceId });
         recordDevBrowserToolsEvent("workspace.opened", { workspaceId: runtime.workspaceId });
         return { workspace: addWorkspaceBranch(runtime.getInfo()) };
@@ -2037,7 +1957,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return workspaceRuntimeRegistry.listOpenWorkspaces().map(addWorkspaceBranch);
       },
       getDefaultWorkspace: async () => {
-        return addWorkspaceBranch(workspaceRuntimeRegistry.getDefaultWorkspace().getInfo());
+        return addWorkspaceBranch((await workspaceRuntimeRegistry.getDefaultWorkspace()).getInfo());
       },
       getAppWorkspaceTabs: async () => {
         return appWorkspaceTabsStore.getState();
@@ -2084,11 +2004,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
       },
       getAppLogs: (query) => {
-        return getWorkspaceRuntime(query).appLogStore.query(stripWorkspaceId(query));
+        return getWorkspaceRuntime(query).appLogs.query(stripWorkspaceId(query));
       },
-      getAppLogSummary: (input) => getWorkspaceRuntime(input).appLogStore.summary(),
+      getAppLogSummary: (input) => getWorkspaceRuntime(input).appLogs.summary(),
       markAppLogsSeen: ({ workspaceId, throughSeq }) =>
-        workspaceRuntimeRegistry.getRuntime(workspaceId).appLogStore.markSeen(throughSeq),
+        workspaceRuntimeRegistry.getRuntime(workspaceId).appLogs.markSeen(throughSeq),
       writeClipboardText: ({ text }) => {
         Utils.clipboardWriteText(text);
         return { ok: true };
@@ -2202,6 +2122,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return await getWorkspaceRuntime(input).catalog.getCommandInspector({
           sessionId,
           commandId,
+        });
+      },
+      writeCommandStdin: async (input) => {
+        const runtime = getWorkspaceRuntime(input);
+        return await runtime.runtimeFacade.commands.writeStdin({
+          commandId: input.commandId as CommandId,
+          text: input.text,
+          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
         });
       },
       listHandlerThreads: async (input) => {
@@ -2439,158 +2367,17 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
         const runtime = getWorkspaceRuntime(payload);
-        const resolved = resolveSendDefaults(runtime, payload);
-        const clientSubmission = normalizePromptClientSubmissionMetadata(payload.clientSubmission);
-        const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
-        const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
-
-        const apiKey = await ensureUsableProviderAuth(resolved.provider);
-        if (!apiKey) {
-          const message = getProviderAuthUnavailableMessage(resolved.provider);
-          runtime.appLog.warning(
-            "auth.provider",
-            "Configured provider is not connected for prompt.",
-            {
-              provider: resolved.provider,
-              ...promptCorrelationDetails,
-              workspaceSessionId: payload.target.workspaceSessionId,
-              surfacePiSessionId: payload.target.surfacePiSessionId,
-              threadId: payload.target.threadId,
-            },
-          );
-          throw new Error(message);
-        }
-
-        const model = getModel(
-          resolved.provider as Parameters<typeof getModel>[0],
-          resolved.model as Parameters<typeof getModel>[1],
-        );
-        let surfacePiSessionId = payload.target.surfacePiSessionId;
-
-        recordDevBrowserToolsEvent("prompt.requested", {
-          ...promptTelemetry,
-          ...promptCorrelationDetails,
-          model: model.id,
-          provider: resolved.provider,
-          queueOnly: payload.queueOnly ?? false,
-          requestedSurfacePiSessionId: payload.target.surfacePiSessionId,
-          requestedWorkspaceSessionId: payload.target.workspaceSessionId,
-          requestedThreadId: payload.target.threadId ?? null,
+        const result = await runtime.runtimeFacade.messages.submit({
+          target: payload.target as SubmitMessageInput["target"],
+          message: payload.message,
+          delivery: payload.delivery,
+          clientSubmission: payload.clientSubmission,
         });
-        runtime.appLog.info("prompt", "Prompt requested.", {
-          ...promptTelemetry,
-          ...promptCorrelationDetails,
-          model: model.id,
-          provider: resolved.provider,
-          queueOnly: payload.queueOnly ?? false,
-          workspaceSessionId: payload.target.workspaceSessionId,
-          surfacePiSessionId: payload.target.surfacePiSessionId,
-          threadId: payload.target.threadId,
-        });
-
-        let queuedMessageId: string | undefined;
-        const session = await runtime.catalog.sendPrompt({
-          target: payload.target,
-          provider: resolved.provider,
-          model: model.id,
-          thinkingLevel: resolved.reasoningEffort,
-          messages: payload.messages,
-          queueOnly: payload.queueOnly ?? false,
-          clientSubmission,
-          promptTelemetry,
-          onEvent: (event) => {
-            if (event.type === "start") {
-              recordDevBrowserToolsEvent("prompt.started", {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-              runtime.appLog.info("prompt", "Prompt started.", {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                surfacePiSessionId,
-                threadId: payload.target.threadId,
-              });
-            } else if (event.type === "done") {
-              recordDevBrowserToolsEvent("prompt.finished", {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                reason: event.reason,
-                surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-              runtime.appLog.info("prompt", "Prompt finished.", {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                reason: event.reason,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                surfacePiSessionId,
-                threadId: payload.target.threadId,
-              });
-            } else if (event.type === "error") {
-              const message =
-                event.error.content.find((block) => block.type === "text")?.text ||
-                "Prompt failed.";
-              recordDevBrowserToolsEvent("prompt.failed", {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                reason: event.reason,
-                surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-              runtime.appLog.error("prompt", message, {
-                ...promptTelemetry,
-                ...promptCorrelationDetails,
-                queuedMessageId,
-                model: model.id,
-                provider: resolved.provider,
-                reason: event.reason,
-                surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-            }
-          },
-        });
-
-        surfacePiSessionId = session.target.surfacePiSessionId;
-        queuedMessageId = session.queuedMessageId;
-        runtime.appLog.info(
-          "prompt",
-          session.queued ? "Prompt queued for active surface." : "Prompt dispatched to pi runtime.",
-          {
-            model: model.id,
-            provider: resolved.provider,
-            queued: session.queued ?? false,
-            queuedMessageId: session.queuedMessageId,
-            ...promptTelemetry,
-            ...promptCorrelationDetails,
-            surfacePiSessionId,
-            workspaceSessionId: session.target.workspaceSessionId,
-            threadId: session.target.threadId,
-          },
-        );
-        return session;
+        return {
+          target: result.target,
+          queued: result.status === "queued",
+          queuedMessageId: result.queuedMessageId,
+        };
       },
       recordRendererTelemetry: async (payload) => {
         const runtime = getWorkspaceRuntime(payload);
@@ -2622,75 +2409,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           runtime.appLog.debug("renderer", message, details);
         }
         return { ok: true };
-      },
-      steerPrompt: async (payload): Promise<SendPromptResponse> => {
-        const runtime = getWorkspaceRuntime(payload);
-        const resolved = resolveSendDefaults(runtime, payload);
-        const clientSubmission = normalizePromptClientSubmissionMetadata(payload.clientSubmission);
-        const promptTelemetry = summarizePromptMessagesForTelemetry(payload.messages);
-        const promptCorrelationDetails = promptClientSubmissionLogDetails(clientSubmission);
-
-        const apiKey = await ensureUsableProviderAuth(resolved.provider);
-        if (!apiKey) {
-          const message = getProviderAuthUnavailableMessage(resolved.provider);
-          runtime.appLog.warning(
-            "auth.provider",
-            "Configured provider is not connected for prompt steering.",
-            {
-              provider: resolved.provider,
-              ...promptCorrelationDetails,
-              workspaceSessionId: payload.target.workspaceSessionId,
-              surfacePiSessionId: payload.target.surfacePiSessionId,
-              threadId: payload.target.threadId,
-            },
-          );
-          throw new Error(message);
-        }
-
-        const model = getModel(
-          resolved.provider as Parameters<typeof getModel>[0],
-          resolved.model as Parameters<typeof getModel>[1],
-        );
-        recordDevBrowserToolsEvent("prompt.steer.requested", {
-          ...promptTelemetry,
-          ...promptCorrelationDetails,
-          model: model.id,
-          provider: resolved.provider,
-          requestedSurfacePiSessionId: payload.target.surfacePiSessionId,
-          requestedWorkspaceSessionId: payload.target.workspaceSessionId,
-          requestedThreadId: payload.target.threadId ?? null,
-        });
-        runtime.appLog.info("prompt", "Prompt steer requested.", {
-          ...promptTelemetry,
-          ...promptCorrelationDetails,
-          model: model.id,
-          provider: resolved.provider,
-          workspaceSessionId: payload.target.workspaceSessionId,
-          surfacePiSessionId: payload.target.surfacePiSessionId,
-          threadId: payload.target.threadId,
-        });
-
-        const session = await runtime.catalog.steerPrompt({
-          target: payload.target,
-          provider: resolved.provider,
-          model: model.id,
-          thinkingLevel: resolved.reasoningEffort,
-          messages: payload.messages,
-          clientSubmission,
-          promptTelemetry,
-        });
-
-        runtime.appLog.info("prompt", "Prompt steer dispatched to pi runtime.", {
-          model: model.id,
-          provider: resolved.provider,
-          queuedMessageId: session.queuedMessageId,
-          ...promptTelemetry,
-          ...promptCorrelationDetails,
-          surfacePiSessionId: session.target.surfacePiSessionId,
-          workspaceSessionId: session.target.workspaceSessionId,
-          threadId: session.target.threadId,
-        });
-        return session;
       },
       updateComposerDraft: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2771,29 +2489,51 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       steerQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.steerQueuedSurfaceMessage(input);
-        runtime.appLog.info("prompt", "Queued surface message steered.", {
-          workspaceSessionId: input.target.workspaceSessionId,
-          surfacePiSessionId: input.target.surfacePiSessionId,
-          threadId: input.target.threadId,
-          queuedMessageId: input.queuedMessageId,
+        await runtime.runtimeFacade.queues.steer({
+          target: input.target as SteerQueuedMessageInput["target"],
+          queuedMessageId: input.queuedMessageId as SteerQueuedMessageInput["queuedMessageId"],
         });
-        return result;
+        return { ok: true, target: input.target };
       },
       answerRequestUserInput: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.answerRequestUserInput(input);
+        const answerResult = await runtime.runtimeFacade.requestInput.answer({
+          surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
+          requestId: input.requestId as RequestInputRequestId,
+          questionId: input.questionId as RequestInputQuestionId,
+          answer:
+            input.answer.kind === "option"
+              ? {
+                  kind: "option",
+                  optionId: input.answer.optionId as RequestInputOptionId,
+                }
+              : ({ kind: "custom", text: input.answer.text } satisfies RequestUserInputAnswer),
+          delivery: input.delivery,
+          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
+        });
+        const result = runtime.catalog.getRequestInputSurfaceMutationResponse({
+          surfacePiSessionId: input.surfacePiSessionId,
+          requestId: input.requestId,
+        });
         runtime.appLog.info("prompt", "Request user input answered.", {
           surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
           questionId: input.questionId,
           delivery: input.delivery,
+          queuedItemId: answerResult.delivery.queuedItemId,
+          answerStatus: answerResult.status,
+          answerDeliveryKind: answerResult.delivery.kind,
         });
         return result;
       },
       answerRuntimeApprovalRequest: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.answerRuntimeApprovalRequest(input);
+        await runtime.runtimeFacade.approvals.answer({
+          approvalId: input.requestId as RuntimeApprovalId,
+          decision: input.approved ? "approved" : "denied",
+          ...(input.reason === undefined ? {} : { reason: input.reason ?? "" }),
+        });
+        const result = await runtime.catalog.afterRuntimeApprovalAnswered(input);
         runtime.appLog.info("direct-tool", "Runtime approval request answered.", {
           requestId: input.requestId,
           approved: input.approved,
@@ -2802,13 +2542,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       setRequestUserInputTimerPaused: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.setRequestUserInputTimerPaused(input);
+        await runtime.runtimeFacade.requestInput.setTimerPaused({
+          surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
+          requestId: input.requestId as RequestInputRequestId,
+          paused: input.paused,
+          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
+        });
         runtime.appLog.info("prompt", "Request user input timer updated.", {
           surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
           paused: input.paused,
         });
-        return result;
+        return { ok: true };
       },
       setExtensionContextAutoUpdate: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2823,17 +2568,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       cancelPrompt: async (input): Promise<{ ok: boolean }> => {
         const runtime = getWorkspaceRuntime(input);
-        const { target } = input;
-        await runtime.catalog.cancelPrompt(target);
-        recordDevBrowserToolsEvent("prompt.cancel.requested", {
-          surfacePiSessionId: target.surfacePiSessionId,
-          threadId: target.threadId ?? null,
-          workspaceSessionId: target.workspaceSessionId,
-        });
-        runtime.appLog.info("prompt", "Prompt cancellation requested.", {
-          workspaceSessionId: target.workspaceSessionId,
-          surfacePiSessionId: target.surfacePiSessionId,
-          threadId: target.threadId,
+        await runtime.runtimeFacade.messages.abort({
+          target: input.target as AbortPromptInput["target"],
+          mode: "all-for-surface",
         });
         return { ok: true };
       },

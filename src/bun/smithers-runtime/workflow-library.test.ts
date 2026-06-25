@@ -31,6 +31,8 @@ import type { SvvyxWorkflowsModelChoice } from "../svvyx-workflows-command";
 import { createWorkflowAgentId } from "../../mainview/agent-profile-ids";
 
 const tempDirs: string[] = [];
+const IMPORT_PATTERN =
+  /\bimport\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|export\s+(?:type\s+)?[^'"]*?\s+from\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 describe("Workflows generated read model", () => {
   afterEach(() => {
@@ -73,10 +75,10 @@ describe("Workflows generated read model", () => {
         '  label: "Reviewer",',
         '  provider: "openai",',
         '  model: "gpt-5.4",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review strictly.",',
-        '  overrides: { [Extensions["git"]]: "loaded" },',
-        "} satisfies Agents.TaskAgentParameters;",
+        '  overrides: { [Extensions.git.id]: "loaded" },',
+        "} satisfies Agents.TaskAgentParametersSource;",
       ].join("\n"),
     );
     writeFileSync(
@@ -118,14 +120,14 @@ describe("Workflows generated read model", () => {
         label: "Reviewer",
         provider: "openai",
         model: "gpt-5.4",
-        reasoningEffort: "medium",
+        reasoning: { effort: "medium" },
         instructions: "Review strictly.",
         overrides: { git: "loaded" },
       },
     });
   });
 
-  it("builds @svvy/workflows from app-global source with namespace-only root exports", async () => {
+  it("builds @svvyx/workflows from app-global source with namespace-only root exports", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -141,7 +143,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strictly.",
           overrides: { shell: "loaded" },
         },
@@ -166,6 +168,13 @@ describe("Workflows generated read model", () => {
     });
 
     expect(build.ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"))).toEqual({
+      name: "@svvyx/workflows",
+      type: "module",
+      exports: {
+        ".": "./index.ts",
+      },
+    });
     expect(readFileSync(join(packageRoot, "index.ts"), "utf8")).toBe(
       [
         'export * as Agents from "./agents";',
@@ -191,31 +200,76 @@ describe("Workflows generated read model", () => {
       expect(publicCode).not.toContain("generatedPath");
       expect(publicCode).not.toContain(".svvy-workflows-manifest");
     }
+    expect(
+      generatedPackageRuntimeImportViolations(packageRoot, {
+        allowedGeneratedPackages: new Set(["@svvy/core", "@svvyx/extensions"]),
+      }),
+    ).toEqual([]);
     const agentsIndex = readFileSync(join(packageRoot, "agents", "index.ts"), "utf8");
-    expect(agentsIndex).toContain("export interface TaskAgentParameters");
-    expect(agentsIndex).toContain("  id: string;");
-    expect(agentsIndex).toContain("export type AgentLike");
     expect(agentsIndex).toContain(
-      "export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): AgentLike",
+      'import type { RunTaskAgentError, RunTaskAgentResult, RunTaskAgentSourceInput } from "@svvy/core";',
+    );
+    expect(agentsIndex).not.toContain("unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap");
+    expect(agentsIndex).not.toContain("decodeUnknownRunTaskAgentInput");
+    expect(agentsIndex).not.toContain("decodeUnknownRunTaskAgentSourceInput");
+    expect(agentsIndex).toContain('import type { AgentLike } from "smithers-orchestrator";');
+    expect(agentsIndex).not.toContain("@mariozechner/pi-agent-core");
+    expect(agentsIndex).toContain(
+      'export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";',
+    );
+    expect(agentsIndex).toContain("export type ReasoningSelection = { effort: ReasoningEffort };");
+    expect(agentsIndex).toContain("export interface TaskAgentParametersSource");
+    expect(agentsIndex).toContain("  id: string;");
+    expect(agentsIndex).toContain("  reasoning: ReasoningSelection;");
+    expect(agentsIndex).toContain(
+      "export function defineTaskAgent<T extends TaskAgentParametersSource>(parameters: T): AgentLike",
+    );
+    expect(agentsIndex).toContain(
+      "async function callTaskAgentBridge(parameters: TaskAgentParametersSource, rawArgs: unknown): Promise<RunTaskAgentResult>",
     );
     expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_URL");
     expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN");
-    expect(agentsIndex).toContain("SVVY_WORKSPACE_SESSION_ID");
-    expect(agentsIndex).toContain("SVVY_SOURCE_COMMAND_ID");
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID");
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID");
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS");
     expect(agentsIndex).toContain('operation: "runTaskAgent"');
-    expect(agentsIndex).toContain('"prompt",');
-    expect(agentsIndex).toContain('"messages",');
-    expect(agentsIndex).toContain('"rootDir",');
-    expect(agentsIndex).toContain('"resumeSession",');
-    expect(agentsIndex).toContain('"continueSession",');
-    expect(agentsIndex).toContain('"taskContext",');
-    expect(agentsIndex).toContain('"run",');
-    expect(agentsIndex).toContain('"node",');
-    expect(agentsIndex).toContain('"iteration",');
-    expect(agentsIndex).toContain('"attempt",');
+    expect(agentsIndex).toContain("taskIdentity: readSmithersTaskIdentity(args)");
+    expect(agentsIndex).toContain("...(smithersContext ? { smithersContext } : {})");
+    expect(agentsIndex).toContain("    promptSource,");
+    expect(agentsIndex).not.toContain("...(promptSource ? { promptSource } : {})");
+    expect(agentsIndex).toContain(
+      'throw new Error("svvy workflow task-agent requires exactly one prompt source: provide either prompt or messages.");',
+    );
+    expect(agentsIndex).toContain("} as RunTaskAgentSourceInput;");
+    for (const forbidden of [
+      "surfacePiSessionId",
+      "workflowTaskAttemptId",
+      "generatedAgentContextFingerprint",
+      "queueItemId",
+      "commandFacts",
+      "runtimeEffects",
+      "extensionExecutionPlan",
+      "systemPrompt",
+    ]) {
+      expect(agentsIndex).not.toContain(forbidden);
+    }
+    expect(agentsIndex).toContain('return { kind: "prompt", prompt: args.prompt };');
+    expect(agentsIndex).toContain(
+      'return { kind: "messages", messages: normalizeBridgeMessages(args.messages) };',
+    );
+    expect(agentsIndex).toContain("rootDir?: unknown;");
+    expect(agentsIndex).toContain("resumeSession?: unknown;");
+    expect(agentsIndex).toContain("continueSession?: unknown;");
+    expect(agentsIndex).toContain("taskContext?: unknown;");
+    expect(agentsIndex).toContain("run?: unknown;");
+    expect(agentsIndex).toContain("node?: unknown;");
+    expect(agentsIndex).toContain("iteration?: unknown;");
+    expect(agentsIndex).toContain("attempt?: unknown;");
     expect(agentsIndex).toContain("smithersRunId");
     expect(agentsIndex).toContain("nodeId");
-    expect(agentsIndex).toContain('"maxOutputBytes"');
+    expect(agentsIndex).toContain("maxOutputBytes?: unknown;");
+    expect(agentsIndex).not.toContain("copySerializableGenerateFields");
+    expect(agentsIndex).not.toContain("copySmithersIdentityFields");
     expect(agentsIndex).not.toContain("supportsNativeStructuredOutput");
     expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
       'export { reviewerAgent } from "./reviewerAgent";',
@@ -224,7 +278,7 @@ describe("Workflows generated read model", () => {
       join(packageRoot, "agents", "reviewerAgent.ts"),
       "utf8",
     );
-    expect(reviewerAgentSource).toContain("satisfies TaskAgentParameters");
+    expect(reviewerAgentSource).toContain("satisfies TaskAgentParametersSource");
     expect(reviewerAgentSource).not.toContain("defineTaskAgent");
     expect(existsSync(join(packageRoot, "components", "ReviewPanel.tsx"))).toBe(true);
     expect(existsSync(join(packageRoot, "prompts", "ReviewPrompt.ts"))).toBe(true);
@@ -259,7 +313,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review bridge payloads.",
           overrides: { shell: "available" },
         },
@@ -277,8 +331,13 @@ describe("Workflows generated read model", () => {
     expect(build.ok).toBe(true);
     linkPackageForGeneratedImport({
       packageRoot,
-      packageName: "@svvy/extensions",
+      packageName: "@svvyx/extensions",
       targetPath: extensionsPackageRoot,
+    });
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvy/core",
+      targetPath: join(import.meta.dir, "..", "..", "..", "packages", "core"),
     });
 
     const received: unknown[] = [];
@@ -287,6 +346,7 @@ describe("Workflows generated read model", () => {
       const request = new Request(requestInfo, init);
       expect(request.method).toBe("POST");
       expect(request.headers.get("authorization")).toBe("Bearer bridge-token");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
       return request.json().then((body) => {
         received.push(body);
         return Response.json({ text: "review complete", usage: { outputTokens: 7 } });
@@ -295,8 +355,9 @@ describe("Workflows generated read model", () => {
     const previousEnv = snapshotBridgeEnv();
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN = "bridge-token";
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
-    process.env.SVVY_SOURCE_COMMAND_ID = "command-workflow-001";
-    process.env.SVVY_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID = "command-workflow-001";
+    process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS = "2500";
 
     try {
       const workflows = await import(`${pathToFileURL(join(packageRoot, "index.ts")).href}?bridge`);
@@ -312,10 +373,16 @@ describe("Workflows generated read model", () => {
       expect(agent).toMatchObject({ id: "reviewerAgent" });
       expect(typeof agent.generate).toBe("function");
 
+      await expect(agent.generate({})).rejects.toThrow(
+        "svvy workflow task-agent requires exactly one prompt source",
+      );
+      await expect(agent.generate({ prompt: "Review this patch.", messages: [] })).rejects.toThrow(
+        "svvy workflow task-agent requires exactly one prompt source",
+      );
+
       await expect(
         agent.generate({
           prompt: "Review this patch.",
-          messages: [{ role: "user", content: "Find risks." }],
           rootDir: "/workspace/project",
           taskContext: { taskId: "task-review" },
           run: { id: "run-001" },
@@ -334,32 +401,37 @@ describe("Workflows generated read model", () => {
     expect(received).toEqual([
       {
         operation: "runTaskAgent",
-        taskAgent: {
+        agent: {
           id: "reviewerAgent",
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review bridge payloads.",
           overrides: { shell: "available" },
         },
         workspaceSessionId: "workspace-session-001",
         sourceCommandId: "command-workflow-001",
-        prompt: "Review this patch.",
-        messages: [{ role: "user", content: "Find risks." }],
-        rootDir: "/workspace/project",
-        taskContext: { taskId: "task-review" },
-        run: { id: "run-001" },
-        node: { id: "node-review" },
-        iteration: 2,
-        attempt: 1,
-        smithersRunId: "run-001",
-        nodeId: "node-review",
+        taskIdentity: {
+          runId: "run-001",
+          nodeId: "node-review",
+          iteration: 2,
+          attempt: 1,
+        },
+        smithersContext: {
+          rootDir: "/workspace/project",
+          run: { id: "run-001" },
+          node: { id: "node-review" },
+        },
+        promptSource: {
+          kind: "prompt",
+          prompt: "Review this patch.",
+        },
       },
     ]);
   });
 
-  it("reports clear generated AgentLike bridge errors for missing env and malformed responses", async () => {
+  it("reports clear generated AgentLike bridge errors for missing env and bridge failures", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -373,7 +445,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review bridge failures.",
         },
         null,
@@ -389,8 +461,13 @@ describe("Workflows generated read model", () => {
     expect(build.ok).toBe(true);
     linkPackageForGeneratedImport({
       packageRoot,
-      packageName: "@svvy/extensions",
+      packageName: "@svvyx/extensions",
       targetPath: extensionsPackageRoot,
+    });
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvy/core",
+      targetPath: join(import.meta.dir, "..", "..", "..", "packages", "core"),
     });
     const workflows = await import(`${pathToFileURL(join(packageRoot, "index.ts")).href}?errors`);
     const agent = workflows.Agents.defineTaskAgent(workflows.Agents.reviewerAgent);
@@ -402,14 +479,33 @@ describe("Workflows generated read model", () => {
     );
 
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = (() => Response.json({ output: "missing text" })) as unknown as typeof fetch;
+    globalThis.fetch = (() => new Response("{not json")) as unknown as typeof fetch;
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN = "bridge-token";
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
-    process.env.SVVY_SOURCE_COMMAND_ID = "command-workflow-001";
-    process.env.SVVY_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID = "command-workflow-001";
+    process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS = "not-a-number";
     try {
+      await expect(agent.generate({ prompt: "bad timeout" })).rejects.toThrow(
+        "Invalid svvy workflow task-agent bridge env var: SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS must be a positive integer.",
+      );
+
+      process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS = "1000";
       await expect(agent.generate({ prompt: "bad response" })).rejects.toThrow(
-        "Malformed svvy workflow task-agent bridge response: expected object with string text.",
+        "Malformed svvy workflow task-agent bridge response",
+      );
+
+      globalThis.fetch = (() =>
+        Response.json(
+          {
+            error: "task_attempt_failed",
+            message: "Task failed.",
+            retryable: true,
+          },
+          { status: 500 },
+        )) as unknown as typeof fetch;
+      await expect(agent.generate({ prompt: "failed response" })).rejects.toThrow(
+        "svvy workflow task-agent bridge rejected runTaskAgent (500 task_attempt_failed): Task failed.",
       );
     } finally {
       restoreBridgeEnv(previousEnv);
@@ -434,12 +530,12 @@ describe("Workflows generated read model", () => {
       sourceRoot,
       workspaceCwds: [workspaceCwd],
     });
-    const linkPath = join(workspaceCwd, ".smithers", "node_modules", "@svvy", "workflows");
+    const linkPath = join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows");
     const extensionsLinkPath = join(
       workspaceCwd,
       ".smithers",
       "node_modules",
-      "@svvy",
+      "@svvyx",
       "extensions",
     );
 
@@ -479,7 +575,7 @@ describe("Workflows generated read model", () => {
           label: "Bad Agent",
           provider: "openai",
           model: "missing-model",
-          reasoningEffort: "xhigh",
+          reasoning: { effort: "xhigh" },
           instructions: "Review strictly.",
           overrides: { "missing-extension": "loaded" },
         },
@@ -495,7 +591,7 @@ describe("Workflows generated read model", () => {
           label: "Bad Reasoning Agent",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "xhigh",
+          reasoning: { effort: "xhigh" },
           instructions: "Review strictly.",
           overrides: { shell: "loaded" },
         },
@@ -530,7 +626,7 @@ describe("Workflows generated read model", () => {
           label: "Strict Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strictly.",
           overrides: { shell: "loaded" },
         },
@@ -574,7 +670,7 @@ describe("Workflows generated read model", () => {
           label: "Explorer copy",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Explore the requested area.",
           overrides: {},
           extensionOrder: [],
@@ -612,7 +708,7 @@ describe("Workflows generated read model", () => {
           label: "Blocked Agent",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strictly.",
           overrides: { "missing-workflow-extension": "loaded" },
         },
@@ -634,7 +730,7 @@ describe("Workflows generated read model", () => {
     ]);
   });
 
-  it("generates and links @svvy/extensions for workflow agent extension references", async () => {
+  it("generates and links @svvyx/extensions for workflow agent extension references", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -650,7 +746,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strictly.",
           overrides: { git: "loaded", github: "loaded" },
         },
@@ -668,21 +764,31 @@ describe("Workflows generated read model", () => {
     });
 
     expect(build.ok).toBe(true);
-    expect(readFileSync(join(extensionsPackageRoot, "package.json"), "utf8")).toContain(
-      '"name": "@svvy/extensions"',
-    );
+    expect(JSON.parse(readFileSync(join(extensionsPackageRoot, "package.json"), "utf8"))).toEqual({
+      name: "@svvyx/extensions",
+      type: "module",
+      exports: {
+        ".": "./index.ts",
+      },
+    });
     const extensionsIndex = readFileSync(join(extensionsPackageRoot, "index.ts"), "utf8");
-    expect(extensionsIndex).toContain('"git": "git"');
-    expect(extensionsIndex).toContain('"github": "github"');
+    expect(extensionsIndex).toContain('"git": {"id":"git"');
+    expect(extensionsIndex).toContain('"github": {"id":"github"');
+    expect(generatedPackageRuntimeImportViolations(extensionsPackageRoot)).toEqual([]);
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
-    expect(generatedAgent).toContain('import { Extensions } from "@svvy/extensions";');
-    expect(generatedAgent).toContain('Extensions["git"]');
-    expect(generatedAgent).toContain('Extensions["github"]');
+    expect(generatedAgent).toContain('import { Extensions } from "@svvyx/extensions";');
+    expect(generatedAgent).toContain("Extensions.git.id");
+    expect(generatedAgent).toContain("Extensions.github.id");
     expect(generatedAgent).not.toContain('Extensions["workflows"]');
     expect(generatedAgent).not.toContain('"extensions"');
     const generatedAgentsIndex = readFileSync(join(packageRoot, "agents", "index.ts"), "utf8");
-    expect(generatedAgentsIndex).toContain('import type { ExtensionId } from "@svvy/extensions";');
+    expect(generatedAgentsIndex).toContain('import type { ExtensionId } from "@svvyx/extensions";');
     expect(generatedAgentsIndex).toContain("export type TaskAgentExtensionId = ExtensionId;");
+    expect(
+      generatedPackageRuntimeImportViolations(packageRoot, {
+        allowedGeneratedPackages: new Set(["@svvy/core", "@svvyx/extensions"]),
+      }),
+    ).toEqual([]);
     expect(build.items[0]?.agentParameters?.overrides).toEqual({
       git: "loaded",
       github: "loaded",
@@ -693,10 +799,10 @@ describe("Workflows generated read model", () => {
       github: "loaded",
     });
     expect(
-      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvy", "workflows")),
+      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows")),
     ).toBe(packageRoot);
     expect(
-      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvy", "extensions")),
+      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "extensions")),
     ).toBe(extensionsPackageRoot);
   });
 
@@ -716,7 +822,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review the implementation.",
           overrides: {
             github: "loaded",
@@ -747,13 +853,13 @@ describe("Workflows generated read model", () => {
       join(generatedPackagePath, "agents", "reviewerAgent.ts"),
       "utf8",
     );
-    expect(generatedAgent).toContain('Extensions["github"]');
-    expect(generatedAgent).toContain('Extensions["git"]');
-    expect(generatedAgent).toContain('Extensions["shell"]');
+    expect(generatedAgent).toContain("Extensions.github.id");
+    expect(generatedAgent).toContain("Extensions.git.id");
+    expect(generatedAgent).toContain("Extensions.shell.id");
     expect(generatedAgent).not.toContain("extensionUsage");
   });
 
-  it("includes ready user svvyx TypeScript extensions in @svvy/extensions", async () => {
+  it("includes ready user svvyx TypeScript extensions in @svvyx/extensions", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -773,7 +879,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strict Linear context.",
           overrides: { git: "loaded", "linear-tools": "loaded" },
         },
@@ -792,11 +898,11 @@ describe("Workflows generated read model", () => {
 
     expect(build.ok).toBe(true);
     const extensionsIndex = readFileSync(join(extensionsPackageRoot, "index.ts"), "utf8");
-    expect(extensionsIndex).toContain('"git": "git"');
-    expect(extensionsIndex).toContain('"linear-tools": "linear-tools"');
+    expect(extensionsIndex).toContain('"git": {"id":"git"');
+    expect(extensionsIndex).toContain('"linear-tools": {"id":"linear-tools"');
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
-    expect(generatedAgent).toContain('Extensions["git"]');
-    expect(generatedAgent).toContain('Extensions["linear-tools"]');
+    expect(generatedAgent).toContain("Extensions.git.id");
+    expect(generatedAgent).toContain('Extensions["linear-tools"].id');
     expect(build.items[0]?.agentParameters?.overrides).toEqual({
       git: "loaded",
       "linear-tools": "loaded",
@@ -830,7 +936,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review dependency-backed extension references.",
           overrides: { "installed-api": "loaded" },
         },
@@ -849,9 +955,9 @@ describe("Workflows generated read model", () => {
 
     expect(build.ok).toBe(true);
     const extensionIds = readFileSync(join(extensionsPackageRoot, "index.ts"), "utf8");
-    expect(extensionIds).toContain('"installed-api": "installed-api"');
+    expect(extensionIds).toContain('"installed-api": {"id":"installed-api"');
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
-    expect(generatedAgent).toContain('Extensions["installed-api"]');
+    expect(generatedAgent).toContain('Extensions["installed-api"].id');
     expect(build.items[0]?.agentParameters?.overrides).toEqual({ "installed-api": "loaded" });
   });
 
@@ -877,7 +983,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review unapproved dependency-backed extension references.",
           overrides: { "unapproved-api": "loaded" },
         },
@@ -931,7 +1037,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review rebuilt extension references.",
           overrides: { "unbuilt-api": "loaded", "stale-api": "loaded" },
         },
@@ -951,11 +1057,11 @@ describe("Workflows generated read model", () => {
     expect(build.ok).toBe(true);
     expect(build.diagnostics).toEqual([]);
     const extensionsIndex = readFileSync(join(extensionsPackageRoot, "index.ts"), "utf8");
-    expect(extensionsIndex).toContain('"stale-api": "stale-api"');
-    expect(extensionsIndex).toContain('"unbuilt-api": "unbuilt-api"');
+    expect(extensionsIndex).toContain('"stale-api": {"id":"stale-api"');
+    expect(extensionsIndex).toContain('"unbuilt-api": {"id":"unbuilt-api"');
     const generatedAgent = readFileSync(join(packageRoot, "agents", "reviewerAgent.ts"), "utf8");
-    expect(generatedAgent).toContain('Extensions["stale-api"]');
-    expect(generatedAgent).toContain('Extensions["unbuilt-api"]');
+    expect(generatedAgent).toContain('Extensions["stale-api"].id');
+    expect(generatedAgent).toContain('Extensions["unbuilt-api"].id');
     expect(build.items[0]?.agentParameters?.overrides).toEqual({
       "unbuilt-api": "loaded",
       "stale-api": "loaded",
@@ -998,7 +1104,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review broken extension context.",
           overrides: { "missing-workflow-extension": "loaded" },
         },
@@ -1072,7 +1178,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review extension preflight ordering.",
           overrides: { "buildable-api": "loaded", "missing-workflow-extension": "loaded" },
         },
@@ -1148,7 +1254,7 @@ describe("Workflows generated read model", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review unavailable extension references.",
           overrides: {
             "blocked-api": "loaded",
@@ -1193,7 +1299,7 @@ describe("Workflows generated read model", () => {
           label: "Default",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "low",
+          reasoning: { effort: "low" },
           instructions: "Handle the task.",
           overrides: { shell: "loaded" },
         },
@@ -1208,9 +1314,9 @@ describe("Workflows generated read model", () => {
         "  ...Agents.defaultAgent,",
         '  id: "reviewerAgent",',
         '  label: "Reviewer",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review strictly.",',
-        '  overrides: { [Extensions.git]: "loaded", [Extensions["apply-patch"]]: "available" },',
+        '  overrides: { [Extensions.git.id]: "loaded", [Extensions["apply-patch"].id]: "available" },',
         "});",
       ].join("\n"),
     );
@@ -1224,7 +1330,7 @@ describe("Workflows generated read model", () => {
         '  label: "Reviewer",',
         '  provider: "openai",',
         "  model,",
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review strictly.",',
         '  overrides: { shell: "loaded" },',
         "});",
@@ -1247,15 +1353,15 @@ describe("Workflows generated read model", () => {
     writeFileSync(
       importedDefineTaskAgentPath,
       [
-        'import { defineTaskAgent } from "@svvy/workflows";',
-        "export const importedReviewer = defineTaskAgent({",
+        'import { Agents } from "@svvyx/workflows";',
+        "export const importedReviewer = Agents.defineTaskAgent({",
         '  id: "importedReviewer",',
         '  label: "Imported Reviewer",',
         '  provider: "openai",',
         '  model: "gpt-5.4",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review from imported helper.",',
-        '  overrides: { [Extensions.git]: "loaded" },',
+        '  overrides: { [Extensions.git.id]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1270,9 +1376,9 @@ describe("Workflows generated read model", () => {
         '  label: "Local Reviewer",',
         '  provider: "openai",',
         '  model: "gpt-5.4",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Do not extract local helpers.",',
-        '  overrides: { [Extensions.git]: "loaded" },',
+        '  overrides: { [Extensions.git.id]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1287,9 +1393,24 @@ describe("Workflows generated read model", () => {
         '  label: "Other Reviewer",',
         '  provider: "openai",',
         '  model: "gpt-5.4",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Do not extract other namespaces.",',
-        '  overrides: { [Extensions.git]: "loaded" },',
+        '  overrides: { [Extensions.git.id]: "loaded" },',
+        "});",
+      ].join("\n"),
+    );
+    const legacyExtensionReferencePath = join(root, "legacy-extension-reference-agent.ts");
+    writeFileSync(
+      legacyExtensionReferencePath,
+      [
+        "export const legacyReviewer = Agents.defineTaskAgent({",
+        '  id: "legacyReviewer",',
+        '  label: "Legacy Reviewer",',
+        '  provider: "openai",',
+        '  model: "gpt-5.4",',
+        '  reasoning: { effort: "medium" },',
+        '  instructions: "Reject legacy extension references.",',
+        '  overrides: { [Extensions["git"]]: "loaded" },',
         "});",
       ].join("\n"),
     );
@@ -1301,7 +1422,7 @@ describe("Workflows generated read model", () => {
         label: "Reviewer",
         provider: "openai",
         model: "gpt-5.4",
-        reasoningEffort: "medium",
+        reasoning: { effort: "medium" },
         instructions: "Review strictly.",
         overrides: {
           git: "loaded",
@@ -1318,7 +1439,7 @@ describe("Workflows generated read model", () => {
         label: "Imported Reviewer",
         provider: "openai",
         model: "gpt-5.4",
-        reasoningEffort: "medium",
+        reasoning: { effort: "medium" },
         instructions: "Review from imported helper.",
         overrides: { git: "loaded" },
       },
@@ -1335,6 +1456,9 @@ describe("Workflows generated read model", () => {
     expect(() =>
       extractWorkflowAgentParametersFromSource({ path: otherNamespacePath, sourceRoot }),
     ).toThrow("No static defineTaskAgent export found.");
+    expect(() =>
+      extractWorkflowAgentParametersFromSource({ path: legacyExtensionReferencePath }),
+    ).toThrow("static property names");
   });
 
   it("extracts one selected component export and rejects unsafe sibling runtime declarations", () => {
@@ -1516,6 +1640,8 @@ function writeReadyUserExtension(input: {
         description: `${input.extensionId} extension`,
         interface: interfaceKind,
         typescriptApiEnabled: input.typescriptApiEnabled,
+        workflowTaskAgentReferenceExportEnabled:
+          interfaceKind === "svvyx" && input.typescriptApiEnabled ? true : undefined,
         instructionFiles: [],
       },
       null,
@@ -1657,10 +1783,11 @@ function linkPackageForGeneratedImport(input: {
 
 function snapshotBridgeEnv(): Record<string, string | undefined> {
   return {
-    SVVY_SOURCE_COMMAND_ID: process.env.SVVY_SOURCE_COMMAND_ID,
     SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN,
     SVVY_WORKFLOW_AGENT_BRIDGE_URL: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL,
-    SVVY_WORKSPACE_SESSION_ID: process.env.SVVY_WORKSPACE_SESSION_ID,
+    SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS,
+    SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID,
+    SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID,
   };
 }
 
@@ -1687,6 +1814,43 @@ function sourceBuildFingerprint(sourceRoot: string): string | null {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+function generatedPackageRuntimeImportViolations(
+  packageRoot: string,
+  options: { allowedGeneratedPackages?: ReadonlySet<string> } = {},
+): string[] {
+  return listGeneratedTypeScriptFiles(packageRoot).flatMap((file) =>
+    readImports(file)
+      .filter((specifier) => {
+        if (specifier.startsWith(".") || specifier.startsWith("node:")) {
+          return false;
+        }
+        if (options.allowedGeneratedPackages?.has(specifier)) {
+          return false;
+        }
+        return (
+          specifier.startsWith("@svvy/") ||
+          specifier.startsWith("@svvyx/") ||
+          specifier === "effect" ||
+          specifier.startsWith("effect/") ||
+          specifier.includes("/src/")
+        );
+      })
+      .map((specifier) => `${file.slice(packageRoot.length + 1)} -> ${specifier}`),
+  );
+}
+
+function readImports(path: string): string[] {
+  const source = readFileSync(path, "utf8");
+  return Array.from(
+    source.matchAll(IMPORT_PATTERN),
+    (match) => match[1] ?? match[2] ?? match[3] ?? match[4],
+  ).filter((specifier): specifier is string => Boolean(specifier));
+}
+
+function listGeneratedTypeScriptFiles(root: string): string[] {
+  return listBuildInputFiles(root).filter((path) => path.endsWith(".ts") || path.endsWith(".tsx"));
 }
 
 function listBuildInputFiles(root: string): string[] {

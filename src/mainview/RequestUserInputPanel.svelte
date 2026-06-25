@@ -179,7 +179,11 @@
       return;
     }
     event.preventDefault();
-    submitCustomAnswer(request, question, event.metaKey || event.ctrlKey ? "after_turn" : "steer");
+    submitCustomAnswer(
+      request,
+      question,
+      event.metaKey || event.ctrlKey ? "queue-only" : "enqueue-and-run",
+    );
   }
 
   onMount(() => {
@@ -300,7 +304,7 @@
                                     request,
                                     question,
                                     { kind: "option", optionId: option.optionId },
-                                    "steer",
+                                    "enqueue-and-run",
                                   )}
                               >
                                 <SendIcon aria-hidden="true" size={13} />
@@ -318,7 +322,7 @@
                                     request,
                                     question,
                                     { kind: "option", optionId: option.optionId },
-                                    "after_turn",
+                                    "queue-only",
                                   )}
                               >
                                 <ClockIcon aria-hidden="true" size={13} />
@@ -344,7 +348,7 @@
                       <Button
                         size="xs"
                         disabled={!answerable || pendingKey === key}
-                        onclick={() => submitCustomAnswer(request, question, "steer")}
+                        onclick={() => submitCustomAnswer(request, question, "enqueue-and-run")}
                       >
                         <SendIcon aria-hidden="true" size={13} />
                         Queue now
@@ -353,7 +357,7 @@
                         size="xs"
                         variant="ghost"
                         disabled={!answerable || pendingKey === key}
-                        onclick={() => submitCustomAnswer(request, question, "after_turn")}
+                        onclick={() => submitCustomAnswer(request, question, "queue-only")}
                       >
                         <ClockIcon aria-hidden="true" size={13} />
                         After turn

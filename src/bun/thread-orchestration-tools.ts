@@ -1,8 +1,13 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import type { StructuredSessionStateStore } from "./structured-session-state";
+import type { NativeToolDefinition } from "@svvy/extensions";
+import { Type, type Static } from "typebox";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type {
+  CommandFactsPayload,
+  RuntimeCommandStatePortService,
+  RuntimeTurnStatePortService,
+  StateContractError,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 
 export const THREAD_FOLLOWUP_TOOL_NAME = "thread_followup";
 export const THREAD_REQUEST_REPORT_TOOL_NAME = "thread_request_report";
@@ -65,9 +70,11 @@ export interface ThreadOrchestrationBridge {
 
 export function createThreadFollowupTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadOrchestrationBridge;
-}): AgentTool<typeof threadFollowupParamsSchema, ThreadFollowupQueueResult> {
+}): NativeToolDefinition<ThreadFollowupParams, ThreadFollowupQueueResult> {
   return {
     label: "Thread Followup",
     name: THREAD_FOLLOWUP_TOOL_NAME,
@@ -81,29 +88,33 @@ export function createThreadFollowupTool(options: {
         params.threadIds?.map((threadId) => threadId.trim()).filter(Boolean) ?? null;
       const threadGroupId = params.threadGroupId?.trim() || null;
 
-      options.store.setTurnDecision({
-        turnId: runtime.turnId!,
-        decision: "thread_followup",
-        onlyIfPending: true,
-      });
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.rootThreadId ?? null,
-        toolName: THREAD_FOLLOWUP_TOOL_NAME,
-        executor: "orchestrator",
-        visibility: "surface",
-        title: "Queue thread follow-up",
-        summary: message,
-        arguments: {
-          ...(threadIds ? { threadIds } : {}),
-          ...(threadGroupId ? { threadGroupId } : {}),
-          message,
-          activate: params.activate ?? false,
-        },
-      });
-      options.store.startCommand(command.id);
+      options.runState(
+        options.turnState.setTurnDecision({
+          turnId: runtime.turnId!,
+          decision: "thread_followup",
+          onlyIfPending: true,
+        }),
+      );
+      const command = options.runState(
+        options.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.rootThreadId ?? null,
+          toolName: THREAD_FOLLOWUP_TOOL_NAME,
+          executor: "orchestrator",
+          visibility: "surface",
+          title: "Queue thread follow-up",
+          summary: message,
+          arguments: {
+            ...(threadIds ? { threadIds } : {}),
+            ...(threadGroupId ? { threadGroupId } : {}),
+            message,
+            activate: params.activate ?? false,
+          },
+        }),
+      ).value;
+      options.runState(options.commandState.startCommand({ commandId: command.id }));
       const validationError = !message
         ? `${THREAD_FOLLOWUP_TOOL_NAME} requires a non-empty message.`
         : (threadIds?.length ?? 0) === 0 && !threadGroupId
@@ -112,12 +123,14 @@ export function createThreadFollowupTool(options: {
             ? `${THREAD_FOLLOWUP_TOOL_NAME} accepts threadIds or threadGroupId, not both.`
             : null;
       if (validationError) {
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: validationError,
-          error: validationError,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: validationError,
+            error: validationError,
+          }),
+        );
         throw new Error(validationError);
       }
 
@@ -130,22 +143,26 @@ export function createThreadFollowupTool(options: {
           message,
           activate: params.activate ?? false,
         });
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary: message,
-          facts: details,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "succeeded",
+            summary: message,
+            facts: details as CommandFactsPayload,
+          }),
+        );
         return jsonToolResult(details);
       } catch (error) {
         const failure =
           error instanceof Error ? error.message : "Failed to queue handler thread follow-up.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: failure,
-          error: failure,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: failure,
+            error: failure,
+          }),
+        );
         return jsonToolResult({
           threadGroupId,
           threads: [],
@@ -158,9 +175,11 @@ export function createThreadFollowupTool(options: {
 
 export function createThreadRequestReportTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadOrchestrationBridge;
-}): AgentTool<typeof threadRequestReportParamsSchema, ThreadRequestReportQueueResult> {
+}): NativeToolDefinition<ThreadRequestReportParams, ThreadRequestReportQueueResult> {
   return {
     label: "Thread Request Report",
     name: THREAD_REQUEST_REPORT_TOOL_NAME,
@@ -174,27 +193,31 @@ export function createThreadRequestReportTool(options: {
       );
       const threadId = params.threadId.trim();
       const request = params.request?.trim() || null;
-      options.store.setTurnDecision({
-        turnId: runtime.turnId!,
-        decision: "thread_request_report",
-        onlyIfPending: true,
-      });
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.rootThreadId ?? null,
-        toolName: THREAD_REQUEST_REPORT_TOOL_NAME,
-        executor: "orchestrator",
-        visibility: "surface",
-        title: "Request thread report",
-        summary: request ?? `Request report from ${threadId}`,
-        arguments: {
-          threadId,
-          ...(request ? { request } : {}),
-        },
-      });
-      options.store.startCommand(command.id);
+      options.runState(
+        options.turnState.setTurnDecision({
+          turnId: runtime.turnId!,
+          decision: "thread_request_report",
+          onlyIfPending: true,
+        }),
+      );
+      const command = options.runState(
+        options.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.rootThreadId ?? null,
+          toolName: THREAD_REQUEST_REPORT_TOOL_NAME,
+          executor: "orchestrator",
+          visibility: "surface",
+          title: "Request thread report",
+          summary: request ?? `Request report from ${threadId}`,
+          arguments: {
+            threadId,
+            ...(request ? { request } : {}),
+          },
+        }),
+      ).value;
+      options.runState(options.commandState.startCommand({ commandId: command.id }));
 
       try {
         const details = await options.bridge.queueThreadReportRequest({
@@ -203,22 +226,26 @@ export function createThreadRequestReportTool(options: {
           threadId,
           request,
         });
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary: request ?? `Requested report from ${threadId}.`,
-          facts: details,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "succeeded",
+            summary: request ?? `Requested report from ${threadId}.`,
+            facts: details as CommandFactsPayload,
+          }),
+        );
         return jsonToolResult(details);
       } catch (error) {
         const failure =
           error instanceof Error ? error.message : "Failed to request a handler thread report.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: failure,
-          error: failure,
-        });
+        options.runState(
+          options.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: failure,
+            error: failure,
+          }),
+        );
         return jsonToolResult({
           threadId,
           surfacePiSessionId: "",

@@ -150,7 +150,7 @@ export async function runSvvyxRuntimeGeneratedClientCommand(input: {
     if (commandEntry.streaming) {
       throw runtimeCommandError(
         "streaming_not_supported",
-        `Streaming commands are not supported via the generated client.`,
+        `Streaming commands are not supported via the generated runtime facade.`,
       );
     }
 
@@ -159,7 +159,7 @@ export async function runSvvyxRuntimeGeneratedClientCommand(input: {
       throw runtimeCommandError("invalid_argument", "Input must be an object.");
     }
     if (isRecord(rawClientInput)) {
-      rejectUnknownGeneratedClientInputKeys(rawClientInput);
+      rejectUnknownGeneratedFacadeInputKeys(rawClientInput);
     }
     if (isRecord(rawClientInput)) {
       if (rawClientInput.args !== undefined && !isRecord(rawClientInput.args)) {
@@ -230,10 +230,10 @@ export async function runSvvyxRuntimeGeneratedClientCommand(input: {
     let processedInput = rawClientInput;
     if (isRecord(rawClientInput)) {
       if (isRecord(rawClientInput.args)) {
-        rejectUnknownGeneratedClientRecordKeys(rawClientInput.args, argNames, "args");
+        rejectUnknownGeneratedFacadeRecordKeys(rawClientInput.args, argNames, "args");
       }
       if (isRecord(rawClientInput.options)) {
-        rejectUnknownGeneratedClientRecordKeys(rawClientInput.options, optionNames, "options");
+        rejectUnknownGeneratedFacadeRecordKeys(rawClientInput.options, optionNames, "options");
       }
       if (argNames.length > 0 && isRecord(rawClientInput.args)) {
         const reordered: Record<string, unknown> = {};
@@ -498,7 +498,7 @@ function dispatcherHelp(): SvvyxRuntimeCommandResult {
   };
 }
 
-function rejectUnknownGeneratedClientInputKeys(input: Record<string, unknown>): void {
+function rejectUnknownGeneratedFacadeInputKeys(input: Record<string, unknown>): void {
   const allowed = new Set([
     "args",
     "options",
@@ -512,13 +512,13 @@ function rejectUnknownGeneratedClientInputKeys(input: Record<string, unknown>): 
     if (!allowed.has(key)) {
       throw runtimeCommandError(
         "invalid_argument",
-        `Unsupported generated client input key: ${key}`,
+        `Unsupported generated runtime facade input key: ${key}`,
       );
     }
   }
 }
 
-function rejectUnknownGeneratedClientRecordKeys(
+function rejectUnknownGeneratedFacadeRecordKeys(
   input: Record<string, unknown>,
   allowedNames: readonly string[],
   name: string,

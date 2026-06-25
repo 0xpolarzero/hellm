@@ -45,7 +45,8 @@ Default usage:
 
 ## Tool Surface
 
-GitHub exposes no native `github_*` tools, no `svvyx github`, and no generated TypeScript client.
+GitHub exposes no native `github_*` tools, no `svvyx github`, and no generated
+`execute_typescript` facade.
 
 Agents use:
 
@@ -53,8 +54,10 @@ Agents use:
 gh ...
 ```
 
-through `exec_command`. GitHub intentionally has no pinned `gh` version in v1 because the builtin
+through `exec_command`. GitHub intentionally has no pinned `gh` version because the builtin
 guidance is generic GitHub CLI behavior rather than a version-specific generated instruction bundle.
 
-Current detailed behavior and loaded instructions are defined in
-`docs/specs/extensions-and-tools.spec.md`, "GitHub Extension".
+Detailed behavior, loaded instructions, and package ownership are defined across:
+
+- `docs/specs/extensions-and-tools.spec.md`, "Builtin Extensions"
+- `docs/specs/package-architecture/extensions.spec.md`, "Prompt-Only CLI Guidance"

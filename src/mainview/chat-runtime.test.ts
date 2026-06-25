@@ -1,9 +1,17 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { getModel, type AssistantMessage, type Message } from "@mariozechner/pi-ai";
+import {
+  getModel,
+  type AssistantMessage,
+  type ImageContent,
+  type Message,
+  type TextContent,
+} from "@mariozechner/pi-ai";
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import {
+  composerAttachmentPromptText,
   parseComposerAttachmentTextSignature,
+  serializeComposerAttachmentTextSignature,
   type ComposerAttachment,
   type AppWorkspaceUiRestoreState,
   type AppLogEntry,
@@ -18,6 +26,8 @@ import {
   type SetRequestUserInputTimerPausedRequest,
   type SurfaceSyncMessage,
   type WorkspaceCommandInspector,
+  type WriteCommandStdinRequest,
+  type WriteCommandStdinResponse,
   type WorkspaceHandlerThreadInspector,
   type WorkspaceHandlerThreadSummary,
   type WorkspaceRuntimeApprovalRequest,
@@ -40,8 +50,8 @@ import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
 } from "../shared/agent-settings";
-import { resolveActorExtensionState, type ExtensionUsageState } from "../shared/extensions";
-import { buildWorkspaceSessionNavigation } from "./session-state";
+import { resolveActorExtensionState, type ExtensionUsageState } from "@svvy/extensions";
+import { buildWorkspaceSessionNavigation } from "@svvy/state/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
 
 mock.module("electrobun/view", () => {
@@ -117,6 +127,7 @@ type FakeRpcHarness = {
     payload: ExtensionCliRequirementActionUpdateMessage,
   ) => void;
   commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
+  commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>>;
   handlerThreadListRequests: string[];
   handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }>;
   workflowTaskAttemptInspectorRequests: Array<{
@@ -163,6 +174,79 @@ function userMessage(text: string): AgentMessage {
     role: "user",
     timestamp: Date.now(),
     content: [{ type: "text", text }],
+  };
+}
+
+function submittedUserMessage(message: SendPromptRequest["message"]): Message {
+  const content: Array<TextContent | ImageContent> = [];
+  const text = message.text.trim();
+  if (text) {
+    content.push({ type: "text", text });
+  }
+  const attachments = (message.attachments ?? []).flatMap(
+    (attachment, index): ComposerAttachment[] => {
+      if (!attachment.path) {
+        return [];
+      }
+      return [
+        {
+          id: attachment.id ?? `submitted-${index}`,
+          kind: attachment.kind,
+          name: attachment.name ?? attachment.path,
+          path: attachment.path,
+          ...(attachment.workspaceRelativePath !== undefined
+            ? { workspaceRelativePath: attachment.workspaceRelativePath }
+            : {}),
+          ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType } : {}),
+          ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+        },
+      ];
+    },
+  );
+  const attachmentText = composerAttachmentPromptText(attachments);
+  if (attachmentText) {
+    content.push({
+      type: "text",
+      text: attachmentText,
+      textSignature: serializeComposerAttachmentTextSignature(attachments),
+    });
+  }
+  for (const attachment of message.attachments ?? []) {
+    if (attachment.kind === "image" && attachment.dataBase64 && attachment.mimeType) {
+      content.push({ type: "image", data: attachment.dataBase64, mimeType: attachment.mimeType });
+    }
+  }
+  return {
+    role: "user",
+    timestamp: Date.now(),
+    content: content.length > 0 ? content : [{ type: "text", text: "" }],
+    ...(message.snippetProvenance?.length
+      ? {
+          svvyMetadata: {
+            snippetProvenance: message.snippetProvenance.map((item) => ({
+              ...item,
+              arguments: [...item.arguments],
+            })),
+          },
+        }
+      : {}),
+  };
+}
+
+function submittedMessageFromAgentMessage(message: Message): SendPromptRequest["message"] {
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : Array.isArray(message.content)
+        ? message.content
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("")
+            .trim()
+        : "";
+  return {
+    text,
+    snippetProvenance: (message as { svvyMetadata?: { snippetProvenance?: unknown } }).svvyMetadata
+      ?.snippetProvenance as SendPromptRequest["message"]["snippetProvenance"],
   };
 }
 
@@ -229,7 +313,7 @@ function createThreadTarget(
 ): PromptTarget {
   return {
     workspaceSessionId,
-    surface: "thread",
+    surface: "handler",
     surfacePiSessionId,
     threadId,
   };
@@ -364,6 +448,11 @@ function createCommandInspector(
     finishedAt: "2026-04-10T10:05:00.000Z",
     artifacts: [],
     outputEvents: [],
+    stdin: {
+      mode: "none",
+      canAttemptWrite: false,
+      acceptedWrites: [],
+    },
     argumentSnapshots: [],
     patchSnapshots: [],
     diagnostics: [],
@@ -387,6 +476,11 @@ function createCommandInspector(
         finishedAt: "2026-04-10T10:02:00.000Z",
         artifacts: [],
         outputEvents: [],
+        stdin: {
+          mode: "continuable",
+          canAttemptWrite: false,
+          acceptedWrites: [],
+        },
         argumentSnapshots: [],
         patchSnapshots: [],
         diagnostics: [],
@@ -642,6 +736,7 @@ function createFakeRpc(input: {
   sessions: WorkspaceSessionSummary[];
   surfaces: ConversationSurfaceSnapshot[];
   commandInspector?: WorkspaceCommandInspector;
+  commandStdinResponse?: WriteCommandStdinResponse;
   handlerThreads?: WorkspaceHandlerThreadSummary[];
   handlerThreadInspector?: WorkspaceHandlerThreadInspector;
   workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
@@ -675,6 +770,7 @@ function createFakeRpc(input: {
   const thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }> = [];
   const cancelRequests: PromptTarget[] = [];
   const commandInspectorRequests: Array<{ sessionId: string; commandId: string }> = [];
+  const commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>> = [];
   const handlerThreadListRequests: string[] = [];
   const handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }> = [];
   const workflowTaskAttemptInspectorRequests: Array<{
@@ -1418,6 +1514,16 @@ function createFakeRpc(input: {
           commandInspectorRequests.push({ sessionId, commandId });
           return structuredClone(input.commandInspector ?? createCommandInspector(commandId));
         },
+        writeCommandStdin: async (request) => {
+          commandStdinRequests.push(structuredClone(request));
+          return structuredClone(
+            input.commandStdinResponse ?? {
+              commandId: request.commandId,
+              status: "accepted",
+              acceptedBytes: new TextEncoder().encode(request.text).byteLength,
+            },
+          );
+        },
         listHandlerThreads: async ({ sessionId }) => {
           handlerThreadListRequests.push(sessionId);
           return structuredClone(
@@ -1609,10 +1715,8 @@ function createFakeRpc(input: {
         },
         sendPrompt: async (request) => {
           const record = getSurfaceRecord(request.target.surfacePiSessionId);
-          const pendingUserMessage =
-            (request.messages as AgentMessage[]).findLast((message) => message.role === "user") ??
-            null;
-          if (request.queueOnly || record.snapshot.promptStatus === "streaming") {
+          const pendingUserMessage = submittedUserMessage(request.message);
+          if (request.delivery === "queue-only" || record.snapshot.promptStatus === "streaming") {
             record.snapshot = {
               ...record.snapshot,
               composerDraft: {
@@ -1693,10 +1797,11 @@ function createFakeRpc(input: {
               return;
             }
 
-            const provider = request.provider ?? record.snapshot.provider;
-            const model = request.model ?? record.snapshot.model;
+            const provider = record.snapshot.provider;
+            const model = record.snapshot.model;
             const nextMessages = [
-              ...(request.messages as AgentMessage[]),
+              ...(record.snapshot.messages as AgentMessage[]),
+              pendingUserMessage,
               ...(result.extraMessages ? structuredClone(result.extraMessages) : []),
               assistantMessage(result.assistantText, { provider, model }),
             ];
@@ -1707,8 +1812,8 @@ function createFakeRpc(input: {
               messages: nextMessages,
               provider,
               model,
-              reasoningEffort: request.reasoningEffort ?? record.snapshot.reasoningEffort,
-              systemPrompt: request.systemPrompt ?? record.snapshot.systemPrompt,
+              reasoningEffort: record.snapshot.reasoningEffort,
+              systemPrompt: record.snapshot.systemPrompt,
               pendingUserMessage: null,
               streamMessage: null,
               promptStatus: "idle",
@@ -1745,10 +1850,8 @@ function createFakeRpc(input: {
               record.snapshot = { ...record.snapshot, queuedMessages: remainingQueued };
               void harness.client.request.sendPrompt({
                 ...request,
-                messages: [
-                  ...(record.snapshot.messages as AgentMessage[]),
-                  userMessage(nextQueued.text),
-                ] as Message[],
+                message: { text: nextQueued.text },
+                delivery: "enqueue-and-run",
               });
             }
           })().catch((error) => {
@@ -1777,10 +1880,14 @@ function createFakeRpc(input: {
               "Unable to edit: user message was not found in the active conversation.",
             );
           }
+          record.snapshot = {
+            ...record.snapshot,
+            messages: structuredClone(messages.slice(0, editIndex)),
+          };
           return await harness.client.request.sendPrompt({
             workspaceId,
             target,
-            messages: [...messages.slice(0, editIndex), message] as Message[],
+            message: submittedMessageFromAgentMessage(message),
           });
         },
         updateComposerDraft: async ({ target, draft }) => {
@@ -2184,6 +2291,7 @@ function createFakeRpc(input: {
     cancelRequests,
     requestCounts,
     commandInspectorRequests,
+    commandStdinRequests,
     handlerThreadListRequests,
     handlerThreadInspectorRequests,
     workflowTaskAttemptInspectorRequests,
@@ -2344,6 +2452,10 @@ describe("createChatRuntime", () => {
       surfacePiSessionId: "session-1",
       requestId: "rui-request-1",
       paused: true,
+      clientSubmission: proxyObject({
+        correlationId: "request-input-timer-proxy",
+        source: "request-input-panel",
+      }),
     });
 
     expect(harness.requestUserInputTimerRequests).toEqual([
@@ -2352,6 +2464,10 @@ describe("createChatRuntime", () => {
         surfacePiSessionId: "session-1",
         requestId: "rui-request-1",
         paused: true,
+        clientSubmission: {
+          correlationId: "request-input-timer-proxy",
+          source: "request-input-panel",
+        },
       },
     ]);
     expect(runtime.getRequestUserInputRequests()[0]?.timeout).toMatchObject({
@@ -2365,7 +2481,11 @@ describe("createChatRuntime", () => {
       requestId: "rui-request-1",
       questionId: "rui-question-1",
       answer: { kind: "option", optionId: "rui-option-2" },
-      delivery: "steer",
+      delivery: "enqueue-and-run",
+      clientSubmission: proxyObject({
+        correlationId: "request-input-answer-proxy",
+        source: "request-input-panel",
+      }),
     });
 
     expect(harness.requestUserInputAnswerRequests).toEqual([
@@ -2374,7 +2494,11 @@ describe("createChatRuntime", () => {
         requestId: "rui-request-1",
         questionId: "rui-question-1",
         answer: { kind: "option", optionId: "rui-option-2" },
-        delivery: "steer",
+        delivery: "enqueue-and-run",
+        clientSubmission: {
+          correlationId: "request-input-answer-proxy",
+          source: "request-input-panel",
+        },
         workspaceId: TEST_WORKSPACE_INFO.workspaceId,
       },
     ]);
@@ -2917,9 +3041,7 @@ describe("createChatRuntime", () => {
     const queuedRequest = harness.promptRequests[1];
     expect(queuedRequest).toBeDefined();
     if (!queuedRequest) return;
-    const queuedUserMessage = (queuedRequest.messages as AgentMessage[]).findLast(
-      (message) => message.role === "user",
-    );
+    const queuedUserMessage = submittedUserMessage(queuedRequest.message);
     expect(queuedUserMessage?.content).toEqual([
       { type: "text", text: "Follow up while streaming" },
     ]);
@@ -3010,7 +3132,7 @@ describe("createChatRuntime", () => {
     });
 
     const request = harness.promptRequests[0];
-    const user = request?.messages.findLast((message) => message.role === "user");
+    const user = request ? submittedUserMessage(request.message) : undefined;
     const attachmentMetadata =
       Array.isArray(user?.content) && user.content[1]?.type === "text"
         ? parseComposerAttachmentTextSignature(user.content[1].textSignature)
@@ -3095,7 +3217,7 @@ describe("createChatRuntime", () => {
     });
 
     const request = harness.promptRequests[0];
-    const user = request?.messages.findLast((message) => message.role === "user");
+    const user = request ? submittedUserMessage(request.message) : undefined;
     const firstBlock = Array.isArray(user?.content) ? user.content[0] : null;
 
     expect(firstBlock).toEqual({
@@ -3183,26 +3305,14 @@ describe("createChatRuntime", () => {
       clientSubmission: proxyObject({
         correlationId: "composer-submit-proxy",
         source: "composer",
-        draftLength: 27,
-        trimmedDraftLength: 27,
-        serializedTextLength: 27,
-        attachmentCount: 1,
-        snippetMentionCount: 1,
-        snippetProvenanceCount: 1,
       }),
     });
 
     const request = harness.promptRequests[0];
-    const user = request?.messages.findLast((message) => message.role === "user");
+    const user = request ? submittedUserMessage(request.message) : undefined;
     expect(request?.clientSubmission).toEqual({
       correlationId: "composer-submit-proxy",
       source: "composer",
-      draftLength: 27,
-      trimmedDraftLength: 27,
-      serializedTextLength: 27,
-      attachmentCount: 1,
-      snippetMentionCount: 1,
-      snippetProvenanceCount: 1,
     });
     expect(user).toMatchObject({
       svvyMetadata: {
@@ -3370,8 +3480,8 @@ describe("createChatRuntime", () => {
     ).toEqual(["Revised request"]);
 
     const [promptRequest] = harness.promptRequests;
-    expect(promptRequest?.messages).toHaveLength(1);
-    expect(promptRequest?.messages[0]).toMatchObject({
+    expect(promptRequest?.message.text).toBe("Revised request");
+    expect(submittedUserMessage(promptRequest!.message)).toMatchObject({
       svvyMetadata: {
         snippetProvenance: [
           {
@@ -4122,6 +4232,47 @@ describe("createChatRuntime", () => {
     ]);
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
       { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("writes command stdin through the workspace runtime bridge", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("first"), assistantMessage("first reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    const result = await runtime.writeCommandStdin({
+      commandId: "command-77",
+      text: "yes\n",
+      clientSubmission: {
+        source: "command_inspector",
+        clientRequestId: "stdin-submit-1",
+      },
+    });
+
+    expect(result).toEqual({
+      commandId: "command-77",
+      status: "accepted",
+      acceptedBytes: 4,
+    });
+    expect(harness.commandStdinRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        commandId: "command-77",
+        text: "yes\n",
+        clientSubmission: {
+          source: "command_inspector",
+          clientRequestId: "stdin-submit-1",
+        },
+      },
     ]);
 
     runtime.dispose();

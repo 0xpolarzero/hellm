@@ -101,7 +101,7 @@ describe("default workspace renderer shell", () => {
     expect(bunSource).toContain("openWorkspace: async (input: OpenWorkspaceRequest = {})");
     expect(bunSource).toContain("const { cwd } = input;");
     expect(bunSource).toContain(
-      "const runtime = workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);",
+      "const runtime = await workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);",
     );
   });
 
@@ -252,7 +252,7 @@ describe("default workspace renderer shell", () => {
     expect(routingSource).not.toContain("getActiveRuntime");
     expect(routingSource).not.toContain("process.cwd");
     expect(bunIndexSource).toContain(
-      "getWorkspaceRuntime(query).appLogStore.query(stripWorkspaceId(query))",
+      "getWorkspaceRuntime(query).appLogs.query(stripWorkspaceId(query))",
     );
     expect(bunIndexSource).not.toContain("workspaceRuntimeRegistry.getActiveRuntime()");
   });
@@ -1035,7 +1035,7 @@ describe("default workspace renderer shell", () => {
     expect(panelHostSource).not.toContain("workspaceMentionPaths={new Set()}");
     expect(panelHostSource).toContain("onInspectCommand={inspectCommandFromTranscript}");
     expect(panelHostSource).toContain("onOpenHandlerThread={openHandlerThreadFromTranscript}");
-    expect(panelHostSource).toContain('surface: "thread"');
+    expect(panelHostSource).toContain('surface: "handler"');
     expect(panelHostSource).toContain("surfacePiSessionId: thread.surfacePiSessionId");
     expect(panelHostSource).toContain("threadId: thread.threadId");
     expect(panelHostSource).toContain("transcriptSplitTarget()");

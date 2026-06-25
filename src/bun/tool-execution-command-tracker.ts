@@ -1,27 +1,17 @@
-import type { PromptExecutionContext } from "./prompt-execution-context";
+import { getNativeToolCommandMetadata } from "@svvy/extensions";
+import * as Effect from "effect/Effect";
 import type { AppLoggerEvent } from "./app-logger";
 import type { AppLogSource } from "../shared/workspace-contract";
+import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 import type {
-  StructuredCommandExecutor,
-  StructuredCommandStatus,
-  StructuredCommandVisibility,
-  StructuredSessionStateStore,
-  StructuredTurnDecision,
-} from "./structured-session-state";
-const SPECIALIZED_TOOL_NAMES = new Set([
-  "execute_typescript",
-  "list_extensions",
-  "load_extension",
-  "thread_start",
-  "thread_followup",
-  "thread_request_report",
-  "thread_current",
-  "thread_list",
-  "thread_episodes",
-  "thread_group",
-  "thread_report",
-  "request_user_input",
-]);
+  CommandFactsPayload,
+  JsonValue,
+  PromptExecutionContext,
+  RuntimeCommandExecutor,
+  RuntimeCommandStatePortService,
+  RuntimeCommandStatus,
+  RuntimeTurnStatePortService,
+} from "@svvy/core";
 
 export interface ToolExecutionCommandTracker {
   handleToolExecutionStart(input: { toolCallId: string; toolName: string; args: unknown }): void;
@@ -32,14 +22,16 @@ export interface ToolExecutionCommandTracker {
     isError: boolean;
   }): void;
   finishDanglingCommands(input: {
-    status: Extract<StructuredCommandStatus, "failed" | "cancelled">;
+    status: Extract<RuntimeCommandStatus, "failed" | "cancelled">;
     error: string;
   }): void;
 }
 
 export function createToolExecutionCommandTracker(options: {
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
   promptContext: PromptExecutionContext;
+  stateWrites: RuntimeStateWriteLane;
+  turnState?: RuntimeTurnStatePortService;
   onAppLog?: (event: AppLoggerEvent) => void;
   onReusedStreamingToolCall?: (toolCallId: string) => void;
 }): ToolExecutionCommandTracker {
@@ -51,129 +43,168 @@ export function createToolExecutionCommandTracker(options: {
     handleToolExecutionStart(input) {
       const toolName = input.toolName;
       const args = input.args;
-      if (SPECIALIZED_TOOL_NAMES.has(toolName) || commandIdByToolCallId.has(input.toolCallId)) {
+      const metadata = getNativeToolCommandMetadata(toolName);
+      if (!metadata) {
+        return;
+      }
+      if (
+        metadata.executionCommand === "self-recorded-command" ||
+        commandIdByToolCallId.has(input.toolCallId)
+      ) {
         return;
       }
 
-      const turnDecision = turnDecisionForTool(toolName);
-      if (turnDecision && options.promptContext.turnId) {
-        options.store.setTurnDecision({
-          turnId: options.promptContext.turnId,
-          decision: turnDecision,
-          onlyIfPending: true,
-        });
-      }
+      const turnDecision = metadata.turnDecision;
+      void options.stateWrites
+        .enqueue(
+          "tool-command.start",
+          Effect.gen(function* () {
+            if (turnDecision && options.promptContext.turnId && options.turnState) {
+              yield* options.turnState.setTurnDecision({
+                turnId: options.promptContext.turnId,
+                decision: turnDecision,
+                onlyIfPending: true,
+              });
+            }
 
-      let commandId: string;
-      const existingStreaming = options.store.findCommandByToolCallId(input.toolCallId);
-      if (existingStreaming) {
-        commandId = existingStreaming.id;
-        options.store.updateCommandArguments(commandId, args);
-        options.onReusedStreamingToolCall?.(input.toolCallId);
-      } else {
-        const command = options.store.createCommand({
-          turnId: options.promptContext.turnId,
-          workflowTaskAttemptId: options.promptContext.workflowTaskAttemptId,
-          threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
-          workflowRunId: options.promptContext.workflowRunId,
-          toolName,
-          executor: inferExecutor(toolName, options.promptContext),
-          visibility: inferVisibility(toolName),
-          title: inferTitle(toolName),
-          summary: summarizeToolArguments(toolName, args),
-          arguments: args,
-          facts: { toolCallId: input.toolCallId },
-        });
-        commandId = command.id;
-      }
-      options.store.startCommand(commandId);
-      recordCommandStartEvents({
-        args,
-        commandId,
-        sessionId: options.promptContext.sessionId,
-        store: options.store,
-        toolName,
-      });
-      commandIdByToolCallId.set(input.toolCallId, commandId);
-      toolNameByCommandId.set(commandId, toolName);
-      const source = directToolLogSource(toolName, args);
-      logSourceByCommandId.set(commandId, source);
-      options.onAppLog?.({
-        level: "info",
-        source,
-        message: directToolLogMessage(source, "started"),
-        details: directToolLogDetails(options.promptContext, commandId, toolName),
-      });
+            let commandId: string;
+            const existingStreaming = yield* options.commandState.findCommandByToolCallId({
+              toolCallId: input.toolCallId,
+            });
+            if (existingStreaming) {
+              commandId = existingStreaming.id;
+              yield* options.commandState.updateCommandArguments({
+                commandId,
+                arguments: toJsonValue(args),
+              });
+              yield* Effect.sync(() => options.onReusedStreamingToolCall?.(input.toolCallId));
+            } else {
+              const command = yield* options.commandState.createCommand({
+                turnId: options.promptContext.turnId,
+                workflowTaskAttemptId: options.promptContext.workflowTaskAttemptId,
+                threadId: options.promptContext.threadId ?? options.promptContext.rootThreadId,
+                workflowRunId: options.promptContext.workflowRunId,
+                toolName,
+                executor: inferExecutor(toolName, options.promptContext),
+                visibility: metadata.visibility,
+                title: inferTitle(toolName),
+                summary: summarizeToolArguments(toolName, args),
+                arguments: toJsonValue(args),
+                facts: { toolCallId: input.toolCallId },
+              });
+              commandId = command.value.id;
+            }
+            yield* options.commandState.startCommand({ commandId });
+            yield* recordCommandStartEvents({
+              args,
+              commandId,
+              commandState: options.commandState,
+              sessionId: options.promptContext.workspaceSessionId,
+              toolName,
+            });
+            commandIdByToolCallId.set(input.toolCallId, commandId);
+            toolNameByCommandId.set(commandId, toolName);
+            const source = directToolLogSource(toolName, args);
+            logSourceByCommandId.set(commandId, source);
+            yield* Effect.sync(() =>
+              options.onAppLog?.({
+                level: "info",
+                source,
+                message: directToolLogMessage(source, "started"),
+                details: directToolLogDetails(options.promptContext, commandId, toolName),
+              }),
+            );
+          }),
+        )
+        .catch(() => undefined);
     },
 
     handleToolExecutionEnd(input) {
       const toolName = input.toolName;
-      const commandId = commandIdByToolCallId.get(input.toolCallId);
-      if (!commandId) {
-        return;
-      }
-
       const resultText = summarizeToolResult(input.result);
       const status = inferCommandFinalStatus(input);
       const summary =
         resultText ??
         (status === "failed" ? `${input.toolName} failed.` : `${toolName} completed successfully.`);
-      recordCommandResultEvents({
-        store: options.store,
-        sessionId: options.promptContext.sessionId,
-        commandId,
-        toolName,
-        result: input.result,
-      });
-      options.store.finishCommand({
-        commandId,
-        status,
-        summary,
-        facts: readCommandFacts(input.result),
-        error: status === "failed" ? summary : null,
-      });
-      options.onAppLog?.({
-        level: status === "failed" ? "warning" : "info",
-        source: logSourceByCommandId.get(commandId) ?? "direct-tool",
-        message: directToolLogMessage(
-          logSourceByCommandId.get(commandId) ?? "direct-tool",
-          status === "failed" ? "failed" : "finished",
-        ),
-        details: {
-          ...directToolLogDetails(options.promptContext, commandId, toolName),
-          ...(status === "failed" ? { errorMessage: summary } : {}),
-        },
-      });
-      commandIdByToolCallId.delete(input.toolCallId);
-      toolNameByCommandId.delete(commandId);
-      logSourceByCommandId.delete(commandId);
+      void options.stateWrites
+        .enqueue(
+          "tool-command.end",
+          Effect.gen(function* () {
+            const commandId = commandIdByToolCallId.get(input.toolCallId);
+            if (!commandId) {
+              return;
+            }
+
+            yield* recordCommandResultEvents({
+              commandState: options.commandState,
+              sessionId: options.promptContext.workspaceSessionId,
+              commandId,
+              toolName,
+              result: input.result,
+            });
+            yield* options.commandState.finishCommand({
+              commandId,
+              status,
+              summary,
+              facts: readCommandFacts(input.result),
+              error: status === "failed" ? summary : null,
+            });
+            yield* Effect.sync(() =>
+              options.onAppLog?.({
+                level: status === "failed" ? "warning" : "info",
+                source: logSourceByCommandId.get(commandId) ?? "direct-tool",
+                message: directToolLogMessage(
+                  logSourceByCommandId.get(commandId) ?? "direct-tool",
+                  status === "failed" ? "failed" : "finished",
+                ),
+                details: {
+                  ...directToolLogDetails(options.promptContext, commandId, toolName),
+                  ...(status === "failed" ? { errorMessage: summary } : {}),
+                },
+              }),
+            );
+            commandIdByToolCallId.delete(input.toolCallId);
+            toolNameByCommandId.delete(commandId);
+            logSourceByCommandId.delete(commandId);
+          }),
+        )
+        .catch(() => undefined);
     },
 
     finishDanglingCommands(input) {
-      for (const commandId of commandIdByToolCallId.values()) {
-        const toolName = toolNameByCommandId.get(commandId) ?? "unknown";
-        options.store.finishCommand({
-          commandId,
-          status: input.status,
-          summary: input.error,
-          error: input.error,
-        });
-        options.onAppLog?.({
-          level: "warning",
-          source: logSourceByCommandId.get(commandId) ?? "direct-tool",
-          message: directToolLogMessage(
-            logSourceByCommandId.get(commandId) ?? "direct-tool",
-            input.status === "cancelled" ? "cancelled" : "failed",
-          ),
-          details: {
-            ...directToolLogDetails(options.promptContext, commandId, toolName),
-            errorMessage: input.error,
-          },
-        });
-      }
-      commandIdByToolCallId.clear();
-      toolNameByCommandId.clear();
-      logSourceByCommandId.clear();
+      void options.stateWrites
+        .enqueue(
+          "tool-command.finish-dangling",
+          Effect.gen(function* () {
+            for (const commandId of commandIdByToolCallId.values()) {
+              const toolName = toolNameByCommandId.get(commandId) ?? "unknown";
+              yield* options.commandState.finishCommand({
+                commandId,
+                status: input.status,
+                summary: input.error,
+                error: input.error,
+              });
+              yield* Effect.sync(() =>
+                options.onAppLog?.({
+                  level: "warning",
+                  source: logSourceByCommandId.get(commandId) ?? "direct-tool",
+                  message: directToolLogMessage(
+                    logSourceByCommandId.get(commandId) ?? "direct-tool",
+                    input.status === "cancelled" ? "cancelled" : "failed",
+                  ),
+                  details: {
+                    ...directToolLogDetails(options.promptContext, commandId, toolName),
+                    errorMessage: input.error,
+                  },
+                }),
+              );
+            }
+            commandIdByToolCallId.clear();
+            toolNameByCommandId.clear();
+            logSourceByCommandId.clear();
+          }),
+        )
+        .catch(() => undefined);
     },
   };
 }
@@ -181,26 +212,25 @@ export function createToolExecutionCommandTracker(options: {
 function recordCommandStartEvents(input: {
   args: unknown;
   commandId: string;
+  commandState: RuntimeCommandStatePortService;
   sessionId: string;
-  store: StructuredSessionStateStore;
   toolName: string;
-}): void {
+}) {
   if (input.toolName !== "apply_patch") {
-    return;
+    return Effect.succeed(undefined);
   }
   const patch = readPatchArgument(input.args);
   if (!patch) {
-    return;
+    return Effect.succeed(undefined);
   }
   const files = parsePatchSnapshotFiles(patch);
   if (files.length === 0) {
-    return;
+    return Effect.succeed(undefined);
   }
-  input.store.recordLifecycleEvent({
+  return input.commandState.recordCommandEvent({
     sessionId: input.sessionId,
+    commandId: input.commandId,
     kind: "command.patch_snapshot",
-    subjectKind: "command",
-    subjectId: input.commandId,
     data: {
       source: "accepted-arguments",
       files,
@@ -236,7 +266,7 @@ function readsSmithersCommand(args: unknown): boolean {
       : typeof (args as { command?: unknown }).command === "string"
         ? (args as { command: string }).command
         : "";
-  return /(?:^|[;&|]\s*)smithers(?:\s|$)/.test(commandText.trim());
+  return /(?:^|[;&|]\s*)bunx\s+smithers-orchestrator(?:\s|$)/.test(commandText.trim());
 }
 
 function directToolLogDetails(
@@ -249,9 +279,9 @@ function directToolLogDetails(
   threadId?: string;
   commandId: string;
 } {
-  const threadId = promptContext.surfaceThreadId ?? promptContext.rootThreadId ?? undefined;
+  const threadId = promptContext.threadId ?? promptContext.rootThreadId ?? undefined;
   return {
-    workspaceSessionId: promptContext.sessionId,
+    workspaceSessionId: promptContext.workspaceSessionId,
     surfacePiSessionId: promptContext.surfacePiSessionId,
     ...(promptContext.workflowRunId ? { workflowRunId: promptContext.workflowRunId } : {}),
     ...(promptContext.workflowTaskAttemptId
@@ -263,44 +293,14 @@ function directToolLogDetails(
   };
 }
 
-function turnDecisionForTool(toolName: string): Exclude<StructuredTurnDecision, "pending"> | null {
-  if (
-    toolName === "reply" ||
-    toolName === "exec_command" ||
-    toolName === "write_stdin" ||
-    toolName === "apply_patch" ||
-    toolName === "execute_typescript" ||
-    toolName === "list_extensions" ||
-    toolName === "load_extension" ||
-    toolName === "thread_start" ||
-    toolName === "thread_followup" ||
-    toolName === "thread_request_report" ||
-    toolName === "thread_group" ||
-    toolName === "thread_report" ||
-    toolName === "thread_episodes" ||
-    toolName === "request_user_input"
-  ) {
-    return toolName;
-  }
-  return null;
-}
-
 function inferExecutor(
   _toolName: string,
   promptContext: Pick<PromptExecutionContext, "surfaceKind">,
-): StructuredCommandExecutor {
+): RuntimeCommandExecutor {
   if (promptContext.surfaceKind === "workflow-task") {
     return "workflow-task-agent";
   }
   return promptContext.surfaceKind === "handler" ? "handler" : "orchestrator";
-}
-
-function inferVisibility(toolName: string): StructuredCommandVisibility {
-  if (["read", "grep", "find", "ls"].includes(toolName)) {
-    return "trace";
-  }
-
-  return "summary";
 }
 
 function inferTitle(toolName: string): string {
@@ -346,7 +346,7 @@ function summarizeToolResult(result: unknown): string | null {
 function inferCommandFinalStatus(input: {
   result: unknown;
   isError: boolean;
-}): Extract<StructuredCommandStatus, "succeeded" | "failed"> {
+}): Extract<RuntimeCommandStatus, "succeeded" | "failed"> {
   if (input.isError) {
     return "failed";
   }
@@ -355,113 +355,83 @@ function inferCommandFinalStatus(input: {
 }
 
 function recordCommandResultEvents(input: {
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
   sessionId: string;
   commandId: string;
   toolName: string;
   result: unknown;
-}): void {
+}) {
   if (input.toolName !== "exec_command") {
-    return;
+    return Effect.succeed(undefined);
   }
 
   const payload = readResultPayload(input.result);
   const stdout = readStringProperty(payload, "stdout");
   const stderr = readStringProperty(payload, "stderr");
-  const hasLiveStdout = hasLiveCommandOutputEvent(
-    input.store,
-    input.sessionId,
-    input.commandId,
-    "stdout",
-  );
-  const hasLiveStderr = hasLiveCommandOutputEvent(
-    input.store,
-    input.sessionId,
-    input.commandId,
-    "stderr",
-  );
-  if (stdout && !hasLiveStdout) {
-    input.store.recordLifecycleEvent({
+  return Effect.gen(function* () {
+    const hasLiveStdout = yield* input.commandState.hasCommandOutputEvent({
       sessionId: input.sessionId,
+      commandId: input.commandId,
+      stream: "stdout",
+      source: "live-stream",
+    });
+    const hasLiveStderr = yield* input.commandState.hasCommandOutputEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
+      stream: "stderr",
+      source: "live-stream",
+    });
+    if (stdout && !hasLiveStdout) {
+      yield* input.commandState.recordCommandEvent({
+        sessionId: input.sessionId,
+        commandId: input.commandId,
+        kind: "command.output",
+        data: {
+          stream: "stdout",
+          source: "final-result",
+          text: stdout,
+        },
+      });
+    }
+    if (stderr && !hasLiveStderr) {
+      yield* input.commandState.recordCommandEvent({
+        sessionId: input.sessionId,
+        commandId: input.commandId,
+        kind: "command.output",
+        data: {
+          stream: "stderr",
+          source: "final-result",
+          text: stderr,
+        },
+      });
+    }
+    if (stdout || stderr) {
+      return;
+    }
+    const hasLiveOutput = yield* input.commandState.hasCommandOutputEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
+      source: "live-stream",
+    });
+    if (hasLiveOutput) {
+      return;
+    }
+
+    const resultText = summarizeToolResult(input.result);
+    if (!resultText) {
+      return;
+    }
+    yield* input.commandState.recordCommandEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
       kind: "command.output",
-      subjectKind: "command",
-      subjectId: input.commandId,
       data: {
         stream: "stdout",
         source: "final-result",
-        text: stdout,
+        text: resultText,
       },
     });
-  }
-  if (stderr && !hasLiveStderr) {
-    input.store.recordLifecycleEvent({
-      sessionId: input.sessionId,
-      kind: "command.output",
-      subjectKind: "command",
-      subjectId: input.commandId,
-      data: {
-        stream: "stderr",
-        source: "final-result",
-        text: stderr,
-      },
-    });
-  }
-  if (stdout || stderr) {
-    return;
-  }
-  if (hasAnyLiveCommandOutputEvent(input.store, input.sessionId, input.commandId)) {
-    return;
-  }
-
-  const resultText = summarizeToolResult(input.result);
-  if (!resultText) {
-    return;
-  }
-  input.store.recordLifecycleEvent({
-    sessionId: input.sessionId,
-    kind: "command.output",
-    subjectKind: "command",
-    subjectId: input.commandId,
-    data: {
-      stream: "stdout",
-      source: "final-result",
-      text: resultText,
-    },
   });
-}
-
-function hasLiveCommandOutputEvent(
-  store: StructuredSessionStateStore,
-  sessionId: string,
-  commandId: string,
-  stream: "stdout" | "stderr",
-): boolean {
-  return store
-    .getSessionState(sessionId)
-    .events.some(
-      (event) =>
-        event.kind === "command.output" &&
-        event.subject.kind === "command" &&
-        event.subject.id === commandId &&
-        event.data?.stream === stream &&
-        event.data?.source === "live-stream",
-    );
-}
-
-function hasAnyLiveCommandOutputEvent(
-  store: StructuredSessionStateStore,
-  sessionId: string,
-  commandId: string,
-): boolean {
-  return store
-    .getSessionState(sessionId)
-    .events.some(
-      (event) =>
-        event.kind === "command.output" &&
-        event.subject.kind === "command" &&
-        event.subject.id === commandId &&
-        event.data?.source === "live-stream",
-    );
 }
 
 function readPatchArgument(args: unknown): string | null {
@@ -610,7 +580,7 @@ function readStringProperty(payload: unknown, key: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function readCommandFacts(result: unknown): Record<string, unknown> | null {
+function readCommandFacts(result: unknown): CommandFactsPayload | null {
   const errorPayload = readErrorPayload(result);
   if (errorPayload) {
     return readPayloadCommandFacts(errorPayload);
@@ -633,15 +603,15 @@ function readResultPayload(result: unknown): unknown | null {
   return (result as { details?: unknown }).details;
 }
 
-function readPayloadCommandFacts(payload: unknown): Record<string, unknown> | null {
+function readPayloadCommandFacts(payload: unknown): CommandFactsPayload | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
   }
   const facts = (payload as { commandFacts?: unknown }).commandFacts;
   if (facts && typeof facts === "object" && !Array.isArray(facts)) {
-    return facts as Record<string, unknown>;
+    return toJsonObject(facts);
   }
-  return payload as Record<string, unknown>;
+  return toJsonObject(payload);
 }
 
 function readErrorPayload(result: unknown): unknown | null {
@@ -673,4 +643,23 @@ function safePreview(value: unknown, limit = 160): string {
   } catch {
     return "";
   }
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value)) as JsonValue;
+  } catch {
+    return null;
+  }
+}
+
+function toJsonObject(value: unknown): CommandFactsPayload | null {
+  const json = toJsonValue(value);
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    return null;
+  }
+  return json as CommandFactsPayload;
 }

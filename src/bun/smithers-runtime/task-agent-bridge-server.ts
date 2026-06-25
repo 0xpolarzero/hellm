@@ -1,51 +1,36 @@
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import {
+  decodeUnknownRunTaskAgentInputExit,
+  decodeUnknownRunTaskAgentErrorExit,
+  decodeUnknownRunTaskAgentResultExit,
+  decodeUnknownRunTaskAgentSourceInputExit,
+  schemaErrorMessage,
+  type RunTaskAgentInput,
+  type RunTaskAgentErrorCode,
+  type RunTaskAgentResult,
+} from "@svvy/core";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
-export const WORKFLOW_TASK_AGENT_BRIDGE_ENV = {
+export const RUN_TASK_AGENT_BRIDGE_ENV = {
   URL: "SVVY_WORKFLOW_AGENT_BRIDGE_URL",
   TOKEN: "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN",
-  WORKSPACE_SESSION_ID: "SVVY_WORKSPACE_SESSION_ID",
-  SOURCE_COMMAND_ID: "SVVY_SOURCE_COMMAND_ID",
+  WORKSPACE_SESSION_ID: "SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID",
+  SOURCE_COMMAND_ID: "SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID",
+  TIMEOUT_MS: "SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS",
 } as const;
 
-export interface WorkflowTaskAgentBridgeRequest {
-  workspaceSessionId: string;
-  sourceCommandId: string;
-  taskContext: {
-    runId: string;
-    nodeId: string;
-    iteration: number;
-    attempt: number;
-  };
-  agent: {
-    id: string;
-    label?: string;
-    provider: string;
-    model: string;
-    reasoningEffort: string;
-    instructions?: string;
-    overrides?: Record<string, "loaded" | "available" | "unavailable">;
-  };
-  prompt?: string;
-  messages?: { role: "user" | "assistant" | "system"; text: string }[];
-  rootDir?: string;
-}
-
-export interface WorkflowTaskAgentBridgeResult {
-  text: string;
-  usage?: unknown;
-  output?: unknown;
-}
-
-export interface WorkflowTaskAgentBridgeServer {
+export interface RunTaskAgentBridgeServer {
   readonly token: string;
   getUrl(): string;
   close(): void;
 }
 
-export function createWorkflowTaskAgentBridgeServer(input: {
-  authorize?: (request: WorkflowTaskAgentBridgeRequest, bearerToken: string) => boolean;
-  runTaskAgent: (request: WorkflowTaskAgentBridgeRequest) => Promise<WorkflowTaskAgentBridgeResult>;
-}): WorkflowTaskAgentBridgeServer {
+export function createRunTaskAgentBridgeServer(input: {
+  authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
+  runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
+}): RunTaskAgentBridgeServer {
   const token = randomBytes(32).toString("base64url");
   let server: ReturnType<typeof Bun.serve> | null = null;
   let url: string | null = null;
@@ -71,10 +56,8 @@ export function createWorkflowTaskAgentBridgeServer(input: {
 
 function startBridgeServer(
   input: {
-    authorize?: (request: WorkflowTaskAgentBridgeRequest, bearerToken: string) => boolean;
-    runTaskAgent: (
-      request: WorkflowTaskAgentBridgeRequest,
-    ) => Promise<WorkflowTaskAgentBridgeResult>;
+    authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
+    runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
   },
   token: string,
 ): ReturnType<typeof Bun.serve> {
@@ -85,7 +68,7 @@ function startBridgeServer(
         hostname: "127.0.0.1",
         port,
         async fetch(request) {
-          return await handleWorkflowTaskAgentBridgeRequest({
+          return await handleRunTaskAgentRequest({
             request,
             authorize: input.authorize,
             token,
@@ -103,31 +86,54 @@ function startBridgeServer(
   throw new Error("Unable to allocate workflow task-agent bridge port.");
 }
 
-export async function handleWorkflowTaskAgentBridgeRequest(input: {
+export async function handleRunTaskAgentRequest(input: {
   request: Request;
-  authorize?: (request: WorkflowTaskAgentBridgeRequest, bearerToken: string) => boolean;
+  authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
   token: string;
-  runTaskAgent: (request: WorkflowTaskAgentBridgeRequest) => Promise<WorkflowTaskAgentBridgeResult>;
+  runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
 }): Promise<Response> {
+  let bridgeRequest: RunTaskAgentInput | null = null;
   try {
     const url = new URL(input.request.url);
     if (input.request.method !== "POST" || url.pathname !== "/runTaskAgent") {
-      return jsonResponse(404, { error: "not_found" });
+      return bridgeErrorResponse(
+        404,
+        "invalid_request",
+        "Workflow task-agent bridge supports only POST /runTaskAgent.",
+      );
     }
     const bearerToken = readBearerToken(input.request.headers.get("authorization") ?? "");
     const body = await readJsonBody(input.request);
-    const request = parseWorkflowTaskAgentBridgeRequest(body);
+    const sourceRequest = requireDecoded(decodeUnknownRunTaskAgentSourceInputExit(body));
+    bridgeRequest = requireDecoded(decodeUnknownRunTaskAgentInputExit(sourceRequest));
     const authorized = input.authorize
-      ? input.authorize(request, bearerToken)
+      ? input.authorize(bridgeRequest, bearerToken)
       : isMatchingSecret(bearerToken, input.token);
     if (!authorized) {
-      return jsonResponse(401, { error: "unauthorized" });
+      return bridgeErrorResponse(
+        401,
+        "unauthorized",
+        "Unauthorized workflow task-agent bridge request.",
+        {
+          workspaceSessionId: bridgeRequest.workspaceSessionId,
+          sourceCommandId: bridgeRequest.sourceCommandId,
+        },
+      );
     }
-    const result = await input.runTaskAgent(request);
+  } catch (error) {
+    return bridgeErrorResponse(400, "invalid_request", errorMessage(error));
+  }
+
+  try {
+    const result = requireDecoded(
+      decodeUnknownRunTaskAgentResultExit(await input.runTaskAgent(bridgeRequest)),
+    );
     return jsonResponse(200, result);
   } catch (error) {
-    return jsonResponse(500, {
-      error: error instanceof Error ? error.message : String(error),
+    return bridgeErrorResponse(500, "task_attempt_failed", errorMessage(error), {
+      retryable: true,
+      workspaceSessionId: bridgeRequest.workspaceSessionId,
+      sourceCommandId: bridgeRequest.sourceCommandId,
     });
   }
 }
@@ -139,41 +145,44 @@ function jsonResponse(status: number, payload: unknown): Response {
   });
 }
 
-function parseWorkflowTaskAgentBridgeRequest(value: unknown): WorkflowTaskAgentBridgeRequest {
-  if (!isRecord(value)) {
-    throw new Error("runTaskAgent request must be an object.");
+function bridgeErrorResponse(
+  status: number,
+  error: RunTaskAgentErrorCode,
+  message: string,
+  options: {
+    retryable?: boolean;
+    requestId?: string;
+    workspaceSessionId?: string;
+    sourceCommandId?: string;
+    taskAttemptId?: string;
+  } = {},
+): Response {
+  const payload = requireDecoded(
+    decodeUnknownRunTaskAgentErrorExit({
+      error,
+      message,
+      retryable: options.retryable ?? false,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
+      ...(options.workspaceSessionId ? { workspaceSessionId: options.workspaceSessionId } : {}),
+      ...(options.sourceCommandId ? { sourceCommandId: options.sourceCommandId } : {}),
+      ...(options.taskAttemptId ? { taskAttemptId: options.taskAttemptId } : {}),
+    }),
+  );
+  return jsonResponse(status, payload);
+}
+
+function requireDecoded<A, E>(exit: Exit.Exit<A, E>): A {
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
   }
-  if (value.operation !== "runTaskAgent") {
-    throw new Error("Workflow task-agent bridge supports only runTaskAgent.");
+  throw new Error(Cause.pretty(exit.cause));
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Schema.SchemaError) {
+    return schemaErrorMessage(error);
   }
-  const taskContext = isRecord(value.taskContext) ? value.taskContext : {};
-  const agent = value.agent ?? value.taskAgent;
-  if (!isRecord(agent)) {
-    throw new Error("runTaskAgent requires taskAgent.");
-  }
-  const request: WorkflowTaskAgentBridgeRequest = {
-    workspaceSessionId: readRequiredString(value, "workspaceSessionId"),
-    sourceCommandId: readRequiredString(value, "sourceCommandId"),
-    taskContext: {
-      runId: readSmithersRunId(value, taskContext),
-      nodeId: readSmithersNodeId(value, taskContext),
-      iteration: readSmithersIndex(value, taskContext, "iteration"),
-      attempt: readSmithersIndex(value, taskContext, "attempt"),
-    },
-    agent: {
-      id: readRequiredString(agent, "id"),
-      label: readOptionalString(agent, "label"),
-      provider: readRequiredString(agent, "provider"),
-      model: readRequiredString(agent, "model"),
-      reasoningEffort: readRequiredString(agent, "reasoningEffort"),
-      instructions: readOptionalString(agent, "instructions"),
-      overrides: readOverrides(agent.overrides),
-    },
-    prompt: readOptionalString(value, "prompt"),
-    messages: readMessages(value.messages),
-    rootDir: readOptionalString(value, "rootDir"),
-  };
-  return request;
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -196,124 +205,4 @@ function isMatchingSecret(actualSecret: string, expectedSecret: string): boolean
     return false;
   }
   return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function readRequiredString(source: Record<string, unknown>, key: string): string {
-  const value = source[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`runTaskAgent requires ${key}.`);
-  }
-  return value;
-}
-
-function readOptionalString(source: Record<string, unknown>, key: string): string | undefined {
-  const value = source[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function readSmithersRunId(
-  value: Record<string, unknown>,
-  taskContext: Record<string, unknown>,
-): string {
-  const run = isRecord(value.run) ? value.run : {};
-  const contextRun = isRecord(taskContext.run) ? taskContext.run : {};
-  const runId =
-    readOptionalString(value, "smithersRunId") ??
-    readOptionalString(value, "runId") ??
-    readOptionalString(taskContext, "smithersRunId") ??
-    readOptionalString(taskContext, "runId") ??
-    readOptionalString(run, "id") ??
-    readOptionalString(run, "runId") ??
-    readOptionalString(contextRun, "id") ??
-    readOptionalString(contextRun, "runId");
-  if (!runId) {
-    throw new Error("runTaskAgent requires Smithers run identity.");
-  }
-  return runId;
-}
-
-function readSmithersNodeId(
-  value: Record<string, unknown>,
-  taskContext: Record<string, unknown>,
-): string {
-  const node = isRecord(value.node) ? value.node : {};
-  const contextNode = isRecord(taskContext.node) ? taskContext.node : {};
-  const nodeId =
-    readOptionalString(value, "nodeId") ??
-    readOptionalString(taskContext, "nodeId") ??
-    readOptionalString(node, "id") ??
-    readOptionalString(node, "nodeId") ??
-    readOptionalString(contextNode, "id") ??
-    readOptionalString(contextNode, "nodeId") ??
-    readOptionalString(taskContext, "taskId");
-  if (!nodeId) {
-    throw new Error("runTaskAgent requires Smithers node identity.");
-  }
-  return nodeId;
-}
-
-function readSmithersIndex(
-  value: Record<string, unknown>,
-  taskContext: Record<string, unknown>,
-  key: "attempt" | "iteration",
-): number {
-  const direct = readIndexValue(value[key]);
-  if (direct !== null) {
-    return direct;
-  }
-  const context = readIndexValue(taskContext[key]);
-  if (context !== null) {
-    return context;
-  }
-  throw new Error(`runTaskAgent requires non-negative integer ${key}.`);
-}
-
-function readIndexValue(value: unknown): number | null {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-    return value;
-  }
-  if (isRecord(value)) {
-    const index = value.index;
-    if (typeof index === "number" && Number.isInteger(index) && index >= 0) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function readOverrides(value: unknown): Record<string, "loaded" | "available" | "unavailable"> {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const overrides: Record<string, "loaded" | "available" | "unavailable"> = {};
-  for (const [key, state] of Object.entries(value)) {
-    if (state === "loaded" || state === "available" || state === "unavailable") {
-      overrides[key] = state;
-    }
-  }
-  return overrides;
-}
-
-function readMessages(value: unknown): WorkflowTaskAgentBridgeRequest["messages"] {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  return value.flatMap((message) => {
-    if (!isRecord(message)) {
-      return [];
-    }
-    const role = message.role;
-    const text = typeof message.text === "string" ? message.text : message.content;
-    if (
-      (role !== "user" && role !== "assistant" && role !== "system") ||
-      typeof text !== "string"
-    ) {
-      return [];
-    }
-    return [{ role, text }];
-  });
 }

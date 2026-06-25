@@ -23,7 +23,7 @@ export function buildUserSvvyxTypescriptDeclaration(input: {
 }): string {
   const prefix = pascalCase(input.extensionId);
   const commandMapName = `${prefix}ExtensionCommandMap`;
-  const clientName = `${prefix}ExtensionClient`;
+  const facadeName = `${prefix}ExtensionFacade`;
   const outputControlsName = `${prefix}ExtensionOutputControls`;
   const inputArgName = `${prefix}ExtensionInputArg`;
   return [
@@ -45,15 +45,15 @@ export function buildUserSvvyxTypescriptDeclaration(input: {
     `  ? [input?: ${commandMapName}[CommandId]["input"]]`,
     `  : [input: ${commandMapName}[CommandId]["input"]];`,
     "",
-    `interface ${clientName} {`,
+    `interface ${facadeName} {`,
     `  run<CommandId extends keyof ${commandMapName}>(`,
     "    commandId: CommandId,",
     `    ...input: ${inputArgName}<CommandId>`,
     `  ): Promise<${commandMapName}[CommandId]["result"]>;`,
     "}",
     "",
-    "interface LoadedExtensionsClient {",
-    `  ${propertyName(input.extensionId)}: ${clientName};`,
+    "interface LoadedExtensionsFacade {",
+    `  ${propertyName(input.extensionId)}: ${facadeName};`,
     "}",
     "",
   ].join("\n");

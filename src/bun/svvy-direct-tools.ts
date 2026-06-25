@@ -1,5 +1,6 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
+import type { NativeToolDefinition } from "@svvy/extensions";
+import * as Exit from "effect/Exit";
+import { Type } from "typebox";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
@@ -16,30 +17,58 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type {
+  CommandId,
+  CommandEventPayload,
+  JsonValue,
+  RuntimeArtifactRecord,
+  RuntimeArtifactStatePortService,
+  RuntimeCommandRecord,
+  RuntimeCommandStatePortService,
+  RuntimeExtensionContextChangedSurface,
+  RuntimeExtensionContextImpactStateFacade,
+  StateContractError,
+  SvvyxRuntimeEffectTransportIntent,
+  SvvyxRuntimeEffectTransportRequest,
+  WorkspaceSessionId,
+} from "@svvy/core";
+import { decodeUnknownSvvyxRuntimeEffectTransportIntentExit } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import {
-  buildManagedWorkspaceWriteFileSystemPolicy,
+  buildDirectToolLaunchPolicy,
+  buildSandboxHelperArgs,
+  buildSvvyxLaunchPolicy,
   canWriteFileSystemPath,
-  unrestrictedFileSystemPolicy,
+  isSandboxDenialOutput,
+  isSandboxHelperBootstrapFailure,
+  resolveSandboxHelperPath,
+  sandboxDenialFacts,
   type FileSystemSandboxPolicy,
-} from "./filesystem-sandbox-policy";
-import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
+  type SandboxLaunchPolicy,
+} from "@svvy/sandbox";
 import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
+import type {
+  LiveCommandCancelResult,
+  LiveCommandStdinAdmissionResult,
+  LiveCommandStdinRegistry,
+} from "./live-command-stdin-registry";
 import { getWorkflowsGeneratedPackagePath } from "./smithers-runtime/workflow-library";
 import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-package";
-import type {
-  StructuredArtifactRecord,
-  StructuredCommandRecord,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
-import type { SvvyxArtifactOpenHandler } from "./svvyx-artifacts-command";
+import {
+  formatSvvyxArtifactsError,
+  runSvvyxArtifactsOperation,
+  type SvvyxArtifactOpenHandler,
+  type SvvyxArtifactsOperationInput,
+  type SvvyxArtifactsRuntimeContext,
+} from "./svvyx-artifacts-command";
 import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
 import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
 import type { SvvyxWorkflowsModelCatalogReader } from "./svvyx-workflows-command";
 import type { AgentSettingsState, ApprovalMode } from "../shared/agent-settings";
+import type * as Effect from "effect/Effect";
 
 type RunningCommandSession = {
   process: ChildProcessWithoutNullStreams;
@@ -54,7 +83,9 @@ type RunningCommandSession = {
 };
 
 type LiveCommandProjection = {
-  store: StructuredSessionStateStore;
+  artifactState: RuntimeArtifactStatePortService;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
   commandId: string;
   managedSandbox: boolean;
@@ -94,14 +125,17 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES = 64 * 1024;
 const RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE = "Output exceeded the live event retention limit.";
 const WORKFLOWS_GENERATED_DIRECT_EDIT_MESSAGE =
-  "Generated Workflows output, workspace @svvy/workflows/@svvy/extensions package links, internal Extension files, and immutable or non-active-session Artifacts are read-only. Edit Workflows source, Extension source/manifest/package.json, or the active session's mutable artifact files through the intended command path instead.";
+  "Generated Workflows output, workspace @svvyx/workflows/@svvyx/extensions package links, internal Extension files, and immutable or non-active-session Artifacts are read-only. Edit Workflows source, Extension source/manifest/package.json, or the active session's mutable artifact files through the intended command path instead.";
 const MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE =
   "Managed filesystem policy allows writes only inside the workspace, configured writable roots, active mutable artifacts, and explicit extension source roots.";
 
 type DirectToolOptions = {
   cwd: string;
   runtime?: PromptExecutionRuntimeHandle;
-  store?: StructuredSessionStateStore;
+  artifactState?: RuntimeArtifactStatePortService;
+  commandState?: RuntimeCommandStatePortService;
+  readWorkspaceForSession?: (sessionId: string) => unknown | null;
+  runState?: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
@@ -114,6 +148,7 @@ type DirectToolOptions = {
   workflowsWorkspaceCwds?: () => readonly string[];
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
+  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
   extensionsEnvValues?: SvvyxRuntimeEnvValues;
   extensionsRoot?: string;
@@ -123,10 +158,11 @@ type DirectToolOptions = {
   managedSandbox?: boolean | (() => boolean);
   networkAccess?: boolean | (() => boolean);
   onAppLog?: (event: AppLoggerEvent) => void;
-  workflowTaskAgentBridge?: WorkflowTaskAgentBridgeEnvProvider;
+  runTaskAgentBridge?: runTaskAgentBridgeEnvProvider;
+  runtimeCommandStdin?: LiveCommandStdinRegistry;
 };
 
-export type WorkflowTaskAgentBridgeEnvProvider = (input: {
+export type runTaskAgentBridgeEnvProvider = (input: {
   command: string;
   commandCwd: string;
   runtime: PromptExecutionRuntimeHandle["current"];
@@ -134,7 +170,7 @@ export type WorkflowTaskAgentBridgeEnvProvider = (input: {
 }) => Record<string, string> | null;
 
 type DirectToolSet = {
-  codingTools: AgentTool<any>[];
+  codingTools: NativeToolDefinition<unknown, Record<string, unknown>>[];
 };
 
 export type DirectToolApprovalBoundary = RuntimeApprovalBoundary;
@@ -143,13 +179,15 @@ export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet
   return {
     codingTools: [
       createExecCommandTool(options),
-      createWriteStdinTool(),
+      createWriteStdinTool(options),
       createApplyPatchTool(options),
     ],
   };
 }
 
-function createWriteStdinTool(): AgentTool<any> {
+function createWriteStdinTool(
+  options: DirectToolOptions,
+): NativeToolDefinition<unknown, Record<string, unknown>> {
   return {
     name: "write_stdin",
     label: "write_stdin",
@@ -176,6 +214,11 @@ function createWriteStdinTool(): AgentTool<any> {
       }
       if (session.exitCode !== null || session.exitSignal !== null) {
         runningCommandSessions.delete(params.session_id);
+        unregisterRuntimeCommandStdinSession(
+          options.runtimeCommandStdin,
+          params.session_id,
+          session,
+        );
         assertProtectedWriteSnapshotUnchanged(session.protectedWriteSnapshot);
         finishLiveCommandProjection(session.liveProjection, {
           stdout: session.stdout.join(""),
@@ -203,7 +246,10 @@ function createWriteStdinTool(): AgentTool<any> {
           },
         };
       }
-      session.process.stdin.write(params.input);
+      const writeResult = writeRunningCommandSessionStdin(session, params.input);
+      if (writeResult.status !== "accepted") {
+        throw new Error(`exec_command session stdin is not writable: ${writeResult.status}`);
+      }
       return {
         content: [
           {
@@ -221,7 +267,68 @@ function createWriteStdinTool(): AgentTool<any> {
   };
 }
 
-function createApplyPatchTool(options: DirectToolOptions): AgentTool<any> {
+function registerRuntimeCommandStdinSession(
+  registry: LiveCommandStdinRegistry | undefined,
+  sessionId: string,
+  session: RunningCommandSession,
+): void {
+  const commandId = session.liveProjection?.commandId;
+  if (!registry || !commandId) {
+    return;
+  }
+  registry.register({
+    commandId,
+    sessionId,
+    cancel: (reason) => cancelRunningCommandSession(session, reason),
+    writeStdin: (text) => writeRunningCommandSessionStdin(session, text),
+  });
+}
+
+function unregisterRuntimeCommandStdinSession(
+  registry: LiveCommandStdinRegistry | undefined,
+  sessionId: string,
+  session: RunningCommandSession,
+): void {
+  const commandId = session.liveProjection?.commandId;
+  if (!registry || !commandId) {
+    return;
+  }
+  registry.unregister({ commandId, sessionId });
+}
+
+function writeRunningCommandSessionStdin(
+  session: RunningCommandSession,
+  text: string,
+): LiveCommandStdinAdmissionResult {
+  if (session.exitCode !== null || session.exitSignal !== null) {
+    return { status: "already_terminal" };
+  }
+  const stdin = session.process.stdin;
+  if (!stdin.writable || stdin.writableEnded || stdin.destroyed) {
+    return { status: "stdin_closed" };
+  }
+  try {
+    stdin.write(text);
+    return { status: "accepted", acceptedBytes: Buffer.byteLength(text, "utf8") };
+  } catch {
+    return { status: "stdin_closed" };
+  }
+}
+
+function cancelRunningCommandSession(
+  session: RunningCommandSession,
+  _reason?: string,
+): LiveCommandCancelResult {
+  if (session.exitCode !== null || session.exitSignal !== null) {
+    return { status: "already_terminal" };
+  }
+  const killed = session.process.kill("SIGTERM");
+  return { status: killed ? "cancelled" : "cancelling" };
+}
+
+function createApplyPatchTool(
+  options: DirectToolOptions,
+): NativeToolDefinition<unknown, Record<string, unknown>> {
   return {
     name: "apply_patch",
     label: "apply_patch",
@@ -246,11 +353,11 @@ function createApplyPatchTool(options: DirectToolOptions): AgentTool<any> {
         toolCallId,
         toolName: "apply_patch",
       });
+      const launchPolicy = directToolLaunchPolicy(options);
       const patchCommandInput = {
         cwd: options.cwd,
-        fileSystemPolicy: directToolFileSystemPolicy(options),
-        managedSandbox:
-          resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
+        fileSystemPolicy: launchPolicy.fileSystemPolicy,
+        managedSandbox: launchPolicy.managedSandbox,
         patch: params.patch,
       };
       let result = spawnPatchCommand(patchCommandInput);
@@ -361,7 +468,9 @@ function parseUnifiedDiffHeaderPath(
   return rawPath.startsWith("a/") || rawPath.startsWith("b/") ? rawPath.slice(2) : rawPath;
 }
 
-function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
+function createExecCommandTool(
+  options: DirectToolOptions,
+): NativeToolDefinition<unknown, Record<string, unknown>> {
   return {
     name: "exec_command",
     label: "exec_command",
@@ -406,23 +515,25 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
         toolName: "exec_command",
       });
       const activeCommand =
-        options.runtime?.current && options.store
+        options.runtime?.current && options.commandState && options.runState
           ? findActiveExecCommand({
-              store: options.store,
-              sessionId: options.runtime.current.sessionId,
+              commandState: options.commandState,
+              runState: options.runState,
+              sessionId: options.runtime.current.workspaceSessionId,
               turnId: options.runtime.current.turnId,
               workflowTaskAttemptId: options.runtime.current.workflowTaskAttemptId ?? null,
               toolCallId,
             })
           : null;
       const activeLiveProjection =
-        activeCommand && options.store
+        activeCommand && options.artifactState && options.commandState && options.runState
           ? {
-              store: options.store,
+              artifactState: options.artifactState,
+              commandState: options.commandState,
+              runState: options.runState,
               sessionId: activeCommand.sessionId,
               commandId: activeCommand.id,
-              managedSandbox:
-                resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
+              managedSandbox: directToolLaunchPolicy(options).managedSandbox,
               outputEventBytes: { stderr: 0, stdout: 0 },
               outputEventRetainedStreams: new Set<"stderr" | "stdout">(),
             }
@@ -433,22 +544,22 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
         commandCwd,
         options,
       });
-      const workflowTaskAgentBridgeEnv = prepareWorkflowTaskAgentBridgeEnv({
+      const runTaskAgentBridgeEnv = preparerunTaskAgentBridgeEnv({
         activeCommand,
         command: params.cmd,
         commandCwd,
         options,
       });
+      const launchPolicy = svvyxSubprocess
+        ? svvyxLaunchPolicy(options)
+        : directToolLaunchPolicy(options);
       const execInput = {
         cwd: commandCwd,
         cmd: params.cmd,
-        env: { ...workflowTaskAgentBridgeEnv, ...svvyxSubprocess?.env },
-        fileSystemPolicy: svvyxSubprocess
-          ? svvyxSubprocessFileSystemPolicy(options)
-          : directToolFileSystemPolicy(options),
-        managedSandbox:
-          resolveApprovalMode(options) !== "full-access" && resolveManagedSandbox(options),
-        networkAccess: resolveNetworkAccess(options),
+        env: { ...runTaskAgentBridgeEnv, ...svvyxSubprocess?.env },
+        fileSystemPolicy: launchPolicy.fileSystemPolicy,
+        managedSandbox: launchPolicy.managedSandbox,
+        networkAccess: launchPolicy.networkAccess,
         protectedWriteRoots: svvyxSubprocess ? [] : protectedDirectEditRoots(options),
         protectedWriteAllowedRoots: svvyxSubprocess ? [] : protectedDirectEditAllowedRoots(options),
         timeoutMs:
@@ -457,7 +568,8 @@ function createExecCommandTool(options: DirectToolOptions): AgentTool<any> {
             : DEFAULT_COMMAND_TIMEOUT_MS,
         signal,
         liveProjection: activeLiveProjection,
-        outputRedactions: workflowTaskAgentBridgeOutputRedactions(workflowTaskAgentBridgeEnv),
+        outputRedactions: runTaskAgentBridgeOutputRedactions(runTaskAgentBridgeEnv),
+        runtimeCommandStdin: options.runtimeCommandStdin,
       };
       const result = await runExecCommandWithSandboxEscalation({
         input: execInput,
@@ -490,14 +602,18 @@ function resolveExtensionsEnvValues(options: DirectToolOptions): SvvyxRuntimeEnv
 }
 
 type PreparedSvvyxSubprocess = {
+  command: string;
+  commandCwd: string;
   env: NodeJS.ProcessEnv;
-  replaySidecar: boolean;
+  replayTransport: boolean;
   resultKey: string;
   resultPath: string;
+  runtime: SvvyxArtifactsRuntimeContext | null;
   shimDir: string;
+  sourceCommandId: string | null;
 };
 
-const WORKFLOW_TASK_AGENT_BRIDGE_TOKEN_ENV = "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN";
+const RUN_TASK_AGENT_BRIDGE_TOKEN_ENV = "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN";
 
 type SvvyxSubprocessAppAction = {
   kind: "artifact.open";
@@ -505,21 +621,47 @@ type SvvyxSubprocessAppAction = {
   sessionId: string;
 };
 
-type SvvyxSubprocessSidecar = {
+type SvvyxSubprocessTransport = {
   agentSettingsState?: AgentSettingsState;
   appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
   commandFacts?: Record<string, unknown>;
+  intents: SvvyxSubprocessIntent[];
   ok: boolean;
+  output?: unknown;
+  progressEvents: SvvyxSubprocessProgressEvent[];
 };
 
-type SignedSvvyxSubprocessSidecar = {
+type SvvyxSubprocessIntent =
+  | {
+      id: string;
+      kind: "artifact.operation";
+      operation: SvvyxArtifactsOperationInput;
+    }
+  | SvvyxRuntimeEffectTransportIntent;
+
+type SvvyxSubprocessProgressEvent = {
+  facts?: Record<string, JsonValue>;
+  family: string;
+  phase: "failed" | "started" | "succeeded";
+};
+
+type SignedSvvyxSubprocessTransport = {
+  envelopeVersion?: unknown;
+  invocationId?: unknown;
+  commandId?: unknown;
+  extensionId?: unknown;
+  createdAt?: unknown;
   payload?: unknown;
-  signature?: unknown;
+  signature?: {
+    algorithm?: unknown;
+    keyId?: unknown;
+    digest?: unknown;
+  };
 };
 
 function prepareSvvyxSubprocess(input: {
-  activeCommand: Pick<StructuredCommandRecord, "id"> | null;
+  activeCommand: Pick<RuntimeCommandRecord, "id"> | null;
   command: string;
   commandCwd: string;
   options: DirectToolOptions;
@@ -534,52 +676,56 @@ function prepareSvvyxSubprocess(input: {
   const shim = createSvvyxSubprocessShim();
   const resultPath = join(shim.dir, `svvyx-result-${randomUUID()}.json`);
   const resultKey = randomBytes(32).toString("base64url");
-  const runtime = input.options.runtime?.current ?? null;
-  let workspace: unknown = null;
-  if (runtime && input.options.store) {
-    try {
-      workspace = input.options.store.getSessionState(runtime.sessionId).workspace;
-    } catch {
-      workspace = null;
-    }
-  }
+  const sourceCommandId = input.activeCommand?.id ?? `svvyx_transport_${randomUUID()}`;
+  const promptRuntime = input.options.runtime?.current ?? null;
+  const runtime = promptRuntime
+    ? {
+        sessionId: promptRuntime.workspaceSessionId,
+        surfacePiSessionId: promptRuntime.surfacePiSessionId,
+        surfaceKind: promptRuntime.surfaceKind,
+        surfaceThreadId:
+          promptRuntime.surfaceKind === "handler" ? (promptRuntime.threadId ?? null) : null,
+      }
+    : null;
   const context = {
     agentSettingsState: input.options.agentSettingsStore?.getState() ?? null,
     canRequestArtifactOpen: input.options.openArtifact !== undefined,
     cwd: input.commandCwd,
-    databasePath: input.options.store?.databasePath ?? null,
     // This env-visible context is intentionally non-secret. Extension secret values are never
     // serialized here; svvyx subprocesses read secrets through the app-owned secret store only.
     extensionEnvValues: resolveExtensionsEnvValues(input.options),
     extensionsBuildRoot: input.options.extensionsBuildRoot,
     extensionsGeneratedPackagePath: input.options.workflowsExtensionsGeneratedPackagePath,
     extensionsRoot: input.options.extensionsRoot,
-    externalInstructionSources: runtime?.externalInstructionSources ?? [],
+    externalInstructionSources: promptRuntime?.externalInstructionSources ?? [],
     resultPath,
     runtime,
-    sourceCommandId: input.activeCommand?.id ?? null,
+    sourceCommandId,
     workflowModelCatalog: input.options.workflowsModelCatalog?.() ?? null,
     workflowsGeneratedPackagePath: input.options.workflowsGeneratedPackagePath,
     workflowsSourceRoot: input.options.workflowsSourceRoot,
     workflowsWorkspaceCwds: input.options.workflowsWorkspaceCwds?.() ?? null,
-    workspace,
     workspaceCwd: input.options.cwd,
   };
   return {
+    command: input.command,
+    commandCwd: input.commandCwd,
     env: {
       PATH: `${shim.dir}:${process.env.PATH ?? ""}`,
       SVVY_SVVYX_SUBPROCESS_CONTEXT: JSON.stringify(context),
       SVVY_SVVYX_SUBPROCESS_RESULT_KEY: resultKey,
     },
-    replaySidecar: invocation.replaySidecar,
+    replayTransport: invocation.replayTransport,
     resultKey,
     resultPath,
+    runtime,
     shimDir: shim.dir,
+    sourceCommandId,
   };
 }
 
-function prepareWorkflowTaskAgentBridgeEnv(input: {
-  activeCommand: Pick<StructuredCommandRecord, "id"> | null;
+function preparerunTaskAgentBridgeEnv(input: {
+  activeCommand: Pick<RuntimeCommandRecord, "id"> | null;
   command: string;
   commandCwd: string;
   options: DirectToolOptions;
@@ -588,11 +734,11 @@ function prepareWorkflowTaskAgentBridgeEnv(input: {
   if (
     runtime?.surfaceKind !== "handler" ||
     !input.activeCommand ||
-    !input.options.workflowTaskAgentBridge
+    !input.options.runTaskAgentBridge
   ) {
     return null;
   }
-  return input.options.workflowTaskAgentBridge({
+  return input.options.runTaskAgentBridge({
     command: input.command,
     commandCwd: input.commandCwd,
     runtime,
@@ -600,10 +746,8 @@ function prepareWorkflowTaskAgentBridgeEnv(input: {
   });
 }
 
-function workflowTaskAgentBridgeOutputRedactions(
-  env: Record<string, string> | null,
-): readonly string[] {
-  const token = env?.[WORKFLOW_TASK_AGENT_BRIDGE_TOKEN_ENV];
+function runTaskAgentBridgeOutputRedactions(env: Record<string, string> | null): readonly string[] {
+  const token = env?.[RUN_TASK_AGENT_BRIDGE_TOKEN_ENV];
   return token ? [token] : [];
 }
 
@@ -619,7 +763,7 @@ function redactCommandOutput(text: string, redactions: readonly string[] | undef
 
 type SvvyxShellInvocation =
   | { kind: "none" }
-  | { kind: "trusted"; replaySidecar: boolean }
+  | { kind: "trusted"; replayTransport: boolean }
   | { kind: "invalid"; message: string };
 
 function classifySvvyxShellInvocation(command: string): SvvyxShellInvocation {
@@ -659,10 +803,10 @@ function classifySvvyxShellInvocation(command: string): SvvyxShellInvocation {
   if (words[index] !== "svvyx") {
     return { kind: "none" };
   }
-  return { kind: "trusted", replaySidecar: isTrustedSvvyxSidecarNamespace(words[index + 1]) };
+  return { kind: "trusted", replayTransport: isTrustedSvvyxTransportNamespace(words[index + 1]) };
 }
 
-function isTrustedSvvyxSidecarNamespace(namespace: string | undefined): boolean {
+function isTrustedSvvyxTransportNamespace(namespace: string | undefined): boolean {
   return namespace === "artifacts" || namespace === "extensions" || namespace === "workflows";
 }
 
@@ -728,26 +872,44 @@ async function finalizeSvvyxSubprocessResult(input: {
     return input.result;
   }
   try {
-    if (!input.svvyxSubprocess.replaySidecar) {
+    if (!input.svvyxSubprocess.replayTransport) {
       return input.result;
     }
-    const sidecar = readSvvyxSubprocessResult(
+    const transport = readSvvyxSubprocessResult(
       input.svvyxSubprocess.resultPath,
       input.svvyxSubprocess.resultKey,
     );
-    replaySvvyxSubprocessAppLogEvents(input.options, sidecar.appLogEvents);
-    await replaySvvyxSubprocessAppActions(input.options, sidecar.appActions);
-    replaySvvyxSubprocessAgentSettings(input.options, sidecar.agentSettingsState);
+    const intentResult = transport.ok
+      ? await applySvvyxSubprocessIntents(
+          input.options,
+          input.svvyxSubprocess,
+          transport.intents,
+          transport.output,
+          transport.commandFacts,
+        )
+      : {};
     const retainedOutputArtifacts = Array.isArray(input.result.details.retainedOutputArtifacts)
       ? { retainedOutputArtifacts: input.result.details.retainedOutputArtifacts }
       : {};
     const commandFacts: Record<string, unknown> | undefined =
-      sidecar.commandFacts || Object.keys(retainedOutputArtifacts).length > 0
+      transport.commandFacts ||
+      intentResult.commandFacts ||
+      Object.keys(retainedOutputArtifacts).length > 0
         ? {
-            ...sidecar.commandFacts,
+            ...transport.commandFacts,
+            ...intentResult.commandFacts,
             ...retainedOutputArtifacts,
           }
         : undefined;
+    replaySvvyxSubprocessProgressEvents(
+      input.options,
+      input.svvyxSubprocess,
+      transport.progressEvents,
+      commandFacts,
+    );
+    replaySvvyxSubprocessAppLogEvents(input.options, transport.appLogEvents);
+    await replaySvvyxSubprocessAppActions(input.options, transport.appActions);
+    replaySvvyxSubprocessAgentSettings(input.options, transport.agentSettingsState);
     if (commandFacts?.workflowBuildOk === true) {
       await input.options.onWorkflowsGeneratedPackageChanged?.({
         reason:
@@ -761,7 +923,7 @@ async function finalizeSvvyxSubprocessResult(input: {
       ...input.result.details,
       ...(commandFacts ? { commandFacts } : {}),
     };
-    if (sidecar.ok === false) {
+    if (transport.ok === false) {
       const stderr =
         typeof input.result.details.stderr === "string" ? input.result.details.stderr : "";
       throw new Error(
@@ -770,9 +932,13 @@ async function finalizeSvvyxSubprocessResult(input: {
       );
     }
     const stdout =
-      typeof input.result.details.stdout === "string"
-        ? input.result.details.stdout
-        : stripCommandExitTrailer(readTextContent(input.result));
+      intentResult.output !== undefined
+        ? JSON.stringify(intentResult.output, null, 2)
+        : transport.output !== undefined
+          ? JSON.stringify(transport.output, null, 2)
+          : typeof input.result.details.stdout === "string"
+            ? input.result.details.stdout
+            : stripCommandExitTrailer(readTextContent(input.result));
     return {
       ...input.result,
       content: stdout ? [{ type: "text", text: stdout.trimEnd() }] : input.result.content,
@@ -781,6 +947,187 @@ async function finalizeSvvyxSubprocessResult(input: {
   } finally {
     rmSync(input.svvyxSubprocess.shimDir, { force: true, recursive: true });
   }
+}
+
+async function applySvvyxSubprocessIntents(
+  options: DirectToolOptions,
+  subprocess: PreparedSvvyxSubprocess,
+  intents: readonly SvvyxSubprocessIntent[],
+  transportOutput: unknown,
+  transportCommandFacts: Record<string, unknown> | undefined,
+): Promise<{ commandFacts?: Record<string, unknown>; output?: unknown }> {
+  let output = cloneJsonObject(transportOutput);
+  let commandFacts: Record<string, unknown> | undefined = transportCommandFacts
+    ? { ...transportCommandFacts }
+    : undefined;
+  for (const intent of intents) {
+    if (intent.kind === "artifact.operation") {
+      if (
+        !subprocess.runtime ||
+        !subprocess.sourceCommandId ||
+        !options.artifactState ||
+        !options.runState
+      ) {
+        throw new Error("Artifacts commands require active prompt command context.");
+      }
+      const result = await runSvvyxArtifactsOperation({
+        artifactState: options.artifactState,
+        cwd: subprocess.commandCwd,
+        operation: intent.operation,
+        runtime: subprocess.runtime,
+        runState: options.runState,
+        sourceCommand: { id: subprocess.sourceCommandId as CommandId },
+        onAppLog: options.onAppLog,
+        openArtifact: options.openArtifact,
+      }).catch((error) => {
+        throw new Error(JSON.stringify(formatSvvyxArtifactsError(error)));
+      });
+      output = result.output;
+      commandFacts = {
+        ...commandFacts,
+        ...result.commandFacts,
+      };
+      continue;
+    }
+    if (intent.kind === "runtime_effect.request") {
+      const result = patchAppPrivateSvvyxRuntimeEffectTransportOutput({
+        commandFacts,
+        contextImpactState: options.extensionContextImpactState,
+        output,
+        request: intent.request,
+      });
+      output = result.output;
+      commandFacts = result.commandFacts;
+    }
+  }
+  return {
+    ...(commandFacts ? { commandFacts } : {}),
+    ...(output !== undefined ? { output } : {}),
+  };
+}
+
+type SvvyxRuntimeEffectTransportApplicationInput = {
+  readonly commandFacts: Record<string, unknown> | undefined;
+  readonly contextImpactState?: RuntimeExtensionContextImpactStateFacade;
+  readonly output: unknown;
+  readonly request: SvvyxRuntimeEffectTransportRequest;
+};
+
+type SvvyxRuntimeEffectTransportApplicationResult = {
+  readonly commandFacts?: Record<string, unknown>;
+  readonly output?: unknown;
+};
+
+function patchAppPrivateSvvyxRuntimeEffectTransportOutput(
+  input: SvvyxRuntimeEffectTransportApplicationInput,
+): SvvyxRuntimeEffectTransportApplicationResult {
+  if (input.request.type === "extension_usage.context_impact") {
+    const affectedSurfaces =
+      input.contextImpactState?.listUsageContextAffectedSurfaces(input.request.input) ?? [];
+    return {
+      commandFacts: {
+        ...input.commandFacts,
+        affectedAgentContextSurfaces: affectedSurfaces.length,
+      },
+      output: patchExtensionUsageAffectedSurfaces(input.output, affectedSurfaces),
+    };
+  }
+  if (input.request.type === "extension_snapshot.context_impact") {
+    const affectedSurfaces =
+      input.contextImpactState?.applySnapshotContextImpact(input.request.input) ?? [];
+    return {
+      commandFacts: {
+        ...input.commandFacts,
+        affectedAgentContextSurfaces: affectedSurfaces.length,
+      },
+      output: patchSnapshotLoadAffectedSurfaces(input.output, affectedSurfaces),
+    };
+  }
+  return {
+    ...(input.commandFacts ? { commandFacts: input.commandFacts } : {}),
+    ...(input.output !== undefined ? { output: input.output } : {}),
+  };
+}
+
+function patchExtensionUsageAffectedSurfaces(
+  value: unknown,
+  affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[],
+): unknown {
+  if (!isMutableRecord(value)) {
+    return value;
+  }
+  const rootImpact = getMutableRecord(value.agentContextImpact);
+  if (rootImpact) {
+    rootImpact.affectedSurfaces = [...affectedSurfaces];
+  }
+  const result = getMutableRecord(value.result);
+  const resultImpact = getMutableRecord(result?.agentContextImpact);
+  if (resultImpact) {
+    resultImpact.affectedSurfaces = [...affectedSurfaces];
+  }
+  return value;
+}
+
+function patchSnapshotLoadAffectedSurfaces(
+  value: unknown,
+  affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[],
+): unknown {
+  if (!isMutableRecord(value)) {
+    return value;
+  }
+  const impact = getMutableRecord(value.agentContextImpact);
+  if (impact) {
+    impact.affectedSurfaces = [...affectedSurfaces];
+  } else {
+    value.agentContextImpact = { affectedSurfaces: [...affectedSurfaces] };
+  }
+  return value;
+}
+
+function getMutableRecord(value: unknown): Record<string, unknown> | null {
+  return isMutableRecord(value) ? value : null;
+}
+
+function isMutableRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function replaySvvyxSubprocessProgressEvents(
+  options: DirectToolOptions,
+  subprocess: PreparedSvvyxSubprocess,
+  events: readonly SvvyxSubprocessProgressEvent[],
+  finalCommandFacts: Record<string, unknown> | undefined,
+): void {
+  if (
+    !options.commandState ||
+    !options.runState ||
+    !subprocess.runtime ||
+    !subprocess.sourceCommandId
+  ) {
+    return;
+  }
+  for (const event of events) {
+    const facts = event.phase === "succeeded" ? finalCommandFacts : event.facts;
+    const data: CommandEventPayload = {
+      command: subprocess.command,
+      family: event.family,
+      phase: event.phase,
+      source: "svvyx-cli-subprocess",
+      ...(isJsonRecord(facts) ? { facts } : {}),
+    };
+    options.runState(
+      options.commandState.recordCommandEvent({
+        sessionId: subprocess.runtime.sessionId,
+        commandId: subprocess.sourceCommandId,
+        kind: "command.progress",
+        data,
+      }),
+    );
+  }
+}
+
+function cloneJsonObject(value: unknown): unknown {
+  return value === undefined ? undefined : structuredClone(value);
 }
 
 function createSvvyxSubprocessShim(): { dir: string } {
@@ -798,15 +1145,15 @@ function createSvvyxSubprocessShim(): { dir: string } {
   return { dir };
 }
 
-function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubprocessSidecar {
+function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubprocessTransport {
   try {
-    const signed = JSON.parse(readFileSync(path, "utf8")) as SignedSvvyxSubprocessSidecar;
+    const signed = JSON.parse(readFileSync(path, "utf8")) as SignedSvvyxSubprocessTransport;
     if (!isValidSvvyxSubprocessSignature(signed, resultKey)) {
-      return { appActions: [], appLogEvents: [], ok: false };
+      return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
     }
     const parsed = signed.payload;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { appActions: [], appLogEvents: [], ok: false };
+      return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
     }
     const appActions = Array.isArray((parsed as { appActions?: unknown }).appActions)
       ? (parsed as { appActions: SvvyxSubprocessAppAction[] }).appActions
@@ -816,6 +1163,15 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
       : [];
     const commandFacts = (parsed as { commandFacts?: unknown }).commandFacts;
     const agentSettingsState = (parsed as { agentSettingsState?: unknown }).agentSettingsState;
+    const intents = Array.isArray((parsed as { intents?: unknown }).intents)
+      ? (parsed as { intents: unknown[] }).intents.flatMap(readSvvyxSubprocessIntent)
+      : [];
+    const progressEvents = Array.isArray((parsed as { progressEvents?: unknown }).progressEvents)
+      ? (parsed as { progressEvents: unknown[] }).progressEvents.flatMap(
+          readSvvyxSubprocessProgressEvent,
+        )
+      : [];
+    const output = (parsed as { output?: unknown }).output;
     return {
       appActions,
       appLogEvents,
@@ -825,26 +1181,159 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
       ...(commandFacts && typeof commandFacts === "object" && !Array.isArray(commandFacts)
         ? { commandFacts: commandFacts as Record<string, unknown> }
         : {}),
-      ok: (parsed as { ok?: unknown }).ok === true,
+      intents,
+      ok:
+        (parsed as { status?: unknown }).status === "succeeded" ||
+        (parsed as { ok?: unknown }).ok === true,
+      ...(output !== undefined ? { output } : {}),
+      progressEvents,
     };
   } catch {
-    return { appActions: [], appLogEvents: [], ok: false };
+    return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
   }
 }
 
+function readSvvyxSubprocessIntent(value: unknown): SvvyxSubprocessIntent[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const intent = value as {
+    id?: unknown;
+    input?: unknown;
+    kind?: unknown;
+    operation?: unknown;
+    request?: unknown;
+    target?: unknown;
+  };
+  if (
+    intent.kind === "artifact.operation" &&
+    intent.operation &&
+    typeof intent.operation === "object" &&
+    !Array.isArray(intent.operation) &&
+    isSvvyxArtifactsOperationInput(intent.operation)
+  ) {
+    return [
+      {
+        id: typeof intent.id === "string" ? intent.id : "artifact.operation",
+        kind: "artifact.operation",
+        operation: intent.operation,
+      },
+    ];
+  }
+  if (intent.kind === "runtime_effect.request") {
+    const decoded = decodeUnknownSvvyxRuntimeEffectTransportIntentExit(intent);
+    if (!Exit.isSuccess(decoded)) {
+      return [];
+    }
+    return [decoded.value];
+  }
+  return [];
+}
+
+function isSvvyxArtifactsOperationInput(
+  operation: unknown,
+): operation is SvvyxArtifactsOperationInput {
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+    return false;
+  }
+  const candidate = operation as { commandId?: unknown; options?: unknown };
+  if (candidate.commandId === "create") {
+    return Boolean(candidate.options && typeof candidate.options === "object");
+  }
+  if (
+    candidate.commandId === "inspect" ||
+    candidate.commandId === "open" ||
+    candidate.commandId === "delete"
+  ) {
+    const options = candidate.options as { id?: unknown } | undefined;
+    return options !== undefined && typeof options === "object" && typeof options.id === "string";
+  }
+  if (candidate.commandId === "list") {
+    return candidate.options === undefined || typeof candidate.options === "object";
+  }
+  return false;
+}
+
+function readSvvyxSubprocessProgressEvent(value: unknown): SvvyxSubprocessProgressEvent[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const event = value as { facts?: unknown; family?: unknown; phase?: unknown };
+  if (
+    typeof event.family !== "string" ||
+    (event.phase !== "started" && event.phase !== "succeeded" && event.phase !== "failed")
+  ) {
+    return [];
+  }
+  if (event.facts !== undefined && !isJsonRecord(event.facts)) {
+    return [];
+  }
+  return [
+    {
+      family: event.family,
+      phase: event.phase,
+      ...(event.facts ? { facts: event.facts } : {}),
+    },
+  ];
+}
+
+function isJsonRecord(value: unknown): value is Record<string, JsonValue> {
+  return (
+    Boolean(value && typeof value === "object" && !Array.isArray(value)) &&
+    Object.values(value as Record<string, unknown>).every(isJsonValue)
+  );
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).every(isJsonValue);
+  }
+  return false;
+}
+
 function isValidSvvyxSubprocessSignature(
-  signed: SignedSvvyxSubprocessSidecar,
+  signed: SignedSvvyxSubprocessTransport,
   resultKey: string,
 ): boolean {
   if (!signed || typeof signed !== "object") {
     return false;
   }
-  if (typeof signed.signature !== "string") {
+  if (
+    signed.envelopeVersion !== 1 ||
+    typeof signed.invocationId !== "string" ||
+    typeof signed.commandId !== "string" ||
+    typeof signed.extensionId !== "string" ||
+    typeof signed.createdAt !== "string" ||
+    !signed.signature ||
+    signed.signature.algorithm !== "hmac-sha256" ||
+    signed.signature.keyId !== "svvyx-subprocess-result" ||
+    typeof signed.signature.digest !== "string"
+  ) {
     return false;
   }
-  const payloadJson = JSON.stringify(signed.payload);
-  const expected = createHmac("sha256", resultKey).update(payloadJson).digest("base64url");
-  const actualBuffer = Buffer.from(signed.signature);
+  const signatureMaterial = {
+    envelopeVersion: signed.envelopeVersion,
+    invocationId: signed.invocationId,
+    commandId: signed.commandId,
+    extensionId: signed.extensionId,
+    createdAt: signed.createdAt,
+    payload: signed.payload,
+  };
+  const expected = createHmac("sha256", resultKey)
+    .update(JSON.stringify(signatureMaterial))
+    .digest("base64url");
+  const actualBuffer = Buffer.from(signed.signature.digest);
   const expectedBuffer = Buffer.from(expected);
   return (
     actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
@@ -944,7 +1433,7 @@ function assertPatchRespectsManagedFilesystemPolicy(
   patch: string,
   options: WorkflowsGeneratedProtectionOptions,
 ): void {
-  const policy = directToolFileSystemPolicy(options);
+  const policy = directToolLaunchPolicy(options).fileSystemPolicy;
   for (const path of readPatchTouchedPaths(patch)) {
     if (!canWriteFileSystemPath(policy, path, options.cwd)) {
       throw new Error(MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE);
@@ -1112,8 +1601,8 @@ function commandPathNeedles(root: string, commandCwd: string, workspaceCwd: stri
     root,
     relative(commandCwd, root),
     relative(workspaceCwd, root),
-    ".smithers/node_modules/@svvy/extensions",
-    ".smithers/node_modules/@svvy/workflows",
+    ".smithers/node_modules/@svvyx/extensions",
+    ".smithers/node_modules/@svvyx/workflows",
   ].filter((needle) => needle.length > 0 && needle !== ".");
 }
 
@@ -1122,56 +1611,53 @@ type WorkflowsGeneratedProtectionOptions = Pick<
   | "approvalMode"
   | "cwd"
   | "extensionsRoot"
+  | "readWorkspaceForSession"
   | "runtime"
-  | "store"
   | "workflowsExtensionsGeneratedPackagePath"
   | "workflowsGeneratedPackagePath"
   | "workflowsSourceRoot"
 >;
 
-function directToolFileSystemPolicy(
-  options: WorkflowsGeneratedProtectionOptions,
-): FileSystemSandboxPolicy {
-  if (resolveApprovalMode(options) === "full-access") {
-    return unrestrictedFileSystemPolicy();
-  }
+function directToolLaunchPolicy(options: WorkflowsGeneratedProtectionOptions): SandboxLaunchPolicy {
   const directEditPolicy = protectedDirectEditPolicy(options);
   const extensionsRoot = resolvePath(options.extensionsRoot ?? defaultExtensionsRoot());
-  return buildManagedWorkspaceWriteFileSystemPolicy({
+  return buildDirectToolLaunchPolicy({
+    approvalMode: resolveApprovalMode(options),
     cwd: options.cwd,
-    writableRoots: [
-      ...(options.workflowsSourceRoot ? [resolvePath(options.workflowsSourceRoot)] : []),
-      resolvePath(extensionsRoot, "sources"),
-      resolvePath(extensionsRoot, "package"),
-      ...directEditPolicy.allowedRoots,
-    ],
-    readOnlyRoots: [...directEditPolicy.protectedRoots, ...directEditPolicy.alwaysProtectedRoots],
-    includeSlashTmp: true,
+    extensionsPackageRoot: resolvePath(extensionsRoot, "package"),
+    extensionsSourceRoot: resolvePath(extensionsRoot, "sources"),
+    managedSandbox: resolveManagedSandbox(options),
+    networkAccess: resolveNetworkAccess(options),
+    workflowsSourceRoot: options.workflowsSourceRoot
+      ? resolvePath(options.workflowsSourceRoot)
+      : null,
+    allowedRoots: directEditPolicy.allowedRoots,
+    protectedRoots: directEditPolicy.protectedRoots,
+    alwaysProtectedRoots: directEditPolicy.alwaysProtectedRoots,
     tmpdir: process.env.TMPDIR ?? null,
   });
 }
 
-function svvyxSubprocessFileSystemPolicy(
-  options: WorkflowsGeneratedProtectionOptions,
-): FileSystemSandboxPolicy {
-  if (resolveApprovalMode(options) === "full-access") {
-    return unrestrictedFileSystemPolicy();
-  }
+function svvyxLaunchPolicy(options: WorkflowsGeneratedProtectionOptions): SandboxLaunchPolicy {
   const extensionsRoot = resolvePath(options.extensionsRoot ?? defaultExtensionsRoot());
   const artifactPolicy = protectedArtifactDirectEditPolicy(options);
-  return buildManagedWorkspaceWriteFileSystemPolicy({
+  return buildSvvyxLaunchPolicy({
+    approvalMode: resolveApprovalMode(options),
     cwd: options.cwd,
-    writableRoots: [
-      ...(options.workflowsSourceRoot ? [resolvePath(options.workflowsSourceRoot)] : []),
-      resolvePath(options.workflowsGeneratedPackagePath ?? getWorkflowsGeneratedPackagePath()),
-      effectiveExtensionsGeneratedPackagePath({
-        extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
-        generatedPackagePath: options.workflowsGeneratedPackagePath,
-      }),
-      extensionsRoot,
-      ...artifactPolicy.allowedRoots,
-    ],
-    includeSlashTmp: true,
+    extensionsGeneratedPackagePath: effectiveExtensionsGeneratedPackagePath({
+      extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
+      generatedPackagePath: options.workflowsGeneratedPackagePath,
+    }),
+    extensionsRoot,
+    managedSandbox: resolveManagedSandbox(options),
+    networkAccess: resolveNetworkAccess(options),
+    workflowsGeneratedPackagePath: resolvePath(
+      options.workflowsGeneratedPackagePath ?? getWorkflowsGeneratedPackagePath(),
+    ),
+    workflowsSourceRoot: options.workflowsSourceRoot
+      ? resolvePath(options.workflowsSourceRoot)
+      : null,
+    artifactAllowedRoots: artifactPolicy.allowedRoots,
     tmpdir: process.env.TMPDIR ?? null,
   });
 }
@@ -1211,17 +1697,25 @@ function protectedArtifactDirectEditPolicy(options: WorkflowsGeneratedProtection
   allowedRoots: string[];
 } {
   const runtime = options.runtime?.current;
-  if (!runtime || !options.store) {
+  if (!runtime || !options.readWorkspaceForSession) {
     return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
   }
   let artifactDir: string;
   try {
-    artifactDir = options.store.getSessionState(runtime.sessionId).workspace.artifactDir;
+    const workspace = options.readWorkspaceForSession(runtime.workspaceSessionId);
+    if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) {
+      return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
+    }
+    const candidate = (workspace as { artifactDir?: unknown }).artifactDir;
+    if (typeof candidate !== "string" || candidate.length === 0) {
+      return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
+    }
+    artifactDir = candidate;
   } catch {
     return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
   }
   const artifactRoot = resolvePath(artifactDir);
-  const sessionArtifactRoot = resolvePath(artifactRoot, runtime.sessionId);
+  const sessionArtifactRoot = resolvePath(artifactRoot, runtime.workspaceSessionId);
   return {
     protectedRoots: [artifactRoot],
     alwaysProtectedRoots: [resolvePath(sessionArtifactRoot, "immutable")],
@@ -1244,8 +1738,8 @@ function protectedWorkflowsGeneratedRoots(options: WorkflowsGeneratedProtectionO
   return [
     workflowsPackagePath,
     extensionsPackagePath,
-    resolvePath(options.cwd, ".smithers", "node_modules", "@svvy", "extensions"),
-    resolvePath(options.cwd, ".smithers", "node_modules", "@svvy", "workflows"),
+    resolvePath(options.cwd, ".smithers", "node_modules", "@svvyx", "extensions"),
+    resolvePath(options.cwd, ".smithers", "node_modules", "@svvyx", "workflows"),
   ];
 }
 
@@ -1339,6 +1833,7 @@ async function runExecCommand(input: {
   signal?: AbortSignal;
   liveProjection?: LiveCommandProjection | null;
   outputRedactions?: readonly string[];
+  runtimeCommandStdin?: LiveCommandStdinRegistry;
 }): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
   const protectedWriteSnapshot = captureProtectedWriteSnapshot(
     input.protectedWriteRoots,
@@ -1425,6 +1920,7 @@ async function runExecCommand(input: {
 
     const sessionId = `exec_${randomUUID()}`;
     runningCommandSessions.set(sessionId, session);
+    registerRuntimeCommandStdinSession(input.runtimeCommandStdin, sessionId, session);
     return {
       content: [
         {
@@ -1490,17 +1986,18 @@ function recordLiveCommandOutput(
       ? truncateUtf8(text, remainingEventBytes)
       : text;
   if (eventText.length > 0) {
-    liveProjection.store.recordLifecycleEvent({
-      sessionId: liveProjection.sessionId,
-      kind: "command.output",
-      subjectKind: "command",
-      subjectId: liveProjection.commandId,
-      data: {
-        stream,
-        source: "live-stream",
-        text: eventText,
-      },
-    });
+    liveProjection.runState(
+      liveProjection.commandState.recordCommandEvent({
+        sessionId: liveProjection.sessionId,
+        kind: "command.output",
+        commandId: liveProjection.commandId,
+        data: {
+          stream,
+          source: "live-stream",
+          text: eventText,
+        },
+      }),
+    );
   }
   liveProjection.outputEventBytes[stream] = nextBytes;
   if (nextBytes > RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES) {
@@ -1517,18 +2014,19 @@ function recordRetainedCommandOutputEvent(
     return;
   }
   liveProjection.outputEventRetainedStreams.add(stream);
-  liveProjection.store.recordLifecycleEvent({
-    sessionId: liveProjection.sessionId,
-    kind: "command.output",
-    subjectKind: "command",
-    subjectId: liveProjection.commandId,
-    data: {
-      stream,
-      source: "retained-log-artifact",
-      text: RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE,
-      bytes,
-    },
-  });
+  liveProjection.runState(
+    liveProjection.commandState.recordCommandEvent({
+      sessionId: liveProjection.sessionId,
+      kind: "command.output",
+      commandId: liveProjection.commandId,
+      data: {
+        stream,
+        source: "retained-log-artifact",
+        text: RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE,
+        bytes,
+      },
+    }),
+  );
 }
 
 function truncateUtf8(text: string, bytes: number): string {
@@ -1557,15 +2055,17 @@ function retainCommandOutputArtifacts(
     ) {
       continue;
     }
-    const artifact = liveProjection.store.createArtifact({
-      sessionId: liveProjection.sessionId,
-      sourceCommandId: liveProjection.commandId,
-      kind: "log",
-      name: `command-output-${stream}-${randomUUID()}.log`,
-      content: text,
-      mimeType: "text/plain",
-      immutable: true,
-    });
+    const artifact = liveProjection.runState(
+      liveProjection.artifactState.createArtifact({
+        sessionId: liveProjection.sessionId as WorkspaceSessionId,
+        sourceCommandId: liveProjection.commandId as CommandId,
+        kind: "log",
+        name: `command-output-${stream}-${randomUUID()}.log`,
+        content: text,
+        mimeType: "text/plain",
+        immutable: true,
+      }),
+    ).value;
     retained.push(retainedCommandOutputArtifact(stream, artifact));
   }
   return retained;
@@ -1573,7 +2073,7 @@ function retainCommandOutputArtifacts(
 
 function retainedCommandOutputArtifact(
   stream: "stderr" | "stdout",
-  artifact: StructuredArtifactRecord,
+  artifact: RuntimeArtifactRecord,
 ): RetainedCommandOutputArtifact {
   return {
     artifactId: artifact.id,
@@ -1616,85 +2116,37 @@ function finishLiveCommandProjection(
     stdout: result.stdout,
     stderr: result.stderr,
   });
-  liveProjection.store.finishCommand({
-    commandId: liveProjection.commandId,
-    status: failed ? "failed" : "succeeded",
-    summary: failed
-      ? `Command finished with ${result.exitSignal ? `signal ${result.exitSignal}` : `exit code ${result.exitCode}`}.`
-      : "Command completed successfully.",
-    facts: {
-      ...commandOutputFactStreams({
-        retainedOutputArtifacts,
-        stderr: result.stderr,
-        stdout: result.stdout,
-      }),
-      ...sandboxDenialFacts({
+  liveProjection.runState(
+    liveProjection.commandState.finishCommand({
+      commandId: liveProjection.commandId,
+      status: failed ? "failed" : "succeeded",
+      summary: failed
+        ? `Command finished with ${result.exitSignal ? `signal ${result.exitSignal}` : `exit code ${result.exitCode}`}.`
+        : "Command completed successfully.",
+      facts: {
+        ...commandOutputFactStreams({
+          retainedOutputArtifacts,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        }),
+        ...sandboxDenialFacts({
+          exitCode: result.exitCode,
+          managedSandbox: result.managedSandbox ?? liveProjection.managedSandbox,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        }),
         exitCode: result.exitCode,
-        managedSandbox: result.managedSandbox ?? liveProjection.managedSandbox,
-        stderr: result.stderr,
-        stdout: result.stdout,
-      }),
-      exitCode: result.exitCode,
-      exitSignal: result.exitSignal,
-      ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
-    },
-    error: failed
-      ? result.stderr.trim() ||
-        (result.exitSignal
-          ? `Command terminated by signal ${result.exitSignal}.`
-          : `Command exited with code ${result.exitCode}.`)
-      : null,
-  });
-}
-
-function sandboxDenialFacts(input: {
-  exitCode: number | null;
-  managedSandbox: boolean;
-  stderr: string;
-  stdout: string;
-}): Record<string, unknown> {
-  if (!isSandboxDenialOutput(input)) {
-    return {};
-  }
-  return {
-    sandboxDenied: true,
-    sandboxEngine: "macos-seatbelt",
-  };
-}
-
-function isSandboxDenialOutput(input: {
-  exitCode: number | null;
-  managedSandbox: boolean;
-  stderr: string;
-  stdout: string;
-}): boolean {
-  if (!input.managedSandbox || input.exitCode === 0 || input.exitCode === 127) {
-    return false;
-  }
-  const combined = `${input.stdout}\n${input.stderr}`;
-  const normalized = combined.toLowerCase();
-  if (!hasSandboxHelperOriginMarker(combined)) {
-    return false;
-  }
-  if (/\b(command not found|parse error|syntax error)\b/.test(normalized)) {
-    return false;
-  }
-  return (
-    normalized.includes("sandbox-exec: sandbox_apply:") ||
-    normalized.includes("operation not permitted") ||
-    normalized.includes("permission denied") ||
-    normalized.includes("read-only file system") ||
-    normalized.includes("failed to write file") ||
-    normalized.includes("deny(")
+        exitSignal: result.exitSignal,
+        ...(retainedOutputArtifacts.length > 0 ? { retainedOutputArtifacts } : {}),
+      },
+      error: failed
+        ? result.stderr.trim() ||
+          (result.exitSignal
+            ? `Command terminated by signal ${result.exitSignal}.`
+            : `Command exited with code ${result.exitCode}.`)
+        : null,
+    }),
   );
-}
-
-function isSandboxHelperBootstrapFailure(output: string): boolean {
-  return output.toLowerCase().includes("sandbox-exec: sandbox_apply:");
-}
-
-function hasSandboxHelperOriginMarker(output: string): boolean {
-  return output.includes("sandbox-exec:") || /^Sandbox:/m.test(output);
 }
 
 function spawnShellCommand(input: {
@@ -1714,7 +2166,10 @@ function spawnShellCommand(input: {
     });
   }
   return spawn(
-    resolveSandboxHelperPath(),
+    resolveSandboxHelperPath({
+      configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
+      executablePath: process.execPath,
+    }),
     buildSandboxHelperArgs({
       command: [shell, "-lc", input.cmd],
       cwd: input.cwd,
@@ -1743,7 +2198,10 @@ function spawnPatchCommand(input: {
     });
   }
   return spawnSync(
-    resolveSandboxHelperPath(),
+    resolveSandboxHelperPath({
+      configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
+      executablePath: process.execPath,
+    }),
     buildSandboxHelperArgs({
       command,
       cwd: input.cwd,
@@ -1999,23 +2457,26 @@ function formatCommandOutput(input: {
 }
 
 function findActiveExecCommand(input: {
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
   turnId: string | null;
   workflowTaskAttemptId: string | null;
   toolCallId: string;
-}): StructuredCommandRecord | null {
-  const snapshot = input.store.getSessionState(input.sessionId);
-  return (
-    snapshot.commands
-      .filter(
-        (command) =>
-          command.turnId === input.turnId &&
-          command.workflowTaskAttemptId === input.workflowTaskAttemptId &&
-          command.toolName === "exec_command" &&
-          command.status === "running" &&
-          command.facts?.toolCallId === input.toolCallId,
-      )
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
+}): RuntimeCommandRecord | null {
+  const command = input.runState(
+    input.commandState.findCommandByToolCallId({ toolCallId: input.toolCallId }),
   );
+  if (
+    !command ||
+    command.sessionId !== input.sessionId ||
+    command.turnId !== input.turnId ||
+    command.workflowTaskAttemptId !== input.workflowTaskAttemptId ||
+    command.toolName !== "exec_command" ||
+    command.status !== "running" ||
+    command.facts?.toolCallId !== input.toolCallId
+  ) {
+    return null;
+  }
+  return command;
 }

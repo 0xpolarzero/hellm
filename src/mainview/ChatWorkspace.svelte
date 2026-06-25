@@ -257,7 +257,7 @@
       if (session.status === "waiting") return "waiting";
       return "neutral";
     }
-    if (binding.surface === "thread") {
+    if (binding.surface === "handler") {
       const threadId = binding.threadId;
       if (threadId && session.threadIdsByStatus?.waiting.includes(threadId)) {
         return "waiting";
@@ -299,7 +299,7 @@
           buildSidebarPaneLocations(
             (binding) =>
               binding.workspaceSessionId === session.id &&
-              binding.surface === "thread" &&
+              binding.surface === "handler" &&
               binding.threadId === thread.threadId,
           ),
         ]),
@@ -308,7 +308,7 @@
   );
   const paneLocationsByWorkflowRunId = $derived<Record<string, SidebarPaneLocation[]>>({});
   const currentSurfaceLabel = $derived.by(() => {
-    if (currentSurface?.surface === "thread") {
+    if (currentSurface?.surface === "handler") {
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
     }
 
@@ -342,7 +342,7 @@
     if (binding?.surface === "artifact") {
       return "Artifact";
     }
-    if (paneController?.target.surface === "thread") {
+    if (paneController?.target.surface === "handler") {
       return "Handler Thread";
     }
     return "Orchestrator";
@@ -352,7 +352,7 @@
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
     if (binding?.surface === "workflows") {
-      return "@svvy/workflows";
+      return "@svvyx/workflows";
     }
     if (binding?.surface === "agents") {
       return "profiles";
@@ -366,7 +366,7 @@
     if (binding?.surface === "app-logs") {
       return "workspace";
     }
-    if (binding && binding.surface !== "orchestrator" && binding.surface !== "thread") {
+    if (binding && binding.surface !== "orchestrator" && binding.surface !== "handler") {
       return binding.workspaceSessionId;
     }
     const model = paneController?.agent.state.model;
@@ -398,7 +398,7 @@
     if (paneController?.agent.state.error) {
       return "failed";
     }
-    if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "thread") {
+    if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "handler") {
       return "active";
     }
     return "idle";
@@ -1171,7 +1171,7 @@
       runtime.openSurface(
         {
           workspaceSessionId: session.id,
-          surface: "thread",
+          surface: "handler",
           surfacePiSessionId: thread.surfacePiSessionId,
           threadId: thread.threadId,
         },
@@ -1189,7 +1189,7 @@
       runtime.openSurface(
         {
           workspaceSessionId: sessionId,
-          surface: "thread",
+          surface: "handler",
           surfacePiSessionId: thread.surfacePiSessionId,
           threadId: thread.threadId,
         },
@@ -1219,7 +1219,7 @@
 
     const target = {
       workspaceSessionId: session.id,
-      surface: "thread" as const,
+      surface: "handler" as const,
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.threadId,
     };
@@ -1271,7 +1271,7 @@
         return runtime.openSurface(
           {
             workspaceSessionId: request.workspaceSessionId,
-            surface: "thread",
+            surface: "handler",
             surfacePiSessionId: request.surfacePiSessionId,
             threadId: request.threadId,
           },
@@ -1296,7 +1296,7 @@
         return runtime.openSurface(
           {
             workspaceSessionId: request.workspaceSessionId,
-            surface: "thread",
+            surface: "handler",
             surfacePiSessionId: request.surfacePiSessionId,
             threadId: request.threadId,
           },

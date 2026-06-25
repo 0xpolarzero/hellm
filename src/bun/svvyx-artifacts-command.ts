@@ -2,13 +2,19 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { AppLoggerEvent } from "./app-logger";
-import type { PromptExecutionSurfaceKind } from "./prompt-execution-context";
 import type {
-  StructuredArtifactKind,
-  StructuredArtifactRecord,
-  StructuredCommandRecord,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
+  AbsolutePath,
+  ArtifactId,
+  CommandId,
+  PromptExecutionSurfaceKind,
+  RuntimeArtifactKind,
+  RuntimeArtifactRecord,
+  RuntimeArtifactStatePortService,
+  StateContractError,
+  ThreadId,
+  WorkspaceSessionId,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 
 export type SvvyxArtifactsCommandResult = {
   output: unknown;
@@ -44,12 +50,31 @@ export type SvvyxArtifactOpenHandler = (input: {
   artifactId: string;
 }) => boolean | Promise<boolean>;
 
+type SourceCommandReference = {
+  id: CommandId;
+};
+
+export type SvvyxArtifactStateRunner = <A>(effect: Effect.Effect<A, StateContractError>) => A;
+
+function workspaceSessionId(id: string): WorkspaceSessionId {
+  return id as WorkspaceSessionId;
+}
+
+function optionalThreadId(id: string | null | undefined): ThreadId | null {
+  return id ? (id as ThreadId) : null;
+}
+
+function artifactIdentifier(id: string): ArtifactId {
+  return id as ArtifactId;
+}
+
 export async function runSvvyxArtifactsCommand(input: {
   cwd: string;
   command: string;
   runtime: SvvyxArtifactsRuntimeContext;
-  store: StructuredSessionStateStore;
-  sourceCommand: Pick<StructuredCommandRecord, "id">;
+  artifactState: RuntimeArtifactStatePortService;
+  runState: SvvyxArtifactStateRunner;
+  sourceCommand: SourceCommandReference;
   openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
@@ -60,82 +85,7 @@ export async function runSvvyxArtifactsCommand(input: {
   };
 
   try {
-    const words = splitCommandLine(input.command);
-    if (words[0] !== "svvyx" || words[1] !== "artifacts") {
-      throw artifactCommandError("INVALID_ARGUMENT", "Expected svvyx artifacts command.");
-    }
-    if (hasShellControlSyntax(input.command)) {
-      throw artifactCommandError(
-        "INVALID_ARGUMENT",
-        "svvyx artifacts commands must be invoked as a standalone command.",
-      );
-    }
-
-    const artifactCommand = words[2];
-    if (!artifactCommand) {
-      throw artifactCommandError("INVALID_ARGUMENT", "Missing Artifacts command.");
-    }
-
-    const flags = parseFlags(words.slice(3));
-    requireJson(flags);
-
-    if (artifactCommand === "create") {
-      rejectUnsupportedCreateFlags(flags);
-      const name = singleFlag(flags, "name");
-      const sourcePath = singleFlag(flags, "path");
-      const mimeType = singleFlag(flags, "mime-type");
-      return runOperation({
-        commandId: "create",
-        options: {
-          ...(name ? { name } : {}),
-          ...(sourcePath ? { path: sourcePath } : {}),
-          ...(hasFlag(flags, "immutable") ? { immutable: true } : {}),
-          ...(mimeType ? { mimeType } : {}),
-        },
-      });
-    }
-
-    if (artifactCommand === "inspect") {
-      rejectUnknownFlags(flags, ["id", "json"]);
-      return runOperation({
-        commandId: "inspect",
-        options: { id: requiredSingleFlag(flags, "id") },
-      });
-    }
-
-    if (artifactCommand === "list") {
-      rejectUnknownFlags(flags, ["thread-id", "limit", "json"]);
-      const threadId = singleFlag(flags, "thread-id");
-      const rawLimit = singleFlag(flags, "limit");
-      return runOperation({
-        commandId: "list",
-        options: {
-          ...(threadId ? { threadId } : {}),
-          ...(rawLimit ? { limit: parseLimit(rawLimit) } : {}),
-        },
-      });
-    }
-
-    if (artifactCommand === "open") {
-      rejectUnknownFlags(flags, ["id", "json"]);
-      return runOperation({
-        commandId: "open",
-        options: { id: requiredSingleFlag(flags, "id") },
-      });
-    }
-
-    if (artifactCommand === "delete") {
-      rejectUnknownFlags(flags, ["id", "json"]);
-      return runOperation({
-        commandId: "delete",
-        options: { id: requiredSingleFlag(flags, "id") },
-      });
-    }
-
-    throw artifactCommandError(
-      "INVALID_ARGUMENT",
-      `Unsupported Artifacts command: ${artifactCommand}`,
-    );
+    return runOperation(parseSvvyxArtifactsCommand(input.command));
   } catch (error) {
     if (!operationStarted) {
       emitArtifactCommandFailureLog(input, error);
@@ -144,12 +94,92 @@ export async function runSvvyxArtifactsCommand(input: {
   }
 }
 
+export function parseSvvyxArtifactsCommand(command: string): SvvyxArtifactsOperationInput {
+  const words = splitCommandLine(command);
+  if (words[0] !== "svvyx" || words[1] !== "artifacts") {
+    throw artifactCommandError("INVALID_ARGUMENT", "Expected svvyx artifacts command.");
+  }
+  if (hasShellControlSyntax(command)) {
+    throw artifactCommandError(
+      "INVALID_ARGUMENT",
+      "svvyx artifacts commands must be invoked as a standalone command.",
+    );
+  }
+
+  const artifactCommand = words[2];
+  if (!artifactCommand) {
+    throw artifactCommandError("INVALID_ARGUMENT", "Missing Artifacts command.");
+  }
+
+  const flags = parseFlags(words.slice(3));
+  requireJson(flags);
+
+  if (artifactCommand === "create") {
+    rejectUnsupportedCreateFlags(flags);
+    const name = singleFlag(flags, "name");
+    const sourcePath = singleFlag(flags, "path");
+    const mimeType = singleFlag(flags, "mime-type");
+    return {
+      commandId: "create",
+      options: {
+        ...(name ? { name } : {}),
+        ...(sourcePath ? { path: sourcePath } : {}),
+        ...(hasFlag(flags, "immutable") ? { immutable: true } : {}),
+        ...(mimeType ? { mimeType } : {}),
+      },
+    };
+  }
+
+  if (artifactCommand === "inspect") {
+    rejectUnknownFlags(flags, ["id", "json"]);
+    return {
+      commandId: "inspect",
+      options: { id: requiredSingleFlag(flags, "id") },
+    };
+  }
+
+  if (artifactCommand === "list") {
+    rejectUnknownFlags(flags, ["thread-id", "limit", "json"]);
+    const threadId = singleFlag(flags, "thread-id");
+    const rawLimit = singleFlag(flags, "limit");
+    return {
+      commandId: "list",
+      options: {
+        ...(threadId ? { threadId } : {}),
+        ...(rawLimit ? { limit: parseLimit(rawLimit) } : {}),
+      },
+    };
+  }
+
+  if (artifactCommand === "open") {
+    rejectUnknownFlags(flags, ["id", "json"]);
+    return {
+      commandId: "open",
+      options: { id: requiredSingleFlag(flags, "id") },
+    };
+  }
+
+  if (artifactCommand === "delete") {
+    rejectUnknownFlags(flags, ["id", "json"]);
+    return {
+      commandId: "delete",
+      options: { id: requiredSingleFlag(flags, "id") },
+    };
+  }
+
+  throw artifactCommandError(
+    "INVALID_ARGUMENT",
+    `Unsupported Artifacts command: ${artifactCommand}`,
+  );
+}
+
 export async function runSvvyxArtifactsOperation(input: {
   cwd: string;
   operation: SvvyxArtifactsOperationInput;
   runtime: SvvyxArtifactsRuntimeContext;
-  store: StructuredSessionStateStore;
-  sourceCommand: Pick<StructuredCommandRecord, "id">;
+  artifactState: RuntimeArtifactStatePortService;
+  runState: SvvyxArtifactStateRunner;
+  sourceCommand: SourceCommandReference;
   openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
@@ -186,8 +216,9 @@ async function runSvvyxArtifactsOperationCore(input: {
   cwd: string;
   operation: SvvyxArtifactsOperationInput;
   runtime: SvvyxArtifactsRuntimeContext;
-  store: StructuredSessionStateStore;
-  sourceCommand: Pick<StructuredCommandRecord, "id">;
+  artifactState: RuntimeArtifactStatePortService;
+  runState: SvvyxArtifactStateRunner;
+  sourceCommand: SourceCommandReference;
   openArtifact?: SvvyxArtifactOpenHandler;
 }): Promise<SvvyxArtifactsCommandResult> {
   if (input.operation.commandId === "create") {
@@ -200,16 +231,21 @@ async function runSvvyxArtifactsOperationCore(input: {
         name,
       );
     }
-    const artifact = input.store.createArtifact({
-      sessionId: input.runtime.sessionId,
-      threadId: input.runtime.surfaceKind === "handler" ? input.runtime.surfaceThreadId : null,
-      sourceCommandId: input.sourceCommand.id,
-      kind: inferArtifactKind(name ?? sourcePath ?? ""),
-      ...(name ? { name } : {}),
-      ...(sourcePath ? { path: resolveCommandPath(input.cwd, sourcePath) } : {}),
-      ...(mimeType ? { mimeType } : {}),
-      immutable,
-    });
+    const artifact = input.runState(
+      input.artifactState.createArtifact({
+        sessionId: workspaceSessionId(input.runtime.sessionId),
+        threadId:
+          input.runtime.surfaceKind === "handler"
+            ? optionalThreadId(input.runtime.surfaceThreadId)
+            : null,
+        sourceCommandId: input.sourceCommand.id,
+        kind: inferArtifactKind(name ?? sourcePath ?? ""),
+        ...(name ? { name } : {}),
+        ...(sourcePath ? { path: resolveCommandPath(input.cwd, sourcePath) } : {}),
+        ...(mimeType ? { mimeType } : {}),
+        immutable,
+      }),
+    ).value;
     const output = artifactRef(refreshArtifactRef(artifact));
     return {
       output,
@@ -228,10 +264,12 @@ async function runSvvyxArtifactsOperationCore(input: {
   }
 
   if (input.operation.commandId === "inspect") {
-    const artifact = input.store.inspectArtifact({
-      sessionId: input.runtime.sessionId,
-      artifactId: input.operation.options.id,
-    });
+    const artifact = input.runState(
+      input.artifactState.inspectArtifact({
+        sessionId: workspaceSessionId(input.runtime.sessionId),
+        artifactId: artifactIdentifier(input.operation.options.id),
+      }),
+    );
     ensureNotDeleted(artifact);
     const output = artifactRef(refreshArtifactRef(artifact));
     return {
@@ -250,14 +288,18 @@ async function runSvvyxArtifactsOperationCore(input: {
 
   if (input.operation.commandId === "list") {
     const { threadId, limit } = input.operation.options ?? {};
-    const artifacts = input.store
-      .listArtifacts({
-        sessionId: input.runtime.sessionId,
-        threadId:
-          threadId ??
-          (input.runtime.surfaceKind === "handler" ? input.runtime.surfaceThreadId : null),
-        limit: parseOperationLimit(limit),
-      })
+    const artifacts = input
+      .runState(
+        input.artifactState.listArtifacts({
+          sessionId: workspaceSessionId(input.runtime.sessionId),
+          threadId:
+            optionalThreadId(threadId) ??
+            (input.runtime.surfaceKind === "handler"
+              ? optionalThreadId(input.runtime.surfaceThreadId)
+              : null),
+          limit: parseOperationLimit(limit),
+        }),
+      )
       .flatMap((artifact) => {
         try {
           ensureNotDeleted(artifact);
@@ -280,10 +322,12 @@ async function runSvvyxArtifactsOperationCore(input: {
   }
 
   if (input.operation.commandId === "open") {
-    const artifact = input.store.inspectArtifact({
-      sessionId: input.runtime.sessionId,
-      artifactId: input.operation.options.id,
-    });
+    const artifact = input.runState(
+      input.artifactState.inspectArtifact({
+        sessionId: workspaceSessionId(input.runtime.sessionId),
+        artifactId: artifactIdentifier(input.operation.options.id),
+      }),
+    );
     ensureNotDeleted(artifact);
     const opened =
       input.openArtifact !== undefined
@@ -311,10 +355,12 @@ async function runSvvyxArtifactsOperationCore(input: {
     };
   }
 
-  const artifact = input.store.deleteArtifact({
-    sessionId: input.runtime.sessionId,
-    artifactId: input.operation.options.id,
-  });
+  const artifact = input.runState(
+    input.artifactState.deleteArtifact({
+      sessionId: workspaceSessionId(input.runtime.sessionId),
+      artifactId: artifactIdentifier(input.operation.options.id),
+    }),
+  ).value;
   const output = { id: artifact.id, deleted: true };
   return {
     output,
@@ -329,7 +375,7 @@ function artifactLogDetails(
   input: {
     operation: SvvyxArtifactsOperationInput;
     runtime: SvvyxArtifactsRuntimeContext;
-    sourceCommand: Pick<StructuredCommandRecord, "id">;
+    sourceCommand: SourceCommandReference;
   },
   facts: Record<string, unknown>,
 ): Record<string, unknown> & {
@@ -371,7 +417,7 @@ function emitArtifactCommandFailureLog(
   input: {
     command: string;
     runtime: SvvyxArtifactsRuntimeContext;
-    sourceCommand: Pick<StructuredCommandRecord, "id">;
+    sourceCommand: SourceCommandReference;
     onAppLog?: (event: AppLoggerEvent) => void;
   },
   error: unknown,
@@ -589,7 +635,7 @@ function parseOperationLimit(value: number | undefined): number | undefined {
   return value;
 }
 
-function inferArtifactKind(nameOrPath: string): StructuredArtifactKind {
+function inferArtifactKind(nameOrPath: string): RuntimeArtifactKind {
   const lower = nameOrPath.toLowerCase();
   if (lower.endsWith(".json")) {
     return "json";
@@ -610,11 +656,11 @@ function inferArtifactKind(nameOrPath: string): StructuredArtifactKind {
   return "file";
 }
 
-function resolveCommandPath(cwd: string, path: string): string {
-  return isAbsolute(path) ? path : resolve(cwd, path);
+function resolveCommandPath(cwd: string, path: string): AbsolutePath {
+  return (isAbsolute(path) ? path : resolve(cwd, path)) as AbsolutePath;
 }
 
-function ensureNotDeleted(artifact: StructuredArtifactRecord): void {
+function ensureNotDeleted(artifact: RuntimeArtifactRecord): void {
   if (artifact.deletedAt) {
     throw artifactCommandError(
       "ARTIFACT_DELETED",
@@ -626,7 +672,7 @@ function ensureNotDeleted(artifact: StructuredArtifactRecord): void {
   }
 }
 
-function refreshArtifactRef(artifact: StructuredArtifactRecord): StructuredArtifactRecord {
+function refreshArtifactRef(artifact: RuntimeArtifactRecord): RuntimeArtifactRecord {
   const path = artifact.path;
   if (!path || !existsSync(path)) {
     throw artifactCommandError(
@@ -655,7 +701,7 @@ function refreshArtifactRef(artifact: StructuredArtifactRecord): StructuredArtif
   };
 }
 
-function artifactRef(artifact: StructuredArtifactRecord) {
+function artifactRef(artifact: RuntimeArtifactRecord) {
   if (!artifact.path) {
     throw artifactCommandError(
       "ARTIFACT_FILE_MISSING",

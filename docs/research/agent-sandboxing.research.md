@@ -792,8 +792,8 @@ This split gives the best combined security and developer experience:
    - should decide policy and delegation
    - should not inherit direct execution powers it does not need
 2. Handler thread
-   - should choose sandbox configuration and supervise long-running work
-   - should hold approvals and attention routing
+   - may request or justify capabilities in normal tool calls
+   - does not own approval waits, sandbox lifecycle, or subprocess/file/stdin execution
    - should be able to inspect artifacts and logs without collapsing back into host shell ownership
 3. Workflow task agent
    - should execute inside the strictest task-local sandbox configuration that still completes the task
@@ -825,15 +825,21 @@ This should be especially strict for:
 - deploys
 - shell execution outside the sandbox
 
-### Recommended file-sync model
+### Recommended file-sync model for future autonomous/remote execution
 
-The product should distinguish clearly between:
+This section is future remote/autonomous sandbox exploration, not the current shipped v1 runtime
+architecture. Current v1 direct tool execution uses `@svvy/sandbox` policy snapshots for approved
+Shell, Apply Patch, Execute TypeScript, `svvyx`, and workflow task-agent direct-tool execution. It
+does not introduce a separate copy-in / diff-out task runtime unless a future product spec adopts
+that model.
+
+Future autonomous execution should distinguish clearly between:
 
 - direct local mount
 - copy-in / diff-out
 - snapshot / resume
 
-Default recommendation:
+Future default recommendation:
 
 - use direct local mount only for trusted low-latency interactive tasks
 - use copy-in / diff-out or worktree-based sync for autonomous workflows and untrusted repositories
@@ -842,7 +848,7 @@ This should be explicit in the product, because users routinely misunderstand "s
 
 ### Recommended end-to-end flow in simple terms
 
-The ideal product flow looks like this:
+The future autonomous/remote product flow looks like this:
 
 1. user asks for work in the main `svvy` surface
 2. orchestrator interprets the request and decides whether it is:
@@ -876,7 +882,7 @@ The mental model is:
 4. Distinguish model-provider auth from tool-provider auth from git auth.
 
 The v1 extension secret scope uses app-managed env values injected only into the specific trusted
-extension command or generated extension-client invocation. Egress proxying, per-run proxy tokens,
+extension command invocation or injected `execute_typescript` extension-facade invocation. Egress proxying, per-run proxy tokens,
 and network-policy enforcement for extension secrets are outside the v1 scope unless added to the
 PRD.
 
@@ -920,13 +926,20 @@ Before claiming strong sandboxing, `svvy` should maintain:
 
 If `svvy` needs one short product stance, it should be:
 
-`svvy` uses layered sandboxing: actor-specific capability policy on top of explicit execution runtimes. Trusted interactive local work uses a narrow local sandbox. Autonomous workflow work runs in isolated per-task environments with staged network access, scoped secrets, and durable audit trails.
+For current v1, `svvy` uses layered sandboxing: actor-specific capability policy on top of explicit
+runtime-owned execution. Trusted interactive local work and workflow task-agent execution route
+dangerous edges through runtime-owned direct tools governed by `@svvy/sandbox`
+`SandboxLaunchFacts`, approvals, scoped secrets, and durable command facts. Isolated copy-in /
+diff-out per-task environments remain future research until adopted by the PRD.
 
 That statement is much stronger and more precise than just saying "agents execute code in a sandboxed environment."
 
 Another useful short version is:
 
-`svvy` should let the model write code against narrow typed APIs, run that code inside an isolated task runtime, and keep secrets, egress, approvals, and sync-back under host policy rather than model control.
+For current v1, `svvy` should let the model write code against narrow typed APIs and route
+dangerous edges through runtime-owned direct tool execution governed by `@svvy/sandbox` policy
+snapshots, approvals, scoped secrets, and durable command facts. A separate isolated copy-in /
+diff-out task runtime remains future autonomous/remote sandbox exploration until the PRD adopts it.
 
 ## Open Product Decisions
 
@@ -935,10 +948,15 @@ requirements:
 
 1. When should `svvy` prefer local worktree execution versus remote task sandboxes?
 2. Will `execute_typescript` be a host API over the local machine, a guest API inside the sandbox, or a policy front-end that can target both?
-3. How should handler threads, workflow task agents, and official Smithers CLI execution divide
-   sandbox lifecycle ownership?
+3. Which future work, if any, should use isolated copy-in/diff-out task sandboxes instead of the v1
+   runtime-owned local execution lanes?
 4. What is the minimum viable secret-brokering model for the first shipped version?
 5. Which operations are never permitted from workflow task agents regardless of approval state?
+
+Resolved for v1: `@svvy/runtime` owns approval, sandbox lifecycle application,
+subprocess/file/stdin/command lifecycle, and durable command facts. `@svvy/sandbox` owns immutable
+policy interpretation and returns scoped `SandboxLaunchFacts`; extensions return immutable plans,
+command facts, or closed `RuntimeEffectRequest` values.
 6. What is the default sync mode for code changes produced by autonomous workflows?
 
 ## Source Index

@@ -7,6 +7,7 @@ import type {
   WorkspaceCommandPatchSnapshot,
   WorkspaceCommandProgressEvent,
   WorkspaceCommandRollup,
+  WorkspaceCommandStdinEvent,
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
 
@@ -32,6 +33,12 @@ export interface WorkspaceCommandProgressSection {
   id: "progress";
   title: string;
   events: WorkspaceCommandProgressEvent[];
+}
+
+export interface WorkspaceCommandStdinSection {
+  id: "stdin";
+  title: string;
+  events: WorkspaceCommandStdinEvent[];
 }
 
 export interface WorkspaceCommandPatchSection {
@@ -128,6 +135,26 @@ export function getCommandOutputSections(
       },
     ];
   });
+}
+
+export function canWriteCommandStdin(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): boolean {
+  return inspector?.stdin.canAttemptWrite === true;
+}
+
+export function getCommandStdinSection(
+  inspector: WorkspaceCommandInspector | null | undefined,
+): WorkspaceCommandStdinSection | null {
+  const events = inspector?.stdin.acceptedWrites ?? [];
+  if (events.length === 0) {
+    return null;
+  }
+  return {
+    id: "stdin",
+    title: "Stdin",
+    events,
+  };
 }
 
 export function getCommandProgressSections(

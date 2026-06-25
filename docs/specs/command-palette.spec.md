@@ -7,7 +7,7 @@
 
 ## Scope
 
-This spec defines the shared command palette and quick-open shell.
+This spec defines the shared command palette and quick-open surface.
 
 ## Product Boundary
 
@@ -18,12 +18,16 @@ Palette actions route into:
 
 - sessions
 - orchestrator and handler-thread surfaces
+- workflow task-agent attempt inspection/opening surfaces, without creating prompt or control
+  actions outside runtime-owned `runTaskAgent` task-agent bridge and coordinator insertion paths
 - Dockview panel placement
 - settings
 - Agents
 - Extensions
 - read-only Workflows generated visibility
-- generated agent-context preview actions
+- generated agent-context preview panes rendered from state-backed read models refreshed after
+  runtime notifications; runtime/extensions build the underlying generated context below the facade
+  boundary
 - future product actions once those actions have their own specs
 
 Smithers execution remains ordinary Shell work inside an agent surface. The palette does not expose
@@ -54,13 +58,18 @@ Command mode discovers product actions such as:
 - open Workflows
 - open Settings
 - Dockview placement actions when panes exist
-- generated agent-context preview actions
+- generated agent-context preview panes rendered from state-backed read models refreshed after
+  runtime notifications; runtime/extensions build the underlying generated context below the facade
+  boundary
 
 Unmatched non-empty command-mode text creates a normal New orchestrator session using the text after
 the `>` as the initial prompt.
 
 That prompt enters the normal orchestrator turn model. It must not bypass system prompt loading,
 prompt history, structured turn state, or live surface runtime ownership.
+
+The palette opens generated-context previews but does not assemble prompts, tool declarations, or
+generated context.
 
 ## Quick Open Mode
 
@@ -89,7 +98,7 @@ Current sidebar shortcut order:
 
 The Workflows command opens the read-only Workflows pane.
 
-It shows the latest successful generated `@svvy/workflows` package.
+It shows the latest successful generated `@svvyx/workflows` package.
 
 ## Related Specs
 

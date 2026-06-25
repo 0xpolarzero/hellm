@@ -3,13 +3,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { createPromptExecutionContext } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import { nativeToolCommandMetadata } from "@svvy/extensions";
+import { createPromptExecutionContext } from "@svvy/core";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
+import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
 import { createStreamingCommandTracker } from "./streaming-command-tracker";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
+import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -82,11 +86,12 @@ function createPromptContext(store: StructuredSessionStateStore) {
     objective: "Test incremental tool-call argument streaming.",
   });
   return createPromptExecutionContext({
-    sessionId: "session-streaming",
+    workspaceSessionId: "session-streaming",
     turnId: turn.id,
     surfacePiSessionId: "session-streaming",
-    surfaceThreadId: rootThread.id,
-    promptText: "Test streaming",
+    threadId: rootThread.id,
+    generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+    generatedAgentContextRevision: "generated_context_revision_test",
   });
 }
 
@@ -110,11 +115,103 @@ function makePartial(overrides: Partial<AssistantMessage> = {}): AssistantMessag
   } as AssistantMessage;
 }
 
+function createStreamingTracker(
+  store: StructuredSessionStateStore,
+  ctx: ReturnType<typeof createPromptContext>,
+) {
+  return createStreamingCommandTracker({
+    commandState: runtimeCommandStatePortFromStore(store),
+    promptContext: ctx,
+    stateWrites: createImmediateRuntimeStateWriteLane(),
+  });
+}
+
+function createExecutionTracker(
+  store: StructuredSessionStateStore,
+  ctx: ReturnType<typeof createPromptContext>,
+  onReusedStreamingToolCall?: (toolCallId: string) => void,
+) {
+  return createToolExecutionCommandTracker({
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    promptContext: ctx,
+    stateWrites: createImmediateRuntimeStateWriteLane(),
+    ...(onReusedStreamingToolCall ? { onReusedStreamingToolCall } : {}),
+  });
+}
+
+function createImmediateRuntimeStateWriteLane(): RuntimeStateWriteLane {
+  return {
+    run(effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    enqueue(_label, effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    drain() {
+      return Promise.resolve();
+    },
+    close() {
+      return Promise.resolve();
+    },
+  };
+}
+
+function createDeferredRuntimeStateWriteLane(): RuntimeStateWriteLane {
+  let tail: Promise<void> = Promise.resolve();
+  return {
+    run(effect) {
+      return this.enqueue("test", effect);
+    },
+    enqueue(_label, effect) {
+      const task = tail.then(() => Promise.resolve().then(() => Effect.runSync(effect)));
+      tail = task.then(
+        () => undefined,
+        () => undefined,
+      );
+      return task;
+    },
+    async drain() {
+      await tail;
+    },
+    async close() {
+      await tail;
+    },
+  };
+}
+
+function createStreamingTrackerWithLane(
+  store: StructuredSessionStateStore,
+  ctx: ReturnType<typeof createPromptContext>,
+  lane: RuntimeStateWriteLane,
+) {
+  return createStreamingCommandTracker({
+    commandState: runtimeCommandStatePortFromStore(store),
+    promptContext: ctx,
+    stateWrites: lane,
+  });
+}
+
+function createExecutionTrackerWithLane(
+  store: StructuredSessionStateStore,
+  ctx: ReturnType<typeof createPromptContext>,
+  lane: RuntimeStateWriteLane,
+  onReusedStreamingToolCall?: (toolCallId: string) => void,
+) {
+  return createToolExecutionCommandTracker({
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    promptContext: ctx,
+    stateWrites: lane,
+    ...(onReusedStreamingToolCall ? { onReusedStreamingToolCall } : {}),
+  });
+}
+
 describe("StreamingCommandTracker", () => {
   it("creates a streaming command on toolcall_start", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
 
     tracker.handleToolcallStart({
       contentIndex: 0,
@@ -134,7 +231,7 @@ describe("StreamingCommandTracker", () => {
   it("records incremental arg_snapshot events on toolcall_delta", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
 
     tracker.handleToolcallStart({
       contentIndex: 0,
@@ -178,7 +275,7 @@ describe("StreamingCommandTracker", () => {
   it("records a streaming-final snapshot on toolcall_end", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
 
     tracker.handleToolcallStart({
       contentIndex: 0,
@@ -210,15 +307,18 @@ describe("StreamingCommandTracker", () => {
     });
   });
 
-  it("skips arg_snapshot events for specialized tools on delta", () => {
+  it("uses extension-owned metadata to skip snapshots for self-recorded-command tools", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
+    const toolName = nativeToolCommandMetadata.find(
+      (metadata) => metadata.toolName === "execute_typescript",
+    )!.toolName;
 
     tracker.handleToolcallStart({
       contentIndex: 0,
       toolCallId: "tc-spec",
-      toolName: "execute_typescript",
+      toolName,
       partialArguments: { typescriptCode: "" },
       partial: makePartial(),
     });
@@ -226,7 +326,7 @@ describe("StreamingCommandTracker", () => {
     tracker.handleToolcallDelta({
       contentIndex: 0,
       toolCallId: "tc-spec",
-      toolName: "execute_typescript",
+      toolName,
       delta: "// some code".repeat(20),
       partialArguments: { typescriptCode: "// some code".repeat(20) },
       partial: makePartial(),
@@ -234,7 +334,8 @@ describe("StreamingCommandTracker", () => {
 
     const snapshot = store.getSessionState("session-streaming");
     expect(snapshot.commands).toHaveLength(1);
-    expect(snapshot.commands[0]!.toolName).toBe("execute_typescript");
+    expect(snapshot.commands[0]!.toolName).toBe(toolName);
+    expect(snapshot.commands[0]!.visibility).toBe("surface");
     expect(snapshot.commands[0]!.status).toBe("streaming");
 
     const argSnapshots = snapshot.events.filter((e) => e.kind === "command.arg_snapshot");
@@ -244,7 +345,7 @@ describe("StreamingCommandTracker", () => {
   it("finishes dangling streaming commands", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
 
     tracker.handleToolcallStart({
       contentIndex: 0,
@@ -266,7 +367,7 @@ describe("StreamingCommandTracker", () => {
   it("persists incremental events durably across reload", () => {
     const first = createFileStore();
     const ctx = createPromptContext(first.store);
-    const tracker = createStreamingCommandTracker({ store: first.store, promptContext: ctx });
+    const tracker = createStreamingTracker(first.store, ctx);
 
     tracker.handleToolcallStart({
       contentIndex: 0,
@@ -306,11 +407,8 @@ describe("StreamingCommandTracker", () => {
   it("execution tracker reuses streaming command on tool_execution_start", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const streamingTracker = createStreamingCommandTracker({ store, promptContext: ctx });
-    const executionTracker = createToolExecutionCommandTracker({
-      store,
-      promptContext: ctx,
-    });
+    const streamingTracker = createStreamingTracker(store, ctx);
+    const executionTracker = createExecutionTracker(store, ctx);
 
     streamingTracker.handleToolcallStart({
       contentIndex: 0,
@@ -341,11 +439,8 @@ describe("StreamingCommandTracker", () => {
   it("orders incremental snapshots before execution events", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const streamingTracker = createStreamingCommandTracker({ store, promptContext: ctx });
-    const executionTracker = createToolExecutionCommandTracker({
-      store,
-      promptContext: ctx,
-    });
+    const streamingTracker = createStreamingTracker(store, ctx);
+    const executionTracker = createExecutionTracker(store, ctx);
 
     streamingTracker.handleToolcallStart({
       contentIndex: 0,
@@ -392,7 +487,7 @@ describe("StreamingCommandTracker", () => {
   it("covers large freeform args, execute_typescript source, and apply_patch patch preview", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const tracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const tracker = createStreamingTracker(store, ctx);
 
     // exec_command with large args
     tracker.handleToolcallStart({
@@ -465,12 +560,10 @@ describe("StreamingCommandTracker", () => {
   it("succeeded commands survive prompt cleanup after full stream+execution lifecycle", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const streamingTracker = createStreamingCommandTracker({ store, promptContext: ctx });
-    const executionTracker = createToolExecutionCommandTracker({
-      store,
-      promptContext: ctx,
-      onReusedStreamingToolCall: (toolCallId) => streamingTracker.releaseToolCall(toolCallId),
-    });
+    const streamingTracker = createStreamingTracker(store, ctx);
+    const executionTracker = createExecutionTracker(store, ctx, (toolCallId) =>
+      streamingTracker.releaseToolCall(toolCallId),
+    );
 
     // Model starts producing tool arguments
     streamingTracker.handleToolcallStart({
@@ -533,10 +626,66 @@ describe("StreamingCommandTracker", () => {
     expect(snapshot.commands[0]!.toolName).toBe("exec_command");
   });
 
+  it("keeps streamed command reuse ordered when pi callbacks arrive before async state writes drain", async () => {
+    const store = createStore();
+    const ctx = createPromptContext(store);
+    const lane = createDeferredRuntimeStateWriteLane();
+    const streamingTracker = createStreamingTrackerWithLane(store, ctx, lane);
+    const executionTracker = createExecutionTrackerWithLane(store, ctx, lane, (toolCallId) =>
+      streamingTracker.releaseToolCall(toolCallId),
+    );
+
+    streamingTracker.handleToolcallStart({
+      contentIndex: 0,
+      toolCallId: "tc-ordered",
+      toolName: "exec_command",
+      partialArguments: { cmd: "" },
+      partial: makePartial(),
+    });
+    streamingTracker.handleToolcallEnd({
+      contentIndex: 0,
+      toolCallId: "tc-ordered",
+      toolName: "exec_command",
+      arguments: { cmd: "echo ordered" },
+      partial: makePartial(),
+    });
+    executionTracker.handleToolExecutionStart({
+      toolCallId: "tc-ordered",
+      toolName: "exec_command",
+      args: { cmd: "echo ordered" },
+    });
+    executionTracker.handleToolExecutionEnd({
+      toolCallId: "tc-ordered",
+      toolName: "exec_command",
+      result: { content: [{ type: "text", text: "ordered" }] },
+      isError: false,
+    });
+    streamingTracker.finishDanglingStreamingCommands({
+      status: "cancelled",
+      error: "Prompt execution ended before the tool run finished.",
+    });
+    executionTracker.finishDanglingCommands({
+      status: "cancelled",
+      error: "Prompt execution ended before the tool run finished.",
+    });
+
+    await lane.drain();
+
+    const snapshot = store.getSessionState("session-streaming");
+    expect(snapshot.commands).toHaveLength(1);
+    expect(snapshot.commands[0]!).toEqual(
+      expect.objectContaining({
+        toolName: "exec_command",
+        status: "succeeded",
+        arguments: { cmd: "echo ordered" },
+      }),
+    );
+  });
+
   it("cancels commands that reach toolcall_end but never reach runtime execution", () => {
     const store = createStore();
     const ctx = createPromptContext(store);
-    const streamingTracker = createStreamingCommandTracker({ store, promptContext: ctx });
+    const streamingTracker = createStreamingTracker(store, ctx);
 
     // Model starts producing tool arguments
     streamingTracker.handleToolcallStart({

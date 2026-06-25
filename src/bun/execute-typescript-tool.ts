@@ -1,9 +1,8 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
+import type { NativeToolDefinition } from "@svvy/extensions";
 import { Client } from "incur/client";
-import type { Static } from "typebox";
+import { Type, type Static } from "typebox";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename } from "node:path";
 import { join } from "node:path";
@@ -12,30 +11,40 @@ import * as ts from "typescript";
 import type { SvvyActorKind } from "./actor-capabilities";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import type { AppLoggerEvent } from "./app-logger";
-import { redactAppLogValue } from "./app-log-store";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import {
-  buildManagedWorkspaceWriteFileSystemPolicy,
-  unrestrictedFileSystemPolicy,
+  buildExecuteTypescriptLaunchPolicy,
+  buildSandboxHelperArgs,
+  resolveSandboxHelperPath,
+  sandboxLaunchFacts,
   type FileSystemSandboxPolicy,
-} from "./filesystem-sandbox-policy";
+  type SandboxLaunchPolicy,
+} from "@svvy/sandbox";
 import {
   createMacOsKeychainExtensionEnvSecretStore,
   type ExtensionEnvSecretStore,
 } from "./extension-env-secret-store";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
 import type {
-  PromptExecutionRuntimeHandle,
+  CommandId,
+  CommandFactsPayload,
+  JsonValue,
   PromptExecutionSurfaceKind,
-} from "./prompt-execution-context";
-import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
-import type {
-  StructuredCommandRecord,
-  StructuredCommandExecutor,
-  StructuredCommandStatus,
-  StructuredCommandVisibility,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
+  RuntimeArtifactStatePortService,
+  RuntimeCommandRecord,
+  RuntimeCommandStatePortService,
+  RuntimeCommandStatus,
+  RuntimeCommandVisibility,
+  RuntimeThreadStatePortService,
+  RuntimeTurnStatePortService,
+  SurfacePiSessionId,
+  StateContractError,
+  ThreadId,
+  WorkflowTaskAttemptId,
+  WorkspaceSessionId,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 import {
   formatSvvyxArtifactsError,
   runSvvyxArtifactsOperation,
@@ -51,7 +60,7 @@ import {
 import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
 import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
 import { resolveExtensionRecords } from "./svvyx-extensions-command";
-import { resolveActorExtensionState } from "../shared/extensions";
+import { resolveActorExtensionState } from "@svvy/extensions";
 import type { ApprovalMode } from "../shared/agent-settings";
 
 export const EXECUTE_TYPESCRIPT_TOOL_NAME = "execute_typescript";
@@ -92,9 +101,9 @@ export const executeTypescriptParamsSchema = Type.Object(
 export type ExecuteTypescriptParams = Static<typeof executeTypescriptParamsSchema>;
 
 const EXECUTE_TYPESCRIPT_DESCRIPTION = [
-  "Run a bounded TypeScript program against actor-local generated extension clients.",
+  "Run a bounded TypeScript program against actor-local generated extension runtime facades.",
   "Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, or transforming structured extension results.",
-  "Inside the snippet, use generated extensions clients and console; do not assume a global svvy client, broad api helper, Node.js built-ins, or node:* imports.",
+  "Inside the snippet, use generated extension runtime facades and console; do not assume a global svvy client, broad api helper, Node.js built-ins, or node:* imports.",
   "The runtime persists the submitted snippet before execution and typechecks before running.",
 ].join(" ");
 
@@ -104,20 +113,19 @@ const SOURCE_FILE = "execute-typescript.ts";
 const DIAGNOSTICS_FILE = "execute-typescript.diagnostics.json";
 const LOGS_FILE = "execute-typescript.logs.log";
 const WRAPPER_PREFIX =
-  "export default async function __svvy(extensions: LoadedExtensionsClient, console: SvvyConsole, __svvyAllowedModules: Record<string, Record<string, unknown>>) {";
+  "export default async function __svvy(extensions: LoadedExtensionsFacade, console: SvvyConsole, __svvyAllowedModules: Record<string, Record<string, unknown>>) {";
 const WRAPPER_SUFFIX = "}";
 const WRAPPER_LINE_OFFSET = 1;
 const INCUR_CLIENT_MODULE = "incur/client";
 const ALLOWED_INCUR_CLIENT_IMPORTS = new Set(["Client", "Resources", "Run"]);
 const INCUR_MODULE = "incur";
 const ALLOWED_INCUR_IMPORTS = new Set(["Cli", "z"]);
-const SVVY_EXTENSIONS_MODULE = "@svvy/extensions";
-const ALLOWED_SVVY_EXTENSIONS_IMPORTS = new Set(["Extensions"]);
-const SVVY_WORKFLOWS_MODULE = "@svvy/workflows";
-const ALLOWED_SVVY_WORKFLOWS_IMPORTS = new Set(["Agents", "Components", "Prompts", "Workflows"]);
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
 const EXECUTE_TYPESCRIPT_SECRET_KEY_PATTERN =
   /(^|[-_])(api[-_]?key|access[-_]?token|refresh[-_]?token|auth|authorization|cookie|secret|password|token|credential)([-_]|$)/i;
+const EXECUTE_TYPESCRIPT_BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+const EXECUTE_TYPESCRIPT_KEY_VALUE_SECRET_PATTERN =
+  /\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Z0-9_]*)\s*=\s*([^\s"'`]{6,}|["'`][^"'`]{6,}["'`])/gi;
 const EXECUTE_TYPESCRIPT_RUNTIME_ENV_ALLOWLIST = [
   "BUN_INSTALL",
   "HOME",
@@ -144,8 +152,8 @@ export type ExecuteTypescriptContext = {
   surfacePiSessionId: string;
   threadId: string | null;
   workflowRunId?: string | null;
-  executor?: StructuredCommandExecutor;
-  visibility?: StructuredCommandVisibility;
+  executor?: RuntimeCommandRecord["executor"];
+  visibility?: RuntimeCommandVisibility;
   loadedExtensionIds?: readonly string[];
 };
 
@@ -163,7 +171,11 @@ export type ExecuteTypescriptRuntimeProcessSpawner = (input: {
 type ExecuteTypescriptToolOptions = {
   cwd: string;
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  artifactState: RuntimeArtifactStatePortService;
+  commandState: RuntimeCommandStatePortService;
+  threadState: RuntimeThreadStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
@@ -216,7 +228,7 @@ type GeneratedUserClientInput = {
   outputTokenLimit?: number;
   outputTokenOffset?: number;
 };
-type GeneratedUserExtensionClient = {
+type GeneratedUserExtensionFacade = {
   run: (commandId: string, input?: GeneratedUserClientInput) => Promise<unknown>;
 };
 type ExecuteTypescriptExtensions = {
@@ -232,7 +244,7 @@ type ExecuteTypescriptExtensions = {
       input: { options?: Record<string, unknown> },
     ) => Promise<GeneratedClientRunResult<unknown>>;
   };
-} & Record<string, GeneratedUserExtensionClient | undefined>;
+} & Record<string, GeneratedUserExtensionFacade | undefined>;
 type IncurClientModuleRuntime = {
   Client: {
     ClientError: typeof Client.ClientError;
@@ -256,11 +268,11 @@ function resolveExecuteTypescriptRuntimeModule(moduleName: string): string | und
   }
 }
 
-type ExecuteTypescriptCommandFacts = Record<string, unknown>;
+type ExecuteTypescriptCommandFacts = CommandFactsPayload;
 
 export function createExecuteTypescriptTool(
   options: ExecuteTypescriptToolOptions,
-): AgentTool<typeof executeTypescriptParamsSchema, ExecuteTypescriptResult> {
+): NativeToolDefinition<ExecuteTypescriptParams, ExecuteTypescriptResult> {
   return {
     label: "Code Mode",
     name: EXECUTE_TYPESCRIPT_TOOL_NAME,
@@ -273,23 +285,35 @@ export function createExecuteTypescriptTool(
       }
 
       if (runtime.turnId) {
-        options.store.setTurnDecision({
-          turnId: runtime.turnId,
-          decision: "execute_typescript",
-          onlyIfPending: true,
-        });
+        options.runState(
+          options.turnState.setTurnDecision({
+            turnId: runtime.turnId,
+            decision: "execute_typescript",
+            onlyIfPending: true,
+          }),
+        );
       }
-      ensureRunnableSurfaceThread(options.store, runtime.sessionId, runtime.rootThreadId);
+      if (runtime.rootThreadId) {
+        options.runState(
+          options.threadState.ensureHandlerThreadRunnable({
+            workspaceSessionId: runtime.workspaceSessionId as WorkspaceSessionId,
+            surfacePiSessionId: runtime.surfacePiSessionId as SurfacePiSessionId,
+            threadId: runtime.rootThreadId as ThreadId,
+          }),
+        );
+      }
 
       const actor = actorForPromptRuntime(runtime.surfaceKind);
       const executor = executorForPromptRuntime(runtime.surfaceKind);
       const result = await runExecuteTypescript({
         cwd: options.cwd,
-        store: options.store,
+        artifactState: options.artifactState,
+        commandState: options.commandState,
+        runState: options.runState,
         signal,
         typescriptCode: params.typescriptCode,
         context: {
-          sessionId: runtime.sessionId,
+          sessionId: runtime.workspaceSessionId,
           turnId: runtime.turnId,
           workflowTaskAttemptId: runtime.workflowTaskAttemptId,
           workflowRunId: runtime.workflowRunId,
@@ -335,33 +359,11 @@ export function createExecuteTypescriptTool(
   };
 }
 
-function ensureRunnableSurfaceThread(
-  store: StructuredSessionStateStore,
-  sessionId: string,
-  threadId: string | null,
-): void {
-  if (!threadId) {
-    return;
-  }
-  const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
-  if (!thread) {
-    return;
-  }
-
-  if (thread.status === "running-handler" && thread.wait === null) {
-    return;
-  }
-
-  store.updateThread({
-    threadId,
-    status: "running-handler",
-    wait: null,
-  });
-}
-
 export async function runExecuteTypescript(input: {
   cwd: string;
-  store: StructuredSessionStateStore;
+  artifactState: RuntimeArtifactStatePortService;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
@@ -390,31 +392,36 @@ export async function runExecuteTypescript(input: {
   runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
   toolCallId: string;
 }): Promise<ExecuteTypescriptResult> {
-  const parentCommand = input.store.createOrReuseStreamingCommand({
-    toolCallId: input.toolCallId,
-    turnId: input.context.turnId ?? null,
-    workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-    surfacePiSessionId: input.context.surfacePiSessionId,
-    threadId: input.context.threadId,
-    workflowRunId: input.context.workflowRunId ?? null,
-    toolName: EXECUTE_TYPESCRIPT_TOOL_NAME,
-    executor: input.context.executor ?? "orchestrator",
-    visibility: input.context.visibility ?? "summary",
-    title: "Run execute_typescript",
-    summary: EXECUTE_TYPESCRIPT_SUMMARY,
-    arguments: {
-      typescriptCode: input.typescriptCode,
-    },
-  });
-  input.store.startCommand(parentCommand.id);
+  const parentCommand = input.runState(
+    input.commandState.createOrReuseStreamingCommand({
+      toolCallId: input.toolCallId,
+      turnId: input.context.turnId ?? null,
+      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+      surfacePiSessionId: input.context.surfacePiSessionId,
+      threadId: input.context.threadId,
+      workflowRunId: input.context.workflowRunId ?? null,
+      toolName: EXECUTE_TYPESCRIPT_TOOL_NAME,
+      executor: input.context.executor ?? "orchestrator",
+      visibility: input.context.visibility ?? "summary",
+      title: "Run execute_typescript",
+      summary: EXECUTE_TYPESCRIPT_SUMMARY,
+      arguments: {
+        typescriptCode: input.typescriptCode,
+      },
+    }),
+  ).value;
+  input.runState(input.commandState.startCommand({ commandId: parentCommand.id }));
   const artifactNamePrefix = `${parentCommand.id}-`;
-  const snippetArtifact = input.store.createArtifact({
-    workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-    sourceCommandId: parentCommand.id,
-    kind: "text",
-    name: `${artifactNamePrefix}${SOURCE_FILE}`,
-    content: input.typescriptCode,
-  });
+  const snippetArtifact = input.runState(
+    input.artifactState.createArtifact({
+      workflowTaskAttemptId:
+        (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ?? null,
+      sourceCommandId: parentCommand.id as CommandId,
+      kind: "text",
+      name: `${artifactNamePrefix}${SOURCE_FILE}`,
+      content: input.typescriptCode,
+    }),
+  ).value;
   input.onAppLog?.({
     level: "info",
     source: "execute_typescript",
@@ -447,16 +454,18 @@ export async function runExecuteTypescript(input: {
         });
   if (approval?.approved === false) {
     const reason = approval.reason?.trim() || "Execute TypeScript was not approved.";
-    input.store.finishCommand({
-      commandId: parentCommand.id,
-      status: "cancelled",
-      summary: reason,
-      facts: {
-        approval: "denied",
-        snippetArtifactId: snippetArtifact.id,
-      },
-      error: reason,
-    });
+    input.runState(
+      input.commandState.finishCommand({
+        commandId: parentCommand.id,
+        status: "cancelled",
+        summary: reason,
+        facts: {
+          approval: "denied",
+          snippetArtifactId: snippetArtifact.id,
+        },
+        error: reason,
+      }),
+    );
     input.onAppLog?.({
       level: "warning",
       source: "execute_typescript",
@@ -484,36 +493,40 @@ export async function runExecuteTypescript(input: {
   const preflight = compileAndTypecheck(input.typescriptCode, {
     context: input.context,
     extensionsRoot: input.extensionsRoot,
-    workflowsExtensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
-    workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
   });
   if (preflight.errors.length > 0) {
-    const diagnosticsArtifact = input.store.createArtifact({
-      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-      sourceCommandId: parentCommand.id,
-      kind: "json",
-      name: `${artifactNamePrefix}${DIAGNOSTICS_FILE}`,
-      content: JSON.stringify(preflight.errors, null, 2),
-    });
+    const diagnosticsArtifact = input.runState(
+      input.artifactState.createArtifact({
+        workflowTaskAttemptId:
+          (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ?? null,
+        sourceCommandId: parentCommand.id as CommandId,
+        kind: "json",
+        name: `${artifactNamePrefix}${DIAGNOSTICS_FILE}`,
+        content: JSON.stringify(preflight.errors, null, 2),
+      }),
+    ).value;
     recordExecuteTypescriptDiagnostics({
-      store: input.store,
+      commandState: input.commandState,
+      runState: input.runState,
       sessionId: input.context.sessionId,
       commandId: parentCommand.id,
       stage: preflight.stage,
       diagnostics: preflight.errors,
     });
     const errorMessage = preflight.errors[0]?.message ?? "Static diagnostics blocked execution.";
-    input.store.finishCommand({
-      commandId: parentCommand.id,
-      status: "failed",
-      summary: errorMessage,
-      facts: {
-        diagnosticsCount: preflight.errors.length,
-        snippetArtifactId: snippetArtifact.id,
-        diagnosticsArtifactId: diagnosticsArtifact.id,
-      },
-      error: errorMessage,
-    });
+    input.runState(
+      input.commandState.finishCommand({
+        commandId: parentCommand.id,
+        status: "failed",
+        summary: errorMessage,
+        facts: {
+          diagnosticsCount: preflight.errors.length,
+          snippetArtifactId: snippetArtifact.id,
+          diagnosticsArtifactId: diagnosticsArtifact.id,
+        },
+        error: errorMessage,
+      }),
+    );
     input.onAppLog?.({
       level: "warning",
       source: "execute_typescript",
@@ -542,12 +555,20 @@ export async function runExecuteTypescript(input: {
   }
 
   const logs: string[] = [];
-  const childCommandFacts: Array<{ status: StructuredCommandStatus }> = [];
+  const childCommandFacts: Array<{ status: RuntimeCommandStatus }> = [];
   const incurClientModule = createIncurClientModule();
-  const runtimeSandbox = resolveExecuteTypescriptRuntimeSandbox(input, approvalMode);
+  const runtimeSandbox = buildExecuteTypescriptLaunchPolicy({
+    approvalMode,
+    cwd: input.cwd,
+    managedSandbox: resolveExecuteTypescriptManagedSandbox(input),
+    networkAccess: resolveExecuteTypescriptNetworkAccess(input),
+    tmpdir: process.env.TMPDIR ?? null,
+  });
   const extensions = createExecuteTypescriptExtensions({
     cwd: input.cwd,
-    store: input.store,
+    artifactState: input.artifactState,
+    commandState: input.commandState,
+    runState: input.runState,
     context: input.context,
     parentCommand,
     childCommandFacts,
@@ -574,7 +595,8 @@ export async function runExecuteTypescript(input: {
       logs,
       onConsoleLine: (line) => {
         recordExecuteTypescriptOutputEvent({
-          store: input.store,
+          commandState: input.commandState,
+          runState: input.runState,
           sessionId: input.context.sessionId,
           commandId: parentCommand.id,
           line,
@@ -586,36 +608,40 @@ export async function runExecuteTypescript(input: {
       runtimeExtensionIds: Object.keys(extensions),
       runtimeModulePaths: {
         [INCUR_MODULE]: resolveExecuteTypescriptRuntimeModule(INCUR_MODULE),
-        [SVVY_EXTENSIONS_MODULE]: input.workflowsExtensionsGeneratedPackagePath,
-        [SVVY_WORKFLOWS_MODULE]: input.workflowsGeneratedPackagePath,
       },
       runtimeSandbox,
     });
     const redactedResultValue = redactExecuteTypescriptValue(resultValue);
     const logsArtifact =
       logs.length > 0
-        ? input.store.createArtifact({
-            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-            sourceCommandId: parentCommand.id,
-            kind: "log",
-            name: `${artifactNamePrefix}${LOGS_FILE}`,
-            content: logs.join("\n"),
-          })
+        ? input.runState(
+            input.artifactState.createArtifact({
+              workflowTaskAttemptId:
+                (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ??
+                null,
+              sourceCommandId: parentCommand.id as CommandId,
+              kind: "log",
+              name: `${artifactNamePrefix}${LOGS_FILE}`,
+              content: logs.join("\n"),
+            }),
+          ).value
         : null;
     const parentRollup = buildExecuteTypescriptParentRollup({
       snippetArtifactId: snippetArtifact.id,
       logsArtifactId: logsArtifact?.id,
       childCommandFacts,
     });
-    input.store.finishCommand({
-      commandId: parentCommand.id,
-      status: "succeeded",
-      summary: parentRollup.summary ?? summarizeResult(redactedResultValue),
-      facts: {
-        ...parentRollup.facts,
-        ...executeTypescriptSandboxFacts(runtimeSandbox),
-      },
-    });
+    input.runState(
+      input.commandState.finishCommand({
+        commandId: parentCommand.id,
+        status: "succeeded",
+        summary: parentRollup.summary ?? summarizeResult(redactedResultValue),
+        facts: {
+          ...parentRollup.facts,
+          ...executeTypescriptSandboxFacts(runtimeSandbox),
+        } as CommandFactsPayload,
+      }),
+    );
     input.onAppLog?.({
       level: "info",
       source: "execute_typescript",
@@ -642,13 +668,17 @@ export async function runExecuteTypescript(input: {
   } catch (error) {
     const logsArtifact =
       logs.length > 0
-        ? input.store.createArtifact({
-            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-            sourceCommandId: parentCommand.id,
-            kind: "log",
-            name: `${artifactNamePrefix}${LOGS_FILE}`,
-            content: logs.join("\n"),
-          })
+        ? input.runState(
+            input.artifactState.createArtifact({
+              workflowTaskAttemptId:
+                (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ??
+                null,
+              sourceCommandId: parentCommand.id as CommandId,
+              kind: "log",
+              name: `${artifactNamePrefix}${LOGS_FILE}`,
+              content: logs.join("\n"),
+            }),
+          ).value
         : null;
     const message = redactExecuteTypescriptString(
       error instanceof Error ? error.message : "execute_typescript failed at runtime.",
@@ -658,16 +688,18 @@ export async function runExecuteTypescript(input: {
       logsArtifactId: logsArtifact?.id,
       childCommandFacts,
     });
-    input.store.finishCommand({
-      commandId: parentCommand.id,
-      status: "failed",
-      summary: message,
-      facts: {
-        ...parentRollup.facts,
-        ...executeTypescriptSandboxFacts(runtimeSandbox),
-      },
-      error: message,
-    });
+    input.runState(
+      input.commandState.finishCommand({
+        commandId: parentCommand.id,
+        status: "failed",
+        summary: message,
+        facts: {
+          ...parentRollup.facts,
+          ...executeTypescriptSandboxFacts(runtimeSandbox),
+        } as CommandFactsPayload,
+        error: message,
+      }),
+    );
     input.onAppLog?.({
       level: "error",
       source: "execute_typescript",
@@ -708,32 +740,6 @@ function resolveExecuteTypescriptApprovalMode(input: {
   return input.approvalMode ?? "auto-review";
 }
 
-function resolveExecuteTypescriptRuntimeSandbox(
-  input: {
-    cwd: string;
-    managedSandbox?: boolean | (() => boolean);
-    networkAccess?: boolean | (() => boolean);
-  },
-  approvalMode: ApprovalMode,
-): {
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
-  networkAccess: boolean;
-} {
-  const fullAccess = approvalMode === "full-access";
-  return {
-    fileSystemPolicy: fullAccess
-      ? unrestrictedFileSystemPolicy()
-      : buildManagedWorkspaceWriteFileSystemPolicy({
-          cwd: input.cwd,
-          includeSlashTmp: true,
-          tmpdir: process.env.TMPDIR ?? null,
-        }),
-    managedSandbox: fullAccess ? false : resolveExecuteTypescriptManagedSandbox(input),
-    networkAccess: fullAccess ? true : resolveExecuteTypescriptNetworkAccess(input),
-  };
-}
-
 function resolveExecuteTypescriptManagedSandbox(input: {
   managedSandbox?: boolean | (() => boolean);
 }): boolean {
@@ -752,26 +758,14 @@ function resolveExecuteTypescriptNetworkAccess(input: {
   return input.networkAccess !== false;
 }
 
-function executeTypescriptSandboxFacts(input: {
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
-  networkAccess: boolean;
-}): Record<string, unknown> {
-  return {
-    managedSandbox: input.managedSandbox,
-    networkAccess: input.networkAccess,
-    fileSystemPolicyKind: input.fileSystemPolicy.kind,
-    fileSystemPolicyEntryCount: input.fileSystemPolicy.entries.length,
-  };
-}
+const executeTypescriptSandboxFacts = (input: SandboxLaunchPolicy): Record<string, unknown> =>
+  sandboxLaunchFacts(input);
 
 function compileAndTypecheck(
   typescriptCode: string,
   input: {
     context: Pick<ExecuteTypescriptContext, "actor" | "loadedExtensionIds">;
     extensionsRoot?: string;
-    workflowsExtensionsGeneratedPackagePath?: string;
-    workflowsGeneratedPackagePath?: string;
   },
 ): {
   javascript: string;
@@ -779,10 +773,7 @@ function compileAndTypecheck(
   warnings: StructuredDiagnostic[];
   stage: "compile" | "typecheck";
 } {
-  const prepared = prepareTypescriptSnippet(typescriptCode, {
-    [SVVY_EXTENSIONS_MODULE]: input.workflowsExtensionsGeneratedPackagePath,
-    [SVVY_WORKFLOWS_MODULE]: input.workflowsGeneratedPackagePath,
-  });
+  const prepared = prepareTypescriptSnippet(typescriptCode);
   const context = input.context;
   if (prepared.error) {
     return {
@@ -821,8 +812,6 @@ function compileAndTypecheck(
           context.loadedExtensionIds ?? [],
           input.extensionsRoot,
         ),
-        workflowsExtensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
-        workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
       }),
     ],
   ]);
@@ -884,17 +873,14 @@ function compileAndTypecheck(
   };
 }
 
-function prepareTypescriptSnippet(
-  typescriptCode: string,
-  generatedPackagePaths: Record<string, string | undefined>,
-): {
+function prepareTypescriptSnippet(typescriptCode: string): {
   typescriptCode: string;
   moduleImportBindings: GeneratedModuleImportBinding[];
   error?: StructuredDiagnostic;
 } {
   const moduleImportBindings: GeneratedModuleImportBinding[] = [];
   const localNames = new Set<string>();
-  let firstError: StructuredDiagnostic | undefined;
+  let firstError = detectUnsupportedImports(typescriptCode);
   const importPattern = /^\s*import\s+(type\s+)?\{([^}]+)\}\s*from\s*["']([^"']+)["'];?\s*$/gm;
   const rewrittenCode = typescriptCode.replace(
     importPattern,
@@ -906,7 +892,7 @@ function prepareTypescriptSnippet(
       offset: number,
     ) => {
       const line = lineNumberAtOffset(typescriptCode, offset);
-      const modulePolicy = allowedImportPolicy(moduleName, generatedPackagePaths);
+      const modulePolicy = allowedImportPolicy(moduleName);
       if (!modulePolicy) {
         firstError ??= {
           severity: "error",
@@ -968,9 +954,85 @@ function prepareTypescriptSnippet(
   };
 }
 
+function detectUnsupportedImports(typescriptCode: string): StructuredDiagnostic | undefined {
+  const sourceFile = ts.createSourceFile(
+    SOURCE_FILE,
+    typescriptCode,
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let firstError: StructuredDiagnostic | undefined;
+
+  const visit = (node: ts.Node) => {
+    if (firstError) return;
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const moduleName = node.moduleSpecifier.text;
+      const modulePolicy = allowedImportPolicy(moduleName);
+      const line = lineNumberAtOffset(typescriptCode, node.getStart(sourceFile));
+      if (!modulePolicy) {
+        firstError = unsupportedImportDiagnostic(moduleName, line);
+        return;
+      }
+      if (
+        !node.importClause ||
+        node.importClause.name ||
+        !node.importClause.namedBindings ||
+        !ts.isNamedImports(node.importClause.namedBindings)
+      ) {
+        firstError = namedImportsOnlyDiagnostic(moduleName, modulePolicy.allowedNames, line);
+        return;
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length > 0
+    ) {
+      const moduleSpecifier = node.arguments[0];
+      if (moduleSpecifier && ts.isStringLiteral(moduleSpecifier)) {
+        firstError = unsupportedImportDiagnostic(
+          moduleSpecifier.text,
+          lineNumberAtOffset(typescriptCode, node.getStart(sourceFile)),
+        );
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return firstError;
+}
+
+function unsupportedImportDiagnostic(moduleName: string, line: number): StructuredDiagnostic {
+  return {
+    severity: "error",
+    message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+    file: basename(SOURCE_FILE),
+    line,
+    column: 1,
+    code: "svvy-import",
+  };
+}
+
+function namedImportsOnlyDiagnostic(
+  moduleName: string,
+  allowedNames: ReadonlySet<string>,
+  line: number,
+): StructuredDiagnostic {
+  return {
+    severity: "error",
+    message: `Only named imports ${[...allowedNames].join(", ")} are supported from "${moduleName}".`,
+    file: basename(SOURCE_FILE),
+    line,
+    column: 1,
+    code: "svvy-import",
+  };
+}
+
 function allowedImportPolicy(
   moduleName: string,
-  generatedPackagePaths: Record<string, string | undefined>,
 ): { allowedNames: ReadonlySet<string>; available: boolean } | null {
   if (moduleName === INCUR_CLIENT_MODULE) {
     return { allowedNames: ALLOWED_INCUR_CLIENT_IMPORTS, available: true };
@@ -978,23 +1040,7 @@ function allowedImportPolicy(
   if (moduleName === INCUR_MODULE) {
     return { allowedNames: ALLOWED_INCUR_IMPORTS, available: true };
   }
-  if (moduleName === SVVY_EXTENSIONS_MODULE) {
-    return {
-      allowedNames: ALLOWED_SVVY_EXTENSIONS_IMPORTS,
-      available: generatedPackageAvailable(generatedPackagePaths[moduleName]),
-    };
-  }
-  if (moduleName === SVVY_WORKFLOWS_MODULE) {
-    return {
-      allowedNames: ALLOWED_SVVY_WORKFLOWS_IMPORTS,
-      available: generatedPackageAvailable(generatedPackagePaths[moduleName]),
-    };
-  }
   return null;
-}
-
-function generatedPackageAvailable(packagePath: string | undefined): boolean {
-  return Boolean(packagePath && existsSync(packagePath));
 }
 
 function parseGeneratedModuleImportList(
@@ -1340,7 +1386,10 @@ function spawnExecuteTypescriptRuntimeProcess(input: {
   }
   const child = input.managedSandbox
     ? spawn(
-        resolveSandboxHelperPath(),
+        resolveSandboxHelperPath({
+          configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
+          executablePath: process.execPath,
+        }),
         buildSandboxHelperArgs({
           command,
           cwd: input.cwd,
@@ -1455,8 +1504,6 @@ function buildAllowedModules() {
       Run: Object.freeze({}),
     }),
     "incur": optionalModuleFromPath("incur"),
-    "@svvy/extensions": optionalModuleFromPath("@svvy/extensions"),
-    "@svvy/workflows": optionalModuleFromPath("@svvy/workflows"),
   });
 }
 
@@ -1526,10 +1573,12 @@ function createIncurClientModule(): IncurClientModuleRuntime {
 
 function createExecuteTypescriptExtensions(input: {
   cwd: string;
-  store: StructuredSessionStateStore;
+  artifactState: RuntimeArtifactStatePortService;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   context: ExecuteTypescriptContext;
-  parentCommand: Pick<StructuredCommandRecord, "id">;
-  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
+  parentCommand: Pick<RuntimeCommandRecord, "id">;
+  childCommandFacts: Array<{ status: RuntimeCommandStatus }>;
   incurClientModule: IncurClientModuleRuntime;
   openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
@@ -1559,31 +1608,33 @@ function createExecuteTypescriptExtensions(input: {
         commandId: string,
         rawInput: { options?: Record<string, unknown> } = {},
       ): Promise<GeneratedClientRunResult<unknown>> => {
-        const childCommand = input.store.createCommand({
-          turnId: input.context.turnId ?? null,
-          workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-          surfacePiSessionId: input.context.surfacePiSessionId,
-          threadId: input.context.threadId,
-          workflowRunId: input.context.workflowRunId ?? null,
-          parentCommandId: input.parentCommand.id,
-          toolName: "extensions.artifacts.run",
-          executor: input.context.executor ?? "orchestrator",
-          visibility:
-            commandId === "inspect" || commandId === "list"
-              ? "trace"
-              : (input.context.visibility ?? "summary"),
-          title: "Run extensions.artifacts.run",
-          summary: `artifacts.${commandId}`,
-          arguments: {
-            commandId,
-            input: redactExecuteTypescriptValue(rawInput),
-          },
-          facts: {
-            extensionId: "artifacts",
-            commandId,
-          },
-        });
-        input.store.startCommand(childCommand.id);
+        const childCommand = input.runState(
+          input.commandState.createCommand({
+            turnId: input.context.turnId ?? null,
+            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+            surfacePiSessionId: input.context.surfacePiSessionId,
+            threadId: input.context.threadId,
+            workflowRunId: input.context.workflowRunId ?? null,
+            parentCommandId: input.parentCommand.id,
+            toolName: "extensions.artifacts.run",
+            executor: input.context.executor ?? "orchestrator",
+            visibility:
+              commandId === "inspect" || commandId === "list"
+                ? "trace"
+                : (input.context.visibility ?? "summary"),
+            title: "Run extensions.artifacts.run",
+            summary: `artifacts.${commandId}`,
+            arguments: {
+              commandId,
+              input: redactExecuteTypescriptValue(rawInput) as JsonValue,
+            },
+            facts: {
+              extensionId: "artifacts",
+              commandId,
+            },
+          }),
+        ).value;
+        input.runState(input.commandState.startCommand({ commandId: childCommand.id }));
         let operationStarted = false;
         try {
           const operation = normalizeArtifactsClientOperation(commandId, rawInput);
@@ -1592,21 +1643,24 @@ function createExecuteTypescriptExtensions(input: {
             cwd: input.cwd,
             operation,
             runtime: artifactsRuntimeContext(input.context),
-            store: input.store,
-            sourceCommand: childCommand,
+            artifactState: input.artifactState,
+            runState: input.runState,
+            sourceCommand: { id: childCommand.id as CommandId },
             openArtifact: input.openArtifact,
             onAppLog: input.onAppLog,
           });
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "succeeded",
-            summary: summarizeResult(result.output),
-            facts: {
-              extensionId: "artifacts",
-              commandId,
-              ...result.commandFacts,
-            },
-          });
+          input.runState(
+            input.commandState.finishCommand({
+              commandId: childCommand.id,
+              status: "succeeded",
+              summary: summarizeResult(result.output),
+              facts: {
+                extensionId: "artifacts",
+                commandId,
+                ...result.commandFacts,
+              } as CommandFactsPayload,
+            }),
+          );
           input.childCommandFacts.push({ status: "succeeded" });
           return Object.freeze({
             ok: true,
@@ -1637,17 +1691,19 @@ function createExecuteTypescriptExtensions(input: {
               },
             });
           }
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "failed",
-            summary: formatted.message,
-            facts: {
-              extensionId: "artifacts",
-              commandId,
-              errorCode: formatted.code,
-            },
-            error: JSON.stringify({ error: formatted }),
-          });
+          input.runState(
+            input.commandState.finishCommand({
+              commandId: childCommand.id,
+              status: "failed",
+              summary: formatted.message,
+              facts: {
+                extensionId: "artifacts",
+                commandId,
+                errorCode: formatted.code,
+              },
+              error: JSON.stringify({ error: formatted }),
+            }),
+          );
           input.childCommandFacts.push({ status: "failed" });
           const ClientError = input.incurClientModule.Client.ClientError;
           throw new ClientError(formatted.message);
@@ -1662,31 +1718,33 @@ function createExecuteTypescriptExtensions(input: {
         commandId: string,
         rawInput: { options?: Record<string, unknown> } = {},
       ): Promise<GeneratedClientRunResult<unknown>> => {
-        const childCommand = input.store.createCommand({
-          turnId: input.context.turnId ?? null,
-          workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
-          surfacePiSessionId: input.context.surfacePiSessionId,
-          threadId: input.context.threadId,
-          workflowRunId: input.context.workflowRunId ?? null,
-          parentCommandId: input.parentCommand.id,
-          toolName: "extensions.workflows.run",
-          executor: input.context.executor ?? "orchestrator",
-          visibility:
-            commandId === "list" || commandId === "models list"
-              ? "trace"
-              : (input.context.visibility ?? "summary"),
-          title: "Run extensions.workflows.run",
-          summary: `workflows.${commandId}`,
-          arguments: {
-            commandId,
-            input: redactExecuteTypescriptValue(rawInput),
-          },
-          facts: {
-            extensionId: "workflows",
-            commandId,
-          },
-        });
-        input.store.startCommand(childCommand.id);
+        const childCommand = input.runState(
+          input.commandState.createCommand({
+            turnId: input.context.turnId ?? null,
+            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
+            surfacePiSessionId: input.context.surfacePiSessionId,
+            threadId: input.context.threadId,
+            workflowRunId: input.context.workflowRunId ?? null,
+            parentCommandId: input.parentCommand.id,
+            toolName: "extensions.workflows.run",
+            executor: input.context.executor ?? "orchestrator",
+            visibility:
+              commandId === "list" || commandId === "models list"
+                ? "trace"
+                : (input.context.visibility ?? "summary"),
+            title: "Run extensions.workflows.run",
+            summary: `workflows.${commandId}`,
+            arguments: {
+              commandId,
+              input: redactExecuteTypescriptValue(rawInput) as JsonValue,
+            },
+            facts: {
+              extensionId: "workflows",
+              commandId,
+            },
+          }),
+        ).value;
+        input.runState(input.commandState.startCommand({ commandId: childCommand.id }));
         let command: string | null = null;
         try {
           command = normalizeWorkflowsClientCommand(commandId, rawInput);
@@ -1725,16 +1783,18 @@ function createExecuteTypescriptExtensions(input: {
               commandFacts: result.commandFacts,
             });
           }
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "succeeded",
-            summary: summarizeResult(result.output),
-            facts: {
-              extensionId: "workflows",
-              commandId,
-              ...result.commandFacts,
-            },
-          });
+          input.runState(
+            input.commandState.finishCommand({
+              commandId: childCommand.id,
+              status: "succeeded",
+              summary: summarizeResult(result.output),
+              facts: {
+                extensionId: "workflows",
+                commandId,
+                ...result.commandFacts,
+              } as CommandFactsPayload,
+            }),
+          );
           input.childCommandFacts.push({ status: "succeeded" });
           return Object.freeze({
             ok: true,
@@ -1765,17 +1825,19 @@ function createExecuteTypescriptExtensions(input: {
               ),
             });
           }
-          input.store.finishCommand({
-            commandId: childCommand.id,
-            status: "failed",
-            summary: formatted.message,
-            facts: {
-              extensionId: "workflows",
-              commandId,
-              errorCode: formatted.code,
-            },
-            error: JSON.stringify({ error: formatted }),
-          });
+          input.runState(
+            input.commandState.finishCommand({
+              commandId: childCommand.id,
+              status: "failed",
+              summary: formatted.message,
+              facts: {
+                extensionId: "workflows",
+                commandId,
+                errorCode: formatted.code,
+              },
+              error: JSON.stringify({ error: formatted }),
+            }),
+          );
           input.childCommandFacts.push({ status: "failed" });
           const ClientError = input.incurClientModule.Client.ClientError;
           throw new ClientError(formatted.message);
@@ -1805,7 +1867,7 @@ function actorForPromptRuntime(surfaceKind: PromptExecutionSurfaceKind): SvvyAct
 
 function executorForPromptRuntime(
   surfaceKind: PromptExecutionSurfaceKind,
-): StructuredCommandExecutor {
+): RuntimeCommandRecord["executor"] {
   if (surfaceKind === "workflow-task") {
     return "workflow-task-agent";
   }
@@ -2084,7 +2146,9 @@ function formatConsoleValue(value: unknown): string {
 }
 
 function redactExecuteTypescriptString(value: string): string {
-  return String(redactAppLogValue(value));
+  return value
+    .replace(EXECUTE_TYPESCRIPT_BEARER_PATTERN, "Bearer [REDACTED]")
+    .replace(EXECUTE_TYPESCRIPT_KEY_VALUE_SECRET_PATTERN, "$1=[REDACTED]");
 }
 
 function redactExecuteTypescriptValue(value: unknown): unknown {
@@ -2122,27 +2186,32 @@ function appendCapturedConsoleLine(
 }
 
 function recordExecuteTypescriptOutputEvent(input: {
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
   commandId: string;
   line: string;
 }): void {
-  input.store.recordLifecycleEvent({
-    sessionId: input.sessionId,
-    kind: "command.output",
-    subjectKind: "command",
-    subjectId: input.commandId,
-    data: {
-      stream:
-        input.line.startsWith("[error] ") || input.line.startsWith("[warn] ") ? "stderr" : "stdout",
-      text: input.line,
-      source: "execute_typescript",
-    },
-  });
+  input.runState(
+    input.commandState.recordCommandEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
+      kind: "command.output",
+      data: {
+        stream:
+          input.line.startsWith("[error] ") || input.line.startsWith("[warn] ")
+            ? "stderr"
+            : "stdout",
+        text: input.line,
+        source: "execute_typescript",
+      },
+    }),
+  );
 }
 
 function recordExecuteTypescriptDiagnostics(input: {
-  store: StructuredSessionStateStore;
+  commandState: RuntimeCommandStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
   commandId: string;
   stage: "compile" | "typecheck";
@@ -2151,17 +2220,18 @@ function recordExecuteTypescriptDiagnostics(input: {
   if (input.diagnostics.length === 0) {
     return;
   }
-  input.store.recordLifecycleEvent({
-    sessionId: input.sessionId,
-    kind: "command.diagnostics",
-    subjectKind: "command",
-    subjectId: input.commandId,
-    data: {
-      source: "execute_typescript",
-      stage: input.stage,
-      diagnostics: input.diagnostics.map((diagnostic) => ({ ...diagnostic })),
-    },
-  });
+  input.runState(
+    input.commandState.recordCommandEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
+      kind: "command.diagnostics",
+      data: {
+        source: "execute_typescript",
+        stage: input.stage,
+        diagnostics: input.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+      },
+    }),
+  );
 }
 
 function summarizeResult(value: unknown): string {
@@ -2178,7 +2248,7 @@ function summarizeResult(value: unknown): string {
 function buildExecuteTypescriptParentRollup(input: {
   snippetArtifactId: string;
   logsArtifactId?: string;
-  childCommandFacts: Array<{ status: StructuredCommandStatus }>;
+  childCommandFacts: Array<{ status: RuntimeCommandStatus }>;
 }): {
   summary?: string;
   facts: ExecuteTypescriptCommandFacts;

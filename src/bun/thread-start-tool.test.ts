@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
 import { createStartThreadTool } from "./thread-start-tool";
+import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -57,26 +59,38 @@ function createOrchestratorRuntime(
 
   return {
     current: {
-      sessionId: "session-thread-start-tool",
+      workspaceSessionId: "session-thread-start-tool",
       turnId: turn.id,
       surfacePiSessionId: "session-thread-start-tool",
-      surfaceThreadId: rootThread.id,
+      threadId: rootThread.id,
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "analysis",
       rootThreadId: rootThread.id,
-      promptText: "Delegate workflow context work",
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: [],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
+  };
+}
+
+function createStartThreadToolOptions(store: StructuredSessionStateStore) {
+  return {
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: Effect.runSync,
   };
 }
 
 describe("thread_start tool", () => {
   it("describes the conservative forked-history policy in the tool schema", () => {
+    const store = createStore();
     const tool = createStartThreadTool({
       runtime: { current: null },
-      store: createStore(),
+      ...createStartThreadToolOptions(store),
       bridge: {
         async createHandlerThread() {
           throw new Error("not used");
@@ -128,7 +142,7 @@ describe("thread_start tool", () => {
 
     const tool = createStartThreadTool({
       runtime,
-      store,
+      ...createStartThreadToolOptions(store),
       onAppLog: (event) => appLogEvents.push(event),
       bridge: {
         async createHandlerThread(input) {
@@ -229,7 +243,7 @@ describe("thread_start tool", () => {
     const appLogEvents: AppLoggerEvent[] = [];
     const tool = createStartThreadTool({
       runtime,
-      store,
+      ...createStartThreadToolOptions(store),
       onAppLog: (event) => appLogEvents.push(event),
       bridge: {
         async createHandlerThread() {
@@ -276,7 +290,7 @@ describe("thread_start tool", () => {
 
     const tool = createStartThreadTool({
       runtime,
-      store,
+      ...createStartThreadToolOptions(store),
       bridge: {
         async createHandlerThread(input) {
           observedThreadGroupInputs.push(input.threadGroupId);

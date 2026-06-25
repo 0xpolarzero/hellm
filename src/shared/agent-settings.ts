@@ -1,7 +1,6 @@
-import type { Agents } from "../bun/smithers-runtime/workflow-authoring-contract";
-import type { ExtensionUsageState } from "./extensions";
+import type { ExtensionUsageState } from "@svvy/core";
 
-export type ReasoningEffort = Agents.ReasoningEffort;
+export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AgentProfileKind = "orchestrator" | "special";
 export type AgentProfileSpecialKey = "threadHandler";
 export type AgentProfileId = string;
@@ -54,9 +53,14 @@ export interface AgentProfileState {
   titleNamer: AgentPromptSettings;
 }
 
-export interface WorkflowAgentSettings extends Agents.TaskAgentParameters {
+export interface WorkflowAgentSettings {
   id: string;
   label: string;
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  instructions: string;
+  overrides?: Record<string, ExtensionUsageState>;
   extensionOrder?: string[];
   sourceVersion?: string;
 }

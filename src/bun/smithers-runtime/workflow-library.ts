@@ -15,7 +15,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
 import ts from "typescript";
-import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../../shared/extensions";
+import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "@svvy/extensions";
 import type { AgentSettingsStore } from "../agent-settings-store";
 import type { ExtensionEnvSecretStore } from "../extension-env-secret-store";
 import {
@@ -25,8 +25,10 @@ import {
   validateExtensionBuildInput,
 } from "../svvyx-extensions-command";
 import {
+  GENERATED_EXTENSIONS_PACKAGE_NAME,
   effectiveExtensionsGeneratedPackagePath,
   generatedExtensionExportIds,
+  generatedExtensionReferenceExpression,
   writeGeneratedExtensionsPackage,
 } from "../generated-extensions-package";
 export { getExtensionsGeneratedPackagePath } from "../generated-extensions-package";
@@ -91,6 +93,8 @@ type WorkflowGeneratedManifest = {
 
 const GENERATED_MANIFEST_FILE = ".svvy-workflows-manifest.json";
 const TASK_AGENT_OVERRIDE_STATES = ["loaded", "available", "unavailable"] as const;
+export const GENERATED_WORKFLOWS_PACKAGE_NAME = "@svvyx/workflows";
+const GENERATED_PACKAGE_SCOPE = "@svvyx";
 
 type TaskAgentExtensionOverrideState = (typeof TASK_AGENT_OVERRIDE_STATES)[number];
 
@@ -501,7 +505,7 @@ function ensureGeneratedPackageLink(input: {
   ) {
     return false;
   }
-  const scopeRoot = join(smithersRoot, "node_modules", "@svvy");
+  const scopeRoot = join(smithersRoot, "node_modules", GENERATED_PACKAGE_SCOPE);
   const linkPath = join(scopeRoot, input.packageName);
   mkdirSync(scopeRoot, { recursive: true });
   if (existsSync(linkPath)) {
@@ -659,7 +663,6 @@ export function extractWorkflowAgentParametersFromSource(input: {
   const source = readFileSync(input.path, "utf8");
   const sourceFile = ts.createSourceFile(input.path, source, ts.ScriptTarget.Latest, true);
   const staticContext: WorkflowAgentStaticContext = {
-    defineTaskAgentNames: readImportedDefineTaskAgentNames(sourceFile),
     sourceFile,
     sourceRoot: input.sourceRoot ?? getWorkflowsSourceRoot(),
   };
@@ -671,10 +674,7 @@ export function extractWorkflowAgentParametersFromSource(input: {
       if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
       if (input.exportName && declaration.name.text !== input.exportName) continue;
       const initializer = unwrapLiteralExpression(declaration.initializer);
-      if (
-        !ts.isCallExpression(initializer) ||
-        !isDefineTaskAgentCall(initializer.expression, staticContext)
-      ) {
+      if (!ts.isCallExpression(initializer) || !isDefineTaskAgentCall(initializer.expression)) {
         continue;
       }
       const argument = initializer.arguments[0];
@@ -1122,7 +1122,6 @@ function literalExpressionToValue(expression: ts.Expression, sourceFile: ts.Sour
 }
 
 type WorkflowAgentStaticContext = {
-  defineTaskAgentNames: ReadonlySet<string>;
   sourceFile: ts.SourceFile;
   sourceRoot: string;
 };
@@ -1175,18 +1174,22 @@ function literalExpressionToStaticValue(
 function extensionReferenceToId(expression: ts.Expression): string | null {
   if (
     ts.isPropertyAccessExpression(expression) &&
-    ts.isIdentifier(expression.expression) &&
-    expression.expression.text === "Extensions"
+    expression.name.text === "id" &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === "Extensions"
   ) {
-    return expression.name.text;
+    return expression.expression.name.text;
   }
   if (
-    ts.isElementAccessExpression(expression) &&
-    ts.isIdentifier(expression.expression) &&
-    expression.expression.text === "Extensions" &&
-    ts.isStringLiteralLike(expression.argumentExpression)
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "id" &&
+    ts.isElementAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === "Extensions" &&
+    ts.isStringLiteralLike(expression.expression.argumentExpression)
   ) {
-    return expression.argumentExpression.text;
+    return expression.expression.argumentExpression.text;
   }
   return null;
 }
@@ -1263,13 +1266,7 @@ function hasDefaultModifier(statement: ts.Statement): boolean {
   );
 }
 
-function isDefineTaskAgentCall(
-  expression: ts.Expression,
-  context: WorkflowAgentStaticContext,
-): boolean {
-  if (ts.isIdentifier(expression)) {
-    return context.defineTaskAgentNames.has(expression.text);
-  }
+function isDefineTaskAgentCall(expression: ts.Expression): boolean {
   if (ts.isPropertyAccessExpression(expression)) {
     return (
       expression.name.text === "defineTaskAgent" &&
@@ -1278,24 +1275,6 @@ function isDefineTaskAgentCall(
     );
   }
   return false;
-}
-
-function readImportedDefineTaskAgentNames(sourceFile: ts.SourceFile): Set<string> {
-  const names = new Set<string>();
-  for (const statement of sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement)) continue;
-    const specifier = statement.moduleSpecifier;
-    if (!ts.isStringLiteralLike(specifier) || specifier.text !== "@svvy/workflows") continue;
-    const namedBindings = statement.importClause?.namedBindings;
-    if (!namedBindings || !ts.isNamedImports(namedBindings)) continue;
-    for (const element of namedBindings.elements) {
-      const importedName = element.propertyName?.text ?? element.name.text;
-      if (importedName === "defineTaskAgent") {
-        names.add(element.name.text);
-      }
-    }
-  }
-  return names;
 }
 
 function propertyNameToString(name: ts.PropertyName): string | null {
@@ -1440,6 +1419,12 @@ function isTaskAgentExtensionOverrideState(
   );
 }
 
+function reasoningEffortProperty(parameters: Record<string, unknown>): ReasoningEffort | null {
+  const reasoning = parameters.reasoning;
+  if (!isRecord(reasoning)) return null;
+  return typeof reasoning.effort === "string" ? (reasoning.effort as ReasoningEffort) : null;
+}
+
 function validateWorkflowSourceItems(
   items: WorkflowSourceItem[],
   modelCatalog: readonly SvvyxWorkflowsModelChoice[],
@@ -1471,7 +1456,7 @@ function validateWorkflowSourceItems(
     const parameters = item.agentParameters ?? {};
     const provider = stringProperty(parameters, "provider");
     const model = stringProperty(parameters, "model");
-    const reasoningEffort = stringProperty(parameters, "reasoningEffort") as ReasoningEffort | null;
+    const reasoningEffort = reasoningEffortProperty(parameters);
     const instructions = stringProperty(parameters, "instructions");
     const overrides = taskAgentOverridesProperty(parameters);
 
@@ -1480,7 +1465,7 @@ function validateWorkflowSourceItems(
       ["label", stringProperty(parameters, "label")],
       ["provider", provider],
       ["model", model],
-      ["reasoningEffort", reasoningEffort],
+      ["reasoning.effort", reasoningEffort],
       ["instructions", instructions],
     ]) {
       if (!value) {
@@ -1496,6 +1481,14 @@ function validateWorkflowSourceItems(
       diagnostics.push({
         code: "invalid_agent_parameters",
         message: `Workflow agent ${item.exportName} must use overrides, not extensions.`,
+        path: item.sourcePath,
+        exportName: item.exportName,
+      });
+    }
+    if (Object.hasOwn(parameters, "reasoningEffort")) {
+      diagnostics.push({
+        code: "invalid_agent_parameters",
+        message: `Workflow agent ${item.exportName} must use reasoning.effort, not reasoningEffort.`,
         path: item.sourcePath,
         exportName: item.exportName,
       });
@@ -1581,7 +1574,7 @@ function writeGeneratedPackage(generatedPackagePath: string, items: readonly Wor
     join(generatedPackagePath, "package.json"),
     JSON.stringify(
       {
-        name: "@svvy/workflows",
+        name: GENERATED_WORKFLOWS_PACKAGE_NAME,
         type: "module",
         exports: {
           ".": "./index.ts",
@@ -1657,22 +1650,20 @@ function writeAgentsIndex(
   writeFileSync(
     join(agentsRoot, "index.ts"),
     [
-      'import type { ThinkingLevel } from "@mariozechner/pi-agent-core";',
-      'import type { ExtensionId } from "@svvy/extensions";',
+      'import type { RunTaskAgentError, RunTaskAgentResult, RunTaskAgentSourceInput } from "@svvy/core";',
+      'import type { AgentLike } from "smithers-orchestrator";',
+      `import type { ExtensionId } from "${GENERATED_EXTENSIONS_PACKAGE_NAME}";`,
       "",
-      "export type ReasoningEffort = ThinkingLevel;",
+      'export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";',
+      "export type ReasoningSelection = { effort: ReasoningEffort };",
       "export type TaskAgentExtensionId = ExtensionId;",
       'export type TaskAgentExtensionOverrideState = "loaded" | "available" | "unavailable";',
-      "export type AgentLike = {",
-      "  id?: string;",
-      "  generate: (args: unknown) => Promise<unknown>;",
-      "};",
-      "export interface TaskAgentParameters {",
+      "export interface TaskAgentParametersSource {",
       "  id: string;",
       "  label: string;",
       "  provider: string;",
       "  model: string;",
-      "  reasoningEffort: ReasoningEffort;",
+      "  reasoning: ReasoningSelection;",
       "  instructions: string;",
       "  overrides?: Record<TaskAgentExtensionId, TaskAgentExtensionOverrideState>;",
       "}",
@@ -1700,26 +1691,30 @@ function writeAgentsIndex(
       "  }",
       "  return value;",
       "}",
+      "function readOptionalPositiveIntegerEnv(name: string): number | undefined {",
+      '  const value = typeof process === "undefined" ? undefined : process.env?.[name];',
+      '  if (value === undefined || value === "") {',
+      "    return undefined;",
+      "  }",
+      "  const parsed = Number(value);",
+      "  if (!Number.isSafeInteger(parsed) || parsed <= 0) {",
+      "    throw new Error(`Invalid svvy workflow task-agent bridge env var: ${name} must be a positive integer.`);",
+      "  }",
+      "  return parsed;",
+      "}",
       "function isBridgeRecord(value: unknown): value is Record<string, unknown> {",
       '  return Boolean(value) && typeof value === "object" && !Array.isArray(value);',
       "}",
       "function stringField(value: unknown, key: string): string | undefined {",
       '  return isBridgeRecord(value) && typeof value[key] === "string" ? value[key] : undefined;',
       "}",
-      "function copySerializableGenerateFields(args: GenerateArgs): Record<string, unknown> {",
-      "  const fields: Record<string, unknown> = {};",
-      '  for (const key of ["prompt", "messages", "rootDir", "resumeSession", "continueSession", "taskContext", "run", "node", "iteration", "attempt", "maxOutputBytes"] as const) {',
-      "    if (args[key] !== undefined) fields[key] = args[key];",
-      "  }",
-      "  return fields;",
-      "}",
-      "function copySmithersIdentityFields(args: GenerateArgs): Record<string, unknown> {",
+      "function readSmithersTaskIdentity(args: GenerateArgs): Record<string, unknown> {",
       "  const taskContext = isBridgeRecord(args.taskContext) ? args.taskContext : {};",
       "  const run = isBridgeRecord(args.run) ? args.run : isBridgeRecord(taskContext.run) ? taskContext.run : {};",
       "  const node = isBridgeRecord(args.node) ? args.node : isBridgeRecord(taskContext.node) ? taskContext.node : {};",
       "  const fields: Record<string, unknown> = {};",
-      '  const smithersRunId = stringField(taskContext, "smithersRunId") ?? stringField(taskContext, "runId") ?? stringField(run, "id") ?? stringField(run, "runId");',
-      "  if (smithersRunId !== undefined) fields.smithersRunId = smithersRunId;",
+      '  const runId = stringField(taskContext, "smithersRunId") ?? stringField(taskContext, "runId") ?? stringField(run, "id") ?? stringField(run, "runId");',
+      "  if (runId !== undefined) fields.runId = runId;",
       '  const nodeId = stringField(taskContext, "nodeId") ?? stringField(node, "id") ?? stringField(node, "nodeId") ?? stringField(taskContext, "taskId");',
       "  if (nodeId !== undefined) fields.nodeId = nodeId;",
       '  const iteration = typeof args.iteration === "number" ? args.iteration : isBridgeRecord(args.iteration) && typeof args.iteration.index === "number" ? args.iteration.index : typeof taskContext.iteration === "number" ? taskContext.iteration : isBridgeRecord(taskContext.iteration) && typeof taskContext.iteration.index === "number" ? taskContext.iteration.index : undefined;',
@@ -1727,6 +1722,46 @@ function writeAgentsIndex(
       '  const attempt = typeof args.attempt === "number" ? args.attempt : isBridgeRecord(args.attempt) && typeof args.attempt.index === "number" ? args.attempt.index : typeof taskContext.attempt === "number" ? taskContext.attempt : isBridgeRecord(taskContext.attempt) && typeof taskContext.attempt.index === "number" ? taskContext.attempt.index : undefined;',
       "  if (attempt !== undefined) fields.attempt = attempt;",
       "  return fields;",
+      "}",
+      "function readSmithersContext(args: GenerateArgs): Record<string, unknown> | undefined {",
+      "  const context: Record<string, unknown> = {};",
+      "  if (args.run !== undefined) context.run = args.run;",
+      "  if (args.node !== undefined) context.node = args.node;",
+      '  if (typeof args.rootDir === "string") context.rootDir = args.rootDir;',
+      "  return Object.keys(context).length > 0 ? context : undefined;",
+      "}",
+      "function normalizeBridgeMessages(value: unknown): unknown {",
+      "  if (!Array.isArray(value)) return value;",
+      "  return value.map((message) => {",
+      "    if (!isBridgeRecord(message)) return message;",
+      '    const text = typeof message.text === "string" ? message.text : message.content;',
+      "    return { role: message.role, text };",
+      "  });",
+      "}",
+      "function readPromptSource(args: GenerateArgs): Record<string, unknown> {",
+      '  const hasPrompt = typeof args.prompt === "string";',
+      "  const hasMessages = args.messages !== undefined;",
+      "  if (hasPrompt && !hasMessages) {",
+      '    return { kind: "prompt", prompt: args.prompt };',
+      "  }",
+      "  if (!hasPrompt && hasMessages) {",
+      '    return { kind: "messages", messages: normalizeBridgeMessages(args.messages) };',
+      "  }",
+      '  throw new Error("svvy workflow task-agent requires exactly one prompt source: provide either prompt or messages.");',
+      "}",
+      "function bridgeErrorMessage(value: unknown): string {",
+      "  const error = value as Partial<RunTaskAgentError>;",
+      '  return typeof error.message === "string" ? error.message : "Malformed bridge error response";',
+      "}",
+      "function bridgeErrorCode(value: unknown): string {",
+      "  const error = value as Partial<RunTaskAgentError>;",
+      '  return typeof error.error === "string" ? error.error : "unknown";',
+      "}",
+      "function decodeBridgeResult(value: unknown): RunTaskAgentResult {",
+      '  if (!isBridgeRecord(value) || typeof value.text !== "string") {',
+      '    throw new Error("Malformed svvy workflow task-agent bridge success response");',
+      "  }",
+      "  return value as RunTaskAgentResult;",
       "}",
       "function emitGenerateText(args: GenerateArgs, text: string): void {",
       "  args.onEvent?.(text);",
@@ -1736,20 +1771,24 @@ function writeAgentsIndex(
       "  args.onEvent?.(text);",
       "  args.onStderr?.(`${text}\\n`);",
       "}",
-      "async function callTaskAgentBridge(parameters: TaskAgentParameters, rawArgs: unknown): Promise<unknown> {",
+      "async function callTaskAgentBridge(parameters: TaskAgentParametersSource, rawArgs: unknown): Promise<RunTaskAgentResult> {",
       '  const args = (rawArgs && typeof rawArgs === "object" ? rawArgs : {}) as GenerateArgs;',
       '  const bridgeUrl = readRequiredEnv("SVVY_WORKFLOW_AGENT_BRIDGE_URL");',
       '  const bridgeToken = readRequiredEnv("SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN");',
-      '  const workspaceSessionId = readRequiredEnv("SVVY_WORKSPACE_SESSION_ID");',
-      '  const sourceCommandId = readRequiredEnv("SVVY_SOURCE_COMMAND_ID");',
+      '  const workspaceSessionId = readRequiredEnv("SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID");',
+      '  const sourceCommandId = readRequiredEnv("SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID");',
+      '  const timeoutMs = readOptionalPositiveIntegerEnv("SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS");',
+      "  const smithersContext = readSmithersContext(args);",
+      "  const promptSource = readPromptSource(args);",
       "  const payload = {",
       '    operation: "runTaskAgent",',
-      "    taskAgent: parameters,",
+      "    agent: parameters,",
+      "    taskIdentity: readSmithersTaskIdentity(args),",
+      "    ...(smithersContext ? { smithersContext } : {}),",
+      "    promptSource,",
       "    workspaceSessionId,",
       "    sourceCommandId,",
-      "    ...copySerializableGenerateFields(args),",
-      "    ...copySmithersIdentityFields(args),",
-      "  };",
+      "  } as RunTaskAgentSourceInput;",
       "  let body: string;",
       "  try {",
       "    body = JSON.stringify(payload);",
@@ -1757,6 +1796,8 @@ function writeAgentsIndex(
       '    const message = error instanceof Error ? error.message : "Unknown serialization error";',
       "    throw new Error(`Unable to serialize svvy workflow task-agent bridge payload: ${message}`);",
       "  }",
+      "  const timeoutController = timeoutMs === undefined ? undefined : new AbortController();",
+      "  const timeoutHandle = timeoutMs === undefined ? undefined : setTimeout(() => timeoutController?.abort(), timeoutMs);",
       "  emitGenerateText(args, `svvy task agent ${parameters.id} started`);",
       "  try {",
       "    const response = await fetch(bridgeUrl, {",
@@ -1766,27 +1807,35 @@ function writeAgentsIndex(
       '        "content-type": "application/json",',
       "      },",
       "      body,",
+      "      ...(timeoutController ? { signal: timeoutController.signal } : {}),",
       "    });",
+      '    const responseText = await response.text().catch(() => "");',
+      "    const responseBody = responseText.length > 0 ? parseBridgeJson(responseText) : {};",
       "    if (!response.ok) {",
-      '      const text = await response.text().catch(() => "");',
-      "      throw new Error(`svvy workflow task-agent bridge rejected runTaskAgent (${response.status}): ${text || response.statusText}`);",
+      "      throw new Error(`svvy workflow task-agent bridge rejected runTaskAgent (${response.status} ${bridgeErrorCode(responseBody)}): ${bridgeErrorMessage(responseBody)}`);",
       "    }",
-      "    const result = await response.json().catch((error) => {",
-      '      const message = error instanceof Error ? error.message : "Unknown JSON parse error";',
-      "      throw new Error(`Malformed svvy workflow task-agent bridge response: ${message}`);",
-      "    });",
-      '    if (!result || typeof result !== "object" || typeof (result as { text?: unknown }).text !== "string") {',
-      '      throw new Error("Malformed svvy workflow task-agent bridge response: expected object with string text.");',
-      "    }",
+      "    const result = decodeBridgeResult(responseBody);",
       "    emitGenerateText(args, `svvy task agent ${parameters.id} finished`);",
       "    return result;",
       "  } catch (error) {",
       "    const message = error instanceof Error ? error.message : String(error);",
       "    emitGenerateError(args, `svvy task agent ${parameters.id} failed: ${message}`);",
       "    throw error;",
+      "  } finally {",
+      "    if (timeoutHandle !== undefined) {",
+      "      clearTimeout(timeoutHandle);",
+      "    }",
       "  }",
       "}",
-      "export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): AgentLike {",
+      "function parseBridgeJson(text: string): unknown {",
+      "  try {",
+      "    return JSON.parse(text);",
+      "  } catch (error) {",
+      '    const message = error instanceof Error ? error.message : "Unknown JSON parse error";',
+      "    throw new Error(`Malformed svvy workflow task-agent bridge response: ${message}`);",
+      "  }",
+      "}",
+      "export function defineTaskAgent<T extends TaskAgentParametersSource>(parameters: T): AgentLike {",
       "  return {",
       "    id: parameters.id,",
       "    generate: (args: unknown) => callTaskAgentBridge(parameters, args),",
@@ -1801,10 +1850,10 @@ function writeAgentsIndex(
     writeFileSync(
       agent.generatedPath,
       [
-        'import type { TaskAgentParameters } from "./index";',
-        'import { Extensions } from "@svvy/extensions";',
+        'import type { TaskAgentParametersSource } from "./index";',
+        `import { Extensions } from "${GENERATED_EXTENSIONS_PACKAGE_NAME}";`,
         "",
-        `export const ${agent.exportName} = ${serializeAgentParameters(agent.agentParameters ?? {})} satisfies TaskAgentParameters;`,
+        `export const ${agent.exportName} = ${serializeAgentParameters(agent.agentParameters ?? {})} satisfies TaskAgentParametersSource;`,
         "",
       ].join("\n"),
     );
@@ -1826,7 +1875,7 @@ function serializeAgentParameters(parameters: Record<string, unknown>): string {
   const separator = prefix === "{" ? "" : ",";
   return [
     prefix,
-    `${separator}\n  "overrides": {${overrideEntries.map(([id, state]) => `\n    [Extensions[${JSON.stringify(id)}]]: ${JSON.stringify(state)},`).join("")}\n  }`,
+    `${separator}\n  "overrides": {${overrideEntries.map(([id, state]) => `\n    [${generatedExtensionReferenceExpression(id)}]: ${JSON.stringify(state)},`).join("")}\n  }`,
     "}",
   ].join("");
 }

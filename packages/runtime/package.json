@@ -1,0 +1,18 @@
+{
+  "name": "@svvy/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bootstrap": "./src/bootstrap.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0-beta.84",
+    "@svvy/core": "workspace:*",
+    "@svvy/extensions": "workspace:*",
+    "@svvy/pi-adapter": "workspace:*",
+    "@svvy/sandbox": "workspace:*",
+    "effect": "4.0.0-beta.84"
+  }
+}

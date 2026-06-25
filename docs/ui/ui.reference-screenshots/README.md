@@ -26,4 +26,5 @@ Captured against the Vite dev app on `http://localhost:5177`.
 - These screenshots capture the Replit artifact's desktop route-level pages and fixture states.
 - The workflow graph screenshot is visual material only. It does not define Workflows or Smithers
   product behavior.
-- Production Svelte UI work should match the relevant visual treatment while consuming svvy's real runtime controllers and workspace read models.
+- Production Svelte UI work should match the relevant visual treatment while consuming
+  bootstrap-provided runtime facade, state read/command facades, and workspace read models.

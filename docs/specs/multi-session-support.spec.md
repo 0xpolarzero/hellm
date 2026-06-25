@@ -7,7 +7,8 @@
 
 ## Scope
 
-This spec defines multiple top-level sessions in one workspace window.
+This spec defines multiple top-level sessions within one acquired workspace context, rendered
+through workspace tabs and Dockview panes.
 
 ## Session Groups
 
@@ -25,6 +26,7 @@ Session rows support:
 
 - open in focused pane
 - `Cmd`-click open in new pane
+- fork from a selected assistant message when available
 - mark read/unread
 - pin/unpin
 - rename
@@ -43,14 +45,18 @@ session row.
 
 ## Titles
 
-Top-level sessions use the durable title-generation flow from the first real user message.
+Top-level sessions show a provisional title from the first live composer draft or first real user
+message until the durable one-shot namer title lands. The namer starts with the first orchestrator
+turn. Manual rename is blocked while title generation is pending or running. A successful generated
+title or manual rename freezes the title.
 
-Handler-thread titles are generated from the delegated objective.
+Handler-thread titles use the same durable namer flow over the delegated objective.
 
 ## Unread State
 
-Unread state is session-level metadata. It appears when assistant work finishes outside the focused
-pane surface and clears when a pane for that session receives focus or an explicit mark-read action
+Unread state is session-level metadata persisted by `@svvy/state` and projected through session
+navigation read models. It appears when assistant work finishes outside the focused pane surface and
+clears when a pane for that session receives focus or an explicit state-backed mark-read command
 runs.
 
 ## Non-Goals

@@ -2,13 +2,20 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
+import * as Effect from "effect/Effect";
 import { createListExtensionsTool, createLoadExtensionTool } from "./extension-tools";
 import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { StateContractError } from "@svvy/core";
+import {
+  runtimeActorExtensionBindingStatePortFromStore,
+  runtimeCommandStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 import {
   BUILTIN_EXTENSION_IDS,
@@ -17,7 +24,7 @@ import {
   getExtensionRecord,
   resolveActorExtensionState,
   visibleExtensionRecords,
-} from "../shared/extensions";
+} from "@svvy/extensions";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -26,6 +33,32 @@ const WORKSPACE = {
 } as const;
 
 const stores: StructuredSessionStateStore[] = [];
+
+function createExtensionToolState(store: StructuredSessionStateStore) {
+  return {
+    actorExtensionBindingState: runtimeActorExtensionBindingStatePortFromStore(store),
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: <A>(effect: Effect.Effect<A, StateContractError>) => Effect.runSync(effect),
+  };
+}
+
+async function noopRefreshGeneratedContext() {}
+
+function seedPiExtensionState(
+  store: StructuredSessionStateStore,
+  input: {
+    sessionId: string;
+    loadedExtensionIds: readonly string[];
+    availableExtensionIds: readonly string[];
+  },
+) {
+  store.updatePiSessionExtensionState({
+    sessionId: input.sessionId,
+    loadedExtensionIds: [...input.loadedExtensionIds],
+    availableExtensionIds: [...input.availableExtensionIds],
+  });
+}
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -286,24 +319,28 @@ describe("builtin extension registry", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-cli-requirements",
+        workspaceSessionId: "session-extension-cli-requirements",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-cli-requirements",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "handler",
         defaultEpisodeKind: "analysis",
         rootThreadId: null,
-        promptText: "List extensions",
         rootEpisodeKind: "analysis",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["cx", "git", "github", "web", "smithers"],
         availableExtensionIds: [],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
-    const result = await createListExtensionsTool({ runtime, store }).execute("tool-call-list", {});
-    const byId = new Map(result.details.loaded.map((extension) => [extension.id, extension]));
+    const result = await createListExtensionsTool({
+      runtime,
+      state: createExtensionToolState(store),
+    }).execute("tool-call-list", {});
+    const byId = new Map(result.details!.loaded.map((extension) => [extension.id, extension]));
 
     expect(byId.get("cx")?.cliRequirements).toEqual([
       {
@@ -364,11 +401,10 @@ describe("builtin extension registry", () => {
       {
         id: "smithers-orchestrator",
         package: "smithers-orchestrator",
-        binary: "smithers",
+        binary: "bunx",
         required: true,
         version: "0.22.0",
-        versionCommand: "smithers --version",
-        installCommand: "npm install -g smithers-orchestrator@{{version}}",
+        versionCommand: "bunx smithers-orchestrator --version",
       },
     ]);
     expect(byId.get("smithers")?.generatedInstructions).toEqual([
@@ -463,7 +499,7 @@ describe("builtin extension registry", () => {
     }
   });
 
-  it("keeps generated clients limited to loaded svvyx extensions and hides unavailable records", () => {
+  it("keeps generated runtime facades limited to loaded svvyx extensions and hides unavailable records", () => {
     const typeScriptClientExtensions = BUILTIN_EXTENSIONS.filter(
       (extension) => extension.typescriptApiEnabled,
     );
@@ -565,39 +601,43 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-tools",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "analysis",
         rootThreadId: null,
-        promptText: "List extensions",
         rootEpisodeKind: "analysis",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell", "thread-orchestration"],
         availableExtensionIds: ["smithers", "workflows"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
-    const result = await createListExtensionsTool({ runtime, store }).execute("tool-call-list", {});
+    const result = await createListExtensionsTool({
+      runtime,
+      state: createExtensionToolState(store),
+    }).execute("tool-call-list", {});
 
-    expect(result.details.loaded.map((extension) => extension.id)).toEqual([
+    expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
       "shell",
       "thread-orchestration",
     ]);
-    expect(result.details.available.map((extension) => extension.id)).toEqual([
+    expect(result.details!.available.map((extension) => extension.id)).toEqual([
       "smithers",
       "workflows",
     ]);
-    expect(result.details.loaded[0]).toHaveProperty("instructionSourceFiles");
-    for (const extension of result.details.available) {
+    expect(result.details!.loaded[0]).toHaveProperty("instructionSourceFiles");
+    for (const extension of result.details!.available) {
       expect(extension).not.toHaveProperty("instructionSourceFiles");
       expect(extension.minimalLoadingHint.length).toBeGreaterThan(0);
       expect(extension.minimalInstructionPath).toBeNull();
     }
-    for (const extension of [...result.details.loaded, ...result.details.available]) {
+    for (const extension of [...result.details!.loaded, ...result.details!.available]) {
       expect(extension).not.toHaveProperty("fingerprint");
       expect(extension).not.toHaveProperty("generatedContextFingerprint");
       expect(extension).not.toHaveProperty("aggregateCacheKey");
@@ -613,10 +653,10 @@ describe("extension loading tools", () => {
         toolName: "list_extensions",
         status: "succeeded",
         arguments: {},
-        facts: {
+        facts: expect.objectContaining({
           loadedExtensionIds: ["shell", "thread-orchestration"],
           availableExtensionIds: ["smithers", "workflows"],
-        },
+        }),
       }),
     ]);
   });
@@ -632,33 +672,34 @@ describe("extension loading tools", () => {
       });
       const runtime: PromptExecutionRuntimeHandle = {
         current: {
-          sessionId: "session-base-extension-tools",
+          workspaceSessionId: "session-base-extension-tools",
           turnId: turn.id,
           surfacePiSessionId: "session-base-extension-tools",
-          surfaceThreadId: null,
+          threadId: null,
           surfaceKind: "orchestrator",
           defaultEpisodeKind: "analysis",
           rootThreadId: null,
-          promptText: "List base extensions",
           rootEpisodeKind: "analysis",
           sessionWaitApplied: false,
           threadWasTerminalAtStart: false,
           loadedExtensionIds: ["base-common", "base-orchestrator"],
           availableExtensionIds: [],
+          generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+          generatedAgentContextRevision: "generated_context_revision_test",
         },
       };
 
       const result = await createListExtensionsTool({
         runtime,
-        store,
+        state: createExtensionToolState(store),
         extensionsRoot,
       }).execute("tool-call-list-base", {});
 
-      expect(result.details.loaded.map((extension) => extension.id)).toEqual([
+      expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
         "base-common",
         "base-orchestrator",
       ]);
-      for (const extension of result.details.loaded) {
+      for (const extension of result.details!.loaded) {
         expect(extension.instructionSourceFiles).toHaveLength(1);
         expect(extension.instructionSourceFiles[0]).toContain(
           join(extensionsRoot, "sources", "builtin", extension.id, "instructions", "full"),
@@ -709,30 +750,31 @@ describe("extension loading tools", () => {
       });
       const listRuntime: PromptExecutionRuntimeHandle = {
         current: {
-          sessionId: "session-user-extension-list",
+          workspaceSessionId: "session-user-extension-list",
           turnId: listTurn.id,
           surfacePiSessionId: "session-user-extension-list",
-          surfaceThreadId: null,
+          threadId: null,
           surfaceKind: "orchestrator",
           defaultEpisodeKind: "analysis",
           rootThreadId: null,
-          promptText: "List extensions",
           rootEpisodeKind: "analysis",
           sessionWaitApplied: false,
           threadWasTerminalAtStart: false,
           loadedExtensionIds: ["shell"],
           availableExtensionIds: ["notes"],
+          generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+          generatedAgentContextRevision: "generated_context_revision_test",
         },
       };
 
       const listed = await createListExtensionsTool({
         runtime: listRuntime,
-        store: listStore,
+        state: createExtensionToolState(listStore),
         extensionsRoot,
       }).execute("tool-call-list-user-extension", {});
 
-      expect(listed.details.available.map((extension) => extension.id)).toEqual(["notes"]);
-      expect(listed.details.available[0]).toMatchObject({
+      expect(listed.details!.available.map((extension) => extension.id)).toEqual(["notes"]);
+      expect(listed.details!.available[0]).toMatchObject({
         category: "user",
         interface: "instructions",
         minimalLoadingHint: "Load Notes when workspace notes matter.\n",
@@ -742,14 +784,19 @@ describe("extension loading tools", () => {
         dependencyReadiness: "not_required",
         typescriptApiEnabled: false,
       });
-      expect(listed.details.available[0]).not.toHaveProperty("instructionSourceFiles");
-      expect(listed.details.available[0]).not.toHaveProperty("sourceRoot");
-      expect(listed.details.available[0]).not.toHaveProperty("extensionBuildFingerprint");
-      expect(listed.details.available[0]).not.toHaveProperty("envDeclarations");
-      expect(listed.details.available[0]).not.toHaveProperty("dependencies");
-      expect(listed.details.available[0]).not.toHaveProperty("trustedDependencies");
+      expect(listed.details!.available[0]).not.toHaveProperty("instructionSourceFiles");
+      expect(listed.details!.available[0]).not.toHaveProperty("sourceRoot");
+      expect(listed.details!.available[0]).not.toHaveProperty("extensionBuildFingerprint");
+      expect(listed.details!.available[0]).not.toHaveProperty("envDeclarations");
+      expect(listed.details!.available[0]).not.toHaveProperty("dependencies");
+      expect(listed.details!.available[0]).not.toHaveProperty("trustedDependencies");
 
-      const store = createStore();
+      const store = createStore("session-user-extension-load");
+      seedPiExtensionState(store, {
+        sessionId: "session-user-extension-load",
+        loadedExtensionIds: ["base-common", "shell"],
+        availableExtensionIds: ["notes"],
+      });
       const turn = store.startTurn({
         sessionId: "session-user-extension-load",
         surfacePiSessionId: "session-user-extension-load",
@@ -757,66 +804,62 @@ describe("extension loading tools", () => {
       });
       const loadRuntime: PromptExecutionRuntimeHandle = {
         current: {
-          sessionId: "session-user-extension-load",
+          workspaceSessionId: "session-user-extension-load",
           turnId: turn.id,
           surfacePiSessionId: "session-user-extension-load",
-          surfaceThreadId: null,
+          threadId: null,
           surfaceKind: "orchestrator",
           defaultEpisodeKind: "change",
           rootThreadId: null,
-          promptText: "Load Notes",
           rootEpisodeKind: "change",
           sessionWaitApplied: false,
           threadWasTerminalAtStart: false,
           loadedExtensionIds: ["base-common", "shell"],
           availableExtensionIds: ["notes"],
+          generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+          generatedAgentContextRevision: "generated_context_revision_test",
         },
       };
 
+      const refreshCalls: unknown[] = [];
       const loaded = await createLoadExtensionTool({
         runtime: loadRuntime,
-        store,
+        state: createExtensionToolState(store),
         extensionsRoot,
-        onContextRefreshed: ({ refreshedContext, runtime }) => {
-          runtime.systemPrompt = `${refreshedContext.systemPrompt}\n\nApplied by catalog.`;
-          runtime.generatedAgentContextFingerprint = "fingerprint-after-load";
-          return {
-            ...refreshedContext,
-            systemPrompt: runtime.systemPrompt,
-          };
+        refreshGeneratedContext: async (input) => {
+          refreshCalls.push(input);
         },
       }).execute("tool-call-load-user-extension", { extensionId: "notes" });
 
-      expect(loaded.details.loadedExtensionId).toBe("notes");
-      expect(loaded.details.refreshedContext.loadedExtensionIds).toEqual([
+      expect(loaded.details!.loadedExtensionId).toBe("notes");
+      expect(loaded.details!.available.map((extension) => extension.id)).toEqual([]);
+      expect(loaded.details!.loaded.map((extension) => extension.id)).toEqual([
         "base-common",
         "notes",
         "shell",
       ]);
-      expect(loaded.details.refreshedContext.availableExtensionIds).toEqual([]);
-      expect(loaded.details.refreshedContext.systemPrompt).toContain("Loaded extension: Notes.");
-      expect(loaded.details.refreshedContext.systemPrompt).toContain("Applied by catalog.");
-      expect(loadRuntime.current?.generatedAgentContextFingerprint).toBe("fingerprint-after-load");
-      expect(loaded.details.refreshedContext.systemPrompt).toContain(
-        "Instruction file: 010-notes.md",
-      );
-      expect(loaded.details.refreshedContext.systemPrompt).toContain("Use the notes workspace.");
-      expect(loaded.details.refreshedContext.systemPrompt).not.toContain(
-        "Do not load this bypassed draft.",
-      );
-      expect(loaded.details.available.map((extension) => extension.id)).toEqual([]);
-      expect(loaded.details.loaded.map((extension) => extension.id)).toEqual([
-        "base-common",
-        "notes",
-        "shell",
-      ]);
-      const loadedNotes = loaded.details.loaded.find((extension) => extension.id === "notes");
+      const loadedNotes = loaded.details!.loaded.find((extension) => extension.id === "notes");
       expect(loadedNotes).toHaveProperty("instructionSourceFiles");
       expect(loadedNotes).not.toHaveProperty("sourceRoot");
       expect(loadedNotes).not.toHaveProperty("extensionBuildFingerprint");
       expect(loadedNotes).not.toHaveProperty("envDeclarations");
       expect(loadedNotes).not.toHaveProperty("dependencies");
       expect(loadedNotes).not.toHaveProperty("trustedDependencies");
+      expect(loaded.details!).not.toHaveProperty("refreshedContext");
+      expect(refreshCalls).toEqual([
+        {
+          scope: "target",
+          target: {
+            workspaceSessionId: "session-user-extension-load",
+            surface: "orchestrator",
+            surfacePiSessionId: "session-user-extension-load",
+          },
+          actorKind: "orchestrator",
+          reason: "load-extension",
+          sourceCommandId: expect.any(String),
+          refreshBoundSurfaceBeforeNextTurn: true,
+        },
+      ]);
     } finally {
       rmSync(extensionsRoot, { recursive: true, force: true });
     }
@@ -844,25 +887,29 @@ describe("extension loading tools", () => {
     } as const;
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-external-instructions",
+        workspaceSessionId: "session-extension-external-instructions",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-external-instructions",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "analysis",
         rootThreadId: null,
-        promptText: "List extensions",
         rootEpisodeKind: "analysis",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: [],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
         externalInstructionSources: [source],
       },
     };
 
-    const result = await createListExtensionsTool({ runtime, store }).execute("tool-call-list", {});
-    const external = result.details.loaded.find(
+    const result = await createListExtensionsTool({
+      runtime,
+      state: createExtensionToolState(store),
+    }).execute("tool-call-list", {});
+    const external = result.details!.loaded.find(
       (extension) => extension.id === externalInstructionExtensionId(source),
     );
 
@@ -915,41 +962,50 @@ describe("extension loading tools", () => {
     } as const;
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-external-instructions-actor",
+        workspaceSessionId: "session-extension-external-instructions-actor",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-external-instructions-actor",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "analysis",
         rootThreadId: null,
-        promptText: "List extensions",
         rootEpisodeKind: "analysis",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: [],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
         externalInstructionSources: [handlerOnly, unreadable],
       },
     };
 
-    const result = await createListExtensionsTool({ runtime, store }).execute("tool-call-list", {});
+    const result = await createListExtensionsTool({
+      runtime,
+      state: createExtensionToolState(store),
+    }).execute("tool-call-list", {});
 
-    expect(result.details.loaded.map((extension) => extension.id)).not.toContain(
+    expect(result.details!.loaded.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(handlerOnly),
     );
-    expect(result.details.loaded.map((extension) => extension.id)).not.toContain(
+    expect(result.details!.loaded.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(unreadable),
     );
-    expect(result.details.available.map((extension) => extension.id)).not.toContain(
+    expect(result.details!.available.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(handlerOnly),
     );
-    expect(result.details.available.map((extension) => extension.id)).not.toContain(
+    expect(result.details!.available.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(unreadable),
     );
   });
 
   it("loads an available extension into a handler thread and persists the binding", async () => {
     const store = createStore();
+    seedPiExtensionState(store, {
+      sessionId: "session-extension-tools",
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["smithers"],
+    });
     const turn = store.startTurn({
       sessionId: "session-extension-tools",
       surfacePiSessionId: "pi-handler-extension-tools",
@@ -965,42 +1021,40 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: turn.id,
         surfacePiSessionId: "pi-handler-extension-tools",
-        surfaceThreadId: thread.id,
+        threadId: thread.id,
         surfaceKind: "handler",
         defaultEpisodeKind: "change",
         rootThreadId: thread.id,
-        promptText: "Load Smithers",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
-    const result = await createLoadExtensionTool({ runtime, store }).execute("tool-call-load", {
+    const refreshCalls: unknown[] = [];
+    const result = await createLoadExtensionTool({
+      runtime,
+      state: createExtensionToolState(store),
+      refreshGeneratedContext: async (input) => {
+        refreshCalls.push(input);
+      },
+    }).execute("tool-call-load", {
       extensionId: "smithers",
     });
 
-    expect(result.details.loadedExtensionId).toBe("smithers");
+    expect(result.details!.loadedExtensionId).toBe("smithers");
     expect(runtime.current?.loadedExtensionIds).toEqual(["shell", "smithers"]);
     expect(runtime.current?.availableExtensionIds).toEqual([]);
-    expect(result.details.refreshedContext).toMatchObject({
-      actor: "handler",
-      loadedExtensionIds: ["shell", "smithers"],
-      availableExtensionIds: [],
-    });
-    expect(result.details.refreshedContext.systemPrompt).toContain(
-      "Loaded prompt-only extension: Smithers CLI workflow authoring.",
-    );
-    expect(result.details.refreshedContext.systemPrompt).not.toContain(
-      "- smithers: Use official Smithers CLI",
-    );
+    expect(result.details!).not.toHaveProperty("refreshedContext");
     expect(result.content[0]?.type === "text" ? result.content[0].text : "").toBe(
-      "Loaded extension smithers.",
+      "Loaded extension `smithers`.",
     );
     expect(result.content[0]?.type === "text" ? result.content[0].text : "").not.toContain(
       "Loaded prompt-only extension: Smithers.",
@@ -1016,17 +1070,38 @@ describe("extension loading tools", () => {
         arguments: {
           extensionId: "smithers",
         },
-        facts: {
-          loadedExtensionId: "smithers",
-          loadedExtensionIds: ["shell", "smithers"],
-          availableExtensionIds: [],
-        },
+        facts: expect.objectContaining({
+          type: "load_extension.finished",
+          status: "succeeded",
+          extensionId: "smithers",
+          usage: "loaded",
+        }),
       }),
     );
+    expect(refreshCalls).toEqual([
+      {
+        scope: "target",
+        target: {
+          workspaceSessionId: "session-extension-tools",
+          surface: "handler",
+          surfacePiSessionId: "pi-handler-extension-tools",
+          threadId: thread.id,
+        },
+        actorKind: "handler",
+        reason: "load-extension",
+        sourceCommandId: expect.any(String),
+        refreshBoundSurfaceBeforeNextTurn: true,
+      },
+    ]);
   });
 
   it("loads an available extension into an orchestrator session and persists the binding", async () => {
     const store = createStore();
+    seedPiExtensionState(store, {
+      sessionId: "session-extension-tools",
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["smithers"],
+    });
     const turn = store.startTurn({
       sessionId: "session-extension-tools",
       surfacePiSessionId: "session-extension-tools",
@@ -1034,37 +1109,64 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-tools",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "change",
         rootThreadId: null,
-        promptText: "Load Smithers",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
-    const result = await createLoadExtensionTool({ runtime, store }).execute("tool-call-load", {
+    const refreshCalls: unknown[] = [];
+    const result = await createLoadExtensionTool({
+      runtime,
+      state: createExtensionToolState(store),
+      refreshGeneratedContext: async (input) => {
+        refreshCalls.push(input);
+      },
+    }).execute("tool-call-load", {
       extensionId: "smithers",
     });
 
-    expect(result.details.loadedExtensionId).toBe("smithers");
+    expect(result.details!.loadedExtensionId).toBe("smithers");
     expect(runtime.current?.loadedExtensionIds).toEqual(["shell", "smithers"]);
     expect(runtime.current?.availableExtensionIds).toEqual([]);
 
     const refreshed = store.getSessionState("session-extension-tools").pi;
     expect(refreshed.loadedExtensionIds).toEqual(["shell", "smithers"]);
     expect(refreshed.availableExtensionIds).toEqual([]);
+    expect(refreshCalls).toEqual([
+      {
+        scope: "target",
+        target: {
+          workspaceSessionId: "session-extension-tools",
+          surface: "orchestrator",
+          surfacePiSessionId: "session-extension-tools",
+        },
+        actorKind: "orchestrator",
+        reason: "load-extension",
+        sourceCommandId: expect.any(String),
+        refreshBoundSurfaceBeforeNextTurn: true,
+      },
+    ]);
   });
 
-  it("rolls back actor-local ids when load_extension context refresh fails", async () => {
-    const store = createStore();
+  it("records a failed command when generated-context refresh scheduling fails", async () => {
+    const store = createStore("session-extension-refresh-fail");
+    seedPiExtensionState(store, {
+      sessionId: "session-extension-refresh-fail",
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["smithers"],
+    });
     const turn = store.startTurn({
       sessionId: "session-extension-refresh-fail",
       surfacePiSessionId: "session-extension-refresh-fail",
@@ -1072,43 +1174,33 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-refresh-fail",
+        workspaceSessionId: "session-extension-refresh-fail",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-refresh-fail",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "change",
         rootThreadId: null,
-        promptText: "Load Smithers",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
-        systemPrompt: "previous prompt",
         generatedAgentContextFingerprint: "previous-fingerprint",
+        generatedAgentContextRevision: "previous-revision",
       },
     };
 
     await expect(
       createLoadExtensionTool({
         runtime,
-        store,
-        onContextRefreshed: async ({ runtime: activeRuntime }) => {
-          activeRuntime.systemPrompt = "partial prompt";
-          activeRuntime.generatedAgentContextFingerprint = "partial-fingerprint";
+        state: createExtensionToolState(store),
+        refreshGeneratedContext: async () => {
           throw new Error("refresh failed");
         },
       }).execute("tool-call-load", { extensionId: "smithers" }),
     ).rejects.toThrow("refresh failed");
 
-    expect(runtime.current?.loadedExtensionIds).toEqual(["shell"]);
-    expect(runtime.current?.availableExtensionIds).toEqual(["smithers"]);
-    expect(runtime.current?.systemPrompt).toBe("previous prompt");
-    expect(runtime.current?.generatedAgentContextFingerprint).toBe("previous-fingerprint");
-    const refreshed = store.getSessionState("session-extension-refresh-fail").pi;
-    expect(refreshed.loadedExtensionIds).toEqual(["shell"]);
-    expect(refreshed.availableExtensionIds).toEqual(["smithers"]);
     expect(store.getSessionState("session-extension-refresh-fail").commands).toContainEqual(
       expect.objectContaining({
         toolName: "load_extension",
@@ -1123,6 +1215,11 @@ describe("extension loading tools", () => {
 
   it("records failed command facts for rejected load_extension requests", async () => {
     const store = createStore();
+    seedPiExtensionState(store, {
+      sessionId: "session-extension-tools",
+      loadedExtensionIds: ["execute-typescript", "shell"],
+      availableExtensionIds: ["workflows"],
+    });
     const turn = store.startTurn({
       sessionId: "session-extension-tools",
       surfacePiSessionId: "session-extension-tools",
@@ -1130,24 +1227,29 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-tools",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "change",
         rootThreadId: null,
-        promptText: "Load missing extension",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
     await expect(
-      createLoadExtensionTool({ runtime, store }).execute("tool-call-load-missing", {
+      createLoadExtensionTool({
+        runtime,
+        state: createExtensionToolState(store),
+        refreshGeneratedContext: noopRefreshGeneratedContext,
+      }).execute("tool-call-load-missing", {
         extensionId: "missing-extension",
       }),
     ).rejects.toThrow("Unknown extension: missing-extension");
@@ -1164,8 +1266,13 @@ describe("extension loading tools", () => {
     );
   });
 
-  it("refreshes actor-local generated TypeScript declarations after loading an extension", async () => {
+  it("does not return generated prompt or TypeScript declaration previews after loading", async () => {
     const store = createStore();
+    seedPiExtensionState(store, {
+      sessionId: "session-extension-tools",
+      loadedExtensionIds: ["execute-typescript", "shell"],
+      availableExtensionIds: ["workflows"],
+    });
     const turn = store.startTurn({
       sessionId: "session-extension-tools",
       surfacePiSessionId: "session-extension-tools",
@@ -1173,47 +1280,41 @@ describe("extension loading tools", () => {
     });
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: turn.id,
         surfacePiSessionId: "session-extension-tools",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "orchestrator",
         defaultEpisodeKind: "change",
         rootThreadId: null,
-        promptText: "Load Workflows",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["execute-typescript", "shell"],
         availableExtensionIds: ["workflows"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
-    const result = await createLoadExtensionTool({ runtime, store }).execute("tool-call-load", {
+    const result = await createLoadExtensionTool({
+      runtime,
+      state: createExtensionToolState(store),
+      refreshGeneratedContext: noopRefreshGeneratedContext,
+    }).execute("tool-call-load", {
       extensionId: "workflows",
     });
 
-    expect(result.details.refreshedContext).toMatchObject({
-      actor: "orchestrator",
-      loadedExtensionIds: ["execute-typescript", "shell", "workflows"],
-      availableExtensionIds: [],
-    });
-    expect(result.details.refreshedContext.executeTypescriptDeclaration).toContain(
-      "workflows: WorkflowsExtensionClient",
-    );
-    expect(result.details.refreshedContext.executeTypescriptDeclaration).toContain('"models list"');
-    expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain(
-      "artifacts: ArtifactsExtensionClient",
-    );
-    expect(result.details.refreshedContext).not.toHaveProperty("generatedContextFingerprint");
-    expect(result.details.refreshedContext).not.toHaveProperty("globalProfileState");
+    expect(result.details!).not.toHaveProperty("refreshedContext");
+    expect(result.details!).not.toHaveProperty("systemPrompt");
+    expect(result.details!).not.toHaveProperty("executeTypescriptDeclaration");
 
     const refreshed = store.getSessionState("session-extension-tools").pi;
     expect(refreshed.loadedExtensionIds).toEqual(["execute-typescript", "shell", "workflows"]);
     expect(refreshed.availableExtensionIds).toEqual([]);
   });
 
-  it("refreshes actor-local prompts while hiding custom-root user svvyx generated clients after loading", async () => {
+  it("loads custom-root user svvyx extensions without returning generated runtime facades", async () => {
     const extensionsRoot = mkdtempSync(join(tmpdir(), "svvy-user-extension-types-"));
     try {
       const sourceRoot = join(extensionsRoot, "sources", "user", "linear");
@@ -1232,7 +1333,7 @@ describe("extension loading tools", () => {
             schemaVersion: 1,
             id: "linear",
             title: "Linear",
-            description: "Linear generated client.",
+            description: "Linear generated runtime facade.",
             interface: "svvyx",
             typescriptApiEnabled: true,
             instructionFiles: [{ file: "010-main.md", bypassed: false }],
@@ -1263,9 +1364,14 @@ describe("extension loading tools", () => {
       );
       writeFileSync(
         join(generatedRoot, "types.d.ts"),
-        "interface LoadedExtensionsClient { staleGeneratedFile: { run(): never } }",
+        "interface LoadedExtensionsFacade { staleGeneratedFile: { run(): never } }",
       );
       const store = createStore();
+      seedPiExtensionState(store, {
+        sessionId: "session-extension-tools",
+        loadedExtensionIds: ["execute-typescript"],
+        availableExtensionIds: ["linear"],
+      });
       const turn = store.startTurn({
         sessionId: "session-extension-tools",
         surfacePiSessionId: "session-extension-tools",
@@ -1273,44 +1379,39 @@ describe("extension loading tools", () => {
       });
       const runtime: PromptExecutionRuntimeHandle = {
         current: {
-          sessionId: "session-extension-tools",
+          workspaceSessionId: "session-extension-tools",
           turnId: turn.id,
           surfacePiSessionId: "session-extension-tools",
-          surfaceThreadId: null,
+          threadId: null,
           surfaceKind: "orchestrator",
           defaultEpisodeKind: "change",
           rootThreadId: null,
-          promptText: "Load Linear",
           rootEpisodeKind: "change",
           sessionWaitApplied: false,
           threadWasTerminalAtStart: false,
           loadedExtensionIds: ["execute-typescript"],
           availableExtensionIds: ["linear"],
+          generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+          generatedAgentContextRevision: "generated_context_revision_test",
         },
       };
 
-      const result = await createLoadExtensionTool({ runtime, store, extensionsRoot }).execute(
-        "tool-call-load",
-        { extensionId: "linear" },
-      );
+      const result = await createLoadExtensionTool({
+        runtime,
+        state: createExtensionToolState(store),
+        extensionsRoot,
+        refreshGeneratedContext: noopRefreshGeneratedContext,
+      }).execute("tool-call-load", { extensionId: "linear" });
 
-      expect(result.details.refreshedContext).toMatchObject({
-        actor: "orchestrator",
-        loadedExtensionIds: ["execute-typescript", "linear"],
-        availableExtensionIds: [],
-      });
-      expect(result.details.refreshedContext.executeTypescriptDeclaration).toContain(
-        "interface LoadedExtensionsClient",
-      );
-      expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain("linear");
-      expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain(
-        "LinearExtensionClient",
-      );
-      expect(result.details.refreshedContext.executeTypescriptDeclaration).not.toContain(
-        '"issues.list"',
-      );
-      expect(result.details.refreshedContext.systemPrompt).not.toContain("staleGeneratedFile");
-      expect(result.details.refreshedContext.systemPrompt).not.toContain("LinearExtensionClient");
+      expect(result.details!.loadedExtensionId).toBe("linear");
+      expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
+        "execute-typescript",
+        "linear",
+      ]);
+      expect(result.details!.available.map((extension) => extension.id)).toEqual([]);
+      expect(result.details!).not.toHaveProperty("refreshedContext");
+      expect(JSON.stringify(result.details!)).not.toContain("staleGeneratedFile");
+      expect(JSON.stringify(result.details!)).not.toContain("LinearExtensionFacade");
     } finally {
       rmSync(extensionsRoot, { recursive: true, force: true });
     }
@@ -1320,24 +1421,29 @@ describe("extension loading tools", () => {
     const store = createStore();
     const runtime: PromptExecutionRuntimeHandle = {
       current: {
-        sessionId: "session-extension-tools",
+        workspaceSessionId: "session-extension-tools",
         turnId: "turn-load-extension-schema",
         surfacePiSessionId: "pi-handler-extension-tools",
-        surfaceThreadId: null,
+        threadId: null,
         surfaceKind: "handler",
         defaultEpisodeKind: "change",
         rootThreadId: null,
-        promptText: "Load Smithers",
         rootEpisodeKind: "change",
         sessionWaitApplied: false,
         threadWasTerminalAtStart: false,
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       },
     };
 
     await expect(
-      createLoadExtensionTool({ runtime, store }).execute("tool-call-load", {
+      createLoadExtensionTool({
+        runtime,
+        state: createExtensionToolState(store),
+        refreshGeneratedContext: noopRefreshGeneratedContext,
+      }).execute("tool-call-load", {
         id: "smithers",
       } as never),
     ).rejects.toThrow();

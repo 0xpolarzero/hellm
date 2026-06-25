@@ -38,12 +38,12 @@ exec_command(input)
 write_stdin(input)
 ```
 
-Current detailed behavior is defined in:
+Detailed behavior and package ownership are defined across:
 
-- `docs/specs/extensions-and-tools.spec.md`, "Shell And Patch Work"
-- `docs/specs/extensions-and-tools.spec.md`, "`exec_command` Source And Lifecycle"
-- `docs/specs/extensions-and-tools.spec.md`, "`write_stdin`"
-- `docs/specs/extensions-and-tools.spec.md`, "Execution Policy"
+- `docs/specs/package-architecture/extensions.spec.md`, "Shell"
+- `docs/specs/package-architecture/effect-v4.spec.md`, "Child Process Rules"
+- `docs/specs/package-architecture/sandbox.spec.md`
+- `docs/specs/extension/svvyx-incur-runtime.spec.md` for `svvyx ...` command-family dispatch
 - `docs/specs/live-tool-projection.spec.md`, "Command Execution Projection"
 
 ## Shell Loaded Instruction Files
@@ -52,29 +52,38 @@ The builtin Shell extension has two full instruction source files. These files a
 filename under `instructions/full/`:
 
 ```text
-010-shell.md
-020-incur-cli-usage.md
+010-shell.mdx
+020-incur-cli-usage.mdx
 ```
 
 The generated loaded instruction for Shell is the concatenation of those files. This split keeps
 generic command execution separate from generic Incur-backed `svvyx` CLI usage.
 
-### `010-shell.md`
+### `010-shell.mdx`
 
 This file owns generic `exec_command` and `write_stdin` guidance. Its canonical content is:
 
 ````md
 # Shell
 
-Use `exec_command` to run shell commands. Use `write_stdin` only to continue an `exec_command`
-session that returned a `session_id`.
+Use `exec_command` to run shell commands. Use `write_stdin` only to continue a runtime-owned
+`exec_command` command session that returned a `session_id`.
+
+Command sessions are runtime-tracked pipe-backed child processes, not Shell-extension-owned durable
+sessions or PTY terminal emulators. Prefer non-interactive flags and do not rely on full-screen
+TUI/curses behavior.
+
+Desktop, browser-tool, and headless command-stdin controls do not invoke the model-facing
+`write_stdin` native tool and do not use Shell `session_id`. They call the runtime command facade
+with a durable `CommandId`. `session_id` remains only the agent-facing continuation token returned
+by `exec_command` inside a model turn.
 
 For repository inspection, prefer `rg` for text search and `rg --files` for filename search. Use
 ordinary shell tools such as `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc` for file
 inspection. Set the `workdir` field on `exec_command` instead of relying on `cd`.
 ````
 
-### `020-incur-cli-usage.md`
+### `020-incur-cli-usage.mdx`
 
 This file owns generic usage of Incur-backed `svvyx` extension CLIs through `exec_command`.
 Extension-specific instructions still own their domain command names and examples. Its canonical
@@ -95,8 +104,10 @@ exec_command({
 })
 ```
 
-Agent Shell usage of `svvyx ...` happens strictly through `exec_command`. There is no parent
-process command-family dispatch, parent-owned Shell shortcut, or second command model.
+Agent Shell usage of `svvyx ...` happens strictly through `exec_command`. The app-owned `svvyx`
+dispatcher runs inside the accepted Shell command and runtime may attach command metadata, but there
+is no separate model-facing tool, Shell shortcut, approval bypass, sandbox bypass, or command-family
+dispatch path outside ordinary Shell execution.
 
 Use the specific loaded extension instructions for domain command names and examples. Use this
 generic guidance for common Incur CLI behavior.

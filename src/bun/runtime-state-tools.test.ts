@@ -1,15 +1,26 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import * as Effect from "effect/Effect";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeReadModelStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
 import {
   createThreadCurrentTool,
   createThreadEpisodesTool,
   createThreadGroupTool,
   createThreadListTool,
+  type ThreadStateToolServices,
 } from "./runtime-state-tools";
-import { createStructuredSessionStateStore } from "./structured-session-state";
+import {
+  createStructuredSessionStateStore,
+  type StructuredSessionStateStore,
+} from "@svvy/state/structured-session-state";
+import type { StateContractError } from "@svvy/core";
 
 const tempDirs: string[] = [];
 
@@ -24,13 +35,13 @@ afterEach(() => {
 
 describe("thread state tools", () => {
   it("fails thread_current outside a handler and returns compact current handler state inside a handler", async () => {
-    const { runtime, store, thread } = createRuntimeFixture();
-    const tool = createThreadCurrentTool({ runtime, store });
+    const { runtime, state, store, thread } = createRuntimeFixture();
+    const tool = createThreadCurrentTool({ runtime, state });
 
     runtime.current = {
       ...runtime.current!,
       surfaceKind: "orchestrator",
-      surfaceThreadId: null,
+      threadId: null,
       rootThreadId: null,
     };
     await expect(
@@ -51,12 +62,12 @@ describe("thread state tools", () => {
     runtime.current = {
       ...runtime.current!,
       surfaceKind: "handler",
-      surfaceThreadId: thread.id,
+      threadId: thread.id,
       rootThreadId: thread.id,
     };
     const result = await tool.execute("tool-call-2", {});
 
-    expect(result.details).toEqual({
+    expect(result.details! as unknown).toEqual({
       threadId: thread.id,
       threadGroupId: thread.threadGroupId,
       workspaceSessionId: thread.sessionId,
@@ -91,15 +102,16 @@ describe("thread state tools", () => {
         }),
       }),
     );
+    expect(store.getSessionState(thread.sessionId).turns[0]?.turnDecision).toBe("thread_current");
   });
 
   it("lists compact delegated thread rows without transcripts, counts, or workflow summaries", async () => {
-    const { runtime, store, thread } = createRuntimeFixture();
-    const tool = createThreadListTool({ runtime, store });
+    const { runtime, state, store, thread } = createRuntimeFixture();
+    const tool = createThreadListTool({ runtime, state });
 
     const result = await tool.execute("tool-call-1", { status: ["waiting"], limit: 5 });
 
-    expect(result.details.threads).toEqual([
+    expect(result.details!.threads as unknown).toEqual([
       {
         threadId: thread.id,
         threadGroupId: thread.threadGroupId,
@@ -122,9 +134,9 @@ describe("thread state tools", () => {
         },
       },
     ]);
-    expect(JSON.stringify(result.details)).not.toContain("message");
-    expect(JSON.stringify(result.details)).not.toContain("workflow summary");
-    expect(JSON.stringify(result.details)).not.toContain("commandCount");
+    expect(JSON.stringify(result.details!)).not.toContain("message");
+    expect(JSON.stringify(result.details!)).not.toContain("workflow summary");
+    expect(JSON.stringify(result.details!)).not.toContain("commandCount");
     expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
       expect.objectContaining({
         toolName: "thread_list",
@@ -143,15 +155,16 @@ describe("thread state tools", () => {
         },
       }),
     );
+    expect(store.getSessionState(thread.sessionId).turns[0]?.turnDecision).toBe("thread_list");
   });
 
   it("reads episode bodies and defaults to the current handler thread", async () => {
-    const { runtime, store, thread, episode } = createRuntimeFixture();
-    const tool = createThreadEpisodesTool({ runtime, store });
+    const { runtime, state, store, thread, episode } = createRuntimeFixture();
+    const tool = createThreadEpisodesTool({ runtime, state });
 
     const result = await tool.execute("tool-call-1", {});
 
-    expect(result.details.episodes).toEqual([
+    expect(result.details!.episodes as unknown).toEqual([
       {
         id: episode.id,
         threadId: episode.threadId,
@@ -181,8 +194,8 @@ describe("thread state tools", () => {
   });
 
   it("records failed command facts for invalid episode filters", async () => {
-    const { runtime, store, thread } = createRuntimeFixture();
-    const tool = createThreadEpisodesTool({ runtime, store });
+    const { runtime, state, store, thread } = createRuntimeFixture();
+    const tool = createThreadEpisodesTool({ runtime, state });
 
     await expect(
       tool.execute("tool-call-invalid-episodes", {
@@ -205,22 +218,48 @@ describe("thread state tools", () => {
     );
   });
 
+  it("requires an episode filter outside handler-thread context", async () => {
+    const { runtime, state, store, thread } = createRuntimeFixture();
+    const tool = createThreadEpisodesTool({ runtime, state });
+    runtime.current = {
+      ...runtime.current!,
+      surfaceKind: "orchestrator",
+      threadId: null,
+      rootThreadId: null,
+    };
+
+    await expect(tool.execute("tool-call-missing-episode-filter", {})).rejects.toThrow(
+      "thread_episodes requires threadId or threadGroupId outside a handler thread.",
+    );
+
+    expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
+      expect.objectContaining({
+        toolName: "thread_episodes",
+        status: "failed",
+        arguments: {
+          limit: 10,
+        },
+        error: "thread_episodes requires threadId or threadGroupId outside a handler thread.",
+      }),
+    );
+  });
+
   it("reads current handler group topology without sharing transcripts", async () => {
-    const { runtime, store, thread } = createRuntimeFixture();
-    const tool = createThreadGroupTool({ runtime, store });
+    const { runtime, state, store, thread } = createRuntimeFixture();
+    const tool = createThreadGroupTool({ runtime, state });
 
     const result = await tool.execute("tool-call-group", {});
 
-    expect(result.details.threadGroupId).toBe(thread.threadGroupId);
-    expect(result.details.currentThreadId).toBe(thread.id);
-    expect(result.details.threads).toEqual([
+    expect(result.details!.threadGroupId as string).toBe(thread.threadGroupId);
+    expect(result.details!.currentThreadId as string).toBe(thread.id);
+    expect(result.details!.threads as unknown).toEqual([
       expect.objectContaining({
         threadId: thread.id,
         threadGroupId: thread.threadGroupId,
         objectiveState: "active",
       }),
     ]);
-    expect(JSON.stringify(result.details)).not.toContain("Full durable report body");
+    expect(JSON.stringify(result.details!)).not.toContain("Full durable report body");
     expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
       expect.objectContaining({
         toolName: "thread_group",
@@ -330,20 +369,33 @@ function createRuntimeFixture() {
 
   const runtime: PromptExecutionRuntimeHandle = {
     current: {
-      sessionId,
+      workspaceSessionId: sessionId,
       turnId: turn.id,
       surfacePiSessionId: handlerSurfaceId,
-      surfaceThreadId: thread.id,
+      threadId: thread.id,
       surfaceKind: "handler",
       defaultEpisodeKind: "change",
       rootThreadId: thread.id,
-      promptText: "Follow up.",
       rootEpisodeKind: "change",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: ["shell"],
+      availableExtensionIds: ["web"],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
       suppressPendingWorkflowAttentionDelivery: false,
     },
   };
+  return { state: createThreadStateToolServices(store), store, runtime, thread, workflow, episode };
+}
 
-  return { store, runtime, thread, workflow, episode };
+function createThreadStateToolServices(
+  store: StructuredSessionStateStore,
+): ThreadStateToolServices {
+  return {
+    commandState: runtimeCommandStatePortFromStore(store),
+    readModelState: runtimeReadModelStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: <A>(effect: Effect.Effect<A, StateContractError>) => Effect.runSync(effect),
+  };
 }

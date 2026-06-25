@@ -1,9 +1,11 @@
-# UI PRD
+# UI Implementation Note
 
 ## Status
 
 - Date: 2026-06-08
-- Status: UI product requirements
+- Status: non-authoritative UI implementation note
+- Authority: Product behavior must be promoted to `docs/prd.md`, `docs/features.ts`,
+  `docs/progress.md`, and the owning `docs/specs/**` file before implementation.
 
 ## Scope
 
@@ -12,7 +14,7 @@ Extensions, Settings, and read-only saved Workflows visibility.
 
 ## Workflows Pane
 
-The Workflows pane shows the latest successful generated `@svvy/workflows` package.
+The Workflows pane shows the latest successful generated `@svvyx/workflows` package.
 
 For each generated export, show:
 
@@ -26,14 +28,18 @@ For each generated export, show:
 
 For `Agents.*`, also show:
 
-- generated task-agent parameter object
-- primary human link to customize the agent in the Agents pane
+- generated workflow-agent parameter record
+- primary human link to customize the corresponding workflow-agent parameter record in the Agents pane
 
-The pane is read-only generated-source visibility and is not a source editor.
+The pane is read-only generated-package visibility and is not a source editor.
 
 ## General UI Rules
 
-- Real product data must come from svvy read models and runtime contracts.
+- Real product data must come from state-backed `svvy` read models. Desktop sends requests through
+  bootstrap-provided runtime facade plus state read/command facades, listens to app-bridged typed
+  invalidation notifications and `surface.stream` patches, then refetches affected read models
+  after notifications. App/bootstrap owns the runtime event subscription, sequencing, buffering, and
+  renderer fanout; UI code does not subscribe to package-private runtime services directly.
 - Mock fixtures are visual examples only.
 - Preserve prompt targeting, Dockview panel bindings, live surface reuse, handler-thread messaging,
   artifact opening, settings persistence, and restart restoration.

@@ -158,7 +158,7 @@ function createRuntime(): CommandRuntime & {
     },
     openSurface: async (target: WorkspacePaneSurfaceTarget, paneId: unknown = "primary") => {
       const targetId =
-        target.surface === "orchestrator" || target.surface === "thread"
+        target.surface === "orchestrator" || target.surface === "handler"
           ? target.surfacePiSessionId
           : target.surface;
       runtime.calls.push(`surface:${targetId}:${formatOpenTarget(paneId)}`);

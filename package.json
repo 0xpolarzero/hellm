@@ -2,6 +2,9 @@
   "name": "svvy",
   "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "type": "module",
   "scripts": {
     "generate:api": "bun scripts/generate-api-declarations.ts && bun x oxfmt generated/*.generated.ts",
@@ -15,13 +18,15 @@
     "build:dev": "bun run generate:api && vite build && electrobun build --env=dev",
     "run": "electrobun run",
     "workflow:implement-feature": "bun workflows/scripts/run-implement-feature.ts",
-    "check": "bun run typecheck && bun run test:unit && bun run lint:check && bun run format:check && bun run build:check",
+    "check": "bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
     "test": "bun run test:unit && bun run test:e2e",
-    "test:unit": "bun run generate:api && bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
+    "test:unit": "bun run generate:api && bun test $(rg --files ./src ./packages -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' -g '!*.effect.test.ts')",
+    "test:effect": "vitest run --root . $(rg --files packages -g '*.effect.test.ts')",
     "setup:e2e": "electrobun-e2e setup --config ./electrobun-e2e.config.ts",
     "test:e2e": "ELECTROBUN_E2E_SHARDS=1 electrobun-e2e run --config ./electrobun-e2e.config.ts",
-    "typecheck": "bun run generate:api && bun run typecheck:root && bun run typecheck:workflows",
+    "typecheck": "bun run generate:api && bun run typecheck:root && bun run typecheck:packages && bun run typecheck:workflows",
     "typecheck:root": "tsgo -p tsconfig.json --noEmit",
+    "typecheck:packages": "tsgo -p packages/core/tsconfig.json --noEmit && tsgo -p packages/state/tsconfig.json --noEmit && tsgo -p packages/pi-adapter/tsconfig.json --noEmit && tsgo -p packages/sandbox/tsconfig.json --noEmit && tsgo -p packages/extensions/tsconfig.json --noEmit && tsgo -p packages/runtime/tsconfig.json --noEmit && tsgo -p packages/desktop/tsconfig.json --noEmit",
     "typecheck:workflows": "bun run --cwd workflows typecheck",
     "lint": "oxlint . --disable-nested-config --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
     "lint:check": "oxlint . --disable-nested-config --import-plugin --node-plugin --deny-warnings",
@@ -29,17 +34,26 @@
     "format:check": "oxfmt --check $(rg --files -g '*.ts' -g '*.tsx' -g '*.svelte' -g '*.toml' -g '!docs/references/**')"
   },
   "dependencies": {
+    "@effect/platform-bun": "4.0.0-beta.84",
     "@fontsource-variable/familjen-grotesk": "^5.2.8",
     "@lucide/svelte": "^1.8.0",
     "@mariozechner/pi-agent-core": "0.73.1",
     "@mariozechner/pi-ai": "0.73.1",
     "@mariozechner/pi-coding-agent": "0.73.1",
     "@mdit/plugin-katex": "^0.25.2",
+    "@svvy/core": "workspace:*",
+    "@svvy/desktop": "workspace:*",
+    "@svvy/extensions": "workspace:*",
+    "@svvy/pi-adapter": "workspace:*",
+    "@svvy/runtime": "workspace:*",
+    "@svvy/sandbox": "workspace:*",
+    "@svvy/state": "workspace:*",
     "@tanstack/svelte-form": "^1.32.0",
     "@tanstack/svelte-hotkeys": "^0.10.0",
     "@tanstack/svelte-virtual": "^3.13.26",
     "cmdk-sv": "^0.0.19",
     "dockview-core": "^6.1.1",
+    "effect": "4.0.0-beta.84",
     "electrobun": "1.16.0",
     "incur": "github:wevm/incur#db1f8c0a62b6de45ab361ffead522b4323d5bc77",
     "katex": "^0.16.45",
@@ -58,6 +72,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@effect/vitest": "4.0.0-beta.84",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/bun": "^1.3.11",
@@ -71,7 +86,8 @@
     "oxlint": "1.59.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "vitest": "4.1.4"
   },
   "engines": {
     "bun": ">=1.3.10"

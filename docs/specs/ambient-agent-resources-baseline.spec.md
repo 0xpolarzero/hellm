@@ -34,7 +34,9 @@ we actually want:
 - `svvy` ignores native prompt replacement files.
 - `svvy` ignores ambient tools, extensions, packages, and skills.
 - `svvy` registers actor tools through its own product-owned tool registry.
-- `svvy` does not discover or expand host prompt macros in this design.
+- Host runtimes do not discover, execute, or expand prompt macros in this design. `svvy` may read
+  supported Markdown macro files directly as read-only Snippet sources through the product-owned
+  Snippets discovery path.
 
 The goal is not a large permission system. The goal is a small, deterministic surface that does not
 surprise us.
@@ -191,8 +193,9 @@ workspace key + canonical file path
 They are visible and active only for that workspace. If the user wants an ancestor directory to behave
 as a global root across workspaces, they can add that directory to the global roots list explicitly.
 
-For each controlled file, `svvy` persists the same per-agent usage controls used by other
-extensions:
+For each controlled file, `svvy` persists external-instruction-specific controls: enabled/disabled
+plus selected actor kinds. External instructions do not use normal extension lifecycle,
+contributors, generated outputs, or loaded / available / unavailable semantics.
 
 ```ts
 type ExternalInstructionActor = "orchestrator" | "handler" | "workflow-task";
@@ -288,6 +291,12 @@ systemPromptOverride: () => svvyComposedActorPrompt,
 appendSystemPromptOverride: () => []
 ```
 
+For pi `AgentSession`, `systemPromptOverride` is only the loader input. The adapter must also bypass
+pi's normal `buildSystemPrompt(...)` wrapping or overwrite the provider-visible session prompt
+immediately before the prompt-bearing call so pi date/cwd footer text, ambient tool prose, skills,
+context files, `.pi/SYSTEM.md`, and `.pi/APPEND_SYSTEM.md` cannot enter the effective prompt unless
+runtime explicitly supplied that content.
+
 ## 3. Callable Capabilities
 
 Callable capabilities are functions the model can call.
@@ -298,7 +307,8 @@ Examples:
 - `write_stdin`
 - `apply_patch`
 - `thread_start`
-- `svvyx workflows build` through Shell or a generated Workflows client when loaded
+- `svvyx workflows build` through Shell or `extensions.workflows.run(...)` when the Workflows
+  generated TypeScript facade is loaded
 - `execute_typescript`
 - MCP tools
 - extension-provided tools
@@ -314,7 +324,7 @@ Product contract:
 Actor surfaces stay split:
 
 - orchestrator gets orchestrator tools
-- handler thread gets handler tools, including Smithers tools
+- handler thread gets handler tools plus loaded prompt-only Smithers CLI guidance when enabled
 - workflow task agent gets task-local tools
 
 Generated tool declarations must match the actual actor tool registry.
@@ -473,7 +483,7 @@ submission, tool calls, session start, compaction, provider requests, or shutdow
 
 They are different from Snippets prompt macros. Commands and hooks can execute code, route work,
 mutate input, block operations, modify tool
-  arguments, modify tool results, inject context, or change UI/runtime behavior.
+arguments, modify tool results, inject context, or change UI/runtime behavior.
 
 Examples:
 
@@ -500,8 +510,9 @@ Baseline decision:
   policy
 
 `svvy` product commands remain allowed because they are product-owned. Examples include command
-palette actions, pane actions, sidebar actions, session actions, and explicit workflow or Smithers
-actions routed through `svvy` tools.
+palette actions, pane actions, sidebar actions, session actions, and Workflows source-library
+commands. Smithers execution and control remain official Smithers CLI usage through Shell; `svvy`
+does not expose product Smithers workflow-control tools.
 
 Host command or hook support requires a separate first-class integration. It must show the source,
 lifecycle event, command text or handler identity, trust state, affected agent/profile
@@ -525,7 +536,8 @@ Baseline pi rule:
 - keep `noSkills: true`
 - keep `noPromptTemplates: true`
 - keep all additional extension, skill, and prompt-template paths empty
-- keep all resource overrides empty
+- keep all additional paths/factories empty and make every resource override return an empty resource
+  result
 - submit user text with host command and prompt-template expansion disabled when available
 
 Because pi hooks are executable extension behavior, disabling extensions is the primary control. The
@@ -534,8 +546,9 @@ command path.
 
 ### Claude And Codex Commands And Hooks Opt-Out
 
-`svvy` does not read Claude command Markdown files as prompt macros and must not invoke Claude Code's
-command runtime.
+`svvy` does not invoke Claude Code's command runtime. It may read supported Claude command Markdown
+files only as read-only Snippet sources; command bash preambles, command runtime behavior, hooks, and
+generated context are ignored.
 
 `svvy` must not load or execute Claude or Codex hook configuration. This includes command hooks,
 prompt hooks, agent hooks, plugin hooks, managed hook layers, and any hook state or trust records from
@@ -624,9 +637,10 @@ Pi-specific rule:
   construction
 - consume pi's explicit built-in model registry and normalized runtime stream events as the provider
   capability source of truth
-- pass provider, model, reasoning, agent-family defaults, and resolved extension binding from `svvy`
-  settings into pi session creation
-  explicitly
+- pass provider, model, reasoning, agent-family defaults, runtime-provided generated system prompt
+  binding, and actor-scoped custom tool declarations into pi session creation explicitly. Extension
+  binding resolution remains owned by `@svvy/extensions`; refresh and application remain owned by
+  `@svvy/runtime`.
 
 ## 10. Credentials And Auth State
 
@@ -723,7 +737,7 @@ Resolved `svvy` execution policy:
 - `networkAccess` defaults to true; when false, outbound network access is restricted and the builtin
   Web extension is disabled through normal extension binding
 - workflow task agents use this same execution policy for task-local shell, patch, network, parent
-  `execute_typescript`, and generated loaded-extension client boundaries, scoped to the owning
+  `execute_typescript`, and generated loaded-extension facade boundaries, scoped to the owning
   Smithers task attempt
 
 Pi-specific rule:
@@ -774,43 +788,24 @@ Pi-specific rule:
 
 ## Required Pi Resource Loader Shape
 
-Every pi-backed `svvy` actor resource loader must use the default-deny shape below.
+`@svvy/pi-adapter` constructs pi resource loaders and actor sessions with ambient resources disabled,
+the svvy-composed system prompt, and runtime-provided custom tool declarations. Desktop, renderer,
+extensions, and request handlers never construct pi sessions or resource loaders directly.
 
-```ts
-new DefaultResourceLoader({
-  cwd,
-  agentDir,
-  settingsManager,
+Every pi-backed `svvy` actor resource loader has these invariants:
 
-  noExtensions: true,
-  noSkills: true,
-  noPromptTemplates: true,
-  noThemes: true,
-
-  additionalExtensionPaths: [],
-  additionalSkillPaths: [],
-  additionalPromptTemplatePaths: [],
-  additionalThemePaths: [],
-  extensionFactories: [],
-
-  agentsFilesOverride: () => ({ agentsFiles: [] }),
-  systemPromptOverride: () => svvyComposedActorPrompt,
-  appendSystemPromptOverride: () => [],
-
-  extensionsOverride: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-  skillsOverride: () => ({ skills: [], diagnostics: [] }),
-  promptsOverride: () => ({ prompts: [], diagnostics: [] }),
-  themesOverride: () => ({ themes: [], diagnostics: [] }),
-});
-```
-
-The override functions are belt-and-suspenders. The important invariant is that pi reports no loaded
-extensions, skills, prompt templates, themes, or agent files for `svvy` actor surfaces, and that the
-only prompt text comes from `svvy`.
+- pi extensions, skills, prompt templates, themes, commands, hooks, and ambient agent files are
+  disabled unless the exact app-owned resource is present in the resolved generated actor context
+- append-system-prompt and prompt-template expansion are disabled for managed `svvy` actor surfaces
+- the effective system prompt is the runtime-provided svvy actor prompt delivered through pi's real
+  `systemPrompt` channel
+- runtime-provided custom tools are the only callable tools for managed `svvy` actor surfaces
+- pi reports no loaded extensions, skills, prompt templates, themes, or agent files for managed
+  `svvy` actor surfaces unless `svvy` explicitly injects that app-owned resource
 
 ## Runtime Checkpoints
 
-Every `DefaultResourceLoader` and `createAgentSession` call must satisfy these checks.
+Every `@svvy/pi-adapter` resource-loader and actor-session acquisition must satisfy these checks.
 
 Required checks:
 
@@ -873,7 +868,7 @@ Required checks:
 - Adding `AGENTS.md` and `CLAUDE.md` under a configured external-instruction root shows both files, with
   only `AGENTS.md` enabled by default when both are in the same directory.
 - Adding `AGENTS.md` and `CLAUDE.md` in a workspace ancestor shows both files as
-  `external_instruction` extension records, with controls persisted only for that workspace.
+  `external_instruction` records, with controls persisted only for that workspace.
 - Adding `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md` does not change any `svvy` actor prompt.
 - Adding a pi skill under global or project skill directories does not add skill metadata to any
   `svvy` actor prompt.

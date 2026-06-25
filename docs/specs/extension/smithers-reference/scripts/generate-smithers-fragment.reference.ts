@@ -26,7 +26,6 @@ const outputFragments: Record<string, FragmentSpec> = {
     minLength: 150_000,
     bannedHeadings: [
       "## After Installation",
-      "## Always Run with `bunx`",
       "## Install the Agent Skill",
       "## Tools & sandboxing",
       "## Coherent task with tools",
@@ -46,31 +45,13 @@ const outputFragments: Record<string, FragmentSpec> = {
       "## How It Works",
       "## JSX API",
       "## CLI",
-      "smithers init",
-      "smithers up",
-      "smithers inspect",
-      "smithers logs",
-      "smithers approve",
+      "bunx smithers-orchestrator init",
+      "bunx smithers-orchestrator up",
+      "bunx smithers-orchestrator inspect",
+      "bunx smithers-orchestrator logs",
+      "bunx smithers-orchestrator approve",
       "docs-full",
     ],
-  },
-  "020-smithers-observability.generated.md": {
-    heading: "# Smithers Observability",
-    minLength: 20_000,
-    bannedHeadings: ["## Tool surface"],
-    requiredMarkers: [
-      "# Smithers Observability",
-      "## HTTP Server",
-      "## Serve Mode",
-      "## Gateway",
-      "/metrics",
-      "/events",
-    ],
-  },
-  "030-smithers-events.generated.md": {
-    heading: "# Smithers Events",
-    minLength: 8_000,
-    requiredMarkers: ["# Smithers Events", "SmithersEvent", "smithers events"],
   },
   "040-smithers-memory.generated.md": {
     heading: "# Smithers Memory",
@@ -90,9 +71,9 @@ const fullBundleRequiredHeadings = [
 ] as const;
 
 const forbiddenMarkers = [
-  "bunx smithers-orchestrator",
-  "bunx --package smithers-orchestrator",
-  "bunx smithers",
+  "workflows/node_modules/.bin/smithers",
+  "svvyx smithers",
+  "workflow.*",
   "Always Run with",
   "Do **not** install Smithers globally",
   "do **not** use the bare `smithers`",
@@ -130,6 +111,17 @@ const forbiddenMarkers = [
   "# Smithers OpenAPI Tools",
   "# Smithers Effect API",
   "# Smithers Integrations",
+] as const;
+
+const forbiddenPatterns: readonly { readonly label: string; readonly pattern: RegExp }[] = [
+  {
+    label: "bare bunx smithers command",
+    pattern: /\bbunx\s+smithers(?:\s|$)/,
+  },
+  {
+    label: "bare bunx --package smithers command",
+    pattern: /\bbunx\s+--package\s+smithers(?:\s|$)/,
+  },
 ] as const;
 
 const parseArgs = (argv: string[]): Args => {
@@ -240,8 +232,6 @@ const transform = (content: string, spec: FragmentSpec): string => {
 
   return (
     output
-      .replaceAll("bunx smithers-orchestrator", "smithers")
-      .replaceAll("bunx smithers", "smithers")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trimEnd() + "\n"
@@ -267,6 +257,12 @@ const validateMarkers = (output: string, spec: FragmentSpec): void => {
       throw new Error(`transformed output still contains forbidden marker: ${marker}`);
     }
   }
+
+  for (const { label, pattern } of forbiddenPatterns) {
+    if (pattern.test(output)) {
+      throw new Error(`transformed output still contains forbidden command form: ${label}`);
+    }
+  }
 };
 
 const validateFullBundle = (content: string): void => {
@@ -289,12 +285,20 @@ const main = async (): Promise<void> => {
     throw new Error(`unsupported Smithers generated output basename: ${basename(args.output)}`);
   }
 
-  const detectedVersion = (await run(["smithers", "--version"], "smithers --version")).trim();
+  const detectedVersion = (
+    await run(
+      ["bunx", "smithers-orchestrator", "--version"],
+      "bunx smithers-orchestrator --version",
+    )
+  ).trim();
   if (detectedVersion !== args.version) {
     throw new Error(`smithers version mismatch: expected ${args.version}, got ${detectedVersion}`);
   }
 
-  const jsonText = await run(["smithers", "docs-full", "--json"], "smithers docs-full --json");
+  const jsonText = await run(
+    ["bunx", "smithers-orchestrator", "docs-full", "--json"],
+    "bunx smithers-orchestrator docs-full --json",
+  );
   const parsed = JSON.parse(jsonText) as Partial<SmithersDocsFullJson>;
   if (typeof parsed.url !== "string" || typeof parsed.content !== "string") {
     throw new Error("smithers docs-full --json must return { url, content }");

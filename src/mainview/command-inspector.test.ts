@@ -10,8 +10,10 @@ import {
   getCommandOutputSections,
   getCommandPatchSections,
   getCommandProgressSections,
+  getCommandStdinSection,
   getVisibleCommandRollups,
   getWorkspaceCommandStatusPresentation,
+  canWriteCommandStdin,
 } from "./command-inspector";
 
 function createSessionSummary(): WorkspaceSessionSummary {
@@ -42,6 +44,11 @@ function createSessionSummary(): WorkspaceSessionSummary {
         status: "succeeded",
         title: "Inspect docs",
         summary: "Read docs and created 1 artifact.",
+        stdin: {
+          mode: "none",
+          canAttemptWrite: false,
+          acceptedWrites: [],
+        },
         childCount: 2,
         summaryChildCount: 1,
         traceChildCount: 1,
@@ -98,6 +105,11 @@ function createInspector(): WorkspaceCommandInspector {
         text: "warning\n",
       },
     ],
+    stdin: {
+      mode: "none",
+      canAttemptWrite: false,
+      acceptedWrites: [],
+    },
     argumentSnapshots: [
       {
         eventId: "event-args",
@@ -174,6 +186,11 @@ function createInspector(): WorkspaceCommandInspector {
         finishedAt: "2026-04-10T10:02:00.000Z",
         artifacts: [],
         outputEvents: [],
+        stdin: {
+          mode: "continuable",
+          canAttemptWrite: false,
+          acceptedWrites: [],
+        },
         argumentSnapshots: [],
         progressEvents: [
           {
@@ -206,6 +223,11 @@ function createInspector(): WorkspaceCommandInspector {
         finishedAt: "2026-04-10T10:00:40.000Z",
         artifacts: [],
         outputEvents: [],
+        stdin: {
+          mode: "none",
+          canAttemptWrite: false,
+          acceptedWrites: [],
+        },
         argumentSnapshots: [],
         patchSnapshots: [],
         diagnostics: [],
@@ -322,6 +344,40 @@ describe("command inspector helpers", () => {
         ],
       },
     ]);
+  });
+
+  it("exposes stdin receipts and write actionability", () => {
+    const inspector = {
+      ...createInspector(),
+      toolName: "exec_command",
+      status: "running",
+      stdin: {
+        mode: "continuable",
+        canAttemptWrite: true,
+        acceptedWrites: [
+          {
+            eventId: "stdin-1",
+            at: "2026-04-10T10:04:30.000Z",
+            text: "yes\n",
+            acceptedBytes: 4,
+          },
+        ],
+      },
+    } satisfies WorkspaceCommandInspector;
+
+    expect(canWriteCommandStdin(inspector)).toBe(true);
+    expect(getCommandStdinSection(inspector)).toEqual({
+      id: "stdin",
+      title: "Stdin",
+      events: [
+        {
+          eventId: "stdin-1",
+          at: "2026-04-10T10:04:30.000Z",
+          text: "yes\n",
+          acceptedBytes: 4,
+        },
+      ],
+    });
   });
 
   it("groups recovered command progress", () => {

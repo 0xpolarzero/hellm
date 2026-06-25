@@ -14,7 +14,7 @@ export interface SessionTranscriptExportInput {
   session: Pick<WorkspaceSessionSummary, "id" | "title" | "status" | "createdAt" | "updatedAt">;
   target?: {
     workspaceSessionId: string;
-    surface: "orchestrator" | "thread";
+    surface: "orchestrator" | "handler";
     surfacePiSessionId: string;
     threadId?: string;
   };

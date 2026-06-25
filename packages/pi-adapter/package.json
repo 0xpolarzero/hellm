@@ -1,0 +1,17 @@
+{
+  "name": "@svvy/pi-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./messages": "./src/messages.ts",
+    "./internal/session": "./src/session.ts"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "0.73.1",
+    "@mariozechner/pi-coding-agent": "0.73.1",
+    "@svvy/core": "workspace:*",
+    "effect": "4.0.0-beta.84"
+  }
+}

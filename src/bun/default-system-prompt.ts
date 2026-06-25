@@ -17,7 +17,7 @@ import {
   getExtensionRecord,
   resolveActorExtensionState,
   type ExtensionRecord,
-} from "../shared/extensions";
+} from "@svvy/extensions";
 import type { RequestUserInputSettings } from "../shared/agent-settings";
 import type {
   GeneratedAgentContextEntry,
@@ -29,23 +29,23 @@ import type {
 export function buildExecuteTypescriptBasePromptSection(actor: SvvyActorKind): string {
   const compositionUses =
     actor === "handler"
-      ? "batching, looping, filtering, aggregation, or structured extension-client composition"
-      : "batching, looping, filtering, aggregation, or structured extension-client composition";
+      ? "batching, looping, filtering, aggregation, or structured extension-facade composition"
+      : "batching, looping, filtering, aggregation, or structured extension-facade composition";
   return [
     "Loaded native extension: Execute TypeScript.",
     "",
     `Use execute_typescript only when a small TypeScript program is genuinely useful for ${compositionUses}.`,
-    "When you call execute_typescript, write plain TypeScript against actor-local generated `extensions` clients and `console`.",
+    "When you call execute_typescript, write plain TypeScript against actor-local generated `extensions` runtime facades and `console`.",
     "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
-    "Do not use or assume a broad `api` helper, global `svvy`, prompt-only extension clients, Smithers clients, or Workflows runner clients.",
+    "Do not use or assume a broad `api` helper, global `svvy`, prompt-only extension runtime facades, Smithers clients, or Workflows runner clients.",
     "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call Shell, Apply Patch, or other direct tools instead.",
   ].join("\n");
 }
 
 export const EXECUTE_TYPESCRIPT_INCUR_CLIENT_PROMPT_SECTION = [
-  "Loaded Execute TypeScript guidance: Incur generated clients.",
+  "Loaded Execute TypeScript guidance: Incur-backed runtime facades.",
   "",
-  'Use generated extension clients through `extensions["<extensionId>"].run(commandId, input)`.',
+  'Use generated extension runtime facades through `extensions["<extensionId>"].run(commandId, input)`.',
   "Dot access is valid only for identifier-safe extension ids, such as `extensions.artifacts.run(...)`.",
   "Import public Incur types from `incur/client` when needed; do not invent internal client APIs.",
 ].join("\n");
@@ -56,8 +56,6 @@ export function buildExecuteTypescriptPromptSection(
     extensionsRoot?: string;
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
-    workflowsExtensionsGeneratedPackagePath?: string;
-    workflowsGeneratedPackagePath?: string;
   } = {},
 ): string {
   return [
@@ -69,8 +67,6 @@ export function buildExecuteTypescriptPromptSection(
       extensionsRoot: options.extensionsRoot,
       loadedExtensionIds: options.loadedExtensionIds,
       loadedExtensionRecords: options.loadedExtensionRecords,
-      workflowsExtensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
-      workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
     }),
     "```",
   ].join("\n");
@@ -259,7 +255,7 @@ function buildArtifactsContextBody(): string {
     "Use artifacts only for durable session files such as screenshots, logs, traces, reports, generated previews, and handoff notes. Do not use artifacts for ordinary repository files the user asked you to create or edit.",
     "Run Artifacts through exec_command with JSON output:",
     ...ARTIFACTS_COMMAND_CONTRACTS.map((command) => `- \`${command.shell}\` ${command.summary}.`),
-    "When writing TypeScript inside execute_typescript, prefer the generated client:",
+    "When writing TypeScript inside execute_typescript, prefer the generated runtime facade:",
     "```ts",
     ...ARTIFACTS_COMMAND_CONTRACTS.map((command) => command.typescript),
     "```",
@@ -280,7 +276,7 @@ export const SMITHERS_HANDLER_CONTEXT_BODY = [
   "",
   "Handler threads use official Smithers CLI commands through Shell against workspace `.smithers/` source. Smithers adds no native tools, no generated TypeScript clients, and no product workflow wrapper tools.",
   "",
-  "Use `smithers init`, `smithers workflow run`, `smithers ps`, and `smithers inspect` as ordinary shell commands when Smithers work is the right unit.",
+  "Use `bunx smithers-orchestrator init`, `bunx smithers-orchestrator workflow run`, `bunx smithers-orchestrator ps`, and `bunx smithers-orchestrator inspect` as ordinary shell commands when Smithers work is the right unit.",
   "",
   "When the delegated objective has an important update, call `thread_report`. Include `outcome` only when the current handler objective is concluded.",
 ].join("\n");

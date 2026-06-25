@@ -17,7 +17,7 @@
     AgentModelChoice,
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
-  import type { ExtensionUsageState } from "../shared/extensions";
+  import type { ExtensionUsageState } from "@svvy/extensions";
   import type { FileBackedSaveMode } from "../shared/file-backed-edit";
   import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";

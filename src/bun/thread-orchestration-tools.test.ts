@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
 import {
   createThreadFollowupTool,
   createThreadRequestReportTool,
@@ -60,17 +62,20 @@ function createOrchestratorRuntime(
 
   return {
     current: {
-      sessionId: "session-thread-orchestration",
+      workspaceSessionId: "session-thread-orchestration",
       turnId: turn.id,
       surfacePiSessionId: "session-thread-orchestration",
-      surfaceThreadId: rootThread.id,
+      threadId: rootThread.id,
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "analysis",
       rootThreadId: rootThread.id,
-      promptText: "Coordinate handler work",
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: [],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
   };
 }
@@ -83,18 +88,29 @@ function createHandlerRuntime(store: StructuredSessionStateStore): PromptExecuti
   });
   return {
     current: {
-      sessionId: "session-thread-orchestration",
+      workspaceSessionId: "session-thread-orchestration",
       turnId: turn.id,
       surfacePiSessionId: "handler-thread",
-      surfaceThreadId: "thread-handler",
+      threadId: "thread-handler",
       surfaceKind: "handler",
       defaultEpisodeKind: "change",
       rootThreadId: "thread-handler",
-      promptText: "Handle delegated work",
       rootEpisodeKind: "change",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: [],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
+  };
+}
+
+function createThreadOrchestrationToolOptions(store: StructuredSessionStateStore) {
+  return {
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: Effect.runSync,
   };
 }
 
@@ -105,7 +121,7 @@ describe("thread orchestration tools", () => {
     const bridgeCalls: Parameters<ThreadOrchestrationBridge["queueThreadFollowup"]>[0][] = [];
     const tool = createThreadFollowupTool({
       runtime,
-      store,
+      ...createThreadOrchestrationToolOptions(store),
       bridge: {
         async queueThreadFollowup(input) {
           bridgeCalls.push(input);
@@ -173,7 +189,7 @@ describe("thread orchestration tools", () => {
     const store = createStore();
     const tool = createThreadFollowupTool({
       runtime: createOrchestratorRuntime(store),
-      store,
+      ...createThreadOrchestrationToolOptions(store),
       bridge: {
         async queueThreadFollowup() {
           throw new Error("unexpected followup");
@@ -212,7 +228,7 @@ describe("thread orchestration tools", () => {
     const bridgeCalls: Parameters<ThreadOrchestrationBridge["queueThreadReportRequest"]>[0][] = [];
     const tool = createThreadRequestReportTool({
       runtime,
-      store,
+      ...createThreadOrchestrationToolOptions(store),
       bridge: {
         async queueThreadFollowup() {
           throw new Error("unexpected followup");
@@ -273,21 +289,23 @@ describe("thread orchestration tools", () => {
     };
 
     await expect(
-      createThreadFollowupTool({ runtime: handlerRuntime, store, bridge }).execute(
-        "tool-call-handler-followup",
-        {
-          threadIds: ["thread-a"],
-          message: "Handlers cannot orchestrate followups.",
-        },
-      ),
+      createThreadFollowupTool({
+        runtime: handlerRuntime,
+        ...createThreadOrchestrationToolOptions(store),
+        bridge,
+      }).execute("tool-call-handler-followup", {
+        threadIds: ["thread-a"],
+        message: "Handlers cannot orchestrate followups.",
+      }),
     ).rejects.toThrow("thread_followup can only run from the orchestrator.");
     await expect(
-      createThreadRequestReportTool({ runtime: handlerRuntime, store, bridge }).execute(
-        "tool-call-handler-report-request",
-        {
-          threadId: "thread-a",
-        },
-      ),
+      createThreadRequestReportTool({
+        runtime: handlerRuntime,
+        ...createThreadOrchestrationToolOptions(store),
+        bridge,
+      }).execute("tool-call-handler-report-request", {
+        threadId: "thread-a",
+      }),
     ).rejects.toThrow("thread_request_report can only run from the orchestrator.");
   });
 });

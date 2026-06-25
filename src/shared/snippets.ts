@@ -1,11 +1,19 @@
-export type SnippetSource = "svvy" | "claude" | "pi";
+import type {
+  ComposerSnippetMention,
+  SentSnippetProvenance,
+  SnippetMetadata,
+  SnippetSource,
+} from "@svvy/core";
+
+export type {
+  ComposerSnippetMention,
+  SentSnippetProvenance,
+  SnippetMetadata,
+  SnippetSource,
+} from "@svvy/core";
+
 export type ExternalSnippetSource = Exclude<SnippetSource, "svvy">;
 export type SnippetScope = "user" | "workspace";
-
-export interface SnippetMetadata {
-  description: string | null;
-  argumentHint: string | null;
-}
 
 export interface DiscoveredSnippet {
   id: string;
@@ -37,30 +45,6 @@ export interface SnippetsReadModel {
   managed: ManagedSnippet[];
   discovered: DiscoveredSnippet[];
   snippets: SnippetRecord[];
-}
-
-export interface ComposerSnippetMention {
-  id: string;
-  snippetId: string;
-  source: SnippetSource;
-  title: string;
-  token: string;
-  body: string;
-  path?: string;
-  contentHash: string;
-  arguments: string[];
-  metadata: SnippetMetadata;
-}
-
-export interface SentSnippetProvenance {
-  mentionId: string;
-  snippetId: string;
-  source: SnippetSource;
-  title: string;
-  path?: string;
-  contentHash: string;
-  arguments: string[];
-  resolvedText: string;
 }
 
 export interface CreateManagedSnippetRequest {
@@ -247,7 +231,10 @@ function emptySnippetMetadata(): SnippetMetadata {
 }
 
 function parseSnippetMetadata(frontmatter: string): SnippetMetadata {
-  const metadata = emptySnippetMetadata();
+  const metadata = {
+    description: null as string | null,
+    argumentHint: null as string | null,
+  };
   for (const line of frontmatter.split(/\r?\n/)) {
     const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
     if (!match) continue;

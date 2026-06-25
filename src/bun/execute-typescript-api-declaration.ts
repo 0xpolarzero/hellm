@@ -1,10 +1,9 @@
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
-import { existsSync } from "node:fs";
 import type { SvvyActorKind } from "./actor-capabilities";
-import { resolveActorExtensionState } from "../shared/extensions";
-import type { ExtensionRecord } from "../shared/extensions";
+import { resolveActorExtensionState } from "@svvy/extensions";
+import type { ExtensionRecord } from "@svvy/extensions";
 
-export const ARTIFACTS_CLIENT_DECLARATION = `
+export const ARTIFACTS_FACADE_DECLARATION = `
 type ArtifactsArtifactRef = {
   id: string;
   path: string;
@@ -52,19 +51,19 @@ type ArtifactsCommandMap = {
   };
 };
 
-interface ArtifactsExtensionClient {
+interface ArtifactsExtensionFacade {
   run<CommandId extends keyof ArtifactsCommandMap>(
     commandId: CommandId,
     input: ArtifactsCommandMap[CommandId]["input"],
   ): Promise<ArtifactsCommandMap[CommandId]["result"]>;
 }
 
-interface LoadedExtensionsClient {
-  artifacts: ArtifactsExtensionClient;
+interface LoadedExtensionsFacade {
+  artifacts: ArtifactsExtensionFacade;
 }
 `.trim();
 
-export const WORKFLOWS_CLIENT_DECLARATION = `
+export const WORKFLOWS_FACADE_DECLARATION = `
 type WorkflowsKind = "agent" | "prompt" | "component" | "workflow";
 
 type WorkflowsDiagnostic = {
@@ -146,15 +145,15 @@ type WorkflowsCommandMap = {
   };
 };
 
-interface WorkflowsExtensionClient {
+interface WorkflowsExtensionFacade {
   run<CommandId extends keyof WorkflowsCommandMap>(
     commandId: CommandId,
     input: WorkflowsCommandMap[CommandId]["input"],
   ): Promise<WorkflowsCommandMap[CommandId]["result"]>;
 }
 
-interface LoadedExtensionsClient {
-  workflows: WorkflowsExtensionClient;
+interface LoadedExtensionsFacade {
+  workflows: WorkflowsExtensionFacade;
 }
 `.trim();
 
@@ -185,30 +184,12 @@ declare module "incur" {
 }
 `.trim();
 
-const SVVY_EXTENSIONS_IMPORT_MODULE_DECLARATION = `
-declare module "@svvy/extensions" {
-  export const Extensions: unknown;
-  export type ExtensionId = string;
-}
-`.trim();
-
-const SVVY_WORKFLOWS_IMPORT_MODULE_DECLARATION = `
-declare module "@svvy/workflows" {
-  export const Agents: unknown;
-  export const Components: unknown;
-  export const Prompts: unknown;
-  export const Workflows: unknown;
-}
-`.trim();
-
 export function buildExecuteTypescriptApiDeclaration(
   actor: SvvyActorKind,
   options: {
     extensionsRoot?: string;
     loadedExtensionIds?: readonly string[];
     loadedExtensionRecords?: readonly ExtensionRecord[];
-    workflowsExtensionsGeneratedPackagePath?: string;
-    workflowsGeneratedPackagePath?: string;
   } = {},
 ): string {
   const loadedExtensionIds =
@@ -217,17 +198,11 @@ export function buildExecuteTypescriptApiDeclaration(
     EXECUTE_TYPESCRIPT_API_DECLARATION.trim(),
     EXECUTE_TYPESCRIPT_IMPORT_MODULE_DECLARATIONS,
   ];
-  if (generatedPackageAvailable(options.workflowsExtensionsGeneratedPackagePath)) {
-    sections.push(SVVY_EXTENSIONS_IMPORT_MODULE_DECLARATION);
-  }
-  if (generatedPackageAvailable(options.workflowsGeneratedPackagePath)) {
-    sections.push(SVVY_WORKFLOWS_IMPORT_MODULE_DECLARATION);
-  }
   if (loadedExtensionIds.includes("artifacts")) {
-    sections.push(ARTIFACTS_CLIENT_DECLARATION);
+    sections.push(ARTIFACTS_FACADE_DECLARATION);
   }
   if (loadedExtensionIds.includes("workflows")) {
-    sections.push(WORKFLOWS_CLIENT_DECLARATION);
+    sections.push(WORKFLOWS_FACADE_DECLARATION);
   }
   sections.push(
     ...buildLoadedUserExtensionDeclarations({
@@ -246,8 +221,4 @@ function buildLoadedUserExtensionDeclarations(input: {
 }): string[] {
   void input;
   return [];
-}
-
-function generatedPackageAvailable(packagePath: string | undefined): boolean {
-  return Boolean(packagePath && existsSync(packagePath));
 }

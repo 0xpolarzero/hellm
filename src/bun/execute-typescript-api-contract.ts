@@ -1,7 +1,7 @@
 /**
  * Source of truth for the `execute_typescript` prompt contract.
  *
- * Code mode receives actor-specific generated `extensions` clients for loaded
+ * Code mode receives actor-specific generated `extensions` runtime facades for loaded
  * TypeScript-enabled `svvyx` extensions. Shell, Apply Patch, and other direct
  * tools remain the canonical agent interface for repository work.
  */
@@ -19,7 +19,7 @@ export interface SvvyConsole {
   error(...args: unknown[]): void;
 }
 
-export interface LoadedExtensionsClient {}
+export interface LoadedExtensionsFacade {}
 
 export namespace Run {
   export type OutputFormat = "toon" | "json" | "yaml" | "md" | "jsonl";
@@ -48,5 +48,5 @@ export interface IncurRpcMeta {
   duration: string;
 }
 
-export declare const extensions: LoadedExtensionsClient;
+export declare const extensions: LoadedExtensionsFacade;
 export declare const console: SvvyConsole;

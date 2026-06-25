@@ -12,7 +12,7 @@ import type {
   WorkflowAgentSettings,
 } from "./agent-settings";
 import type { FileBackedSaveMode } from "./file-backed-edit";
-import type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "./extensions";
+import type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type {
   GeneratedAgentContextActor,
@@ -34,95 +34,31 @@ import type {
   UpdateManagedSnippetRequest,
 } from "./snippets";
 import type { AppMenuAction } from "./shortcut-registry";
+import type {
+  AppLogLevel,
+  AppLogQuery,
+  AppLogReadModel,
+  AppLogSummary,
+  AppLogUpdateMessage,
+  RuntimeMessageDelivery,
+  RuntimeSubmittedMessage,
+  RuntimeClientSubmissionMetadata,
+  ComposerAttachment,
+} from "@svvy/core";
+import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
+
+export type {
+  AppLogEntry,
+  AppLogLevel,
+  AppLogQuery,
+  AppLogReadModel,
+  AppLogSource,
+  AppLogSummary,
+  AppLogUpdateMessage,
+} from "@svvy/core";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
-export type PromptSurfaceKind = "orchestrator" | "thread";
-
-export type AppLogLevel = "debug" | "info" | "warn" | "error";
-
-export type AppLogSource =
-  | "app.lifecycle"
-  | "app.bridge"
-  | "app.rpc"
-  | "auth.provider"
-  | "settings"
-  | "workspace"
-  | "session"
-  | "session.title"
-  | "source.graph"
-  | "surface"
-  | "prompt"
-  | "thread"
-  | "smithers"
-  | "workflow.library"
-  | "workflow.run"
-  | "workflow.task"
-  | "direct-tool"
-  | "execute_typescript"
-  | "artifact"
-  | "external-editor"
-  | "renderer";
-
-export interface AppLogEntry {
-  id: string;
-  seq: number;
-  createdAt: string;
-  level: AppLogLevel;
-  source: AppLogSource;
-  message: string;
-  details?: Record<string, unknown>;
-  error?: {
-    name?: string;
-    message: string;
-    stack?: string;
-  };
-  workspaceSessionId?: string;
-  surfacePiSessionId?: string;
-  threadId?: string;
-  workflowRunId?: string;
-  workflowTaskAttemptId?: string;
-  commandId?: string;
-  artifactId?: string;
-}
-
-export interface AppLogSummary {
-  latestSeq: number;
-  seenSeq: number;
-  unread: {
-    total: number;
-    debug: number;
-    info: number;
-    warn: number;
-    error: number;
-  };
-  totals: {
-    total: number;
-    debug: number;
-    info: number;
-    warn: number;
-    error: number;
-  };
-}
-
-export interface AppLogQuery {
-  levels?: AppLogLevel[];
-  sources?: AppLogSource[];
-  query?: string;
-  afterSeq?: number;
-  beforeSeq?: number;
-  limit?: number;
-}
-
-export interface AppLogReadModel {
-  entries: AppLogEntry[];
-  summary: AppLogSummary;
-}
-
-export interface AppLogUpdateMessage {
-  workspaceId: string;
-  entries: AppLogEntry[];
-  summary: AppLogSummary;
-}
+export type PromptSurfaceKind = "orchestrator" | "handler";
 
 export interface PromptTarget {
   workspaceSessionId: string;
@@ -518,22 +454,7 @@ export type WorkspacePaneSurfaceTarget =
   | OpenWorkspacePaneTarget
   | StaticInspectorPaneTarget;
 
-export interface PromptClientSubmissionMetadata {
-  submissionId?: string;
-  correlationId?: string;
-  clientRequestId?: string;
-  source?: string;
-  submittedAt?: string;
-  sequence?: number;
-  panelId?: string;
-  draftLength?: number;
-  trimmedDraftLength?: number;
-  serializedTextLength?: number;
-  attachmentCount?: number;
-  snippetMentionCount?: number;
-  snippetProvenanceCount?: number;
-  isEdit?: boolean;
-}
+export type PromptClientSubmissionMetadata = RuntimeClientSubmissionMetadata;
 
 export interface RendererTelemetryRequest {
   eventName: string;
@@ -555,13 +476,9 @@ export interface RendererTelemetryResponse {
 }
 
 export interface SendPromptRequest {
-  messages: Message[];
-  provider?: string;
-  model?: string;
-  reasoningEffort?: ReasoningEffort;
   target: PromptTarget;
-  systemPrompt?: string;
-  queueOnly?: boolean;
+  message: RuntimeSubmittedMessage;
+  delivery?: RuntimeMessageDelivery;
   clientSubmission?: PromptClientSubmissionMetadata;
 }
 
@@ -777,45 +694,9 @@ export interface WorkspacePathIndexEntry {
   workspaceRelativePath: string;
 }
 
-export type ComposerAttachmentKind = "file" | "folder" | "image";
-
-export interface ComposerAttachment {
-  id: string;
-  kind: ComposerAttachmentKind;
-  name: string;
-  path: string;
-  workspaceRelativePath?: string;
-  mimeType?: string;
-  sizeBytes?: number;
-  dataBase64?: string;
-}
-
-export const COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX = "svvy:composer-attachments:v1:";
-
-export function composerAttachmentPromptText(attachments: readonly ComposerAttachment[]): string {
-  if (attachments.length === 0) return "";
-  const lines = attachments.map((attachment) => {
-    const path = attachment.workspaceRelativePath ?? attachment.path;
-    return `- ${attachment.kind} path: ${path} (name: ${attachment.name})`;
-  });
-  return `Attached files are available at these workspace-relative paths:\n${lines.join("\n")}`;
-}
-
-export function serializeComposerAttachmentTextSignature(
-  attachments: readonly ComposerAttachment[],
-): string {
-  return `${COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX}${JSON.stringify(
-    attachments.map((attachment) => ({
-      id: attachment.id,
-      kind: attachment.kind,
-      name: attachment.name,
-      path: attachment.path,
-      workspaceRelativePath: attachment.workspaceRelativePath,
-      mimeType: attachment.mimeType,
-      sizeBytes: attachment.sizeBytes,
-    })),
-  )}`;
-}
+export type { ComposerAttachment, ComposerAttachmentKind } from "@svvy/core";
+export { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX };
+export { composerAttachmentPromptText, serializeComposerAttachmentTextSignature } from "@svvy/core";
 
 export function parseComposerAttachmentTextSignature(
   textSignature: string | undefined,
@@ -926,6 +807,7 @@ export interface WorkspaceCommandRollup {
   error?: string | null;
   artifacts?: WorkspaceCommandArtifactLink[];
   outputEvents?: WorkspaceCommandOutputEvent[];
+  stdin: WorkspaceCommandStdinState;
   argumentSnapshots?: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots?: WorkspaceCommandPatchSnapshot[];
@@ -958,6 +840,19 @@ export interface WorkspaceCommandOutputEvent {
   stream: "stdout" | "stderr";
   source: string;
   text: string;
+}
+
+export interface WorkspaceCommandStdinEvent {
+  eventId: string;
+  at: string;
+  text: string;
+  acceptedBytes: number;
+}
+
+export interface WorkspaceCommandStdinState {
+  mode: "none" | "continuable";
+  canAttemptWrite: boolean;
+  acceptedWrites: WorkspaceCommandStdinEvent[];
 }
 
 export interface WorkspaceCommandProgressEvent {
@@ -1030,6 +925,7 @@ export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupCh
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
   outputEvents: WorkspaceCommandOutputEvent[];
+  stdin: WorkspaceCommandStdinState;
   argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots: WorkspaceCommandPatchSnapshot[];
@@ -1053,6 +949,7 @@ export interface WorkspaceCommandInspector {
   finishedAt: string | null;
   artifacts: WorkspaceCommandArtifactLink[];
   outputEvents: WorkspaceCommandOutputEvent[];
+  stdin: WorkspaceCommandStdinState;
   argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
   progressEvents?: WorkspaceCommandProgressEvent[];
   patchSnapshots: WorkspaceCommandPatchSnapshot[];
@@ -1063,6 +960,23 @@ export interface WorkspaceCommandInspector {
   summaryChildren: WorkspaceCommandInspectorChild[];
   traceChildren: WorkspaceCommandInspectorChild[];
 }
+
+export interface WriteCommandStdinRequest {
+  commandId: string;
+  text: string;
+  clientSubmission?: RuntimeClientSubmissionMetadata;
+}
+
+export type WriteCommandStdinResponse =
+  | {
+      commandId: string;
+      status: "accepted";
+      acceptedBytes: number;
+    }
+  | {
+      commandId: string;
+      status: "stdin_closed" | "not_running" | "already_terminal";
+    };
 
 export interface WorkspaceHandlerThreadWorkflowSummary {
   workflowRunId: string;
@@ -1075,7 +989,7 @@ export interface WorkspaceHandlerThreadWorkflowSummary {
 
 export interface WorkspaceHandlerThreadEpisodeSummary {
   episodeId: string;
-  kind: "analysis" | "change" | "workflow" | "clarification";
+  kind: "analysis" | "change" | "workflow" | "clarification" | "report" | "handoff" | "conclusion";
   title: string;
   summary: string;
   createdAt: string;
@@ -1335,7 +1249,7 @@ export interface WorkspaceSessionNavigationReadModel {
   };
 }
 
-export type WorkspaceRequestUserInputDelivery = "steer" | "after_turn";
+export type WorkspaceRequestUserInputDelivery = RuntimeMessageDelivery;
 
 export type WorkspaceRequestUserInputAnswer =
   | {
@@ -1419,12 +1333,14 @@ export interface RequestUserInputAnswerRequest {
   questionId: string;
   answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
   delivery: WorkspaceRequestUserInputDelivery;
+  clientSubmission?: PromptClientSubmissionMetadata;
 }
 
 export interface SetRequestUserInputTimerPausedRequest {
   surfacePiSessionId: string;
   requestId: string;
   paused: boolean;
+  clientSubmission?: PromptClientSubmissionMetadata;
 }
 
 export interface WorkspaceArtifactPreview {
@@ -2006,6 +1922,10 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<{ sessionId: string; commandId: string }>;
         response: WorkspaceCommandInspector | null;
       };
+      writeCommandStdin: {
+        params: WorkspaceScoped<WriteCommandStdinRequest>;
+        response: WriteCommandStdinResponse;
+      };
       listHandlerThreads: {
         params: WorkspaceScoped<{ sessionId: string }>;
         response: WorkspaceHandlerThreadSummary[];
@@ -2108,10 +2028,6 @@ export interface ChatRPCSchema {
       };
       editCommittedUserMessage: {
         params: WorkspaceScoped<EditCommittedUserMessageRequest>;
-        response: SendPromptResponse;
-      };
-      steerPrompt: {
-        params: WorkspaceScoped<SendPromptRequest>;
         response: SendPromptResponse;
       };
       deleteQueuedSurfaceMessage: {

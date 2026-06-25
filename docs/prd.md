@@ -18,10 +18,11 @@ The product combines:
 
 - an Electrobun desktop shell
 - a pi-backed interactive runtime and session substrate
+- a reusable package architecture whose non-UI packages can be driven programmatically without the desktop UI
 - a `svvy` orchestrator that owns strategy, routing, and final decisions
 - pi-backed delegated handler threads for bounded delegated objectives
 - Smithers workflow authoring and execution through direct official Smithers CLI usage inside handler threads
-- an app-global Workflows source library that generates reusable `@svvy/workflows` imports
+- an app-global Workflows source library that generates reusable `@svvyx/workflows` imports
 - first-class threads, commands, episodes, artifacts, saved Workflows visibility, and worktree awareness
 - live Codex-like tool projection for streamed tool arguments, command output, patch previews,
   approvals, waits, and final command facts
@@ -78,15 +79,111 @@ No worker or handler thread becomes the source of truth for overall strategy.
 It has one shared execution model:
 
 ```text
-message -> target surface -> turn -> tool call -> command -> handler -> events -> structured state -> UI
+message submit -> durable queue commit -> queue wake/claim -> turn record commit -> pi stream -> streamed tool intent -> accepted tool call -> runtime command envelope -> extension handler -> ExtensionRuntimeOperation processing -> runtime_effect application / execution_plan execution -> state commit -> runtime notification/live patch -> UI refetch or stream rebaseline -> recovery scan
 ```
 
 The target surface may be:
 
 - the main orchestrator surface
 - a delegated handler thread surface
+- a workflow task-agent attempt surface created by the Smithers task-agent bridge
 
 Everything the agent does is still driven through turns, tools, runtime handlers, and durable state.
+
+The same execution model is available programmatically. Product runtime behavior lives below the UI
+in reusable packages:
+
+- `@svvy/core` defines shared ids, schemas, typed errors, read-model shapes, command envelopes,
+  native-tool declaration shapes, typed runtime notification and stream-event contract shapes,
+  `RuntimeEffectRequest` and `ExtensionExecutionPlan` contracts, and package-boundary port service
+  tags/data contracts.
+- `@svvy/state` owns SQLite-backed product state, transactions, projections, settings, app logs,
+  generated package facts, queue rows, command facts, secrets, artifact metadata, provider auth
+  snapshots, persisted pi session references, and the concrete Effect layers that implement the
+  core-owned state ports. Runtime, extensions, pi-adapter, sandbox, and desktop consume only narrow
+  core-owned state ports plus approved state read facades and command facades. They never import
+  `StateStore`, repositories, SQL helpers, transaction helpers, migration helpers, table helpers, or
+  SQLite implementation details.
+- `@svvy/sandbox` turns immutable policy snapshots into filesystem/network launch constraints and
+  sandbox-denial classification.
+- `@svvy/pi-adapter` adapts pi sessions, true `systemPrompt` delivery, turns, model metadata, helper
+  jobs, and pi event streams into `svvy` contracts without leaking pi-native objects.
+- `@svvy/extensions` owns extension source, builtin capability records, generated actor context,
+  MDX/source prompt and instruction contributors, native tool metadata and handlers, request-input question validation and
+  default-answer derivation, `svvyx` dispatch, generated `execute_typescript` facade declarations,
+  and generated `@svvyx/workflows` / `@svvyx/extensions` package production. Extension handlers
+  return one model-facing tool result plus ordered `ExtensionRuntimeOperation` items wrapping closed
+  `RuntimeEffectRequest` values or immutable `ExtensionExecutionPlan` values; they do not write product state,
+  publish runtime events, own durable command sessions, or execute runtime-owned
+  subprocess/file/approval work directly. Those generated packages are not reusable SDKs and are not
+  `execute_typescript` runtime facades.
+  Extension generated-package refresh writes files and returns build evidence only. Runtime
+  separately asks `@svvy/extensions` for an immutable workspace-link plan for each targeted
+  workspace/package pair, then applies that plan. Extensions never mutate workspace
+  `.smithers/node_modules/@svvyx/*`, write generated-package state facts directly, or emit
+  runtime/read-model notifications.
+- `@svvy/runtime` owns prompt submission, queue claiming, turn execution, prompt refresh,
+  handler-thread lifecycle, accepted native-tool execution, extension handler invocation,
+  `RuntimeEffectRequest` application, immutable execution-plan execution, request-input record
+  creation, request-input waiting, timeout completion, the request-input answer API, answer
+  recording, nonblocking queued answer delivery, generated-package refresh scheduling, recovery,
+  title jobs, command tracking, and runtime event publication. Runtime schedules and applies
+  generated-package link repair, writes and commits generated-package facts through core-owned state
+  ports implemented by `@svvy/state`, and turns after-commit descriptors into typed runtime
+  notifications.
+- `@svvy/desktop` is one consumer of the runtime through app/bootstrap. It sends runtime requests
+  through renderer-safe facades, receives renderer-safe notifications that app/bootstrap derives by
+  subscribing to runtime events, refetches read models from state, and renders the result.
+  App/bootstrap owns runtime event subscription, sequencing, buffering, and fanout to renderer
+  bridges. Desktop imports only renderer-safe runtime facade plus state read/command facades
+  injected by app bootstrap; it does not create ManagedRuntimes, import package-private services,
+  subscribe to package-private runtime services directly, or own queue, prompt, state, recovery, or
+  generated-package semantics.
+
+Non-UI packages use Effect v4 services and layers for package-to-package composition, scoped
+resource lifetimes, typed errors, streams, schedules, queues, subprocesses, and test layers. App
+bootstrap composes the package layers once, creates exactly one app-owned `ManagedRuntime`, awaits
+`managedRuntime.context()` and the runtime-owned startup readiness effect before exposing facades,
+and owns final shutdown preparation plus disposal. Desktop, browser tools, and headless automation
+use small Promise, callback, and `AsyncIterable` facades over that scoped app-bootstrap runtime;
+those facades do not contain queue claiming, prompt dispatch, tool execution, state mutation, or
+recovery policy. No package, renderer module, or request handler creates a package-level runtime or
+per-request layer graph.
+
+Effect service/layer behavior is promoted only when the implementation method is covered by the
+dedicated `bun run test:effect` lane using `@effect/vitest`; `bun run check` already runs both
+`test:unit` and `test:effect` before lint, format, and production build. Package-boundary checks
+keep Effect service/layer tests out of the Bun unit lane. Pure schema, pure contract,
+generated-boundary, and package-boundary tests may remain in `test:unit`.
+
+The package API shape is explicit:
+
+- each package exports exactly the service tags, named layers, root layers, and facades named by its
+  package spec; `@svvy/state` intentionally exposes state ports, read facades, command facades, and
+  layers instead of one public umbrella state service
+- `@svvy/runtime` exports `Runtime`, `Runtime.layer`, `layer`, and `createRuntimeFacade(...)`;
+  `Runtime` is the product service class implemented as an Effect v4 `Context.Service` selector,
+  not an Effect runtime execution value
+- `RuntimeEffectRequest` and `ExtensionExecutionPlan` are closed core algebras wrapped in
+  `ExtensionRuntimeOperation` items returned by extension handlers; runtime applies effect requests
+  and executes plans only inside runtime-owned ordered lanes
+- public facades expose the same named groups as the runtime service, such as
+  `runtime.messages.submit(...)`, `runtime.messages.abort(...)`, `runtime.queues.steer(...)`,
+  and `runtime.requestInput.answer(...)`; callers never submit raw `RuntimeEffectRequest` envelopes
+- the authenticated `runTaskAgent` workflow task-agent bridge is not a general public facade group;
+  runtime owns one command-scoped loopback endpoint and injects its URL/token only into eligible
+  Smithers task-agent command environments
+
+The public composer/runtime message API accepts a user-messageable orchestrator or handler target,
+one new user message, delivery intent, and optional client submission metadata. Callers do not
+submit pi message arrays, `systemPrompt` content, generated-context previews, extension id lists,
+renderer transcript state, UI snapshots, or workflow task-agent attempt targets. Runtime reads
+durable surface state, model settings, prompt bindings, extension usage, and queue state from
+`@svvy/state`; sends the new user text through `@svvy/pi-adapter`; and publishes typed notification
+events. Internal runtime-owned queue contracts cover Smithers task-agent bridge work and
+runtime/coordinator control rows that target workflow task-agent attempts. Consumers refetch
+authoritative read models after notifications instead of treating runtime events as durable state
+snapshots.
 
 Tool use must project live through the same execution model. When a model starts a tool call, the UI
 renders the correct execution-span card immediately, updates large arguments progressively while
@@ -96,7 +193,7 @@ acted, what state it reached, how long it took, and the useful outcome. The expa
 nearby semantic sections such as accepted arguments, command target, file changes, diagnostics,
 progress, grouped stdout/stderr, and child commands, while the card exposes linked artifact actions
 when artifacts exist. The inspector remains the
-full trace/debugger for raw events, complete output, facts, snapshots, and artifacts. `apply_patch`
+full trace/debugger for raw command lifecycle events, complete output, facts, snapshots, and artifacts. `apply_patch`
 uses a Codex-like structured file-change projection with patch snapshots; `exec_command` uses
 grouped command output deltas; `execute_typescript` uses source, diagnostic, runtime, and
 child-command projection. This is not achieved by asking the agent to split coherent work into many
@@ -105,11 +202,11 @@ tiny tool calls.
 Before any target surface runs a turn through pi:
 
 - `svvy` must compose that surface's actor prompt from the current generated agent context and load the resulting instructions through pi's real `systemPrompt` channel
-- `svvy` must ignore pi prompt replacement and append files such as `.pi/SYSTEM.md` and `APPEND_SYSTEM.md`, while preserving discovered `AGENTS.md` and `CLAUDE.md` files as read-only `external_instruction` extension records in the actual prompt path
+- `svvy` must ignore pi prompt replacement and append files such as `.pi/SYSTEM.md` and `APPEND_SYSTEM.md`, while preserving discovered `AGENTS.md` and `CLAUDE.md` files as read-only `external_instruction` records in the actual prompt path
 - the submitted prompt body is the real new user message for that surface; `svvy` does not repair or advance a surface by flattening prior messages into role-labelled transcript prose
 - committed conversation history stays in pi's session history, while runtime, thread, episode, report-request, and workflow state stays in structured state and targeted tools
 - the UI should project the active system prompt as expandable surface metadata rather than as inline transcript prose, and should warn when a surface is bound to an older prompt revision than current settings
-- each surface must receive only the generated tool declarations and SDK blocks present in that surface's resolved extension binding and native runtime surface
+- each surface must receive only the generated tool declarations and `execute_typescript` facade declarations present in that surface's resolved extension binding and native runtime surface
 - each surface may receive compact knowledge about what another surface commonly does, but it must not receive that other surface's full callable API block just for awareness
 - handler threads may start with a product-filtered inherited-history section from the orchestrator
   when `thread_start.threads[].history` is `forked`. That inherited-history section is delivered as
@@ -118,19 +215,50 @@ Before any target surface runs a turn through pi:
   handler system prompt, and not shared pi transcript state. It does not create shared tools or
   continuing access to orchestrator-only callable surfaces.
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git loaded by default for all adopted agent kinds, Web loaded by default for all adopted agent kinds only while `networkAccess` is enabled, GitHub loaded by default for orchestrators and handler threads while available for workflow task agents, and Smithers loaded by default for handler threads as prompt-only official CLI guidance. The builtin Workflows extension is loaded by default for handler threads as the app-owned `svvyx workflows ...` source-library command family. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git loaded by default for all adopted agent kinds, Web loaded by default for all adopted agent kinds only while `networkAccess` is enabled, GitHub loaded by default for orchestrators and handler threads while available for workflow task agents, and Smithers loaded by default for handler threads as prompt-only official CLI guidance. The builtin Workflows extension is loaded by default for handler threads as the app-owned `svvyx workflows ...` source-library command family. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only external instruction records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated declaration block for the exact actor session or task attempt that may call them.
 
-Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
+Extension env values are app-managed per extension. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are outside the shipped scope unless the PRD, feature inventory, and owning specs add them as resolved product behavior.
 
-Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, sparse extension usage overrides for values that differ from the resolved actor/profile defaults, and an optional per-profile extension instruction order. Actor prompts do not accept profile-local instruction blobs: orchestrators and handler threads receive instructions only from their resolved extensions and external instruction records. The only non-extension instruction input is a workflow-agent row's individual instruction textarea, and that text is prepended ahead of the workflow task-agent generated extension context. Each Agents-pane extension usage row links to the matching record in the Extensions inventory. The composer footer exposes the same extension usage control beside model and reasoning so an active orchestrator or handler-thread surface can change its bound loaded/available/off extension state directly; orchestrator surfaces using a profile with Follow composer enabled save composer extension changes back to that profile in the same way as composer model and reasoning changes. Expanded orchestrator, handler, and workflow task-agent profile rows show one extension list with name, description, usage controls, extension link, active-row generated token estimates in an aligned column, available-row estimates for the available prompt plus the would-be loaded prompt in parentheses, expandable generated instruction text, Off rows moved to the end without token counts, active rows draggable into the order their instructions enter the generated actor context, drag-only movement animation, stable in-place Loaded/Available/Off state updates, underlined extension names for true usage overrides, a tooltiped icon button for overridden orchestrator and workflow task-agent rows that appears in compact menus and immediately before expanded Loaded/Available/Off controls to promote the row's current state to the future default for that actor kind, and actor-level reset controls for default extension selection and default instruction order with the total generated prompt token estimate on that toolbar. Workflow-agent rows use the same compact profile bar affordances as orchestrator rows for model/reasoning, extension usage, duplication, deletion, and creation, while keeping their individual instruction textarea, autosaving textarea edits with an icon-only unsaved/saving/saved state inside the input without dimming unrelated row controls, showing that inline instruction's live token estimate on the source-file metadata line only when the row is expanded, adding a link to the underlying `.agent.json` source file, and including the current inline instruction draft in the expanded total prompt estimate. Workflow-agent `.agent.json` edits use shared file-backed edit-session conflict control: each editor save carries the source version it was based on, backend saves compare that version against the current file, stale saves stop autosync and show a warning icon without replacing the local draft, and the warning opens three tooltiped actions to keep editing, discard local changes in favor of the external file, or explicitly overwrite the external file. The default Explorer, Implementer, and Reviewer workflow agents are builtin defaults that may be edited and duplicated but not deleted.
+Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, sparse extension usage overrides for values that differ from the resolved actor/profile defaults, and an optional per-profile extension instruction order. Actor prompts do not accept profile-local instruction blobs: orchestrators and handler threads receive instructions only from their resolved extensions and external instruction records. The only non-extension instruction input is a workflow-agent row's individual instruction textarea, and that text is prepended ahead of the workflow task-agent generated extension context. Each Agents-pane extension usage row links to the matching record in the Extensions inventory. The composer footer exposes the same extension usage control beside model and reasoning so an active orchestrator or handler-thread surface can request a runtime/state-backed update to its bound loaded/available/unavailable extension state; orchestrator surfaces using a profile with Follow composer enabled save composer extension changes back to that profile in the same way as composer model and reasoning changes. Expanded orchestrator, handler, and workflow task-agent profile rows show one extension list with name, description, usage controls, extension link, active-row generated token estimates in an aligned column, available-row estimates for the available prompt plus the would-be loaded prompt in parentheses, expandable generated instruction text, Off rows moved to the end without token counts, active rows draggable into the order their instructions enter the generated actor context, drag-only movement animation, stable in-place Loaded/Available/Off UI state updates, underlined extension names for true usage overrides, a tooltiped icon button for overridden orchestrator and workflow task-agent rows that appears in compact menus and immediately before expanded Loaded/Available/Off UI controls to promote the row's current state to the default for newly created surfaces of that actor kind, and actor-level reset controls for default extension selection and default instruction order with the total generated prompt token estimate on that toolbar. Workflow-agent rows use the same compact profile bar affordances as orchestrator rows for model/reasoning, extension usage, duplication, deletion, and creation, while keeping their individual instruction textarea, autosaving textarea edits with an icon-only unsaved/saving/saved state inside the input without dimming unrelated row controls, showing that inline instruction's live token estimate on the source-file metadata line only when the row is expanded, adding a link to the underlying `.agent.json` source file, and including the current inline instruction draft in the expanded total prompt estimate. Workflow-agent `.agent.json` edits use shared file-backed edit-session conflict control: each editor save carries the source version it was based on, source-owner saves compare that version against the current file and `@svvy/state` source-version row, stale saves stop autosync and show a warning icon without replacing the local draft, and the warning opens three tooltiped actions to keep editing, discard local changes in favor of the external file, or explicitly overwrite the external file. The default Explorer, Implementer, and Reviewer workflow agents are builtin defaults that may be edited and duplicated but not deleted.
 
-Every normal builtin or user extension has the same composable shape: an editable minimal instruction source used as its available/loading hint (except fixed always-loaded Extension Loading, which may omit it), zero or more loaded instruction contributors, optional CLI requirements, optional native tool schema, optional `svvyx` command source plus generated command schema, optional generated TypeScript API declaration, reset/delete behavior, customized tags, inventory filters, and readiness state. Loaded instruction contributors are either editable Markdown source files or scripted instruction contributors. A scripted instruction contributor is one editable TypeScript generator source paired with the read-only Markdown output from the last successful generation, plus a regenerate action that runs the extension build path. Direct builtin prompt text, including base actor prompts and native-tool guidance, is exposed as editable loaded source contributors rather than generated-script output. Generated Markdown is never an independent top-level source type: users and agents customize the Markdown source file, generator script, manifest, extension source, CLI requirement, or package state, then regenerate/build. Loaded generated actor context receives one concatenated loaded instruction block per loaded extension from non-bypassed loaded contributors.
+Every normal builtin or user extension has the same composable shape: an editable minimal MDX instruction source used as its available/loading hint (except fixed always-loaded Extension Loading, which may omit it), zero or more loaded instruction contributors, optional CLI requirements, optional native tool schema, optional `svvyx` command source plus generated command schema, optional generated `execute_typescript` facade declaration, reset/delete behavior, customized tags, inventory filters, and readiness state. Loaded instruction contributors are either editable MDX source files or scripted instruction contributors. A scripted instruction contributor is one editable TypeScript generator source paired with the read-only generated Markdown/plain prompt output from the last successful generation, plus a regenerate action that runs the extension build path. Direct builtin prompt text, including base actor prompts and native-tool guidance, is exposed as editable MDX loaded source contributors rather than generated-script output. Generated Markdown/plain prompt text is never an independent top-level source type: users and agents customize the MDX source file, generator script, manifest, extension source, CLI requirement, or package state, then regenerate/build. Loaded generated actor context receives one concatenated plain prompt-text block per loaded extension from non-bypassed loaded contributors after MDX/generator output is compiled.
 
-Normal builtin and user extension sources are real local files under `~/.config/svvy/extensions/sources/...`: builtin sources live under `sources/builtin/<id>/`, user sources under `sources/user/<id>/`. Packaged app defaults are read-only templates used only to scaffold missing builtin source and to reset builtin source back to its default state. For normal source-backed `svvyx` extensions, `source/index.ts` is the editable command source; `commands.json` is generated build output that enters generated prompt/tool context. App-owned builtin command namespaces may instead expose a read-only generated command contract from product code when their runtime is implemented directly by `svvy`. Extension Managing is that kind of app-owned builtin `svvyx` namespace: it is reached through Shell as `svvyx extensions ...`, has no native tool schema, and has no editable runtime `source/index.ts`. The optional generated TypeScript API declaration is a separate generated artifact that exposes typed clients through `execute_typescript`; it is not the command schema.
+Normal builtin and user extension sources are real local files under `~/.config/svvy/extensions/sources/...`: builtin sources live under `sources/builtin/<id>/`, user sources under `sources/user/<id>/`. Packaged app defaults are read-only templates used only to scaffold missing builtin source and to reset builtin source back to its default state. For normal source-backed `svvyx` extensions, `source/index.ts` is the editable command source; `commands.json` is generated build output that enters generated prompt/tool context. App-owned builtin command namespaces may instead expose a read-only generated command contract from product code when their runtime is implemented directly by `svvy`. Extension Managing is that kind of app-owned builtin `svvyx` namespace: it is reached through Shell as `svvyx extensions ...`, has no native tool schema, and has no editable runtime `source/index.ts`. The optional generated `execute_typescript` facade declaration is a separate generated artifact that exposes typed injected facades through `execute_typescript`; it is not the command schema.
 
-External instruction records are deliberately separate from normal extensions. Discovered files such as `AGENTS.md` and `CLAUDE.md` are read-only external instruction inputs owned outside `svvy`; they have no minimal hint, no editable source lifecycle, no scripted contributors, no reset/delete lifecycle, and only expose file content, read status, and actor enablement controls. Base actor prompts are normal builtin instruction extensions: `base-common` is loaded by default for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are loaded by default by the corresponding default profile. Other extension default usage is future-facing profile policy for newly created orchestrator sessions and workflow task-agent attempts only; the singleton handler profile remains owned by Agents and can still be customized there. Changing defaults must not rewrite the bound generated context of an existing surface except through the normal out-of-date fingerprint refresh flow. Extension loaded instruction text is actor-agnostic; actor-specific behavior is represented by separate extension records, such as `base-orchestrator` versus `base-handler` or `thread-orchestration` versus `thread-handling`, and profile defaults decide which actor loads each extension. New user extensions start in the loaded default state for new orchestrators and workflow task agents unless the user changes their per-actor defaults before use. Extension snapshots include a saved Initial baseline when no local snapshots exist, while user-named snapshots preserve local source, package, usage, ordered contributors, bypass/default state, customized tags, generated-contributor source/output state, and coarse secret-state restore points. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
+External instruction records are deliberately separate from normal extensions. Discovered files such as `AGENTS.md` and `CLAUDE.md` are read-only external instruction inputs owned outside `svvy`; they have no minimal hint, no editable source lifecycle, no scripted contributors, no reset/delete lifecycle, and only expose file content, read status, and actor enablement controls. Base actor prompts are normal builtin instruction extensions: `base-common` is loaded by default for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are loaded by default by the corresponding default profile. Other extension default usage is profile policy for subsequently created orchestrator sessions and workflow task-agent attempts only; the singleton handler profile remains owned by Agents and can still be customized there. Changing defaults must not rewrite the bound generated context of an existing surface except through the normal out-of-date fingerprint refresh flow. Extension loaded instruction text is actor-agnostic; actor-specific behavior is represented by separate extension records, such as `base-orchestrator` versus `base-handler` or `thread-orchestration` versus `thread-handling`, and profile defaults decide which actor loads each extension. New user extensions start in the loaded default state for new orchestrators and workflow task agents unless the user changes their per-actor defaults before use. Extension snapshots include a saved Initial baseline when no local snapshots exist, while user-named snapshots preserve local source, package, usage, ordered contributors, bypass/default state, customized tags, generated-contributor source/output state, and coarse secret-state restore points. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and refresh at the next safe pre-dispatch boundary only when their checked-by-default update-before-next-turn intent is enabled; opted-out surfaces keep running with their bound context and remain visibly stale.
 
-File-backed source inputs refresh through a backend-owned source invalidation coordinator, not through renderer panes. Low-level file watcher events only schedule deterministic fingerprint scans; source fingerprints, validation results, and generated build facts are authoritative. The coordinator watches app-global agent settings, Workflows source, Extensions source, external instruction candidates, and managed or discovered snippet roots. It never watches generated output such as Workflows generated packages, Extensions generated packages, extension build directories, workspace `.smithers/node_modules/@svvy/*` links, or workspace `.svvy/generated` prompt preview files as triggers. When a source fingerprint changes, `svvy` recomputes the smallest affected state: workflow-agent source records refresh the Agents pane and rebuild `@svvy/workflows`; extension source refreshes inventory and generated declarations and triggers Workflows validation when needed; external instruction changes refresh Extensions inventory rows, prompt previews, and open-surface prompt bindings; snippet changes refresh only snippet read models. Invalid or unreadable source is surfaced as diagnostics while the previous ready generated output remains active. Existing surfaces become stale only when their bound generated-context fingerprint differs from the current fingerprint.
+File-backed source inputs refresh through `@svvy/runtime` source invalidation coordinators, not
+through renderer panes. One app-global coordinator watches Workflows and Extensions source roots,
+performs app-global generated-package refresh, and fans out workspace-link repair to acquired
+workspace runtime scopes. One workspace coordinator per acquired workspace watches external instruction
+candidates and discovered read-only host snippet Markdown sources for that workspace. Low-level file
+watcher events are only hints that schedule deterministic fingerprint scans; source fingerprints,
+validation results, generated build facts, and state commits are authoritative. App-global agent
+settings, profile settings, and managed svvy snippets are DB/product-state-backed writes owned by
+`@svvy/state`; they are not watched as file-backed sources and they do not enter runtime through
+public raw invalidation descriptors. Coordinators never watch generated output such as generated
+`@svvyx/workflows` output, generated `@svvyx/extensions` output, extension build directories,
+workspace `.smithers/node_modules/@svvyx/*` links, or workspace `.svvy/generated` prompt preview
+files as triggers. App-global generated-package refresh must not run once per workspace runtime scope;
+workspace runtime scopes repair only their own package links after the app-global generated-package facts
+commit.
+
+When a source fingerprint changes, runtime reconciles the smallest affected file-backed source state:
+workflow-agent source records are reread and validated by `@svvy/extensions`; runtime schedules
+app-global generated-package refresh, rebuilding `@svvyx/extensions` when extension references
+change and then rebuilding `@svvyx/workflows`; extension source refreshes inventory and generated
+declarations and triggers Workflows validation when needed; external instruction changes refresh
+Extensions inventory rows, generated-context previews, and current aggregate fingerprints. When a
+DB-backed product write commits, `@svvy/state` commits the facts in the same transaction and returns
+internal `afterCommit` descriptors to the runtime-owned publication boundary. Runtime maps those
+committed descriptors to typed read-model invalidation notifications. App/bootstrap sequences,
+buffers, and fans out renderer-safe notifications; consumers refetch read models from state.
+Public runtime facades never accept a raw `StateInvalidationDescriptor`, and state does not publish
+runtime events directly. Existing open surface bindings are not rewritten by invalidation. Invalid or
+unreadable file-backed source is surfaced as diagnostics while the previous ready generated output
+remains active. Existing surfaces become stale only when their bound
+generated-context fingerprint differs from the current fingerprint, and opted-in stale surfaces
+refresh at the next safe pre-dispatch boundary.
 
 The default actor-specific generated context split is:
 
@@ -141,10 +269,16 @@ The default actor-specific generated context split is:
   delegated-thread state, durable thread groups, durable episodes, handler follow-ups, handler
   reactivation, and handler status requests are handled through focused tools instead of prompt
   stuffing
-- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Workflows, Extension Managing, and broad handler/orchestrator controls are not loaded by default
+- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations;
+  in the default adopted workflow-agent parameter record it receives Extension Loading, prompt-only
+  cx and Git guidance, prompt-only Web guidance while network access is enabled, task-local direct
+  tools, and `execute_typescript`, while Smithers, Workflows, Extension Managing, GitHub
+  loaded-by-default behavior, and broad handler/orchestrator controls are not loaded by default
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage overrides remain the source of truth for loaded, available, and unavailable extensions; setting an extension back to the resolved actor/profile default removes the stored override, and Extension Loading is the only fixed always-loaded extension control
-- Smithers execution is not exposed through native `svvy` workflow wrappers. Agents run official Smithers CLI commands through Shell, and those shell commands project as normal command-family `exec_command` work.
+- Smithers execution uses official Smithers CLI commands through Shell; those shell commands project
+  as normal command-family `exec_command` work. `svvyx workflows ...` is reserved for reusable
+  source-library operations and generated `@svvyx/workflows` imports.
 
 ### 3. Handler Threads Are The Delegation Unit
 
@@ -200,85 +334,113 @@ Editable reusable source lives under:
   prompts/
   components/
   workflows/
-  generated/
 ```
 
 The editable source directories are:
 
 - `agents/` for structured `.agent.json` task-agent parameter records
-- `prompts/` for direct MDX prompt assets
+- `prompts/` for reusable workflow MDX prompt source contributors
 - `components/` for direct TypeScript or TSX Smithers components and helpers
 - `workflows/` for direct TSX reusable workflow modules
 
-`generated/` is build output outside the safe writable boundary. Agents and auto-review must treat direct edits to generated Workflows output as invalid. The correct edit path is to change source and rebuild, or to use `svvyx workflows save`.
+Generated package roots are app-owned read-only output roots resolved through
+`GeneratedPackageRootPort`, separate from the Workflows source tree. Agents and auto-review must
+treat direct edits to generated Workflows output as invalid. The correct edit path is to change
+source and rebuild, or to use `svvyx workflows save`. Runtime grants generated-root writes only to
+explicit app-owned generated-package build/link refresh work; approval decisions never infer
+generated-root write access from command-string inspection.
 
-`svvyx workflows build` produces a generated Bun/TypeScript package:
+`svvyx workflows build` requests runtime-owned generated-package refresh for both canonical
+generated packages, `@svvyx/extensions` and `@svvyx/workflows`. Their app-owned generated roots are
+resolved through `GeneratedPackageRootPort`; product code and docs must not derive those roots from
+`~/.config/svvy/workflows`.
 
-```text
-~/.config/svvy/workflows/generated/package/
-```
-
-The generated package name is `@svvy/workflows`. The root public API exports only:
+The generated Workflows source-library package name is `@svvyx/workflows`. Its agent-facing
+generated export surface contains only:
 
 ```ts
-import { Agents, Components, Prompts, Workflows } from "@svvy/workflows";
+import { Agents, Components, Prompts, Workflows } from "@svvyx/workflows";
 ```
 
-Reusable values are accessed through those namespaces, for example `Agents.defaultAgent`, `Agents.reviewerAgent`, `Agents.implementerAgent`, `Agents.explorerAgent`, `Components.SomeComponent`, `Prompts.somePrompt`, and `Workflows.someWorkflow`. `Agents.*` generated agent exports are persisted `TaskAgentParameters` records from `~/.config/svvy/workflows/agents/*.agent.json`. `Agents.defineTaskAgent` and type `Agents.TaskAgentParameters` also live under `Agents.*` so agent usage stays uniform.
+Reusable values are accessed through those namespaces, for example `Agents.defaultAgent`, `Agents.reviewerAgent`, `Agents.implementerAgent`, `Agents.explorerAgent`, `Components.SomeComponent`, `Prompts.somePrompt`, and `Workflows.someWorkflow`. `Agents.*` generated agent exports are persisted `TaskAgentParametersSource` records from `~/.config/svvy/workflows/agents/*.agent.json`. `Agents.defineTaskAgent` and type `Agents.TaskAgentParametersSource` also live under `Agents.*` so agent usage stays uniform.
 
 Smithers task usage passes the generated parameter record into `Agents.defineTaskAgent`, which returns the Smithers-compatible `AgentLike` value intended for `<Task agent={...}>`:
 
 ```tsx
 import { Task } from "smithers-orchestrator";
-import { Agents } from "@svvy/workflows";
+import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
 
-export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+export default (
+  <Task id="review" agent={reviewer}>
+    Review the diff.
+  </Task>
+);
 ```
 
 Direct parameters are also valid when the workflow source owns the task-agent configuration:
 
 ```tsx
 import { Task } from "smithers-orchestrator";
-import { Agents } from "@svvy/workflows";
+import { Agents } from "@svvyx/workflows";
 
 const explorer = Agents.defineTaskAgent({
   id: "explore",
   label: "Explorer",
   provider: "openai",
   model: "gpt-5.4",
-  reasoningEffort: "medium",
+  reasoning: { effort: "medium" },
   instructions: "Explore the requested area and return concise findings.",
 });
 
-export default <Task id="explore" agent={explorer}>Map the relevant code paths.</Task>;
+export default (
+  <Task id="explore" agent={explorer}>
+    Map the relevant code paths.
+  </Task>
+);
 ```
 
 The returned `AgentLike` runs through a narrow authenticated workflow task-agent bridge back into
-the `svvy` app process. Official Smithers CLI workflow code runs in a child process, while `svvy`
-owns pi runtime creation, sandboxing, approvals, generated context binding, and durable workflow
-task-attempt surface state in the app process. The bridge is scoped to one operation,
-`runTaskAgent`, and its callback environment is injected only into handler-thread `exec_command`
-child environments that have an active structured source command id. The injection is not based on
-Smithers command-string parsing, binary shadowing, or a `svvy` workflow wrapper. It carries an
-unguessable app-owned auth token plus the local bridge endpoint, the owning `workspaceSessionId`,
-and the source `exec_command` id as `sourceCommandId`.
-`runTaskAgent` accepts the task-agent parameters, Smithers task context/run/node/iteration/attempt
-identity, prompt/messages, root directory, and explicit workspace/session binding. It returns the
-Smithers-compatible result `{ text, usage? }` and may include `output` only when the app runtime
-supplies structured task output. Multiple task agents may call the bridge concurrently; each call is
-bound to one workflow-task-attempt surface. The bridge exposes no arbitrary app RPC, shell,
-settings, orchestrator, handler-thread, or workflow-control operations and does not duplicate
-Smithers workflow/run state.
+the `svvy` app process. Official Smithers CLI workflow code runs in a child process and Smithers
+continues to own workflow graph execution, task scheduling, and workflow/run state. App/bootstrap
+binds the local command-scoped loopback route for `POST /runTaskAgent`; that transport binding is not the
+generated-package runtime-service adapter. `@svvy/runtime` owns the authenticated `runTaskAgent`
+bridge operation semantics: decoded token-lineage authorization,
+workflow-task-attempt surface creation, queueing, command facts, recovery, notifications, and pi
+turn orchestration. `@svvy/state` owns durable command facts, task-attempt surface facts, recovery
+facts, read-model projections, and CLI-observed Smithers facts. `@svvy/pi-adapter` owns the pi
+session creation and turn adaptation used by each task-agent call. Sandbox policy and approval facts
+flow through the same runtime/state command path as other handler-thread commands.
 
-When the app opens or prepares a workspace with `.smithers/`, it idempotently links the generated package into:
+The bridge is scoped to one operation, `runTaskAgent`, and its command-scoped bridge environment is
+injected only into handler-thread `exec_command` child environments that have an active structured
+source command id. The injection is not based on Smithers command-string parsing, binary shadowing,
+or a user-facing `svvy` command. It carries an unguessable app-owned auth token plus the local bridge
+endpoint, the owning `workspaceSessionId`, and the source `exec_command` id as `sourceCommandId`.
+Generated `@svvyx/workflows` code sends `RunTaskAgentSourceInput`, a plain source DTO carrying the
+task-agent parameters, required Smithers task-attempt identity
+`{ runId, nodeId, iteration, attempt }`, optional observed Smithers context `{ run, node, rootDir }`,
+exactly one prompt source as either a prompt string or a non-empty user/assistant message list,
+`workspaceSessionId`, and `sourceCommandId`. Runtime validates that source DTO into the branded
+`RunTaskAgentInput` before token authorization, durable idempotency, state writes, command facts, or
+pi orchestration. It returns the Smithers-compatible result `{ text, usage? }` and may include
+`output` only when the app runtime supplies structured task output. Multiple task agents may call
+the bridge concurrently; each call is bound to one workflow-task-attempt surface. The bridge exposes
+no arbitrary app RPC, shell, settings, orchestrator, handler-thread, or workflow-control operations
+and does not duplicate Smithers workflow/run state.
+
+When the app opens or prepares a workspace with `.smithers/`, it idempotently links both generated
+packages into the workspace-local Smithers package-resolution root:
 
 ```text
-<workspace>/.smithers/node_modules/@svvy/workflows
+<workspace>/.smithers/node_modules/@svvyx/workflows
+<workspace>/.smithers/node_modules/@svvyx/extensions
 ```
 
-This link is internal package-resolution plumbing, not a user-facing command and not an editable workspace copy. The app must not rely on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or a source-checkout-relative package path.
+These links are internal package-resolution plumbing, not user-facing commands and not editable
+workspace copies. The app must not rely on ambient global package resolution, `NODE_PATH`, parent
+repository `node_modules`, or a source-checkout-relative package path.
 
 The Workflows extension is the only app-owned command surface for this source library:
 
@@ -289,13 +451,24 @@ svvyx workflows build --json
 svvyx workflows models list --json
 ```
 
-It is not a Smithers runner. There is no `install`, `retrieve`, `promote`, kind-specific list subcommand, or product workflow wrapper command.
+It is not a Smithers runner. There is no `install`, `retrieve`, `promote`, kind-specific list
+subcommand, or product command for Smithers workflow execution.
 
 `svvyx workflows list` returns mechanically available export identity and paths only. It must not infer titles, summaries, usefulness, or recommendations.
 
-`svvyx workflows save` copies or extracts reusable source into `~/.config/svvy/workflows/`. It fails if it would overwrite an existing source item unless `--overwrite` is present. A successful save immediately runs the full build pipeline.
+`svvyx workflows save` copies or extracts reusable source into `~/.config/svvy/workflows/`. It
+fails if it would overwrite an existing source item unless `--overwrite` is present. A successful
+save returns a model-facing command result; the handler result also carries one ordered
+`ExtensionRuntimeOperation` wrapping a `generated_packages.refresh` `RuntimeEffectRequest`. Runtime
+applies that operation in the generated-package lane before the saved item is import-ready.
 
-`svvyx workflows build` first builds and validates Extensions, generates or refreshes `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension usage overrides, generates `@svvy/workflows`, and refreshes workspace package links.
+`svvyx workflows build` returns a model-facing command result plus one ordered
+`ExtensionRuntimeOperation` wrapping `generated_packages.refresh` for both canonical packages.
+`@svvy/runtime` applies that closed request in the runtime-owned generated-package refresh lane,
+calls `Extensions.generatedPackages.refresh(...)`, records generated-package facts through state
+ports after atomic output replacement, and only then schedules workspace-link repair for acquired
+workspaces. The Workflows extension command itself does not build generated roots, record state
+facts, apply workspace links, or publish invalidations.
 
 `svvyx workflows models list --json` returns provider/model/reasoning choices from the same pi-normalized provider metadata and usable auth state used by the Agents pane. Expired OAuth and OAuth whose refresh failed remains visible as connected credential state but is not usable model auth. Build-time validation must fail explicitly when an agent parameter record names a provider/model/reasoning combination or extension reference that is not available under that registry. It must not silently clamp, rewrite, or defer those errors to runtime.
 
@@ -320,7 +493,7 @@ Direct tools cover:
 When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
 
 The prompt-only `cx` extension is the preferred code-navigation guidance when the language is
-supported. It does not add native `cx_*` tools, `svvyx cx`, or generated TypeScript clients. Agents
+supported. It does not add native `cx_*` tools, `svvyx cx`, or generated TypeScript facades. Agents
 run the official CLI through `exec_command`. The normal inspection ladder is:
 
 ```text
@@ -341,7 +514,7 @@ sandbox policy unless `approvalMode` is `full-access`.
 The Shell and `execute_typescript` native-tool instructions keep generic runtime guidance separate
 from Incur-specific guidance: Shell has one base command-execution instruction file and one separate
 Incur-backed `svvyx` CLI usage file, while `execute_typescript` has one base TypeScript execution
-instruction file and one separate Incur generated-client usage file.
+instruction file and one separate Incur facade usage file.
 
 That includes:
 
@@ -350,30 +523,32 @@ That includes:
 - filtering and aggregating already available structured output
 - producing durable artifact evidence from composed results
 
-Inside `execute_typescript`, the runtime exposes an actor-specific generated `extensions` object.
+Inside `execute_typescript`, the runtime exposes an actor-specific injected `extensions` object.
 
-`extensions` contains only loaded TypeScript-enabled builtin clients that are callable by the
-current actor, such as Artifacts and Workflows. User `svvyx` generated clients are hidden and
-unavailable until sandboxed generated-client execution exists. If the actor has loaded builtin
-clients `artifacts` and `workflows`, the generated declarations and instructions include only
-`extensions.artifacts` and `extensions.workflows` plus those clients' command types and
+`extensions` contains only loaded TypeScript-enabled builtin app-owned generated TypeScript facades
+that are callable by the current actor, such as Artifacts and Workflows. User `svvyx` extensions do
+not contribute `execute_typescript` facades. If the actor has loaded builtin facades
+`artifacts` and `workflows`, the generated declarations and instructions include only
+`extensions.artifacts` and `extensions.workflows` plus those facades' command types and
 command-specific guidance. There is no global `svvy` client and no broad injected `api` helper
 surface.
 
-Generated extension clients use the Incur-compatible shape
-`extensions.<extensionId>.run(commandId, input)`. Agents may import public types and errors from
-`incur/client`, including `Client.ClientError`, inside snippets. The emitted generated clients are
-real TypeScript clients backed by app-owned generated packages; they are not rewritten into shell
-`svvyx` calls in docs or prompts, and they do not expose local Incur actions or current-build
-internals to agent-authored snippets.
+Injected extension facades use the Incur-compatible shape
+`extensions.<extensionId>.run(extensionCommandId, input)`. The `extensionCommandId` is the
+extension's Incur command path, not a durable product `CommandId`. Agents may import public types
+and errors from `incur/client`, including `Client.ClientError`, inside snippets. These facades are
+generated TypeScript facades backed by `@svvy/extensions` handlers and `@svvy/runtime` command
+recording. They are not package imports, not generated `@svvyx/extensions` references, not rewritten
+into shell `svvyx` calls in docs or prompts, and they do not expose local Incur actions or
+current-build internals to agent-authored snippets.
 
-The default orchestrator `execute_typescript` extension set does not include the Workflows generated client,
+The default orchestrator `execute_typescript` extension set does not include the Workflows generated TypeScript facade,
 Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the
 orchestrator normally goes through `thread_start` into a handler thread.
 
 The default workflow task-agent `execute_typescript` extension set includes only task-local loaded
-extension clients. It does not include Workflows source-library clients, Smithers runtime control, or
-handler/orchestrator control clients.
+extension facades. It does not include Workflows source-library facades, Smithers runtime control, or
+handler/orchestrator control facades.
 
 File edits use `apply_patch`. The patch target set is validated against the managed filesystem policy
 before file effects begin, and the file effects must run through the same Codex-derived sandbox-aware
@@ -381,8 +556,9 @@ filesystem execution model as Shell subprocesses rather than relying on TypeScri
 unsandboxed host patch process. The policy includes read-only subpaths, protected metadata carveouts,
 generated-output boundaries, and the explicit `full-access` sandbox omission.
 
-Every submitted snippet is persisted as a file-backed artifact in the configured artifact directory,
-and the runtime must compile or typecheck the snippet before execution.
+Every submitted snippet is persisted as an artifact file in the configured artifact directory with
+DB-backed artifact metadata and command facts in `@svvy/state`, and the runtime must compile or
+typecheck the snippet before execution.
 
 Structured diagnostics must be produced, and invalid snippets must not run.
 
@@ -390,9 +566,9 @@ The top-level `execute_typescript` tool call goes through the same approval-boun
 approval-gated native actions before the snippet runtime starts, and that approved runtime is then
 constrained by the same managed filesystem and network sandbox policy as other direct execution
 surfaces unless full-access policy omits sandboxing. TypeScript code may assemble execution policy,
-launch approved and sandboxed runtime work, validate product contracts, call generated Incur clients,
+launch approved and sandboxed runtime work, validate product contracts, call injected TypeScript facades,
 and project results. It must not be described as enforcing filesystem or network sandbox policy with
-TypeScript-only validation, cleanup, or compensation substitutes. Generated extension-client calls
+TypeScript-only validation, cleanup, or compensation substitutes. Extension facade calls
 inside an approved snippet are recorded as child commands and enforce extension readiness, env
 injection, redaction, product-state validation, and failure semantics, but they are not the first
 approval gate for arbitrary TypeScript execution.
@@ -402,7 +578,7 @@ sandbox policy constrains filesystem and network effects after execution begins.
 
 Live rendering for `execute_typescript` follows the shared tool projection model: the source argument
 may stream into a code preview, the persisted source artifact and typecheck diagnostics are runtime
-progress, generated-client calls appear as nested child commands, and the final parent command facts
+progress, extension facade calls appear as nested child commands, and the final parent command facts
 remain authoritative.
 
 ### 7. Native Control Tools Stay Small And Explicit
@@ -438,17 +614,20 @@ The concrete thread-control and thread-inspection APIs are defined in
 actor's loaded and available extension records and never exposes unavailable extension details,
 secret values, generated context fingerprints, aggregate cache keys, or global profile usage state.
 
-`load_extension` is a native control tool. It loads an available, ready extension into the current
-actor session, refreshes the same-turn tool declarations, loaded `svvyx` command guidance,
-generated TypeScript declarations, and generated agent context binding, and records an
-`Agent context updated` product event. It does not build extensions, request dependency approval,
-configure env values, or mutate agent profile defaults.
+`load_extension` is a native control tool. It records that an available, ready extension is loaded
+for the current actor session and schedules the next safe pre-dispatch refresh of tool declarations,
+loaded `svvyx` command guidance, generated TypeScript declarations, and generated agent context
+binding. The current model turn records request/fact outcomes, but active pi tool declarations do
+not mutate mid-turn. The refresh commits generated-context binding facts through state ports and
+publishes read-model notifications before the next prompt-bearing dispatch that uses the updated
+binding. It does not build extensions, request
+dependency approval, configure env values, or mutate agent profile defaults.
 
 Prompt-only Web guidance is different from a native Web tool surface.
 
 The builtin Web extension is a loaded by default prompt-only extension that teaches agents to use the
 official TinyFish CLI through ordinary shell commands. It does not add `web_search`, `web_fetch`,
-`svvyx web`, generated Web TypeScript clients, or app-owned Web Provider settings. TinyFish owns CLI
+`svvyx web`, generated Web TypeScript facades, or app-owned Web Provider settings. TinyFish owns CLI
 install, auth, search, fetch, browser-backed research, and command output behavior. `svvy` only owns
 whether the Web instructions are included in the actor's generated agent context.
 
@@ -469,9 +648,14 @@ and output are defined in `docs/specs/extension/thread_managing.extension.spec.m
 
 Smithers and Workflows are different from native control tools.
 
-Smithers is prompt-only official CLI guidance. It adds no native tools and no generated TypeScript client. Agents use Smithers by running official Smithers CLI commands through Shell as ordinary `exec_command` command-family work.
+Smithers is prompt-only official CLI guidance. It adds no native tools and no generated
+`execute_typescript` facade. Agents use Smithers by running official Smithers CLI commands through
+Shell as ordinary `exec_command` command-family work.
 
-Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. Agents access it by running `svvyx workflows ...` through Shell as ordinary `exec_command` command-family work, or through loaded generated `execute_typescript` clients when available. It exposes `list`, `save`, `build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
+Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. Agents access
+it by running `svvyx workflows ...` through Shell as ordinary `exec_command` command-family work, or
+through loaded `execute_typescript` TypeScript facades when available. It exposes `list`, `save`,
+`build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
 
 The default orchestrator context should know that workflow action normally belongs in a delegated handler thread, but ordinary orchestrator profiles do not load by default Smithers or Workflows. The default handler context knows that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as product behavior.
 
@@ -618,9 +802,9 @@ In practice that means:
 - `svvyx` is a real app-owned CLI that uses Incur; agent Shell usage of `svvyx ...` happens only as
   ordinary `exec_command` input to that CLI and projects through the same Shell command model as
   other subprocess work
-- `execute_typescript` is a TypeScript composition tool; builtin Artifacts and Workflows generated
-  clients are available through typed TypeScript clients, user `svvyx` generated clients remain
-  unavailable until sandboxed generated-client execution exists, and the whole TypeScript runtime is
+- `execute_typescript` is a TypeScript composition tool; builtin Artifacts and Workflows injected
+  generated TypeScript extension facades are available through typed declarations, user `svvyx`
+  extensions do not contribute `execute_typescript` facades, and the whole TypeScript runtime is
   launched through the same approval and sandbox execution lane as other direct execution surfaces
 - macOS managed sandboxing uses a packaged, app-owned Codex-derived native helper that applies
   Codex filesystem policy semantics through `/usr/bin/sandbox-exec`, including `Read`, `Write`, and
@@ -634,13 +818,14 @@ In practice that means:
 - extension package dependency installation remains an explicit user-confirmation flow because it
   can download and execute third-party code
 - extension-declared CLI install or update commands are direct user-initiated app actions when the
-  user clicks Install or Update in the Extensions UI; the app backend runs the resolved command for
-  that exact requirement, streams stdout/stderr into a closeable inline output panel under the
-  clicked requirement, shows pending/success/failure feedback, and refreshes readiness afterward.
-  When an agent chooses to install or update a CLI as part of delegated setup, that remains ordinary
-  Shell work governed by the active execution policy
+  user clicks Install or Update in the Extensions UI; `@svvy/desktop` submits the action through the
+  runtime facade, `@svvy/extensions` validates the immutable command plan, and `@svvy/runtime` runs
+  the tracked command, streams stdout/stderr into a closeable inline output panel under the clicked
+  requirement, records command facts, and refreshes readiness afterward. When an agent chooses to
+  install or update a CLI as part of delegated setup, that remains ordinary Shell work governed by
+  the active execution policy
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
-- delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals remain Smithers workflow state
+- delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals invoked through official CLI commands are persisted as CLI-observed product-visible Smithers facts linked to commands and workflow task-attempt surfaces in `@svvy/state`
 
 ## Product Ownership Boundaries
 
@@ -687,7 +872,6 @@ It must not replace pi with a second agent shell.
 Smithers owns:
 
 - workflow execution invoked by agents through official Smithers CLI commands
-- durable multi-step workflow state inside Smithers
 - retries, loops, branches, and internal workflow state
 - worktree-isolated execution when delegated work requires it
 
@@ -711,11 +895,11 @@ It includes:
 - available worktrees
 - discovered `AGENTS.md` and `CLAUDE.md` external instruction sources
 
-The desktop shell presents open workspaces as compact tabs inside the app chrome, integrated with the sidebar and workspace control row rather than as a separate top toolbar. Workspace tabs are left-aligned at the start of the main workspace chrome, scroll horizontally when the open tab set exceeds the available space, and can be dragged to reorder them. Workspace tab order is durable workspace-shell chrome state and restores across app restart. A workspace tab is a visual selector for one workspace runtime and one active layout slot id. The canonical workspace runtime, durable workspace state, and durable workspace layouts belong to the workspace context, not to the visual tab: the session catalog, path index, app logs, live surface registry, pi sessions, structured state, prompt queues, handler threads, workspace read models, saved Workflows generated-state visibility, and initialized `A`/`B`/`C` layout snapshots are shared by duplicate tabs for the same canonical cwd. Duplicate same-cwd tabs may choose different active layout ids, but they do not own separate durable layout documents or separate panel-local restore state for the same `(workspaceId, layoutId)`. Opening the app with no restored user workspace tabs creates a real svvy-owned default workspace tab, so normal chat, Context, Logs, command palette, and sessions remain usable before a user chooses a repository. The default workspace uses the same durable layout slots as any other workspace; its only layout exception is that an empty selected default-workspace slot is seeded with exactly one `Open Workspace` pane instead of staying blank. `Open Workspace` retargets the current visual tab to the chosen user workspace, `New Tab` creates another default workspace tab using the default workspace's selected durable layout slot, and `Open Workspace in New Tab` creates a new visual tab for the chosen user workspace. Opening an already-open repository in a new tab creates a separate visual workspace tab for the same cwd instead of focusing the existing tab, without creating an independent workspace runtime, independent session catalog, isolated durable workspace state, or another durable layout owner.
+The desktop shell presents open workspaces as compact tabs inside the app chrome, integrated with the sidebar and workspace control row rather than as a separate top toolbar. Workspace tabs are left-aligned at the start of the main workspace chrome, scroll horizontally when the open tab set exceeds the available space, and can be dragged to reorder them. Workspace tab order is durable workspace-shell chrome state and restores across app restart. A workspace tab is a visual selector for one workspace runtime scope and one active layout slot id. The canonical workspace runtime scope, durable workspace state, and durable workspace layouts belong to the workspace context, not to the visual tab: the session catalog, path index, app logs, live surface registry, pi sessions, structured state, prompt queues, handler threads, workspace read models, generated Workflows export read models projected from generated-package facts, and initialized `A`/`B`/`C` layout snapshots are shared by duplicate tabs for the same canonical cwd. Duplicate same-cwd tabs may choose different active layout ids, but they do not own separate durable layout documents or separate panel-local restore state for the same `(workspaceId, layoutId)`. Opening the app with no restored user workspace tabs creates a real svvy-owned default workspace tab, so normal chat, Logs, Agents, Extensions, Workflows, command palette, and sessions remain usable before a user chooses a repository. The default workspace uses the same durable layout slots as any other workspace; its only layout exception is that an empty selected default-workspace slot is seeded with exactly one `Open Workspace` pane instead of staying blank. `Open Workspace` retargets the current visual tab to the chosen user workspace, `New Tab` creates another default workspace tab using the default workspace's selected durable layout slot, and `Open Workspace in New Tab` creates a new visual tab for the chosen user workspace. Opening an already-open repository in a new tab creates a separate visual workspace tab for the same cwd instead of focusing the existing tab, without creating an independent workspace runtime scope, independent session catalog, isolated durable workspace state, or another durable layout owner.
 
-Each workspace tab summarizes that workspace's session-level running, unread, waiting, and error counts from the shared durable workspace read models for its cwd. Count badges render only when their value is greater than zero, stay in the stable running, unread, waiting, error order, use status color instead of icons, and expose title or tooltip context on hover. Workspace open and close controls are compact icon controls with accessible labels. Workspace-scoped backend requests and renderer sync events carry an explicit `workspaceId` for the shared workspace runtime and, when layout state is involved, an explicit `layoutId` chosen by the tab. The backend must not route user work through a process-global active cwd, treat cwd alone as the runtime id, or treat duplicate same-cwd tabs as separate durable workspaces or separate durable layout owners.
+Each workspace tab summarizes that workspace's session-level running, unread, waiting, and error counts from the shared durable workspace read models for its cwd. Count badges render only when their value is greater than zero, stay in the stable running, unread, waiting, error order, use status color instead of icons, and expose title or tooltip context on hover. Workspace open and close controls are compact icon controls with accessible labels. Workspace-scoped runtime/state facade requests and typed notifications carry an explicit `workspaceId` for the shared workspace runtime scope and, when layout state is involved, an explicit `layoutId` chosen by the tab, except for APIs whose target, workspace session id, surface id, command id, or queue id already identifies the workspace and is validated through `@svvy/state` before mutation. `@svvy/runtime` must not route user work through a process-global active cwd, treat cwd alone as the runtime id, or treat duplicate same-cwd tabs as separate durable workspaces or separate durable layout owners.
 
-The sidebar footer shows the current checked-out branch with a branch icon when the workspace is inside a git repository. That branch affordance opens a compact local-branch menu and switches branches through a workspace-scoped Bun RPC using normal git semantics. If the workspace is not a git repository or no branch is checked out, the footer falls back to the workspace label with the workspace icon and does not expose a branch switcher.
+The sidebar footer shows the current checked-out branch with a branch icon when the workspace is inside a git repository. That branch affordance opens a compact local-branch menu and switches branches through a workspace-scoped runtime request using normal git semantics. If the workspace is not a git repository or no branch is checked out, the footer falls back to the workspace label with the workspace icon and does not expose a branch switcher.
 
 Each workspace has three fixed durable layout slots: `A`, `B`, and `C`, keyed by `(workspaceId, layoutId)`. These are not user-named layouts. The slots render as compact controls pinned at the far right of the same chrome row as the workspace tabs and status controls. Selecting a layout slot changes the active layout id on the current tab and swaps to that workspace's durable Dockview layout snapshot for the selected slot. Empty slots remain selectable and render muted, not disabled, so the user can start a new layout from scratch. In the default workspace only, opening an empty selected slot creates one `Open Workspace` pane. Duplicate same-cwd tabs share the same three durable layout slots while each tab records only its selected active layout id; changing slot `A` in one tab changes the same `(workspaceId, "A")` layout that another tab would see when it selects `A`.
 
@@ -761,7 +945,7 @@ The product carries four different identifiers and they are not interchangeable:
 
 Rules:
 
-- backend RPC calls and backend-to-renderer surface payloads must carry an explicit surface target rather than overloading `session.id`
+- runtime facade calls and runtime-to-renderer surface payloads must carry an explicit surface target rather than overloading `session.id`
 - `session.id` inside session summaries means `workspaceSessionId`
 - `workspaceSessionId` and `surfacePiSessionId` are distinct contract fields even when two values happen to match
 - `panelId` must never be used as a session id, surface id, or thread id
@@ -772,7 +956,7 @@ Each interactive pi surface is managed as its own live runtime object keyed by `
 
 That live runtime owns:
 
-- the live transcript snapshot
+- scoped live surface resources
 - streaming state
 - provider, model, and reasoning settings
 - the resolved system prompt
@@ -780,14 +964,16 @@ That live runtime owns:
 - one prompt lock for that surface
 - a surface-local durable queue manager for prompt-bearing and control work, with blocked follow-ups waiting for the prompt lock to release
 
-Live surface runtime is separate from both durable workspace state and Dockview layout state.
+Durable messages, transcript read models, command facts, and surface records live in `@svvy/state`.
+Desktop may apply transient ordered stream patches, but live surface runtime scope is separate from both
+durable workspace state and Dockview layout state.
 
-Streaming state belongs to the live surface runtime, not to a Dockview panel or renderer prompt
+Streaming state belongs to the live surface runtime scope, not to a Dockview panel or renderer prompt
 request. A surface may keep streaming with zero, one, or many attached panels, and a panel opened
 mid-stream renders the committed transcript, pending user message, and current assistant stream from
-the surface snapshot.
+the surface read-model sync.
 
-Queued surface work is structured product state, not committed transcript history until a prompt-bearing item is delivered as the next real user message for the same `surfacePiSessionId`. Backend queue acceptance is the only ordinary composer send boundary: the renderer serializes composer-owned reactive state into plain submission data, then leaves renderer composer state and prompt history unchanged until the backend validates the target, durably creates the queued user message, clears the durable composer draft, and returns the accepted surface snapshot. Backend acceptance also invalidates any older delayed renderer draft persistence so stale pre-send text cannot be written back after the backend clears the draft. If backend acceptance fails, the renderer keeps the draft and writes no prompt history. If a post-acceptance local prompt-history refresh fails, the send remains accepted and the failure is logged as a separate non-blocking renderer refresh failure. If the user submits from a composer while the target surface is idle, `svvy` still durably enqueues the message, but the queue manager atomically claims it before publishing renderer-visible queued state, so the first visible state is pending or active work. If the target surface is already running, `svvy` queues that message for the same surface, keeps the active turn undisturbed, and starts the next normal turn only after the current turn settles or is cancelled. Ordinary composer submit is queue-managed delivery; the explicit queued-row `Steer` action promotes a durable row ahead of ordinary queued user messages for the next safe delivery boundary. It does not inject a pi-only steering fast path. A steered row remains visible in a locked state until the queue runner claims it or `svvy` restores it after rejection. Thread report notifications and report requests use the same surface queue so they are ordered with user messages. Generated-context refresh is not a visible queue row: before dispatching prompt-bearing work, the backend compares the surface's bound fingerprint with the current fingerprint and refreshes first when the surface's checked-by-default `update before next turn` intent is enabled. Queued work survives panel changes and duplicated panel views because it belongs to the surface, not to a Dockview panel.
+Queued surface work is structured product state, not committed transcript history until a prompt-bearing item is delivered as the next real user message for the same `surfacePiSessionId`. Runtime queue acceptance is the only ordinary composer send boundary: the renderer submits target surface, one new user message, delivery intent, and optional client metadata, then leaves renderer composer state and prompt history unchanged until `@svvy/runtime` validates the target, durably creates the queued user message through `@svvy/state`, clears the durable composer draft, and publishes a typed notification. The renderer clears visible composer state after refetching the authoritative composer and queue read models. Runtime acceptance also invalidates any older delayed renderer draft persistence so stale pre-send text cannot be written back after runtime clears the draft. If runtime acceptance fails, the renderer keeps the draft and writes no prompt history. If a post-acceptance local prompt-history refresh fails, the send remains accepted and the failure is logged as a separate non-blocking renderer refresh failure. If the user submits from a composer while the target surface is idle, `svvy` still durably enqueues the message, publishes after commit, and wakes the queue dispatcher; insertion and claim are separate committed transitions, and the UI learns whether the row is queued, dispatching, pending, or active by refetching authoritative read models after notifications. If the target surface is already running, `svvy` queues that message for the same surface, keeps the active turn undisturbed, and starts the next normal turn only after the current turn settles or is cancelled. Ordinary composer submit is queue-managed delivery; the explicit queued-row `Steer` action promotes a durable row ahead of ordinary queued user messages for the next safe delivery boundary. It does not inject a pi-only steering fast path. A steered row remains visible in a locked state until the queue runner claims it, the user removes or restores it before delivery, or delivery fails into queue-row-local failed state. Thread report notifications and report requests use the same surface queue so they are ordered with user messages. Generated-context refresh is not a visible queue row: before dispatching prompt-bearing work, `@svvy/runtime` compares the surface's bound fingerprint with the current fingerprint and refreshes first when the surface's checked-by-default `update before next turn` intent is enabled. Queued work survives panel changes and duplicated panel views because it belongs to the surface, not to a Dockview panel.
 
 ### Dockview Panel And Layout State
 
@@ -803,7 +989,7 @@ It owns:
 
 Dockview panels are not live runtimes.
 
-If two Dockview panels show the same surface, they share one underlying live surface runtime.
+If two Dockview panels show the same surface, they share one underlying live surface runtime scope.
 
 Users may split, dock, tab, drag, resize, close, float, and pop out panels as their workspace requires. Dockview owns the layout interaction mechanics, including drag/drop overlays and splitter behavior. The renderer is responsible for applying svvy product policy, practical minimum panel sizes, and explicit close behavior around Dockview events.
 
@@ -848,13 +1034,26 @@ Available extension ids describe reusable product knowledge loaded into actor pr
 
 The current handler objective, current `threadGroupId`, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, filters those rows by `threadGroupId` when it needs a related group, requests handler updates through `thread_request_report`, sends follow-ups through `thread_followup`, and reads exact durable episode bodies through `thread_episodes`. Handlers can inspect their current group and sibling objective summaries through `thread_group`, and can read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, command details, or Smithers internals; handlers use Shell and artifacts when execution details matter.
 
-Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through builtin `base-*` instruction extensions rather than stored as profile-local prompt blobs. Orchestrator and handler-thread profiles have no custom instruction field; workflow-agent profile instructions are the only profile-local instruction text and are prepended before that workflow task agent's generated extension context. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
+Orchestrator profiles and the `threadHandler` profile are app-global DB/product-state records
+persisted by `@svvy/state`. They describe the provider, model, reasoning level, extension usage
+selections, and callable policy used by pi-backed product agents. Base role instructions are builtin
+`@svvy/extensions` MDX/source instruction contributors selected by profile usage state rather than profile-local
+prompt blobs. Orchestrator and handler-thread profiles have no custom instruction field.
+Workflow-agent rows are app-global Agents-pane records whose editable provider, model, reasoning,
+instructions, and extension-usage source of truth is the corresponding
+`~/.config/svvy/workflows/agents/*.agent.json` file. `@svvy/state` stores only source-version,
+fingerprint, diagnostics, generated metadata, links, and read-model/index facts for those rows.
+Workflow-agent row instructions are the only workflow-agent-local instruction text and are prepended
+before that workflow task agent's generated extension context. The Agents pane appears in the
+sidebar between Logs and Extensions and renders/edits orchestrator profiles, the special
+handler-thread profile, and workflow-agent parameter records through state/runtime facades rather than
+burying model behavior in general settings.
 
 The app owns these app-wide agent profile settings:
 
 - the default orchestrator profile for normal New orchestrator creation; it is locked, non-draggable, non-deletable, and always present in the picker
 - `threadHandler` for delegated handler-thread surfaces created by `thread_start`
-- workflow-agent profiles for Smithers task-agent attempts and generated workflow-agent components
+- workflow-agent parameter records for Smithers task-agent attempts and generated workflow-agent components
 
 The app also owns internal title-naming settings for one-shot top-level session and handler-thread title generation, seeded to `openai-codex`/`gpt-5.4-mini` with low reasoning effort. Those settings are not exposed as a special Agents-pane profile.
 
@@ -867,17 +1066,26 @@ creation-time `overrides` as a partial map over that profile's extension usage s
 Extensions remain separate product knowledge and capability records; they do not carry model,
 reasoning, or prompt-selection settings.
 
-The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for durable session artifact files. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. OAuth credential rows expose exact health from stored expiry and refresh results: healthy OAuth is usable until its provider-supplied expiry, expired OAuth attempts refresh at auth-summary and send boundaries, and refresh failure is stored as explicit connected-but-unusable state that requires reconnect before the provider can appear as usable model auth or enter pi runtime auth storage. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Workflow-agent instruction textarea edits autosave after a short debounce and show their unsaved, saving, saved, or failed state as a small icon inside the textarea instead of exposing Save or Reset buttons; the saved textarea source preserves user-entered whitespace, and trimming happens only when that source is composed into injected prompt text. Agent model selection is a constrained picker over models from currently usable providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model, reasoning, and extension usage changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
+The Agents pane edits app-global agent profiles, including orchestrator profiles and `threadHandler`, plus workflow-agent parameter records. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for durable session artifact files. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. OAuth credential rows expose exact health from stored expiry and refresh results: healthy OAuth is usable until its provider-supplied expiry, expired OAuth attempts refresh at auth-summary and send boundaries, and refresh failure is stored as explicit connected-but-unusable state that requires reconnect before the provider can appear as usable model auth or enter pi runtime auth storage. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while `@svvy/state` validation and normalization remain authoritative. Agent profile and workflow-agent parameter changes save directly from the setting control rather than through a separate save button. Workflow-agent instruction textarea edits autosave after a short debounce and show their unsaved, saving, saved, or failed state as a small icon inside the textarea instead of exposing Save or Reset buttons; the saved textarea source preserves user-entered whitespace, and trimming happens only when that source is composed into injected prompt text. Agent model selection is a constrained picker over models from currently usable providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model, reasoning, and extension usage changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
-Workflow-agent profiles are app-global Agents-pane profiles backed by the same structured source
-records generated as `Agents.*` exports in `@svvy/workflows`. UI edits and agent saves both write
-that source shape and trigger a Workflows build.
+Workflow-agent parameter records are app-global Agents-pane rows backed by the same structured file-backed
+source records generated as `Agents.*` exports in `@svvyx/workflows`. UI edits submit versioned
+workflow-agent source edit requests through the app-bootstrap runtime facade. `@svvy/runtime` uses
+the extension-owned source contract, asks `@svvy/extensions` to validate and write the source
+through source services, and commits source-version, fingerprint, and diagnostic facts through
+runtime-facing `@svvy/state` ports. Runtime then schedules generated-package refresh;
+generated-package facts commit only after that refresh succeeds. Panes refresh only from committed
+`@svvy/state` read models and generated-package facts.
 
 ### Agents And Extensions
 
-Agents and Extensions are the app-owned prompt and capability configuration surface for orchestrator, handler-thread, and workflow task-agent prompts.
+Agents and Extensions are the app-owned prompt and capability configuration surfaces for
+orchestrator, handler-thread, and workflow task-agent prompts. `@svvy/state` owns persisted profile
+rows, `@svvy/extensions` resolves profile extension usage/order into generated actor context, and
+`@svvy/desktop` renders the editor controls through the runtime facade plus state read/command
+facades injected by app bootstrap.
 
-Agents own:
+Agent profile records contain:
 
 - profile display name
 - actor kind
@@ -902,20 +1110,24 @@ Extensions own:
   instruction files
 - minimal available instructions
 - native tool, svvyx, or instructions-only interface
-- generated TypeScript client declarations for emitted `svvyx` clients, controlled by the
-  extension's TypeScript API setting and limited to generated-client execution that is safe for
+- generated `execute_typescript` facade declarations for emitted `svvyx` facades, controlled by the
+  extension's TypeScript API setting and limited to facade execution that is safe for
   the target actor
 - env and dependency readiness
-- backend-derived customized tags for builtin and user extension source records plus inventory filters for all records,
+- `@svvy/extensions`-derived customized tags for builtin and user extension source records plus inventory filters for all records,
   prompt-only records, native tools, and svvyx extensions
 - category-appropriate reset/delete behavior
 - read-only usage views showing which agents use the extension
 
-Artifacts is a builtin `svvyx` extension with generated TypeScript clients. Its model-callable API is
+Artifacts is a builtin `svvyx` extension with generated TypeScript facade declarations. Its model-callable API is
 the `svvyx artifacts ...` command family, with `create`, `inspect`, `list`, `open`, and `delete`
 commands defined in `docs/specs/extension/artifacts.extension.spec.md`.
 
-External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the Extensions pane as a distinct read-only category, use the same per-agent usage states as other extensions, show path/content/order in generated-context previews, and provide an open-external-file action. Resetting an external instruction record changes only `svvy` usage/settings metadata; it never overwrites the external file.
+External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the
+Extensions pane as a distinct read-only category, use enabled/disabled plus selected actor kinds
+rather than normal extension loaded/available/unavailable usage states, show path/content/order in
+generated-context previews, and provide an open-external-file action. Resetting an external
+instruction record changes only `svvy` settings metadata; it never overwrites the external file.
 
 `unavailable` is the configured Off state for an extension in a resolved actor/profile binding, not
 a hard actor boundary by itself. Configurability is not blocked merely because an extension's default
@@ -923,9 +1135,9 @@ state is `unavailable`; normal usage controls may move configurable extensions b
 available, and unavailable for a target actor/profile. Extension Loading remains the fixed
 always-loaded control.
 
-Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, emitted generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
+Generated agent context bindings store loaded extension ids, available extension ids, external instruction identity/order/read-status metadata, native tool declarations, loaded svvyx guidance, emitted generated `execute_typescript` facade declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts. External instruction file bodies remain file-backed inputs used during generated context composition and may be shown through the external-instruction inventory/read-model surface; prompt execution context and subprocess environment context carry only metadata and never duplicate those file bodies.
 
-New top-level sessions, handler threads, and workflow task agents always use the latest context-ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. A surface is stale only when its bound fingerprint differs from the current fingerprint. Stale surfaces show “Extensions changed and will require system prompt to refresh.” with a checked-by-default durable checkbox labelled “Update before next turn.” Before any prompt-bearing item dispatches, the backend recomputes the current fingerprint; if it still differs and the checkbox is enabled, the backend refreshes the binding first and records `Agent context updated`. If the checkbox is disabled, the prompt runs with the bound context and the stale banner remains visible. Active turns are never refreshed mid-turn; the same pre-dispatch rule applies to the next prompt-bearing item. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
+New top-level sessions, handler threads, and workflow task agents always use the latest context-ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. A surface is stale only when its bound fingerprint differs from the current fingerprint. Stale surfaces show “Extensions changed and will require system prompt to refresh.” with a checked-by-default durable checkbox labelled “Update before next turn.” Before any prompt-bearing item dispatches, `@svvy/runtime` recomputes the current fingerprint; if it still differs and the checkbox is enabled, runtime refreshes the binding first, commits generated-context binding facts through state ports, and publishes read-model notifications. If the checkbox is disabled, the prompt runs with the bound context and the stale banner remains visible. Active turns are never refreshed mid-turn; the same pre-dispatch rule applies to the next prompt-bearing item. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
 
 Top-level session titles are generated through an explicit durable title-generation flow. Before the first turn is submitted, the visible default session title follows the beginning of the live composer draft for that session's orchestrator surface. When the first real user turn starts in a top-level session, the app records a pending title-generation job and runs the configured `namer` agent concurrently with the orchestrator turn; until that generated title lands, the visible title continues to use the first user message summary. The orchestrator must not wait for the namer, and the namer must not wait for the orchestrator response. The namer settings prompt is the title-generation instruction; the one-shot user prompt sent to that agent contains only the first user message context to title, not another naming instruction or extracted keyword list. While that job is pending or running, manual session rename is blocked for that session so the generated title and a user rename cannot race. The generated title is persisted once, auto-title generation stops after that first successful generation, and a manual rename permanently freezes future auto-titling for the session. Handler-thread titles are generated by the same configured `namer` agent from the orchestrator-supplied `thread_start` objective; the orchestrator does not receive or supply a separate handler title field.
 
@@ -936,30 +1148,41 @@ The Workflows source library is app-global reusable Smithers authoring source.
 It lives under `~/.config/svvy/workflows/` and has exactly these editable source kinds:
 
 - `agents/`: structured `.agent.json` task-agent parameter records
-- `prompts/`: direct MDX prompt assets
+- `prompts/`: reusable workflow MDX prompt source contributors
 - `components/`: direct TypeScript or TSX Smithers components and helpers
 - `workflows/`: direct TSX reusable workflow modules
 
-The `generated/` child is read-only build output outside the safe writable boundary. Agents must not edit it directly.
+Generated package output is app-owned read-only build output resolved through
+`GeneratedPackageRootPort`, separate from this source tree. Agents must not edit generated roots
+directly.
 
-`svvyx workflows save` is the promotion path from workspace-authored `.smithers/` files into app-global reusable source. `svvyx workflows build` is the repair and refresh path after source edits. Both are ordinary Shell commands from the agent's perspective.
+`svvyx workflows save` copies or extracts workspace-authored `.smithers/` files into app-global reusable source. `svvyx workflows build` requests deterministic generated-package refresh after source edits. Both are ordinary Shell commands from the agent's perspective.
 
-Workflow-agent records are parameter objects, not arbitrary executable agent source. They are saved as structured data so the Agents pane and Workflows build share one source of truth. UI edits in the Agents pane and agent edits through `svvyx workflows save` both write the same source shape and trigger the same build. The Agents pane can create and duplicate workflow-agent records, delete user-created workflow-agent records through the same inline confirmation pattern as orchestrator profiles, and open the exact `.agent.json` source file for each record. The default Explorer, Implementer, and Reviewer records are seeded source records and remain non-deletable defaults.
+Workflow-agent records are parameter objects, not arbitrary executable agent source. They are saved
+as structured data so the Agents pane and Workflows build share one source of truth. UI edits in the
+Agents pane and agent edits through `svvyx workflows save` both enter the same versioned source-edit
+and generated-package refresh path. The Agents pane can create and duplicate workflow-agent records,
+delete user-created workflow-agent records through the same inline confirmation pattern as
+orchestrator profiles, and open the exact `.agent.json` source file for each record. The default
+Explorer, Implementer, and Reviewer records are seeded source records and remain non-deletable
+defaults.
 
-The generated `@svvy/workflows` package exports only namespace objects:
+The generated `@svvyx/workflows` package exports only namespace objects:
 
 - `Agents`
 - `Components`
 - `Prompts`
 - `Workflows`
 
-The generated package may attach internal non-enumerable metadata to exported values so the app can map generated exports back to source files and Agents-pane records. That metadata is not part of the agent-facing public API, must not alter normal import usage, and must not appear as public fields, public declarations, public docs, or examples.
+The generated package export values do not carry app metadata. Source-file mapping, Agents-pane
+records, generated-package facts, and read-model metadata live in `@svvy/state` and
+`@svvy/extensions` outputs, not in generated `@svvyx/workflows` runtime values.
 
 ### Workflows Pane
 
-The Workflows pane is read-only visibility into the latest successful generated `@svvy/workflows` package.
+The Workflows pane is read-only visibility into the latest successful generated `@svvyx/workflows` package.
 
-It is generated-source visibility only. It is not a workflow runner or source editor.
+It is generated-package visibility only. It is not a workflow runner or source editor.
 
 For each generated export in `Agents`, `Components`, `Prompts`, and `Workflows`, it shows:
 
@@ -973,7 +1196,10 @@ For each generated export in `Agents`, `Components`, `Prompts`, and `Workflows`,
 
 For `Agents.*` exports, the pane also shows the generated task-agent parameter object and provides a primary human action that opens the corresponding record in the Agents pane for customization. Agents themselves do not use that UI link; agents use `svvyx workflows ...` and source files.
 
-The Workflows pane refreshes after successful `svvyx workflows build` and after UI edits that trigger a build. It may use internal build metadata for source/generated links, but it must not expose that metadata as an agent-facing contract.
+The Workflows pane refreshes after successful generated-package facts commit for `@svvyx/workflows`,
+whether the refresh was caused by `svvyx workflows build`, a UI source edit, or runtime recovery. It
+may use internal build metadata for source/generated links, but it must not expose that metadata as
+an agent-facing contract.
 
 ### Turn
 
@@ -983,6 +1209,7 @@ That means:
 
 - the main orchestrator surface has turns
 - each handler thread surface has its own turns
+- each workflow task-agent attempt surface has its own turns
 
 Turns exist because a user or system message opened a real unit of work in one surface.
 
@@ -1073,20 +1300,28 @@ At minimum:
 
 ### High-Level Flow
 
-Every user request that can start immediately goes through one orchestrator-controlled product loop:
+Every user request that can start immediately goes through one surface-owned runtime flow:
 
 1. load current workspace, session, thread, episode, artifact, saved Workflows, and wait context
 2. identify the target surface of the message
 3. compare the target surface's bound generated-context fingerprint with the current fingerprint, and refresh the binding before prompt-bearing work only when the surface's update-before-next-turn intent is enabled
-4. compose that surface's actor prompt from its bound generated agent context, including loaded base instruction extensions, loaded capability extension instructions, available extension loading hints, external instruction files, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations, then load it into pi's true `systemPrompt` channel before sending the new user message
+4. compose that surface's actor prompt from its bound generated agent context, including loaded base instruction extensions, loaded capability extension instructions, available extension loading hints, external instruction files, native tool declarations, loaded svvyx guidance, and generated `execute_typescript` facade declarations, then load it into pi's true `systemPrompt` channel before sending the new user message
 5. open a new turn for that surface
 6. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
-7. execute tools through the correct runtime handler
-8. record commands, events, artifacts, and wait state
-9. update structured state
-10. emit explicit workspace-state updates whenever durable summaries or read models change
-11. emit explicit surface-state updates whenever one live surface transcript or runtime snapshot changes
-12. render updated workspace and Dockview panel surfaces by joining those updates with panel bindings
+7. route accepted model tool calls through `@svvy/runtime` to the matching `@svvy/extensions`
+   handler, with runtime-owned accepted-tool execution allocating command envelopes and receiving an
+   `ExtensionHandlerResult` whose runtime-owned work is carried in
+   `operations?: readonly ExtensionRuntimeOperation[]`
+8. process returned `ExtensionRuntimeOperation` items in `@svvy/runtime`; runtime applies
+   `runtime_effect` items, executes `execution_plan` items, publishes typed read-model invalidation
+   notifications derived from committed `afterCommit` descriptors, and owns lifecycle policy,
+   command writes, queue writes, waits, Effect-managed timeouts/schedules, and state-port calls
+9. record command/projection facts, artifacts, and wait facts through structured state
+10. update state-backed read models
+11. publish typed read-model invalidation notifications after durable state changes
+12. publish `surface.stream` patches with a target-local stream sequence for live assistant output while the surface is active
+13. render updated workspace and Dockview panel surfaces by refetching read models and applying
+    transient stream patches through panel bindings
 
 Read APIs and renderer code must not compensate for missing lifecycle writes with polling, transcript parsing, or inferred repair logic.
 
@@ -1173,8 +1408,17 @@ Two common cases matter:
 In the adopted delegated model:
 
 - if an orchestrator or handler thread needs clarification, it uses `request_user_input`
-- the default `request_user_input` variant is nonblocking: the agent supplies a recommended/default answer, the tool immediately returns that default, and later user answers are delivered through the owning surface queue with priority over ordinary user messages
-- the user may switch the builtin Request User Input extension into blocking mode; in that variant the same tool waits until the user answers or the five-minute default timer supplies the default answer
+- the default `request_user_input` variant is nonblocking: the extension validates questions and
+  returns default answers plus one ordered `ExtensionRuntimeOperation` item wrapping a
+  `request_input.create` `RuntimeEffectRequest`; runtime creates the durable request, completes the
+  command with those defaults, and later accepts user answers through `runtime.requestInput.answer`;
+  in nonblocking mode that API records the answer and may create a `request_user_input_answer` row
+  for the owning surface. Answer rows outrank ordinary `user_message` rows and remain FIFO among
+  answer rows; row-level `Steer` is still the separate highest-priority next-delivery action.
+- the user may switch the builtin Request User Input extension into blocking mode; in that variant
+  the extension returns the same ordered `ExtensionRuntimeOperation` item and runtime waits through
+  an Effect-managed timeout until the user answers or, after five minutes, resolves with the default
+  answer
 - if a handler thread needs clarification, it asks inside that thread
 - the user's reply goes back to that same thread surface
 - the orchestrator does not need to intermediate that clarification by default
@@ -1193,7 +1437,7 @@ The intended behavior is:
 
 - a command or Smithers CLI operation fails
 - the handler thread works through repair locally
-- the handler thread may inspect artifacts, inspect Smithers state through official CLI commands, edit `.smithers/` source, repair inputs, rerun commands, ask the user, or explicitly close the objective
+- the handler thread may inspect artifacts, inspect product-visible CLI/bridge-observed Smithers workflow/run/task-attempt facts persisted by `@svvy/state`, use official Smithers CLI commands for execution evidence and repair, edit `.smithers/` source, repair inputs, rerun commands, ask the user, or explicitly close the objective
 - only explicit handler reports are returned to the orchestrator by default: update episodes or a conclusion episode plus concluded objective state
 
 ## UI And Surface Model
@@ -1221,7 +1465,7 @@ Active row subtitles blink only for agent work that is currently running, not fo
 
 `svvy` should expose a VS Code-like shared palette model as a first-class shell capability.
 
-The palette has one shell, one input, and one result interaction model. The leading `>` input prefix selects command mode. `Cmd+Shift+P` opens the shared palette with `>` already inserted, and command mode discovers and executes product actions, including New orchestrator creation and session switching, session pin/archive actions, opening focused session/thread/artifact/Workflows surfaces, handler-thread surfaces, pane and layout actions when panes exist, settings and Agents profile actions when those features exist, and future product actions as they are added.
+The palette has one shell, one input, and one result interaction model. The leading `>` input prefix selects command mode. `Cmd+Shift+P` opens the shared palette with `>` already inserted, and command mode discovers and executes product actions, including New orchestrator creation and session switching, session pin/archive actions, opening focused session/thread/artifact/Workflows surfaces, handler-thread surfaces, pane and layout actions when panes exist, settings and Agents profile actions when those features exist, and all product actions registered in the command/action registry.
 
 `Cmd+P` opens the same shared palette with an empty input for reserved file quick-open mode. File
 quick-open has disabled or empty results until file surfaces are part of the product contract.
@@ -1232,12 +1476,12 @@ The command palette UI should use `cmdk-sv` from `https://www.cmdk-sv.com/` as t
 
 The command palette is a prefix-driven shell/action surface within the shared palette. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, durable state, settings, Workflows visibility, and Agents profiles.
 
-Shell action controls that expose command-palette, quick-open, New orchestrator, sidebar, or pane actions use the product shortcut registry for user feedback and dispatch metadata. The registry owns stable shortcut action ids, labels, platform chords, compact and readable display strings, scope, input-typing policy, availability, and command routing metadata. TanStack Hotkeys is the renderer binding primitive that subscribes scoped shortcuts and applies the registry input policy; it is not the source of product command semantics. App launcher and shell command chords such as `Cmd+Shift+P`, `Cmd+P`, `Cmd+N` for New orchestrator in the focused pane, `Cmd+Shift+N` for New orchestrator in a new pane, sidebar toggle, `Cmd+Shift+1` for Logs, `Cmd+Shift+2` for Agents, `Cmd+Shift+3` for Context, and `Cmd+Shift+4` for Workflows remain available while workspace text inputs such as the composer are focused. Explicit labeled sidebar actions reveal compact in-button shortcuts immediately on hover or focus; the New orchestrator control also shows a delayed tooltip that explains click, `Cmd+N`, `Cmd`-click, `Cmd+Shift+N` placement, and profile-picker behavior. Icon-only or ambiguous controls may show explanatory action tooltips after 500 ms and include the readable shortcut when one exists. Native browser `title` tooltips are not the product feedback layer for these controls. Command palette and quick-open launchers live in the sidebar rather than duplicated in the top-right workspace chrome.
+Shell action controls that expose command-palette, quick-open, New orchestrator, sidebar, or pane actions use the product shortcut registry for user feedback and dispatch metadata. The registry owns stable shortcut action ids, labels, platform chords, compact and readable display strings, scope, input-typing policy, availability, and command routing metadata. TanStack Hotkeys is the renderer binding primitive that subscribes scoped shortcuts and applies the registry input policy; it is not the source of product command semantics. App launcher and shell command chords such as `Cmd+Shift+P`, `Cmd+P`, `Cmd+N` for New orchestrator in the focused pane, `Cmd+Shift+N` for New orchestrator in a new pane, sidebar toggle, `Cmd+Shift+1` for Logs, `Cmd+Shift+2` for Agents, `Cmd+Shift+3` for Extensions, and `Cmd+Shift+4` for Workflows remain available while workspace text inputs such as the composer are focused. Explicit labeled sidebar actions reveal compact in-button shortcuts immediately on hover or focus; the New orchestrator control also shows a delayed tooltip that explains click, `Cmd+N`, `Cmd`-click, `Cmd+Shift+N` placement, and profile-picker behavior. Icon-only or ambiguous controls may show explanatory action tooltips after 500 ms and include the readable shortcut when one exists. Native browser `title` tooltips are not the product feedback layer for these controls. Command palette and quick-open launchers live in the sidebar rather than duplicated in the top-right workspace chrome.
 
 When the shared palette is in command mode and the text after `>` does not match an existing command
 or action, pressing Enter creates a New orchestrator session and uses the text after `>` as the
 initial prompt. That prompt enters the normal orchestrator turn model; it does not skip system
-prompt loading, prompt history, structured turn state, or live surface runtime ownership. Text
+prompt loading, prompt history, structured turn state, or live surface runtime scope ownership. Text
 entered without the leading `>` remains quick-open search text and does not create prompt sessions.
 
 The default command-palette behavior is defined before choosing a Dockview target as normal current workspace and session routing. Once Dockview layout exists, placement rules belong to the pane-layout spec: command palette results that open sessions or surfaces default to a new Dockview panel, and `Cmd+Enter` opens into the currently focused panel.
@@ -1248,7 +1492,7 @@ The default command-palette behavior is defined before choosing a Dockview targe
 
 - the main orchestrator surface can be opened in a Dockview panel
 - a handler thread surface can be opened in a Dockview panel
-- artifact, Workflows, Context, and related inspector surfaces can be opened in Dockview panels, tab groups, edge groups, floating groups, or popout groups when valid
+- artifact, command inspector, Logs, Agents, Extensions, Workflows, Settings, and related static or inspector surfaces can be opened in Dockview panels, tab groups, edge groups, floating groups, or popout groups when valid
 
 The main orchestrator surface and a handler thread surface should use the same core interactive UI model:
 
@@ -1258,7 +1502,7 @@ The main orchestrator surface and a handler thread surface should use the same c
 - artifacts
 - status
 
-Assistant transcript messages render Markdown suitable for coding-agent output, including compact prose, lists, tables, fenced code with syntax highlighting and copy actions, inline and block math, Mermaid diagrams, and escaped raw HTML rather than executable HTML. Long transcript surfaces use TanStack Virtual over system metadata, semantic projection cards, durable messages, tool rows, and active streaming rows so variable-height content preserves pane-local scroll anchors while following the bottom only when the user is pinned there. Tool cards render as execution spans from structured command records: collapsed spans show action, target, status, duration, compact counts, useful outcome, and linked artifact actions when artifacts exist; expanded spans show bounded semantic sections for accepted arguments, command target, file changes, diagnostics, progress, grouped stdout/stderr, and child commands; the inspector remains the full debugger for raw facts, snapshots, and complete output. Matched raw tool-result rows collapse into the tool call instead of creating duplicate transcript cards. Handler-thread cards keep objective, current activity, latest report, and counts as separate fields rather than replacing the objective with report text. Live assistant output preserves each provider/runtime stream packet as a visible update, but the bridge sends compact ordered stream patches instead of full surface snapshots for every packet; full snapshots remain the baseline, recovery, and settled-state mechanism.
+Assistant transcript messages render Markdown suitable for coding-agent output, including compact prose, lists, tables, fenced code with syntax highlighting and copy actions, inline and block math, Mermaid diagrams, and escaped raw HTML rather than executable HTML. Long transcript surfaces use TanStack Virtual over system metadata, semantic projection cards, durable messages, tool rows, and active streaming rows so variable-height content preserves pane-local scroll anchors while following the bottom only when the user is pinned there. Tool cards render as execution spans from structured command records: collapsed spans show action, target, status, duration, compact counts, useful outcome, and linked artifact actions when artifacts exist; expanded spans show bounded semantic sections for accepted arguments, command target, file changes, diagnostics, progress, grouped stdout/stderr, and child commands; the inspector remains the full debugger for raw facts, snapshots, and complete output. Matched raw tool-result rows collapse into the tool call instead of creating duplicate transcript cards. Handler-thread cards keep objective, current activity, latest report, and counts as separate fields rather than replacing the objective with report text. Live assistant output preserves each provider/runtime stream packet as a visible update, but the bridge sends compact ordered stream patches instead of full surface read-model syncs for every packet; baseline, recovery, and settled views come from `@svvy/state` read-model fetches.
 
 Message targeting is simple:
 
@@ -1270,26 +1514,28 @@ This is shared surface behavior, not a thread-specific exception.
 
 Projection ownership is equally simple:
 
-- the backend owns durable workspace projection and live surface runtime ownership
+- `@svvy/runtime` owns durable workspace lifecycle coordination and live surface runtime scope ownership
 - Dockview owns layout mechanics and serialized layout state
-- the renderer runtime owns warm read-model snapshots for app-global state such as app preferences, provider auth summaries, model choices, agent settings, and generated Workflows exports
-- the renderer runtime owns workspace-keyed warm read-model snapshots for workspace projections such as app logs, extension inventory projections, external instruction sources, and snippets
-- Dockview panes synchronously render from those runtime snapshots when they open, refresh through the runtime boundary in the background, and update immediately when another open pane or runtime event changes the same snapshot
-- the renderer owns panel bindings, panel focus projection, and panel-local view state such as selected rows, filters, expanded sections, and scroll
-- the renderer listens for explicit workspace updates and surface updates, then joins them locally through the runtime snapshots and panel bindings
+- `@svvy/state` owns the authoritative read-model projections for app-global state such as app preferences, provider auth summaries, model choices, agent settings, and generated Workflows exports
+- `@svvy/state` owns the authoritative workspace-keyed read-model projections for workspace state such as app logs, extension inventory projections, external instruction sources, and snippets
+- `@svvy/state` owns persisted layout JSON, panel metadata, and panel-to-surface bindings
+- `@svvy/desktop` holds renderer-local non-authoritative warm caches of those read models so panes can render synchronously and then refetch after app-bridged typed invalidations
+- Dockview panes synchronously render from those warm read-model caches when they open, refresh through the runtime facade plus state read/command facades in the background, and update immediately when another open pane or app-bridged runtime notification invalidates the same read model
+- the renderer owns transient Dockview projection, focus, drag/drop, scroll, and panel-local view state such as selected rows, filters, and expanded sections
+- the renderer listens for app-bridged typed read-model invalidation notifications and `surface.stream` patches, then joins them locally through read-model caches and panel bindings
 - the renderer does not poll read APIs on every pane open, inspect transcript files, or infer lifecycle changes from transcript mutations
-- workspace-scoped backend requests and sync events route by explicit `workspaceId`, never by active workspace, focused panel, or current tab
+- workspace-scoped runtime requests and sync events route by explicit `workspaceId`, never by active workspace, focused panel, or current tab
 
 Panel and surface semantics are:
 
 - opening a Dockview panel attaches that panel to a surface
 - closing a panel detaches that panel without deleting durable state
-- closing the last owner of a surface releases that live surface runtime cleanly
+- closing the last owner of a surface releases that live surface runtime scope cleanly
 - more than one panel may attach to the same surface
 - duplicated panels share one underlying live surface state but may keep independent scroll position
 - split, resize, close, tab reorder, panel/group drag/drop placement, Dockview focus, bindings, Dockview layout JSON, edge-group state, floating/popout state, and panel-local state persist across restart
 - user workspace active layout choices and all initialized `A`/`B`/`C` layout snapshots keyed by `(workspaceId, layoutId)` persist across restart
-On restart, the workspace shell should restore useful stable UI state:
+  On restart, the workspace shell should restore useful stable UI state:
 
 - pinned and archived session state
 - Archived group collapsed state
@@ -1302,7 +1548,7 @@ It should not restore transient menus or popovers, unsaved inline edits outside 
 
 Composer draft text and chip-only attachments are durable surface state rather than transient UI restore state. They are saved live against the owning `surfacePiSessionId`, survive closing the surface and restarting the app, and clear only when submitted or explicitly emptied.
 
-Backend recovery is separate from workspace shell UI restore. Each acquired workspace runtime owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which runtimes exist; they do not drain workspace queues or repair workspace product work directly.
+`@svvy/runtime` recovery is separate from workspace shell UI restore. Each acquired workspace runtime scope owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which workspace runtime scopes exist; they do not drain workspace queues or repair workspace product work directly.
 
 ## Product Outcomes
 
@@ -1310,8 +1556,9 @@ The design is successful when:
 
 - the orchestrator remains strategically informed without being bloated by delegated-work internals
 - delegated work happens inside handler threads that feel like real interactive surfaces
-- Smithers workflow work uses official Smithers CLI commands and workspace `.smithers/` source without `svvy` wrappers
-- reusable workflow material is saved once under `~/.config/svvy/workflows/` and consumed through generated `@svvy/workflows` namespace imports
+- Smithers workflow work uses official Smithers CLI commands and workspace `.smithers/` source while
+  reusable source-library work uses `svvyx workflows ...`
+- reusable workflow material is saved once under `~/.config/svvy/workflows/` and consumed through generated `@svvyx/workflows` namespace imports
 - handler threads can repair, clarify, and rerun commands internally before returning control
 - handed-back threads remain open for follow-up chat and explicit reactivation in the same delegated
   context

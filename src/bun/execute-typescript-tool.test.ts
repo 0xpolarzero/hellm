@@ -11,22 +11,51 @@ import {
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { StateContractError } from "@svvy/core";
+import * as Effect from "effect/Effect";
 import type { AppLoggerEvent } from "./app-logger";
+import {
+  runtimeArtifactStatePortFromStore,
+  runtimeCommandStatePortFromStore,
+  runtimeThreadStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
 import { createExecuteTypescriptTool as createExecuteTypescriptToolBase } from "./execute-typescript-tool";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import type { ExtensionCliRequirement, ExtensionRecord } from "../shared/extensions";
+import {
+  resolveActorExtensionState,
+  type ExtensionCliRequirement,
+  type ExtensionRecord,
+} from "@svvy/extensions";
 
 function createExecuteTypescriptTool(
-  options: Parameters<typeof createExecuteTypescriptToolBase>[0],
+  options: Omit<
+    Parameters<typeof createExecuteTypescriptToolBase>[0],
+    "artifactState" | "commandState" | "threadState" | "turnState" | "runState"
+  > & {
+    store: StructuredSessionStateStore;
+  } & Partial<
+      Pick<
+        Parameters<typeof createExecuteTypescriptToolBase>[0],
+        "artifactState" | "commandState" | "threadState" | "turnState" | "runState"
+      >
+    >,
 ): ReturnType<typeof createExecuteTypescriptToolBase> {
   return createExecuteTypescriptToolBase({
     managedSandbox: false,
     ...options,
+    artifactState: options.artifactState ?? runtimeArtifactStatePortFromStore(options.store),
+    commandState: options.commandState ?? runtimeCommandStatePortFromStore(options.store),
+    threadState: options.threadState ?? runtimeThreadStatePortFromStore(options.store),
+    turnState: options.turnState ?? runtimeTurnStatePortFromStore(options.store),
+    runState:
+      options.runState ??
+      (<A>(effect: Effect.Effect<A, StateContractError>) => Effect.runSync(effect)),
   });
 }
 
@@ -278,7 +307,7 @@ function createStore(sessionId: string, workspaceCwd: string): StructuredSession
     },
   });
   store.upsertPiSession({
-    sessionId,
+    sessionId: sessionId,
     title: "Execute Typescript",
     provider: "openai",
     model: "gpt-5.4",
@@ -299,25 +328,29 @@ function createRuntime(
   loadedExtensionIds?: readonly string[],
 ): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
-    sessionId,
+    sessionId: sessionId,
     surfacePiSessionId: sessionId,
     requestSummary: promptText,
   });
 
   return {
     current: {
-      sessionId,
+      workspaceSessionId: sessionId,
       turnId: turn.id,
       surfacePiSessionId: sessionId,
-      surfaceThreadId: null,
+      threadId: null,
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "analysis",
       rootThreadId: null,
-      promptText,
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
-      loadedExtensionIds: loadedExtensionIds ? [...loadedExtensionIds] : undefined,
+      loadedExtensionIds: loadedExtensionIds
+        ? [...loadedExtensionIds]
+        : [...resolveActorExtensionState({ actor: "orchestrator" }).loadedExtensionIds],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
   };
 }
@@ -329,7 +362,7 @@ function createHandlerRuntime(
   loadedExtensionIds?: readonly string[],
 ): PromptExecutionRuntimeHandle {
   const orchestratorTurn = store.startTurn({
-    sessionId,
+    sessionId: sessionId,
     surfacePiSessionId: sessionId,
     requestSummary: "Delegate handler work",
   });
@@ -341,7 +374,7 @@ function createHandlerRuntime(
   });
   store.finishTurn({ turnId: orchestratorTurn.id, status: "completed" });
   const handlerTurn = store.startTurn({
-    sessionId,
+    sessionId: sessionId,
     surfacePiSessionId: thread.surfacePiSessionId,
     threadId: thread.id,
     requestSummary: promptText,
@@ -349,18 +382,22 @@ function createHandlerRuntime(
 
   return {
     current: {
-      sessionId,
+      workspaceSessionId: sessionId,
       turnId: handlerTurn.id,
       surfacePiSessionId: thread.surfacePiSessionId,
-      surfaceThreadId: thread.id,
+      threadId: thread.id,
       surfaceKind: "handler",
       defaultEpisodeKind: "change",
       rootThreadId: thread.id,
-      promptText,
       rootEpisodeKind: "change",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
-      loadedExtensionIds: loadedExtensionIds ? [...loadedExtensionIds] : undefined,
+      loadedExtensionIds: loadedExtensionIds
+        ? [...loadedExtensionIds]
+        : [...resolveActorExtensionState({ actor: "handler" }).loadedExtensionIds],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
   };
 }
@@ -397,7 +434,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "const title: string = 42;",
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: false,
       error: {
         stage: "typecheck",
@@ -495,7 +532,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "console.log('should not run');\nconst title: string = 42;",
     });
 
-    expect(result.details).toEqual({
+    expect(result.details!).toEqual({
       success: false,
       error: {
         message: "User denied Execute TypeScript.",
@@ -578,7 +615,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return 'allowed';",
     });
 
-    expect(result.details).toEqual({
+    expect(result.details!).toEqual({
       success: true,
       result: "allowed",
     });
@@ -627,7 +664,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return { sandboxed: true };",
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: { sandboxed: true },
     });
@@ -669,7 +706,7 @@ describe("execute_typescript tool", () => {
           "return { leaked: (globalThis as any).process?.env?.SVVY_PARENT_ONLY_TEST_SECRET ?? null };",
       });
 
-      expect(result.details).toEqual({
+      expect(result.details!).toEqual({
         success: true,
         result: {
           leaked: null,
@@ -705,9 +742,9 @@ describe("execute_typescript tool", () => {
       const typechecked = await tool.execute(`tool-call-${property}-typecheck`, {
         typescriptCode: `return await api.${property}({});`,
       });
-      expect(typechecked.details.success).toBe(false);
-      expect(typechecked.details.error?.stage).toBe("typecheck");
-      expect(typechecked.details.error?.message).toContain("api");
+      expect(typechecked.details!.success).toBe(false);
+      expect(typechecked.details!.error?.stage).toBe("typecheck");
+      expect(typechecked.details!.error?.message).toContain("api");
     }
 
     const runtimeResult = await tool.execute("tool-call-no-global-api-runtime", {
@@ -759,7 +796,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         total: 6,
@@ -932,7 +969,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: 'throw new Error("runtime exploded");',
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: false,
       error: {
         stage: "runtime",
@@ -982,49 +1019,79 @@ describe("execute_typescript tool", () => {
       buildExecuteTypescriptApiDeclaration("orchestrator", {
         loadedExtensionIds: ["execute-typescript"],
       }),
-    ).not.toContain("artifacts: ArtifactsExtensionClient");
+    ).not.toContain("artifacts: ArtifactsExtensionFacade");
     expect(
       buildExecuteTypescriptApiDeclaration("orchestrator", {
         loadedExtensionIds: ["execute-typescript"],
       }),
-    ).not.toContain("workflows: WorkflowsExtensionClient");
+    ).not.toContain("workflows: WorkflowsExtensionFacade");
     expect(
       buildExecuteTypescriptApiDeclaration("orchestrator", {
         loadedExtensionIds: ["artifacts", "execute-typescript"],
       }),
-    ).toContain("artifacts: ArtifactsExtensionClient");
+    ).toContain("artifacts: ArtifactsExtensionFacade");
     expect(buildExecuteTypescriptApiDeclaration("orchestrator")).not.toContain(
-      "workflows: WorkflowsExtensionClient",
+      "workflows: WorkflowsExtensionFacade",
     );
     expect(buildExecuteTypescriptApiDeclaration("handler")).toContain(
-      "workflows: WorkflowsExtensionClient",
+      "workflows: WorkflowsExtensionFacade",
     );
     const loadedBoth = buildExecuteTypescriptApiDeclaration("orchestrator", {
       loadedExtensionIds: ["artifacts", "execute-typescript", "workflows"],
     });
-    expect(loadedBoth).toContain("artifacts: ArtifactsExtensionClient");
-    expect(loadedBoth).toContain("workflows: WorkflowsExtensionClient");
+    expect(loadedBoth).toContain("artifacts: ArtifactsExtensionFacade");
+    expect(loadedBoth).toContain("workflows: WorkflowsExtensionFacade");
     expect(loadedBoth).toContain('"models list"');
     expect(loadedBoth).not.toContain('"models.list"');
     expect(loadedBoth).not.toContain("runWorkflow");
   });
 
-  it("omits current-build user svvyx declarations until sandboxed generated clients exist", () => {
+  it("generated actor execute_typescript declarations do not expose package services", () => {
+    const declarations = [
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        loadedExtensionIds: ["execute-typescript"],
+      }),
+      buildExecuteTypescriptApiDeclaration("orchestrator", {
+        loadedExtensionIds: ["artifacts", "execute-typescript", "workflows"],
+      }),
+      buildExecuteTypescriptApiDeclaration("handler"),
+      buildExecuteTypescriptApiDeclaration("workflow-task", {
+        loadedExtensionIds: ["execute-typescript"],
+      }),
+    ];
+    const forbiddenPatterns = [
+      /@svvy\/(?:runtime|state|sandbox|pi-adapter|extensions)/,
+      /@mariozechner\//,
+      /\b(RuntimeEffectRequest|ExtensionExecutionPlan|StateInvalidationDescriptor|RuntimeQueueStatePort|RuntimeRequestStatePort|GeneratedPackageRootPort|ManagedRuntime|StateStore)\b/,
+      /\bContext\.Service\b/,
+      /\beffect\/Runtime\b/,
+    ];
+
+    const violations = declarations.flatMap((declaration, index) =>
+      forbiddenPatterns
+        .filter((pattern) => pattern.test(declaration))
+        .map((pattern) => `declaration ${index} -> ${pattern}`),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("omits current-build user svvyx declarations until sandboxed generated runtime facades exist", () => {
     const extensionsRoot = createWorkspaceRoot();
     createUserSvvyxExtensionBuild({
       extensionId: "linear",
       extensionsRoot,
       typesDeclaration: [
-        "interface StaleLinearExtensionClient {",
+        "interface StaleLinearExtensionFacade {",
         '  run(commandId: "stale.command"): Promise<never>;',
         "}",
-        "interface LoadedExtensionsClient { staleLinear: StaleLinearExtensionClient; }",
+        "interface LoadedExtensionsFacade { staleLinear: StaleLinearExtensionFacade; }",
       ].join("\n"),
     });
     createUserSvvyxExtensionBuild({
       extensionId: "notion",
       extensionsRoot,
-      typesDeclaration: "interface LoadedExtensionsClient { notion: { run(): never } }",
+      typesDeclaration: "interface LoadedExtensionsFacade { notion: { run(): never } }",
     });
 
     const declaration = buildExecuteTypescriptApiDeclaration("orchestrator", {
@@ -1038,7 +1105,7 @@ describe("execute_typescript tool", () => {
       ],
     });
 
-    expect(declaration).not.toContain("linear: LinearExtensionClient");
+    expect(declaration).not.toContain("linear: LinearExtensionFacade");
     expect(declaration).not.toContain('"issues.list"');
     expect(declaration).not.toContain("type LinearExtensionCommandMap");
     expect(declaration).not.toContain("args: { issueId: string }");
@@ -1055,7 +1122,7 @@ describe("execute_typescript tool", () => {
     mkdirSync(generatedRoot, { recursive: true });
     writeFileSync(
       join(generatedRoot, "types.d.ts"),
-      "interface LoadedExtensionsClient { linear: { run(): never } }",
+      "interface LoadedExtensionsFacade { linear: { run(): never } }",
     );
 
     expect(
@@ -1092,7 +1159,7 @@ describe("execute_typescript tool", () => {
         extensionId: `linear-${index}`,
         extensionsRoot,
         commandManifest,
-        typesDeclaration: "interface LoadedExtensionsClient { staleLinear: { run(): never } }",
+        typesDeclaration: "interface LoadedExtensionsFacade { staleLinear: { run(): never } }",
       });
     }
 
@@ -1138,7 +1205,7 @@ describe("execute_typescript tool", () => {
     );
     writeFileSync(
       join(escapedGeneratedRoot, "types.d.ts"),
-      "interface LoadedExtensionsClient { escaped: { run(): never } }",
+      "interface LoadedExtensionsFacade { escaped: { run(): never } }",
     );
 
     expect(
@@ -1157,11 +1224,11 @@ describe("execute_typescript tool", () => {
       extensionId: "linear",
       extensionsRoot,
       typesDeclaration: [
-        "interface LinearExtensionClient {",
+        "interface LinearExtensionFacade {",
         '  run(commandId: "issues.list", input: { options: { status: "open" } }): Promise<{ ok: true; data: { id: string }[] }>;',
         "}",
-        "interface LoadedExtensionsClient {",
-        "  linear: LinearExtensionClient;",
+        "interface LoadedExtensionsFacade {",
+        "  linear: LinearExtensionFacade;",
         "}",
       ].join("\n"),
     });
@@ -1185,9 +1252,9 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details.success).toBe(false);
-    expect(result.details.error?.stage).toBe("typecheck");
-    expect(result.details.error?.message).toContain("linear");
+    expect(result.details!.success).toBe(false);
+    expect(result.details!.error?.stage).toBe("typecheck");
+    expect(result.details!.error?.message).toContain("linear");
   });
 
   it("rejects user svvyx generated declaration access when the extension is not loaded", async () => {
@@ -1197,11 +1264,11 @@ describe("execute_typescript tool", () => {
       extensionId: "linear",
       extensionsRoot,
       typesDeclaration: [
-        "interface LinearExtensionClient {",
+        "interface LinearExtensionFacade {",
         '  run(commandId: "issues.list", input: { options: { status: "open" } }): Promise<{ ok: true; data: { id: string }[] }>;',
         "}",
-        "interface LoadedExtensionsClient {",
-        "  linear: LinearExtensionClient;",
+        "interface LoadedExtensionsFacade {",
+        "  linear: LinearExtensionFacade;",
         "}",
       ].join("\n"),
     });
@@ -1224,9 +1291,9 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details.success).toBe(false);
-    expect(result.details.error?.stage).toBe("typecheck");
-    expect(result.details.error?.message).toContain("linear");
+    expect(result.details!.success).toBe(false);
+    expect(result.details!.error?.stage).toBe("typecheck");
+    expect(result.details!.error?.message).toContain("linear");
   });
 
   it("runs the generated Artifacts client and links created artifacts to child commands", async () => {
@@ -1254,7 +1321,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         ok: true,
@@ -1262,7 +1329,7 @@ describe("execute_typescript tool", () => {
         outputMatchesData: true,
       },
     });
-    const returned = result.details.result as { id: string; factArtifactId: string };
+    const returned = result.details!.result as { id: string; factArtifactId: string };
     expect(returned.factArtifactId).toBe(returned.id);
 
     const snapshot = store.getSessionState("session-artifact-client");
@@ -1328,7 +1395,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         name: "bracket.md",
@@ -1364,9 +1431,9 @@ describe("execute_typescript tool", () => {
         'return await extensions.artifacts.run("create", { options: { name: "blocked.md" } });',
     });
 
-    expect(result.details.success).toBe(false);
-    expect(result.details.error?.stage).toBe("typecheck");
-    expect(result.details.error?.message).toContain("artifacts");
+    expect(result.details!.success).toBe(false);
+    expect(result.details!.error?.stage).toBe("typecheck");
+    expect(result.details!.error?.message).toContain("artifacts");
     const snapshot = store.getSessionState("session-artifact-unloaded");
     expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
   });
@@ -1440,7 +1507,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         extensionKeys: ["artifacts", "workflows"],
@@ -1457,11 +1524,11 @@ describe("execute_typescript tool", () => {
     expect(existsSync(join(workflowsGeneratedPackagePath, "prompts", "ReviewPrompt.ts"))).toBe(
       true,
     );
-    expect(existsSync(join(workspaceCwd, ".smithers", "node_modules", "@svvy", "workflows"))).toBe(
+    expect(existsSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(
       true,
     );
     expect(
-      existsSync(join(otherWorkspaceCwd, ".smithers", "node_modules", "@svvy", "workflows")),
+      existsSync(join(otherWorkspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows")),
     ).toBe(true);
     expect(generatedPackageEvents).toHaveLength(1);
     expect(generatedPackageEvents[0]).toMatchObject({
@@ -1557,7 +1624,7 @@ describe("execute_typescript tool", () => {
     );
   });
 
-  it("forwards Extension prebuild CLI failures through the Workflows generated client", async () => {
+  it("forwards Extension prebuild CLI failures through the Workflows generated runtime facade", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
     const workflowsGeneratedPackagePath = join(workspaceCwd, "generated-workflows-package");
@@ -1662,7 +1729,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -1737,8 +1804,8 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details.success).toBe(false);
-    expect(result.details.error?.message).toContain("workspace .smithers source file");
+    expect(result.details!.success).toBe(false);
+    expect(result.details!.error?.message).toContain("workspace .smithers source file");
     expect(existsSync(join(workflowsSourceRoot, "prompts", "OutsidePrompt.mdx"))).toBe(false);
     expect(existsSync(join(workflowsGeneratedPackagePath, "prompts", "OutsidePrompt.ts"))).toBe(
       false,
@@ -1818,7 +1885,7 @@ describe("execute_typescript tool", () => {
     });
   });
 
-  it("keeps removed Workflows runner commands unavailable through generated clients", async () => {
+  it("keeps removed Workflows runner commands unavailable through generated runtime facades", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const removedCommandIds = [
       "run",
@@ -1850,15 +1917,15 @@ describe("execute_typescript tool", () => {
         typescriptCode: `await extensions.workflows.run(${JSON.stringify(commandId)}, { options: {} });`,
       });
 
-      expect(result.details.success).toBe(false);
-      expect(result.details.error?.stage).toBe("typecheck");
-      expect(result.details.error?.message).toContain(JSON.stringify(commandId));
+      expect(result.details!.success).toBe(false);
+      expect(result.details!.error?.stage).toBe("typecheck");
+      expect(result.details!.error?.message).toContain(JSON.stringify(commandId));
       const snapshot = store.getSessionState(sessionId);
       expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
     }
   });
 
-  it("records failed Workflows child commands for invalid dynamic generated-client inputs", async () => {
+  it("records failed Workflows child commands for invalid dynamic generated-runtime-facade inputs", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-workflows-invalid-input", workspaceCwd);
     const runtime = createHandlerRuntime(store, "session-workflows-invalid-input");
@@ -1884,7 +1951,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -1909,14 +1976,15 @@ describe("execute_typescript tool", () => {
     });
   });
 
-  it("supports Artifacts and Workflows generated clients in the same loaded extension set", async () => {
+  it("supports Artifacts and Workflows generated runtime facades in the same loaded extension set", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const store = createStore("session-generated-clients-together", workspaceCwd);
-    const runtime = createRuntime(store, "session-generated-clients-together", "Use clients", [
-      "artifacts",
-      "execute-typescript",
-      "workflows",
-    ]);
+    const store = createStore("session-generated-runtime-facades-together", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-generated-runtime-facades-together",
+      "Use clients",
+      ["artifacts", "execute-typescript", "workflows"],
+    );
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
@@ -1937,7 +2005,7 @@ describe("execute_typescript tool", () => {
       ],
     });
 
-    const result = await tool.execute("tool-call-generated-clients-together", {
+    const result = await tool.execute("tool-call-generated-runtime-facades-together", {
       typescriptCode: [
         'const artifact = await extensions.artifacts.run("create", { options: { name: "both.md" } });',
         'const models = await extensions.workflows.run("models list", { options: {} });',
@@ -1949,7 +2017,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         artifactName: "both.md",
@@ -1957,7 +2025,7 @@ describe("execute_typescript tool", () => {
         extensionKeys: ["artifacts", "workflows"],
       },
     });
-    const snapshot = store.getSessionState("session-generated-clients-together");
+    const snapshot = store.getSessionState("session-generated-runtime-facades-together");
     expect(
       snapshot.commands.filter((command) => command.toolName === "extensions.artifacts.run"),
     ).toHaveLength(1);
@@ -1997,7 +2065,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -2024,7 +2092,7 @@ describe("execute_typescript tool", () => {
     });
   });
 
-  it("opens generated-client artifacts through the attached UI bridge", async () => {
+  it("opens generated-runtime-facade artifacts through the attached UI bridge", async () => {
     const openedArtifacts: Array<{ sessionId: string; artifactId: string }> = [];
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-artifact-open", workspaceCwd);
@@ -2047,13 +2115,13 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         opened: true,
       },
     });
-    const returned = result.details.result as { id: string };
+    const returned = result.details!.result as { id: string };
     expect(openedArtifacts).toEqual([
       {
         sessionId: "session-artifact-open",
@@ -2062,7 +2130,7 @@ describe("execute_typescript tool", () => {
     ]);
   });
 
-  it("records failed child commands for invalid dynamic generated-client inputs", async () => {
+  it("records failed child commands for invalid dynamic generated-runtime-facade inputs", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-artifact-invalid-input", workspaceCwd);
     const runtime = createRuntime(store, "session-artifact-invalid-input");
@@ -2087,7 +2155,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -2147,8 +2215,8 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    const returned = result.details.result as { createdId: string; listedIds: string[] };
-    expect(result.details.success).toBe(true);
+    const returned = result.details!.result as { createdId: string; listedIds: string[] };
+    expect(result.details!.success).toBe(true);
     expect(returned.listedIds).toContain(returned.createdId);
     const snapshot = store.getSessionState("session-artifact-handler");
     const handlerThread = snapshot.threads[0];
@@ -2161,56 +2229,19 @@ describe("execute_typescript tool", () => {
 
   it("supports documented static imports and blocks unsupported module imports", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const extensionsPackagePath = join(workspaceCwd, "generated-extensions-package");
-    const workflowsPackagePath = join(workspaceCwd, "generated-workflows-package");
-    mkdirSync(extensionsPackagePath, { recursive: true });
-    mkdirSync(workflowsPackagePath, { recursive: true });
-    writeFileSync(
-      join(extensionsPackagePath, "package.json"),
-      JSON.stringify({ name: "@svvy/extensions", main: "index.ts" }, null, 2),
-    );
-    writeFileSync(
-      join(extensionsPackagePath, "index.ts"),
-      'export const Extensions = Object.freeze({ linear: "linear" });\n',
-    );
-    writeFileSync(
-      join(workflowsPackagePath, "package.json"),
-      JSON.stringify({ name: "@svvy/workflows", main: "index.ts" }, null, 2),
-    );
-    writeFileSync(
-      join(workflowsPackagePath, "index.ts"),
-      [
-        'export const Agents = Object.freeze({ reviewer: "reviewer" });',
-        "export const Components = Object.freeze({});",
-        "export const Prompts = Object.freeze({});",
-        "export const Workflows = Object.freeze({});",
-        "",
-      ].join("\n"),
-    );
-    expect(buildExecuteTypescriptApiDeclaration("orchestrator")).not.toContain(
-      'declare module "@svvy/workflows"',
-    );
-    expect(
-      buildExecuteTypescriptApiDeclaration("orchestrator", {
-        workflowsExtensionsGeneratedPackagePath: extensionsPackagePath,
-        workflowsGeneratedPackagePath: workflowsPackagePath,
-      }),
-    ).toContain('declare module "@svvy/workflows"');
+    expect(buildExecuteTypescriptApiDeclaration("orchestrator")).not.toContain("@svvyx/workflows");
+    expect(buildExecuteTypescriptApiDeclaration("orchestrator")).not.toContain("@svvyx/extensions");
     const store = createStore("session-incur-client", workspaceCwd);
     const runtime = createRuntime(store, "session-incur-client");
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
-      workflowsExtensionsGeneratedPackagePath: extensionsPackagePath,
-      workflowsGeneratedPackagePath: workflowsPackagePath,
     });
 
     const result = await tool.execute("tool-call-incur-client", {
       typescriptCode: [
         'import { Client, Resources as R, Run } from "incur/client";',
-        'import { Extensions } from "@svvy/extensions";',
-        'import { Agents } from "@svvy/workflows";',
         'const error = new Client.ClientError("no configured client");',
         'console.info("client error", error.name);',
         "return {",
@@ -2218,21 +2249,17 @@ describe("execute_typescript tool", () => {
         "  errorMessage: error.message,",
         "  resourceKeys: Object.keys(R),",
         "  runKeys: Object.keys(Run),",
-        "  extensionKeys: Object.keys(Extensions as object),",
-        "  agentKeys: Object.keys(Agents as object),",
         "};",
       ].join("\n"),
     });
 
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       success: true,
       result: {
         errorName: "Incur.ClientError",
         errorMessage: "no configured client",
         resourceKeys: [],
         runKeys: [],
-        extensionKeys: ["linear"],
-        agentKeys: ["reviewer"],
       },
       logs: ["client error Incur.ClientError"],
     });
@@ -2240,38 +2267,84 @@ describe("execute_typescript tool", () => {
     const unsupportedIncurImport = await tool.execute("tool-call-invalid-incur-import", {
       typescriptCode: 'import { Secrets } from "incur/client";\nreturn Secrets;',
     });
-    expect(unsupportedIncurImport.details).toMatchObject({
+    expect(unsupportedIncurImport.details!).toMatchObject({
       success: false,
       error: {
         stage: "compile",
       },
     });
-    expect(unsupportedIncurImport.details.error?.message).toContain(
+    expect(unsupportedIncurImport.details!.error?.message).toContain(
       "Only named imports Client, Resources, Run",
     );
 
     const nodeImport = await tool.execute("tool-call-node-import", {
       typescriptCode: 'import { readFileSync } from "node:fs";\nreturn readFileSync;',
     });
-    expect(nodeImport.details.success).toBe(false);
-    expect(nodeImport.details.error?.stage).toBe("compile");
-    expect(nodeImport.details.error?.message).toContain(
+    expect(nodeImport.details!.success).toBe(false);
+    expect(nodeImport.details!.error?.stage).toBe("compile");
+    expect(nodeImport.details!.error?.message).toContain(
       "Unsupported execute_typescript import declaration: node:fs",
     );
 
-    const unavailableGeneratedPackageImport = await createExecuteTypescriptTool({
-      cwd: workspaceCwd,
-      runtime,
-      store,
-    }).execute("tool-call-unavailable-generated-package-import", {
-      typescriptCode: 'import { Agents } from "@svvy/workflows";\nreturn Agents;',
-    });
-    expect(unavailableGeneratedPackageImport.details).toMatchObject({
-      success: false,
-      error: {
-        stage: "compile",
-        message: 'Import "@svvy/workflows" is not available in this execute_typescript context.',
-      },
-    });
+    for (const [index, moduleName] of [
+      "@svvyx/workflows",
+      "@svvyx/extensions",
+      "@svvy/workflows",
+      "@svvy/extensions",
+      "@svvy/runtime",
+      "@svvy/state",
+    ].entries()) {
+      const generatedPackageImport = await tool.execute(`tool-call-generated-import-${index}`, {
+        typescriptCode: `import { Agents } from "${moduleName}";\nreturn Agents;`,
+      });
+      expect(generatedPackageImport.details).toMatchObject({
+        success: false,
+        error: {
+          stage: "compile",
+          message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+        },
+      });
+    }
+
+    for (const [index, moduleName] of [
+      "@svvyx/workflows",
+      "@svvyx/extensions",
+      "@svvy/extensions",
+      "@svvy/runtime",
+      "@svvy/state",
+    ].entries()) {
+      const namespaceImport = await tool.execute(`tool-call-namespace-import-${index}`, {
+        typescriptCode: `import * as Package from "${moduleName}";\nreturn Package;`,
+      });
+      expect(namespaceImport.details).toMatchObject({
+        success: false,
+        error: {
+          stage: "compile",
+          message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+        },
+      });
+
+      const sideEffectImport = await tool.execute(`tool-call-side-effect-import-${index}`, {
+        typescriptCode: `import "${moduleName}";\nreturn {};`,
+      });
+      expect(sideEffectImport.details).toMatchObject({
+        success: false,
+        error: {
+          stage: "compile",
+          message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+        },
+      });
+
+      const dynamicImport = await tool.execute(`tool-call-dynamic-import-${index}`, {
+        typescriptCode: `const module = await import("${moduleName}");\nreturn module;`,
+      });
+      expect(dynamicImport.details).toMatchObject({
+        success: false,
+        error: {
+          stage: "compile",
+          message: `Unsupported execute_typescript import declaration: ${moduleName}.`,
+        },
+      });
+    }
   });
 });

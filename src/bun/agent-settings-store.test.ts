@@ -231,7 +231,7 @@ describe("agent profile settings", () => {
       label: "Reviewer",
       provider: "anthropic",
       model: "claude-sonnet-4",
-      reasoningEffort: "high",
+      reasoning: { effort: "high" },
       instructions: "Review strictly.",
       overrides: {
         ci: "loaded",
@@ -291,7 +291,7 @@ describe("agent profile settings", () => {
           label: "Strict Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strict source records.",
           overrides: {
             git: "loaded",
@@ -344,7 +344,7 @@ describe("agent profile settings", () => {
       label: "Strict Reviewer",
       provider: "openai",
       model: "gpt-5.4",
-      reasoningEffort: "medium",
+      reasoning: { effort: "medium" },
       instructions: "Review the implementation and tests strictly.",
       overrides: {
         git: "loaded",
@@ -354,7 +354,7 @@ describe("agent profile settings", () => {
     });
   });
 
-  it("canonicalizes obsolete workflow-agent source fields before Workflows builds read them", () => {
+  it("canonicalizes obsolete workflow-agent extension fields before Workflows builds read them", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-workflow-agent-source-canonical-"));
     const workflowsSourceRoot = join(root, "workflows");
     const sourcePath = join(workflowsSourceRoot, "agents", "explorer.agent.json");
@@ -367,7 +367,7 @@ describe("agent profile settings", () => {
           label: "Explorer",
           provider: "zai",
           model: "glm-5-turbo",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Inspect the repository.",
           extensions: ["base-common", "base-workflow-task"],
           extensionUsage: {
@@ -404,7 +404,7 @@ describe("agent profile settings", () => {
       label: "Explorer",
       provider: "zai",
       model: "glm-5-turbo",
-      reasoningEffort: "medium",
+      reasoning: { effort: "medium" },
       instructions: "Inspect the repository.",
       overrides: {},
       extensionOrder: [],
@@ -438,7 +438,7 @@ describe("agent profile settings", () => {
           label: "Reviewer",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "External edit.",
           overrides: {},
           extensionOrder: [],

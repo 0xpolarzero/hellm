@@ -21,9 +21,9 @@ It is useful when TypeScript control flow helps the agent:
 - batch related loaded-extension operations
 - loop over structured extension results
 - filter or aggregate command results already available to the snippet
-- call generated loaded-extension clients repeatedly
+- call loaded-extension facades repeatedly
 - transform JSON before returning a concise result
-- collect evidence into artifacts through loaded extension clients when those clients expose artifact
+- collect evidence into artifacts through loaded extension facades when those facades expose artifact
   operations
 
 Ordinary one-shot repository work should use the Shell and Apply Patch native extensions:
@@ -39,32 +39,34 @@ owned by the Shell and Apply Patch native extensions.
 
 `execute_typescript` does not widen actor authority.
 
-The generated TypeScript clients exposed to a submitted program are derived from the current actor's
-loaded extension set:
+The TypeScript facades exposed to a submitted program are actor-scoped generated TypeScript
+extension facades derived from the current actor's loaded extension set and backed by
+`@svvy/extensions` handlers plus `@svvy/runtime` command recording:
 
-- builtin app-owned `svvyx` extensions may contribute generated clients when TypeScript API is enabled
-- user `svvyx` generated clients are not emitted until sandboxed generated-client execution exists
-- available-but-not-loaded extensions contribute no generated client
-- unavailable extensions contribute no generated client and no awareness
+- builtin app-owned `svvyx` extensions may contribute generated TypeScript extension facades when
+  TypeScript API is enabled
+- user `svvyx` extensions do not contribute generated TypeScript extension facades
+- available-but-not-loaded extensions contribute no generated TypeScript extension facade
+- unavailable extensions contribute no generated TypeScript extension facade and no awareness
 
-Provider readiness is not a generic reason to expose generated clients. If a future provider-backed
-extension needs generated clients, that extension must still expose a concrete loaded runtime
-interface whose source contracts can generate the client. The builtin Web extension is prompt-only
-and therefore never contributes generated clients in Web v1.
+Provider readiness is not a generic reason to expose generated TypeScript extension facades. A
+facade is emitted only for a loaded extension with a concrete TypeScript facade contract generated
+from source contracts. The builtin Web extension is prompt-only and therefore never contributes a
+facade.
 
-The builtin cx extension is also prompt-only and therefore never contributes generated clients in cx
-v1. `execute_typescript` must not expose `api.cx_*`, `extensions.cx.*`, or another cx SDK. Agents
-use official `cx` CLI commands through `exec_command`.
+The builtin cx extension is also prompt-only and therefore never contributes generated TypeScript
+extension facades. `execute_typescript` must not expose `api.cx_*`, `extensions.cx.*`, or another
+cx SDK. Agents use official `cx` CLI commands through `exec_command`.
 
 If an actor cannot call a capability through its normal generated runtime interface, it must not gain
-that capability through generated `execute_typescript` clients.
+that capability through `execute_typescript` facades.
 
 ## TypeScript Runtime
 
 The submitted program may run ordinary TypeScript after the top-level `execute_typescript` action
 passes the same approval-boundary flow as other approval-gated native actions.
 
-Builtin loaded-extension clients are the preferred surface because they provide:
+Builtin loaded-extension facades are the preferred surface because they provide:
 
 - typed inputs and outputs
 - extension-scoped documentation
@@ -79,19 +81,24 @@ automatic reviewer; in `approvalMode: "user"`, they block on user approval; in
 `approvalMode: "full-access"`, the approval boundary is disabled according to the normal execution
 settings.
 
-Generated extension-client calls inside an approved `execute_typescript` run are not a separate
-approval surface. Builtin Artifacts and Workflows clients create child command records and enforce
-readiness, env injection, redaction, product-state validation, and command failure semantics from
-the underlying extension contract. User `svvyx` generated clients remain unavailable until their
-execution can run inside the same sandboxed generated-client runtime.
+Extension facade calls inside an approved `execute_typescript` run are not a separate approval
+surface. Builtin Artifacts and Workflows injected facades return normal typed command results to the
+submitted TypeScript. Internally, the facade runtime resolves readiness and invocation environment
+through `@svvy/runtime` and `@svvy/extensions`, calls the extension handler, and passes any ordered
+`ExtensionRuntimeOperation` items back to `@svvy/runtime`. Runtime applies closed
+`RuntimeEffectRequest` values and immutable `ExtensionExecutionPlan` values in its owned lanes,
+records child command facts, enforces redaction and failure semantics, and commits state through
+runtime-facing `@svvy/state` ports. User TypeScript never receives those internal operation values.
+User `svvyx` extensions do not contribute `execute_typescript` facade objects or declaration
+entries.
 
-Arbitrary TypeScript side effects that do not go through generated clients are opaque. `svvy` should
-record the submitted source, lifecycle, console output, return value, thrown error, and any observed
-workspace changes after the fact, but it must not claim exact reads, writes, network requests, child
-process behavior, or Codex-style sandbox approval facts for arbitrary host-side TypeScript unless a
-future implementation routes those effects through an owned runtime boundary. The runtime must not
-claim that generated-client child approval checks can retroactively make arbitrary host-side
-TypeScript safe; approval is decided before the snippet runs.
+Arbitrary TypeScript side effects that do not go through TypeScript facades are opaque. `svvy`
+records the submitted source, lifecycle, console output, return value, thrown error, and any observed
+workspace changes after the fact. It records exact facts only for app-owned boundaries and must not
+claim exact reads, writes, network requests, child process behavior, or Codex-style sandbox approval
+facts for arbitrary host-side TypeScript. The runtime must not claim that facade child-command
+checks can retroactively make arbitrary host-side TypeScript safe; approval is decided before the
+snippet runs.
 
 ## Input
 
@@ -109,35 +116,35 @@ The actor receives one generated declaration block for `execute_typescript`. The
 actor-scoped:
 
 ```ts
-declare const extensions: LoadedExtensionsClient;
+declare const extensions: LoadedExtensionFacades;
 declare const console: SvvyConsole;
 ```
 
 There is no global `svvy` client and no broad injected `api` object.
 
-`LoadedExtensionsClient` contains only currently callable TypeScript clients. In v1 this means the
-native app-owned clients such as `artifacts` and `workflows`; user generated extension clients are
-not emitted until their code can execute inside the `execute_typescript` sandbox. If a current actor
-has loaded callable TypeScript clients `artifacts` and `workflows`, the generated declaration
-contains only `extensions.artifacts` and `extensions.workflows`, plus only those clients' command map
-types. It must not contain user extension placeholders, unavailable extensions, docs for
-available-but-not-loaded extensions, or fail-closed runnable user client examples.
+`LoadedExtensionFacades` contains only currently callable builtin app-owned TypeScript facades such
+as `artifacts` and `workflows`. User extension facades are not emitted. If a current actor has
+loaded callable TypeScript facades `artifacts` and `workflows`, the generated declaration contains
+only
+`extensions.artifacts` and `extensions.workflows`, plus only those facades' command map types. It
+must not contain user extension placeholders, unavailable extensions, docs for
+available-but-not-loaded extensions, or fail-closed runnable user facade examples.
 
-Each generated extension client is an Incur-compatible per-extension command client:
+Each extension facade is an Incur-compatible per-extension command facade:
 
 ```ts
-extensions["<extensionId>"].run(commandId, input)
+extensions["<extensionId>"].run(extensionCommandId, input)
 ```
 
 Dot access such as `extensions.artifacts.run(...)` is valid shorthand only for extension ids that
 are also TypeScript identifiers. Hyphenated extension ids, when present, must use bracket access:
 `extensions["some-extension"].run(...)`.
 
-Command ids are the extension's Incur command paths. Inputs use Incur `args`, `options`, and output
-controls. Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `output`, and
-`meta`.
+`extensionCommandId` values are the extension's Incur command paths. They are not durable
+`CommandId` product identities. Inputs use Incur `args`, `options`, and output controls.
+Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `output`, and `meta`.
 
-The declaration generator must include command map types for each loaded callable TypeScript client.
+The declaration generator must include command map types for each loaded callable TypeScript facade.
 The exact emitted names are implementation details, but they must be scoped to the available
 generated declaration block and must be usable with `Run` helper types from `incur/client`.
 
@@ -170,7 +177,7 @@ every extension command schema.
 
 ## Public API Boundary
 
-`execute_typescript` exposes generated loaded-extension clients only. It has no broad hand-written
+`execute_typescript` exposes generated loaded-extension facades only. It has no broad hand-written
 helper API for ordinary repository primitives.
 
 The public snippet environment excludes hand-written namespaces for:
@@ -184,8 +191,8 @@ The public snippet environment excludes hand-written namespaces for:
 - workflow discovery helpers as a hand-written namespace
 - web helpers as a hand-written namespace
 
-When an equivalent operation is useful from TypeScript, it comes from a loaded-extension client
-backed by the same source contract as the actual extension command. The generated client interface
+When an equivalent operation is useful from TypeScript, it comes from a loaded-extension facade
+backed by the same source contract as the actual extension command. The generated facade interface
 is the only extension-command abstraction available inside snippets.
 
 ## Runtime Rules
@@ -194,36 +201,46 @@ is the only extension-command abstraction available inside snippets.
   approval-gated native actions before the snippet runtime starts.
 - The approved snippet runtime then runs under the managed filesystem and network sandbox policy
   for the current session unless full-access policy omits sandboxing.
-- TypeScript may assemble execution policy, launch approved and sandboxed runtime work, validate
-  product contracts, call generated clients, and project results. It must not be described as the
+- TypeScript may construct inputs, call actor-scoped facades, validate product contracts, and
+  request runtime-owned work. `@svvy/runtime` owns approval, sandbox launch facts, subprocess/file
+  effects, child-command records, and final command facts. TypeScript must not be described as the
   filesystem or network sandbox enforcement layer.
 - TypeScript is checked before execution when the runtime can do so reliably.
-- Typecheck failure stops execution before generated client calls run.
+- Typecheck failure stops execution before extension facade calls run.
 - Runtime failure records the thrown error and preserves any child command facts already emitted.
-- Generated client calls create child command records under the parent `execute_typescript` command.
-- Builtin generated clients resolve the same generated command contracts as shell dispatch and call
-  through the generated TypeScript client runtime with the same explicit extension env source.
-- User `svvyx` generated clients are hidden from declarations and unavailable at runtime until
-  sandboxed generated-client execution exists.
-- Generated clients are not shell `svvyx` wrappers. Do not document or generate them as shell calls.
-  They are typed TypeScript clients whose parent `execute_typescript` process has already entered the
-  approval and sandbox execution lane.
-- Local Incur actions and generated-client internals must not be exposed on
+- Extension facade handlers may return `ExtensionHandlerResult` values with ordered
+  `ExtensionRuntimeOperation` items wrapping closed `RuntimeEffectRequest` values for child command
+  records under the parent `execute_typescript` command; those values are internal to the
+  facade/runtime boundary and are not returned to user TypeScript.
+- Builtin injected facades resolve the same generated command contracts as shell dispatch, then call
+  `@svvy/extensions` handlers and pass any returned `ExtensionRuntimeOperation` items back to
+  `@svvy/runtime` with the same explicit extension env source. User TypeScript receives only the
+  typed facade command result or a typed facade error.
+- User `svvyx` extensions do not contribute declaration entries or runtime facade objects.
+- TypeScript facades are not shell `svvyx` wrappers. Do not document or generate them as shell calls.
+  They are typed TypeScript facades whose parent `execute_typescript` process has already entered
+  the approval and sandbox execution lane.
+- Local Incur actions and generated internals must not be exposed on
   `extensions.<extensionId>`.
 - Static imports from `incur/client` must typecheck and execute. Extension implementation files,
   current build paths, and generated extension internals must not be importable by agent-authored
-  snippets as part of the public contract.
+  snippets as part of the public contract. Agent-authored snippets must not import
+  `@svvyx/workflows`, `@svvyx/extensions`, generated package files, extension implementation files,
+  current build paths, or generated extension internals. Generated `@svvyx/*` packages are for
+  Smithers workflow source and Workflows source-library authoring, not the `execute_typescript`
+  runtime surface.
 - Console logs are bounded and recorded as command output or artifacts according to size.
 - Secret redaction runs before logs, outputs, artifacts, command facts, or transcript text are
   persisted.
 - Extension secrets are never injected into the broad TypeScript execution environment.
-- Extension env values are injected only into the exact generated client command invocation that
+- Extension env values are injected only into the exact extension facade command invocation that
   belongs to that extension, and extension code receives them through Incur `c.env`, not through
   broad TypeScript process env.
-- Already emitted generated-client calls finish against the loaded tool/client set that produced
+- Already emitted extension facade calls finish against the loaded tool/facade set that produced
   their declarations.
-- If `load_extension` succeeds earlier in the same turn, the next model call in that same turn sees
-  refreshed `execute_typescript` declarations including the newly loaded extension.
+- If `load_extension` succeeds during a turn, runtime records the actor-local binding change. Active
+  pi declarations do not mutate mid-turn; refreshed `execute_typescript` declarations become visible
+  only after the next safe prompt-bearing pre-dispatch generated-context refresh.
 
 ## Recording
 
@@ -240,16 +257,18 @@ The parent record includes:
 - return value summary when serializable
 - diagnostics artifact when typecheck fails
 - error details when execution fails
-- child command rollups for generated client calls
+- child command rollups for extension facade calls
 
-Generated client calls create child command records with authoritative facts because `svvy` owns that
+Extension facade handlers may return `ExtensionHandlerResult` values with ordered
+`ExtensionRuntimeOperation` items wrapping closed `RuntimeEffectRequest` values for child command
+records. `@svvy/runtime` applies those requests through `@svvy/state` because `svvy` owns that
 boundary. Arbitrary TypeScript host effects do not create authoritative child records.
 
 ## Visibility
 
 The parent `execute_typescript` command is summary-visible by default.
 
-Child generated-client calls follow the visibility policy of the underlying capability:
+Child extension facade calls follow the visibility policy of the underlying capability:
 
 - read/search/list/discovery actions are trace-visible by default
 - command execution, artifact creation, extension lifecycle, approvals, failures, and file changes
@@ -260,7 +279,7 @@ inspectability.
 
 ## Examples
 
-Example using a loaded extension client:
+Example using a loaded extension facade:
 
 ```ts
 const created = await extensions.artifacts.run("create", {
@@ -283,7 +302,7 @@ return {
 };
 ```
 
-The last example has no child command facts because it does not call a generated client.
+The last example has no child command facts because it does not call an extension facade.
 
 ## Execute TypeScript Loaded Instruction Files
 
@@ -291,20 +310,20 @@ The builtin Execute TypeScript extension has two full instruction source files. 
 ordered by filename under `instructions/full/`:
 
 ```text
-010-execute-typescript.md
-020-incur-typescript-clients.md
+010-execute-typescript.mdx
+020-incur-typescript-facades.mdx
 ```
 
 The generated loaded instruction for Execute TypeScript is the concatenation of those files. This
 split keeps generic TypeScript execution guidance separate from generic Incur-backed generated
-client usage.
+facade usage.
 
 The loaded Execute TypeScript instruction files are generic. They must not contain every generated
 extension declaration or every loaded extension's command docs. The exact command map and
 extension-specific examples are generated beside these instructions from the actor's loaded
 TypeScript-enabled `svvyx` extensions.
 
-### `010-execute-typescript.md`
+### `010-execute-typescript.mdx`
 
 This file owns generic `execute_typescript` guidance. Its canonical content is:
 
@@ -319,7 +338,7 @@ Good uses:
 - batch related loaded-extension operations
 - loop over structured extension results
 - filter or aggregate JSON already available to the snippet
-- call generated loaded-extension clients repeatedly
+- call loaded-extension facades repeatedly
 - transform data before returning a concise result
 
 Prefer Shell and Apply Patch for ordinary repository work:
@@ -348,18 +367,18 @@ extensions exist, and `console` for bounded diagnostic logging.
 Use `console.log`, `console.info`, `console.warn`, or `console.error` for concise diagnostics. Do
 not use logs as the main result when returning structured data is clearer.
 
-Arbitrary TypeScript side effects that do not go through generated clients are opaque to product
-state. Use loaded extension clients for app-owned operations that need command facts, redaction,
+Arbitrary TypeScript side effects that do not go through TypeScript facades are opaque to product
+state. Use loaded extension facades for app-owned operations that need command facts, redaction,
 env injection, artifacts, or other product-state capture.
 ````
 
-### `020-incur-typescript-clients.md`
+### `020-incur-typescript-facades.mdx`
 
-This file owns generic usage of generated Incur-compatible clients for loaded builtin `svvyx`
+This file owns generic usage of generated Incur-compatible facades for loaded builtin `svvyx`
 extensions. Its canonical content is:
 
 ````md
-# Incur TypeScript Clients
+# Incur TypeScript Facades
 
 Use this guidance when TypeScript code inside `execute_typescript` needs to call a loaded builtin
 `svvyx` extension programmatically. Use shell commands when the operation is a one-shot CLI call or
@@ -374,13 +393,13 @@ import { Client, Resources, Run } from "incur/client";
 `incur/client` is available inside `execute_typescript` snippets. Import `Client` when you need to
 handle `Client.ClientError`.
 
-## Loaded Extension Clients
+## Loaded Extension Facades
 
 `execute_typescript` exposes an actor-scoped `extensions` object. It contains only loaded
-TypeScript-enabled builtin clients available to the current actor.
+TypeScript-enabled builtin facades available to the current actor.
 
-If the current actor has loaded callable TypeScript clients `artifacts` and `workflows`, then only
-those clients exist:
+If the current actor has loaded callable TypeScript facades `artifacts` and `workflows`, then only
+those facades exist:
 
 ```ts
 extensions.artifacts;
@@ -388,20 +407,21 @@ extensions.workflows;
 ```
 
 Available-but-not-loaded extensions and unavailable extensions do not appear in `extensions` and do
-not contribute command types, examples, or docs. User generated extension clients are unavailable in
-v1 and likewise do not appear in `extensions`.
+not contribute command types, examples, or docs. User generated extension facades are unavailable in
+the shipped contract and likewise do not appear in `extensions`.
 
 There is no global `svvy` client and no injected `api` object.
 
 Do not construct transports, generic Incur clients, or extension implementation imports inside
-snippets. The app owns the generated clients and injects extension env internally.
+snippets. `@svvy/extensions` owns facade declarations and handlers; `@svvy/runtime` owns command
+execution and child-command recording; trusted app bootstrap injects extension env internally.
 
 ## Command Maps And Command IDs
 
-Each generated extension client is typed from that extension's Incur command map. Command IDs are
+Each generated extension facade declaration is typed from that extension's Incur command map. Command IDs are
 full Incur command paths such as `"create"`, `"inspect"`, `"list"`, or `"models list"`.
 
-The actual command maps are generated only for the builtin clients available to this actor.
+The actual command maps are generated only for the builtin facades available to this actor.
 
 ## Running Commands
 
@@ -414,7 +434,7 @@ const report = await extensions.workflows.run("list", {
   options: { kind: "workflow" },
 
   // Equivalent to --filter-output. This changes result.data, so data is typed unknown.
-  selection: ["summary", "items[0:3]", "nextCursor"],
+  selection: ["items[0:3]"],
 
   // These affect rendered result.output.text, not the extension command's original full output.
   outputFormat: "md",
@@ -431,13 +451,24 @@ console.log(report);
 // {
 //   ok: true,
 //   data: {
-//     summary: 'Available workflow exports',
 //     items: [
-//       { exportName: 'releaseChecklist', qualifiedName: 'Workflows.releaseChecklist' },
-//       { exportName: 'triageIssue', qualifiedName: 'Workflows.triageIssue' },
-//       { exportName: 'summarizeDiff', qualifiedName: 'Workflows.summarizeDiff' },
+//       {
+//         kind: 'workflow',
+//         namespace: 'Workflows',
+//         exportName: 'releaseChecklist',
+//         qualifiedName: 'Workflows.releaseChecklist',
+//         sourcePath: '~/.config/svvy/workflows/workflows/releaseChecklist.workflow.ts',
+//         generatedPath: '<GeneratedPackageRootPort-resolved @svvyx/workflows root>/src/workflows/releaseChecklist.workflow.ts',
+//       },
+//       {
+//         kind: 'workflow',
+//         namespace: 'Workflows',
+//         exportName: 'triageIssue',
+//         qualifiedName: 'Workflows.triageIssue',
+//         sourcePath: '~/.config/svvy/workflows/workflows/triageIssue.workflow.ts',
+//         generatedPath: '<GeneratedPackageRootPort-resolved @svvyx/workflows root>/src/workflows/triageIssue.workflow.ts',
+//       },
 //     ],
-//     nextCursor: 'workflow_4',
 //   },
 //   output: {
 //     text: '## Available workflow exports\n\n- Workflows.releaseChecklist\n- Workflows.triageIssue',
@@ -471,14 +502,14 @@ await extensions.artifacts.run("missing");
 await extensions.artifacts.run("create");
 ```
 
-If an extension client has default output selection, result data is conservative `unknown`. Clear it
+If an extension facade has default output selection, result data is conservative `unknown`. Clear it
 for a call with `selection: undefined` to recover the full output type:
 
 ```ts
 const selected = await extensions.workflows.run("list", {
   options: { kind: "workflow" },
 });
-// selected.data is unknown when the generated client applies default selection.
+// selected.data is unknown when the generated facade applies default selection.
 
 const full = await extensions.workflows.run("list", {
   options: { kind: "workflow" },
@@ -490,16 +521,27 @@ console.log(full);
 // {
 //   ok: true,
 //   data: {
-//     summary: 'Available workflow exports',
 //     items: [
-//       { exportName: 'releaseChecklist', qualifiedName: 'Workflows.releaseChecklist' },
-//       { exportName: 'triageIssue', qualifiedName: 'Workflows.triageIssue' },
-//       { exportName: 'summarizeDiff', qualifiedName: 'Workflows.summarizeDiff' },
+//       {
+//         kind: 'workflow',
+//         namespace: 'Workflows',
+//         exportName: 'releaseChecklist',
+//         qualifiedName: 'Workflows.releaseChecklist',
+//         sourcePath: '~/.config/svvy/workflows/workflows/releaseChecklist.workflow.ts',
+//         generatedPath: '<GeneratedPackageRootPort-resolved @svvyx/workflows root>/src/workflows/releaseChecklist.workflow.ts',
+//       },
+//       {
+//         kind: 'workflow',
+//         namespace: 'Workflows',
+//         exportName: 'triageIssue',
+//         qualifiedName: 'Workflows.triageIssue',
+//         sourcePath: '~/.config/svvy/workflows/workflows/triageIssue.workflow.ts',
+//         generatedPath: '<GeneratedPackageRootPort-resolved @svvyx/workflows root>/src/workflows/triageIssue.workflow.ts',
+//       },
 //     ],
-//     nextCursor: 'workflow_4',
 //   },
 //   output: {
-//     text: 'summary: Available workflow exports\nitems[3]{exportName,qualifiedName}: ...',
+//     text: 'items[2]{kind,namespace,exportName,qualifiedName,sourcePath,generatedPath}: ...',
 //     format: 'toon',
 //   },
 //   meta: { command: 'list', duration: '18ms' },
@@ -508,8 +550,8 @@ console.log(full);
 
 ## CTAs
 
-CTA execution is not a current `execute_typescript` generated-client capability. Do not document,
-generate, or rely on runnable `meta.cta` helpers for this surface until the generated-client runtime
+CTA execution is not a current `execute_typescript` facade capability. Do not document,
+generate, or rely on runnable `meta.cta` helpers for this surface until the facade runtime
 implements and tests them.
 
 ## Errors
@@ -521,7 +563,7 @@ import { Client } from "incur/client";
 
 try {
   await extensions.artifacts.run("inspect", {
-    args: { artifactId: "missing_artifact" },
+    options: { id: "missing_artifact" },
   });
 } catch (error) {
   if (error instanceof Client.ClientError) {
@@ -561,24 +603,23 @@ Do not use a structural `IncurClientError` alias. Import `Client` from `incur/cl
 
 ## Streaming
 
-Streaming generated-client commands are not a current `execute_typescript` capability. The current
-runtime must fail closed for streaming user extension commands until streamed child-command
-projection, backpressure, cancellation, final-result recording, and tests are implemented.
+Streaming extension-facade commands are outside the current `execute_typescript` contract. Runtime
+fails closed for streaming user extension commands.
 
 ## Discovery Resources
 
 Incur discovery resources such as llms docs, schemas, help text, and OpenAPI descriptions are
 internal inputs to extension build, validation, inspection, and generated-contract creation.
 
-In v1, agent-authored `execute_typescript` snippets do not receive discovery helper methods such as
-`llms()`, `llmsFull()`, `schema()`, `help()`, or `openapi()` on generated extension clients. The
-agent-facing client surface remains `extensions["<extensionId>"].run(commandId, input)` plus
-generated command map types for emitted builtin TypeScript clients.
+Agent-authored `execute_typescript` snippets do not receive discovery helper methods such as
+`llms()`, `llmsFull()`, `schema()`, `help()`, or `openapi()` on generated extension facades. The
+agent-facing facade surface is `extensions["<extensionId>"].run(extensionCommandId, input)` plus
+generated command map types for emitted builtin TypeScript facades.
 
 Use discovery resources for docs, UI generation, tests, and schema inspection. Use
 `extensions.<extensionId>.run()` for command execution.
 
-Do not use local Skills actions or MCP setup actions. Generated clients do not expose
+Do not use local Skills actions or MCP setup actions. Generated facades do not expose
 `skills.add()`, `skills.get()`, `skills.index()`, `mcp.add()`, or `mcp.tools()`.
 ````
 
@@ -590,9 +631,9 @@ The agent receives:
 - generated TypeScript declarations for the current actor
 - base Execute TypeScript usage guidance saying `execute_typescript` is for TypeScript composition,
   not one-shot repository inspection or file edits
-- separate generic Incur TypeScript client guidance for `extensions["<id>"].run(...)` and
+- separate generic Incur-compatible facade guidance for `extensions["<id>"].run(...)` and
   `incur/client`
-- loaded-extension client documentation only for emitted builtin clients that expose TypeScript API
+- loaded-extension facade documentation only for emitted builtin facades that expose TypeScript API
 
 The agent must not receive generated declarations for unavailable or available-but-not-loaded
 extensions.

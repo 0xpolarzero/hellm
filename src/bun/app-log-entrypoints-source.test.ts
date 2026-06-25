@@ -4,10 +4,13 @@ import { readFile } from "node:fs/promises";
 describe("Bun app-log entrypoints", () => {
   it("emits targeted logs for provider auth, sessions, surfaces, prompts, and external editor handoff", async () => {
     const indexSource = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+    const runtimeLayerSource = await readFile(
+      new URL("../../packages/runtime/src/runtime-layer.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(indexSource).toContain('"auth.provider"');
-    expect(indexSource).toContain('"Configured provider is not connected for prompt."');
-    expect(indexSource).toContain('"Configured provider is not connected for prompt steering."');
+    expect(runtimeLayerSource).toContain('"Configured provider is not connected for prompt."');
     expect(indexSource).toContain('"auth.provider", "Provider auth updated."');
     expect(indexSource).toContain('"auth.provider", "Provider OAuth started."');
     expect(indexSource).toContain('"auth.provider", "Provider OAuth failed."');
@@ -21,11 +24,11 @@ describe("Bun app-log entrypoints", () => {
     expect(indexSource).toContain('"surface", "Surface closed."');
     expect(indexSource).toContain('"surface", "Surface model changed."');
     expect(indexSource).toContain('"surface", "Surface reasoning changed."');
-    expect(indexSource).toContain('"prompt", "Prompt requested."');
-    expect(indexSource).toContain('"prompt", "Prompt started."');
-    expect(indexSource).toContain('"prompt", "Prompt finished."');
-    expect(indexSource).toContain('"Prompt queued for active surface."');
-    expect(indexSource).toContain('"Prompt dispatched to pi runtime."');
+    expect(runtimeLayerSource).toContain('"prompt", "Prompt requested."');
+    expect(runtimeLayerSource).toContain('"prompt", "Prompt started."');
+    expect(runtimeLayerSource).toContain('"prompt", "Prompt finished."');
+    expect(runtimeLayerSource).toContain('"Prompt queued for active surface."');
+    expect(runtimeLayerSource).toContain('"Prompt dispatched to pi runtime."');
     expect(indexSource).toContain(
       '"external-editor", "Workspace source opened in external editor."',
     );

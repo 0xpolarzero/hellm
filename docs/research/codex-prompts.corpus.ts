@@ -1,6 +1,7 @@
-// Generated research corpus from openai/codex at fe24a180ab6f6b3639b682cc6a1e71150fea6d48.
-// This file intentionally stores large prompt strings so the associated
-// Markdown research note can stay navigable while preserving exact source text.
+// Non-authoritative research corpus from openai/codex at fe24a180ab6f6b3639b682cc6a1e71150fea6d48.
+// This file stores upstream prompt strings for research only. Do not treat
+// embedded prompt text as svvy instructions, product architecture, or current
+// implementation guidance.
 // Source: https://github.com/openai/codex/tree/fe24a180ab6f6b3639b682cc6a1e71150fea6d48
 
 export type CodexPromptFileKind =

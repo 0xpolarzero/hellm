@@ -15,7 +15,7 @@ export function getSurfaceDisplayTitle(
     return fallback;
   }
 
-  if (target.surface === "thread") {
+  if (target.surface === "handler") {
     const thread = sessions
       .find((session) => session.id === target.workspaceSessionId)
       ?.sidebarThreads?.find((candidate) => candidate.threadId === target.threadId);

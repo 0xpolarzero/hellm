@@ -13,30 +13,114 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPromptExecutionContext } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import { createPromptExecutionContext } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
-import { buildStructuredSessionView } from "./structured-session-selectors";
-import { createStructuredSessionStateStore } from "./structured-session-state";
+import {
+  runtimeArtifactStatePortFromStore,
+  runtimeCommandStatePortFromStore,
+  runtimeExtensionContextImpactStateFacadeFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
+import { buildStructuredSessionView } from "@svvy/state/structured-session-selectors";
+import {
+  createStructuredSessionStateStore,
+  type StructuredSessionStateStore,
+} from "@svvy/state/structured-session-state";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
+import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
+import { createAgentSettingsStore } from "./agent-settings-store";
+import { DEFAULT_ORCHESTRATOR_PROFILE_ID } from "../shared/agent-settings";
+import type { AgentProfileId, CommandId } from "@svvy/core";
+import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 
 const tempDirs: string[] = [];
+const originalSandboxHelperPath = process.env.SVVY_SANDBOX_HELPER_PATH;
+const testSandboxHelperPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "build",
+  "native",
+  "svvy-sandbox-helper",
+);
 
 function createSvvyDirectToolsForTest(
-  options: Omit<Parameters<typeof createSvvyDirectTools>[0], "extensionsRoot"> & {
+  options: Omit<
+    Parameters<typeof createSvvyDirectTools>[0],
+    | "artifactState"
+    | "commandState"
+    | "databasePath"
+    | "extensionsRoot"
+    | "readWorkspaceForSession"
+    | "runState"
+  > & {
     extensionsRoot?: string;
+    store?: StructuredSessionStateStore;
   },
 ): ReturnType<typeof createSvvyDirectTools> {
+  if (options.managedSandbox && !process.env.SVVY_SANDBOX_HELPER_PATH) {
+    process.env.SVVY_SANDBOX_HELPER_PATH = testSandboxHelperPath;
+  }
+  const { store, ...directOptions } = options;
   return createSvvyDirectTools({
-    ...options,
+    ...directOptions,
+    ...(store
+      ? {
+          artifactState: runtimeArtifactStatePortFromStore(store),
+          commandState: runtimeCommandStatePortFromStore(store),
+          databasePath: store.databasePath,
+          extensionContextImpactState:
+            directOptions.extensionContextImpactState ??
+            runtimeExtensionContextImpactStateFacadeFromStore(store),
+          readWorkspaceForSession: (sessionId: string) =>
+            store.getSessionState(sessionId).workspace,
+          runState: Effect.runSync,
+        }
+      : {}),
     managedSandbox: options.managedSandbox ?? false,
     extensionsRoot: options.extensionsRoot ?? join(options.cwd, ".svvy-test", "extensions"),
   });
+}
+
+function createTrackerForTest(
+  store: StructuredSessionStateStore,
+  promptContext: ReturnType<typeof createPromptExecutionContext>,
+) {
+  return createToolExecutionCommandTracker({
+    commandState: runtimeCommandStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    promptContext,
+    stateWrites: createImmediateRuntimeStateWriteLane(),
+  });
+}
+
+function createImmediateRuntimeStateWriteLane(): RuntimeStateWriteLane {
+  return {
+    run(effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    enqueue(_label, effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    drain() {
+      return Promise.resolve();
+    },
+    close() {
+      return Promise.resolve();
+    },
+  };
 }
 const openStores: ReturnType<typeof createStructuredSessionStateStore>[] = [];
 
 describe("svvy direct tools", () => {
   afterEach(() => {
+    if (originalSandboxHelperPath === undefined) {
+      delete process.env.SVVY_SANDBOX_HELPER_PATH;
+    } else {
+      process.env.SVVY_SANDBOX_HELPER_PATH = originalSandboxHelperPath;
+    }
     while (openStores.length > 0) {
       openStores.pop()?.close();
     }
@@ -145,10 +229,11 @@ describe("svvy direct tools", () => {
     });
     const runtime = {
       current: createPromptExecutionContext({
-        sessionId: "session-live-exec",
+        workspaceSessionId: "session-live-exec",
         turnId: turn.id,
         surfacePiSessionId: "session-live-exec",
-        promptText: "Run a command",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       }),
     };
     const command = store.createCommand({
@@ -227,12 +312,13 @@ describe("svvy direct tools", () => {
       requestSummary: "Run a command",
     });
     const promptContext = createPromptExecutionContext({
-      sessionId: "session-retained-output",
+      workspaceSessionId: "session-retained-output",
       turnId: turn.id,
       surfacePiSessionId: "session-retained-output",
-      promptText: "Run a command",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     });
-    const tracker = createToolExecutionCommandTracker({ store, promptContext });
+    const tracker = createTrackerForTest(store, promptContext);
     const commandText =
       "bun -e \"console.log('x'.repeat(70000)); console.error('y'.repeat(70000))\"";
     tracker.handleToolExecutionStart({
@@ -473,6 +559,58 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("app-owned and cannot be overridden");
   });
 
+  it("does not expose external instruction bodies through svvyx subprocess context", async () => {
+    const cwd = createTempDir();
+    const secretInstructionBody = "secret instruction body must not cross shell env";
+    const runtime = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: "session-external-instruction-env",
+        turnId: "turn-external-instruction-env",
+        surfacePiSessionId: "session-external-instruction-env",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
+        externalInstructionSources: [
+          {
+            id: "0:/repo/AGENTS.md",
+            kind: "AGENTS.md",
+            title: "AGENTS.md",
+            path: "/repo/AGENTS.md",
+            content: secretInstructionBody,
+            contentHash: "hash-agents",
+            order: 0,
+            enabled: true,
+            actors: ["orchestrator", "handler"],
+            sourceGroup: "workspace_chain",
+            readStatus: { status: "readable" },
+          },
+        ],
+      }),
+    };
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({ cwd, runtime }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-svvyx-external-instruction-env",
+      { cmd: "svvyx extensions inspect external_instruction:AGENTS.md:/repo/AGENTS.md --json" },
+      new AbortController().signal,
+      () => {},
+    );
+    const text = readText(result);
+    const output = JSON.parse(text);
+
+    expect(text).not.toContain(secretInstructionBody);
+    expect(output.extension.externalInstruction).toMatchObject({
+      path: "/repo/AGENTS.md",
+      content: "",
+      contentHash: "hash-agents",
+      enabled: true,
+      actors: ["orchestrator", "handler"],
+      readStatus: { status: "readable" },
+    });
+  });
+
   it("injects command-scoped workflow task-agent bridge env for handler shell commands", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
@@ -510,13 +648,14 @@ describe("svvy direct tools", () => {
     });
     const runtime = {
       current: createPromptExecutionContext({
-        sessionId: "session-smithers-bridge",
+        workspaceSessionId: "session-smithers-bridge",
         turnId: turn.id,
         surfacePiSessionId: "session-smithers-handler",
         surfaceKind: "handler",
-        surfaceThreadId: thread.id,
+        threadId: thread.id,
         rootThreadId: thread.id,
-        promptText: "Run Smithers",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       }),
     };
     const command = store.createCommand({
@@ -537,11 +676,11 @@ describe("svvy direct tools", () => {
         cwd,
         runtime,
         store,
-        workflowTaskAgentBridge: ({ runtime: bridgeRuntime, sourceCommandId }) => ({
+        runTaskAgentBridge: ({ runtime: bridgeRuntime, sourceCommandId }) => ({
           SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
           SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
-          SVVY_WORKSPACE_SESSION_ID: bridgeRuntime?.sessionId ?? "",
-          SVVY_SOURCE_COMMAND_ID: sourceCommandId ?? "",
+          SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: bridgeRuntime?.workspaceSessionId ?? "",
+          SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: sourceCommandId ?? "",
         }),
       }).codingTools,
       "exec_command",
@@ -553,8 +692,8 @@ describe("svvy direct tools", () => {
         cmd: [
           'printf "url=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_URL"',
           'printf "token=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN"',
-          'printf "workspace=%s\\n" "$SVVY_WORKSPACE_SESSION_ID"',
-          'printf "source=%s\\n" "$SVVY_SOURCE_COMMAND_ID"',
+          'printf "workspace=%s\\n" "$SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID"',
+          'printf "source=%s\\n" "$SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID"',
         ].join("; "),
       },
       new AbortController().signal,
@@ -593,10 +732,11 @@ describe("svvy direct tools", () => {
     });
     const runtime = {
       current: createPromptExecutionContext({
-        sessionId: "session-orchestrator-no-bridge",
+        workspaceSessionId: "session-orchestrator-no-bridge",
         turnId: turn.id,
         surfacePiSessionId: "session-orchestrator-no-bridge",
-        promptText: "Run shell command",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       }),
     };
     const command = store.createCommand({
@@ -615,11 +755,11 @@ describe("svvy direct tools", () => {
         cwd,
         runtime,
         store,
-        workflowTaskAgentBridge: () => ({
+        runTaskAgentBridge: () => ({
           SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
           SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
-          SVVY_WORKSPACE_SESSION_ID: "session-orchestrator-no-bridge",
-          SVVY_SOURCE_COMMAND_ID: command.id,
+          SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: "session-orchestrator-no-bridge",
+          SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: command.id,
         }),
       }).codingTools,
       "exec_command",
@@ -695,12 +835,12 @@ describe("svvy direct tools", () => {
     expect(catResult.details?.commandFacts).toBeUndefined();
   });
 
-  it("does not trust sidecar replay for user runtime extension svvyx commands", async () => {
+  it("does not trust transport replay for user runtime extension svvyx commands", async () => {
     const cwd = createTempDir();
     const execTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "exec_command");
 
     const result = await execTool.execute(
-      "tool-runtime-no-sidecar-replay",
+      "tool-runtime-no-transport-replay",
       { cmd: "svvyx linear search --json" },
       new AbortController().signal,
       () => {},
@@ -887,15 +1027,13 @@ describe("svvy direct tools", () => {
       requestSummary: "Run a workflow command",
     });
     const promptContext = createPromptExecutionContext({
-      sessionId: "session-live-workflows-tracker",
+      workspaceSessionId: "session-live-workflows-tracker",
       turnId: turn.id,
       surfacePiSessionId: "session-live-workflows-tracker",
-      promptText: "Run a workflow command",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     });
-    const tracker = createToolExecutionCommandTracker({
-      store,
-      promptContext,
-    });
+    const tracker = createTrackerForTest(store, promptContext);
     const runtime = { current: promptContext };
     const execTool = findTool(
       createSvvyDirectToolsForTest({
@@ -976,10 +1114,11 @@ describe("svvy direct tools", () => {
     });
     const runtime = {
       current: createPromptExecutionContext({
-        sessionId: "session-running-exec",
+        workspaceSessionId: "session-running-exec",
         turnId: turn.id,
         surfacePiSessionId: "session-running-exec",
-        promptText: "Run a long command",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       }),
     };
     const command = store.createCommand({
@@ -1085,10 +1224,11 @@ describe("svvy direct tools", () => {
     });
     const runtime = {
       current: createPromptExecutionContext({
-        sessionId: "session-running-retained-exec",
+        workspaceSessionId: "session-running-retained-exec",
         turnId: turn.id,
         surfacePiSessionId: "session-running-retained-exec",
-        promptText: "Run a long command",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
       }),
     };
     const command = store.createCommand({
@@ -1192,12 +1332,13 @@ describe("svvy direct tools", () => {
       requestSummary: "Run a command",
     });
     const promptContext = createPromptExecutionContext({
-      sessionId: "session-unsandboxed-long-running",
+      workspaceSessionId: "session-unsandboxed-long-running",
       turnId: turn.id,
       surfacePiSessionId: "session-unsandboxed-long-running",
-      promptText: "Run a command",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     });
-    const tracker = createToolExecutionCommandTracker({ store, promptContext });
+    const tracker = createTrackerForTest(store, promptContext);
     const tools = createSvvyDirectToolsForTest({
       cwd,
       runtime: { current: promptContext },
@@ -1370,7 +1511,7 @@ describe("svvy direct tools", () => {
       [
         "export const reviewerAgent = {",
         '  label: "Reviewer",',
-        "} satisfies Agents.TaskAgentParameters;",
+        "} satisfies Agents.TaskAgentParametersSource;",
       ].join("\n"),
     );
     writeFileSync(
@@ -1710,9 +1851,9 @@ describe("svvy direct tools", () => {
         },
       },
     ]);
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvy", "workflows"))).toBe(true);
+    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(true);
     expect(
-      existsSync(join(otherWorkspace, ".smithers", "node_modules", "@svvy", "workflows")),
+      existsSync(join(otherWorkspace, ".smithers", "node_modules", "@svvyx", "workflows")),
     ).toBe(true);
     expect(readFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "utf8")).toBe(
       "# Review\n",
@@ -1773,6 +1914,41 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("direct MDX");
     expect(existsSync(join(sourceRoot, "prompts", "PromptExport.mdx"))).toBe(false);
     expect(events).toHaveLength(1);
+  });
+
+  it("rejects workflow save sources outside workspace-owned .smithers source files", async () => {
+    const cwd = createTempDir();
+    const sourceRoot = join(cwd, "workflow-source");
+    const packageRoot = join(cwd, "generated", "package");
+    const outsidePromptPath = join(cwd, "outside-review-prompt.mdx");
+    const generatedPromptPath = join(
+      cwd,
+      ".smithers",
+      "node_modules",
+      "@svvyx",
+      "workflows",
+      "prompts",
+      "ReviewPrompt.ts",
+    );
+    const events: unknown[] = [];
+    mkdirSync(join(cwd, ".smithers", "prompts"), { recursive: true });
+    mkdirSync(dirname(generatedPromptPath), { recursive: true });
+    writeFileSync(outsidePromptPath, "# Outside\n");
+    writeFileSync(generatedPromptPath, "export const ReviewPrompt = {};\n");
+    symlinkSync(outsidePromptPath, join(cwd, ".smithers", "prompts", "outside-link.mdx"));
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        workflowsGeneratedPackagePath: packageRoot,
+        workflowsModelCatalog: () => [],
+        workflowsSourceRoot: sourceRoot,
+        workflowsWorkspaceCwds: () => [cwd],
+        onWorkflowsGeneratedPackageChanged: (event) => {
+          events.push(event);
+        },
+      }).codingTools,
+      "exec_command",
+    );
 
     await expect(
       execTool.execute(
@@ -1785,7 +1961,7 @@ describe("svvy direct tools", () => {
       ),
     ).rejects.toThrow("workspace .smithers source file");
     expect(existsSync(join(sourceRoot, "prompts", "OutsidePrompt.mdx"))).toBe(false);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(0);
 
     await expect(
       execTool.execute(
@@ -1798,20 +1974,20 @@ describe("svvy direct tools", () => {
       ),
     ).rejects.toThrow("workspace .smithers source file");
     expect(existsSync(join(sourceRoot, "prompts", "SymlinkPrompt.mdx"))).toBe(false);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(0);
 
     await expect(
       execTool.execute(
         "tool-workflows-save-generated-link-source-rejected",
         {
-          cmd: "svvyx workflows save --from .smithers/node_modules/@svvy/workflows/prompts/ReviewPrompt.ts --kind component --as GeneratedPromptSource --json",
+          cmd: "svvyx workflows save --from .smithers/node_modules/@svvyx/workflows/prompts/ReviewPrompt.ts --kind component --as GeneratedPromptSource --json",
         },
         new AbortController().signal,
         () => {},
       ),
     ).rejects.toThrow("workspace .smithers source file");
     expect(existsSync(join(sourceRoot, "components", "GeneratedPromptSource.ts"))).toBe(false);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(0);
   });
 
   it("rolls back source and generated packages when save linking fails", async () => {
@@ -1848,7 +2024,7 @@ describe("svvy direct tools", () => {
     );
 
     writeFileSync(join(extensionsPackageRoot, "preserved-marker.txt"), "preserved\n");
-    mkdirSync(join(badWorkspace, ".smithers", "node_modules", "@svvy", "extensions"), {
+    mkdirSync(join(badWorkspace, ".smithers", "node_modules", "@svvyx", "extensions"), {
       recursive: true,
     });
     workspaceCwds = [cwd, badWorkspace];
@@ -1916,7 +2092,7 @@ describe("svvy direct tools", () => {
       sourcePath: join(sourceRoot, "prompts", "NestedPrompt.mdx"),
       linkedWorkspaces: [cwd],
     });
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvy", "workflows"))).toBe(true);
+    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(true);
   });
 
   it("saves selected component and workflow exports and rejects unsafe non-agent extraction", async () => {
@@ -2077,7 +2253,7 @@ describe("svvy direct tools", () => {
           label: "Default",
           provider: "openai",
           model: "gpt-5.4",
-          reasoningEffort: "low",
+          reasoning: { effort: "low" },
           instructions: "Handle the task.",
           overrides: { shell: "loaded" },
         },
@@ -2092,7 +2268,7 @@ describe("svvy direct tools", () => {
         "  ...Agents.defaultAgent,",
         '  id: "sourceReviewer",',
         '  label: "Reviewer",',
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review strictly.",',
         '  overrides: { shell: "loaded" },',
         "});",
@@ -2107,7 +2283,7 @@ describe("svvy direct tools", () => {
         '  label: "Dynamic",',
         '  provider: "openai",',
         "  model,",
-        '  reasoningEffort: "medium",',
+        '  reasoning: { effort: "medium" },',
         '  instructions: "Review strictly.",',
         '  overrides: { shell: "loaded" },',
         "});",
@@ -2158,7 +2334,7 @@ describe("svvy direct tools", () => {
       label: "Reviewer",
       provider: "openai",
       model: "gpt-5.4",
-      reasoningEffort: "medium",
+      reasoning: { effort: "medium" },
       overrides: { shell: "loaded" },
     });
     expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
@@ -2196,7 +2372,7 @@ describe("svvy direct tools", () => {
           label: "Bad Agent",
           provider: "openai",
           model: "missing-model",
-          reasoningEffort: "medium",
+          reasoning: { effort: "medium" },
           instructions: "Review strictly.",
           overrides: { "missing-extension": "loaded" },
         },
@@ -2411,7 +2587,7 @@ describe("svvy direct tools", () => {
       cwd,
       ".smithers",
       "node_modules",
-      "@svvy",
+      "@svvyx",
       "workflows",
       "prompts",
       "GeneratedPrompt.ts",
@@ -2420,17 +2596,17 @@ describe("svvy direct tools", () => {
       cwd,
       ".smithers",
       "node_modules",
-      "@svvy",
+      "@svvyx",
       "extensions",
       "index.ts",
     );
     mkdirSync(join(sourceRoot, "prompts"), { recursive: true });
     mkdirSync(join(packageRoot, "prompts"), { recursive: true });
     mkdirSync(extensionsPackageRoot, { recursive: true });
-    mkdirSync(join(cwd, ".smithers", "node_modules", "@svvy", "workflows", "prompts"), {
+    mkdirSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows", "prompts"), {
       recursive: true,
     });
-    mkdirSync(join(cwd, ".smithers", "node_modules", "@svvy", "extensions"), {
+    mkdirSync(join(cwd, ".smithers", "node_modules", "@svvyx", "extensions"), {
       recursive: true,
     });
     writeFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "# Review\n");
@@ -2470,8 +2646,8 @@ describe("svvy direct tools", () => {
         "tool-patch-workflows-link",
         {
           patch: [
-            "--- .smithers/node_modules/@svvy/workflows/prompts/GeneratedPrompt.ts",
-            "+++ .smithers/node_modules/@svvy/workflows/prompts/GeneratedPrompt.ts",
+            "--- .smithers/node_modules/@svvyx/workflows/prompts/GeneratedPrompt.ts",
+            "+++ .smithers/node_modules/@svvyx/workflows/prompts/GeneratedPrompt.ts",
             "@@ -1 +1 @@",
             "-export const GeneratedPrompt = 'old link';",
             "+export const GeneratedPrompt = 'new link';",
@@ -2504,8 +2680,8 @@ describe("svvy direct tools", () => {
         "tool-patch-extensions-link",
         {
           patch: [
-            "--- .smithers/node_modules/@svvy/extensions/index.ts",
-            "+++ .smithers/node_modules/@svvy/extensions/index.ts",
+            "--- .smithers/node_modules/@svvyx/extensions/index.ts",
+            "+++ .smithers/node_modules/@svvyx/extensions/index.ts",
             "@@ -1 +1 @@",
             "-export const Extensions = { github: 'github' };",
             "+export const Extensions = { shell: 'shell' };",
@@ -2557,7 +2733,7 @@ describe("svvy direct tools", () => {
       execTool.execute(
         "tool-shell-generated-workflows-link-bun-write",
         {
-          cmd: "bun -e \"Bun.write('.smithers/node_modules/@svvy/workflows/prompts/GeneratedPrompt.ts', 'hacked link')\"",
+          cmd: "bun -e \"Bun.write('.smithers/node_modules/@svvyx/workflows/prompts/GeneratedPrompt.ts', 'hacked link')\"",
         },
         new AbortController().signal,
         () => {},
@@ -2583,7 +2759,7 @@ describe("svvy direct tools", () => {
       execTool.execute(
         "tool-shell-generated-extensions-link-bun-write",
         {
-          cmd: "bun -e \"Bun.write('.smithers/node_modules/@svvy/extensions/index.ts', 'hacked extension link')\"",
+          cmd: "bun -e \"Bun.write('.smithers/node_modules/@svvyx/extensions/index.ts', 'hacked extension link')\"",
         },
         new AbortController().signal,
         () => {},
@@ -2637,11 +2813,11 @@ describe("svvy direct tools", () => {
     expect(readFileSync(workspaceExtensionsLinkFile, "utf8")).toBe(
       "export const Extensions = { github: 'github' };\n",
     );
-    rmSync(join(cwd, ".smithers", "node_modules", "@svvy", "workflows"), {
+    rmSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"), {
       force: true,
       recursive: true,
     });
-    rmSync(join(cwd, ".smithers", "node_modules", "@svvy", "extensions"), {
+    rmSync(join(cwd, ".smithers", "node_modules", "@svvyx", "extensions"), {
       force: true,
       recursive: true,
     });
@@ -2658,7 +2834,42 @@ describe("svvy direct tools", () => {
     );
   });
 
-  it("rejects direct edits to the generated @svvy/extensions package path", async () => {
+  it("does not classify public @svvy package links as generated workspace links by name", async () => {
+    const cwd = createTempDir();
+    const publicExtensionFile = join(
+      cwd,
+      ".smithers",
+      "node_modules",
+      "@svvy",
+      "extensions",
+      "index.ts",
+    );
+    mkdirSync(dirname(publicExtensionFile), { recursive: true });
+    writeFileSync(publicExtensionFile, "export const publicPackage = 'before';\n");
+    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
+
+    await patchTool.execute(
+      "tool-patch-public-svvy-extension-link",
+      {
+        patch: [
+          "--- .smithers/node_modules/@svvy/extensions/index.ts",
+          "+++ .smithers/node_modules/@svvy/extensions/index.ts",
+          "@@ -1 +1 @@",
+          "-export const publicPackage = 'before';",
+          "+export const publicPackage = 'after';",
+          "",
+        ].join("\n"),
+      },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readFileSync(publicExtensionFile, "utf8")).toBe(
+      "export const publicPackage = 'after';\n",
+    );
+  });
+
+  it("rejects direct edits to the generated @svvyx/extensions package path", async () => {
     const cwd = createTempDir();
     const extensionsRoot = createTempDir();
     const execTool = findTool(
@@ -2677,7 +2888,7 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("Generated Workflows output");
   });
 
-  it("rejects direct edits to the default generated @svvy/extensions package path without touching the real home", () => {
+  it("rejects direct edits to the default generated @svvyx/extensions package path without touching the real home", () => {
     const cwd = createTempDir();
     const home = createTempDir();
     const script = String.raw`
@@ -2935,6 +3146,94 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ]);
   });
 
+  it("registers long-running exec_command stdin by durable command id", async () => {
+    const cwd = createTempDir();
+    const store = createStructuredSessionStateStore({
+      workspace: {
+        id: cwd,
+        label: "svvy",
+        cwd,
+      },
+      databasePath: join(cwd, "structured.sqlite"),
+    });
+    openStores.push(store);
+    store.upsertPiSession({
+      sessionId: "session-running-command-stdin",
+      title: "Running command stdin",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-06-10T10:00:00.000Z",
+      updatedAt: "2026-06-10T10:00:00.000Z",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-running-command-stdin",
+      surfacePiSessionId: "session-running-command-stdin",
+      requestSummary: "Run a command waiting for stdin",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: "session-running-command-stdin",
+        turnId: turn.id,
+        surfacePiSessionId: "session-running-command-stdin",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
+      }),
+    };
+    const command = store.createCommand({
+      turnId: turn.id,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Run exec_command",
+      summary: "Run a command waiting for stdin.",
+      arguments: { cmd: "read line; echo got:$line" },
+      facts: { toolCallId: "tool-running-command-stdin" },
+    });
+    store.startCommand(command.id);
+    const runtimeCommandStdin = createLiveCommandStdinRegistry();
+    const tools = createSvvyDirectToolsForTest({
+      cwd,
+      runtime,
+      store,
+      runtimeCommandStdin,
+    }).codingTools;
+    const execTool = findTool(tools, "exec_command");
+    const stdinTool = findTool(tools, "write_stdin");
+
+    const started = await execTool.execute(
+      "tool-running-command-stdin",
+      { cmd: "read line; echo got:$line", timeout: 1 },
+      new AbortController().signal,
+      () => {},
+    );
+    const sessionId = readText(started).match(/session_id: (\S+)/)?.[1];
+    expect(sessionId).toBeTruthy();
+
+    await expect(
+      Effect.runPromise(
+        runtimeCommandStdin.writeStdin({
+          commandId: command.id as CommandId,
+          text: "registry\n",
+        }),
+      ),
+    ).resolves.toEqual({
+      commandId: command.id as CommandId,
+      status: "accepted",
+      acceptedBytes: 9,
+    });
+    await sleep(50);
+    const drained = await stdinTool.execute(
+      "tool-running-command-stdin-drain",
+      { session_id: sessionId, input: "" },
+      new AbortController().signal,
+      () => {},
+    );
+    expect(readText(drained)).toContain("got:registry");
+  });
+
   it("passes default auto-review mode to the direct approval boundary", async () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
@@ -3089,6 +3388,136 @@ if (readFileSync(target, "utf8") !== "before\n") {
         cwd,
         toolCallId: "tool-denied-svvyx-runtime",
         toolName: "exec_command",
+      }),
+    ]);
+  });
+
+  it("replays svvyx extensions runtime-effect transport intents in parent state", async () => {
+    const cwd = createTempDir();
+    const extensionsRoot = join(cwd, "extensions");
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd,
+      agentDir: join(cwd, ".agent"),
+      workflowsSourceRoot: join(cwd, "workflows"),
+    });
+    const store = createStructuredSessionStateStore({
+      workspace: {
+        id: cwd,
+        label: "svvy",
+        cwd,
+      },
+      databasePath: join(cwd, "structured.sqlite"),
+    });
+    openStores.push(store);
+    store.upsertPiSession({
+      sessionId: "session-extension-impact",
+      title: "Extension Impact",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      orchestratorAgentProfileId: DEFAULT_ORCHESTRATOR_PROFILE_ID as AgentProfileId,
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-extension-impact",
+      surfacePiSessionId: "session-extension-impact",
+      requestSummary: "Set extension usage",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: "session-extension-impact",
+        turnId: turn.id,
+        surfacePiSessionId: "session-extension-impact",
+        rootThreadId: null,
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
+      }),
+    };
+    const toolCallId = "tool-extension-impact";
+    const commandText =
+      "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json";
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-extension-impact",
+      threadId: null,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Run exec_command",
+      summary: commandText,
+      arguments: { cmd: commandText },
+      facts: { toolCallId },
+    });
+    store.startCommand(command.id);
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        agentSettingsStore,
+        cwd,
+        extensionsRoot,
+        runtime,
+        store,
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      toolCallId,
+      { cmd: commandText },
+      new AbortController().signal,
+      () => {},
+    );
+    const text = readText(result);
+    const output = JSON.parse(text) as {
+      agentContextImpact?: { affectedSurfaces?: unknown[] };
+      ok?: boolean;
+    };
+
+    expect(output).toMatchObject({
+      ok: true,
+      extensionId: "smithers",
+      agentProfile: "default-orchestrator",
+      after: { state: "loaded" },
+      agentContextImpact: {
+        affectedSurfaces: [
+          {
+            surfacePiSessionId: "session-extension-impact",
+            kind: "extension_context_changed",
+            label: "Extensions changed",
+            reason: "extension_usage_changed",
+          },
+        ],
+      },
+    });
+    expect(result.details?.commandFacts).toMatchObject({
+      affectedAgentContextSurfaces: 1,
+    });
+    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
+      smithers: "loaded",
+    });
+    const progressEvents = store
+      .getSessionState("session-extension-impact")
+      .events.filter(
+        (event) => event.kind === "command.progress" && event.subject.id === command.id,
+      );
+    expect(progressEvents.map((event) => event.data)).toEqual([
+      {
+        command: commandText,
+        family: "extensions",
+        phase: "started",
+        source: "svvyx-cli-subprocess",
+      },
+      expect.objectContaining({
+        command: commandText,
+        family: "extensions",
+        phase: "succeeded",
+        source: "svvyx-cli-subprocess",
+        facts: expect.objectContaining({
+          affectedAgentContextSurfaces: 1,
+          extensionId: "smithers",
+        }),
       }),
     ]);
   });
@@ -3448,7 +3877,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       artifactId: result.output.id,
     });
     expect(artifact.sourceCommandId).toBe(result.command.id);
-    expect(result.details.commandFacts).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       artifactId: result.output.id,
       artifactPath: result.output.path,
       artifactName: "plan.md",
@@ -3740,7 +4169,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
     const opened = await harness.run(`svvyx artifacts open --id ${created.output.id} --json`);
 
     expect(opened.output).toEqual({ id: created.output.id, opened: true });
-    expect(opened.details.commandFacts).toEqual({
+    expect(opened.details!.commandFacts).toEqual({
       artifactId: created.output.id,
       opened: true,
     });
@@ -3835,10 +4264,11 @@ function createActiveExecHarness(input: {
   });
   const runtime = {
     current: createPromptExecutionContext({
-      sessionId: input.sessionId,
+      workspaceSessionId: input.sessionId,
       turnId: turn.id,
       surfacePiSessionId: input.sessionId,
-      promptText: "Run svvyx command",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     }),
   };
   const command = store.createCommand({
@@ -3908,11 +4338,12 @@ function createArtifactsHarness(
     requestSummary: "Use artifacts",
   });
   runtime.current = createPromptExecutionContext({
-    sessionId: "session-artifacts",
+    workspaceSessionId: "session-artifacts",
     turnId: turn.id,
     surfacePiSessionId: "session-artifacts",
     rootThreadId: null,
-    promptText: "Use artifacts",
+    generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+    generatedAgentContextRevision: "generated_context_revision_test",
   });
   const extensionsRoot = join(cwd, "extensions");
   const tools = createSvvyDirectToolsForTest({
@@ -3978,10 +4409,16 @@ function createArtifactsHarness(
           new AbortController().signal,
           () => {},
         );
+        const commandFacts =
+          result.details!.commandFacts &&
+          typeof result.details!.commandFacts === "object" &&
+          !Array.isArray(result.details!.commandFacts)
+            ? (result.details!.commandFacts as Record<string, unknown>)
+            : null;
         store.finishCommand({
           commandId: command.id,
           status: "succeeded",
-          facts: result.details?.commandFacts ?? null,
+          facts: commandFacts,
         });
         const text = result.content.find(
           (block): block is { type: "text"; text: string } => block.type === "text",
@@ -3992,7 +4429,7 @@ function createArtifactsHarness(
         return {
           command,
           result,
-          details: result.details,
+          details: result.details!,
           output: JSON.parse(text),
         };
       } catch (error) {

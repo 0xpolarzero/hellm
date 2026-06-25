@@ -319,7 +319,7 @@
 	}
 
 	function isHandlerObjectiveMessage(message: UserMessage): boolean {
-		if (target?.surface !== "thread") return false;
+		if (target?.surface !== "handler") return false;
 		const firstUserMessage = conversation.visibleMessages.find(
 			(candidate): candidate is UserMessage => candidate.role === "user",
 		);

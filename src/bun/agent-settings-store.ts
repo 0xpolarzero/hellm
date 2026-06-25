@@ -267,7 +267,7 @@ function readWorkflowAgentSourceRecords(
         label: typeof raw.label === "string" ? raw.label : id,
         provider: typeof raw.provider === "string" ? raw.provider : "",
         model: typeof raw.model === "string" ? raw.model : "",
-        reasoningEffort: raw.reasoningEffort as WorkflowAgentSettings["reasoningEffort"],
+        reasoningEffort: readWorkflowAgentSourceReasoning(raw),
         instructions: typeof raw.instructions === "string" ? raw.instructions : "",
         overrides: normalizeExtensionUsage(raw.overrides as WorkflowAgentSettings["overrides"]),
         extensionOrder: normalizeExtensionOrder(
@@ -289,6 +289,18 @@ function hasObsoleteWorkflowAgentSourceFields(raw: Record<string, unknown>): boo
   return Object.hasOwn(raw, "extensions") || Object.hasOwn(raw, "extensionUsage");
 }
 
+function readWorkflowAgentSourceReasoning(
+  raw: Record<string, unknown>,
+): WorkflowAgentSettings["reasoningEffort"] {
+  const reasoning = raw.reasoning;
+  return reasoning &&
+    typeof reasoning === "object" &&
+    !Array.isArray(reasoning) &&
+    typeof (reasoning as { effort?: unknown }).effort === "string"
+    ? ((reasoning as { effort: string }).effort as WorkflowAgentSettings["reasoningEffort"])
+    : ("" as WorkflowAgentSettings["reasoningEffort"]);
+}
+
 function workflowAgentSourcePath(workflowsSourceRoot: string, id: string): string {
   return join(workflowsSourceRoot, "agents", `${id}.agent.json`);
 }
@@ -300,7 +312,7 @@ function workflowAgentSourceContent(settings: WorkflowAgentSettings): string {
       label: settings.label,
       provider: settings.provider,
       model: settings.model,
-      reasoningEffort: settings.reasoningEffort,
+      reasoning: { effort: settings.reasoningEffort },
       instructions: settings.instructions,
       overrides: settings.overrides ?? {},
       extensionOrder: settings.extensionOrder ?? [],
@@ -527,7 +539,7 @@ function normalizeWorkflowAgentSettings(
   key: WorkflowAgentKey,
   input: WorkflowAgentSettings,
 ): WorkflowAgentSettings {
-  return assertWorkflowAgentSettingsAssignableToParameters({
+  const normalized = {
     id: key,
     label: requireNonEmpty(input.label, "label"),
     provider: requireNonEmpty(input.provider, "provider"),
@@ -537,12 +549,22 @@ function normalizeWorkflowAgentSettings(
     overrides: normalizeExtensionUsage(input.overrides),
     extensionOrder: normalizeExtensionOrder(input.extensionOrder),
     sourceVersion: input.sourceVersion,
+  } satisfies WorkflowAgentSettings;
+  assertWorkflowAgentSettingsAssignableToParameters({
+    id: key,
+    label: normalized.label,
+    provider: normalized.provider,
+    model: normalized.model,
+    reasoning: { effort: normalized.reasoningEffort },
+    instructions: normalized.instructions,
+    overrides: normalized.overrides,
   });
+  return normalized;
 }
 
-function assertWorkflowAgentSettingsAssignableToParameters<T extends Agents.TaskAgentParameters>(
-  settings: T,
-): T {
+function assertWorkflowAgentSettingsAssignableToParameters<
+  T extends Agents.TaskAgentParametersSource,
+>(settings: T): T {
   return settings;
 }
 

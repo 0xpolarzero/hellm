@@ -5,10 +5,11 @@
  * guidance aligned with these exported types.
  */
 
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-
 export namespace Agents {
-  export type ReasoningEffort = ThinkingLevel;
+  export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  export type ReasoningSelection = {
+    effort: ReasoningEffort;
+  };
 
   /**
    * Extension ids whose workflow task-agent default usage may be overridden by
@@ -22,12 +23,12 @@ export namespace Agents {
    * handler-authored Workflows source may import or copy when configuring
    * Smithers agents through official Smithers APIs.
    */
-  export interface TaskAgentParameters {
+  export interface TaskAgentParametersSource {
     id: string;
     label: string;
     provider: string;
     model: string;
-    reasoningEffort: ReasoningEffort;
+    reasoning: ReasoningSelection;
     instructions: string;
     overrides?: Record<TaskAgentExtensionId, TaskAgentExtensionOverrideState>;
   }
@@ -41,11 +42,13 @@ export namespace Agents {
    * Adapter for using reusable app-global agent parameter records as Smithers
    * task agents.
    */
-  export function defineTaskAgent<T extends TaskAgentParameters>(parameters: T): AgentLike {
+  export function defineTaskAgent<T extends TaskAgentParametersSource>(parameters: T): AgentLike {
     return {
       id: parameters.id,
       async generate() {
-        throw new Error("Agents.defineTaskAgent is available only from generated @svvy/workflows.");
+        throw new Error(
+          "Agents.defineTaskAgent is available only from generated @svvyx/workflows.",
+        );
       },
     };
   }

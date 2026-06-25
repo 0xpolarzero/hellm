@@ -1,1 +1,1 @@
-export type SvvyActorKind = "orchestrator" | "handler" | "workflow-task";
+export type { ActorKind as SvvyActorKind } from "@svvy/core";

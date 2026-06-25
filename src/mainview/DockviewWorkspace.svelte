@@ -247,7 +247,7 @@
     switch (panel?.binding?.surface) {
       case "orchestrator":
         return "orchestrator";
-      case "thread":
+      case "handler":
         return "handler";
       case "workflows":
       case "app-logs":
@@ -275,7 +275,7 @@
     if (controller?.agent.state.isStreaming || controller?.promptStatus === "streaming") {
       return "streaming";
     }
-    if (panel?.binding?.surface === "thread") {
+    if (panel?.binding?.surface === "handler") {
       const threadId = panel.binding.threadId;
       if (threadId && session?.threadIdsByStatus?.waiting.includes(threadId)) {
         return "waiting";
@@ -668,7 +668,7 @@
 
   function getPanelRenderer(panel: WorkspaceDockviewPanelState): DockviewPanelRenderer {
     const surface = panel.binding?.surface;
-    return surface === "orchestrator" || surface === "thread" ? "always" : "onlyWhenVisible";
+    return surface === "orchestrator" || surface === "handler" ? "always" : "onlyWhenVisible";
   }
 
   function getPanelRenderKey(panel: WorkspaceDockviewPanelState): string {

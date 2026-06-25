@@ -1,17 +1,31 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { Static } from "typebox";
-import type { SvvyActorKind } from "./actor-capabilities";
-import { buildSystemPrompt } from "./default-system-prompt";
-import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import type { StructuredSessionStateStore } from "./structured-session-state";
 import {
-  resolveExtensionRecord,
-  resolveExtensionRecords,
-  resolveVisibleExtensionRecords,
-} from "./svvyx-extensions-command";
-import { visibleExtensionRecords, type ExtensionRecord } from "../shared/extensions";
+  BUILTIN_EXTENSIONS,
+  type ExtensionsService,
+  type ListExtensionsDetails,
+  type NativeToolDefinition,
+  getExtensionRecord,
+  listExtensionsForActor,
+  summarizeListExtensions,
+} from "@svvy/extensions";
+import { Type, type Static } from "typebox";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import { resolveExtensionRecord, resolveVisibleExtensionRecords } from "./svvyx-extensions-command";
+import {
+  ExtensionError as CoreExtensionError,
+  RuntimeContractError,
+  type PromptTarget,
+  type CommandId,
+  type RefreshGeneratedContextRequest,
+  type RuntimeActorExtensionBindingStatePortService,
+  type RuntimeCommandStatePortService,
+  type RuntimeTurnStatePortService,
+  type StateContractError,
+  type ToolCallId,
+  type ToolItemId,
+  type TurnId,
+} from "@svvy/core";
+import * as Effect from "effect/Effect";
+import { runAcceptedLoadExtensionToolCallAtRuntimeBoundary } from "./runtime-service-adapter";
 
 export const LIST_EXTENSIONS_TOOL_NAME = "list_extensions";
 export const LOAD_EXTENSION_TOOL_NAME = "load_extension";
@@ -27,27 +41,22 @@ const loadExtensionParamsSchema = Type.Object(
 type ListExtensionsParams = Static<typeof listExtensionsParamsSchema>;
 type LoadExtensionParams = Static<typeof loadExtensionParamsSchema>;
 
-export interface ListExtensionsDetails {
-  loaded: ReturnType<typeof visibleExtensionRecords>["loaded"];
-  available: ReturnType<typeof visibleExtensionRecords>["available"];
-}
-
 export interface LoadExtensionDetails extends ListExtensionsDetails {
   loadedExtensionId: string;
-  refreshedContext: {
-    actor: SvvyActorKind;
-    loadedExtensionIds: string[];
-    availableExtensionIds: string[];
-    systemPrompt: string;
-    executeTypescriptDeclaration: string;
-  };
 }
+
+type ExtensionToolState = {
+  commandState: RuntimeCommandStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  actorExtensionBindingState: RuntimeActorExtensionBindingStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+};
 
 export function createListExtensionsTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  state: ExtensionToolState;
   extensionsRoot?: string;
-}): AgentTool<typeof listExtensionsParamsSchema, ListExtensionsDetails> {
+}): NativeToolDefinition<ListExtensionsParams, ListExtensionsDetails> {
   return {
     label: "List Extensions",
     name: LIST_EXTENSIONS_TOOL_NAME,
@@ -57,37 +66,41 @@ export function createListExtensionsTool(options: {
     execute: async (_toolCallId, _params: ListExtensionsParams) => {
       const runtime = requireActiveRuntime(options.runtime, LIST_EXTENSIONS_TOOL_NAME);
       if (runtime.turnId) {
-        options.store.setTurnDecision({
-          turnId: runtime.turnId,
-          decision: LIST_EXTENSIONS_TOOL_NAME,
-          onlyIfPending: true,
-        });
+        options.state.runState(
+          options.state.turnState.setTurnDecision({
+            turnId: runtime.turnId,
+            decision: LIST_EXTENSIONS_TOOL_NAME,
+            onlyIfPending: true,
+          }),
+        );
       }
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        workflowTaskAttemptId: runtime.workflowTaskAttemptId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
-        workflowRunId: runtime.workflowRunId,
-        toolName: LIST_EXTENSIONS_TOOL_NAME,
-        executor:
-          runtime.surfaceKind === "workflow-task"
-            ? "workflow-task-agent"
-            : runtime.surfaceKind === "handler"
-              ? "handler"
-              : "orchestrator",
-        visibility: "surface",
-        title: "List extensions",
-        summary: "List loaded and available extensions.",
-        arguments: {},
-      });
-      options.store.startCommand(command.id);
+      const command = options.state.runState(
+        options.state.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          workflowTaskAttemptId: runtime.workflowTaskAttemptId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.surfaceKind === "handler" ? runtime.threadId : null,
+          workflowRunId: runtime.workflowRunId,
+          toolName: LIST_EXTENSIONS_TOOL_NAME,
+          executor:
+            runtime.surfaceKind === "workflow-task"
+              ? "workflow-task-agent"
+              : runtime.surfaceKind === "handler"
+                ? "handler"
+                : "orchestrator",
+          visibility: "surface",
+          title: "List extensions",
+          summary: "List loaded and available extensions.",
+          arguments: {},
+        }),
+      ).value;
+      options.state.runState(options.state.commandState.startCommand({ commandId: command.id }));
 
       try {
         const loadedExtensionIds = runtime.loadedExtensionIds ?? [];
         const availableExtensionIds = runtime.availableExtensionIds ?? [];
-        const details = visibleExtensionRecords({
+        const details = listExtensionsForActor({
           actor: runtime.surfaceKind,
           loadedExtensionIds,
           loadedExtensionRecords: resolveVisibleExtensionRecords(
@@ -101,27 +114,31 @@ export function createListExtensionsTool(options: {
           ),
           externalInstructionSources: runtime.externalInstructionSources ?? [],
         });
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary: summarizeExtensions(details),
-          facts: {
-            loadedExtensionIds: details.loaded.map((extension) => extension.id),
-            availableExtensionIds: details.available.map((extension) => extension.id),
-          },
-        });
+        options.state.runState(
+          options.state.commandState.finishCommand({
+            commandId: command.id,
+            status: "succeeded",
+            summary: summarizeListExtensions(details),
+            facts: {
+              loadedExtensionIds: details.loaded.map((extension) => extension.id),
+              availableExtensionIds: details.available.map((extension) => extension.id),
+            },
+          }),
+        );
         return {
-          content: [{ type: "text", text: summarizeExtensions(details) }],
+          content: [{ type: "text", text: summarizeListExtensions(details) }],
           details,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to list extensions.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        options.state.runState(
+          options.state.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         throw error;
       }
     },
@@ -130,17 +147,10 @@ export function createListExtensionsTool(options: {
 
 export function createLoadExtensionTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  state: ExtensionToolState;
   extensionsRoot?: string;
-  onContextRefreshed?: (input: {
-    extensionId: string;
-    refreshedContext: LoadExtensionDetails["refreshedContext"];
-    runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
-  }) =>
-    | Promise<LoadExtensionDetails["refreshedContext"] | void>
-    | LoadExtensionDetails["refreshedContext"]
-    | void;
-}): AgentTool<typeof loadExtensionParamsSchema, LoadExtensionDetails> {
+  refreshGeneratedContext: (input: RefreshGeneratedContextRequest) => Promise<void>;
+}): NativeToolDefinition<LoadExtensionParams, LoadExtensionDetails> {
   return {
     label: "Load Extension",
     name: LOAD_EXTENSION_TOOL_NAME,
@@ -151,96 +161,98 @@ export function createLoadExtensionTool(options: {
       const runtime = requireActiveRuntime(options.runtime, LOAD_EXTENSION_TOOL_NAME);
       const id = params.extensionId.trim();
       if (runtime.turnId) {
-        options.store.setTurnDecision({
+        options.state.runState(
+          options.state.turnState.setTurnDecision({
+            turnId: runtime.turnId,
+            decision: "load_extension",
+            onlyIfPending: true,
+          }),
+        );
+      }
+      const command = options.state.runState(
+        options.state.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
           turnId: runtime.turnId,
-          decision: "load_extension",
-          onlyIfPending: true,
-        });
-      }
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        workflowTaskAttemptId: runtime.workflowTaskAttemptId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.surfaceKind === "handler" ? runtime.surfaceThreadId : null,
-        workflowRunId: runtime.workflowRunId,
-        toolName: LOAD_EXTENSION_TOOL_NAME,
-        executor:
-          runtime.surfaceKind === "workflow-task"
-            ? "workflow-task-agent"
-            : runtime.surfaceKind === "handler"
-              ? "handler"
-              : "orchestrator",
-        visibility: "surface",
-        title: `Load extension: ${id}`,
-        summary: `Load extension ${id}.`,
-        arguments: {
-          extensionId: id,
-        },
-      });
-      options.store.startCommand(command.id);
-      const failLoad = (message: string): never => {
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
-        throw new Error(message);
-      };
-      const record = resolveExtensionRecord(id, options.extensionsRoot);
-      if (!record) {
-        return failLoad(`Unknown extension: ${id}`);
-      }
-      if (!(runtime.availableExtensionIds ?? []).includes(id)) {
-        return failLoad(`Extension is not available to load for this actor: ${id}`);
-      }
-      if (!extensionIsReady(record)) {
-        return failLoad(`Extension is not ready to load for this actor: ${id}`);
-      }
-
-      const previousLoadedExtensionIds = [...(runtime.loadedExtensionIds ?? [])];
-      const previousAvailableExtensionIds = [...(runtime.availableExtensionIds ?? [])];
-      const previousSystemPrompt = runtime.systemPrompt;
-      const previousGeneratedAgentContextFingerprint = runtime.generatedAgentContextFingerprint;
-
+          workflowTaskAttemptId: runtime.workflowTaskAttemptId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.surfaceKind === "handler" ? runtime.threadId : null,
+          workflowRunId: runtime.workflowRunId,
+          toolName: LOAD_EXTENSION_TOOL_NAME,
+          executor:
+            runtime.surfaceKind === "workflow-task"
+              ? "workflow-task-agent"
+              : runtime.surfaceKind === "handler"
+                ? "handler"
+                : "orchestrator",
+          visibility: "surface",
+          title: `Load extension: ${id}`,
+          summary: `Load extension ${id}.`,
+          arguments: {
+            extensionId: id,
+          },
+        }),
+      ).value;
+      options.state.runState(options.state.commandState.startCommand({ commandId: command.id }));
       try {
-        runtime.loadedExtensionIds = [
-          ...new Set([...(runtime.loadedExtensionIds ?? []), id]),
-        ].toSorted();
-        runtime.availableExtensionIds = (runtime.availableExtensionIds ?? [])
-          .filter((candidate) => candidate !== id)
-          .toSorted();
-
-        if (runtime.surfaceKind === "handler" && runtime.surfaceThreadId) {
-          options.store.updateThread({
-            threadId: runtime.surfaceThreadId,
-            loadedExtensionIds: runtime.loadedExtensionIds,
-            availableExtensionIds: runtime.availableExtensionIds,
-          });
-        } else if (runtime.surfaceKind === "orchestrator") {
-          options.store.updatePiSessionExtensionState({
-            sessionId: runtime.sessionId,
-            loadedExtensionIds: runtime.loadedExtensionIds,
-            availableExtensionIds: runtime.availableExtensionIds,
-          });
-        }
-
-        let refreshedContext = buildRefreshedContextPreview(runtime, options.extensionsRoot);
-        let appliedContext: LoadExtensionDetails["refreshedContext"] | void;
-        appliedContext = await options.onContextRefreshed?.({
-          extensionId: id,
-          refreshedContext,
-          runtime,
+        const target = promptTargetFromRuntime(runtime, LOAD_EXTENSION_TOOL_NAME);
+        const loadedExtensionRecords = resolveVisibleExtensionRecords(
+          runtime.loadedExtensionIds ?? [],
+          options.extensionsRoot,
+        );
+        const availableExtensionRecords = resolveVisibleExtensionRecords(
+          runtime.availableExtensionIds ?? [],
+          options.extensionsRoot,
+        );
+        const executed = await runAcceptedLoadExtensionToolCallAtRuntimeBoundary({
+          request: {
+            toolCallId: _toolCallId as ToolCallId,
+            toolItemId: _toolCallId as ToolItemId,
+            arguments: {
+              extensionId: id,
+            },
+            context: runtime,
+            actorBinding: {
+              loadedExtensionIds: runtime.loadedExtensionIds ?? [],
+              availableExtensionIds: runtime.availableExtensionIds ?? [],
+              loadedExtensionRecords,
+              availableExtensionRecords,
+            },
+            command: {
+              commandId: command.id as CommandId,
+              target,
+              turnId: runtime.turnId! as TurnId,
+              approvalMode: "auto-review",
+              sandbox: { snapshot: {} },
+              cwd: "",
+              baseEnv: {},
+            },
+            sourceInvalidation: {
+              refreshGeneratedContext: (input) =>
+                hostPromise("load_extension.refreshGeneratedContext", () =>
+                  options.refreshGeneratedContext(input),
+                ),
+              refreshGeneratedPackages: () =>
+                Effect.die("load_extension must not refresh generated packages."),
+            },
+          },
+          commandStatePort: options.state.commandState,
+          actorExtensionBindingStatePort: options.state.actorExtensionBindingState,
+          extensionsService: runtimeBoundaryExtensionsService(options.extensionsRoot),
         });
-        if (appliedContext) {
-          refreshedContext = appliedContext;
+        const bindingEffect = executed.appliedEffects.find(
+          (effect) => effect.type === "actor_extension_binding.update",
+        );
+        if (bindingEffect?.type === "actor_extension_binding.update") {
+          runtime.loadedExtensionIds = [...bindingEffect.binding.loadedExtensionIds];
+          runtime.availableExtensionIds = [...bindingEffect.binding.availableExtensionIds];
+          if (bindingEffect.binding.generatedAgentContextFingerprint) {
+            runtime.generatedAgentContextFingerprint =
+              bindingEffect.binding.generatedAgentContextFingerprint;
+          }
         }
-
         const details = {
           loadedExtensionId: id,
-          refreshedContext,
-          ...visibleExtensionRecords({
+          ...listExtensionsForActor({
             actor: runtime.surfaceKind,
             loadedExtensionIds: runtime.loadedExtensionIds ?? [],
             loadedExtensionRecords: resolveVisibleExtensionRecords(
@@ -255,89 +267,104 @@ export function createLoadExtensionTool(options: {
             externalInstructionSources: runtime.externalInstructionSources ?? [],
           }),
         };
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary: `Loaded extension ${id}.`,
-          facts: {
-            loadedExtensionId: id,
-            loadedExtensionIds: runtime.loadedExtensionIds ?? [],
-            availableExtensionIds: runtime.availableExtensionIds ?? [],
-          },
-        });
         return {
-          content: [{ type: "text", text: `Loaded extension ${id}.` }],
+          content: executed.toolResult.content,
           details,
         };
       } catch (error) {
-        runtime.loadedExtensionIds = previousLoadedExtensionIds;
-        runtime.availableExtensionIds = previousAvailableExtensionIds;
-        runtime.systemPrompt = previousSystemPrompt;
-        runtime.generatedAgentContextFingerprint = previousGeneratedAgentContextFingerprint;
-        if (runtime.surfaceKind === "handler" && runtime.surfaceThreadId) {
-          options.store.updateThread({
-            threadId: runtime.surfaceThreadId,
-            loadedExtensionIds: previousLoadedExtensionIds,
-            availableExtensionIds: previousAvailableExtensionIds,
-          });
-        } else if (runtime.surfaceKind === "orchestrator") {
-          options.store.updatePiSessionExtensionState({
-            sessionId: runtime.sessionId,
-            loadedExtensionIds: previousLoadedExtensionIds,
-            availableExtensionIds: previousAvailableExtensionIds,
-          });
-        }
         const message = error instanceof Error ? error.message : `Failed to load extension ${id}.`;
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          error: message,
-        });
+        options.state.runState(
+          options.state.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            error: message,
+          }),
+        );
         throw error;
       }
     },
   };
 }
 
-function extensionIsReady(record: ExtensionRecord): boolean {
-  return (
-    (record.envReadiness === "ready" || record.envReadiness === "not_required") &&
-    (record.dependencyReadiness === "ready" || record.dependencyReadiness === "not_required")
-  );
-}
-
-function summarizeExtensions(details: ListExtensionsDetails): string {
-  const loaded = details.loaded.map((extension) => extension.id).join(", ") || "none";
-  const available = details.available.map((extension) => extension.id).join(", ") || "none";
-  return `Loaded extensions: ${loaded}\nAvailable extensions: ${available}`;
-}
-
-function buildRefreshedContextPreview(
+function promptTargetFromRuntime(
   runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>,
-  extensionsRoot?: string,
-): LoadExtensionDetails["refreshedContext"] {
-  const actor = runtime.surfaceKind === "handler" ? "handler" : "orchestrator";
-  const loadedExtensionIds = [...(runtime.loadedExtensionIds ?? [])];
-  const availableExtensionIds = [...(runtime.availableExtensionIds ?? [])];
+  toolName: string,
+): PromptTarget {
+  if (runtime.surfaceKind === "orchestrator") {
+    return {
+      workspaceSessionId: runtime.workspaceSessionId,
+      surface: "orchestrator",
+      surfacePiSessionId: runtime.surfacePiSessionId,
+    } as PromptTarget;
+  }
+  if (runtime.surfaceKind === "handler") {
+    const threadId = runtime.rootThreadId ?? runtime.threadId;
+    if (!threadId) {
+      throw new Error(`${toolName} handler runtime requires a thread id.`);
+    }
+    return {
+      workspaceSessionId: runtime.workspaceSessionId,
+      surface: "handler",
+      surfacePiSessionId: runtime.surfacePiSessionId,
+      threadId,
+    } as PromptTarget;
+  }
+  throw new Error(`${toolName} can only run on orchestrator or handler surfaces.`);
+}
+
+function runtimeBoundaryExtensionsService(extensionsRoot?: string): ExtensionsService {
   return {
-    actor,
-    loadedExtensionIds,
-    availableExtensionIds,
-    systemPrompt: buildSystemPrompt(actor, {
-      extensionsRoot,
-      loadedExtensionIds,
-      loadedExtensionRecords: resolveExtensionRecords(loadedExtensionIds, extensionsRoot),
-      availableExtensionIds,
-      availableExtensionRecords: resolveExtensionRecords(availableExtensionIds, extensionsRoot),
-      externalInstructionSources: runtime.externalInstructionSources,
-    }),
-    executeTypescriptDeclaration: buildExecuteTypescriptApiDeclaration(actor, {
-      extensionsRoot,
-      loadedExtensionIds,
-      loadedExtensionRecords: resolveExtensionRecords(loadedExtensionIds, extensionsRoot),
-    }),
+    registry: {
+      list: () => Effect.succeed(BUILTIN_EXTENSIONS),
+      inspect: ({ id }) => {
+        const record = resolveExtensionRecord(id, extensionsRoot) ?? getExtensionRecord(id);
+        if (record) {
+          return Effect.succeed(record);
+        }
+        return Effect.fail(
+          new CoreExtensionError({
+            extensionId: id,
+            operation: "extensions.registry.inspect",
+            reason: "not-found",
+            message: `Extension record does not exist: ${id}`,
+          }),
+        );
+      },
+    },
+    actorBindings: {
+      resolve: () => Effect.die("Unexpected actor binding resolution in load_extension boundary."),
+      visibleRecords: () =>
+        Effect.die("Unexpected visible record resolution in load_extension boundary."),
+    },
+    nativeTools: {
+      schemasJson: () => Effect.die("Unexpected native tool schema request."),
+      schemaJsonForExtension: () => Effect.die("Unexpected native tool schema request."),
+      listCommandMetadata: () => Effect.die("Unexpected command metadata request."),
+      getCommandMetadata: () => Effect.die("Unexpected command metadata request."),
+      handler: () => Effect.die("Unexpected native tool handler request."),
+    },
+    generatedPackages: {
+      refresh: () => Effect.die("Unexpected generated package refresh."),
+      planWorkspaceLink: () => Effect.die("Unexpected generated package workspace link plan."),
+    },
   };
+}
+
+function hostPromise<A>(
+  operation: string,
+  run: () => Promise<A>,
+): Effect.Effect<A, RuntimeContractError> {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new RuntimeContractError({
+        operation,
+        reason: "stale-state",
+        message: cause instanceof Error ? cause.message : `${operation} failed.`,
+        cause,
+      }),
+  });
 }
 
 function requireActiveRuntime(

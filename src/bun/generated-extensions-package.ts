@@ -10,12 +10,20 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { BUILTIN_EXTENSIONS } from "../shared/extensions";
+import {
+  generatedExtensionExportIdsFromHost,
+  generatedExtensionsPackageContentsFromHost,
+  renderGeneratedExtensionsPackageFiles,
+  type GeneratedExtensionExportDiscoveryHost,
+} from "@svvy/extensions";
+import type { AbsolutePath } from "@svvy/core";
 import {
   ExtensionDependencyApprovalStore,
   extensionDependencyIdentityFromDeclaration,
 } from "./extension-dependency-approval-store";
-import { isSvvyxCommandManifest } from "./svvyx-typescript-declarations";
+
+export { GENERATED_EXTENSIONS_PACKAGE_NAME } from "@svvy/extensions";
+export { generatedExtensionReferenceExpression } from "@svvy/extensions";
 
 export function getExtensionsGeneratedPackagePath(): string {
   return join(homedir(), ".config", "svvy", "extensions", "generated", "package");
@@ -48,10 +56,14 @@ export function refreshGeneratedExtensionsPackage(
   } = {},
 ): { extensionIds: string[]; generatedPackagePath: string } {
   const generatedPackagePath = effectiveExtensionsGeneratedPackagePath(options);
-  const extensionIds = [...generatedExtensionExportIds({ extensionsRoot: options.extensionsRoot })];
-  writeGeneratedExtensionsPackage(generatedPackagePath, new Set(extensionIds));
+  const extensionsRoot = options.extensionsRoot ?? defaultExtensionsRoot();
+  const contents = generatedExtensionsPackageContentsFromHost(
+    { extensionsRoot: extensionsRoot as AbsolutePath },
+    generatedExtensionDiscoveryHost(extensionsRoot),
+  );
+  writeGeneratedExtensionsPackageFiles(generatedPackagePath, contents.files);
   return {
-    extensionIds,
+    extensionIds: [...contents.extensionIds],
     generatedPackagePath,
   };
 }
@@ -60,171 +72,66 @@ export function writeGeneratedExtensionsPackage(
   generatedPackagePath: string,
   extensionExportIds: ReadonlySet<string>,
 ): void {
-  const exportedIds = [...extensionExportIds].toSorted();
+  writeGeneratedExtensionsPackageFiles(
+    generatedPackagePath,
+    renderGeneratedExtensionsPackageFiles(extensionExportIds),
+  );
+}
+
+function writeGeneratedExtensionsPackageFiles(
+  generatedPackagePath: string,
+  files: ReturnType<typeof renderGeneratedExtensionsPackageFiles>,
+): void {
   mkdirSync(generatedPackagePath, { recursive: true });
-  writeFileSync(
-    join(generatedPackagePath, "package.json"),
-    JSON.stringify(
-      {
-        name: "@svvy/extensions",
-        type: "module",
-        exports: {
-          ".": "./index.ts",
-        },
-      },
-      null,
-      2,
-    ),
-  );
-  writeFileSync(
-    join(generatedPackagePath, "index.ts"),
-    [
-      "export const Extensions = {",
-      ...exportedIds.map((id) => `  ${JSON.stringify(id)}: ${JSON.stringify(id)},`),
-      "} as const;",
-      "",
-      "export type ExtensionId = (typeof Extensions)[keyof typeof Extensions];",
-      "",
-    ].join("\n"),
-  );
+  for (const file of files) {
+    writeFileSync(join(generatedPackagePath, file.relativePath), file.contents);
+  }
 }
 
 export function generatedExtensionExportIds(
   options: { extensionsRoot?: string } = {},
 ): Set<string> {
-  return new Set(
-    [
-      ...BUILTIN_EXTENSIONS.map((extension) => extension.id),
-      ...readReadyUserExtensionExportIds(options.extensionsRoot),
-    ].toSorted(),
+  const extensionsRoot = options.extensionsRoot ?? defaultExtensionsRoot();
+  return generatedExtensionExportIdsFromHost(
+    { extensionsRoot: extensionsRoot as AbsolutePath },
+    generatedExtensionDiscoveryHost(extensionsRoot),
   );
 }
 
-function readReadyUserExtensionExportIds(extensionsRoot?: string): string[] {
-  const userSourceRoot = join(extensionsRoot ?? defaultExtensionsRoot(), "sources", "user");
-  if (!existsSync(userSourceRoot) || !statSync(userSourceRoot).isDirectory()) {
-    return [];
-  }
-  return readdirSync(userSourceRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((extensionId) => userExtensionHasReadyGeneratedExport(extensionId, extensionsRoot))
-    .toSorted();
-}
-
-function userExtensionHasReadyGeneratedExport(
-  extensionId: string,
-  extensionsRoot: string | undefined,
-): boolean {
-  const root = extensionsRoot ?? defaultExtensionsRoot();
-  const sourceRoot = join(root, "sources", "user", extensionId);
-  const sourceManifestPath = join(sourceRoot, "manifest.json");
-  const currentBuildManifestPath = join(
-    root,
-    "builds",
-    "extensions",
-    extensionId,
-    "current",
-    "manifest.json",
-  );
-  const sourceManifest = readOptionalJsonObject(sourceManifestPath);
-  const currentBuildManifest = readOptionalJsonObject(currentBuildManifestPath);
-  if (!sourceManifest || !currentBuildManifest) {
-    return false;
-  }
-  if (
-    sourceManifest.schemaVersion !== 1 ||
-    sourceManifest.id !== extensionId ||
-    sourceManifest.interface !== "svvyx" ||
-    sourceManifest.typescriptApiEnabled !== true
-  ) {
-    return false;
-  }
-  if (
-    currentBuildManifest.schemaVersion !== 1 ||
-    currentBuildManifest.extensionId !== extensionId ||
-    currentBuildManifest.interface !== "svvyx" ||
-    typeof currentBuildManifest.module !== "string" ||
-    currentBuildManifest.typescriptTypes !==
-      join(root, "generated", "extensions", extensionId, "types.d.ts") ||
-    !isSvvyxCommandManifest(currentBuildManifest.commandManifest) ||
-    !Array.isArray(currentBuildManifest.dependencies)
-  ) {
-    return false;
-  }
-  const sourceFingerprint = sourceBuildFingerprint(sourceRoot);
-  if (!sourceFingerprint || currentBuildManifest.sourceFingerprint !== sourceFingerprint) {
-    return false;
-  }
-  const dependencyApprovalStore = new ExtensionDependencyApprovalStore({ extensionsRoot: root });
-  return currentBuildManifest.dependencies.every(
-    (dependency) =>
-      generatedExtensionDependencyApproved(dependencyApprovalStore, dependency) &&
-      generatedExtensionDependencyArtifactInstalled(root, dependency),
-  );
-}
-
-function generatedExtensionDependencyApproved(
-  dependencyApprovalStore: ExtensionDependencyApprovalStore,
-  dependency: unknown,
-): boolean {
-  const declaration = readGeneratedExtensionDependencyDeclaration(dependency);
-  return declaration
-    ? dependencyApprovalStore.hasApproved(extensionDependencyIdentityFromDeclaration(declaration))
-    : false;
-}
-
-function generatedExtensionDependencyArtifactInstalled(
+function generatedExtensionDiscoveryHost(
   extensionsRoot: string,
-  dependency: unknown,
-): boolean {
-  const declaration = readGeneratedExtensionDependencyDeclaration(dependency);
-  if (!declaration) {
-    return false;
-  }
-  const packageJsonPath = join(
-    extensionsRoot,
-    "package",
-    "node_modules",
-    ...declaration.name.split("/"),
-    "package.json",
-  );
-  if (!existsSync(packageJsonPath)) {
-    return false;
-  }
-  try {
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    return packageJson.name === declaration.name && packageJson.version === declaration.version;
-  } catch {
-    return false;
-  }
-}
-
-function readGeneratedExtensionDependencyDeclaration(
-  dependency: unknown,
-): { kind: "dependency" | "trusted_dependency"; name: string; version: string } | null {
-  if (!dependency || typeof dependency !== "object" || Array.isArray(dependency)) {
-    return null;
-  }
-  const entry = dependency as Record<string, unknown>;
-  if (
-    (entry.kind !== "dependency" && entry.kind !== "trusted_dependency") ||
-    typeof entry.name !== "string" ||
-    typeof entry.version !== "string"
-  ) {
-    return null;
-  }
+): GeneratedExtensionExportDiscoveryHost {
+  const dependencyApprovalStore = new ExtensionDependencyApprovalStore({ extensionsRoot });
   return {
-    kind: entry.kind,
-    name: entry.name,
-    version: entry.version,
+    isDependencyApproved: (dependency) =>
+      dependencyApprovalStore.hasApproved(extensionDependencyIdentityFromDeclaration(dependency)),
+    join,
+    readDirectory: (path) => {
+      if (!existsSync(path) || !statSync(path).isDirectory()) {
+        return [];
+      }
+      return readdirSync(path);
+    },
+    readFileString: (path) => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    sourceFingerprint: sourceBuildFingerprint,
+    statType: (path) => {
+      try {
+        const stat = statSync(path);
+        return stat.isDirectory() ? "Directory" : stat.isFile() ? "File" : "Other";
+      } catch {
+        return null;
+      }
+    },
   };
 }
 
-function sourceBuildFingerprint(sourceRoot: string): string | null {
+export function sourceBuildFingerprint(sourceRoot: string): string | null {
   if (!existsSync(sourceRoot)) {
     return null;
   }
@@ -274,20 +181,6 @@ function listBuildInputFiles(root: string): string[] {
     }
   }
   return files.toSorted((left, right) => left.localeCompare(right));
-}
-
-function readOptionalJsonObject(path: string): Record<string, unknown> | null {
-  if (!existsSync(path)) {
-    return null;
-  }
-  try {
-    const value = JSON.parse(readFileSync(path, "utf8"));
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function defaultExtensionsRoot(): string {

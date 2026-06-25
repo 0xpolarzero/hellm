@@ -7,7 +7,7 @@
 
 ## Scope
 
-This spec defines the shared live rendering model for current tool and command execution.
+This spec defines the shared live rendering model for tool and command execution.
 
 ## Core Model
 
@@ -25,7 +25,8 @@ The transcript card has three semantic levels:
   actions
 - expanded: bounded nearby sections for accepted arguments, command target, file changes,
   diagnostics, progress, grouped stdout/stderr, child commands, and artifacts
-- inspector: full trace/debugger for raw events, complete output, facts, snapshots, and artifacts
+- inspector: full trace/debugger for raw command lifecycle events, command facts, argument
+  snapshots, output chunks, retained output, child-command facts, and artifacts
 
 Once a command reaches a terminal state (`succeeded`, `failed`, or `cancelled`), its terminal
 summary, facts, error, and finished timestamp are immutable. Prompt cleanup and late duplicate
@@ -37,7 +38,7 @@ This model applies to:
 - long-running shell sessions through `write_stdin`
 - `apply_patch`
 - `execute_typescript`
-- generated `svvyx` extension-client child commands inside `execute_typescript`
+- generated `svvyx` extension-facade child commands inside `execute_typescript`
 - thread-control tools
 - extension loading and inspection
 - request-user-input
@@ -46,9 +47,12 @@ Prompt-only CLIs such as Smithers are projected as ordinary Shell command execut
 span may show the submitted command, grouped stdout/stderr summary, exit status, duration, and
 retained artifacts. It does not become a workflow-specific renderer.
 
+Runtime event-stream replay is not a command recovery or debugger source. Recovery and inspection
+use durable command facts, command event rows, retained artifacts, and state read models.
+
 ## Shell And svvyx Commands
 
-Shell projection records:
+Shell command records and durable command event rows include:
 
 - command string
 - working directory
@@ -58,12 +62,21 @@ Shell projection records:
 - exit code or signal
 - retained output artifact links when needed
 
-Transcript spans group stdout and stderr separately, cap inline output, and route full output to the
-command inspector or retained artifacts. Successful low-risk commands should remain compact; failed
-commands should surface the first useful failure reason without requiring transcript archaeology.
+Transcript spans and inspectors derive from those command facts. Spans group stdout and stderr
+separately, cap inline output, and route full output to the command inspector or retained artifacts.
+Successful low-risk commands should remain compact; failed commands should surface the first useful
+failure reason without requiring transcript archaeology.
 
-`svvyx workflows ...` is a command-family Shell surface unless invoked through a generated
-`execute_typescript` client.
+Running Shell command spans whose command inspector read model reports
+`stdin.mode === "continuable"` and `stdin.canAttemptWrite === true` may render a compact stdin
+composer. Submitting it calls the runtime command stdin facade by durable `commandId`; it must not
+append transcript text, call the model-facing `write_stdin` tool, mutate renderer-only command
+state, or infer success before the runtime result and subsequent `command.changed` refetch.
+
+`svvyx workflows ...` is a command-family Shell surface unless invoked through an injected
+`execute_typescript` generated TypeScript facade such as `extensions.workflows.run(...)`. Facade
+calls record child commands under the parent TypeScript command; they are not generated `@svvyx/*`
+package imports.
 
 ## Apply Patch
 
@@ -77,7 +90,7 @@ Final facts include changed files, created files, deleted files, and errors.
 
 `execute_typescript` is one parent command.
 
-Generated extension-client calls inside the snippet are child commands under that parent. Summary
+Generated extension-facade calls inside the snippet are child commands under that parent. Summary
 children render as nested child spans inside the expanded parent card; trace-only children stay in
 the command inspector and do not create top-level transcript cards.
 
@@ -92,10 +105,14 @@ Expected display:
 - `build`: build phases and diagnostics
 - `models list`: provider/model/reasoning choices and auth/configuration status
 
+Workflows semantic rollups are derived from `exec_command` command facts and facade child command
+facts. They are not produced by a workflow runtime renderer, a Smithers wrapper, or generated
+`@svvyx/*` package APIs.
+
 ## Recovery
 
-The recovery source is durable command records, argument snapshots, command events, final command
-facts, and retained artifacts.
+The recovery source is durable command records, argument snapshots, durable command event rows,
+final command facts, and retained artifacts.
 
 Renderer code must not reconstruct command lifecycle by parsing transcript prose or rerunning tools.
 

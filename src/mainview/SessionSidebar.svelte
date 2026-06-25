@@ -11,7 +11,7 @@
   import BoxesIcon from "@lucide/svelte/icons/boxes";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import FolderGit2Icon from "@lucide/svelte/icons/folder-git-2";
-  import type { ContextBudget } from "../shared/context-budget";
+  import type { ContextBudget } from "./context-budget";
   import type { AgentProfileSettings } from "../shared/agent-settings";
   import { getShortcutCompact, getShortcutReadable } from "../shared/shortcut-registry";
   import type {

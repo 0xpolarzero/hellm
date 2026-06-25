@@ -16,6 +16,11 @@ function commandRollup(overrides: Partial<WorkspaceCommandRollup> = {}): Workspa
     error: null,
     artifacts: [],
     outputEvents: [],
+    stdin: {
+      mode: "continuable",
+      canAttemptWrite: false,
+      acceptedWrites: [],
+    },
     argumentSnapshots: [],
     progressEvents: [],
     patchSnapshots: [],

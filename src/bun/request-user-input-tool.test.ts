@@ -1,11 +1,22 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { createPromptExecutionContext } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import { createPromptExecutionContext } from "@svvy/core";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeRequestStatePortFromStore,
+  runtimeSessionWaitStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
-import { createRequestUserInputTool, RequestUserInputRuntime } from "./request-user-input-tool";
-import { buildStructuredSessionView } from "./structured-session-selectors";
+} from "@svvy/state/structured-session-state";
+import {
+  createRequestUserInputTool,
+  RequestUserInputRuntime,
+  type RequestUserInputToolState,
+} from "./request-user-input-tool";
+import { buildStructuredSessionView } from "@svvy/state/structured-session-selectors";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -23,11 +34,11 @@ afterEach(() => {
 
 describe("request_user_input tool", () => {
   it("uses active variant-specific tool descriptions and schema descriptions", () => {
-    const { store, runtime } = createHarness();
+    const { runtime, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
 
     const nonblockingTool = createRequestUserInputTool({
-      store,
+      state: requestInputState,
       runtime,
       requestUserInputRuntime,
     });
@@ -41,7 +52,7 @@ describe("request_user_input tool", () => {
       blockingTimeout: { enabled: true, durationMs: 300_000 },
     });
     const blockingTool = createRequestUserInputTool({
-      store,
+      state: requestInputState,
       runtime,
       requestUserInputRuntime,
     });
@@ -51,8 +62,8 @@ describe("request_user_input tool", () => {
   });
 
   it("returns nonblocking default answers without internal runtime fields", async () => {
-    const { store, runtime } = createHarness();
-    const tool = createRequestUserInputTool({ store, runtime });
+    const { store, runtime, requestInputState } = createHarness();
+    const tool = createRequestUserInputTool({ state: requestInputState, runtime });
 
     const result = await tool.execute("tool-call-request-input", {
       questions: [
@@ -253,13 +264,17 @@ describe("request_user_input tool", () => {
   });
 
   it("creates a waiting command record before a blocking answer arrives", async () => {
-    const { store, runtime } = createHarness();
+    const { store, runtime, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     requestUserInputRuntime.setSettings({
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
-    const tool = createRequestUserInputTool({ store, runtime, requestUserInputRuntime });
+    const tool = createRequestUserInputTool({
+      state: requestInputState,
+      runtime,
+      requestUserInputRuntime,
+    });
 
     const pending = tool.execute("tool-call-blocking-start", {
       questions: [
@@ -281,6 +296,9 @@ describe("request_user_input tool", () => {
       ],
     });
     await Promise.resolve();
+    await waitFor(
+      () => store.getSessionState("session-request-input").commands[0]?.status === "waiting",
+    );
 
     const snapshot = store.getSessionState("session-request-input");
     const request = snapshot.requestUserInputRequests[0]!;
@@ -331,9 +349,9 @@ describe("request_user_input tool", () => {
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
       answer: { kind: "option", optionId: fullSuite.optionId },
-      delivery: "steer",
+      delivery: "enqueue-and-run",
     });
-    requestUserInputRuntime.resolveBlockingRequest(store, request.requestId);
+    await requestUserInputRuntime.resolveBlockingRequest(requestInputState, request.requestId);
 
     await expect(pending).resolves.toMatchObject({
       details: {
@@ -343,8 +361,8 @@ describe("request_user_input tool", () => {
   });
 
   it("rejects invalid question shapes", async () => {
-    const { store, runtime } = createHarness();
-    const tool = createRequestUserInputTool({ store, runtime });
+    const { store, runtime, requestInputState } = createHarness();
+    const tool = createRequestUserInputTool({ state: requestInputState, runtime });
 
     await expect(
       tool.execute("tool-call-missing-recommended", {
@@ -365,7 +383,7 @@ describe("request_user_input tool", () => {
           },
         ],
       }),
-    ).rejects.toThrow("requires exactly one recommended option");
+    ).rejects.toThrow("choice request-input questions require exactly one recommended option");
 
     await expect(
       tool.execute("tool-call-both-kinds", {
@@ -388,7 +406,7 @@ describe("request_user_input tool", () => {
           },
         ],
       }),
-    ).rejects.toThrow("requires either options or defaultAnswer, but not both");
+    ).rejects.toThrow('Unexpected key with value "Unit checks only."');
 
     await expect(
       tool.execute("tool-call-too-many", {
@@ -399,7 +417,7 @@ describe("request_user_input tool", () => {
           { title: "Four", question: "Four?", defaultAnswer: "Four." },
         ],
       }),
-    ).rejects.toThrow("requires one to three questions");
+    ).rejects.toThrow("Expected a value with a length between 1 and 3");
 
     await expect(
       tool.execute("tool-call-agent-ids", {
@@ -422,7 +440,7 @@ describe("request_user_input tool", () => {
           },
         ],
       } as never),
-    ).rejects.toThrow("unsupported field id");
+    ).rejects.toThrow('Unexpected key with value "agent-supplied-id"');
 
     expect(
       store
@@ -440,8 +458,8 @@ describe("request_user_input tool", () => {
   });
 
   it("records handler-owned clarification commands without orchestrator notification", async () => {
-    const { store, runtime } = createHarness({ surfaceKind: "handler" });
-    const tool = createRequestUserInputTool({ store, runtime });
+    const { store, runtime, requestInputState } = createHarness({ surfaceKind: "handler" });
+    const tool = createRequestUserInputTool({ state: requestInputState, runtime });
 
     await tool.execute("tool-call-handler-request-input", {
       questions: [
@@ -486,13 +504,17 @@ describe("request_user_input tool", () => {
   });
 
   it("waits in blocking mode until the user answers through the request record", async () => {
-    const { store, runtime } = createHarness();
+    const { store, runtime, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     requestUserInputRuntime.setSettings({
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
-    const tool = createRequestUserInputTool({ store, runtime, requestUserInputRuntime });
+    const tool = createRequestUserInputTool({
+      state: requestInputState,
+      runtime,
+      requestUserInputRuntime,
+    });
 
     const pending = tool.execute("tool-call-blocking-request-input", {
       questions: [
@@ -514,6 +536,9 @@ describe("request_user_input tool", () => {
       ],
     });
     await Promise.resolve();
+    await waitFor(
+      () => store.getSessionState("session-request-input").commands[0]?.status === "waiting",
+    );
 
     const request = store.getSessionState("session-request-input").requestUserInputRequests[0]!;
     expect(request).toMatchObject({
@@ -538,10 +563,10 @@ describe("request_user_input tool", () => {
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
       answer: { kind: "option", optionId: fullSuite.optionId },
-      delivery: "steer",
+      delivery: "enqueue-and-run",
     });
     expect(answered.queuedMessage).toBeNull();
-    requestUserInputRuntime.resolveBlockingRequest(store, request.requestId);
+    await requestUserInputRuntime.resolveBlockingRequest(requestInputState, request.requestId);
 
     await expect(pending).resolves.toMatchObject({
       details: {
@@ -567,13 +592,17 @@ describe("request_user_input tool", () => {
   });
 
   it("uses timeout defaults for unanswered blocking questions", async () => {
-    const { store, runtime } = createHarness();
+    const { store, runtime, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     requestUserInputRuntime.setSettings({
       mode: "blocking",
       blockingTimeout: { enabled: true, durationMs: 0 },
     });
-    const tool = createRequestUserInputTool({ store, runtime, requestUserInputRuntime });
+    const tool = createRequestUserInputTool({
+      state: requestInputState,
+      runtime,
+      requestUserInputRuntime,
+    });
 
     const result = await tool.execute("tool-call-blocking-timeout", {
       questions: [
@@ -616,14 +645,14 @@ describe("request_user_input tool", () => {
     });
   });
 
-  it("restores orphaned blocking requests and finalizes them when the user answers", () => {
-    const { store } = createHarness();
+  it("restores orphaned blocking requests and finalizes them when the user answers", async () => {
+    const { store, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     const request = createDurableBlockingRequest(store, {
       timeout: { enabled: false, durationMs: 300_000 },
     });
 
-    requestUserInputRuntime.restoreOpenBlockingRequests(store);
+    await requestUserInputRuntime.restoreOpenBlockingRequests(requestInputState);
 
     expect(store.getSessionState("session-request-input").commands[0]).toMatchObject({
       status: "waiting",
@@ -643,11 +672,14 @@ describe("request_user_input tool", () => {
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
       answer: { kind: "option", optionId: fullSuite.optionId },
-      delivery: "steer",
+      delivery: "enqueue-and-run",
     });
     expect(answered.queuedMessage).toBeNull();
 
-    const result = requestUserInputRuntime.resolveBlockingRequest(store, request.requestId);
+    const result = await requestUserInputRuntime.resolveBlockingRequest(
+      requestInputState,
+      request.requestId,
+    );
 
     expect(result).toMatchObject({
       answers: [
@@ -671,13 +703,13 @@ describe("request_user_input tool", () => {
   });
 
   it("restores orphaned blocking request timers and applies timeout defaults", async () => {
-    const { store } = createHarness();
+    const { store, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     const request = createDurableBlockingRequest(store, {
       timeout: { enabled: true, durationMs: 0 },
     });
 
-    requestUserInputRuntime.restoreOpenBlockingRequests(store);
+    await requestUserInputRuntime.restoreOpenBlockingRequests(requestInputState);
     await waitFor(
       () =>
         store.getSessionState("session-request-input").requestUserInputRequests[0]?.status ===
@@ -705,13 +737,17 @@ describe("request_user_input tool", () => {
   });
 
   it("cancels active blocking requests and rejects the waiting tool call", async () => {
-    const { store, runtime } = createHarness();
+    const { store, runtime, requestInputState } = createHarness();
     const requestUserInputRuntime = new RequestUserInputRuntime();
     requestUserInputRuntime.setSettings({
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
-    const tool = createRequestUserInputTool({ store, runtime, requestUserInputRuntime });
+    const tool = createRequestUserInputTool({
+      state: requestInputState,
+      runtime,
+      requestUserInputRuntime,
+    });
 
     const pending = tool.execute("tool-call-cancel-rui", {
       questions: [
@@ -735,8 +771,8 @@ describe("request_user_input tool", () => {
     await Promise.resolve();
 
     const request = store.getSessionState("session-request-input").requestUserInputRequests[0]!;
-    requestUserInputRuntime.cancelBlockingRequestsForSurface(
-      store,
+    await requestUserInputRuntime.cancelBlockingRequestsForSurface(
+      requestInputState,
       request.surfacePiSessionId,
       "Prompt cancelled.",
     );
@@ -786,15 +822,32 @@ function createHarness(options: { surfaceKind?: "orchestrator" | "handler" } = {
       : null;
   const runtime = {
     current: createPromptExecutionContext({
-      sessionId: "session-request-input",
+      workspaceSessionId: "session-request-input",
       turnId: turn.id,
       surfacePiSessionId: rootThread?.surfacePiSessionId ?? "session-request-input",
       rootThreadId: rootThread?.id ?? null,
-      promptText: "Ask a clarification question",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
       surfaceKind: options.surfaceKind,
     }),
   };
-  return { store, runtime };
+  return {
+    store,
+    runtime,
+    requestInputState: createRequestInputToolState(store),
+  };
+}
+
+function createRequestInputToolState(
+  store: StructuredSessionStateStore,
+): RequestUserInputToolState {
+  return {
+    commandState: runtimeCommandStatePortFromStore(store),
+    requestState: runtimeRequestStatePortFromStore(store),
+    sessionWaitState: runtimeSessionWaitStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: (effect) => Effect.runSync(effect),
+  };
 }
 
 function createDurableBlockingRequest(

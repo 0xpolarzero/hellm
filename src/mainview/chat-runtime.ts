@@ -8,6 +8,7 @@ import {
   type Model,
   type TextContent,
 } from "@mariozechner/pi-ai";
+import type { RuntimeSubmittedAttachment, RuntimeSubmittedMessage } from "@svvy/core";
 import {
   composerAttachmentPromptText,
   serializeComposerAttachmentTextSignature,
@@ -79,6 +80,8 @@ import {
   type SetExtensionTypescriptApiRequest,
   type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
+  type WriteCommandStdinRequest,
+  type WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
 import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
 import type {
@@ -100,7 +103,6 @@ import type {
 } from "../shared/snippets";
 import { createChatStorage, type ChatStorage } from "./chat-storage";
 import {
-  DEFAULT_AGENT_SETTINGS,
   type AgentSettingsState,
   type AppPreferences,
   type ReasoningEffort,
@@ -111,7 +113,7 @@ import {
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import type { AppMenuAction } from "../shared/shortcut-registry";
-import type { ExtensionUsageState } from "../shared/extensions";
+import type { ExtensionUsageState } from "@svvy/extensions";
 import {
   addDockviewPanel,
   bindPane,
@@ -136,7 +138,7 @@ import {
 } from "./pane-layout";
 import { mergeAppLogEntries } from "./app-logs";
 import { rpc } from "./rpc";
-import { buildWorkspaceSessionNavigation } from "./session-state";
+import { buildWorkspaceSessionNavigation } from "@svvy/state/session-navigation";
 
 export { PRIMARY_CHAT_PANE_ID } from "./pane-layout";
 
@@ -327,6 +329,40 @@ function buildUserMessage(input: ComposerPromptSubmission): Message {
   return message;
 }
 
+function buildRuntimeSubmittedMessage(input: ComposerPromptSubmission): RuntimeSubmittedMessage {
+  const attachments: RuntimeSubmittedAttachment[] = input.attachments.map((attachment) => {
+    const common = {
+      id: attachment.id,
+      name: attachment.name,
+      path: attachment.path,
+      ...(attachment.workspaceRelativePath !== undefined
+        ? { workspaceRelativePath: attachment.workspaceRelativePath }
+        : {}),
+      ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType } : {}),
+      ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+    };
+    if (attachment.kind === "image") {
+      return {
+        ...common,
+        kind: "image",
+        dataBase64: attachment.dataBase64,
+        mimeType: attachment.mimeType ?? "application/octet-stream",
+      };
+    }
+    if (attachment.kind === "folder") {
+      return { ...common, kind: "folder" };
+    }
+    return { ...common, kind: "file" };
+  });
+  return {
+    text: input.text.trim(),
+    attachments,
+    ...(input.snippetProvenance?.length
+      ? { snippetProvenance: structuredClone(input.snippetProvenance) }
+      : {}),
+  };
+}
+
 function serializableComposerAttachment(input: ComposerAttachment): ComposerAttachment {
   return {
     id: input.id,
@@ -384,22 +420,6 @@ function serializableClientSubmission(
     ...(input.source !== undefined ? { source: input.source } : {}),
     ...(input.submittedAt !== undefined ? { submittedAt: input.submittedAt } : {}),
     ...(input.sequence !== undefined ? { sequence: input.sequence } : {}),
-    ...(input.panelId !== undefined ? { panelId: input.panelId } : {}),
-    ...(input.draftLength !== undefined ? { draftLength: input.draftLength } : {}),
-    ...(input.trimmedDraftLength !== undefined
-      ? { trimmedDraftLength: input.trimmedDraftLength }
-      : {}),
-    ...(input.serializedTextLength !== undefined
-      ? { serializedTextLength: input.serializedTextLength }
-      : {}),
-    ...(input.attachmentCount !== undefined ? { attachmentCount: input.attachmentCount } : {}),
-    ...(input.snippetMentionCount !== undefined
-      ? { snippetMentionCount: input.snippetMentionCount }
-      : {}),
-    ...(input.snippetProvenanceCount !== undefined
-      ? { snippetProvenanceCount: input.snippetProvenanceCount }
-      : {}),
-    ...(input.isEdit !== undefined ? { isEdit: input.isEdit } : {}),
   };
 }
 
@@ -627,6 +647,7 @@ export interface ChatRuntimeRpcClient {
     getGeneratedAgentContextEntries: typeof rpc.request.getGeneratedAgentContextEntries;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
+    writeCommandStdin: typeof rpc.request.writeCommandStdin;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
@@ -737,6 +758,7 @@ export interface ChatRuntime {
     commandId: string,
     sessionId?: string,
   ) => Promise<WorkspaceCommandInspector>;
+  writeCommandStdin: (request: WriteCommandStdinRequest) => Promise<WriteCommandStdinResponse>;
   listHandlerThreads: (sessionId?: string) => Promise<WorkspaceHandlerThreadSummary[]>;
   getHandlerThreadInspector: (
     threadId: string,
@@ -957,7 +979,7 @@ function normalizePromptTarget(target: PromptTarget): PromptTarget {
 }
 
 function isPromptTarget(target: WorkspacePaneSurfaceTarget | null): target is PromptTarget {
-  if (target?.surface !== "orchestrator" && target?.surface !== "thread") {
+  if (target?.surface !== "orchestrator" && target?.surface !== "handler") {
     return false;
   }
   if (
@@ -968,7 +990,7 @@ function isPromptTarget(target: WorkspacePaneSurfaceTarget | null): target is Pr
   ) {
     return false;
   }
-  if (target.surface === "thread") {
+  if (target.surface === "handler") {
     return typeof target.threadId === "string" && target.threadId.length > 0;
   }
   return true;
@@ -1387,21 +1409,10 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       return;
     }
 
-    const userMessage = buildUserMessage(submission);
-    const provider = this.agent.state.model?.provider ?? DEFAULT_AGENT_SETTINGS.provider;
-    const model = this.agent.state.model?.id ?? DEFAULT_AGENT_SETTINGS.model;
-    const reasoningEffort =
-      (this.agent.state.thinkingLevel as ReasoningEffort | undefined) ??
-      DEFAULT_AGENT_SETTINGS.reasoningEffort;
-
     try {
       const response = await this.rpcClient.request.sendPrompt({
-        messages: [...(this.agent.state.messages as Message[]), userMessage],
-        provider,
-        model,
-        reasoningEffort,
         target: this.target,
-        systemPrompt: this.agent.state.systemPrompt,
+        message: buildRuntimeSubmittedMessage(submission),
         clientSubmission: submission.clientSubmission,
         workspaceId: this.workspaceId,
       });
@@ -2163,6 +2174,19 @@ export async function createChatRuntime(
     return inspector;
   };
 
+  const writeCommandStdin = async (
+    request: WriteCommandStdinRequest,
+  ): Promise<WriteCommandStdinResponse> => {
+    return await rpcClient.request.writeCommandStdin(
+      scoped({
+        ...request,
+        ...(request.clientSubmission
+          ? { clientSubmission: serializableClientSubmission(request.clientSubmission) }
+          : {}),
+      }),
+    );
+  };
+
   const listHandlerThreads = async (
     sessionId = getSelectedSessionId(),
   ): Promise<WorkspaceHandlerThreadSummary[]> => {
@@ -2649,11 +2673,11 @@ export async function createChatRuntime(
       }
       if (
         refreshAll ||
-        domains.some((domain) => domain === "extensions" || domain === "external-instructions")
+        domains.some((domain) => domain === "extensions" || domain === "external_instructions")
       ) {
         void refreshExtensionsInventory().catch(() => undefined);
       }
-      if (refreshAll || domains.includes("external-instructions")) {
+      if (refreshAll || domains.includes("external_instructions")) {
         void refreshExternalInstructionSources().catch(() => undefined);
       }
       if (
@@ -2662,7 +2686,7 @@ export async function createChatRuntime(
       ) {
         void refreshWorkflowsGenerated().catch(() => undefined);
       }
-      if (refreshAll || domains.includes("snippets")) {
+      if (refreshAll || domains.includes("host_snippets")) {
         void refreshSnippets().catch(() => undefined);
       }
     }
@@ -2759,7 +2783,7 @@ export async function createChatRuntime(
         event.workspaceSessionId && event.surfacePiSessionId
           ? {
               workspaceSessionId: event.workspaceSessionId,
-              surface: event.threadId ? "thread" : "orchestrator",
+              surface: event.threadId ? "handler" : "orchestrator",
               surfacePiSessionId: event.surfacePiSessionId,
               threadId: event.threadId,
             }
@@ -2995,6 +3019,7 @@ export async function createChatRuntime(
       recordFocusedSession();
     },
     getCommandInspector,
+    writeCommandStdin,
     listHandlerThreads,
     getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
@@ -3002,14 +3027,28 @@ export async function createChatRuntime(
     getRequestUserInputRequests: () => structuredClone(requestUserInputRequests),
     getRuntimeApprovalRequests: () => structuredClone(runtimeApprovalRequests),
     answerRequestUserInput: async (request) => {
-      const response = await rpcClient.request.answerRequestUserInput(scoped(request));
+      const response = await rpcClient.request.answerRequestUserInput(
+        scoped({
+          ...request,
+          ...(request.clientSubmission
+            ? { clientSubmission: serializableClientSubmission(request.clientSubmission) }
+            : {}),
+        }),
+      );
       if (response.snapshot) {
         upsertSurfaceController(response.snapshot);
       }
       await refreshSessions();
     },
     setRequestUserInputTimerPaused: async (request) => {
-      await rpcClient.request.setRequestUserInputTimerPaused(scoped(request));
+      await rpcClient.request.setRequestUserInputTimerPaused(
+        scoped({
+          ...request,
+          ...(request.clientSubmission
+            ? { clientSubmission: serializableClientSubmission(request.clientSubmission) }
+            : {}),
+        }),
+      );
       await refreshSessions();
     },
     answerRuntimeApprovalRequest: async (request) => {

@@ -9,7 +9,7 @@ import {
 } from "./default-system-prompt";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import { startThreadParamsSchema } from "./thread-start-tool";
-import { BUILTIN_EXTENSIONS } from "../shared/extensions";
+import { BUILTIN_EXTENSIONS } from "@svvy/extensions";
 
 const REMOVED_TOOL_NAMES = [
   "thread_handoff",
@@ -177,6 +177,9 @@ describe("removed product contracts", () => {
       "src/bun/thread-resume-tool.ts",
       "src/bun/request-context-tool.ts",
       "src/bun/wait-tool.ts",
+      "src/bun/app-log-store.ts",
+      "src/bun/filesystem-sandbox-policy.ts",
+      "src/bun/sandbox-helper.ts",
       "src/bun/smithers-tools.ts",
       "src/bun/smithers-runtime/manager.ts",
       "src/bun/smithers-runtime/native-adapter.ts",
@@ -207,8 +210,8 @@ describe("removed product contracts", () => {
   it("does not keep Smithers bridge attention fields or DevTools guidance in current runtime code", () => {
     const root = join(import.meta.dir, "..", "..");
     const checkedFiles = [
-      "src/bun/structured-session-state.ts",
-      "src/bun/structured-session-selectors.ts",
+      "packages/state/src/structured-session-state.ts",
+      "packages/state/src/structured-session-selectors.ts",
       "src/shared/workspace-contract.ts",
       "src/bun/default-system-prompt.ts",
       "src/bun/smithers-runtime/workflow-authoring-guide.ts",

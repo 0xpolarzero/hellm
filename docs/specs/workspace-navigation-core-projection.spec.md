@@ -50,7 +50,7 @@ Transcript links may still exist, but artifact projection should prefer structur
 
 The Workflows sidebar entry opens the read-only Workflows pane.
 
-The pane surfaces generated `@svvy/workflows` exports:
+The pane surfaces generated `@svvyx/workflows` exports:
 
 - `Agents`
 - `Components`
@@ -60,20 +60,26 @@ The pane surfaces generated `@svvy/workflows` exports:
 Each row links to generated code and source code. Agent rows also link to the Agents pane for human
 customization.
 
-The Workflows pane is read-only generated-source visibility. It is not a source editor or workflow
+The Workflows pane is read-only generated-package visibility. It is not a source editor or workflow
 runner.
 
 ## Restart Restore
 
 Workspace shell restore includes:
 
-- pinned and archived session state
-- group collapsed and size state
-- open Dockview panels and panel-to-surface bindings
+- serialized Dockview layout
+- panel metadata and panel-to-surface bindings
 - focused panel
-- panel-local scroll and display preferences
 - Workflows pane open state when present
-- composer drafts and attachments
+
+Composer drafts, attachments, structured transcript projections, and surface lifecycle indicators
+render from `@svvy/state` surface read models keyed by `surfacePiSessionId`; pi remains the
+canonical conversation transcript substrate. Prompt-lock indicators derive from durable active turn
+facts, queue-claim facts, and pi-session reference facts. The locks themselves are process-local
+`@svvy/runtime` state reconstructed when runtime acquires the workspace.
+
+Workspace shell restore restores persisted layout, panel metadata, focused panel, Workflows pane open
+state, and panel-to-surface bindings. It does not persist renderer component snapshots.
 
 It does not restore transient menus, popovers, selected transcript text, temporary search
 highlights, or stale stream state.

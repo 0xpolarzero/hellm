@@ -7,7 +7,8 @@
 - Scope:
   - define the builtin Workflows `svvyx` extension record
   - define the `svvyx workflows ...` command family
-  - define agent-facing instructions for reusable Workflows source and generated imports
+  - define actor-scoped agent-facing instructions for reusable Workflows source and generated
+    imports
   - define build prerequisites, validation, and read-only generated output behavior
 
 Detailed source layout, generated package, save semantics, model validation, and Workflows pane
@@ -22,7 +23,7 @@ and command-surface contract.
   "category": "builtin",
   "interface": "svvyx",
   "title": "Workflows",
-  "description": "Reusable Smithers workflow authoring assets, task-agent parameters, generated @svvy/workflows imports, and provider/model discovery.",
+  "description": "Reusable Smithers workflow authoring assets, task-agent parameters, generated @svvyx/workflows imports, workflow-task extension references from @svvyx/extensions, and provider/model discovery.",
   "typescriptApiEnabled": true,
   "env": [],
   "dependencies": [],
@@ -32,16 +33,22 @@ and command-surface contract.
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `available` |
-| Handler thread | `loaded` |
+| Actor kind          | State         |
+| ------------------- | ------------- |
+| Orchestrator        | `available`   |
+| Handler thread      | `loaded`      |
 | Workflow task agent | `unavailable` |
 
 The Workflows extension is available to orchestrators so they can understand that reusable workflow
 material exists, but normal workflow authoring belongs to handler threads. Workflow task agents do
 not receive Workflows by default because they should execute the local task they were given. That
-`unavailable` default is a configurable off state, not a hard actor boundary.
+`unavailable` default is a configurable off state, not a hard actor boundary. If a profile override
+loads Workflows into a workflow task agent, it exposes only source-library command guidance that is
+valid for that actor. The `runTaskAgent` bridge is not a callable capability inside workflow
+task-agent prompts; it is command-scoped child-process plumbing used by
+`Agents.defineTaskAgent(...)` from Smithers workflow source. Workflows must not expose Smithers
+runtime-control APIs, handler-thread controls, generated `@svvyx/*` package imports, or broad
+`execute_typescript` runtime facades to workflow task agents.
 
 ## Command Family
 
@@ -69,9 +76,75 @@ Rejected command names:
 Running, resuming, approving, inspecting, or debugging Smithers workflows is Smithers CLI behavior
 through the Shell extension, not Workflows extension behavior.
 
+All command results are schema-backed and contain only machine-usable facts:
+
+```ts
+type WorkflowsCommandErrorCode =
+  | "invalid_arguments"
+  | "source_not_found"
+  | "source_not_supported"
+  | "target_exists"
+  | "source_ambiguous"
+  | "source_invalid"
+  | "model_invalid"
+  | "extension_reference_invalid"
+  | "build_failed"
+  | "generated_package_unavailable"
+  | "state_conflict";
+
+type WorkflowsCommandDiagnostic = {
+  code: WorkflowsCommandErrorCode;
+  message: string;
+  sourcePath?: string;
+  exportName?: string;
+};
+
+type WorkflowsSaveResult = {
+  saved: {
+    kind: "agent" | "prompt" | "component" | "workflow";
+    exportName: string;
+    sourcePath: string;
+  };
+  diagnostics: readonly WorkflowsCommandDiagnostic[];
+};
+
+type WorkflowsBuildResult = {
+  diagnostics: readonly WorkflowsCommandDiagnostic[];
+};
+
+type WorkflowsModelsListResult = {
+  providers: readonly {
+    providerId: string;
+    configured: boolean;
+    authHealth: "usable" | "missing" | "expired" | "refresh_failed";
+    redactedAccountLabel?: string;
+    expiresAt?: string;
+    models: readonly {
+      modelId: string;
+      displayName: string;
+      supportedReasoning: readonly string[];
+      capabilities: readonly ("reasoning" | "vision" | "tool_calling")[];
+    }[];
+  }[];
+};
+```
+
+`save` and `build` handlers return an `ExtensionHandlerResult` with a model-facing command result and
+one ordered `operations` item wrapping a closed `generated_packages.refresh` `RuntimeEffectRequest`.
+Runtime applies the request in its generated-package refresh lane by invoking the `@svvy/extensions`
+generated-package service, which writes generated package files and returns build evidence only.
+Runtime records generated-package build/failure facts through core-owned state ports implemented by
+`@svvy/state`. After those generated-package facts commit, runtime schedules workspace-link repair
+for affected acquired workspace runtimes; each repair asks `@svvy/extensions` for an immutable
+workspace/package link plan, applies that plan, and records committed workspace-link facts through
+state ports. Model-facing command results must not include runtime effect payloads, title, summary,
+recommendation, preview content, generated file snippets, runtime scheduler ids, recovery ids, or
+applied workspace link status. Those are read from state read models and generated-package facts
+after runtime applies the effect.
+
 ## `list`
 
-`list` returns generated exports from the latest successful `@svvy/workflows` build.
+`list` returns generated exports from the latest successful `@svvyx/workflows` build.
 
 It supports one optional filter:
 
@@ -119,15 +192,19 @@ Optional:
 If saving would overwrite an existing source item and `--overwrite` is absent, the command fails
 with `target_exists` and performs no partial write.
 
-After a successful write, `save` runs the full Workflows build. The saved export becomes available
-only when that build succeeds.
+After a successful write, `save` returns an `ExtensionHandlerResult` with one model-facing command
+result and one ordered `operations` item wrapping a closed `generated_packages.refresh`
+`RuntimeEffectRequest`. The command result reports the accepted source-library write only; the saved
+export becomes available only after runtime applies the wrapped request and the generated-package
+refresh succeeds.
 
 Agent saving rules:
 
-- `prompt`: source is direct MDX
+- `prompt`: source is a direct MDX file saved under `~/.config/svvy/workflows/prompts/`
 - `component`: source is TypeScript or TSX
 - `workflow`: source is TSX
-- `agent`: source is statically extracted task-agent parameters from a `defineTaskAgent(...)` call
+- `agent`: source is statically extracted task-agent parameters from an `Agents.defineTaskAgent(...)`
+  call
 
 Agent saves must not execute arbitrary TypeScript to discover parameters. Dynamic or ambiguous
 agent definitions fail with diagnostics.
@@ -136,14 +213,22 @@ agent definitions fail with diagnostics.
 
 `build` is the repair and refresh command for the Workflows source library.
 
-It must:
+It requests a full generated-package refresh. Runtime applies the internally returned
+`generated_packages.refresh` request at the ordered refresh boundary, where it calls the
+`@svvy/extensions` generated-package service to:
 
-1. build and validate Extensions
-2. generate or refresh `@svvy/extensions`
+1. validate Extension source and ensure current `@svvyx/extensions` output
+2. use the same-batch generated `@svvyx/extensions` build evidence and declarations
 3. validate Workflows source
 4. validate workflow-agent provider/model/reasoning and extension usage overrides
-5. generate `@svvy/workflows`
-6. link generated packages into opened workspace `.smithers/node_modules`
+5. generate `@svvyx/workflows`
+6. return generated-package build evidence
+
+After generated output commits and generated-package facts are recorded through `@svvy/state`,
+`@svvy/runtime` schedules workspace-link repair for acquired workspace runtimes that need
+`.smithers/node_modules/@svvyx/*` links. For each workspace/package pair, runtime asks
+`@svvy/extensions` for a package-safe link plan, applies that plan, coordinates recovery, and records
+committed link facts through `@svvy/state`.
 
 The command returns structured diagnostics and fails closed. It must not silently generate a partial
 package that drops invalid source items.
@@ -163,37 +248,44 @@ It reports:
 
 - provider id
 - model id
-- whether the provider is currently configured/authenticated
-- auth source category such as API key, OAuth, env, or missing
+- current credential visibility and model-auth usability for the provider
+- redacted provider auth health: usable, missing, expired, or refresh failed
 - supported reasoning values
 - relevant capability flags such as reasoning, vision, and tool calling when available
 
 It does not perform a live completion request by default.
 
-## Generated TypeScript Client
+## Generated Execute TypeScript Facade
 
 When loaded into an actor with `execute_typescript`, the Workflows extension may expose the standard
-Incur-compatible generated client:
+Incur-compatible generated facade:
 
 ```ts
-extensions.workflows.run(commandId, input)
+extensions.workflows.run(extensionCommandId, input);
 ```
 
-The generated client must contain only the concrete command ids above and their exact input/output
-types. It must not expose a separate workflow runner, Smithers API, product workflow wrapper, or
+The generated facade must contain only the concrete extension command ids above and their exact
+input/output types. Those ids are extension command paths, not durable product `CommandId` records.
+It must not expose a separate workflow runner, Smithers API, Smithers execution command surface, or
 broad global `svvy` helper.
+
+That facade is an injected runtime object provided to `execute_typescript`. It is not an
+`@svvyx/workflows` or `@svvyx/extensions` import, and generated `@svvyx/*` packages are forbidden in
+`execute_typescript` snippets.
 
 ## Agent Instructions
 
-Loaded Workflows instructions must teach:
+Loaded Workflows instructions are actor-scoped. Orchestrators and handler threads receive Workflows
+instructions that teach:
 
 - reusable workflow material lives under `~/.config/svvy/workflows/`
-- generated imports come from `@svvy/workflows`
+- reusable workflow asset imports come from `@svvyx/workflows`
+- workflow task-agent extension reference values come from generated `@svvyx/extensions`
 - the only public root imports are `Agents`, `Components`, `Prompts`, and `Workflows`
 - generated `Agents.*` exports such as `Agents.reviewerAgent`, `Agents.implementerAgent`, and
-  `Agents.explorerAgent` are persisted `TaskAgentParameters` records from
+  `Agents.explorerAgent` are persisted `TaskAgentParametersSource` records from
   `~/.config/svvy/workflows/agents`
-- `Agents.defineTaskAgent(parametersOrAgentsExport)` and `Agents.TaskAgentParameters` live under
+- `Agents.defineTaskAgent(parametersOrAgentsExport)` and `Agents.TaskAgentParametersSource` live under
   `Agents`
 - `Agents.defineTaskAgent(...)` returns the Smithers-compatible `AgentLike` intended for
   `<Task agent={...}>`
@@ -201,55 +293,82 @@ Loaded Workflows instructions must teach:
 
 ```tsx
 import { Task } from "smithers-orchestrator";
-import { Agents } from "@svvy/workflows";
+import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
 
-export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+export default (
+  <Task id="review" agent={reviewer}>
+    Review the diff.
+  </Task>
+);
 ```
 
 - direct parameter usage:
 
 ```tsx
 import { Task } from "smithers-orchestrator";
-import { Agents } from "@svvy/workflows";
+import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent({
   id: "reviewerAgent",
   label: "Reviewer",
   provider: "openai",
   model: "gpt-5.4",
-  reasoningEffort: "medium",
+  reasoning: { effort: "medium" },
   instructions: "Review the diff.",
 });
 
-export default <Task id="review" agent={reviewer}>Review the diff.</Task>;
+export default (
+  <Task id="review" agent={reviewer}>
+    Review the diff.
+  </Task>
+);
 ```
 
 - agents use `svvyx workflows list` to orient
 - agents use `svvyx workflows save` to save reusable material
 - agents use `svvyx workflows build` after source edits
 - agents use `svvyx workflows models list` to choose valid provider/model/reasoning values
-- generated output and `.smithers/node_modules/@svvy/workflows` are read-only plumbing
+- generated output and workspace `.smithers/node_modules/@svvyx/workflows` /
+  `.smithers/node_modules/@svvyx/extensions` links are read-only package-resolution plumbing
 - Smithers execution uses official Smithers CLI commands through Shell, not Workflows commands
 - task-agent execution uses the narrow authenticated `runTaskAgent` bridge available in
-  handler-thread command-scoped environments; that bridge accepts task-agent parameters, Smithers
-  taskContext/run/node/iteration/attempt identity, prompt/messages, rootDir, workspace/session
-  binding, and returns `{ text, usage? }` plus optional `output` only when app runtime supplies it
+  handler-thread command-scoped environments; that bridge accepts task-agent parameters, required
+  Smithers task-attempt identity `{ runId, nodeId, iteration, attempt }`, optional observed
+  Smithers context `{ run, node, rootDir }`, exactly one prompt source as either a prompt string or a
+  non-empty user/assistant message list, `workspaceSessionId`, and `sourceCommandId`, and returns
+  `{ text, usage?, output? }`
+- workflow task-agent overrides import `{ Extensions }` from `@svvyx/extensions` and use
+  `Extensions.<id>.id` for identifier-safe ids or `Extensions["<id>"].id` for ids with punctuation;
+  bare extension references and generated camel aliases are invalid
 - the task-agent bridge supports concurrent calls, binds each call to one workflow-task-attempt
   surface, exposes no arbitrary app RPC/shell/settings/orchestrator controls, and does not
   duplicate Smithers workflow/run state
 
-Loaded Workflows instructions cover only app-global source-library commands, generated imports,
-read-only generated output, task-agent import usage, and the official Smithers CLI execution
-boundary.
+These orchestrator and handler-thread instructions cover only app-global source-library commands,
+generated imports, read-only generated output, and task-agent import usage. They may include the
+negative boundary that Workflows does not run Smithers workflows; official Smithers CLI usage
+belongs to the Smithers extension.
+
+If a profile override loads Workflows into a workflow task agent, that actor receives only
+actor-valid source-library command guidance generated from source contracts: `svvyx workflows list`,
+`svvyx workflows save`, `svvyx workflows build`, `svvyx workflows models list`, the app-global
+source root, read-only generated output boundaries, and the fact that Workflows does not run
+Smithers workflows. Workflow task-agent Workflows instructions may include generated TypeScript
+declarations or generated schema blocks for those commands, but must not include hand-written
+generated `@svvyx/workflows` or `@svvyx/extensions` import examples, `Agents.defineTaskAgent(...)`,
+`TaskAgentParametersSource`, bridge payload details, Smithers task-attempt identity fields,
+`runTaskAgent` transport details, handler-thread controls, Smithers runtime-control guidance, or
+broad `execute_typescript` runtime facade guidance.
 
 ## Workflows Pane Relationship
 
-The Workflows pane reads generated Workflows output and internal metadata. It is not an extension
-command.
+The Workflows pane reads the `@svvy/state` read model derived from latest successful generated
+Workflows package facts. It is not an extension command and does not scan generated output files or
+read internal build metadata directly.
 
-The extension command output and Workflows pane should agree because both derive from the same
-latest successful generated package. The pane may use internal metadata attached during build to
-link generated exports to source files and Agents-pane rows. That metadata is not an agent-facing
-API.
+The extension command output and Workflows pane agree because both derive from generated-package
+facts produced by `@svvy/extensions`, committed through `@svvy/state`, and announced by
+`@svvy/runtime` as typed after-commit notifications. Consumers refetch state read models.
+Source/export links are state read-model fields, not an agent-facing generated package API.

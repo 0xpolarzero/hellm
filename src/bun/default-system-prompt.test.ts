@@ -26,7 +26,7 @@ import {
   SMITHERS_MEMORY_FRAGMENT,
   SMITHERS_SVVY_BOUNDARY_APPENDIX,
 } from "./smithers-runtime/workflow-authoring-guide";
-import { getExtensionRecord, type ExtensionRecord } from "../shared/extensions";
+import { getExtensionRecord, type ExtensionRecord } from "@svvy/extensions";
 
 describe("default system prompt", () => {
   it("puts core coding-agent operating policy into every coding surface", () => {
@@ -194,15 +194,15 @@ describe("default system prompt", () => {
     );
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Loaded native extension: Execute TypeScript.");
     expect(DEFAULT_SYSTEM_PROMPT).toContain(
-      "Loaded Execute TypeScript guidance: Incur generated clients.",
+      "Loaded Execute TypeScript guidance: Incur-backed runtime facades.",
     );
     expect(DEFAULT_SYSTEM_PROMPT).toContain('extensions["<extensionId>"].run(commandId, input)');
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Dot access is valid only for identifier-safe");
     expect(DEFAULT_SYSTEM_PROMPT).toContain(EXECUTE_TYPESCRIPT_API_DECLARATION.trim());
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("interface ActiveWebSearchInput");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("site?: string");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("interface LoadedExtensionsClient");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("declare const extensions: LoadedExtensionsClient");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("interface LoadedExtensionsFacade");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("declare const extensions: LoadedExtensionsFacade");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("interface SvvyApi");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("list_assets(");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("list_models(): Promise<ToolResult");
@@ -210,7 +210,7 @@ describe("default system prompt", () => {
     expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain("web_");
     expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain("workflow_");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Do not use or assume a broad `api` helper");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("prompt-only extension clients");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("prompt-only extension runtime facades");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("api.cx_*");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("api.web_*");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("api.workflow_*");
@@ -273,14 +273,14 @@ describe("default system prompt", () => {
       );
       writeFileSync(
         join(generatedRoot, "types.d.ts"),
-        "interface LoadedExtensionsClient { staleGeneratedFile: { run(): never } }",
+        "interface LoadedExtensionsFacade { staleGeneratedFile: { run(): never } }",
       );
       const loadedRecord: ExtensionRecord = {
         id: "linear",
         category: "user",
         interface: "svvyx",
         title: "Linear",
-        description: "Linear generated client.",
+        description: "Linear generated runtime facade.",
         instructionSourceFiles: [],
         minimalLoadingHint: "",
         typescriptApiEnabled: true,
@@ -296,7 +296,7 @@ describe("default system prompt", () => {
         loadedExtensionRecords: [loadedRecord],
       });
 
-      expect(prompt).not.toContain("linear: LinearExtensionClient");
+      expect(prompt).not.toContain("linear: LinearExtensionFacade");
       expect(prompt).not.toContain('"issues.list"');
       expect(prompt).not.toContain("staleGeneratedFile");
     } finally {
@@ -306,14 +306,14 @@ describe("default system prompt", () => {
 
   it("explicitly steers snippets away from Node built-ins and broad helper APIs", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Do not import or assume Node.js built-ins");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("actor-local generated `extensions` clients");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("actor-local generated `extensions` runtime facades");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("bash(input:");
   });
 
-  it("keeps Execute TypeScript base guidance separate from generated-client guidance", () => {
+  it("keeps Execute TypeScript base guidance separate from generated-runtime-facade guidance", () => {
     const baseIndex = DEFAULT_SYSTEM_PROMPT.indexOf("Loaded native extension: Execute TypeScript.");
     const clientIndex = DEFAULT_SYSTEM_PROMPT.indexOf(
-      "Loaded Execute TypeScript guidance: Incur generated clients.",
+      "Loaded Execute TypeScript guidance: Incur-backed runtime facades.",
     );
     const declarationIndex = DEFAULT_SYSTEM_PROMPT.indexOf(
       "The execute_typescript contract follows",
@@ -382,11 +382,10 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Workflow waits, approvals, and resumes stay inside this handler thread until the handler decides to report an update or conclusion.",
     );
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers init");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers workflow run");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers ps");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers inspect");
-    expect(HANDLER_SYSTEM_PROMPT).not.toContain("bunx smithers-orchestrator");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator init");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator workflow run");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator ps");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator inspect");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("bunx smithers ");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Do not call thread_start from this surface in the adopted supervision model.",
@@ -394,7 +393,7 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("thread_resume");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("thread_handoff");
     expect(HANDLER_SYSTEM_PROMPT).toContain("workspace `.smithers/` source");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("@svvy/workflows");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("@svvyx/workflows");
     expect(HANDLER_SYSTEM_PROMPT).toContain("Workflow authoring guide for handler threads:");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "The handler workflow-authoring TypeScript contract follows",
@@ -583,12 +582,11 @@ describe("default system prompt", () => {
 
   it("injects generated workflow authoring contracts only into handler prompts", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain("namespace Agents");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("interface TaskAgentParameters");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("interface TaskAgentParametersSource");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("interface WorkflowAgentParameters");
     expect(HANDLER_SYSTEM_PROMPT).toContain("function defineTaskAgent");
     expect(HANDLER_SYSTEM_PROMPT).toContain("createSmithers");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers workflow run");
-    expect(HANDLER_SYSTEM_PROMPT).not.toContain("bunx smithers-orchestrator");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator workflow run");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("bunx smithers ");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("createRunnableEntry");
     expect(HANDLER_SYSTEM_PROMPT).not.toContain("interface RunnableWorkflowEntryModule");
@@ -598,7 +596,9 @@ describe("default system prompt", () => {
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain(
       WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
     );
-    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface TaskAgentParameters");
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain(
+      "interface TaskAgentParametersSource",
+    );
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface SvvyApi");
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("workflow_list_assets");
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("smithers_run_workflow");
@@ -612,12 +612,14 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Generated Smithers core instructions from smithers-orchestrator@0.22.0 official docs.",
     );
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers init");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers workflow run implement");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers ps");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers inspect <run-id>");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers approve <run-id>");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("smithers up workflow.tsx --run-id <id> --resume true");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator init");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator workflow run implement");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator ps");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator inspect <run-id>");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("bunx smithers-orchestrator approve <run-id>");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "bunx smithers-orchestrator up workflow.tsx --run-id <id> --resume true",
+    );
     expect(HANDLER_SYSTEM_PROMPT).toContain("`.smithers/package.json`");
     expect(HANDLER_SYSTEM_PROMPT).toContain("Local workflow project manifest with");
     expect(HANDLER_SYSTEM_PROMPT).toContain("Workflows are JSX trees");
@@ -626,9 +628,11 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain("task IDs must be stable");
     expect(HANDLER_SYSTEM_PROMPT).toContain("Zod");
     expect(HANDLER_SYSTEM_PROMPT).toContain("svvy Smithers boundary for handler threads");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("Use the checked `smithers` CLI binary through Shell");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
-      "Import reusable svvy workflow material from `@svvy/workflows`",
+      "Use official `bunx smithers-orchestrator ...` commands through Shell",
+    );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Import reusable svvy workflow material from `@svvyx/workflows`",
     );
     expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows models list --json");
     expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows save");
@@ -651,7 +655,6 @@ describe("default system prompt", () => {
 
   it("keeps excluded Smithers fragments and memory out of default handler guidance", () => {
     for (const forbidden of [
-      "bunx smithers-orchestrator",
       "bunx smithers ",
       "Gateway",
       "MCP",
@@ -709,7 +712,7 @@ describe("default system prompt", () => {
     );
     expect(
       handlerEntries.find((entry) => entry.id === "smithers-svvy-boundary")?.content,
-    ).toContain("@svvy/workflows");
+    ).toContain("@svvyx/workflows");
     expect(handlerEntries.find((entry) => entry.id === "smithers-memory")?.sourcePath).toBe(
       "generated/smithers-instructions.generated.ts",
     );

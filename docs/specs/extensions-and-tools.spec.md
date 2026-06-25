@@ -7,34 +7,57 @@
 
 ## Scope
 
-This spec defines the current extension model, default extension usage, and agent-facing capability
+This spec defines the extension model, default extension usage, and agent-facing capability
 boundaries.
 
 ## Core Model
 
-Agents own:
+`@svvy/state` owns persisted agent profile/default rows, generated-context binding facts,
+fingerprints, readiness facts, and read models. `@svvy/extensions` owns extension binding
+resolution, generated actor-context construction, native tool declarations/metadata/handlers,
+`svvyx` dispatch, env/dependency interpretation, generated `execute_typescript` facade
+declarations, generated-package file production, and immutable generated-package link plans.
+Model-callable extension handlers return one model-facing tool result, optional projection hints,
+and ordered `ExtensionRuntimeOperation` items wrapping closed `RuntimeEffectRequest` values or
+immutable `ExtensionExecutionPlan` values. They do not record durable command facts, write product
+state, publish runtime events, or emit read-model notifications directly. Durable command facts and
+invalidations are created only when `@svvy/runtime` processes those operations through
+`@svvy/state` ports and relevant package services. `@svvy/desktop` renders the Agents pane editor
+and composer controls, owns renderer-local view state, and submits typed intents through bootstrap
+facades; `@svvy/state` owns persisted rows, and `@svvy/runtime` owns surface binding/update effects.
+
+Agent profiles contain:
 
 - actor kind
 - provider/model/reasoning defaults
 - per-extension usage state
-- generated context and runtime-surface previews
+- profile/default settings used to resolve generated-context previews
+- non-authoritative preview display state for the current profile or surface
 
 Extensions own:
 
 - builtin or user ownership and lifecycle
-- an editable minimal instruction source used as the available-loading hint, except fixed
+- an editable minimal MDX instruction source used as the available-loading hint, except fixed
   always-loaded Extension Loading may omit it
 - zero or more ordered loaded instruction contributors
 - scripted instruction contributors made from an editable TypeScript generator and a read-only
   generated Markdown output from the last generation
 - optional CLI requirements
-- optional native tool schemas
+- optional native tool declarations, metadata, schemas, and handlers; shared declaration shapes live
+  in `@svvy/core`
 - optional `svvyx` command source plus generated command schema
-- optional generated TypeScript API declarations when enabled for `svvyx`
+- optional generated `execute_typescript` facade declarations when enabled for `svvyx`
 - env and dependency readiness
 - reset/delete behavior appropriate to category
+- generated actor context composition from resolved actor/profile or surface bindings, loaded
+  extension contributors, enabled external instruction records, and actor-specific declaration
+  availability
 
-Generated actor context is composed from the current agent profile plus loaded extensions.
+Generated actor context is composed from the resolved actor/profile or surface binding, loaded
+extension contributors, enabled external instruction records, and actor-specific declaration
+availability. Existing surfaces keep their bound context until `@svvy/runtime` refreshes it at a
+safe pre-dispatch boundary. `@svvy/state` persists generated-context bindings, fingerprints, and
+read-model facts.
 
 Normal builtin and user extension sources are local editable files under
 `~/.config/svvy/extensions/sources/...`. Builtin extension defaults are packaged read-only app
@@ -45,16 +68,18 @@ is never copied into an editable svvy source lifecycle.
 
 For `svvyx` extensions, `source/index.ts` is the editable command source. A build produces generated
 command schema output such as `commands.json`, which is the command contract that enters generated
-prompt/tool context. Optional generated TypeScript API declarations are a separate build artifact
-that exposes typed clients through `execute_typescript`; they are not the command schema.
+prompt/tool context. Optional generated `execute_typescript` facade declarations are a separate
+build artifact that exposes typed injected facades through `execute_typescript`; they are not the
+command schema.
 
 Direct builtin prompt text, including base actor prompts and native-tool guidance, is modeled as
-editable loaded Markdown source contributors. Scripted contributors are used only when an extension
-has a real generator/source pair.
+editable loaded MDX source contributors. Scripted contributors are used only when an extension has a
+real generator/source pair.
 
 External instruction records are not normal extensions. They are discovered read-only instruction
 files such as `AGENTS.md` or `CLAUDE.md`, owned outside `svvy`, with no minimal instruction, no
-loaded-contributor lifecycle, no generated outputs, and no reset/delete controls.
+loaded-contributor lifecycle, no generated outputs, no loaded / available / unavailable state, and
+no reset/delete controls.
 
 ## Builtin Extensions
 
@@ -79,23 +104,35 @@ loaded-contributor lifecycle, no generated outputs, and no reset/delete controls
 | `smithers` | instructions | available | loaded | unavailable |
 | `workflows` | svvyx | available | loaded | unavailable |
 | `artifacts` | svvyx | loaded | loaded | loaded |
-| external instructions | instructions | configurable | configurable | configurable |
 
 The builtin extension inventory above is exhaustive for the base design.
 
-Usage states are `loaded`, `available`, and `unavailable`. `unavailable` means the extension is
-configured off for that actor's resolved default or profile binding; it is not by itself a hard
-actor boundary. Configurable extensions may be moved between loaded, available, and unavailable for
-a target actor/profile through the normal usage controls unless the extension is fixed always-loaded
-by product contract. Extension Loading is the fixed always-loaded control; other `unavailable`
-defaults remain configurable off states.
+Usage states are `loaded`, `available`, and `unavailable` (displayed as Off in UI). `unavailable`
+means the extension is configured off for that actor's resolved default or profile binding; it is not
+by itself a hard actor boundary. Configurable extensions may be moved between loaded, available, and
+unavailable for a target actor/profile through the normal usage controls unless the extension is
+fixed always-loaded by product contract. Extension Loading is the fixed always-loaded control; other
+`unavailable` defaults remain configurable off states.
+
+## External Instruction Records
+
+| Category | Interface | Scope | Controls | Tools | Generated output |
+| --- | --- | --- | --- | --- | --- |
+| `external_instruction` | instructions | discovered file | enabled/disabled plus selected actor kinds | none | none |
+
+External instruction records are configurable per discovered file path. They contribute read-only
+file content to generated actor context only when enabled for that actor kind. They have no extension
+lifecycle, no builtin/user source root, no minimal instruction, no `loaded` / `available` /
+`unavailable` row state, no native tools, no `svvyx` command namespace, no generated package output,
+and no reset/delete behavior that can modify the external file.
 
 ## Smithers Boundary
 
 Smithers is prompt-only CLI guidance.
 
 Agents use official Smithers CLI commands through Shell against workspace `.smithers/` source. The
-Smithers extension adds no native tools, no `svvyx` commands, and no generated TypeScript client.
+Smithers extension adds no native tools, no `svvyx` commands, and no generated `execute_typescript`
+facade.
 
 The generated actor context must not include Smithers wrapper tools.
 
@@ -114,33 +151,43 @@ svvyx workflows models list --json
 
 It manages reusable source and generated imports. It does not run Smithers workflows.
 
-Generated `Agents.*` exports in `@svvy/workflows` are persisted `TaskAgentParameters` records from
-`~/.config/svvy/workflows/agents`. `Agents.defineTaskAgent(parametersOrAgentsExport)` returns a
-Smithers-compatible `AgentLike` for `<Task agent={...}>`. That `AgentLike` calls the app process
-through the narrow authenticated `runTaskAgent` bridge with task-agent parameters, Smithers
-taskContext/run/node/iteration/attempt identity, prompt/messages, rootDir, and workspace/session
-binding, and receives `{ text, usage? }` plus optional `output` only when supplied by the app
-runtime. The bridge accepts concurrent calls, binds each to a workflow-task-attempt surface, exposes
-no arbitrary app RPC/shell/settings/orchestrator controls, and does not duplicate Smithers
-workflow/run state.
+Generated `Agents.*` exports in `@svvyx/workflows` are persisted `TaskAgentParametersSource` records
+from `~/.config/svvy/workflows/agents`. `Agents.defineTaskAgent(parametersOrAgentsExport)` returns a
+Smithers-compatible `AgentLike` for `<Task agent={...}>`. That `AgentLike` calls the runtime-owned
+command-scoped loopback endpoint created by app bootstrap for the narrow authenticated
+`runTaskAgent` bridge. App bootstrap wires the local route into the single app-owned
+`ManagedRuntime`; `@svvy/runtime` owns token verification, queueing, task-attempt lifecycle,
+generated-context binding, command facts, and pi turn orchestration. The bridge carries task-agent
+parameters, required Smithers task-attempt identity `{ runId, nodeId, iteration, attempt }`,
+optional observed Smithers context `{ run, node, rootDir }`, exactly one prompt source as either a
+prompt string or a non-empty user/assistant message list, `workspaceSessionId`, and
+`sourceCommandId`, and receives `{ text, usage? }` plus optional `output` only when supplied by the
+app runtime. The bridge accepts concurrent calls, binds each to a workflow-task-attempt surface,
+exposes no arbitrary app
+RPC/shell/settings/orchestrator controls, and does not duplicate Smithers workflow/run state.
 
-When loaded into `execute_typescript`, it may expose the standard generated client:
+When loaded into `execute_typescript`, it may expose the standard generated facade:
 
 ```ts
-extensions.workflows.run(commandId, input)
+extensions.workflows.run(extensionCommandId, input)
 ```
 
-## Generated TypeScript Clients
+That facade is an injected runtime object provided to `execute_typescript`. It is not an
+`@svvyx/workflows` or `@svvyx/extensions` import, and generated `@svvyx/*` packages are forbidden in
+`execute_typescript` snippets.
 
-Generated clients exist only for loaded TypeScript-enabled `svvyx` extensions.
+## Generated Execute TypeScript Facades
+
+Generated facade declarations exist only for loaded TypeScript-enabled `svvyx` extensions.
 
 The injected shape is:
 
 ```ts
-extensions["<extensionId>"].run(commandId, input)
+extensions["<extensionId>"].run(extensionCommandId, input)
 ```
 
 Dot access is allowed only for identifier-safe extension ids.
+`extensionCommandId` values are extension command paths, not durable product `CommandId` records.
 
 There is no global `svvy` client and no broad injected `api` object.
 
@@ -148,8 +195,11 @@ There is no global `svvy` client and no broad injected `api` object.
 
 `list_extensions` reports the current actor's loaded and available extensions.
 
-`load_extension` loads an available ready extension into the current actor session and refreshes the
-actor's generated context at the next safe boundary.
+`load_extension` records a loaded-extension binding change for the current actor surface and
+schedules generated-context refresh for the next safe prompt-bearing pre-dispatch boundary. The
+active pi turn's tool declarations, loaded instructions, and generated TypeScript declarations do
+not mutate mid-turn. The tool does not build extensions, approve dependencies, configure env values,
+or mutate profile defaults.
 
 Unavailable extension details, secret values, generated context fingerprints, aggregate cache keys,
 and global profile usage state are not exposed through `list_extensions`.
@@ -162,7 +212,7 @@ Extension build validates:
 - generated instruction fragments
 - CLI requirements
 - env declarations
-- generated TypeScript client declarations
+- generated `execute_typescript` facade declarations
 - Incur command schemas for `svvyx` extensions
 
 Workflows build depends on successful Extensions build because workflow-agent parameter records may

@@ -1,14 +1,35 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import { type NativeToolDefinition } from "@svvy/extensions";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
+import { Type } from "typebox";
+import {
+  decodeRequestUserInputInputExit,
+  type RequestUserInputInput,
+  type RequestUserInputResult,
+} from "@svvy/extensions";
+import type { RuntimeBlockingRequestInputEffectState } from "@svvy/runtime/bootstrap";
+import {
+  type CommandId,
+  type PromptExecutionRuntimeHandle,
+  type PromptTarget,
+  type RuntimeCommandRecord,
+  type RuntimeCommandStatePortService,
+  type RuntimeRequestStatePortService,
+  type RuntimeSessionWaitStatePortService,
+  type RuntimeTurnStatePortService,
+  type RequestUserInputResolvedAnswer,
+  type StateContractError,
+  type ToolCallId,
+  type ToolItemId,
+  type TurnId,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
+import {
+  createRuntimeBlockingRequestInputWaitRegistryHandle,
+  runAcceptedRequestUserInputToolCallAtRuntimeBoundary,
+  type RuntimeBlockingRequestInputWaitRegistryHandle,
+} from "./runtime-service-adapter";
 import type { RequestUserInputSettings } from "../shared/agent-settings";
-import type {
-  StructuredCommandRecord,
-  StructuredRequestUserInputAnswer,
-  StructuredRequestUserInputRequestRecord,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
 
 export const REQUEST_USER_INPUT_TOOL_NAME = "request_user_input";
 
@@ -60,25 +81,7 @@ export function getRequestUserInputToolDescription(mode: RequestUserInputSetting
   return REQUEST_USER_INPUT_TOOL_DESCRIPTIONS[mode];
 }
 
-export type RequestUserInputParams = Static<typeof requestUserInputParamsSchema>;
-
-export type RequestUserInputResult = {
-  answers: Array<{
-    title: string;
-    question: string;
-    answer:
-      | {
-          kind: "option";
-          label: string;
-          text: string;
-        }
-      | {
-          kind: "custom";
-          text: string;
-        };
-    answeredBy: "default" | "user" | "timeout_default";
-  }>;
-};
+export type RequestUserInputParams = RequestUserInputInput;
 
 const DEFAULT_REQUEST_USER_INPUT_SETTINGS: RequestUserInputSettings = {
   mode: "nonblocking",
@@ -88,18 +91,33 @@ const DEFAULT_REQUEST_USER_INPUT_SETTINGS: RequestUserInputSettings = {
   },
 };
 
-type PendingBlockingRequest = {
-  commandId: string;
-  sessionId: string;
-  timeout: ReturnType<typeof setTimeout> | null;
-  resolve: ((result: RequestUserInputResult) => void) | null;
-  reject: ((error: Error) => void) | null;
+export type RequestUserInputToolState = {
+  commandState: RuntimeCommandStatePortService;
+  requestState: RuntimeRequestStatePortService;
+  sessionWaitState: RuntimeSessionWaitStatePortService;
+  turnState: RuntimeTurnStatePortService;
+  runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
 };
+
+export type RequestUserInputBlockingState = Pick<
+  RequestUserInputToolState,
+  "commandState" | "requestState" | "sessionWaitState"
+>;
 
 export class RequestUserInputRuntime {
   private settings: RequestUserInputSettings = structuredClone(DEFAULT_REQUEST_USER_INPUT_SETTINGS);
-  private readonly pending = new Map<string, PendingBlockingRequest>();
   private onRequestUpdated: (() => void | Promise<void>) | null = null;
+  private readonly blocking: RuntimeBlockingRequestInputWaitRegistryHandle;
+
+  constructor(blocking?: RuntimeBlockingRequestInputWaitRegistryHandle) {
+    this.blocking =
+      blocking ??
+      createRuntimeBlockingRequestInputWaitRegistryHandle({
+        onRequestUpdated: async () => {
+          await this.onRequestUpdated?.();
+        },
+      });
+  }
 
   getSettings(): RequestUserInputSettings {
     return structuredClone(this.settings);
@@ -117,251 +135,61 @@ export class RequestUserInputRuntime {
     return this.getSettings();
   }
 
-  setRequestUpdatedListener(listener: (() => void | Promise<void>) | null): void {
+  setRequestUpdatedListener(listener: (() => void) | null): void {
     this.onRequestUpdated = listener;
   }
 
-  restoreOpenBlockingRequests(store: StructuredSessionStateStore): void {
-    for (const snapshot of store.listSessionStates()) {
-      for (const request of snapshot.requestUserInputRequests) {
-        if (
-          request.variant !== "blocking" ||
-          request.status !== "open" ||
-          this.pending.has(request.requestId)
-        ) {
-          continue;
-        }
-        this.pending.set(request.requestId, {
-          commandId: request.commandId,
-          sessionId: request.sessionId,
-          timeout: null,
-          resolve: null,
-          reject: null,
-        });
-        this.enterBlockingWait(store, request);
-        this.scheduleBlockingTimeout(store, request.requestId);
-      }
-    }
+  restoreOpenBlockingRequests(state: RequestUserInputBlockingState): Promise<void> {
+    return this.blocking.restoreOpenBlockingRequests(state);
   }
 
-  dispose(): void {
-    for (const pending of this.pending.values()) {
-      if (pending.timeout) {
-        clearTimeout(pending.timeout);
-      }
-    }
-    this.pending.clear();
+  dispose(): Promise<void> {
+    return this.blocking.close();
   }
 
   waitForBlockingRequest(input: {
-    store: StructuredSessionStateStore;
-    request: StructuredRequestUserInputRequestRecord;
-    command: StructuredCommandRecord;
+    state: RuntimeBlockingRequestInputEffectState;
+    request: Parameters<
+      RuntimeBlockingRequestInputWaitRegistryHandle["waitForBlockingRequest"]
+    >[0]["request"];
+    command: RuntimeCommandRecord;
   }): Promise<RequestUserInputResult> {
-    const existing = this.pending.get(input.request.requestId);
-    if (existing) {
-      return Promise.reject(
-        new Error(`Blocking request_user_input is already waiting: ${input.request.requestId}`),
-      );
-    }
-
-    this.enterBlockingWait(input.store, input.request);
-
-    return new Promise<RequestUserInputResult>((resolve, reject) => {
-      this.pending.set(input.request.requestId, {
-        commandId: input.command.id,
-        sessionId: input.request.sessionId,
-        timeout: null,
-        resolve,
-        reject,
-      });
-      this.scheduleBlockingTimeout(input.store, input.request.requestId);
-    });
+    return this.blocking.waitForBlockingRequest(input);
   }
 
-  setBlockingTimerPaused(
-    store: StructuredSessionStateStore,
+  setBlockingTimerPaused(state: RequestUserInputBlockingState, requestId: string, paused: boolean) {
+    return this.blocking.setBlockingTimerPaused(state, requestId, paused);
+  }
+
+  rescheduleBlockingTimeout(
+    state: RequestUserInputBlockingState,
     requestId: string,
-    paused: boolean,
-  ): StructuredRequestUserInputRequestRecord {
-    const request = store.setRequestUserInputTimerPaused({ requestId, paused });
-    this.scheduleBlockingTimeout(store, requestId);
-    return request;
+  ): Promise<void> {
+    return this.blocking.rescheduleBlockingTimeout(state, requestId);
   }
 
   resolveBlockingRequest(
-    store: StructuredSessionStateStore,
+    state: RequestUserInputBlockingState,
     requestId: string,
-  ): RequestUserInputResult | null {
-    const request = store.getRequestUserInputRequest(requestId);
-    if (request.questions.some((question) => question.status === "open")) {
-      return null;
-    }
-    const pending = this.pending.get(requestId);
-    this.pending.delete(requestId);
-    if (pending?.timeout) {
-      clearTimeout(pending.timeout);
-    }
-    store.clearSessionWait({ sessionId: pending?.sessionId ?? request.sessionId });
-    const result = buildResultFromRequest(request);
-    const answeredBy = summarizeRequestUserInputResult(result);
-    store.finishCommand({
-      commandId: pending?.commandId ?? request.commandId,
-      status: "succeeded",
-      summary:
-        request.questions.length === 1
-          ? `Answered ${request.questions[0]!.title}.`
-          : `Answered ${request.questions.length} clarification questions.`,
-      facts: {
-        questionCount: request.questions.length,
-        answeredBy,
-        result,
-      },
-    });
-    pending?.resolve?.(result);
-    return result;
+  ): Promise<RequestUserInputResult | null> {
+    return this.blocking.resolveBlockingRequest(state, requestId);
   }
 
-  rejectBlockingRequest(store: StructuredSessionStateStore, requestId: string, error: Error): void {
-    const pending = this.pending.get(requestId);
-    if (!pending) {
-      return;
-    }
-    this.pending.delete(requestId);
-    if (pending.timeout) {
-      clearTimeout(pending.timeout);
-    }
-    store.clearSessionWait({ sessionId: pending.sessionId });
-    store.finishCommand({
-      commandId: pending.commandId,
-      status: "failed",
-      error: error.message,
-      summary: "Request user input failed.",
-    });
-    pending.reject?.(error);
+  rejectBlockingRequest(
+    state: RequestUserInputBlockingState,
+    requestId: string,
+    error: Error,
+  ): Promise<void> {
+    return this.blocking.rejectBlockingRequest(state, requestId, error);
   }
 
   cancelBlockingRequestsForSurface(
-    store: StructuredSessionStateStore,
+    state: RequestUserInputBlockingState,
     surfacePiSessionId: string,
     reason = "Request user input cancelled.",
-  ): void {
-    for (const snapshot of store.listSessionStates()) {
-      for (const request of snapshot.requestUserInputRequests) {
-        if (
-          request.surfacePiSessionId !== surfacePiSessionId ||
-          request.variant !== "blocking" ||
-          request.status !== "open"
-        ) {
-          continue;
-        }
-        const pending = this.pending.get(request.requestId);
-        this.pending.delete(request.requestId);
-        if (pending?.timeout) {
-          clearTimeout(pending.timeout);
-        }
-        store.cancelRequestUserInputRequest({ requestId: request.requestId });
-        store.clearSessionWait({ sessionId: request.sessionId });
-        store.finishCommand({
-          commandId: request.commandId,
-          status: "cancelled",
-          error: reason,
-          summary: "Request user input cancelled.",
-        });
-        pending?.reject?.(new Error(reason));
-      }
-    }
+  ): Promise<void> {
+    return this.blocking.cancelBlockingRequestsForSurface(state, surfacePiSessionId, reason);
   }
-
-  private enterBlockingWait(
-    store: StructuredSessionStateStore,
-    request: StructuredRequestUserInputRequestRecord,
-  ): void {
-    store.finishCommand({
-      commandId: request.commandId,
-      status: "waiting",
-      summary: `Waiting for user answer: ${request.questions.map((question) => question.title).join("; ")}`,
-      facts: {
-        questionCount: request.questions.length,
-        answeredBy: "pending",
-      },
-    });
-    this.ensureBlockingWaitProjection(store, request);
-  }
-
-  private ensureBlockingWaitProjection(
-    store: StructuredSessionStateStore,
-    request: StructuredRequestUserInputRequestRecord,
-  ): void {
-    try {
-      store.setSessionWait({
-        sessionId: request.sessionId,
-        owner: request.threadId
-          ? { kind: "thread", threadId: request.threadId }
-          : { kind: "orchestrator" },
-        kind: "user",
-        reason:
-          request.questions.length === 1
-            ? request.questions[0]!.title
-            : `Waiting for ${request.questions.length} clarification answers.`,
-        resumeWhen: "Resume when the user answers the clarification request.",
-      });
-    } catch {
-      // The command-level wait still preserves the surface prompt lock. Whole-session
-      // frontier waits are not valid while unrelated runnable thread work remains.
-    }
-  }
-
-  private scheduleBlockingTimeout(store: StructuredSessionStateStore, requestId: string): void {
-    const pending = this.pending.get(requestId);
-    if (!pending) {
-      return;
-    }
-    if (pending.timeout) {
-      clearTimeout(pending.timeout);
-      pending.timeout = null;
-    }
-
-    const request = store.getRequestUserInputRequest(requestId);
-    const timeout = request.timeout;
-    if (
-      request.status !== "open" ||
-      timeout?.enabled !== true ||
-      timeout.pausedAt ||
-      !timeout.expiresAt
-    ) {
-      return;
-    }
-    const durationMs = Math.max(0, Date.parse(timeout.expiresAt) - Date.now());
-    pending.timeout = setTimeout(() => {
-      try {
-        const expired = store.defaultOpenRequestUserInputQuestions({
-          requestId,
-          answeredBy: "timeout_default",
-        });
-        this.resolveBlockingRequest(store, expired.requestId);
-        void Promise.resolve(this.onRequestUpdated?.()).catch((error) => {
-          console.error("Failed to publish request_user_input timeout update:", error);
-        });
-      } catch (error) {
-        this.rejectBlockingRequest(
-          store,
-          requestId,
-          error instanceof Error ? error : new Error("Blocking request_user_input failed."),
-        );
-      }
-    }, durationMs);
-  }
-}
-
-function summarizeRequestUserInputResult(
-  result: RequestUserInputResult,
-): "user" | "default" | "timeout_default" | "mixed" {
-  const values = new Set(result.answers.map((answer) => answer.answeredBy));
-  if (values.size === 1) {
-    return result.answers[0]?.answeredBy ?? "default";
-  }
-  return "mixed";
 }
 
 function buildRequestUserInputCommandTitle(paramsQuestions: unknown): string {
@@ -386,6 +214,14 @@ function buildRequestUserInputCommandSummary(paramsQuestions: unknown): string {
   return titles.length > 0 ? titles.join("; ") : "Request user input.";
 }
 
+function buildDefaultedRequestUserInputSummary(
+  paramsQuestions: readonly { title: string }[],
+): string {
+  return paramsQuestions.length === 1
+    ? `Defaulted answer for ${paramsQuestions[0]!.title}.`
+    : `Defaulted answers for ${paramsQuestions.length} questions.`;
+}
+
 function readQuestionTitle(question: unknown): string | null {
   if (!question || typeof question !== "object" || Array.isArray(question)) {
     return null;
@@ -394,11 +230,102 @@ function readQuestionTitle(question: unknown): string | null {
   return typeof title === "string" && title.trim() ? title.trim() : null;
 }
 
+function promptTargetFromRuntime(
+  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>,
+): PromptTarget {
+  if (runtime.surfaceKind === "orchestrator") {
+    return {
+      workspaceSessionId: runtime.workspaceSessionId as PromptTarget["workspaceSessionId"],
+      surface: "orchestrator",
+      surfacePiSessionId: runtime.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
+    };
+  }
+  if (runtime.surfaceKind === "handler") {
+    const threadId = runtime.rootThreadId ?? runtime.threadId;
+    if (!threadId) {
+      throw new Error(`${REQUEST_USER_INPUT_TOOL_NAME} handler runtime requires a thread id.`);
+    }
+    return {
+      workspaceSessionId: runtime.workspaceSessionId as PromptTarget["workspaceSessionId"],
+      surface: "handler",
+      surfacePiSessionId: runtime.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
+      threadId: threadId as Extract<PromptTarget, { surface: "handler" }>["threadId"],
+    };
+  }
+  throw new Error(
+    `${REQUEST_USER_INPUT_TOOL_NAME} can only run on orchestrator or handler surfaces.`,
+  );
+}
+
+function describeRequestUserInputError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (error && typeof error === "object" && "issue" in error) {
+    const issue = (error as { issue?: unknown }).issue;
+    if (typeof issue === "string" && issue.trim()) {
+      if (issue.includes("require exactly one recommended option")) {
+        return "request_user_input requires exactly one recommended option for choice questions.";
+      }
+      if (issue.includes('["questions"][0]["id"]')) {
+        return "request_user_input unsupported field id.";
+      }
+      if (
+        issue.includes('["defaultAnswer"]') &&
+        issue.includes('["options"]') &&
+        issue.includes("Unexpected key")
+      ) {
+        return "request_user_input requires either options or defaultAnswer, but not both.";
+      }
+      if (issue.includes("Expected a value with a length between 1 and 3")) {
+        return "request_user_input requires one to three questions.";
+      }
+      return issue;
+    }
+  }
+  return fallback;
+}
+
+async function runNonblockingRequestUserInputHandler(input: {
+  toolCallId: string;
+  params: RequestUserInputParams;
+  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+  command: RuntimeCommandRecord;
+  commandState: RuntimeCommandStatePortService;
+  requestState: RuntimeRequestStatePortService;
+}): Promise<RequestUserInputResult> {
+  const target = promptTargetFromRuntime(input.runtime);
+  const executed = await runAcceptedRequestUserInputToolCallAtRuntimeBoundary({
+    request: {
+      toolCallId: input.toolCallId as ToolCallId,
+      toolItemId: input.toolCallId as ToolItemId,
+      arguments: input.params,
+      context: input.runtime,
+      actorBinding: {
+        loadedExtensionIds: input.runtime.loadedExtensionIds,
+        availableExtensionIds: input.runtime.availableExtensionIds,
+      },
+      command: {
+        commandId: input.command.id as CommandId,
+        target,
+        turnId: input.runtime.turnId! as TurnId,
+        approvalMode: "auto-review",
+        sandbox: { snapshot: {} },
+        cwd: "",
+        baseEnv: {},
+      },
+    },
+    commandStatePort: input.commandState,
+    requestStatePort: input.requestState,
+  });
+  return executed.result;
+}
+
 export function createRequestUserInputTool(options: {
   runtime: PromptExecutionRuntimeHandle;
-  store: StructuredSessionStateStore;
+  state: RequestUserInputToolState;
   requestUserInputRuntime?: RequestUserInputRuntime;
-}): AgentTool<typeof requestUserInputParamsSchema, RequestUserInputResult> {
+}): NativeToolDefinition<RequestUserInputParams, RequestUserInputResult> {
   const requestUserInputRuntime = options.requestUserInputRuntime ?? new RequestUserInputRuntime();
   const initialSettings = requestUserInputRuntime.getSettings();
   return {
@@ -413,43 +340,85 @@ export function createRequestUserInputTool(options: {
       }
       const settings = requestUserInputRuntime.getSettings();
 
-      options.store.setTurnDecision({
-        turnId: runtime.turnId!,
-        decision: REQUEST_USER_INPUT_TOOL_NAME,
-        onlyIfPending: true,
-      });
-      const command = options.store.createOrReuseStreamingCommand({
-        toolCallId: _toolCallId,
-        turnId: runtime.turnId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
-        toolName: REQUEST_USER_INPUT_TOOL_NAME,
-        executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
-        visibility: "surface",
-        title: buildRequestUserInputCommandTitle(params.questions),
-        summary: buildRequestUserInputCommandSummary(params.questions),
-        arguments: {
-          questions: params.questions,
-        },
-        facts: {
-          questionCount: Array.isArray(params.questions) ? params.questions.length : 0,
-          answeredBy: "default",
-        },
-      });
-      options.store.startCommand(command.id);
+      options.state.runState(
+        options.state.turnState.setTurnDecision({
+          turnId: runtime.turnId!,
+          decision: REQUEST_USER_INPUT_TOOL_NAME,
+          onlyIfPending: true,
+        }),
+      );
+      const command = options.state.runState(
+        options.state.commandState.createOrReuseStreamingCommand({
+          toolCallId: _toolCallId,
+          turnId: runtime.turnId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
+          toolName: REQUEST_USER_INPUT_TOOL_NAME,
+          executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
+          visibility: "surface",
+          title: buildRequestUserInputCommandTitle(params.questions),
+          summary: buildRequestUserInputCommandSummary(params.questions),
+          arguments: {
+            questions: params.questions,
+          },
+          facts: {
+            questionCount: Array.isArray(params.questions) ? params.questions.length : 0,
+            answeredBy: "default",
+          },
+        }),
+      ).value;
+      options.state.runState(options.state.commandState.startCommand({ commandId: command.id }));
+      if (settings.mode === "nonblocking") {
+        try {
+          const result = await runNonblockingRequestUserInputHandler({
+            toolCallId: _toolCallId,
+            params,
+            runtime,
+            command,
+            commandState: options.state.commandState,
+            requestState: options.state.requestState,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result),
+              },
+            ],
+            details: result,
+          };
+        } catch (error) {
+          const message = describeRequestUserInputError(
+            error,
+            "request_user_input handler failed.",
+          );
+          options.state.runState(
+            options.state.commandState.finishCommand({
+              commandId: command.id,
+              status: "failed",
+              summary: message,
+              facts: null,
+              error: message,
+            }),
+          );
+          throw new Error(message, { cause: error });
+        }
+      }
       let questions: ReturnType<typeof validateRequestUserInputParams>;
       try {
         questions = validateRequestUserInputParams(params);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Invalid request_user_input parameters.";
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: message,
-          facts: null,
-          error: message,
-        });
+        options.state.runState(
+          options.state.commandState.finishCommand({
+            commandId: command.id,
+            status: "failed",
+            summary: message,
+            facts: null,
+            error: message,
+          }),
+        );
         throw error;
       }
       const defaultQuestions = questions.map((question) => {
@@ -469,35 +438,40 @@ export function createRequestUserInputTool(options: {
             : {}),
         };
       });
-      const request = options.store.createRequestUserInputRequest({
-        sessionId: runtime.sessionId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
-        turnId: runtime.turnId!,
+      const target = promptTargetFromRuntime(runtime);
+      const request = options.state.runState(
+        options.state.requestState.createRequestInput({
+          target,
+          turnId: runtime.turnId! as TurnId,
+          sourceCommandId: command.id as CommandId,
+          toolItemId: _toolCallId as ToolItemId,
+          mode: settings.mode,
+          timeout:
+            settings.mode === "blocking"
+              ? {
+                  enabled: settings.blockingTimeout.enabled,
+                  durationMs: settings.blockingTimeout.durationMs,
+                }
+              : null,
+          questions: defaultQuestions,
+        }),
+      );
+      const requestRecord = request.value;
+      recordRequestUserInputProgress(options.state, {
+        sessionId: runtime.workspaceSessionId,
         commandId: command.id,
-        toolItemId: _toolCallId,
-        variant: settings.mode,
-        timeout:
-          settings.mode === "blocking"
-            ? {
-                enabled: settings.blockingTimeout.enabled,
-                durationMs: settings.blockingTimeout.durationMs,
-              }
-            : null,
-        questions: defaultQuestions,
-      });
-      recordRequestUserInputProgress(options.store, {
-        sessionId: runtime.sessionId,
-        commandId: command.id,
-        requestId: request.requestId,
+        requestId: requestRecord.requestId,
         variant: settings.mode,
         questionCount: defaultQuestions.length,
       });
+      const requestDetails = options.state.runState(
+        options.state.requestState.getRequestInput({ requestId: requestRecord.requestId }),
+      );
 
       if (settings.mode === "blocking") {
         const blockingResult = await requestUserInputRuntime.waitForBlockingRequest({
-          store: options.store,
-          request,
+          state: options.state,
+          request: requestDetails,
           command,
         });
         return {
@@ -520,19 +494,18 @@ export function createRequestUserInputTool(options: {
         })),
       };
 
-      options.store.finishCommand({
-        commandId: command.id,
-        status: "succeeded",
-        summary:
-          questions.length === 1
-            ? `Defaulted answer for ${questions[0]!.title}.`
-            : `Defaulted answers for ${questions.length} questions.`,
-        facts: {
-          questionCount: questions.length,
-          answeredBy: "default",
-          result,
-        },
-      });
+      options.state.runState(
+        options.state.commandState.finishCommand({
+          commandId: command.id,
+          status: "succeeded",
+          summary: buildDefaultedRequestUserInputSummary(questions),
+          facts: {
+            questionCount: questions.length,
+            answeredBy: "default",
+            result,
+          },
+        }),
+      );
       return {
         content: [
           {
@@ -547,7 +520,7 @@ export function createRequestUserInputTool(options: {
 }
 
 function recordRequestUserInputProgress(
-  store: StructuredSessionStateStore,
+  state: Pick<RequestUserInputToolState, "commandState" | "runState">,
   input: {
     sessionId: string;
     commandId: string;
@@ -556,65 +529,44 @@ function recordRequestUserInputProgress(
     questionCount: number;
   },
 ): void {
-  store.recordLifecycleEvent({
-    sessionId: input.sessionId,
-    kind: "command.progress",
-    subjectKind: "command",
-    subjectId: input.commandId,
-    data: {
-      source: REQUEST_USER_INPUT_TOOL_NAME,
-      phase: "created",
-      message:
-        input.questionCount === 1
-          ? "Created 1 user-input question."
-          : `Created ${input.questionCount} user-input questions.`,
-      facts: {
-        requestId: input.requestId,
-        variant: input.variant,
-        questionCount: input.questionCount,
+  state.runState(
+    state.commandState.recordCommandEvent({
+      sessionId: input.sessionId,
+      commandId: input.commandId,
+      kind: "command.progress",
+      data: {
+        source: REQUEST_USER_INPUT_TOOL_NAME,
+        phase: "created",
+        message:
+          input.questionCount === 1
+            ? "Created 1 user-input question."
+            : `Created ${input.questionCount} user-input questions.`,
+        facts: {
+          requestId: input.requestId,
+          variant: input.variant,
+          questionCount: input.questionCount,
+        },
       },
-    },
-  });
-}
-
-function buildResultFromRequest(
-  request: StructuredRequestUserInputRequestRecord,
-): RequestUserInputResult {
-  return {
-    answers: request.questions.map((question) => {
-      const answer = request.answers
-        .filter((entry) => entry.questionId === question.questionId)
-        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
-        .at(-1);
-      return {
-        title: question.title,
-        question: question.question,
-        answer: structuredClone(answer?.answer ?? question.defaultAnswer),
-        answeredBy: answer?.answeredBy ?? "default",
-      };
     }),
-  };
+  );
 }
 
-type ValidatedQuestion =
-  | {
-      title: string;
-      question: string;
-      options: Array<{ label: string; description: string; recommended?: true }>;
-    }
-  | {
-      title: string;
-      question: string;
-      defaultAnswer: string;
-    };
+type ValidatedQuestion = RequestUserInputInput["questions"][number];
+type RawRequestUserInputOption = {
+  label: string;
+  description: string;
+  recommended?: unknown;
+};
 
-function validateRequestUserInputParams(input: RequestUserInputParams): ValidatedQuestion[] {
+function validateRequestUserInputParams(
+  input: RequestUserInputParams,
+): readonly ValidatedQuestion[] {
   assertExactKeys(input, ["questions"], "request_user_input input");
   if (!Array.isArray(input.questions) || input.questions.length < 1 || input.questions.length > 3) {
     throw new Error(`${REQUEST_USER_INPUT_TOOL_NAME} requires one to three questions.`);
   }
 
-  return input.questions.map((rawQuestion, index) => {
+  const normalizedQuestions = input.questions.map((rawQuestion, index) => {
     assertExactKeys(
       rawQuestion as unknown as Record<string, unknown>,
       ["title", "question", "options", "defaultAnswer"],
@@ -639,34 +591,42 @@ function validateRequestUserInputParams(input: RequestUserInputParams): Validate
     }
 
     if (hasOptions) {
-      const options = rawQuestion.options ?? [];
+      const options = rawQuestion.options as readonly RawRequestUserInputOption[];
       if (options.length < 2 || options.length > 3) {
         throw new Error(`Question ${questionNumber} requires two or three options.`);
       }
-      const normalizedOptions = options.map((option, optionIndex) => {
-        assertExactKeys(
-          option as unknown as Record<string, unknown>,
-          ["label", "description", "recommended"],
-          `Question ${questionNumber} option ${optionIndex + 1}`,
-        );
-        const label = option.label.trim();
-        const description = option.description.trim();
-        if (!label) {
-          throw new Error(
-            `Question ${questionNumber} option ${optionIndex + 1} requires a non-empty label.`,
+      const normalizedOptions = options.map(
+        (option: RawRequestUserInputOption, optionIndex: number) => {
+          assertExactKeys(
+            option as unknown as Record<string, unknown>,
+            ["label", "description", "recommended"],
+            `Question ${questionNumber} option ${optionIndex + 1}`,
           );
-        }
-        if (!description) {
-          throw new Error(
-            `Question ${questionNumber} option ${optionIndex + 1} requires a non-empty description.`,
-          );
-        }
-        return {
-          label,
-          description,
-          ...(option.recommended ? { recommended: true as const } : {}),
-        };
-      });
+          const label = option.label.trim();
+          const description = option.description.trim();
+          if (!label) {
+            throw new Error(
+              `Question ${questionNumber} option ${optionIndex + 1} requires a non-empty label.`,
+            );
+          }
+          if (!description) {
+            throw new Error(
+              `Question ${questionNumber} option ${optionIndex + 1} requires a non-empty description.`,
+            );
+          }
+          const recommended = option.recommended;
+          if (recommended !== undefined && recommended !== true) {
+            throw new Error(
+              `Question ${questionNumber} option ${optionIndex + 1} can only set recommended to true.`,
+            );
+          }
+          return {
+            label,
+            description,
+            ...(option.recommended ? { recommended: true as const } : {}),
+          };
+        },
+      );
       const recommendedCount = normalizedOptions.filter((option) => option.recommended).length;
       if (recommendedCount !== 1) {
         throw new Error(`Question ${questionNumber} requires exactly one recommended option.`);
@@ -688,9 +648,16 @@ function validateRequestUserInputParams(input: RequestUserInputParams): Validate
       defaultAnswer,
     };
   });
+
+  return Exit.match(decodeRequestUserInputInputExit({ questions: normalizedQuestions }), {
+    onSuccess: (decoded) => decoded.questions,
+    onFailure: (cause) => {
+      throw Cause.squash(cause);
+    },
+  });
 }
 
-function defaultAnswerForQuestion(question: ValidatedQuestion): StructuredRequestUserInputAnswer {
+function defaultAnswerForQuestion(question: ValidatedQuestion): RequestUserInputResolvedAnswer {
   if ("options" in question) {
     const recommended = question.options.find((option) => option.recommended);
     return {

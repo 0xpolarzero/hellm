@@ -39,7 +39,7 @@ Default usage:
 
 ## Tool Surface
 
-Git exposes no native `git_*` tools, no `svvyx git`, and no generated TypeScript client.
+Git exposes no native `git_*` tools, no `svvyx git`, and no generated `execute_typescript` facade.
 
 Agents use:
 
@@ -47,8 +47,10 @@ Agents use:
 git ...
 ```
 
-through `exec_command`. Git intentionally has no pinned version in v1 because the builtin guidance is
+through `exec_command`. Git intentionally has no pinned version because the builtin guidance is
 generic Git behavior rather than a version-specific generated instruction bundle.
 
-Current detailed behavior and loaded instructions are defined in
-`docs/specs/extensions-and-tools.spec.md`, "Git Extension".
+Detailed behavior, loaded instructions, and package ownership are defined across:
+
+- `docs/specs/extensions-and-tools.spec.md`, "Builtin Extensions"
+- `docs/specs/package-architecture/extensions.spec.md`, "Prompt-Only CLI Guidance"

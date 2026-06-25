@@ -3,7 +3,7 @@
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import { onDestroy, tick } from "svelte";
-  import type { ExtensionCategory, ExtensionUsageState } from "../shared/extensions";
+  import type { ExtensionCategory, ExtensionUsageState } from "@svvy/extensions";
   import {
     canSelectExtensionUsageState,
     type AgentContextActor,

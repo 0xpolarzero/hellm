@@ -1,8 +1,19 @@
 import type {
-  StructuredCommandRecord,
-  StructuredRuntimeApprovalRequestRecord,
-  StructuredSessionStateStore,
-} from "./structured-session-state";
+  RuntimeApprovalRecord,
+  RuntimeApprovalStatePortService,
+  RuntimeCommandRecord,
+  RuntimeCommandStatePortService,
+  RuntimeSessionWaitStatePortService,
+  StateContractError,
+  CommandId,
+  RuntimeApprovalId,
+  SurfacePiSessionId,
+  ThreadId,
+  ToolItemId,
+  TurnId,
+  WorkspaceSessionId,
+} from "@svvy/core";
+import type * as Effect from "effect/Effect";
 import type { RuntimeApprovalBoundary, RuntimeApprovalBoundaryInput } from "./approval-boundary";
 
 type PendingRuntimeApproval = {
@@ -13,7 +24,12 @@ type PendingRuntimeApproval = {
 export class RuntimeApprovalRequestRuntime {
   private readonly pending = new Map<string, PendingRuntimeApproval>();
 
-  constructor(private readonly store: StructuredSessionStateStore) {}
+  constructor(
+    private readonly approvalState: RuntimeApprovalStatePortService,
+    private readonly commandState: RuntimeCommandStatePortService,
+    private readonly sessionWaitState: RuntimeSessionWaitStatePortService,
+    private readonly runState: <A>(effect: Effect.Effect<A, StateContractError>) => Promise<A>,
+  ) {}
 
   createBoundary(): RuntimeApprovalBoundary {
     return (input) => this.requestApproval(input);
@@ -22,74 +38,89 @@ export class RuntimeApprovalRequestRuntime {
   async requestApproval(
     input: RuntimeApprovalBoundaryInput,
   ): Promise<{ approved: true } | { approved: false; reason?: string }> {
-    const command = this.findCommand(input) ?? null;
+    const command = (await this.findCommand(input)) ?? null;
     const sessionId = command?.sessionId ?? readContextString(input.context, "sessionId");
     const surfacePiSessionId =
       command?.surfacePiSessionId ?? readContextString(input.context, "surfacePiSessionId");
     if (!sessionId || !surfacePiSessionId) {
       return { approved: false, reason: "Runtime approval request is missing surface context." };
     }
-    const request = this.store.createRuntimeApprovalRequest({
-      sessionId,
-      surfacePiSessionId,
-      threadId: command?.threadId ?? readContextString(input.context, "threadId"),
-      turnId: command?.turnId ?? null,
-      commandId: input.commandId ?? command?.id ?? null,
-      toolCallId: input.toolCallId,
-      toolName: input.toolName,
-      approvalMode: input.approvalMode,
-      cwd: input.cwd,
-      command: input.command,
-      commandFamily: input.commandFamily,
-      patch: input.patch,
-      snippetArtifactId: input.snippetArtifactId,
-      typescriptCode: input.typescriptCode,
-    });
+    const threadId = command?.threadId ?? readContextString(input.context, "threadId");
+    const requestResult = await this.runState(
+      this.approvalState.createApprovalRequest({
+        sessionId: sessionId as WorkspaceSessionId,
+        surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+        threadId: threadId ? (threadId as ThreadId) : null,
+        turnId: command?.turnId ? (command.turnId as TurnId) : null,
+        commandId: input.commandId
+          ? (input.commandId as CommandId)
+          : command?.id
+            ? (command.id as CommandId)
+            : null,
+        toolCallId: input.toolCallId as ToolItemId,
+        toolName: input.toolName,
+        approvalMode: input.approvalMode,
+        cwd: input.cwd,
+        command: input.command,
+        commandFamily: input.commandFamily,
+        patch: input.patch,
+        snippetArtifactId: input.snippetArtifactId,
+        typescriptCode: input.typescriptCode,
+      }),
+    );
+    const request = requestResult.value;
 
     if (input.approvalMode === "auto-review") {
       const decision = reviewRuntimeApprovalRequest(input);
-      this.store.resolveRuntimeApprovalRequest({
-        requestId: request.requestId,
-        status: decision.approved ? "approved" : "denied",
-        reviewer: "auto-review",
-        decisionReason: decision.reason,
-      });
+      await this.runState(
+        this.approvalState.resolveApprovalRequest({
+          requestId: request.requestId,
+          status: decision.approved ? "approved" : "denied",
+          reviewer: "auto-review",
+          decisionReason: decision.reason,
+        }),
+      );
       if (!decision.approved && command) {
-        this.store.finishCommand({
-          commandId: command.id,
-          status: "cancelled",
-          summary: `Approval denied: ${approvalRequestSummary(request)}`,
-          facts: {
-            ...command.facts,
-            approval: "denied",
-            approvalRequestId: request.requestId,
-          },
-        });
+        await this.runState(
+          this.commandState.finishCommand({
+            commandId: command.id,
+            status: "cancelled",
+            summary: `Approval denied: ${approvalRequestSummary(request)}`,
+            facts: {
+              ...command.facts,
+              approval: "denied",
+              approvalRequestId: request.requestId,
+            },
+          }),
+        );
       }
       return decision.approved ? { approved: true } : { approved: false, reason: decision.reason };
     }
 
     if (command) {
-      this.store.finishCommand({
-        commandId: command.id,
-        status: "waiting",
-        summary: `Waiting for approval: ${approvalRequestSummary(request)}`,
-        facts: {
-          ...command.facts,
-          approval: "pending",
-          approvalRequestId: request.requestId,
-        },
-      });
+      await this.runState(
+        this.commandState.finishCommand({
+          commandId: command.id,
+          status: "waiting",
+          summary: `Waiting for approval: ${approvalRequestSummary(request)}`,
+          facts: {
+            ...command.facts,
+            approval: "pending",
+            approvalRequestId: request.requestId,
+          },
+        }),
+      );
       try {
-        this.store.setSessionWait({
-          sessionId,
-          owner: command.threadId
-            ? { kind: "thread", threadId: command.threadId }
-            : { kind: "orchestrator" },
-          kind: "approval",
-          reason: approvalRequestSummary(request),
-          resumeWhen: "Resume when the user approves or denies the runtime action.",
-        });
+        await this.runState(
+          this.sessionWaitState.setApprovalWait({
+            sessionId: sessionId as WorkspaceSessionId,
+            owner: command.threadId
+              ? { kind: "thread", threadId: command.threadId as ThreadId }
+              : { kind: "orchestrator" },
+            reason: approvalRequestSummary(request),
+            resumeWhen: "Resume when the user approves or denies the runtime action.",
+          }),
+        );
       } catch {
         // Command-level waiting state still preserves the exact pending action.
       }
@@ -100,61 +131,88 @@ export class RuntimeApprovalRequestRuntime {
     });
   }
 
-  answer(input: {
+  async answer(input: {
     requestId: string;
     approved: boolean;
     reason?: string | null;
-  }): StructuredRuntimeApprovalRequestRecord {
-    const request = this.store.resolveRuntimeApprovalRequest({
-      requestId: input.requestId,
-      status: input.approved ? "approved" : "denied",
-      reviewer: "user",
-      decisionReason: input.reason ?? null,
-    });
-    const pending = this.pending.get(input.requestId);
-    this.pending.delete(input.requestId);
+  }): Promise<RuntimeApprovalRecord> {
+    const requestResult = await this.runState(
+      this.approvalState.resolveApprovalRequest({
+        requestId: input.requestId as RuntimeApprovalId,
+        status: input.approved ? "approved" : "denied",
+        reviewer: "user",
+        decisionReason: input.reason ?? null,
+      }),
+    );
+    const request = requestResult.value;
     if (request.commandId) {
       if (input.approved) {
-        this.store.startCommand(request.commandId);
+        await this.runState(this.commandState.startCommand({ commandId: request.commandId }));
       } else {
-        const command = this.findCommandById(request.commandId);
-        this.store.finishCommand({
-          commandId: request.commandId,
-          status: "cancelled",
-          summary: `Approval denied: ${approvalRequestSummary(request)}`,
-          facts: {
-            ...command?.facts,
-            approval: "denied",
-            approvalRequestId: request.requestId,
-          },
-        });
+        const command = await this.findCommandById(request.commandId);
+        await this.runState(
+          this.commandState.finishCommand({
+            commandId: request.commandId,
+            status: "cancelled",
+            summary: `Approval denied: ${approvalRequestSummary(request)}`,
+            facts: {
+              ...command?.facts,
+              approval: "denied",
+              approvalRequestId: request.requestId,
+            },
+          }),
+        );
       }
     }
-    this.store.clearSessionWait({ sessionId: request.sessionId });
-    if (pending) {
-      pending.resolve(
-        input.approved
-          ? { approved: true }
-          : { approved: false, reason: input.reason ?? "Runtime action was not approved." },
-      );
-    }
+    await this.runState(this.sessionWaitState.clearSessionWait({ sessionId: request.sessionId }));
+    this.resolveAnsweredRequest({ request, approved: input.approved, reason: input.reason });
     return request;
   }
 
-  cancelOpenRequestsForSurface(surfacePiSessionId: string, reason: string): void {
-    for (const request of this.store.listOpenRuntimeApprovalRequests()) {
-      if (request.surfacePiSessionId !== surfacePiSessionId) {
-        continue;
-      }
-      const resolved = this.store.resolveRuntimeApprovalRequest({
-        requestId: request.requestId,
+  resolveAnsweredRequest(input: {
+    approved: boolean;
+    reason?: string | null;
+    request: RuntimeApprovalRecord;
+  }): void {
+    const pending = this.pending.get(input.request.requestId);
+    this.pending.delete(input.request.requestId);
+    pending?.resolve(
+      input.approved
+        ? { approved: true }
+        : { approved: false, reason: input.reason ?? "Runtime action was not approved." },
+    );
+  }
+
+  async cancelOpenRequestsForSurface(surfacePiSessionId: string, reason: string): Promise<void> {
+    for (const request of await this.runState(
+      this.approvalState.listOpenApprovalRequests({
+        surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+      }),
+    )) {
+      await this.cancelOpenRequest(request, reason);
+    }
+  }
+
+  async cancelAllOpenRequests(reason: string): Promise<void> {
+    for (const request of await this.runState(this.approvalState.listOpenApprovalRequests())) {
+      await this.cancelOpenRequest(request, reason);
+    }
+  }
+
+  private async cancelOpenRequest(request: RuntimeApprovalRecord, reason: string): Promise<void> {
+    const resolvedResult = await this.runState(
+      this.approvalState.resolveApprovalRequest({
+        requestId: request.requestId as RuntimeApprovalId,
         status: "cancelled",
         reviewer: "user",
         decisionReason: reason,
-      });
-      if (resolved.commandId) {
-        const command = this.findCommandById(resolved.commandId);
-        this.store.finishCommand({
+      }),
+    );
+    const resolved = resolvedResult.value;
+    if (resolved.commandId) {
+      const command = await this.findCommandById(resolved.commandId);
+      await this.runState(
+        this.commandState.finishCommand({
           commandId: resolved.commandId,
           status: "cancelled",
           summary: `Approval cancelled: ${approvalRequestSummary(resolved)}`,
@@ -163,49 +221,36 @@ export class RuntimeApprovalRequestRuntime {
             approval: "cancelled",
             approvalRequestId: resolved.requestId,
           },
-        });
-      }
-      this.store.clearSessionWait({ sessionId: resolved.sessionId });
-      const pending = this.pending.get(resolved.requestId);
-      this.pending.delete(resolved.requestId);
-      pending?.resolve({ approved: false, reason });
-    }
-  }
-
-  private findCommand(input: RuntimeApprovalBoundaryInput): StructuredCommandRecord | null {
-    if (input.commandId) {
-      for (const snapshot of this.store.listSessionStates()) {
-        const command = snapshot.commands.find((entry) => entry.id === input.commandId);
-        if (command) {
-          return command;
-        }
-      }
-    }
-    for (const snapshot of this.store.listSessionStates()) {
-      const command = snapshot.commands.find(
-        (entry) =>
-          entry.facts?.toolCallId === input.toolCallId &&
-          (entry.status === "running" || entry.status === "requested"),
+        }),
       );
-      if (command) {
-        return command;
-      }
+    }
+    await this.runState(this.sessionWaitState.clearSessionWait({ sessionId: resolved.sessionId }));
+    const pending = this.pending.get(resolved.requestId);
+    this.pending.delete(resolved.requestId);
+    pending?.resolve({ approved: false, reason });
+  }
+
+  private async findCommand(
+    input: RuntimeApprovalBoundaryInput,
+  ): Promise<RuntimeCommandRecord | null> {
+    if (input.commandId) {
+      return this.findCommandById(input.commandId);
+    }
+    const command = await this.runState(
+      this.commandState.findCommandByToolCallId({ toolCallId: input.toolCallId }),
+    );
+    if (command && (command.status === "running" || command.status === "requested")) {
+      return command;
     }
     return null;
   }
 
-  private findCommandById(commandId: string): StructuredCommandRecord | null {
-    for (const snapshot of this.store.listSessionStates()) {
-      const command = snapshot.commands.find((entry) => entry.id === commandId);
-      if (command) {
-        return command;
-      }
-    }
-    return null;
+  private findCommandById(commandId: string): Promise<RuntimeCommandRecord | null> {
+    return this.runState(this.commandState.findCommandById({ commandId }));
   }
 }
 
-export function approvalRequestSummary(request: StructuredRuntimeApprovalRequestRecord): string {
+export function approvalRequestSummary(request: RuntimeApprovalRecord): string {
   if (request.toolName === "exec_command" && request.command) {
     return `Run command: ${request.command}`;
   }

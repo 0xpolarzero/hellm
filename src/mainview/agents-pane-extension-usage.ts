@@ -1,5 +1,5 @@
-import type { ExtensionCategory, ExtensionUsageState } from "../shared/extensions";
-import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "../shared/extensions";
+import type { ExtensionCategory, ExtensionUsageState } from "@svvy/extensions";
+import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "@svvy/extensions";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   type ExtensionDefaultsSettings,

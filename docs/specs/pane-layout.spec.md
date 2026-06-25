@@ -7,7 +7,7 @@
 
 ## Scope
 
-This spec defines Dockview layout ownership and current surface placement.
+This spec defines Dockview layout ownership and surface placement.
 
 ## Dockview Ownership
 
@@ -23,21 +23,31 @@ Dockview owns:
 - popouts
 - serialized layout restore
 
-`svvy` owns:
+`@svvy/runtime` owns:
 
-- panel-to-surface bindings
-- panel-local metadata
-- product placement policy
-- surface open/close semantics
+- live surface lifecycle keyed by `surfacePiSessionId`
+- surface attach/release effects, live-surface disposal decisions, and recovery semantics
+
+Dockview and the renderer own:
+
+- transient Dockview projection
+- focus, drag/drop, and scroll state
+- user placement intent before it is submitted through product commands
+
+`@svvy/state` owns durable layout records, panel metadata, panel-to-surface bindings, and their read
+models. The renderer submits attach, detach, and layout-save requests through bootstrap-provided
+facades and renders from refreshed read models. Renderer-local Dockview state is a projection of
+those records and is not product truth.
 
 Live pi surfaces are keyed by `surfacePiSessionId`, not by panel id.
 
-## Current Surface Kinds
+## Surface Kinds
 
-Current Dockview-bindable surface kinds:
+Dockview-bindable surface kinds:
 
 - orchestrator surface
 - handler-thread surface
+- workflow task-agent attempt surface
 - artifact inspector
 - command inspector
 - Logs pane
@@ -49,7 +59,7 @@ Current Dockview-bindable surface kinds:
 
 ## Workflows Pane
 
-The Workflows pane is read-only generated `@svvy/workflows` visibility.
+The Workflows pane is read-only generated `@svvyx/workflows` visibility.
 
 It can be opened in Dockview like any other static pane. It does not create a live pi runtime.
 
@@ -88,5 +98,11 @@ same placement policy.
 Closing a panel detaches the panel. It does not delete durable session, thread, command, artifact,
 or Workflows source state.
 
-Multiple panels may attach to the same live surface. They share one backend live surface controller
-and keep independent panel-local scroll state.
+Multiple panels may attach to the same live surface identity. `@svvy/runtime` owns live-surface
+lifecycle; desktop only observes state/read-model updates, sends facade requests, and keeps
+independent panel-local scroll state.
+
+Closing the final panel binding submits a detach request through a bootstrap-provided facade.
+Runtime release happens only through explicit runtime-owned surface/workspace owner scopes;
+`@svvy/runtime` decides live-surface disposal from owner scopes, idle TTL, invalidation, or app
+shutdown.

@@ -8,7 +8,7 @@
   - define the builtin Request User Input native extension
   - define the model-facing `request_user_input` API
   - define the nonblocking and blocking runtime variants
-  - define user-answer queue delivery and side-panel behavior
+  - define the runtime answer API, blocking answer resolution, nonblocking queued delivery, and side-panel behavior
   - define which state is file-backed extension source and which state is product-state-backed
 
 `request_user_input` is the model-facing way for orchestrator and handler-thread agents to ask the
@@ -23,7 +23,8 @@ This design borrows only the useful narrow shape from Codex:
 - Codex asks one to three questions.
 - Codex choices use short user-facing labels plus one-sentence tradeoff descriptions.
 - Codex recommends two to three mutually exclusive choices.
-- Codex clients add the freeform "Other" answer path.
+- Codex clients add a custom-answer affordance. In `svvy`, custom answers are submitted through the
+  runtime answer API as `{ kind: "custom" }`, not as a model-authored "Other" option.
 
 Local Codex reference files:
 
@@ -64,25 +65,25 @@ request_user_input
 
 Default usage state:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | loaded |
-| Handler | loaded |
+| Actor kind          | State       |
+| ------------------- | ----------- |
+| Orchestrator        | loaded      |
+| Handler             | loaded      |
 | Workflow task agent | unavailable |
 
-Workflow task agents do not receive this extension by default. A workflow task agent runs under
-Smithers task-attempt ownership; user clarification should route through the supervising handler
-thread instead of letting a task-local agent open independent user-input requests.
+Workflow task agents do not receive this extension by default. A workflow task-agent attempt is a
+runtime-managed pi-backed task-attempt surface; user clarification routes through the supervising
+handler thread instead of letting a task-local agent open independent user-input requests.
 
 ## Dual Runtime Variant
 
 The visible extension is a dual extension. The user sees one extension row and one extension pane,
 but the app owns two internal variants:
 
-| Variant | Runtime behavior | Tool name |
-| --- | --- | --- |
-| `nonblocking` | The tool creates answerable side-panel requests, immediately returns the agent's default answer, and lets later user answers queue through normal surface queue delivery. | `request_user_input` |
-| `blocking` | The tool creates answerable side-panel requests and does not return until the user answers or the configured timeout supplies the default answer. | `request_user_input` |
+| Variant       | Runtime behavior                                                                                                                                                                                                                       | Tool name            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `nonblocking` | The tool creates answerable side-panel requests, immediately returns the agent's default answer, and lets later user answers submit through `runtime.requestInput.answer`; nonblocking answers create queued delivery when applicable. | `request_user_input` |
+| `blocking`    | The tool creates answerable side-panel requests and does not return until the user answers or the configured timeout supplies the default answer.                                                                                      | `request_user_input` |
 
 The current variant is an app-global product setting for this builtin extension. Switching the
 variant changes all three of these surfaces together:
@@ -113,11 +114,11 @@ File-backed extension source:
   manifest.json
   variants/
     nonblocking/
-      instructions/full/*.md
-      instructions/minimal.md
+      instructions/full/*.mdx
+      instructions/minimal.mdx
     blocking/
-      instructions/full/*.md
-      instructions/minimal.md
+      instructions/full/*.mdx
+      instructions/minimal.mdx
 ```
 
 Product-state-backed settings and runtime records:
@@ -125,14 +126,35 @@ Product-state-backed settings and runtime records:
 - active variant: `nonblocking` or `blocking`
 - blocking timeout enabled flag
 - blocking timeout duration
-- request records
-- question records
-- generated option ids
-- answer records
-- queue records created from later answers
-- active timer state and pause state
-- command lifecycle state
-- surface wait projection created by blocking requests
+- request/question/option records written through `RuntimeRequestStatePort`
+- default/user/timeout answer records written through `RuntimeRequestStatePort`
+- `queuedItemId`-linked queue records only for later nonblocking user answers
+- blocking timeout deadline, paused/resumed facts, and answer/default facts written through
+  `RuntimeRequestStatePort`; process-local timeout fibers and wait-registry entries are runtime
+  coordination state and are never product state
+- command progress, waiting state, and terminal command facts written through
+  `RuntimeCommandStatePort`
+- session/surface wait projection created by blocking requests through `RuntimeSessionWaitStatePort`
+
+Request User Input settings are DB/product-state-backed extension settings. The user-facing
+extension pane submits an explicit runtime request. `@svvy/runtime` commits active variant and
+blocking-timeout configuration through `@svvy/state` command ports, receives after-commit
+descriptors, and publishes typed notifications after commit. Runtime reads the committed settings
+when generating/binding the active extension variant and when resolving accepted tool behavior.
+Extension handlers never write these settings.
+
+Blocking wait and timeout execution is runtime-owned. The blocking implementation uses
+`RuntimeRequestStatePort`, `RuntimeCommandStatePort`, `RuntimeSessionWaitStatePort`, a
+runtime-owned pending wait registry, scoped `Deferred` completion, and Effect time services.
+Blocking waits race the runtime-owned answer `Deferred` against the committed deadline using
+`Effect.timeoutOrElse` or an equivalent scoped `Effect.sleep` timer fiber. Runtime computes
+remaining time from Effect `DateTime.now` / `Clock`, records the deadline in state, and re-forks the
+scoped timer only after committed pause/resume/version changes. Production bootstrap provides the
+package layer graph and platform services; it does not provide a custom timeout policy or direct
+host timer callbacks. Package tests use Effect test layers and `TestClock` for timeout behavior.
+Desktop, renderer, headless, app/bootstrap bridge adapters, and pi-adapter edge adapters do not own
+request-input pending maps, timeout/defaulting policy, package-private state-port mutation, command
+settlement, or answer delivery. They call runtime/state facades and render read models.
 
 Extension Managing exposes only the active variant's editable source paths when an agent inspects
 this extension. Agent edit, reset, revert, and instruction-file lifecycle operations target only the
@@ -327,11 +349,11 @@ type RequestUserInputResult = {
 type RequestUserInputResolvedAnswer = {
   title: string;
   question: string;
-  answer: RequestUserInputAnswer;
+  answer: RequestUserInputResolvedAnswerValue;
   answeredBy: "user" | "default" | "timeout_default";
 };
 
-type RequestUserInputAnswer =
+type RequestUserInputResolvedAnswerValue =
   | {
       kind: "option";
       label: string;
@@ -356,6 +378,13 @@ The result must not include:
 - generated UI header/title guesses
 - best-effort summaries of the question
 - previews of side-panel state
+
+This is the model-facing tool result delivered back to pi. Durable command facts may mirror the
+final `RequestUserInputResult` with projection fields such as question count and answer source for
+UI recovery, but those facts are state-backed command data, not extra fields in the model-facing
+tool result. Callers that need request ids, question ids, answer ids, queue ids, or command status
+must read structured state/read-model surfaces rather than expecting those fields in the tool
+result.
 
 Nonblocking immediate result example:
 
@@ -423,11 +452,21 @@ Runtime sequence:
 
 1. The model starts composing a `request_user_input` tool call.
 2. Live tool projection may show a disabled draft card from streamed arguments.
-3. When arguments complete and validate, the runtime creates request/question records.
-4. The side panel shows the request as answerable.
-5. The tool returns immediately with the recommended/default answers.
-6. The agent continues as if those defaults were the user's answer.
-7. If the user later answers, the app creates a high-priority surface queue item.
+3. When arguments complete and validate, the extension handler returns one ordered
+   `ExtensionRuntimeOperation` item wrapping a `request_input.create` `RuntimeEffectRequest` carrying
+   the validated questions, options, and defaults.
+4. `@svvy/runtime` applies the wrapped request by creating request/question/option/default-answer state
+   through `RuntimeRequestStatePort`; nonblocking creation does not create a
+   `request_user_input_answer` queue row.
+5. `@svvy/runtime` records created request/question progress through
+   `RuntimeCommandStatePort.recordCommandEvent(...)`, then completes the current command through
+   `RuntimeCommandStatePort.finishCommand(...)` with final facts containing the default
+   `RequestUserInputResult`, question count, and `answeredBy: "default"`.
+6. The side panel shows the request as answerable.
+7. The tool returns immediately with the recommended/default answers.
+8. The agent continues as if those defaults were the user's answer.
+9. If the user later answers, the UI calls `runtime.requestInput.answer`; runtime validates and
+   records the answer through request state, and only then may enqueue `request_user_input_answer`.
 
 Nonblocking requests must not:
 
@@ -456,7 +495,11 @@ Runtime sequence:
 
 1. The model starts composing a `request_user_input` tool call.
 2. Live tool projection may show a disabled draft card from streamed arguments.
-3. When arguments complete and validate, the runtime creates request/question records.
+3. When arguments complete and validate, the extension handler returns one ordered
+   `ExtensionRuntimeOperation` item wrapping a `request_input.create` `RuntimeEffectRequest`
+   carrying the validated questions, options, and defaults. `@svvy/runtime` applies it through the
+   core-owned request-input state port implemented by `@svvy/state`; that implementation allocates
+   request/question/option ids and commits the durable records.
 4. The side panel shows the request as answerable.
 5. The command enters `waiting`.
 6. The surface wait projection records that this turn is waiting on user input.
@@ -537,44 +580,70 @@ Question card behavior:
 
 Submission controls:
 
-- Enter queues the answer immediately with steering semantics
-- Cmd+Enter queues the answer for after-turn delivery
+- Enter submits with `delivery: "enqueue-and-run"`
+- Cmd+Enter submits with `delivery: "queue-only"`
 - visible buttons provide the same two actions
 - in blocking mode, either action resolves the waiting tool call; there is no later queued
   answer
-- in nonblocking mode, either action creates a durable `request_user_input_answer` queue item
+- in nonblocking mode, either action may create a durable `request_user_input_answer` queue item
+  when model delivery is still applicable; otherwise runtime records the answer and returns
+  `delivery: { kind: "nonblocking-recorded", queuedItemId: null }`
 
 The panel must keep unanswered requests visible even if no Dockview panel currently shows the owning
 surface. Ownership is by surface, not by panel.
 
-## Queued Answer Item
+## Runtime Answer API And Nonblocking Queue Delivery
 
-In nonblocking mode, a later user answer becomes a durable surface queue item:
+Later user answers are submitted through the runtime answer API:
 
 ```ts
-type RequestUserInputAnswerQueueItem = {
-  kind: "request_user_input_answer";
-  queuedItemId: QueuedItemId;
-  workspaceSessionId: WorkspaceSessionId;
+type AnswerRequestInputInput = {
   surfacePiSessionId: SurfacePiSessionId;
-  threadId?: ThreadId;
-  requestId: RequestUserInputRequestId;
-  questionId: RequestUserInputQuestionId;
-  delivery: "steer" | "after_turn";
-  status: "queued" | "steering" | "dispatching" | "delivered" | "cancelled";
-  createdAt: ISODateString;
+  requestId: RequestInputRequestId;
+  questionId: RequestInputQuestionId;
+  answer: { kind: "option"; optionId: RequestInputOptionId } | { kind: "custom"; text: string };
+  delivery: RuntimeMessageDelivery;
+};
+
+type AnswerRequestInputResult = {
+  requestId: RequestInputRequestId;
+  questionId: RequestInputQuestionId;
+  status: "recorded" | "duplicate";
+  delivery:
+    | { kind: "blocking-resolved"; queuedItemId: null }
+    | { kind: "nonblocking-queued"; queuedItemId: QueueItemId }
+    | { kind: "nonblocking-recorded"; queuedItemId: null };
 };
 ```
 
-The generated prompt-bearing payload delivered to the agent is:
+In nonblocking mode, a later user answer may become a durable surface queue item. Queue insertion is
+a runtime-owned effect of the user's answer action; the extension schema defines the answer payload
+shape, but the extension handler does not create queue rows. The queue payload is only the
+nonblocking delivery artifact needed to validate, order, cancel, and deliver the answer:
+
+```ts
+type RequestUserInputAnswerQueuePayload = {
+  kind: "request_user_input_answer";
+  requestId: RequestInputRequestId;
+  questionId: RequestInputQuestionId;
+  answerId: RequestInputAnswerId;
+  delivery: RuntimeMessageDelivery;
+};
+```
+
+The generic queue row owns `queuedItemId`, `workspaceId`, `workspaceSessionId`,
+`surfacePiSessionId`, `threadId`, lifecycle status, timestamps, failure state, ordering, and
+row-level metadata. Queue rows do not store `requestSummary`; any queue display summary is derived
+by runtime/state read models from row kind, payload, and linked request-input state. The generated
+prompt-bearing payload delivered to the agent is separate and id-free:
 
 ```ts
 type RequestUserInputAnswerDelivery = {
   type: "request_user_input.answer";
   title: string;
   question: string;
-  originalAnswer: RequestUserInputAnswer;
-  userAnswer: RequestUserInputAnswer;
+  originalAnswer: RequestUserInputResolvedAnswerValue;
+  userAnswer: RequestUserInputResolvedAnswerValue;
 };
 ```
 
@@ -602,32 +671,37 @@ Queue rules:
 
 - `request_user_input_answer` items belong to the same `surfacePiSessionId` that created the
   original request.
-- answer queue items outrank ordinary `user_message` rows.
-- answer queue items do not bypass required opted-in extension context refresh checks.
+- nonblocking answer queue items outrank ordinary `user_message` rows.
+- nonblocking answer queue items do not bypass required opted-in extension context refresh checks.
 - within `request_user_input_answer`, ordering is FIFO by answer creation time unless the user
   cancels a row before delivery.
-- `delivery: "steer"` uses the existing queue steering semantics and status values.
-- `delivery: "after_turn"` waits for the active turn to settle and then delivers as the next real
-  prompt-bearing item.
+- `delivery` uses `RuntimeMessageDelivery`; it is not a steering mode.
+- row-level `Steer` remains a separate queue action over the returned `queuedItemId`.
 - if the surface is idle, either delivery mode may be claimed immediately by the shared queue runner.
-- if delivery fails before pi accepts it, the item returns to the front of the durable queue.
+- if delivery fails before pi accepts it, runtime marks the queue item `failed` with `failedAt` and
+  `failureError`; the failed row remains inspectable and dismissable and is not silently returned to
+  the queue front.
 - once pi accepts it, the item is `delivered`; any later turn failure belongs to the normal turn
   lifecycle.
 
 This does not introduce a pi-only steering fast path. It uses the existing durable queue logic.
 
-## Internal Product Commands
+## Internal Product Requests
 
-These commands are renderer/backend product commands, not model-facing tools and not tool output.
+These are typed desktop/headless facade requests exposed by app bootstrap, not model-facing tools,
+tool output, or a parallel string command system. Facade handlers validate payloads with
+package-boundary schemas, then call the bootstrap-provided runtime facade for active-variant
+changes, timeout configuration, timer pause/resume, and answers. State read facades are used only to
+refetch read models after runtime-published notifications. Desktop/headless handlers do not mutate
+request-input settings through state command facades directly. `@svvy/runtime` owns answer
+recording, wait resolution, timeout completion, committed state effects, and notification
+publication.
 
 Set active variant:
 
 ```json
 {
-  "command": "request_user_input.set_mode",
-  "params": {
-    "mode": "nonblocking"
-  }
+  "mode": "nonblocking"
 }
 ```
 
@@ -635,11 +709,8 @@ Set blocking timeout:
 
 ```json
 {
-  "command": "request_user_input.set_blocking_timeout",
-  "params": {
-    "enabled": true,
-    "durationMs": 300000
-  }
+  "enabled": true,
+  "durationMs": 300000
 }
 ```
 
@@ -647,11 +718,9 @@ Pause or resume a running timer:
 
 ```json
 {
-  "command": "request_user_input.set_timer_paused",
-  "params": {
-    "requestId": "rui_01J00000000000000000000000",
-    "paused": true
-  }
+  "surfacePiSessionId": "pi_orch_01J00000000000000000000000",
+  "requestId": "rui_01J00000000000000000000000",
+  "paused": true
 }
 ```
 
@@ -659,16 +728,14 @@ Submit an option answer:
 
 ```json
 {
-  "command": "request_user_input.answer",
-  "params": {
-    "requestId": "rui_01J00000000000000000000000",
-    "questionId": "ruiq_01J00000000000000000000000",
-    "answer": {
-      "kind": "option",
-      "optionId": "ruio_01J00000000000000000000000"
-    },
-    "delivery": "steer"
-  }
+  "surfacePiSessionId": "pi_orch_01J00000000000000000000000",
+  "requestId": "rui_01J00000000000000000000000",
+  "questionId": "ruiq_01J00000000000000000000000",
+  "answer": {
+    "kind": "option",
+    "optionId": "ruio_01J00000000000000000000000"
+  },
+  "delivery": "enqueue-and-run"
 }
 ```
 
@@ -676,28 +743,29 @@ Submit a custom answer:
 
 ```json
 {
-  "command": "request_user_input.answer",
-  "params": {
-    "requestId": "rui_01J00000000000000000000000",
-    "questionId": "ruiq_01J00000000000000000000000",
-    "answer": {
-      "kind": "custom",
-      "text": "Run the full suite, but skip already-known flaky browser coverage."
-    },
-    "delivery": "after_turn"
-  }
+  "surfacePiSessionId": "pi_orch_01J00000000000000000000000",
+  "requestId": "rui_01J00000000000000000000000",
+  "questionId": "ruiq_01J00000000000000000000000",
+  "answer": {
+    "kind": "custom",
+    "text": "Run the full suite, but skip already-known flaky browser coverage."
+  },
+  "delivery": "queue-only"
 }
 ```
 
-Command validation:
+Request validation:
 
 - `requestId`, `questionId`, and `optionId` must be generated product ids from an open request.
-- the command must reject ids from a different workspace or surface.
-- the command must reject answers to already completed, cancelled, or expired questions.
-- the command must reject blank custom text.
-- the command must reject `delivery` values other than `steer` or `after_turn`.
-- in blocking mode, `delivery` affects UI button semantics but resolves the current tool call rather
+- `surfacePiSessionId` must match the request's owning surface.
+- the request must reject ids from a different workspace or surface.
+- the request must reject answers to already completed, cancelled, or expired questions.
+- the request must reject blank custom text.
+- the request must reject `delivery` values other than `enqueue-and-run` or `queue-only`.
+- in blocking mode, `delivery` is accepted for API consistency but resolves the current tool call rather
   than creating a later queue item.
+- the runtime returns `AnswerRequestInputResult`; `delivery.kind` tells the caller whether a
+  blocking wait was resolved, nonblocking model delivery was queued, or the answer was only recorded.
 
 ## Live Tool Projection
 
@@ -714,12 +782,20 @@ Argument streaming:
 
 Runtime projection:
 
-- once request records are created, link the tool item to the command record
-- show created request/question count in command progress
-- in nonblocking mode, finish the command immediately with default answers
-- in blocking mode, show command status `waiting` while waiting on answers
-- in blocking mode, timer progress may be rendered as command progress or request-card state
-- final command facts contain the delivered `RequestUserInputResult`
+- `@svvy/runtime`, not the app/pi-adapter edge, creates or reuses the command row for streamed pi
+  tool calls through `RuntimeCommandStatePort`
+- accepted request-input execution, effect application, progress events, waiting state, and
+  successful command settlement belong to `@svvy/runtime`
+- successful nonblocking execution records command progress with created request/question count
+  through `RuntimeCommandStatePort.recordCommandEvent(...)`
+- successful nonblocking execution immediately finishes the command with default answers through
+  `RuntimeCommandStatePort.finishCommand(...)`
+- blocking execution records command status `waiting` through
+  `RuntimeCommandStatePort.finishCommand(...)` and later terminalizes the same command when user
+  answer, timeout, or cancellation resolves the wait
+- blocking timer progress may be rendered as command progress or request-card state
+- final command facts contain the delivered `RequestUserInputResult`, question count, and
+  `answeredBy` source
 
 Recovery:
 
@@ -735,7 +811,7 @@ Required request record:
 
 ```ts
 type RequestUserInputRequestRecord = {
-  requestId: RequestUserInputRequestId;
+  requestId: RequestInputRequestId;
   workspaceSessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
   threadId?: ThreadId;
@@ -761,14 +837,14 @@ Required question record:
 
 ```ts
 type RequestUserInputQuestionRecord = {
-  questionId: RequestUserInputQuestionId;
-  requestId: RequestUserInputRequestId;
+  questionId: RequestInputQuestionId;
+  requestId: RequestInputRequestId;
   ordinal: number;
   title: string;
   question: string;
-  defaultAnswer: RequestUserInputAnswer;
+  defaultAnswer: RequestUserInputResolvedAnswerValue;
   choices: Array<{
-    optionId: RequestUserInputOptionId;
+    optionId: RequestInputOptionId;
     ordinal: number;
     label: string;
     description: string;
@@ -782,19 +858,19 @@ Required answer record:
 
 ```ts
 type RequestUserInputAnswerRecord = {
-  answerId: RequestUserInputAnswerId;
-  requestId: RequestUserInputRequestId;
-  questionId: RequestUserInputQuestionId;
-  answer: RequestUserInputAnswer;
+  answerId: RequestInputAnswerId;
+  requestId: RequestInputRequestId;
+  questionId: RequestInputQuestionId;
+  answer: RequestUserInputResolvedAnswerValue;
   answeredBy: "user" | "default" | "timeout_default";
-  delivery: "steer" | "after_turn" | null;
-  queuedItemId: QueuedItemId | null;
+  delivery: RuntimeMessageDelivery | null;
+  queuedItemId: QueueItemId | null;
   createdAt: ISODateString;
 };
 ```
 
-The records above are `svvy` product state. They do not copy external wait records or replace
-external wait state.
+The records above are authoritative `svvy` product state for request-input waits. They may link to
+surface wait projection, but they do not mirror pi, Smithers, or renderer-local wait state.
 
 ## Cancellation And Closure
 
@@ -810,8 +886,8 @@ If a nonblocking request exists and the originating turn later fails or is cance
 
 - already-open side-panel requests remain answerable unless the owning surface/session is closed or
   the user cancels the request
-- later answers still queue to the owning surface because the original default may already have
-  influenced visible work
+- later answers are still accepted through the runtime answer API and may enqueue to the owning
+  surface because the original default may already have influenced visible work
 
 If the owning surface/session is explicitly closed in a way that discards queued work:
 

@@ -4,7 +4,7 @@
   import GitForkIcon from "@lucide/svelte/icons/git-fork";
   import PinIcon from "@lucide/svelte/icons/pin";
   import PinOffIcon from "@lucide/svelte/icons/pin-off";
-  import type { ContextBudget } from "../shared/context-budget";
+  import type { ContextBudget } from "./context-budget";
   import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
   import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import {

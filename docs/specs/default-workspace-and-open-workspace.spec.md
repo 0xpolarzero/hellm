@@ -9,13 +9,13 @@
   - define the `Open Workspace` surface shown inside that default workspace
   - define current-tab and new-tab workspace opening behavior
   - define native app menu actions and shortcuts for workspace tab operations
-  - define how default workspace tabs interact with workspace runtimes, Dockview layouts, Context, Logs, Workflows, sessions, and restore state
+  - define how default workspace tabs interact with workspace runtimes, Dockview layouts, Logs, Agents, Extensions, Workflows, sessions, and restore state
 
 ## Purpose
 
 `svvy` should never boot into an empty page that only says `Open Workspace`.
 
-When there is no restored user workspace tab, the app opens a real svvy-owned default workspace. That default workspace is a normal workspace runtime with sessions, Context, Logs, command palette, app logs, prompt history, provider settings, durable layout slots, and other runtime-backed product surfaces available. Its initial focused surface is an `Open Workspace` panel that lets the user choose a repository. The default workspace uses the same durable Dockview layout behavior as any other workspace. The only default-workspace layout exception is that opening an empty selected layout slot seeds that slot with a single `Open Workspace` pane instead of leaving the workbench blank.
+When there is no restored user workspace tab, the app opens a real svvy-owned default workspace. That default workspace is a normal workspace runtime with sessions, Logs, Agents, Extensions, Workflows, command palette, app logs, prompt history, provider settings, durable layout slots, and other runtime-facade plus DB/product-state-backed surfaces available. Its initial focused surface is an `Open Workspace` panel that lets the user choose a repository. The default workspace uses the same durable Dockview layout behavior as any other workspace. The only default-workspace layout exception is that opening an empty selected layout slot seeds that slot with a single `Open Workspace` pane instead of leaving the workbench blank.
 
 This keeps the app usable before a user chooses a repository while preserving the product rule that substantive repository work happens inside workspace runtimes.
 
@@ -45,7 +45,7 @@ It is a real workspace runtime. It is not:
 - a hidden staging area for user repositories
 - a replacement for user-selected repository workspaces
 
-It exists so app-global and workspace-runtime-backed behavior remains available before a user chooses a repository.
+It exists so app-global, workspace-routed runtime behavior, and DB/product-state-backed read/command facade behavior remain available before a user chooses a repository.
 
 ### User Workspace
 
@@ -59,9 +59,9 @@ User workspaces keep the existing product meaning:
 - path index
 - sessions
 - handler threads
-- app logs
-- workspace read models
-- saved Workflows generated-state visibility
+- app-log records and read models owned by `@svvy/state`
+- workspace read models served through the state read facade
+- generated Workflows export visibility projected from generated-package facts
 - discovered external instruction records
 
 ### Workspace Tab
@@ -72,10 +72,10 @@ Every workspace tab must have a stable chrome tab id. The tab id is separate fro
 
 Use:
 
-- `workspaceId` for the shared backend workspace runtime
+- `workspaceId` for the shared `@svvy/runtime` workspace runtime
 - `workspaceTabId` or equivalent for chrome tab state
 
-Duplicate tabs for the same cwd share one backend runtime. Their durable workspace layouts are also shared by `(workspaceId, layoutId)`; the tab only chooses which layout id is active.
+Duplicate tabs for the same cwd share one workspace runtime. Their durable workspace layouts are also shared by `(workspaceId, layoutId)`; the tab only chooses which layout id is active.
 
 Tabs do not own durable layout documents. A tab stores chrome state such as tab order, selected `workspaceId`, and active layout id. Durable layout snapshots are keyed by `(workspaceId, layoutId)` where `layoutId` is `A`, `B`, or `C`.
 
@@ -117,7 +117,8 @@ Adopted default:
 
 The svvy app data dir is the app-owned durable state root. Keeping the default workspace there makes it packaged-app safe and avoids writing into arbitrary user repositories while keeping PI-specific session storage under its own `pi/` child directory.
 
-The exact path should be created by a Bun helper rather than hardcoded in renderer code, for example:
+The exact path should be created by an app-owned desktop/bootstrap helper rather than hardcoded in
+renderer code, for example:
 
 ```ts
 getDefaultWorkspaceCwd(appDataDir): string
@@ -138,21 +139,27 @@ The default workspace should have a stable canonical cwd across app restarts.
 
 The default workspace must have a stable runtime identity derived from its canonical cwd, using the same runtime-id normalization as other workspaces unless a stronger explicit default id is needed.
 
-The runtime must expose metadata that lets the renderer distinguish it from a user workspace:
+`WorkspaceReadModel.workspace` is the canonical payload that lets desktop and non-desktop callers
+distinguish the default workspace from a user workspace:
 
 ```ts
 type WorkspaceKind = "default" | "user";
 
-type WorkspaceInfoResponse = {
+type WorkspaceReadModel = {
+  workspace: {
   workspaceId: string;
   cwd: string;
   workspaceLabel: string;
   branch?: string;
   kind: WorkspaceKind;
+  };
 };
 ```
 
 The default workspace label should be `Default Workspace`.
+
+There is no separate workspace-info response. Callers consume `WorkspaceReadModel.workspace` as the
+canonical workspace identity payload.
 
 `Open Workspace` names the panel and action that choose a user repository. It should not replace the workspace tab or sidebar footer label, because that makes the workspace identity look like a command.
 
@@ -183,8 +190,8 @@ The default workspace does not support:
 - assuming Smithers saved entries exist
 
 Workflows may be visible in the default workspace because saved Workflows are app-global generated
-state. The UI must not fabricate workspace-local Smithers source or runnable entries for the default
-workspace.
+package facts projected through the Workflows generated read model. The UI must not fabricate
+workspace-local Smithers source or runnable entries for the default workspace.
 
 ### Open Workspace Surface Behavior
 
@@ -207,14 +214,18 @@ Current-tab open behavior:
 1. User activates `Open Workspace` from the default workspace panel, native menu, or command palette.
 2. App opens the folder picker.
 3. If the user cancels, keep the default workspace tab unchanged.
-4. If the user selects a cwd, open or acquire the backend user workspace runtime for that cwd.
+4. If the user selects a cwd, open or acquire the user workspace runtime for that cwd.
 5. Replace the current visual tab's `workspaceId` with the selected user workspace runtime id.
 6. Preserve the current visual tab id and tab order.
 7. Reinitialize that visual tab from the selected user workspace's active layout id and durable layout slot.
 8. Focus the selected user workspace tab.
 9. Persist tab state.
 
-Replacing a default workspace tab with a user workspace must not delete default workspace sessions or logs. It only removes that visual tab's attachment to the default workspace runtime. The default runtime can be released if no tabs or background work still reference it.
+Replacing a default workspace tab with a user workspace must not delete default workspace sessions or
+logs. It only removes that visual tab's attachment to the default workspace runtime. Desktop asks the
+bootstrap-provided runtime facade to release the tab's prior owner reference through
+`runtime.workspaces.release(...)`; runtime decides retain, idle, drain, or dispose according to owner
+scopes, TTL, invalidation, and app shutdown policy.
 
 If the current tab is already a user workspace, `Open Workspace` still opens the selected workspace in the current tab. This is a tab retarget operation, not a new tab operation.
 
@@ -222,9 +233,10 @@ When a current-tab retarget happens from one user workspace to another:
 
 - preserve the visual tab id and tab order
 - close the prior visual tab attachment
-- release the prior workspace runtime if no other tab or background work references it
+- call the bootstrap-provided runtime facade to release the prior tab owner reference; do not inspect
+  prompt, queue, thread, command, wait, or recovery idleness in renderer code
 - initialize the new user workspace view from the tab's active layout id and the selected workspace's durable layout slot when available, otherwise use the selected workspace's default layout
-- do not mutate or delete the prior workspace's durable sessions, app logs, workflows, or Context state
+- do not mutate or delete the prior workspace's durable sessions, app logs, generated Workflows export read models, or workspace-routed generated agent-context projections
 
 ### New Tab Behavior
 
@@ -238,7 +250,7 @@ The new tab:
 - uses the default workspace `workspaceId`
 - opens the selected default-workspace layout slot
 - seeds an empty selected layout slot with exactly one `Open Workspace` pane focused
-- shares the default workspace runtime, sessions, app logs, Context, and prompt history with other default workspace tabs
+- shares the default workspace runtime, sessions, app logs, prompt history, and workspace-routed generated agent-context projections with other default workspace tabs
 
 Multiple default workspace tabs are allowed. They are separate visual views over the same default workspace runtime and shared durable layout slots. Pane changes made inside a default workspace tab persist to that workspace's selected layout slot and are visible to later default workspace tabs using the same slot.
 
@@ -251,14 +263,14 @@ Behavior:
 1. User invokes the action.
 2. App opens the folder picker.
 3. If the user cancels, no tab is created.
-4. If the user selects a cwd, open or acquire the backend user workspace runtime for that cwd.
+4. If the user selects a cwd, open or acquire the user workspace runtime for that cwd.
 5. Create a new visual tab after the active tab.
 6. Bind the tab to the selected workspace runtime.
 7. Make the new tab active.
 8. Initialize its layout from the selected user workspace's active durable layout slot when available, otherwise the selected workspace's default layout.
 9. Persist tab state.
 
-Opening an already-open repository in a new tab creates a duplicate visual tab for the same backend runtime. It must not focus the existing tab unless the user explicitly chooses a switch action.
+Opening an already-open repository in a new tab creates a duplicate visual tab for the same workspace runtime. It must not focus the existing tab unless the user explicitly chooses a switch action.
 
 ### Tab Close Behavior
 
@@ -365,15 +377,18 @@ type CommandExecutionTarget =
   | ...
 ```
 
-The command palette fallback prompt behavior remains unchanged because the default workspace is a real workspace. Unmatched command-mode text creates a New orchestrator session in the active workspace, including the default workspace.
+The command palette fallback prompt behavior remains unchanged because the default workspace is a
+real workspace. Unmatched command-mode text creates a new orchestrator session in the workspace
+selected by the active visual tab, passing that tab's explicit `workspaceId` to `@svvy/runtime`;
+this includes the default workspace.
 
 ## Runtime And Storage Contracts
 
 ### Workspace Tab State
 
-Workspace tab persistence needs separate runtime and visual identities.
-
-Adopted shape:
+Workspace tab persistence needs separate durable workspace-runtime identity and visual tab identity.
+The `@svvy/core` workspace-tab state contract carries these fields, while `@svvy/state` persists the
+durable tab/layout state:
 
 ```ts
 type WorkspaceKind = "default" | "user";
@@ -402,34 +417,43 @@ Implementation must keep visual tab identity separate from runtime identity so d
 Rules:
 
 - `workspaceTabId` is unique per visual tab
-- `workspaceId` points to a shared backend runtime
+- `workspaceId` points to a shared workspace runtime
 - duplicate same-cwd tabs have different `workspaceTabId` values and the same `workspaceId`
 - retargeting a tab changes `workspaceId`, `cwd`, `workspaceLabel`, and `kind`, but keeps `workspaceTabId`
 - tab reorder operates on `workspaceTabId`
 - active tab state uses `activeWorkspaceTabId`
-- runtime RPC routing still uses explicit `workspaceId`
+- runtime facade routing still uses explicit `workspaceId`
 - workspace layout restore state uses `(workspaceId, layoutId)`
 - each workspace tab stores only its active `layoutId`; duplicate same-cwd tabs can select different active layout ids but share the same durable slot contents
 - default workspace tabs use the same durable layout restore state as user workspace tabs; the only special case is seeding an empty selected default-workspace layout with `Open Workspace`
 
-### Runtime Registry
+### Workspace Lifecycle Facade
 
-The workspace runtime registry supports acquiring an existing runtime for a cwd.
+App bootstrap owns the app `ManagedRuntime` and constructs the bootstrap-provided runtime facade
+after `await managedRuntime.context()` and the runtime-owned startup readiness effect have both
+completed. Desktop workspace-tab actions call that facade; they do not create a separate workspace
+registry or lifecycle host.
 
-Needed operations:
+Needed runtime facade calls:
 
 ```ts
-openWorkspace(cwd, { workspaceId? })          // create a runtime for callers that require uniqueness
-acquireWorkspace(cwd, { workspaceId? })       // create or return existing runtime
-releaseWorkspace(workspaceId)                 // release visual owner, dispose only when unused
-getDefaultWorkspace()                         // create or return default runtime
+runtime.workspaces.acquire({ cwd: canonicalCwd, owner, openReason: "user-open" | "restore" });
+runtime.workspaces.acquireDefault({ owner, openReason: "startup" | "new-tab" });
+runtime.workspaces.release({
+  workspaceId,
+  owner,
+  releaseReason: "tab-closed" | "workspace-replaced",
+});
 ```
 
-Duplicate visual tabs share one backend runtime for the same canonical cwd.
+Duplicate visual tabs share one workspace runtime for the same canonical cwd. A generic unique
+same-cwd runtime API is not part of this product model; if a future product feature needs isolated
+same-cwd runtimes, it must define a distinct workspace identity and state model rather than bypassing
+registry sharing.
 
 ### Default Workspace Bootstrap
 
-Bun startup should not rely on source-checkout cwd as the product workspace.
+App bootstrap should not rely on source-checkout cwd as the product workspace.
 
 Startup should know:
 
@@ -462,15 +486,21 @@ Renderer responsibilities:
 - call new-tab open from `Open Workspace in New Tab`
 - create default tabs through `New Tab` without invoking the folder picker
 
-Bun responsibilities:
+Desktop bridge responsibilities:
 
 - resolve picker cwd when `cwd` is absent
 - canonicalize cwd
-- acquire workspace runtime
-- return workspace info
-- not decide visual tab placement
+- call bootstrap-provided `runtime.workspaces.acquire(...)`, `runtime.workspaces.acquireDefault(...)`,
+  or `runtime.workspaces.release(...)` to acquire or release workspace runtime ownership
+- submit durable tab/layout state through the `@svvy/state` command facade and refetch workspace read
+  models
+- return the renderer-safe `WorkspaceReadModel.workspace` identity payload
+- not decide visual tab placement or own lifecycle policy
 
-The renderer owns visual tab creation, replacement, ordering, and persistence because those are app chrome state.
+The renderer owns the user intent and local chrome projection for visual tab creation,
+replacement, ordering, and active-tab selection. Durable tab/layout state is persisted through
+`@svvy/state`; workspace runtime lifecycle belongs to `@svvy/runtime` and is accessed through the
+bootstrap-provided runtime facade rather than renderer-owned policy.
 
 ## UI Requirements
 
@@ -512,7 +542,7 @@ Enabled:
 - Command Palette
 - Logs
 - Agents
-- Context
+- Extensions
 - Workflows, as app-global generated Workflows visibility
 - Settings
 
@@ -526,7 +556,7 @@ Session sections show real default-workspace sessions. If no sessions exist, the
 
 Durable layout slots `A`, `B`, and `C` are a workspace feature keyed by `(workspaceId, layoutId)`.
 
-Default workspace tabs expose and persist the same durable layout slots as user workspace tabs. A default workspace tab opens its selected slot like any other workspace tab. If the selected default-workspace slot is empty, the renderer creates exactly one `Open Workspace` pane in that slot.
+Default workspace tabs expose and persist the same durable layout slots as user workspace tabs. A default workspace tab opens its selected slot like any other workspace tab. If the selected default-workspace slot is empty, desktop layout initialization seeds exactly one `Open Workspace` pane in that slot.
 
 ### Logs
 
@@ -534,23 +564,23 @@ Logs are enabled in the default workspace.
 
 They show logs for the default workspace runtime. They do not become app-global logs.
 
-When a user workspace is opened in the current tab, the tab switches to that workspace's logs stream because the visual tab now points at a different workspace runtime.
+When a user workspace is opened in the current tab, the tab switches to that workspace's app-log read
+model from state because the visual tab now carries a different explicit `workspaceId`.
 
 ### Extensions
 
 Extensions are enabled in the default workspace.
 
-Agent profiles and extension definitions are app-owned settings. Extensions are app-global in v1,
-while generated agent-context previews and external-instruction projections may need a workspace
-runtime for workspace-specific files. This spec does not require moving those projections to a
-separate global runtime before default-workspace launch because the default workspace provides a
-valid `workspaceId` for operations that need one.
+Agent profiles and extension definitions are app-owned settings persisted through `@svvy/state`.
+Extensions are app-global, while generated agent-context previews and external-instruction
+projections use explicit `workspaceId`-routed runtime/state read models for workspace-specific
+files. Desktop renders those read models; it does not own runtime projection state.
 
 Extensions are available in the default workspace startup state.
 
 ### Workflows
 
-Workflows are enabled when the app can serve the generated `@svvy/workflows` visibility contract.
+Workflows are enabled when the app can serve the generated `@svvyx/workflows` visibility contract.
 
 The default workspace does not imply workspace-local `.smithers/` source. It can still show
 app-global generated Workflows exports.
@@ -563,7 +593,7 @@ No sample workflows should be fabricated just because the default workspace is o
 
 The active visual tab determines the current workspace for renderer commands that intentionally operate on the focused workspace.
 
-Backend requests must still carry explicit `workspaceId`.
+Runtime facade requests and state read-model requests must still carry explicit `workspaceId`.
 
 Menu and shortcut actions resolve as follows:
 
@@ -574,7 +604,10 @@ Menu and shortcut actions resolve as follows:
 - `Logs`: active tab's current workspace logs
 - `Agents`: app-global agent profiles, evaluated from the active tab's workspace context when workspace-scoped projections are needed
 - `Extensions`: app-global extension records with workspace-routed generated agent-context projections when needed
-- `Workflows`: active tab's current workspace workflows
+- `Workflows`: app-global generated `@svvyx/workflows` visibility rendered for the `workspaceId`
+  selected by the active visual tab when projection, logs, or source links need workspace context.
+  It does not create or use a workspace-specific workflow runtime, does not run `.smithers/`, and
+  does not read repo-root `workflows/`.
 
 ### Running Work
 
@@ -583,15 +616,20 @@ Opening, replacing, or closing a visual workspace tab must not interrupt running
 If current-tab `Open Workspace` retargets a tab whose prior workspace has running prompts or handler threads:
 
 - do not cancel them automatically
-- keep the prior backend runtime alive while running work or other tabs reference it
+- close only the visual attachment and release the tab `ownerRef` through
+  `runtime.workspaces.release(...)`
 - surface running counts on any remaining tabs for that runtime
-- if no visual tab remains but background work continues, retain runtime ownership until work reaches a safe terminal or waiting state
+- let `@svvy/runtime` retain, drain, idle, invalidate, or dispose the prior runtime according to
+  runtime policy; renderer code does not inspect prompt, queue, thread, command, wait, or recovery
+  state
 
-The exact background-runtime retention mechanism belongs to runtime registry implementation, but this spec requires that tab retargeting is not a destructive operation.
+The exact background-runtime retention mechanism belongs to runtime implementation, but this spec
+requires that tab retargeting is not a destructive operation and is never implemented as
+renderer-owned lifecycle policy.
 
 ### Recent Workspaces
 
-The app should keep a durable `knownWorkspaces` list for picker affordances and Context scope options.
+The app should keep a durable `knownWorkspaces` list for workspace picker affordances and workspace-scoped generated-context projection options.
 
 Rules:
 
@@ -626,12 +664,13 @@ Selected cwd cannot be opened:
 
 - keep existing current tab binding
 - show inline error in the `Open Workspace` panel if invoked there
-- emit an app log error in the invoking workspace runtime when available, otherwise in the default workspace runtime
+- append an app-log error through `AppLogWritePort` for the invoking workspace when available,
+  otherwise for the default workspace
 
 Default workspace cannot be created:
 
 - show startup failure surface
-- emit runtime log to stderr or bridge log if app logs are unavailable
+- emit a bootstrap diagnostic to stderr or bridge log if state app-log persistence is unavailable
 
 Retarget fails after runtime acquisition:
 
@@ -649,8 +688,9 @@ Unit tests:
 - `New Tab` creates a default workspace tab after the active tab
 - current-tab open preserves `workspaceTabId` and changes `workspaceId`
 - open in new tab creates a new `workspaceTabId`
-- duplicate same-cwd tabs share one backend runtime
-- retargeting a tab releases the prior runtime only when unused and idle
+- duplicate same-cwd tabs share one workspace runtime
+- retargeting a tab releases the prior visual `ownerRef`; runtime disposes only when owner scopes,
+  TTL, invalidation, and shutdown policy allow it
 - known workspaces exclude default workspace from user recents
 - shortcut registry exposes correct accelerators for workspace actions
 - command palette exposes workspace actions with correct availability
@@ -659,7 +699,7 @@ Renderer tests:
 
 - no restored user tabs renders normal app chrome with a default workspace tab
 - default workspace sidebar actions are enabled
-- default workspace logs and Context open normally
+- default workspace Logs, Agents, Extensions, and Workflows open normally
 - open-workspace panel primary button uses current-tab placement
 - `Open Workspace in New Tab` leaves the default tab in place and opens the selected workspace beside it
 - default workspace tabs show durable layout slots and persist panes across app restart
@@ -690,7 +730,8 @@ Run e2e through the OrbStack machine lane with `bun run test:e2e`.
 - Do not create a separate no-workspace shell state.
 - Do not make Logs app-global.
 - Do not fabricate workflow entries in the default workspace.
-- Do not route workspace RPCs through process cwd or active runtime instead of explicit `workspaceId`.
+- Do not route workspace-scoped runtime/state requests through process cwd or an active runtime
+  singleton instead of explicit `workspaceId` contracts and facades.
 - Do not introduce a standalone terminal, alternate TUI, or shell loop.
 - Do not store default workspace state under repo-root `workflows/` or any source-checkout-relative Smithers path.
 - Do not focus an already-open user workspace tab when the user requested `Open Workspace in New Tab`.

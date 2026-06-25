@@ -44,6 +44,15 @@ Workflow task-agent panes show the task attempt's context budget in the task-age
 
 ## Persistence
 
-Interactive orchestrator and handler-thread panes derive the meter from live pi surface messages and the active model.
+Interactive orchestrator and handler-thread panes derive the meter from `@svvy/state` surface read
+models built from usage/model facts committed by `@svvy/runtime` after `@svvy/pi-adapter`
+normalization.
+Panes render fields such as
+`latestPromptInputTokens`, `activeModelMaxContextTokens`, and the derived percentage from that read
+model; they do not inspect live pi messages directly.
 
-Workflow task-agent attempts persist context-budget source values in the attempt metadata so completed task-agent surfaces can be inspected later without replaying a pi session.
+Workflow task-agent attempts persist context-budget source values on the task-attempt metadata row
+from runtime-owned bridge/command facts: prompt input tokens, latest observed usage, model id,
+provider id, model-window metadata, and observed-at timestamps. The UI derives task-agent context
+budget read models from that state row. It must not replay a pi session, parse transcript prose,
+copy renderer meter state into the attempt, or store a separate preview-only budget record.

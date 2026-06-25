@@ -25,7 +25,8 @@ Baseline behavior:
 - support Snippets as a first-class `svvy` pane
 - discover known Markdown prompt macro files from supported hosts
 - show discovered Snippets as read-only external files
-- allow `svvy`-owned Snippets to be created, edited, renamed, and deleted in the Snippets pane
+- allow `svvy`-owned Snippets to be created, edited, renamed, and deleted through Snippets pane
+  controls backed by runtime/state commands
 - allow individual managed or discovered Snippets to be enabled or disabled for composer insertion
 - insert Snippets explicitly from the composer through `@` fuzzy matching
 - expand Snippets through `svvy`, not through pi, Claude, Codex, or another host runtime
@@ -72,15 +73,17 @@ Discovered Snippets are external files:
 - opened through the configured external editor
 - never duplicated automatically into editable `svvy` Snippets
 - not deleted, renamed, or rewritten by `svvy`
-- refreshed from live file content
+- refreshed through `@svvy/runtime` source invalidation/fingerprint coordinators and projected
+  through `@svvy/state` snippet read models
 
-Managed Snippets are product-owned records:
+Managed Snippets are product-owned records persisted by `@svvy/state`:
 
-- created in the Snippets pane
-- edited in the Snippets pane
-- renamed in the Snippets pane
-- deleted in the Snippets pane
-- stored by `svvy`
+- the Snippets pane submits typed create intents through runtime/state facades
+- the Snippets pane submits typed edit intents through runtime/state facades
+- the Snippets pane submits typed rename intents through runtime/state facades
+- the Snippets pane submits typed delete intents through runtime/state facades
+- `@svvy/state` owns the durable managed Snippet record state
+- `@svvy/runtime` owns discovered Snippet source refresh, expansion, provenance, and invalidation
 
 There is no clone or "make editable copy" flow in the baseline. If a user wants an editable version
 of an external Snippet, they can create a separate managed Snippet manually.
@@ -213,26 +216,24 @@ ordinary edited text.
 
 Host runtime expansion stays disabled.
 
-For pi-backed actors:
-
-- keep `noPromptTemplates: true`
-- keep `additionalPromptTemplatePaths: []`
-- keep `promptsOverride: () => ({ prompts: [], diagnostics: [] })`
-- submit user text with pi prompt-template and slash-command expansion disabled when that option is
-  available
+For pi-backed actors, `@svvy/runtime` and `@svvy/pi-adapter` setup disables host prompt-template
+and slash-command expansion for snippet submissions. Exact pi resource-loader flags belong to the
+pi-adapter package contract, not to renderer or shared UI contracts.
 
 This means pi prompt-template files can be discovered by `svvy` as read-only Snippets, but pi itself
 does not load them, list them as commands, or expand them.
 
-Claude and Codex runtimes are not invoked for Snippet discovery or expansion. `svvy` reads supported
-Markdown files directly and owns the UI, argument substitution, transcript projection, and final
-prompt text.
+Claude and Codex runtimes are not invoked for Snippet discovery or expansion. The `@svvy/runtime`
+source invalidation coordinator discovers and fingerprints supported Markdown files and projects
+snippet read models through `@svvy/state`. `@svvy/desktop` renders those read models and draft
+previews. Runtime resolves accepted snippet mentions into final user text plus durable provenance
+metadata before pi submission.
 
 ## Invariants
 
 - Snippets never grant tools.
 - Snippets never change model, provider, reasoning, extension loading, generated declarations, or
   execution policy.
-- Snippets never add `svvyx` command guidance or generated clients.
+- Snippets never add `svvyx` command guidance or generated facades.
 - Snippets never alter generated agent context.
 - Snippets are sent as user-authored prompt text after explicit insertion.

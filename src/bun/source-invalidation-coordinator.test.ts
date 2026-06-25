@@ -1,13 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
 import {
-  buildSourceWatchInputs,
-  createSourceInvalidationCoordinator,
-  type SourceInvalidationEvent,
-  type SourceWatchInput,
-} from "./source-invalidation-coordinator";
+  buildAppGlobalSourceWatchInputs,
+  buildWorkspaceSourceWatchInputs,
+  type SourceInvalidationHost,
+} from "@svvy/runtime/bootstrap";
 
 const tempDirs: string[] = [];
 
@@ -18,46 +18,18 @@ afterEach(() => {
 });
 
 describe("source invalidation coordinator", () => {
-  it("emits domain invalidations from deterministic fingerprints, not raw watcher events", async () => {
-    const root = tempRoot("source-invalidation");
-    const workflows = join(root, "workflows", "agents");
-    mkdirSync(workflows, { recursive: true });
-    writeFileSync(join(workflows, "implementer.agent.json"), "{}\n");
-    const events: SourceInvalidationEvent[] = [];
-    const coordinator = testCoordinator({
-      inputs: [
-        {
-          domain: "workflows",
-          kind: "directory",
-          path: workflows,
-          recursive: true,
-        },
-      ],
-      events,
-    });
-
-    writeFileSync(join(workflows, "implementer.agent.json"), '{"id":"implementer"}\n');
-    coordinator.requestScan("test");
-    await flushMicrotasks();
-
-    expect(events).toHaveLength(1);
-    expect(events[0]?.domains).toEqual(["workflows"]);
-
-    coordinator.requestScan("unchanged");
-    await flushMicrotasks();
-
-    expect(events).toHaveLength(1);
-    coordinator.close();
-  });
-
   it("keeps generated Workflows output outside watched source inputs", () => {
     const root = tempRoot("source-inputs");
-    const inputs = buildSourceWatchInputs({
-      agentDir: join(root, "pi"),
-      cwdByWorkspaceId: new Map([["workspace:1", join(root, "workspace")]]),
+    const appInputs = buildAppGlobalSourceWatchInputs({
       extensionsRoot: join(root, "extensions"),
+      host: testHost(root),
       workflowsSourceRoot: join(root, "workflows"),
     });
+    const workspaceInputs = buildWorkspaceSourceWatchInputs({
+      cwd: join(root, "workspace"),
+      host: testHost(root),
+    });
+    const inputs = [...appInputs, ...workspaceInputs];
 
     expect(inputs.some((input) => input.path.includes("/workflows/generated/"))).toBe(false);
     expect(inputs).toContainEqual(
@@ -67,62 +39,69 @@ describe("source invalidation coordinator", () => {
         path: join(root, "workflows", "agents"),
       }),
     );
+    expect(inputs.some((input) => input.path.endsWith("agent-settings.json"))).toBe(false);
+    expect(inputs.some((input) => input.path.endsWith("snippets.json"))).toBe(false);
     expect(inputs).toContainEqual(
       expect.objectContaining({
-        domain: "snippets",
-        kind: "file",
-        path: join(
-          root,
-          "pi",
-          "sessions",
-          `--${join(root, "workspace")
-            .replace(/^[/\\]/, "")
-            .replace(/[/\\:]/g, "-")}--`,
-          "snippets.json",
-        ),
+        domain: "host_snippets",
+        kind: "directory",
+        path: join(root, "workspace", ".claude", "commands"),
       }),
     );
+  });
+
+  it("splits app-global and workspace source input planning by owner", () => {
+    const root = tempRoot("split-source-inputs");
+    const host = testHost(root);
+    const appInputs = buildAppGlobalSourceWatchInputs({
+      extensionsRoot: join(root, "extensions"),
+      host,
+      workflowsSourceRoot: join(root, "workflows"),
+    });
+    const workspaceInputs = buildWorkspaceSourceWatchInputs({
+      cwd: join(root, "workspace"),
+      host,
+    });
+
+    expect(new Set(appInputs.map((input) => input.domain))).toEqual(
+      new Set(["extensions", "workflows"]),
+    );
+    expect(appInputs.some((input) => input.domain === "host_snippets")).toBe(false);
+    expect(appInputs.some((input) => input.domain === "external_instructions")).toBe(false);
+    expect(new Set(workspaceInputs.map((input) => input.domain))).toEqual(
+      new Set(["external_instructions", "host_snippets"]),
+    );
+    expect(workspaceInputs.some((input) => input.domain === "extensions")).toBe(false);
+    expect(workspaceInputs.some((input) => input.domain === "workflows")).toBe(false);
   });
 
   it("adds external instruction candidates for workspace ancestors and configured global roots", () => {
     const root = tempRoot("external-inputs");
     const workspace = join(root, "a", "b");
     const global = join(root, "global");
-    const inputs = buildSourceWatchInputs({
-      agentDir: join(root, "pi"),
-      cwdByWorkspaceId: new Map([["workspace:1", workspace]]),
-      externalInstructionsByWorkspaceId: new Map([
-        [
-          "workspace:1",
+    const inputs = buildWorkspaceSourceWatchInputs({
+      cwd: workspace,
+      externalInstructions: {
+        globalRoots: [
           {
-            globalControls: {},
-            globalRoots: [
-              {
-                enabled: true,
-                id: "global",
-                kind: "custom",
-                label: "Global",
-                path: global,
-              },
-            ],
-            workspaceControls: {},
+            enabled: true,
+            path: global,
           },
         ],
-      ]),
-      extensionsRoot: join(root, "extensions"),
-      workflowsSourceRoot: join(root, "workflows"),
+      },
+      host: testHost(root),
     });
 
     expect(inputs).toContainEqual(
       expect.objectContaining({
-        domain: "external-instructions",
+        domain: "external_instructions",
         kind: "file",
         path: join(global, "AGENTS.md"),
       }),
     );
     expect(inputs).toContainEqual(
       expect.objectContaining({
-        domain: "external-instructions",
+        domain: "external_instructions",
         kind: "file",
         path: join(workspace, "CLAUDE.md"),
       }),
@@ -130,31 +109,51 @@ describe("source invalidation coordinator", () => {
   });
 });
 
-function testCoordinator(input: {
-  inputs: readonly SourceWatchInput[];
-  events: SourceInvalidationEvent[];
-}) {
-  return createSourceInvalidationCoordinator({
-    clearInterval: () => undefined,
-    clearTimeout: () => undefined,
-    debounceMs: 1,
-    onDomainsChanged: (event) => {
-      input.events.push(event);
+function testHost(homeDir: string): SourceInvalidationHost {
+  return {
+    homeDir,
+    path: {
+      dirname,
+      join,
+      resolve,
     },
-    readInputs: () => input.inputs,
-    reconciliationIntervalMs: 0,
-    setInterval: (() => 0) as unknown as typeof globalThis.setInterval,
-    setTimeout: ((callback: () => void) => {
-      queueMicrotask(callback);
-      return 0;
-    }) as typeof globalThis.setTimeout,
-    watchEnabled: false,
-  });
-}
-
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+    fileSystem: {
+      exists: existsSync,
+      isDirectory: (path) => {
+        try {
+          return statSync(path).isDirectory();
+        } catch {
+          return false;
+        }
+      },
+      isFile: (path) => {
+        try {
+          return statSync(path).isFile();
+        } catch {
+          return false;
+        }
+      },
+      readDirectory: (path) =>
+        readdirSync(path, { withFileTypes: true }).map((entry) => ({
+          name: entry.name,
+          kind: entry.isDirectory()
+            ? ("directory" as const)
+            : entry.isFile()
+              ? ("file" as const)
+              : ("other" as const),
+        })),
+      readFileString: (path) => readFileSync(path, "utf8"),
+    },
+    hashStrings: (parts) => {
+      const hash = createHash("sha256");
+      for (const part of parts) {
+        hash.update(part);
+        hash.update("\0");
+      }
+      return hash.digest("hex");
+    },
+    watch: () => ({ close: () => undefined }),
+  };
 }
 
 function tempRoot(name: string): string {

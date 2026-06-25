@@ -65,7 +65,7 @@ describe("surface display titles", () => {
       getSurfaceDisplayTitle(
         {
           workspaceSessionId: "session-1",
-          surface: "thread",
+          surface: "handler",
           surfacePiSessionId: "pi-thread-1",
           threadId: "thread-1",
         },

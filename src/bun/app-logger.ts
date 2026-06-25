@@ -1,12 +1,4 @@
-import type {
-  AppLogEntry,
-  AppLogLevel,
-  AppLogSource,
-  AppLogSummary,
-} from "../shared/workspace-contract";
-import type { AppLogStore } from "./app-log-store";
-
-export type BridgeLogLevel = "debug" | "info" | "warn" | "error";
+import type { AppLogEntry, AppLogLevel, AppLogSource, AppLogSummary } from "@svvy/core";
 
 export interface AppLogger {
   debug(source: AppLogSource, message: string, details?: AppLogDetails): AppLogEntry | null;
@@ -46,8 +38,30 @@ export type AppLoggerEvent =
       details?: AppLogDetails;
     };
 
+export interface AppLogAppender {
+  append(entry: AppLogAppendInput): AppLogEntry;
+  subscribe(listener: (entries: AppLogEntry[], summary: AppLogSummary) => void): () => void;
+}
+
+export interface AppLogAppendInput {
+  level: AppLogLevel;
+  source: AppLogSource;
+  message: string;
+  details?: Record<string, unknown>;
+  error?: unknown;
+  workspaceSessionId?: string;
+  surfacePiSessionId?: string;
+  threadId?: string;
+  workflowRunId?: string;
+  workflowTaskAttemptId?: string;
+  commandId?: string;
+  artifactId?: string;
+}
+
+export type BridgeLogLevel = "debug" | "info" | "warn" | "error";
+
 export interface CreateAppLoggerOptions {
-  store: AppLogStore;
+  appLogs: AppLogAppender;
   forwardBridgeLog?: (
     level: BridgeLogLevel,
     message: string,
@@ -73,45 +87,52 @@ export function createAppLogger(options: CreateAppLoggerOptions): AppLogger {
     error?: unknown,
   ): AppLogEntry | null => {
     try {
-      const entry = options.store.append({
+      const cleanDetails = stripRelatedIds(details);
+      return options.appLogs.append({
         level,
         source,
         message,
-        details: stripRelatedIds(details),
-        error,
-        workspaceSessionId: details?.workspaceSessionId,
-        surfacePiSessionId: details?.surfacePiSessionId,
-        threadId: details?.threadId,
-        workflowRunId: details?.workflowRunId,
-        workflowTaskAttemptId: details?.workflowTaskAttemptId,
-        commandId: details?.commandId,
-        artifactId: details?.artifactId,
+        ...(cleanDetails ? { details: cleanDetails } : {}),
+        ...(error !== undefined ? { error } : {}),
+        ...(details?.workspaceSessionId ? { workspaceSessionId: details.workspaceSessionId } : {}),
+        ...(details?.surfacePiSessionId ? { surfacePiSessionId: details.surfacePiSessionId } : {}),
+        ...(details?.threadId ? { threadId: details.threadId } : {}),
+        ...(details?.workflowRunId ? { workflowRunId: details.workflowRunId } : {}),
+        ...(details?.workflowTaskAttemptId
+          ? { workflowTaskAttemptId: details.workflowTaskAttemptId }
+          : {}),
+        ...(details?.commandId ? { commandId: details.commandId } : {}),
+        ...(details?.artifactId ? { artifactId: details.artifactId } : {}),
       });
-      options.forwardBridgeLog?.(
-        level,
-        entry.message,
-        source,
-        entryBridgeDetails(entry),
-        entry.error,
-      );
-      return entry;
     } catch (logError) {
       console.error("Failed to append app log:", logError);
       return null;
     }
   };
+  const forward = (entry: AppLogEntry | null): AppLogEntry | null => {
+    if (entry) {
+      options.forwardBridgeLog?.(
+        entry.level,
+        entry.message,
+        entry.source,
+        entryBridgeDetails(entry),
+        entry.error,
+      );
+    }
+    return entry;
+  };
 
   return {
-    debug: (source, message, details) => append("debug", source, message, details),
-    info: (source, message, details) => append("info", source, message, details),
-    warning: (source, message, details) => append("warn", source, message, details),
+    debug: (source, message, details) => forward(append("debug", source, message, details)),
+    info: (source, message, details) => forward(append("info", source, message, details)),
+    warning: (source, message, details) => forward(append("warn", source, message, details)),
     error: (source, message, errorOrDetails, details) => {
       if (isPlainDetails(errorOrDetails) && details === undefined) {
-        return append("error", source, message, errorOrDetails);
+        return forward(append("error", source, message, errorOrDetails));
       }
-      return append("error", source, message, details, errorOrDetails);
+      return forward(append("error", source, message, details, errorOrDetails));
     },
-    subscribe: (listener) => options.store.subscribe(listener),
+    subscribe: (listener) => options.appLogs.subscribe(listener),
   };
 }
 

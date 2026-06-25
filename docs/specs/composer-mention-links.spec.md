@@ -4,7 +4,8 @@
 
 This document defines `@` file and folder mentions as a composer path-link convenience, not as prompt-side context attachments.
 
-It is the source of truth for composer behavior, transcript behavior, path opening, persistence, and tests for composer mention links.
+It defines composer behavior, transcript behavior, path opening, and product requirements for
+composer mention links. Persistence contracts live in `@svvy/core`/`@svvy/state`.
 
 ## Purpose
 
@@ -13,7 +14,7 @@ It is the source of truth for composer behavior, transcript behavior, path openi
 The feature should let a user:
 
 - type `@` in the composer and autocomplete workspace files and folders
-- select a target and see it as a removable composer chip
+- select a target and insert it as normal editable `@path` text
 - send the message with the mentioned path preserved as normal user-visible text
 - see the sent mention rendered in the transcript as a clickable workspace path link
 
@@ -23,7 +24,10 @@ The goal is path-entry ergonomics, not automatic context loading.
 
 The PRD defines `svvy` as a coding app where the agent works inside real repositories through visible orchestrator and handler-thread surfaces.
 
-The existing execution model already gives agents repository file tools. Mentions should complement that model by making paths easier for the user to enter, while leaving file-reading behavior to the agent's ordinary tool use.
+The existing execution model already gives agents ordinary file inspection through Shell
+`exec_command`, prompt-only `cx` guidance when loaded, and file edits through `apply_patch`.
+Mentions should complement that model by making paths easier for the user to enter, while leaving
+file-reading behavior to the agent's ordinary tool use.
 
 Sources:
 
@@ -47,15 +51,21 @@ The adopted `svvy` direction is:
 - Mentions support files and folders.
 - Selecting an `@` result inserts normal editable `@path` text into the textarea. It does not create an attachment chip.
 - Paperclip picker selections, dropped files, and pasted files create removable attachment chips above the composer. They do not mutate textarea text.
-- Pasted, dropped, or picked files are stored as user attachments for composer and transcript rendering. File and folder attachments are passed to the agent as tagged attachment metadata containing their paths, without rendering that metadata as visible transcript prose.
-- Pasted, dropped, or picked images are also sent to pi as image content blocks. When model metadata does not list image input, the composer keeps the chip visible and warns that the provider may ignore or reject the image attachment.
+- Paperclip picker selections, dropped files, and pasted files submit typed attachment metadata
+  through the runtime message facade while creating removable renderer-visible chips above the
+  composer. `@svvy/state` persists submitted-message attachment metadata for composer and
+  transcript rendering. `@svvy/runtime` and `@svvy/pi-adapter` decide model-facing delivery,
+  including path metadata and image content blocks.
+- When model metadata does not list image input, the composer keeps the chip visible and warns that
+  the provider may ignore or reject the image attachment.
 - Sent mentions render in the conversation as actionable workspace path links.
 - The agent-facing message remains ordinary user text containing the path.
 - Mentions do not inject file contents into the prompt.
 - Mentions do not inject folder contents, folder summaries, or symbolic context-target blocks into the prompt.
 - Mentions do not create a separate agent context model.
 - Mentions are not used as proof that the agent read a file.
-- Read provenance should come from the files the agent actually reads through the repository API or other tool calls during its turn.
+- Read provenance should come from the files the agent actually reads through Shell, `cx`, or other
+  tool calls during its turn.
 - Workspace path discovery for autocomplete should be indexed or cached; the renderer must not scan the workspace tree on every keypress.
 - Transcript links must perform a real path action. Existing files should reveal in the OS file browser, existing folders should open, and missing paths should render as unavailable links. A dead anchor or no-op click is not complete.
 
@@ -210,7 +220,8 @@ A composer attachment chip should show:
 - enough path context to disambiguate when needed
 - a remove control
 
-Attachment chips are created only by picker, drag/drop, or paste. They are submitted as structured attachments and must not be serialized back into textarea text.
+Attachment chips are created only by the paperclip picker, drag/drop, or paste. The `@` mention
+picker never creates attachment chips and never serializes structured attachment metadata.
 
 Removing a chip removes only that structured attachment from composer state. It never rewrites textarea mention text.
 
@@ -231,7 +242,7 @@ Compare @src/mainview/ChatComposer.svelte with @src/mainview/prompt-history.ts.
 ```
 
 ```text
-Look at @src/bun/ before changing the bridge.
+Look at the runtime, desktop bridge, and state package contracts before changing the bridge.
 ```
 
 ## Transcript Rendering
@@ -257,12 +268,13 @@ If the user says:
 Please inspect @docs/progress.md.
 ```
 
-then the agent may choose to read `docs/progress.md` through the normal repository API. The mention itself does not cause any read.
+then the agent may choose to read `docs/progress.md` through normal tool use. The mention itself
+does not cause any read.
 
 This preserves a clean provenance model:
 
 - mentioned paths show what the user pointed at
-- repository API reads show what the agent actually inspected
+- tool reads show what the agent actually inspected
 
 ## Persistence Contract
 
@@ -270,9 +282,15 @@ This preserves a clean provenance model:
 
 The persisted sent message text is the durable record for composer mentions.
 
-Composer attachment state is structured prompt input. File and folder attachment chips are persisted as tagged attachment metadata that the transcript renders as tiles and the agent receives as path-first, workspace-relative context for normal tool inspection. Image attachment chips are persisted the same way and also contribute image content blocks for vision-capable models.
+Composer attachment state is durable submitted-message metadata and transcript tile input. File and
+folder attachment chips persist tagged path metadata only; they do not trigger prompt expansion,
+file reads, folder expansion, or a context-target contract. Image attachment chips persist the same
+metadata and may also contribute runtime-delivered image content blocks for vision-capable models.
 
-Agent-facing attachment context must lead with the readable workspace-relative path, not the attachment display name. If an attachment was imported from outside the workspace, the context points only at the copied `.svvy/attachments/user-input/...` path and does not expose or suggest the original absolute source path.
+Agent-visible attachment metadata must lead with the readable workspace-relative path, not the
+attachment display name. If an attachment was imported from outside the workspace, the metadata
+points only at the copied `.svvy/attachments/user-input/...` path and does not expose or suggest the
+original absolute source path.
 
 The transcript renderer recognizes `@workspace/path` text in user messages and renders matching paths as workspace links. It also recognizes tagged composer attachment metadata and renders it as file, folder, and image tiles instead of visible prompt prose.
 
@@ -292,7 +310,12 @@ If a transcript link points to a missing path, the renderer should show it as a 
 
 The mention picker should use a workspace path index or cache.
 
-The implementation builds the index on workspace open or first picker activation, then refreshes explicitly when requested.
+`@svvy/state` owns the authoritative path-index read model. `@svvy/state` commits path-index facts
+and returns `StateMutationResult.afterCommit`; `@svvy/runtime` maps those descriptors to typed
+notifications on workspace open or first picker activation. The renderer may request activation
+through bootstrap-provided facades and searches only a non-authoritative warm cache of that read
+model, but it refetches after typed runtime notifications and never traverses workspace files
+directly.
 
 The implementation must not traverse the full workspace tree on every keypress.
 
@@ -362,7 +385,7 @@ Section 13 in `docs/progress.md` is Composer Mention Links.
 All Section 13 progress items are required for the feature to count as complete:
 
 - indexed `@` autocomplete for workspace files and folders
-- removable composer chips
+- editable `@path` mention text
 - ordinary user-text serialization
 - actionable transcript links for existing files and folders
 - visibly unavailable transcript links for missing paths

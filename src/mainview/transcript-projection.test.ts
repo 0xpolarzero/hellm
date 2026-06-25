@@ -19,6 +19,11 @@ function commandRollup(commandId = "command-1"): WorkspaceCommandRollup {
     status: "succeeded",
     title: "Run execute_typescript",
     summary: "Read docs and ran tests.",
+    stdin: {
+      mode: "none",
+      canAttemptWrite: false,
+      acceptedWrites: [],
+    },
     childCount: 2,
     summaryChildCount: 1,
     traceChildCount: 1,

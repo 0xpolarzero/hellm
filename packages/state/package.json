@@ -1,0 +1,16 @@
+{
+  "name": "@svvy/state",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./session-navigation": "./src/session-navigation.ts",
+    "./structured-session-selectors": "./src/structured-session-selectors.ts",
+    "./structured-session-state": "./src/structured-session-state.ts"
+  },
+  "dependencies": {
+    "@svvy/core": "workspace:*",
+    "effect": "4.0.0-beta.84"
+  }
+}

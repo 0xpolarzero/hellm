@@ -3,7 +3,9 @@
 ## Status
 
 - Date: 2026-06-03
-- Status: accepted extension index; external file discovery remains in `docs/specs/extensions-and-tools.spec.md`
+- Status: accepted extension index; discovery/default enablement is governed by
+  `docs/specs/ambient-agent-resources-baseline.spec.md`, and freshness is governed by
+  `docs/specs/source-invalidation.spec.md`
 - Scope:
   - define discovered external instruction files as extension records
   - keep external instruction source read-only from Extension Managing
@@ -27,18 +29,16 @@ AGENTS.md
 CLAUDE.md
 ```
 
-Default usage:
-
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `loaded` |
-| Handler thread | `loaded` |
-| Workflow task agent | `loaded` |
+Default usage is per discovered file, not unconditional per actor. When both supported files exist
+in the same directory, `AGENTS.md` is enabled by default and `CLAUDE.md` is disabled by default.
+When only one supported file exists in a directory, that file is enabled by default. Defaults apply
+only until a persisted user control record exists. A file enters generated actor context only when
+it is enabled, readable, and selected for that actor kind.
 
 ## Tool Surface
 
 External Instructions exposes no native tools, no `svvyx` command namespace, and no generated
-TypeScript client.
+`execute_typescript` facade.
 
 ## Rules
 
@@ -47,5 +47,8 @@ TypeScript client.
 - Extension Managing may inspect their metadata and usage state.
 - Extension Managing must not expose the external files as editable extension source paths.
 
-Current detailed behavior is defined in `docs/specs/extensions-and-tools.spec.md`,
-"External Instructions".
+Detailed behavior and package ownership are defined across:
+
+- `docs/specs/extensions-and-tools.spec.md`, "Core Model"
+- `docs/prd.md`, "One Execution Model"
+- `docs/specs/source-invalidation.spec.md`

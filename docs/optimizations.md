@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: current performance guidance
+- Status: non-authoritative performance note; product behavior must be promoted to `docs/prd.md`, `docs/features.ts`, `docs/progress.md`, and the owning `docs/specs/**` file before implementation
 
 ## Durable State
 
@@ -16,18 +16,26 @@ Optimize around explicit product records instead of transcript replay:
 - episodes
 - artifacts
 - generated agent-context bindings
-- saved Workflows generated metadata
+- Workflows generated export metadata
 - app logs
 
 ## Workflows
 
-Saved Workflows visibility comes from the latest successful generated `@svvy/workflows` package.
+Workflows visibility comes from the latest successful generated `@svvyx/workflows` package facts
+persisted in `@svvy/state`.
 
-The Workflows pane should read generated export metadata and source/generated file links directly
-from the build output metadata instead of scanning transcripts or workspace files repeatedly.
+The Workflows pane reads the state-backed generated-package and Workflows read models for generated
+export metadata and source/generated file links. `@svvy/extensions` owns the generated output files,
+`@svvy/state` returns after-commit descriptors after generated-package facts commit, and
+`@svvy/runtime` publishes notifications, schedules generated-package refresh, and separately
+coordinates workspace-link repair.
 
-Workspace `.smithers/` authoring remains ordinary repository source and should be indexed like other
-workspace files when needed.
+Workspace `.smithers/` authoring remains ordinary repository source when it is real source:
+`.smithers/workflows/**`, `.smithers/prompts/**`, `.smithers/components/**`,
+`.smithers/agents/**`, `.smithers/package.json`, `.smithers/tsconfig.json`,
+`.smithers/bunfig.toml`, and `.smithers/preload.ts` may be indexed when needed. Exclude
+`.smithers/node_modules/**`, generated `@svvyx/*` links, Smithers execution state/databases, run
+artifacts, and generated package-resolution plumbing from source indexing.
 
 ## UI
 

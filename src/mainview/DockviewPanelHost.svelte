@@ -39,7 +39,7 @@
     type AgentContextActor,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
-  import type { ExtensionUsageState } from "../shared/extensions";
+  import type { ExtensionUsageState } from "@svvy/extensions";
   import type {
     WorkspaceHandlerThreadSummary,
     WorkspaceSessionSummary,
@@ -143,7 +143,7 @@
     getSurfaceDisplayTitle(
       controller?.target,
       sessions,
-      pane?.target?.surface === "thread" ? "Handler Thread" : "Orchestrator",
+      pane?.target?.surface === "handler" ? "Handler Thread" : "Orchestrator",
     ),
   );
   const visibleStreamMessage = $derived.by(() => {
@@ -156,7 +156,7 @@
   const editingUserMessageTimestamp = $derived(editDraft?.messageTimestamp ?? null);
   const activeSystemPrompt = $derived(resolvedSystemPrompt.trim());
   const composerExtensionActor = $derived<AgentContextActor>(
-    controller?.target.surface === "thread" ? "handler" : "orchestrator",
+    controller?.target.surface === "handler" ? "handler" : "orchestrator",
   );
   const composerExtensionUsage = $derived.by<Record<string, ExtensionUsageState>>(() => {
     void controllerRevision;
@@ -595,7 +595,7 @@
     void runtime.openSurface(
       {
         workspaceSessionId: controller.target.workspaceSessionId,
-        surface: "thread",
+        surface: "handler",
         surfacePiSessionId: thread.surfacePiSessionId,
         threadId: thread.threadId,
       },
@@ -627,7 +627,7 @@
       await runtime.sendPromptToTarget(
         {
           workspaceSessionId: controller.target.workspaceSessionId,
-          surface: "thread",
+          surface: "handler",
           surfacePiSessionId: targetThread.surfacePiSessionId,
           threadId: targetThread.threadId,
         },
@@ -760,7 +760,7 @@
         {#if activeSystemPrompt}
           <details class="surface-prompt-metadata">
             <summary>
-              <strong>{controller.target.surface === "thread" ? "Handler system prompt" : "Surface system prompt"}</strong>
+              <strong>{controller.target.surface === "handler" ? "Handler system prompt" : "Surface system prompt"}</strong>
               {#if promptBinding}
                 <span>revision {promptBinding.currentRevision}</span>
               {/if}
@@ -807,7 +807,7 @@
       {editDraft}
       {contextBudget}
       sessionName={surfaceDisplayTitle}
-      targetLabel={pane?.target?.surface === "thread" ? "Messaging handler thread" : "Messaging orchestrator"}
+      targetLabel={pane?.target?.surface === "handler" ? "Messaging handler thread" : "Messaging orchestrator"}
       worktreeLabel={runtime.branch ?? runtime.workspaceLabel}
       onOpenModelPicker={() => onOpenModelPicker(panelId)}
       onListModels={listModelsForComposer}

@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import { ExtensionDependencyApprovalStore } from "./extension-dependency-approval-store";
-import { createStructuredSessionStateStore } from "./structured-session-state";
+import { runtimeExtensionContextImpactStateFacadeFromStore } from "@svvy/state";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import {
   approveExtensionDependencyRequest,
@@ -39,9 +40,11 @@ import {
   runSvvyxRuntimeCommand,
   runSvvyxRuntimeGeneratedClientCommand,
 } from "./svvyx-runtime-command";
-import type { ExtensionCliRequirement } from "../shared/extensions";
+import type { AgentProfileId } from "@svvy/core";
+import type { ExtensionCliRequirement } from "@svvy/extensions";
 
 const tempDirs: string[] = [];
+const TEST_ORCHESTRATOR_AGENT_PROFILE_ID = "default-orchestrator" as AgentProfileId;
 
 function createSvvyDirectToolsForTest(
   options: Parameters<typeof createSvvyDirectTools>[0],
@@ -62,12 +65,12 @@ function readTextBlock(result: { content: Array<{ type: string; text?: string }>
 
 function parseExecStdoutJson(result: {
   content: Array<{ type: string; text?: string }>;
-  details: Record<string, unknown>;
+  details?: Record<string, unknown>;
 }): any {
   const output =
-    typeof result.details.stdout === "string" && result.details.stdout.trim().length > 0
+    typeof result.details?.stdout === "string" && result.details.stdout.trim().length > 0
       ? result.details.stdout
-      : typeof result.details.stderr === "string" && result.details.stderr.trim().length > 0
+      : typeof result.details?.stderr === "string" && result.details.stderr.trim().length > 0
         ? result.details.stderr
         : readTextBlock(result);
   return JSON.parse(output);
@@ -192,6 +195,7 @@ describe("svvyx extensions command", () => {
       description: "Linear issue and project workflow support.",
       interface: "svvyx",
       typescriptApiEnabled: true,
+      workflowTaskAgentReferenceExportEnabled: true,
       instructionFiles: [
         {
           file: "010-linear.md",
@@ -465,14 +469,18 @@ describe("svvyx extensions command", () => {
     ).toBe(true);
     expect(
       readFileSync(join(extensionsRoot, "generated", "package", "package.json"), "utf8"),
-    ).toContain('"name": "@svvy/extensions"');
+    ).toContain('"name": "@svvyx/extensions"');
     const generatedExtensionsIndex = readFileSync(
       join(extensionsRoot, "generated", "package", "index.ts"),
       "utf8",
     );
-    expect(generatedExtensionsIndex).toContain('"git": "git"');
-    expect(generatedExtensionsIndex).toContain('"linear": "linear"');
-    expect(generatedExtensionsIndex).toContain('"workflows": "workflows"');
+    expect(generatedExtensionsIndex).toContain('"git": {"id":"git"');
+    expect(generatedExtensionsIndex).toContain('"linear": {"id":"linear"');
+    expect(generatedExtensionsIndex).toContain('"base-workflow-task": {"id":"base-workflow-task"');
+    expect(generatedExtensionsIndex).not.toContain('"workflows": {"id":"workflows"');
+    expect(generatedExtensionsIndex).not.toContain(
+      '"request-user-input": {"id":"request-user-input"',
+    );
 
     const inspectAfter = await runSvvyxExtensionsCommand({
       command: "svvyx extensions inspect linear --json",
@@ -704,7 +712,7 @@ describe("svvyx extensions command", () => {
     expect(typesDeclaration).toContain(
       "result: Run.Result<{ value: string; tag: string }, LinearExtensionCommandMap>",
     );
-    expect(typesDeclaration).toContain("linear: LinearExtensionClient");
+    expect(typesDeclaration).toContain("linear: LinearExtensionFacade");
   });
 
   it("scaffolds and builds builtin svvyx sources with generated command schemas", async () => {
@@ -1078,7 +1086,7 @@ describe("svvyx extensions command", () => {
     );
     const text = readTextBlock(result);
     expect(text).toContain("command not found: svvyx");
-    expect(result.details).toMatchObject({
+    expect(result.details!).toMatchObject({
       stdout: "",
       exitCode: 127,
     });
@@ -1124,8 +1132,8 @@ describe("svvyx extensions command", () => {
       argv: ["--help"],
       exitCode: 0,
     });
-    expect(result.details).toMatchObject({ exitCode: 0 });
-    expect(result.details).not.toHaveProperty("commandFacts");
+    expect(result.details!).toMatchObject({ exitCode: 0 });
+    expect(result.details!).not.toHaveProperty("commandFacts");
   });
 
   it("injects app-managed non-secret env overrides through exec_command svvyx dispatch", async () => {
@@ -1205,8 +1213,8 @@ describe("svvyx extensions command", () => {
       baseUrl: "https://linear.example.test",
       label: "configured-label",
     });
-    expect(result.details).toMatchObject({ exitCode: 0 });
-    expect(result.details).not.toHaveProperty("commandFacts");
+    expect(result.details!).toMatchObject({ exitCode: 0 });
+    expect(result.details!).not.toHaveProperty("commandFacts");
   });
 
   it("blocks dependency-backed current builds with missing package artifacts before runtime invocation", async () => {
@@ -1473,8 +1481,8 @@ describe("svvyx extensions command", () => {
       usage: "svvyx <extension-id> <extension-command> ...",
       note: "Use list_extensions or svvyx extensions inspect for extension discovery.",
     });
-    expect(result.details).toMatchObject({ exitCode: 0 });
-    expect(result.details).not.toHaveProperty("commandFacts");
+    expect(result.details!).toMatchObject({ exitCode: 0 });
+    expect(result.details!).not.toHaveProperty("commandFacts");
   });
 
   it("manages user full instruction files without editing body text", async () => {
@@ -2585,7 +2593,7 @@ describe("svvyx extensions command", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       messageCount: 0,
       status: "idle",
       createdAt: "2026-06-09T00:00:00.000Z",
@@ -2600,7 +2608,8 @@ describe("svvyx extensions command", () => {
     const revert = await runSvvyxExtensionsCommand({
       command: `svvyx extensions revert ${changeId} --json`,
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
 
     expect(revert.output).toMatchObject({
@@ -3246,7 +3255,7 @@ describe("svvyx extensions command", () => {
     });
   });
 
-  it("redacts exact secret values from generated client result data and error data", async () => {
+  it("redacts exact secret values from generated runtime facade result data and error data", async () => {
     const extensionsRoot = createTempDir();
     const extensionId = "test-secret";
     const sourceRoot = join(extensionsRoot, "sources", "user", extensionId);
@@ -4501,7 +4510,7 @@ describe("svvyx extensions command", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       generatedAgentContextFingerprint: "session-fingerprint-before-snapshot-load",
       loadedExtensionIds: ["notes", "scratch"],
       availableExtensionIds: ["linear", "scratch"],
@@ -4516,7 +4525,7 @@ describe("svvyx extensions command", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       generatedAgentContextFingerprint: "session-fingerprint-before-usage-only-snapshot",
       loadedExtensionIds: ["base-common"],
       availableExtensionIds: [],
@@ -4565,7 +4574,8 @@ describe("svvyx extensions command", () => {
       cliProbe: (requirement) => cliStatus(requirement, { status: "available" }),
       cwd,
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
 
     expect(loaded.output).toMatchObject({
@@ -4722,7 +4732,7 @@ describe("svvyx extensions command", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       generatedAgentContextFingerprint: "session-fingerprint-before-broken-snapshot",
       loadedExtensionIds: ["linear"],
       availableExtensionIds: [],
@@ -4735,7 +4745,8 @@ describe("svvyx extensions command", () => {
     const loaded = await runSvvyxExtensionsCommand({
       command: `svvyx extensions snapshots load ${snapshotId} --json`,
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
 
     expect(loaded.output).toMatchObject({
@@ -5382,7 +5393,7 @@ describe("svvyx extensions command", () => {
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       messageCount: 0,
       status: "idle",
       createdAt: "2026-06-09T00:00:00.000Z",
@@ -5391,7 +5402,8 @@ describe("svvyx extensions command", () => {
     const structuredBuild = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
     expect(structuredBuild.output).toMatchObject({
       contextReady: true,
@@ -5657,7 +5669,7 @@ describe("svvyx extensions command", () => {
     const output = parseExecStdoutJson(result);
     expect(JSON.stringify(output)).not.toContain("keychain-token-value");
     expect(JSON.stringify(result)).not.toContain("keychain-token-value");
-    expect(result.details).not.toHaveProperty("commandFacts");
+    expect(result.details!).not.toHaveProperty("commandFacts");
   });
 
   it("allows app secret management only for declared secret env requirements", async () => {
@@ -5904,7 +5916,7 @@ describe("svvyx extensions command", () => {
           return cliStatus(requirement, { status: "missing" });
         }
         if (requirement.id === "smithers-orchestrator") {
-          return cliStatus(requirement, { path: "/usr/local/bin/smithers", status: "unknown" });
+          return cliStatus(requirement, { path: "/usr/local/bin/bunx", status: "unknown" });
         }
         if (requirement.id === "cx") {
           return cliStatus(requirement, {
@@ -5952,9 +5964,9 @@ describe("svvyx extensions command", () => {
       issues: [{ code: "CLI_STATUS_UNKNOWN" }],
     });
     expect(smithers?.requirements.cliRequirements[0]).toMatchObject({
-      binary: "smithers",
+      binary: "bunx",
       currentVersion: null,
-      path: "/usr/local/bin/smithers",
+      path: "/usr/local/bin/bunx",
       status: "unknown",
     });
   });
@@ -7444,7 +7456,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       messageCount: 0,
       status: "idle",
       createdAt: "2026-06-09T00:00:00.000Z",
@@ -7456,7 +7468,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       command:
         "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json",
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
     const output = result.output as any;
 
@@ -7492,7 +7505,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentSettingsStore,
       command: `svvyx extensions revert ${output.changeId} --json`,
       extensionsRoot,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
     });
     expect((reverted.output as any).result).toMatchObject({
       kind: "extension_usage",
@@ -7527,7 +7541,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      orchestratorAgentProfileId: TEST_ORCHESTRATOR_AGENT_PROFILE_ID,
       messageCount: 0,
       status: "idle",
       createdAt: "2026-06-09T00:00:00.000Z",
@@ -7537,7 +7551,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(() =>
       setExtensionUsage({
         agentSettingsStore,
-        structuredSessionStore,
+        extensionContextImpactState:
+          runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
         extensionsRoot,
         extensionId: "extension-loading",
         agentProfile: "default-orchestrator",
@@ -7547,7 +7562,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     const result = setExtensionUsage({
       agentSettingsStore,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
       extensionsRoot,
       extensionId: "smithers",
       agentProfile: "default-orchestrator",
@@ -7576,7 +7592,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     const restored = setExtensionUsage({
       agentSettingsStore,
-      structuredSessionStore,
+      extensionContextImpactState:
+        runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
       extensionsRoot,
       extensionId: "smithers",
       agentProfile: "default-orchestrator",
@@ -8034,7 +8051,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       cwd: "/repo/svvy",
       extensionsRoot,
       cliProbe: (requirement) =>
-        cliStatus(requirement, { path: "/usr/local/bin/smithers", status: "unknown" }),
+        cliStatus(requirement, { path: "/usr/local/bin/bunx", status: "unknown" }),
     });
 
     expect(cxResult.output).toMatchObject({
@@ -8057,9 +8074,9 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionId: "smithers",
         cli: {
           id: "smithers-orchestrator",
-          binary: "smithers",
+          binary: "bunx",
           currentVersion: null,
-          path: "/usr/local/bin/smithers",
+          path: "/usr/local/bin/bunx",
         },
       },
     });

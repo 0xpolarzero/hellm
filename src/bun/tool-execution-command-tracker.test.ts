@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { createPromptExecutionContext } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import { nativeToolCommandMetadata } from "@svvy/extensions";
+import { createPromptExecutionContext } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
+import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
+import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -53,11 +57,12 @@ function createPromptContext(store: StructuredSessionStateStore) {
   });
 
   return createPromptExecutionContext({
-    sessionId: "session-tool-tracker",
+    workspaceSessionId: "session-tool-tracker",
     turnId: turn.id,
     surfacePiSessionId: "session-tool-tracker",
-    surfaceThreadId: rootThread.id,
-    promptText: "Track tool commands",
+    threadId: rootThread.id,
+    generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+    generatedAgentContextRevision: "generated_context_revision_test",
   });
 }
 
@@ -83,21 +88,53 @@ function createHandlerPromptContext(store: StructuredSessionStateStore) {
     orchestratorThreadId: orchestratorThread.id,
     handlerThreadId: handlerThread.id,
     promptContext: createPromptExecutionContext({
-      sessionId: "session-tool-tracker",
+      workspaceSessionId: "session-tool-tracker",
       turnId: turn.id,
       surfacePiSessionId: handlerThread.surfacePiSessionId,
-      surfaceThreadId: handlerThread.id,
+      threadId: handlerThread.id,
       surfaceKind: "handler",
-      promptText: "Inspect the workspace",
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     }),
+  };
+}
+
+function createTracker(
+  store: StructuredSessionStateStore,
+  options: Omit<
+    Parameters<typeof createToolExecutionCommandTracker>[0],
+    "commandState" | "stateWrites" | "turnState"
+  >,
+) {
+  return createToolExecutionCommandTracker({
+    ...options,
+    commandState: runtimeCommandStatePortFromStore(store),
+    stateWrites: createImmediateRuntimeStateWriteLane(),
+    turnState: runtimeTurnStatePortFromStore(store),
+  });
+}
+
+function createImmediateRuntimeStateWriteLane(): RuntimeStateWriteLane {
+  return {
+    run(effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    enqueue(_label, effect) {
+      return Promise.resolve(Effect.runSync(effect));
+    },
+    drain() {
+      return Promise.resolve();
+    },
+    close() {
+      return Promise.resolve();
+    },
   };
 }
 
 describe("tool execution command tracker", () => {
   it("creates a running command record at tool start before any result arrives", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -124,8 +161,7 @@ describe("tool execution command tracker", () => {
   it("records generic tool executions as structured commands", () => {
     const store = createStore();
     const appLogEvents: AppLoggerEvent[] = [];
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
       onAppLog: (event) => appLogEvents.push(event),
     });
@@ -197,8 +233,7 @@ describe("tool execution command tracker", () => {
 
   it("settles apply_patch command records from authoritative final command facts", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -280,8 +315,7 @@ describe("tool execution command tracker", () => {
 
   it("persists failed apply_patch command facts with errors", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
     const patch = [
@@ -352,11 +386,10 @@ describe("tool execution command tracker", () => {
     );
   });
 
-  it("records generic tool executions against the active surface thread", () => {
+  it("does not create command records for unregistered native tools", () => {
     const store = createStore();
-    const { handlerThreadId, promptContext } = createHandlerPromptContext(store);
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const { promptContext } = createHandlerPromptContext(store);
+    const tracker = createTracker(store, {
       promptContext,
     });
 
@@ -375,21 +408,14 @@ describe("tool execution command tracker", () => {
     });
 
     const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "read",
-        threadId: handlerThreadId,
-        summary: "Loaded docs/prd.md",
-      }),
-    ]);
+    expect(snapshot.commands).toEqual([]);
     expect(snapshot.turns[0]?.turnDecision).toBe("pending");
   });
 
   it("records shell-routed CLI command surfaces as ordinary summary commands", () => {
     const store = createStore();
     const appLogEvents: AppLoggerEvent[] = [];
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
       onAppLog: (event) => appLogEvents.push(event),
     });
@@ -397,7 +423,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-cli",
       toolName: "exec_command",
-      args: { cmd: "smithers ps" },
+      args: { cmd: "bunx smithers-orchestrator ps" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-cli",
@@ -436,7 +462,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-shell-segment",
       toolName: "exec_command",
-      args: { cmd: "cd .smithers && smithers list" },
+      args: { cmd: "cd .smithers && bunx smithers-orchestrator ps" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-shell-segment",
@@ -531,8 +557,7 @@ describe("tool execution command tracker", () => {
 
   it("records exec_command stdout and stderr as durable command output events", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -590,8 +615,7 @@ describe("tool execution command tracker", () => {
 
   it("does not duplicate exec_command streams already recorded from live output", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -643,8 +667,7 @@ describe("tool execution command tracker", () => {
 
   it("does not add final-result text when intercepted commands already recorded live output", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -697,8 +720,7 @@ describe("tool execution command tracker", () => {
   it("emits Smithers app logs for shell-routed Smithers command failures", () => {
     const store = createStore();
     const appLogEvents: AppLoggerEvent[] = [];
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
       onAppLog: (event) => appLogEvents.push(event),
     });
@@ -706,7 +728,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-failed",
       toolName: "exec_command",
-      args: { cmd: "smithers inspect run-missing" },
+      args: { cmd: "bunx smithers-orchestrator inspect run-missing" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-failed",
@@ -741,8 +763,7 @@ describe("tool execution command tracker", () => {
 
   it("records command facts from failed svvyx exec_command error payloads", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -792,8 +813,7 @@ describe("tool execution command tracker", () => {
 
   it("marks structured svvyx ok:false exec_command results as failed command records", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -877,8 +897,7 @@ describe("tool execution command tracker", () => {
 
   it("does not normalize removed bash tool calls into exec_command", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -897,36 +916,24 @@ describe("tool execution command tracker", () => {
     });
 
     const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "bash",
-        status: "succeeded",
-        summary: "legacy command surface",
-      }),
-    ]);
+    expect(snapshot.commands).toEqual([]);
     expect(snapshot.turns[0]?.turnDecision).toBe("pending");
   });
 
   it("ignores native control tools that already own structured command writes", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
-    for (const toolName of [
-      "list_extensions",
-      "load_extension",
-      "thread_start",
-      "thread_followup",
-      "thread_request_report",
-      "thread_current",
-      "thread_list",
-      "thread_episodes",
-      "thread_group",
-      "thread_report",
-      "request_user_input",
-    ]) {
+    const toolNames = nativeToolCommandMetadata
+      .filter((metadata) => metadata.executionCommand === "self-recorded-command")
+      .map((metadata) => metadata.toolName);
+
+    expect(toolNames).toContain("execute_typescript");
+    expect(toolNames).toContain("thread_start");
+
+    for (const toolName of toolNames) {
       tracker.handleToolExecutionStart({
         toolCallId: `tool-call-${toolName}`,
         toolName,
@@ -948,8 +955,7 @@ describe("tool execution command tracker", () => {
 
   it("ignores execute_typescript because the runtime records its own parent and child commands", () => {
     const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
     });
 
@@ -971,11 +977,10 @@ describe("tool execution command tracker", () => {
     expect(snapshot.commands).toHaveLength(0);
   });
 
-  it("marks dangling tracked commands as failed or cancelled", () => {
+  it("does not mark dangling commands for unregistered native tools", () => {
     const store = createStore();
     const appLogEvents: AppLoggerEvent[] = [];
-    const tracker = createToolExecutionCommandTracker({
-      store,
+    const tracker = createTracker(store, {
       promptContext: createPromptContext(store),
       onAppLog: (event) => appLogEvents.push(event),
     });
@@ -991,26 +996,7 @@ describe("tool execution command tracker", () => {
     });
 
     const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "read",
-        status: "cancelled",
-        error: "Prompt execution ended before the tool run finished.",
-      }),
-    ]);
-    expect(appLogEvents).toContainEqual(
-      expect.objectContaining({
-        level: "warning",
-        source: "direct-tool",
-        message: "Direct tool cancelled.",
-        details: expect.objectContaining({
-          workspaceSessionId: "session-tool-tracker",
-          surfacePiSessionId: "session-tool-tracker",
-          commandId: snapshot.commands[0]!.id,
-          toolName: "read",
-          errorMessage: "Prompt execution ended before the tool run finished.",
-        }),
-      }),
-    );
+    expect(snapshot.commands).toEqual([]);
+    expect(appLogEvents).toEqual([]);
   });
 });

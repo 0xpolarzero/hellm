@@ -61,7 +61,7 @@ The adopted `svvy` direction is:
 - the composer preserves the user's unsent draft while browsing history
 - history is shared across sessions within the same workspace
 - history is not shared across different workspaces by default
-- non-empty user prompts are recorded only after backend queue acceptance
+- non-empty user prompts are recorded only after runtime queue acceptance
 - explicit history search is a separate capability and should not be overloaded onto plain arrow navigation
 
 Nothing below should be read as leaving those points open.
@@ -165,7 +165,7 @@ The useful lesson is:
 - persistent history across sessions is expected
 - search and recall are related but separable behaviors
 
-For `svvy`, filtered search on plain arrows is not adopted in v1.
+For `svvy`, filtered search on plain arrows is not adopted.
 
 ## Adopted Behavior
 
@@ -193,7 +193,7 @@ Prompt history stores only prompts that are:
 - user-authored
 - explicitly submitted
 - non-empty after trimming for submit validation
-- accepted by the backend surface queue
+- accepted by the runtime surface queue
 
 The stored value is the exact submitted text.
 
@@ -202,14 +202,15 @@ Recommended metadata:
 - `text`
 - `sentAt`
 - `workspaceId`
-- `sessionId`
+- `workspaceSessionId`
+- `surfacePiSessionId`
 
 ### Decision
 
-Prompt history is written only after backend queue acceptance. Pre-accept validation failures,
-provider access rejection, target lookup failure, or interrupted backend acceptance must leave the
+Prompt history is written only after runtime queue acceptance. Pre-accept validation failures,
+provider access rejection, target lookup failure, or interrupted runtime acceptance must leave the
 live composer draft intact and must not create a history entry. A local prompt-history refresh
-failure after backend acceptance must not turn the accepted send into a rejected composer submit.
+failure after runtime acceptance must not turn the accepted send into a rejected composer submit.
 
 ### Decision
 
@@ -273,7 +274,7 @@ When the user moves forward past the newest stored history entry:
 - history-navigation mode ends
 - the preserved temporary draft is restored exactly
 
-This is the multiline-composer equivalent of Readline's "current line being entered".
+This is the multiline-composer equivalent of restoring the current draft being edited.
 
 ### Decision
 
@@ -304,13 +305,14 @@ Navigating away from a modified recalled entry should not mutate the stored hist
 If the user sends a recalled or edited recalled prompt:
 
 - the current buffer is submitted
-- after backend queue acceptance, that submitted text becomes the newest history entry
+- after runtime queue acceptance, that submitted text becomes the newest history entry
 - history-navigation mode ends
-- the composer returns to the normal empty-draft state from the accepted backend snapshot
+- the composer returns to the normal empty-draft state after runtime queue acceptance and read-model
+  refetch
 
 ### Decision
 
-If send fails before the runtime accepts the prompt:
+If send fails before runtime queue acceptance:
 
 - the exact buffer should be restored
 - the user's browsing state should remain recoverable rather than silently discarded
@@ -364,13 +366,15 @@ This spec does not change transcript ownership or session semantics.
 
 ### Decision
 
-Prompt history should be persisted locally so it survives app restarts.
+Prompt history is persisted by `@svvy/state` as workspace-scoped product state so it survives app
+restarts.
 
 ### Decision
 
 The persistence boundary should match workspace identity.
 
-The exact storage backend is an implementation detail and is not specified here.
+The exact SQLite tables, transaction helpers, and storage implementation details stay private to
+`@svvy/state`. Public callers use the approved runtime facade, state read/command facades, and read models.
 
 ### Out Of Scope
 
@@ -401,22 +405,30 @@ This feature is not trying to:
 The implementation should be split conceptually into two layers:
 
 - transient composer navigation state
-- persistent workspace-scoped prompt history storage
+- persistent workspace-scoped prompt history state in `@svvy/state`
 
 The persistent store should not live only inside the current session's in-memory message list.
 
 ### Decision
 
-The composer should receive a linear history view that is already filtered to the current workspace.
+The composer should receive a linear prompt-history read model that is already filtered to the
+current workspace.
 
 This keeps the keyboard logic simple and avoids coupling the composer to session-loading policy.
 
 ## Storage Boundary
 
-These storage details are implementation choices:
+After `@svvy/runtime` accepts a non-empty user message into the durable surface queue, prompt history
+is recorded through the runtime-facing state port in the same queue-acceptance transaction.
+Renderer-local navigation state may select older/newer entries, but it does not own persistent
+history. `@svvy/state` returns `StateMutationResult.afterCommit`; `@svvy/runtime` publishes typed
+prompt-history/read-model invalidations; desktop refetches through the state read facade after those
+notifications. Refresh failures do not reject the accepted send.
+
+These storage details are `@svvy/state` implementation choices:
 
 - the exact workspace identity key
-- the exact local storage format and file location
+- the exact table/index shape
 - whether duplicate compaction should ever exist as an optional setting
 - whether "private" or "do not persist this prompt" modes should exist
 - whether reverse search should be inline, modal, or popover-based

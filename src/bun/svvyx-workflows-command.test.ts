@@ -9,7 +9,7 @@ import {
   runSvvyxWorkflowsCommand,
   type SvvyxWorkflowsModelChoice,
 } from "./svvyx-workflows-command";
-import type { ExtensionCliRequirement } from "../shared/extensions";
+import type { ExtensionCliRequirement } from "@svvy/extensions";
 
 const tempDirs: string[] = [];
 

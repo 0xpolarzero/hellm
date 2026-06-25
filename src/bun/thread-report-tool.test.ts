@@ -2,12 +2,19 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import * as Effect from "effect/Effect";
+import type { PromptExecutionRuntimeHandle } from "@svvy/core";
 import { createThreadReportTool } from "./thread-report-tool";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeEpisodeStatePortFromStore,
+  runtimeReadModelStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
-} from "./structured-session-state";
+} from "@svvy/state/structured-session-state";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -69,26 +76,40 @@ function createHandlerRuntime(store: StructuredSessionStateStore): PromptExecuti
 
   return {
     current: {
-      sessionId: "session-thread-report-tool",
+      workspaceSessionId: "session-thread-report-tool",
       turnId: turn.id,
       surfacePiSessionId: "pi-thread-report-001",
-      surfaceThreadId: thread.id,
+      threadId: thread.id,
       surfaceKind: "handler",
       defaultEpisodeKind: "change",
       rootThreadId: thread.id,
-      promptText: "Report from handler",
       rootEpisodeKind: "change",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
+      loadedExtensionIds: [],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
     },
+  };
+}
+
+function createThreadReportToolOptions(store: StructuredSessionStateStore) {
+  return {
+    commandState: runtimeCommandStatePortFromStore(store),
+    episodeState: runtimeEpisodeStatePortFromStore(store),
+    readModelState: runtimeReadModelStatePortFromStore(store),
+    turnState: runtimeTurnStatePortFromStore(store),
+    runState: Effect.runSync,
   };
 }
 
 describe("thread_report tool", () => {
   it("requires a handler prompt runtime", async () => {
+    const store = createStore();
     const tool = createThreadReportTool({
       runtime: { current: null },
-      store: createStore(),
+      ...createThreadReportToolOptions(store),
       queueThreadReportNotification: async () => {
         throw new Error("unexpected notification");
       },
@@ -107,7 +128,7 @@ describe("thread_report tool", () => {
     const notifications: string[] = [];
     const tool = createThreadReportTool({
       runtime,
-      store,
+      ...createThreadReportToolOptions(store),
       queueThreadReportNotification: async (request) => {
         notifications.push(request.episode.id);
       },
@@ -143,7 +164,7 @@ describe("thread_report tool", () => {
   it("concludes the objective when outcome is present", async () => {
     const store = createStore();
     const runtime = createHandlerRuntime(store);
-    const threadId = runtime.current!.surfaceThreadId!;
+    const threadId = runtime.current!.threadId!;
     const existingCommand = store.createCommand({
       turnId: runtime.current!.turnId,
       surfacePiSessionId: runtime.current!.surfacePiSessionId,
@@ -164,7 +185,7 @@ describe("thread_report tool", () => {
     const sourcePath = join(sourceDir, "summary.md");
     writeFileSync(sourcePath, "# Summary\n");
     const existingArtifact = store.createArtifact({
-      sessionId: runtime.current!.sessionId,
+      sessionId: runtime.current!.workspaceSessionId,
       threadId,
       sourceCommandId: existingCommand.id,
       kind: "text",
@@ -173,7 +194,7 @@ describe("thread_report tool", () => {
     });
     const tool = createThreadReportTool({
       runtime,
-      store,
+      ...createThreadReportToolOptions(store),
       queueThreadReportNotification: async () => {},
     });
 
@@ -213,7 +234,7 @@ describe("thread_report tool", () => {
     const runtime = createHandlerRuntime(store);
     const tool = createThreadReportTool({
       runtime,
-      store,
+      ...createThreadReportToolOptions(store),
       queueThreadReportNotification: async () => {},
     });
 
@@ -247,7 +268,7 @@ describe("thread_report tool", () => {
     const runtime = createHandlerRuntime(store);
     const tool = createThreadReportTool({
       runtime,
-      store,
+      ...createThreadReportToolOptions(store),
       queueThreadReportNotification: async () => {
         throw new Error("queue unavailable");
       },
