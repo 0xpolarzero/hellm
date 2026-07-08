@@ -39,6 +39,7 @@ import {
   type RuntimeApprovalId,
   type SandboxLaunchFacts,
   type SurfacePiSessionId,
+  type WorkspaceId,
 } from "@svvy/core";
 import { RuntimeEventBus } from "../../packages/runtime/src/runtime-event-bus";
 import { answerRuntimeApproval } from "../../packages/runtime/src/runtime-approval-answer";
@@ -732,6 +733,33 @@ function hasAssistantReply(messages: readonly AgentMessage[], text: string): boo
 }
 
 describe("WorkspaceSessionCatalog", () => {
+  it("exposes the same structured store instance backing catalog state ports", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    const { store } = catalog.workspaceStateRouterRegistration();
+    const createOrchestratorSurface = store.createOrchestratorSurface.bind(store);
+    let invoked = false;
+    store.createOrchestratorSurface = ((input) => {
+      invoked = true;
+      return createOrchestratorSurface(input);
+    }) satisfies StructuredSessionStateStore["createOrchestratorSurface"];
+
+    try {
+      const created = await runCatalogEffect(
+        catalog.getRuntimeSurfaceLifecycleStatePort().createOrchestratorSurface({
+          workspaceId: store.workspaceId as WorkspaceId,
+          title: "Accessor Wiring",
+        }),
+      );
+
+      expect(created.value.workspaceSessionId).toBeDefined();
+      expect(invoked).toBe(true);
+    } finally {
+      store.createOrchestratorSurface = createOrchestratorSurface;
+    }
+  });
+
   it("writes generated agent context entries into workspace-owned files", () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);

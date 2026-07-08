@@ -7431,13 +7431,29 @@ describe("package boundaries", () => {
     expect(actualInternalPiAdapterImports).toEqual(expectedInternalPiAdapterImports);
   });
 
-  it("Bun production code does not expose structured store escape hatches", () => {
-    const structuredStoreGetterViolations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+  it("Bun code exposes structured-session store access only as the router registration seam", () => {
+    const oldStructuredStoreGetterUses = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
       .filter((file) => /\bgetStructuredSessionStore\b/.test(readSource(file)))
-      .map(display);
+      .map(display)
+      .toSorted();
 
-    expect(structuredStoreGetterViolations).toEqual([]);
+    expect(oldStructuredStoreGetterUses).toEqual([]);
+
+    const routerRegistrationSeamOwners = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .filter((file) => /\bworkspaceStateRouterRegistration\s*\(/.test(readSource(file)))
+      .map(display)
+      .toSorted();
+
+    expect(routerRegistrationSeamOwners).toEqual(["src/bun/session-catalog.ts"]);
+
+    const routerRegistrationCallSites = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => /\.\s*workspaceStateRouterRegistration\s*\(/.test(readSource(file)))
+      .map(display)
+      .toSorted();
+
+    expect(routerRegistrationCallSites).toEqual(["src/bun/session-catalog.test.ts"]);
   });
 
   it("extension context impact store adapter stays inside the catalog bootstrap edge", () => {

@@ -201,6 +201,7 @@ import {
   runtimeThreadStatePortFromStore,
   runtimeTurnStatePortFromStore,
   runtimeWorkspaceStatePortFromStore,
+  type WorkspaceStateRegistration,
 } from "@svvy/state/structured-session-adapters";
 import type { AppLoggerEvent } from "./app-logger";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
@@ -886,6 +887,10 @@ export class WorkspaceSessionCatalog {
 
   getExtensionStatePort(): ExtensionStatePortService {
     return extensionStatePortFromStore(this.structuredSessionStore);
+  }
+
+  workspaceStateRouterRegistration(): WorkspaceStateRegistration {
+    return { store: this.structuredSessionStore };
   }
 
   getRuntimeQueueStatePort(): RuntimeQueueStatePortService {

@@ -150,6 +150,16 @@ function targetNotFound(operation: string, detail: string): StateContractError {
   });
 }
 
+interface FanOutSweepPartialFailurePayload<A> {
+  readonly kind: "workspace-state-router.fan-out-sweep-partial-failure";
+  readonly committed: StateMutationResult<readonly A[]>;
+  readonly failures: readonly StateContractError[];
+}
+
+type FanOutSweepOutcome<A> =
+  | { readonly ok: true; readonly result: StateMutationResult<readonly A[]> }
+  | { readonly ok: false; readonly error: StateContractError };
+
 type StoreProbe = (store: StructuredSessionStateStore) => boolean;
 
 const surfaceProbe =
@@ -320,15 +330,41 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     Effect.forEach(allStores, run).pipe(Effect.map((lists) => lists.flatMap((list) => list)));
 
   const fanOutMutationList = <A>(
+    operation: string,
     run: (
       registered: RegisteredStore,
     ) => Effect.Effect<StateMutationResult<readonly A[]>, StateContractError>,
   ): Effect.Effect<StateMutationResult<readonly A[]>, StateContractError> =>
-    Effect.forEach(allStores, run).pipe(
-      Effect.map((results) => ({
-        value: results.flatMap((result) => result.value),
-        afterCommit: results.flatMap((result) => result.afterCommit),
-      })),
+    Effect.forEach(allStores, (registered) =>
+      Effect.matchEffect(run(registered), {
+        onFailure: (error): Effect.Effect<FanOutSweepOutcome<A>> =>
+          Effect.succeed({ ok: false, error }),
+        onSuccess: (result): Effect.Effect<FanOutSweepOutcome<A>> =>
+          Effect.succeed({ ok: true, result }),
+      }),
+    ).pipe(
+      Effect.flatMap((outcomes) => {
+        const committed: StateMutationResult<readonly A[]> = {
+          value: outcomes.flatMap((outcome) => (outcome.ok ? outcome.result.value : [])),
+          afterCommit: outcomes.flatMap((outcome) =>
+            outcome.ok ? outcome.result.afterCommit : [],
+          ),
+        };
+        const failures = outcomes.flatMap((outcome) => (outcome.ok ? [] : [outcome.error]));
+        if (failures.length === 0) return Effect.succeed(committed);
+        return Effect.fail(
+          new StateContractError({
+            operation: `workspace-state-router.${operation}`,
+            reason: "transaction-failed",
+            message: `Workspace state router ${operation} fan-out failed for ${failures.length} of ${allStores.length} store(s); ${committed.afterCommit.length} committed after-commit descriptor(s) preserved.`,
+            cause: {
+              kind: "workspace-state-router.fan-out-sweep-partial-failure",
+              committed,
+              failures,
+            } satisfies FanOutSweepPartialFailurePayload<A>,
+          }),
+        );
+      }),
     );
 
   const workspace: RuntimeWorkspaceStatePortService = {
@@ -478,8 +514,9 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
             ),
             (registered) => registered.ports.queue.releaseExpiredSurfaceMessageClaims(request),
           )
-        : fanOutMutationList<RuntimeSurfaceMessageRecord>((registered) =>
-            registered.ports.queue.releaseExpiredSurfaceMessageClaims(request),
+        : fanOutMutationList<RuntimeSurfaceMessageRecord>(
+            "releaseExpiredSurfaceMessageClaims",
+            (registered) => registered.ports.queue.releaseExpiredSurfaceMessageClaims(request),
           ),
     markSurfaceMessageSteering: (request) =>
       via(

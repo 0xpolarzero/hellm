@@ -454,7 +454,13 @@ and unscoped `readLinksNeedingRepair`). Durable-id global uniqueness holds only 
 UUID `idFactory`; the router never derives scope from a bound single-workspace store. Unresolvable
 targets fail with a typed `StateContractError` (`reason: "not-found"`, `operation` prefixed
 `workspace-state-router.`). Committed invalidation descriptors carry the committed workspace scope of
-the owning store. `layerWorkspaceStateRouter` provides the fourteen runtime-facing state-port layers
+the owning store. A bare-input maintenance fan-out mutation sweep does not fail fast: the router runs
+every registered store, aggregates the committed values and after-commit descriptors of the stores
+that succeed, and returns that aggregate when all stores succeed. When at least one store fails, the
+sweep fails with a typed `StateContractError` (`reason: "transaction-failed"`, `operation` prefixed
+`workspace-state-router.`) whose `cause` carries the preserved partial results (the aggregated values
+and committed after-commit descriptors of the stores that succeeded) so already-committed descriptors
+from earlier stores are never dropped. `layerWorkspaceStateRouter` provides the fourteen runtime-facing state-port layers
 from a constructed router. The router is constructed only by app bootstrap at the runtime-state
 composition edge, and has no product call site elsewhere.
 

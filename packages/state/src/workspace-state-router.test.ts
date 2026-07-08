@@ -3,17 +3,43 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as Effect from "effect/Effect";
 import {
+  RuntimeActorExtensionBindingStatePort,
+  RuntimeApprovalStatePort,
+  RuntimeCommandStatePort,
+  RuntimeEpisodeStatePort,
+  RuntimeGeneratedPackageStatePort,
+  RuntimePromptDefaultsStatePort,
+  RuntimeQueueStatePort,
+  RuntimeRequestStatePort,
+  RuntimeSessionWaitStatePort,
+  RuntimeSourceStatePort,
+  RuntimeSurfaceLifecycleStatePort,
+  RuntimeThreadStatePort,
+  RuntimeTurnStatePort,
+  RuntimeWorkspaceStatePort,
   StateContractError,
   type AbsolutePath,
   type CommandId,
   type GeneratedPackageName,
+  type PromptTarget,
   type RuntimeOwnerId,
+  type RuntimeSurfaceMessageRecord,
+  type StateInvalidationDescriptor,
+  type StateMutationResult,
+  type SurfacePiSessionId,
+  type ThreadGroupId,
+  type ThreadId,
   type ToolItemId,
   type TurnId,
   type WorkspaceId,
+  type WorkspaceSessionId,
 } from "@svvy/core";
-import { createWorkspaceStateRouter } from "./structured-session-adapters";
+import {
+  createWorkspaceStateRouter,
+  layerWorkspaceStateRouter,
+} from "./structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -426,6 +452,203 @@ describe("workspace state router", () => {
 
       expect(() => appGlobal.store.getRuntimeApprovalRequest(appGlobalApprovalId)).not.toThrow();
       expect(() => workspaceA.store.getRuntimeApprovalRequest(appGlobalApprovalId)).toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("wires each of the fourteen runtime-facing port tags to its router service", async () => {
+    const { registry, cleanup } = createRegistry();
+    const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
+    const workspaceA = makeStore(registry, "workspace_a", "a");
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: appGlobal.store,
+      workspaceStores: [{ store: workspaceA.store, isDefaultWorkspace: true }],
+    });
+    const layer = layerWorkspaceStateRouter(router);
+
+    const unknownTarget: PromptTarget = {
+      workspaceSessionId: "session-unregistered" as WorkspaceSessionId,
+      surface: "orchestrator",
+      surfacePiSessionId: "surface-unregistered" as SurfacePiSessionId,
+    };
+    const tolerate = <A>(
+      effect: Effect.Effect<A, StateContractError>,
+    ): Effect.Effect<"ok" | "typed-failure"> =>
+      Effect.matchEffect(effect, {
+        onFailure: () => Effect.succeed("typed-failure" as const),
+        onSuccess: () => Effect.succeed("ok" as const),
+      });
+
+    try {
+      const observed = await runTestEffect(
+        Effect.gen(function* () {
+          const workspace = yield* RuntimeWorkspaceStatePort;
+          const surfaceLifecycle = yield* RuntimeSurfaceLifecycleStatePort;
+          const promptDefaults = yield* RuntimePromptDefaultsStatePort;
+          const source = yield* RuntimeSourceStatePort;
+          const generatedPackage = yield* RuntimeGeneratedPackageStatePort;
+          const actorExtensionBinding = yield* RuntimeActorExtensionBindingStatePort;
+          const queue = yield* RuntimeQueueStatePort;
+          const request = yield* RuntimeRequestStatePort;
+          const approval = yield* RuntimeApprovalStatePort;
+          const command = yield* RuntimeCommandStatePort;
+          const sessionWait = yield* RuntimeSessionWaitStatePort;
+          const thread = yield* RuntimeThreadStatePort;
+          const turn = yield* RuntimeTurnStatePort;
+          const episode = yield* RuntimeEpisodeStatePort;
+
+          const identities = {
+            workspace: workspace === router.workspace,
+            surfaceLifecycle: surfaceLifecycle === router.surfaceLifecycle,
+            promptDefaults: promptDefaults === router.promptDefaults,
+            source: source === router.source,
+            generatedPackage: generatedPackage === router.generatedPackage,
+            actorExtensionBinding: actorExtensionBinding === router.actorExtensionBinding,
+            queue: queue === router.queue,
+            request: request === router.request,
+            approval: approval === router.approval,
+            command: command === router.command,
+            sessionWait: sessionWait === router.sessionWait,
+            thread: thread === router.thread,
+            turn: turn === router.turn,
+            episode: episode === router.episode,
+          };
+
+          const dispatched = {
+            workspace: yield* tolerate(
+              workspace.releaseWorkspace({
+                workspaceId: "workspace_unregistered" as WorkspaceId,
+                owner: { ownerId: "owner-wiring" as RuntimeOwnerId, kind: "test" },
+                releaseReason: "test",
+              }),
+            ),
+            surfaceLifecycle: yield* tolerate(
+              surfaceLifecycle.createOrchestratorSurface({
+                workspaceId: "workspace_unregistered" as WorkspaceId,
+              }),
+            ),
+            promptDefaults: yield* tolerate(
+              promptDefaults.resolvePromptDefaults({ target: unknownTarget }),
+            ),
+            source: yield* tolerate(
+              source.readSourceVersion({
+                scope: { kind: "app-global" },
+                sourceKind: "user-extension",
+                sourceId: "wiring",
+              }),
+            ),
+            generatedPackage: yield* tolerate(generatedPackage.readGeneratedPackageFacts()),
+            actorExtensionBinding: yield* tolerate(
+              actorExtensionBinding.readRuntimePromptBinding({ target: unknownTarget }),
+            ),
+            queue: yield* tolerate(queue.releaseExpiredSurfaceMessageClaims()),
+            request: yield* tolerate(request.listOpenBlockingRequestInputs()),
+            approval: yield* tolerate(approval.listOpenApprovalRequests()),
+            command: yield* tolerate(
+              command.findCommandById({ commandId: "command-unregistered" }),
+            ),
+            sessionWait: yield* tolerate(
+              sessionWait.clearSessionWait({
+                sessionId: "session-unregistered" as WorkspaceSessionId,
+              }),
+            ),
+            thread: yield* tolerate(
+              thread.ensureHandlerThreadRunnable({
+                workspaceSessionId: "session-unregistered" as WorkspaceSessionId,
+                surfacePiSessionId: "surface-unregistered" as SurfacePiSessionId,
+                threadId: "thread-unregistered" as ThreadId,
+              }),
+            ),
+            turn: yield* tolerate(
+              turn.setTurnDecision({ turnId: "turn-unregistered", decision: "reply" }),
+            ),
+            episode: yield* tolerate(
+              episode.recordHandlerThreadEpisode({
+                scope: "handler-thread",
+                workspaceSessionId: "session-unregistered" as WorkspaceSessionId,
+                threadId: "thread-unregistered" as ThreadId,
+                threadGroupId: "group-unregistered" as ThreadGroupId,
+                kind: "report",
+                summary: "wiring",
+              }),
+            ),
+          };
+
+          return { identities, dispatched };
+        }).pipe(Effect.provide(layer)),
+      );
+
+      expect(observed.identities).toEqual({
+        workspace: true,
+        surfaceLifecycle: true,
+        promptDefaults: true,
+        source: true,
+        generatedPackage: true,
+        actorExtensionBinding: true,
+        queue: true,
+        request: true,
+        approval: true,
+        command: true,
+        sessionWait: true,
+        thread: true,
+        turn: true,
+        episode: true,
+      });
+      expect(Object.keys(observed.dispatched)).toHaveLength(14);
+      expect(
+        Object.values(observed.dispatched).every(
+          (outcome) => outcome === "ok" || outcome === "typed-failure",
+        ),
+      ).toBeTrue();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("preserves committed sweep descriptors when a later store fails the bare fan-out", async () => {
+    const { registry, cleanup } = createRegistry();
+    const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
+    const workspaceA = makeStore(registry, "workspace_a", "a");
+
+    workspaceA.store.releaseExpiredSurfaceMessageClaims = () => [
+      { surfacePiSessionId: "surface-store-a" } as unknown as RuntimeSurfaceMessageRecord,
+    ];
+    appGlobal.store.releaseExpiredSurfaceMessageClaims = () => {
+      throw new Error("app-global sweep boom");
+    };
+
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: appGlobal.store,
+      workspaceStores: [{ store: workspaceA.store, isDefaultWorkspace: true }],
+    });
+
+    try {
+      const failure = await runTestEffect(router.queue.releaseExpiredSurfaceMessageClaims()).then(
+        () => {
+          throw new Error("expected the bare sweep to fail");
+        },
+        (error: unknown) => error as StateContractError,
+      );
+
+      expect(failure).toBeInstanceOf(StateContractError);
+      expect(failure.operation).toBe("workspace-state-router.releaseExpiredSurfaceMessageClaims");
+      expect(failure.reason).toBe("transaction-failed");
+
+      const payload = failure.cause as {
+        readonly kind: string;
+        readonly committed: StateMutationResult<readonly RuntimeSurfaceMessageRecord[]>;
+        readonly failures: readonly StateContractError[];
+      };
+      expect(payload.kind).toBe("workspace-state-router.fan-out-sweep-partial-failure");
+      expect(payload.failures).toHaveLength(1);
+      expect(payload.committed.value).toHaveLength(1);
+      expect(payload.committed.afterCommit).toHaveLength(1);
+      expect(payload.committed.afterCommit[0] as StateInvalidationDescriptor).toMatchObject({
+        scope: "workspace",
+        workspaceId: "workspace_a",
+        invalidation: { model: "surface", ids: ["surface-store-a"] },
+      });
     } finally {
       cleanup();
     }
