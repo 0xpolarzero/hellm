@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,8 @@ import {
   unrestrictedFileSystemPolicy,
 } from "./filesystem-sandbox-policy";
 import { buildSandboxHelperArgs, resolveSandboxHelperPath } from "./sandbox-helper";
+
+const MACOS_SEATBELT_EXECUTABLE = "/usr/bin/sandbox-exec";
 
 function testSandboxHelperResolutionInput(configuredPath = process.env.SVVY_SANDBOX_HELPER_PATH) {
   return {
@@ -181,6 +183,46 @@ describe("sandbox helper", () => {
     expect(enabledArgs).toContain("enabled");
   });
 
+  it("denies loopback networking through the packaged helper under the restricted network policy", async () => {
+    if (!existsSync(MACOS_SEATBELT_EXECUTABLE)) {
+      expect(existsSync(MACOS_SEATBELT_EXECUTABLE)).toBe(false);
+      return;
+    }
+    const server = startLoopbackTextServer();
+    if (!server) {
+      expect(server).toBeNull();
+      return;
+    }
+    const helper = resolveTestSandboxHelperPath();
+    try {
+      const result = await runHelperLoopbackFetch(helper, server.url, false);
+      expect(result.stdout).not.toContain("network-ok");
+      expect(result.exitCode).not.toBe(0);
+    } finally {
+      server.stop();
+    }
+  }, 20000);
+
+  it("allows loopback networking through the packaged helper under the enabled network policy", async () => {
+    if (!existsSync(MACOS_SEATBELT_EXECUTABLE)) {
+      expect(existsSync(MACOS_SEATBELT_EXECUTABLE)).toBe(false);
+      return;
+    }
+    const server = startLoopbackTextServer();
+    if (!server) {
+      expect(server).toBeNull();
+      return;
+    }
+    const helper = resolveTestSandboxHelperPath();
+    try {
+      const result = await runHelperLoopbackFetch(helper, server.url, true);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("network-ok");
+    } finally {
+      server.stop();
+    }
+  }, 20000);
+
   it("passes platform defaults only when explicitly requested", () => {
     const cwd = mkdtempSync(join(tmpdir(), "svvy-helper-platform-defaults-"));
     const policy = buildManagedWorkspaceWriteFileSystemPolicy({ cwd, tmpdir: tmpdir() });
@@ -289,4 +331,60 @@ function checkAccess(
     stdout: result.stdout.trim(),
     stderr: result.stderr.trim(),
   };
+}
+
+async function runHelperLoopbackFetch(
+  helper: string,
+  url: string,
+  networkAccess: boolean,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const cwd = mkdtempSync(join(tmpdir(), "svvy-helper-network-real-"));
+  const policy = buildManagedWorkspaceWriteFileSystemPolicy({ cwd, tmpdir: tmpdir() });
+  const program = `try { const response = await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(8000) }); process.stdout.write(await response.text()); } catch (error) { process.stderr.write(error instanceof Error ? error.message : String(error)); process.exit(37); }`;
+  const args = buildSandboxHelperArgs({
+    command: [process.execPath, "-e", program],
+    cwd,
+    fileSystemPolicy: policy,
+    networkAccess,
+  });
+  return spawnHelperAsync(helper, args);
+}
+
+function spawnHelperAsync(
+  helper: string,
+  args: readonly string[],
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(helper, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", rejectPromise);
+    child.on("close", (exitCode) => {
+      resolvePromise({ exitCode, stdout, stderr });
+    });
+  });
+}
+
+function startLoopbackTextServer(): { url: string; stop: () => void } | null {
+  try {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("network-ok\n"),
+    });
+    return {
+      url: `http://127.0.0.1:${server.port}/`,
+      stop: () => {
+        server.stop(true);
+      },
+    };
+  } catch {
+    return null;
+  }
 }

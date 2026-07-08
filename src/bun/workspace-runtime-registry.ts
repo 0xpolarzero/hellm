@@ -73,6 +73,7 @@ import {
   createRuntimeBackedWorkspaceSessionCatalog,
   type CatalogBackedRuntime,
   type CatalogBackedRuntimeDependencies,
+  type PackagedSandboxHostSupportServices,
   type RuntimeGeneratedPackageRefreshBoundaryHost,
 } from "./runtime-service-adapter";
 import {
@@ -161,6 +162,7 @@ type WorkspaceRuntimeRegistryOptions = {
   listRecoverableWorkspaces?: () => readonly WorkspaceInfoResponse[];
   runtimeDependencies?: Partial<CatalogBackedRuntimeDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
+  sandboxHostSupport: PackagedSandboxHostSupportServices;
   sourceInvalidationHost?: RuntimeSourceInvalidationHost;
   sourceWatchEnabled?: boolean;
   workflowsGeneratedPackagePath?: string;
@@ -574,6 +576,7 @@ export class WorkspaceRuntimeRegistry {
         }),
         sourceInvalidationScan: this.createSourceInvalidationScanPort(),
         appLogWritePort: appLogs.writePort,
+        sandboxHostSupport: this.options.sandboxHostSupport,
       },
       this.runtimeDependencies(),
       this.options.runtimeLayerConfig,
@@ -774,6 +777,7 @@ export class WorkspaceRuntimeRegistry {
         }),
         sourceInvalidationScan: this.createSourceInvalidationScanPort(),
         appLogWritePort: appLogs.writePort,
+        sandboxHostSupport: this.options.sandboxHostSupport,
       },
       this.runtimeDependencies(),
       this.options.runtimeLayerConfig,

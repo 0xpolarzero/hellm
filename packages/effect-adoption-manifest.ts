@@ -146,7 +146,6 @@ export const adoptedEffectRuntimeModuleExports = [
       "TaggedErrorClass",
       "TemplateLiteral",
       "Union",
-      "Unknown",
       "brand",
       "check",
       "decodeUnknownEffect",

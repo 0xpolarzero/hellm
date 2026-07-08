@@ -94,6 +94,28 @@ describe("native sandbox helper package metadata", () => {
     }
   });
 
+  test("app bootstrap skips metadata preload on non-darwin and yields empty candidates", async () => {
+    const services = createPackagedSandboxHostSupportServices({
+      executablePath: "/build/dev-linux-arm64/svvy-dev/bin/svvy",
+      appSupportRoot: "/tmp/svvy-app-support",
+      tempRoot: "/tmp",
+      platform: "linux",
+      arch: "arm64",
+      readFileString: () => {
+        throw new Error("non-darwin bootstrap must not read helper metadata");
+      },
+    });
+
+    await expect(Effect.runPromise(services.helperCandidates.getSnapshot())).resolves.toEqual({
+      candidates: [],
+      allowedRoots: [],
+    });
+    await expect(Effect.runPromise(services.hostProcess.getSnapshot())).rejects.toMatchObject({
+      _tag: "SandboxPolicyError",
+      reason: "helper-unavailable",
+    });
+  });
+
   test("build script writes digest metadata for the copied helper artifact", () => {
     const source = readProjectFile("scripts/build-native-sandbox-helper.ts");
 

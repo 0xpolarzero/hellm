@@ -86,6 +86,7 @@ import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-work
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
+import { createPackagedSandboxHostSupportServices } from "./runtime-service-adapter";
 import { RuntimeLayerConfigFromEnv } from "@svvy/runtime/bootstrap";
 import {
   FILE_BACKED_EDIT_CONFLICT_CODE,
@@ -949,6 +950,7 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   initialCwd: startupWorkspaceCwd,
   openInitialWorkspace: !!process.env.SVVY_WORKSPACE_CWD,
   runtimeLayerConfig,
+  sandboxHostSupport: createPackagedSandboxHostSupportServices(),
   forwardBridgeLog: (level, message, source, details, error) => {
     if (level === "error") {
       recordDevBrowserToolsError("app", message, source, details, error);

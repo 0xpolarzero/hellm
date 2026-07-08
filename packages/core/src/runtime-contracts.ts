@@ -110,7 +110,6 @@ export {
 };
 export type { CommandFactsPayload, CommandResultEnvelope };
 
-const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 export const CommandArgumentSnapshotEventPayloadSchema = Schema.Struct({
   source: Schema.optionalKey(Schema.String),
   arguments: JsonValue,

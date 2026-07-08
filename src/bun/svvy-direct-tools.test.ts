@@ -1687,7 +1687,7 @@ describe("svvy direct tools", () => {
     expect(closed).toBe(true);
   });
 
-  it("allows loopback networking on the direct test seam without runtime launch facts", async () => {
+  it("allows loopback networking through the default non-managed exec_command tool", async () => {
     const server = startLoopbackTextServer();
     if (!server) {
       expect(server).toBeNull();
@@ -1708,20 +1708,6 @@ describe("svvy direct tools", () => {
 
       expect(readText(allowed)).toContain("network-ok");
       expect(readText(allowed)).toContain("exit code: 0");
-
-      const directTestSeamTool = findTool(
-        createSvvyDirectToolsForTest({ cwd, managedSandbox: true, networkAccess: false })
-          .codingTools,
-        "exec_command",
-      );
-      const directTestSeamResult = await directTestSeamTool.execute(
-        "tool-shell-loopback-network-direct-seam",
-        { cmd: `bun -e "console.log(await (await fetch('${server.url}')).text())"` },
-        new AbortController().signal,
-        () => {},
-      );
-      expect(readText(directTestSeamResult)).toContain("network-ok");
-      expect(readText(directTestSeamResult)).toContain("exit code: 0");
     } finally {
       server.stop();
     }

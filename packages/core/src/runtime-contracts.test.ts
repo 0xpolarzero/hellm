@@ -1610,6 +1610,42 @@ describe("@svvy/core runtime contracts", () => {
     });
   });
 
+  it("decodes runtime approval requests without command previews", () => {
+    const approvalRequest = {
+      target: handlerTarget,
+      sourceCommandId: "cmd_exec_01",
+      approvalKind: "shell",
+      title: "Run repository check",
+      reason: "The command needs approval before execution.",
+    };
+    expect(
+      Schema.decodeUnknownSync(RuntimeApprovalRequestSchema, {
+        onExcessProperty: "error",
+        errors: "all",
+      })(approvalRequest) as unknown,
+    ).toEqual(approvalRequest);
+
+    expect(() =>
+      Schema.decodeUnknownSync(RuntimeApprovalRequestSchema, {
+        onExcessProperty: "error",
+        errors: "all",
+      })({
+        ...approvalRequest,
+        commandPreview: "bun run check",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      Schema.decodeUnknownSync(RuntimeApprovalRequestSchema, {
+        onExcessProperty: "error",
+        errors: "all",
+      })({
+        ...approvalRequest,
+        approvalKind: "network",
+      }),
+    ).toThrow();
+  });
+
   it("decodes runtime approval answers without command previews or workspace snapshots", () => {
     expect(
       unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap({

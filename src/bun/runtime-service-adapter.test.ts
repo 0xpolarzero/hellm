@@ -83,6 +83,7 @@ import {
   type CatalogBackedRuntimeDependencies,
   type RuntimeGeneratedPackageRefreshBoundaryHost,
 } from "./runtime-service-adapter";
+import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import {
   defaultRuntimeLayerConfig,
   type RuntimeGeneratedPackageWorkspaceLinkFileHost,
@@ -1226,6 +1227,7 @@ async function createHarness(
       commandStdin,
       commandControl,
       appLogWritePort,
+      sandboxHostSupport: createTestSandboxHostSupport(),
     },
     dependencies,
     defaultRuntimeLayerConfig,

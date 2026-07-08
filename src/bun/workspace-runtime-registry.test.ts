@@ -24,6 +24,7 @@ import {
 import { STRUCTURED_SESSION_DB_FILENAME, getSvvySessionDir } from "./session-catalog";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { getDefaultWorkspaceCwd } from "./workspace-context";
+import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import type { AppLogUpdateMessage } from "../shared/workspace-contract";
 import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
 
@@ -731,6 +732,7 @@ function createRegistry(
     agentDir,
     sourceWatchEnabled: false,
     runtimeLayerConfig: defaultRuntimeLayerConfig,
+    sandboxHostSupport: createTestSandboxHostSupport(),
     coreTypeContractPackagePath:
       options.coreTypeContractPackagePath ?? tempWorkspace("generated-core-type-contract"),
     workflowsSourceRoot: options.workflowsSourceRoot ?? tempWorkspace("workflows-source"),

@@ -9698,6 +9698,7 @@ describe("package boundaries", () => {
       "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
       "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
       "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
+      "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",

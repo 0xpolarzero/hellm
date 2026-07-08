@@ -150,6 +150,7 @@ export type RuntimeServiceAdapterPort = RuntimeRoutingPortHost & {
   commandStdin: RuntimeLayerCommandStdinPortService;
   commandControl: RuntimeLayerCommandControlPortService;
   appLogWritePort: AppLogWritePortService;
+  sandboxHostSupport: PackagedSandboxHostSupportServices;
 };
 
 type CatalogBackedRuntimePort = {
@@ -185,6 +186,7 @@ type CatalogBackedRuntimePort = {
   commandStdin: RuntimeLayerCommandStdinPortService;
   commandControl: RuntimeLayerCommandControlPortService;
   appLogWritePort: AppLogWritePortService;
+  sandboxHostSupport: PackagedSandboxHostSupportServices;
 };
 
 export type CatalogBackedRuntimeDependencies = {
@@ -310,25 +312,11 @@ export function createPackagedSandboxHostSupportServices(
   const platform = input.platform ?? process.platform;
   const arch = input.arch ?? process.arch;
   const readFileString = input.readFileString ?? ((path: string) => readFileSync(path, "utf8"));
-  const metadataPath = join(executableDir, "svvy-sandbox-helper.metadata.json");
-  const metadata = (() => {
-    try {
-      return parseNativeSandboxHelperMetadata(readFileString(metadataPath));
-    } catch (cause) {
-      throw sandboxHostSupportError("createPackagedSandboxHostSupportServices", cause);
-    }
-  })();
-  const helperSnapshot: SandboxHelperCandidatesSnapshot = {
-    candidates: [
-      {
-        path: join(executableDir, metadata.artifact) as AbsolutePath,
-        platform: metadata.platform,
-        arch: metadata.arch,
-        expectedDigest: metadata.digest.hex,
-      },
-    ],
-    allowedRoots: [executableDir as AbsolutePath],
-  };
+  const helperSnapshot = buildPackagedHelperCandidatesSnapshot({
+    platform,
+    executableDir,
+    readFileString,
+  });
 
   const hostProcess: HostProcessReferencePortService = {
     getSnapshot: () =>
@@ -349,6 +337,35 @@ export function createPackagedSandboxHostSupportServices(
   };
 
   return { helperCandidates, hostProcess };
+}
+
+function buildPackagedHelperCandidatesSnapshot(input: {
+  platform: NodeJS.Platform;
+  executableDir: string;
+  readFileString: (path: string) => string;
+}): SandboxHelperCandidatesSnapshot {
+  if (input.platform !== "darwin") {
+    return { candidates: [], allowedRoots: [] };
+  }
+  const metadataPath = join(input.executableDir, "svvy-sandbox-helper.metadata.json");
+  const metadata = (() => {
+    try {
+      return parseNativeSandboxHelperMetadata(input.readFileString(metadataPath));
+    } catch (cause) {
+      throw sandboxHostSupportError("createPackagedSandboxHostSupportServices", cause);
+    }
+  })();
+  return {
+    candidates: [
+      {
+        path: join(input.executableDir, metadata.artifact) as AbsolutePath,
+        platform: metadata.platform,
+        arch: metadata.arch,
+        expectedDigest: metadata.digest.hex,
+      },
+    ],
+    allowedRoots: [input.executableDir as AbsolutePath],
+  };
 }
 
 function parseNativeSandboxHelperMetadata(source: string): NativeSandboxHelperMetadata {
@@ -489,7 +506,7 @@ export async function createRuntimeServiceAdapter(
   dependencies: CatalogBackedRuntimeDependencies,
   config: RuntimeLayerConfig,
 ): Promise<CatalogBackedRuntime> {
-  const sandboxHostSupport = createPackagedSandboxHostSupportServices();
+  const sandboxHostSupport = port.sandboxHostSupport;
   const extensionPackageLayer = Layer.mergeAll(
     layerRuntimeBunPlatform,
     Layer.succeed(ExtensionStatePort, port.extensionStatePort),
@@ -686,6 +703,7 @@ function catalogBackedRuntimePort(port: CatalogBackedRuntimePort): RuntimeServic
     commandStdin: port.commandStdin,
     commandControl: port.commandControl,
     appLogWritePort: port.appLogWritePort,
+    sandboxHostSupport: port.sandboxHostSupport,
   };
 }
 
