@@ -145,7 +145,7 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
 
       expect(await page.locator(".user-row").count()).toBe(1);
       expect(await page.locator(".assistant-row").count()).toBe(2);
-      expect(await page.locator(".tool-row").count()).toBe(1);
+      expect(await page.locator(".tool-row").count()).toBe(0);
 
       const assistantRows = page.locator(".assistant-row");
       const firstAssistant = assistantRows.first();

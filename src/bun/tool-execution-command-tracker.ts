@@ -11,6 +11,7 @@ import type {
   RuntimeCommandStatePortService,
   RuntimeCommandStatus,
   RuntimeTurnStatePortService,
+  SurfacePiSessionId,
 } from "@svvy/core";
 
 export interface ToolExecutionCommandTracker {
@@ -70,6 +71,7 @@ export function createToolExecutionCommandTracker(options: {
             let commandId: string;
             const existingStreaming = yield* options.commandState.findCommandByToolCallId({
               toolCallId: input.toolCallId,
+              surfacePiSessionId: options.promptContext.surfacePiSessionId as SurfacePiSessionId,
             });
             if (existingStreaming) {
               commandId = existingStreaming.id;

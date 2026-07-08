@@ -15,7 +15,7 @@ import type {
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
-import { createAppLogStore, type AppendAppLogEntry } from "../src/bun/app-log-store";
+import { createAppLogStore, type AppendAppLogEntry } from "../packages/state/src/app-log-store";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);
@@ -56,6 +56,34 @@ export interface SeededSession {
 
 export function getTestAgentDir(homeDir: string): string {
   return join(homeDir, ".config", "svvy", "pi");
+}
+
+export function getTestExtensionsRoot(homeDir: string): string {
+  return join(homeDir, ".config", "svvy", "extensions");
+}
+
+// The app bootstraps an "Initial" extension snapshot on the first extensions-inventory read.
+// That bootstrap calls the macOS-keychain-backed secret store, which throws on the Linux e2e
+// lane and leaves a partial snapshot that fails every later inventory read. Seeding a valid
+// initial snapshot skips the bootstrap so extension surfaces stay available in e2e.
+export async function seedInitialExtensionSnapshot(homeDir: string): Promise<void> {
+  const snapshotRoot = join(getTestExtensionsRoot(homeDir), "snapshots", "snap_initial");
+  await mkdir(snapshotRoot, { recursive: true });
+  await writeFile(
+    join(snapshotRoot, "metadata.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: "snap_initial",
+        name: "Initial",
+        extensionCount: 0,
+        hasSecretState: false,
+        status: "available",
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 export async function writeAgentModelsConfig(
@@ -155,6 +183,7 @@ export async function seedAppLogs(
   const runtimeDir = getTestWorkspaceRuntimeDir(homeDir, workspaceDir);
   const store = createAppLogStore({
     databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+    now: () => new Date().toISOString(),
   });
   try {
     for (const entry of entries) {

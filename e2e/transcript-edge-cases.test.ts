@@ -124,15 +124,9 @@ test("renders seeded transcript timestamps, tool error states, and reasoning fal
       "Failed",
     );
 
-    const toolResult = page.locator(".tool-row").first();
-    expect(await toolResult.count()).toBe(1);
-    expect(await toolResult.locator('[data-testid="status-badge-failed"]').textContent()).toBe(
-      "Failed",
-    );
-    await toolResult.locator(".transcript-tool-toggle").click({ force: true });
-    expect(await toolResult.locator(".transcript-tool-pre").textContent()).toContain(
-      "Unable to create broken.txt",
-    );
+    expect(await page.locator(".tool-row").count()).toBe(0);
+    await failedToolCard.locator(".transcript-tool-toggle").click({ force: true });
+    expect((await failedToolCard.textContent()) ?? "").toContain("Unable to create broken.txt");
 
     const reasoningBlocks = page.locator(".assistant-row .thinking-block");
     expect(await reasoningBlocks.count()).toBe(2);

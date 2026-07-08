@@ -186,7 +186,10 @@ function findCommand(
         );
     }
     const command = yield* commandState
-      .findCommandByToolCallId({ toolCallId: input.toolCallId })
+      .findCommandByToolCallId({
+        toolCallId: input.toolCallId,
+        ...(input.surfacePiSessionId ? { surfacePiSessionId: input.surfacePiSessionId } : {}),
+      })
       .pipe(
         Effect.mapError((cause) =>
           mapApprovalAdmissionFailure("runtime.acceptedNativeTool.approval.findCommand", cause),

@@ -670,8 +670,13 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
   [
     "@svvy/state/structured-session-adapters",
     [
+      "WorkspaceStateRegistration",
+      "WorkspaceStateRouter",
+      "WorkspaceStateRouterInput",
+      "createWorkspaceStateRouter",
       "extensionStatePortFromStore",
       "extensionStatePortFromStructuredSessionState",
+      "layerWorkspaceStateRouter",
       "piSessionReferencePortFromStore",
       "piSessionReferencePortFromStructuredSessionState",
       "providerAuthStatusStatePortFromStore",
@@ -717,6 +722,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runtimeTurnStatePortFromStructuredSessionState",
       "runtimeWorkspaceStatePortFromStore",
       "runtimeWorkspaceStatePortFromStructuredSessionState",
+      "stateCommandsFromRouter",
+      "stateReadModelsFromRouter",
     ],
   ],
   [
@@ -3603,6 +3610,7 @@ describe("package boundaries", () => {
           "packages/state/src/state-facade.ts -> layer",
           "packages/state/src/structured-session-state.ts -> StructuredSessionState",
           "packages/state/src/structured-session-state.ts -> layerStructuredSessionState",
+          "packages/state/src/workspace-state-router.ts -> layerWorkspaceStateRouter",
         ],
         resources: [
           "SQLite database handle",
@@ -9178,9 +9186,10 @@ describe("package boundaries", () => {
   });
 
   it("@svvy/state structured-session adapters do not expose aggregate state-port bundles", () => {
-    const actual = readPublicExportedNames(
+    const exported = readPublicExportedNames(
       join(packageRoot, "state", "src", "structured-session-adapters.ts"),
-    )
+    );
+    const actual = exported
       .filter((symbol) =>
         [
           /^StructuredSessionStatePorts$/,
@@ -9191,6 +9200,12 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([]);
+
+    const sanctionedAggregateLayers = exported
+      .filter((symbol) => symbol === "layerWorkspaceStateRouter")
+      .toSorted();
+
+    expect(sanctionedAggregateLayers).toEqual(["layerWorkspaceStateRouter"]);
   });
 
   it("@svvy/state sandbox policy layer is a zero-argument structured-session projection", () => {

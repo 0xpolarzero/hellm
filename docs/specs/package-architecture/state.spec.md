@@ -118,10 +118,21 @@ Restricted subpath export status is explicit:
   constructors, raw store types, and selector/storage DTOs are not production-visible restricted
   exports unless this spec names the exact app-bootstrap or state-test boundary allowlist.
 - `@svvy/state/structured-session-adapters` is a restricted adapter ledger for per-port
-  `*FromStructuredSessionState` helpers plus their corresponding `*FromStore` helpers. `*FromStore`
-  helpers are implementation escape hatches allowed only for state tests and approved app/bootstrap
-  integration fixtures; they are not product API. Product app/bootstrap targets
-  `*FromStructuredSessionState` helpers or named zero-argument port layers.
+  `*FromStructuredSessionState` helpers plus their corresponding `*FromStore` helpers, the
+  app-composed workspace-store router symbols `createWorkspaceStateRouter`,
+  `layerWorkspaceStateRouter`, `WorkspaceStateRouter`, `WorkspaceStateRouterInput`, and
+  `WorkspaceStateRegistration`, and the router facade composers `stateReadModelsFromRouter` and
+  `stateCommandsFromRouter`. `*FromStore` helpers are implementation escape hatches allowed only
+  for state tests and approved app/bootstrap integration fixtures; they are not product API. Product
+  app/bootstrap targets `*FromStructuredSessionState` helpers or named zero-argument port layers. The
+  workspace-store router symbols are limited to the same boundary: `createWorkspaceStateRouter`,
+  `WorkspaceStateRouterInput`, and `WorkspaceStateRegistration` construct the router from
+  already-acquired stores, `layerWorkspaceStateRouter` and `WorkspaceStateRouter` provide its
+  runtime-facing port layers, and `stateReadModelsFromRouter`/`stateCommandsFromRouter` compose the
+  `StateReadModels`/`StateCommands` facades over a constructed router — all consumed only at the
+  app-bootstrap runtime-state composition edge and by `@svvy/state` tests, and none of them exported
+  from the `@svvy/state` package root. Runtime, desktop, renderer/shared, extensions, pi-adapter,
+  sandbox, browser-tool, headless, and generated packages must not import this subpath.
 - `@svvy/state/structured-session-projections` is a restricted app-bootstrap projection ledger for
   the finite structured-session read-model projection helpers consumed by `src/bun/session-catalog.ts`.
   It re-exports only the projection helpers and projection result types named by package-boundary
@@ -403,19 +414,49 @@ named projection layers already composed by `@svvy/state`; it does not import th
 layer is never independently configured, never hides a call to `layer(input)`, and never acquires a
 separate store. Aggregate port-layer composition helpers may exist only as package-private
 implementation or state-test helpers; they are not public restricted subpath exports and are not
-product app APIs. Internal package code may use the package-private aggregate helper to implement
-the root `layer(input)` facade, but app/bootstrap, runtime, desktop, renderer/shared, extensions,
-pi-adapter, sandbox, browser-tool, headless, and generated packages must not import or compose that
-helper.
+product app APIs, except the named app-composed workspace-store router layer `layerWorkspaceStateRouter`
+exported from the restricted `@svvy/state/structured-session-adapters` subpath. Internal package code
+may use the package-private aggregate helper to implement the root `layer(input)` facade, but
+app/bootstrap, runtime, desktop, renderer/shared, extensions, pi-adapter, sandbox, browser-tool,
+headless, and generated packages must not import or compose that helper.
 
 Package-root exports, general public subpaths, tests, and app-entry code must not expose or consume
 `StateStore`, `StructuredSessionState`, app-log store objects, repository objects, SQL clients,
 migration helpers, transaction helpers, table helpers, or state-port layers that acquire their own
 store. The restricted `@svvy/state/structured-session-adapters` subpath exposes only the explicit
 store-adapter helpers named for the app-bootstrap structured-session state composition edge; it does
-not export an aggregate port layer. State package boundaries do not expose
+not export an aggregate port layer other than the named app-composed workspace-store router layer
+`layerWorkspaceStateRouter`. State package boundaries do not expose
 implementation seams that bypass the named state ports, state read facades, state command facades,
 or the shared `StructuredSessionState` provider described in this spec.
+
+The app-composed workspace-store router (`createWorkspaceStateRouter`, exported from the restricted
+`@svvy/state/structured-session-adapters` subpath) is the single state-owned dispatcher over the
+app-global structured-session store and the registered per-workspace stores. It accepts already
+acquired `StructuredSessionStateStore` instances — the exact instances app bootstrap already owns —
+and never opens a second store or database connection for a registered store. The app-global store is
+a full member of the routable store set: it is reachable by explicit `workspaceId`, committed `cwd`,
+durable committed-row id, prompt target, and the bare-input maintenance fan-out, in addition to being
+the target for app-global designation (app-global source scope and the app-global generated-package
+methods). Registered per-workspace stores take precedence over the app-global store on any
+`workspaceId`/`cwd` collision, so an `acquireWorkspace(cwd)` that resolves the app-global store
+returns a `workspaceId` that `releaseWorkspace` resolves back to the same store, and the bare-input
+sweeps observe rows the app-global store owns. Every runtime-facing state-port method, and the
+`StateReadModels`/`StateCommands` facades composed over the router through
+`stateReadModelsFromRouter`/`stateCommandsFromRouter` (also restricted to that subpath), dispatches to
+the correct store by explicit `workspaceId`/scope, by app-global designation, by a durable globally
+resolvable id resolved through committed rows (surface `pi_session_reference`, `session`, `command`,
+`turn`, `workflow_task_attempt`, `surface_message_queue`, `runtime_approval_request`,
+`request_user_input_request`, and `thread` rows), or by fan-out over the app-global store and every
+registered per-workspace store for the bare-input maintenance sweeps
+(`releaseExpiredSurfaceMessageClaims`, `listOpenApprovalRequests`, `listOpenBlockingRequestInputs`,
+and unscoped `readLinksNeedingRepair`). Durable-id global uniqueness holds only under the production
+UUID `idFactory`; the router never derives scope from a bound single-workspace store. Unresolvable
+targets fail with a typed `StateContractError` (`reason: "not-found"`, `operation` prefixed
+`workspace-state-router.`). Committed invalidation descriptors carry the committed workspace scope of
+the owning store. `layerWorkspaceStateRouter` provides the fourteen runtime-facing state-port layers
+from a constructed router. The router is constructed only by app bootstrap at the runtime-state
+composition edge, and has no product call site elsewhere.
 
 ```ts
 type StateLayerConfig = {
@@ -4572,3 +4613,14 @@ Target package paths:
   public SQLite handles, and any SQLite connection import outside package-private repository,
   migration, setup, or driver-integration tests.
 - Tests proving state package does not execute commands, call pi, or render UI.
+- Workspace-store router dispatch tests proving each runtime-facing state-port method reaches the
+  correct app-global or registered per-workspace store by explicit `workspaceId`/scope, app-global
+  designation, durable committed-row id, prompt target, committed cwd, or bare-input fan-out; that
+  after-commit descriptors carry the committed workspace scope of the owning store; that unresolvable
+  targets fail with a typed `StateContractError` (`reason: "not-found"`); and that the router
+  dispatches through the exact acquired store instance without opening a second connection.
+- Routing-identity audit test enumerating every runtime-facing routed state-port method across the
+  fourteen ports and classifying each by the routable identity present in its decoded input or a
+  durable committed record; the audit is exhaustive over the routed port method set at compile time
+  (`Record<keyof Service, …>` exhaustiveness and `keyof` input-field proofs) and complete against the
+  constructed router's method set at runtime.

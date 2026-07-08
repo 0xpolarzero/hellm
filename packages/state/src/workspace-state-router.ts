@@ -1,0 +1,855 @@
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import {
+  RuntimeActorExtensionBindingStatePort,
+  RuntimeApprovalStatePort,
+  RuntimeCommandStatePort,
+  RuntimeEpisodeStatePort,
+  RuntimeGeneratedPackageStatePort,
+  RuntimePromptDefaultsStatePort,
+  RuntimeQueueStatePort,
+  RuntimeRequestStatePort,
+  RuntimeSessionWaitStatePort,
+  RuntimeSourceStatePort,
+  RuntimeSurfaceLifecycleStatePort,
+  RuntimeThreadStatePort,
+  RuntimeTurnStatePort,
+  RuntimeWorkspaceStatePort,
+  StateContractError,
+  type PromptTarget,
+  type RuntimeActorExtensionBindingStatePortService,
+  type RuntimeApprovalRecord,
+  type RuntimeApprovalStatePortService,
+  type RuntimeCommandStatePortService,
+  type RuntimeEpisodeStatePortService,
+  type RuntimeGeneratedPackageStatePortService,
+  type RuntimeGeneratedPackageWorkspaceLinkRecord,
+  type RuntimePromptDefaultsStatePortService,
+  type RuntimeQueueStatePortService,
+  type RuntimeRequestInputDetailsRecord,
+  type RuntimeRequestStatePortService,
+  type RuntimeSessionWaitStatePortService,
+  type RuntimeSourceStatePortService,
+  type RuntimeSurfaceLifecycleStatePortService,
+  type RuntimeSurfaceMessageRecord,
+  type RuntimeThreadStatePortService,
+  type RuntimeTurnStatePortService,
+  type RuntimeWorkspaceStatePortService,
+  type SourceInvalidationScope,
+  type StateMutationResult,
+  type WorkspaceId,
+} from "@svvy/core";
+import { runtimeActorExtensionBindingStatePortFromStructuredSessionState } from "./runtime-actor-extension-binding-state-port";
+import { runtimeApprovalStatePortFromStructuredSessionState } from "./runtime-approval-state-port";
+import { runtimeCommandStatePortFromStructuredSessionState } from "./runtime-command-state-port";
+import { runtimeEpisodeStatePortFromStructuredSessionState } from "./runtime-episode-state-port";
+import { runtimeGeneratedPackageStatePortFromStructuredSessionState } from "./runtime-generated-package-state-port";
+import { runtimePromptDefaultsStatePortFromStructuredSessionState } from "./runtime-prompt-defaults-state-port";
+import { runtimeQueueStatePortFromStructuredSessionState } from "./runtime-queue-state-port";
+import { runtimeRequestStatePortFromStructuredSessionState } from "./runtime-request-state-port";
+import { runtimeSessionWaitStatePortFromStructuredSessionState } from "./runtime-session-wait-state-port";
+import { runtimeSourceStatePortFromStructuredSessionState } from "./runtime-source-state-port";
+import { runtimeSurfaceLifecycleStatePortFromStructuredSessionState } from "./runtime-surface-lifecycle-state-port";
+import { runtimeThreadStatePortFromStructuredSessionState } from "./runtime-thread-state-port";
+import { runtimeTurnStatePortFromStructuredSessionState } from "./runtime-turn-state-port";
+import { runtimeWorkspaceStatePortFromStructuredSessionState } from "./runtime-workspace-state-port";
+import {
+  structuredSessionStateFromStore,
+  type StructuredSessionState,
+  type StructuredSessionStateStore,
+} from "./structured-session-state";
+
+export interface WorkspaceStateRegistration {
+  readonly store: StructuredSessionStateStore;
+  readonly isDefaultWorkspace?: boolean;
+}
+
+export interface WorkspaceStateRouterInput {
+  readonly appGlobalStore: StructuredSessionStateStore;
+  readonly workspaceStores: readonly WorkspaceStateRegistration[];
+}
+
+export interface WorkspaceStateRouter {
+  readonly workspace: RuntimeWorkspaceStatePortService;
+  readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
+  readonly promptDefaults: RuntimePromptDefaultsStatePortService;
+  readonly source: RuntimeSourceStatePortService;
+  readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
+  readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
+  readonly queue: RuntimeQueueStatePortService;
+  readonly request: RuntimeRequestStatePortService;
+  readonly approval: RuntimeApprovalStatePortService;
+  readonly command: RuntimeCommandStatePortService;
+  readonly sessionWait: RuntimeSessionWaitStatePortService;
+  readonly thread: RuntimeThreadStatePortService;
+  readonly turn: RuntimeTurnStatePortService;
+  readonly episode: RuntimeEpisodeStatePortService;
+  readonly appGlobalStructuredSession: StructuredSessionState["Service"];
+  readonly resolveWorkspaceStructuredSession: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
+}
+
+interface RegisteredStore {
+  readonly store: StructuredSessionStateStore;
+  readonly workspaceId: WorkspaceId;
+  readonly cwd: string;
+  readonly structuredSession: StructuredSessionState["Service"];
+  readonly ports: {
+    readonly workspace: RuntimeWorkspaceStatePortService;
+    readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
+    readonly promptDefaults: RuntimePromptDefaultsStatePortService;
+    readonly source: RuntimeSourceStatePortService;
+    readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
+    readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
+    readonly queue: RuntimeQueueStatePortService;
+    readonly request: RuntimeRequestStatePortService;
+    readonly approval: RuntimeApprovalStatePortService;
+    readonly command: RuntimeCommandStatePortService;
+    readonly sessionWait: RuntimeSessionWaitStatePortService;
+    readonly thread: RuntimeThreadStatePortService;
+    readonly turn: RuntimeTurnStatePortService;
+    readonly episode: RuntimeEpisodeStatePortService;
+  };
+}
+
+function registerStore(store: StructuredSessionStateStore): RegisteredStore {
+  const structuredSession = structuredSessionStateFromStore(store);
+  return {
+    store,
+    workspaceId: store.workspaceId as WorkspaceId,
+    cwd: store.getWorkspaceRecord().cwd,
+    structuredSession,
+    ports: {
+      workspace: runtimeWorkspaceStatePortFromStructuredSessionState(structuredSession),
+      surfaceLifecycle:
+        runtimeSurfaceLifecycleStatePortFromStructuredSessionState(structuredSession),
+      promptDefaults: runtimePromptDefaultsStatePortFromStructuredSessionState(structuredSession),
+      source: runtimeSourceStatePortFromStructuredSessionState(structuredSession),
+      generatedPackage:
+        runtimeGeneratedPackageStatePortFromStructuredSessionState(structuredSession),
+      actorExtensionBinding:
+        runtimeActorExtensionBindingStatePortFromStructuredSessionState(structuredSession),
+      queue: runtimeQueueStatePortFromStructuredSessionState(structuredSession),
+      request: runtimeRequestStatePortFromStructuredSessionState(structuredSession),
+      approval: runtimeApprovalStatePortFromStructuredSessionState(structuredSession),
+      command: runtimeCommandStatePortFromStructuredSessionState(structuredSession),
+      sessionWait: runtimeSessionWaitStatePortFromStructuredSessionState(structuredSession),
+      thread: runtimeThreadStatePortFromStructuredSessionState(structuredSession),
+      turn: runtimeTurnStatePortFromStructuredSessionState(structuredSession),
+      episode: runtimeEpisodeStatePortFromStructuredSessionState(structuredSession),
+    },
+  };
+}
+
+function targetNotFound(operation: string, detail: string): StateContractError {
+  return new StateContractError({
+    operation: `workspace-state-router.${operation}`,
+    reason: "not-found",
+    message: `Workspace state router could not resolve a target store: ${detail}.`,
+  });
+}
+
+type StoreProbe = (store: StructuredSessionStateStore) => boolean;
+
+const surfaceProbe =
+  (surfacePiSessionId: string): StoreProbe =>
+  (store) =>
+    store.getPiSessionReference({ surfacePiSessionId: surfacePiSessionId as never }) !== undefined;
+
+const commandProbe =
+  (commandId: string): StoreProbe =>
+  (store) =>
+    store.findCommandById(commandId) !== null;
+
+const sessionProbe =
+  (sessionId: string): StoreProbe =>
+  (store) => {
+    store.getSessionState(sessionId);
+    return true;
+  };
+
+const turnProbe =
+  (turnId: string): StoreProbe =>
+  (store) =>
+    store.listSessionStates().some((snapshot) => snapshot.turns.some((turn) => turn.id === turnId));
+
+const attemptProbe =
+  (workflowTaskAttemptId: string): StoreProbe =>
+  (store) =>
+    store
+      .listSessionStates()
+      .some((snapshot) =>
+        snapshot.workflowTaskAttempts.some((attempt) => attempt.id === workflowTaskAttemptId),
+      );
+
+const queueItemProbe =
+  (id: string): StoreProbe =>
+  (store) => {
+    store.getSurfaceQueuedMessage({ id });
+    return true;
+  };
+
+const requestInputProbe =
+  (requestId: string): StoreProbe =>
+  (store) => {
+    store.getRequestUserInputRequest(requestId);
+    return true;
+  };
+
+const approvalProbe =
+  (requestId: string): StoreProbe =>
+  (store) => {
+    store.getRuntimeApprovalRequest(requestId);
+    return true;
+  };
+
+const threadProbe =
+  (threadId: string): StoreProbe =>
+  (store) => {
+    store.getThreadDetail(threadId);
+    return true;
+  };
+
+export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): WorkspaceStateRouter {
+  const registrations = new Map<StructuredSessionStateStore, RegisteredStore>();
+  const registerOnce = (store: StructuredSessionStateStore): RegisteredStore => {
+    const existing = registrations.get(store);
+    if (existing) return existing;
+    const created = registerStore(store);
+    registrations.set(store, created);
+    return created;
+  };
+
+  const appGlobal = registerOnce(input.appGlobalStore);
+  const workspaceRegs = input.workspaceStores.map((registration) =>
+    registerOnce(registration.store),
+  );
+  const defaultRegistration = input.workspaceStores.find(
+    (registration) => registration.isDefaultWorkspace,
+  );
+  const defaultWorkspace = defaultRegistration
+    ? registerOnce(defaultRegistration.store)
+    : undefined;
+
+  const allStores: RegisteredStore[] = [];
+  for (const registered of workspaceRegs) {
+    if (!allStores.includes(registered)) allStores.push(registered);
+  }
+  if (!allStores.includes(appGlobal)) allStores.push(appGlobal);
+
+  const byWorkspaceId = new Map<string, RegisteredStore>();
+  for (const registered of allStores) {
+    if (!byWorkspaceId.has(registered.workspaceId)) {
+      byWorkspaceId.set(registered.workspaceId, registered);
+    }
+  }
+
+  const resolveWorkspace = (
+    operation: string,
+    workspaceId: string,
+  ): Effect.Effect<RegisteredStore, StateContractError> => {
+    const registered = byWorkspaceId.get(workspaceId);
+    return registered
+      ? Effect.succeed(registered)
+      : Effect.fail(
+          targetNotFound(operation, `no workspace store registered for workspaceId ${workspaceId}`),
+        );
+  };
+
+  const resolveScope = (
+    operation: string,
+    scope: SourceInvalidationScope,
+  ): Effect.Effect<RegisteredStore, StateContractError> =>
+    scope.kind === "app-global"
+      ? Effect.succeed(appGlobal)
+      : resolveWorkspace(operation, scope.workspaceId);
+
+  const resolveDefault = (operation: string): Effect.Effect<RegisteredStore, StateContractError> =>
+    defaultWorkspace
+      ? Effect.succeed(defaultWorkspace)
+      : Effect.fail(targetNotFound(operation, "no default workspace store registered"));
+
+  const resolveCwd = (
+    operation: string,
+    cwd: string,
+  ): Effect.Effect<RegisteredStore, StateContractError> => {
+    const registered = allStores.find((candidate) => candidate.cwd === cwd);
+    return registered
+      ? Effect.succeed(registered)
+      : Effect.fail(targetNotFound(operation, `no workspace store registered for cwd ${cwd}`));
+  };
+
+  const locate = (
+    operation: string,
+    detail: string,
+    probes: readonly StoreProbe[],
+  ): Effect.Effect<RegisteredStore, StateContractError> =>
+    Effect.suspend(() => {
+      for (const probe of probes) {
+        for (const registered of allStores) {
+          let owned = false;
+          try {
+            owned = probe(registered.store);
+          } catch {
+            owned = false;
+          }
+          if (owned) return Effect.succeed(registered);
+        }
+      }
+      return Effect.fail(targetNotFound(operation, detail));
+    });
+
+  const locatePromptTarget = (
+    operation: string,
+    target: PromptTarget,
+  ): Effect.Effect<RegisteredStore, StateContractError> =>
+    locate(operation, `no store owns prompt target surface ${target.surfacePiSessionId}`, [
+      surfaceProbe(target.surfacePiSessionId),
+      sessionProbe(target.workspaceSessionId),
+    ]);
+
+  const via = <A>(
+    resolve: Effect.Effect<RegisteredStore, StateContractError>,
+    run: (registered: RegisteredStore) => Effect.Effect<A, StateContractError>,
+  ): Effect.Effect<A, StateContractError> => resolve.pipe(Effect.flatMap(run));
+
+  const fanOutList = <A>(
+    run: (registered: RegisteredStore) => Effect.Effect<readonly A[], StateContractError>,
+  ): Effect.Effect<readonly A[], StateContractError> =>
+    Effect.forEach(allStores, run).pipe(Effect.map((lists) => lists.flatMap((list) => list)));
+
+  const fanOutMutationList = <A>(
+    run: (
+      registered: RegisteredStore,
+    ) => Effect.Effect<StateMutationResult<readonly A[]>, StateContractError>,
+  ): Effect.Effect<StateMutationResult<readonly A[]>, StateContractError> =>
+    Effect.forEach(allStores, run).pipe(
+      Effect.map((results) => ({
+        value: results.flatMap((result) => result.value),
+        afterCommit: results.flatMap((result) => result.afterCommit),
+      })),
+    );
+
+  const workspace: RuntimeWorkspaceStatePortService = {
+    acquireWorkspace: (request) =>
+      via(resolveCwd("acquireWorkspace", request.cwd), (registered) =>
+        registered.ports.workspace.acquireWorkspace(request),
+      ),
+    acquireDefaultWorkspace: (request) =>
+      via(resolveDefault("acquireDefaultWorkspace"), (registered) =>
+        registered.ports.workspace.acquireDefaultWorkspace(request),
+      ),
+    releaseWorkspace: (request) =>
+      via(resolveWorkspace("releaseWorkspace", request.workspaceId), (registered) =>
+        registered.ports.workspace.releaseWorkspace(request),
+      ),
+  };
+
+  const surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService = {
+    createOrchestratorSurface: (request) =>
+      via(resolveWorkspace("createOrchestratorSurface", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.createOrchestratorSurface(request),
+      ),
+    openSurface: (request) =>
+      via(resolveWorkspace("openSurface", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.openSurface(request),
+      ),
+    closeSurface: (request) =>
+      via(resolveWorkspace("closeSurface", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.closeSurface(request),
+      ),
+  };
+
+  const promptDefaults: RuntimePromptDefaultsStatePortService = {
+    resolvePromptDefaults: (request) =>
+      via(locatePromptTarget("resolvePromptDefaults", request.target), (registered) =>
+        registered.ports.promptDefaults.resolvePromptDefaults(request),
+      ),
+  };
+
+  const source: RuntimeSourceStatePortService = {
+    readSourceVersion: (request) =>
+      via(resolveScope("readSourceVersion", request.scope), (registered) =>
+        registered.ports.source.readSourceVersion(request),
+      ),
+    recordSourceSave: (request) =>
+      via(resolveScope("recordSourceSave", request.scope), (registered) =>
+        registered.ports.source.recordSourceSave(request),
+      ),
+    recordSourceDelete: (request) =>
+      via(resolveScope("recordSourceDelete", request.scope), (registered) =>
+        registered.ports.source.recordSourceDelete(request),
+      ),
+    recordSourceScan: (request) =>
+      via(resolveScope("recordSourceScan", request.scope), (registered) =>
+        registered.ports.source.recordSourceScan(request),
+      ),
+    recordObservedSourceDeletion: (request) =>
+      via(resolveScope("recordObservedSourceDeletion", request.scope), (registered) =>
+        registered.ports.source.recordObservedSourceDeletion(request),
+      ),
+    recordSourceDiagnostic: (request) =>
+      via(resolveScope("recordSourceDiagnostic", request.scope), (registered) =>
+        registered.ports.source.recordSourceDiagnostic(request),
+      ),
+  };
+
+  const generatedPackage: RuntimeGeneratedPackageStatePortService = {
+    recordGeneratedPackageBuild: (request) =>
+      appGlobal.ports.generatedPackage.recordGeneratedPackageBuild(request),
+    recordGeneratedPackageFailure: (request) =>
+      appGlobal.ports.generatedPackage.recordGeneratedPackageFailure(request),
+    recordWorkspaceLinkStatus: (request) =>
+      via(resolveWorkspace("recordWorkspaceLinkStatus", request.status.workspaceId), (registered) =>
+        registered.ports.generatedPackage.recordWorkspaceLinkStatus(request),
+      ),
+    markWorkspaceLinksRepairNeeded: (request) =>
+      via(resolveWorkspace("markWorkspaceLinksRepairNeeded", request.workspaceId), (registered) =>
+        registered.ports.generatedPackage.markWorkspaceLinksRepairNeeded(request),
+      ),
+    readLinksNeedingRepair: (request) =>
+      request?.workspaceId
+        ? via(resolveWorkspace("readLinksNeedingRepair", request.workspaceId), (registered) =>
+            registered.ports.generatedPackage.readLinksNeedingRepair(request),
+          )
+        : fanOutList<RuntimeGeneratedPackageWorkspaceLinkRecord>((registered) =>
+            registered.ports.generatedPackage.readLinksNeedingRepair(request),
+          ),
+    readGeneratedPackageFacts: (request) =>
+      appGlobal.ports.generatedPackage.readGeneratedPackageFacts(request),
+    reconcileGeneratedPackageManifest: (request) =>
+      appGlobal.ports.generatedPackage.reconcileGeneratedPackageManifest(request),
+    markGeneratedPackageRefreshNeeded: (request) =>
+      appGlobal.ports.generatedPackage.markGeneratedPackageRefreshNeeded(request),
+  };
+
+  const actorExtensionBinding: RuntimeActorExtensionBindingStatePortService = {
+    readRuntimePromptBinding: (request) =>
+      via(locatePromptTarget("readRuntimePromptBinding", request.target), (registered) =>
+        registered.ports.actorExtensionBinding.readRuntimePromptBinding(request),
+      ),
+    updateActorExtensionBinding: (request) =>
+      via(locatePromptTarget("updateActorExtensionBinding", request.target), (registered) =>
+        registered.ports.actorExtensionBinding.updateActorExtensionBinding(request),
+      ),
+    setActorExtensionBinding: (request) =>
+      via(locatePromptTarget("setActorExtensionBinding", request.target), (registered) =>
+        registered.ports.actorExtensionBinding.setActorExtensionBinding(request),
+      ),
+  };
+
+  const queue: RuntimeQueueStatePortService = {
+    acceptSubmittedSurfaceMessage: (request) =>
+      via(locatePromptTarget("acceptSubmittedSurfaceMessage", request.target), (registered) =>
+        registered.ports.queue.acceptSubmittedSurfaceMessage(request),
+      ),
+    enqueueSurfaceMessage: (request) =>
+      via(
+        locate("enqueueSurfaceMessage", `no store owns surface ${request.surfacePiSessionId}`, [
+          surfaceProbe(request.surfacePiSessionId),
+          sessionProbe(request.sessionId),
+        ]),
+        (registered) => registered.ports.queue.enqueueSurfaceMessage(request),
+      ),
+    getSurfaceQueuedMessage: (request) =>
+      via(
+        locate("getSurfaceQueuedMessage", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.getSurfaceQueuedMessage(request),
+      ),
+    claimNextQueuedSurfaceMessage: (request) =>
+      via(
+        locate(
+          "claimNextQueuedSurfaceMessage",
+          `no store owns surface ${request.surfacePiSessionId}`,
+          [surfaceProbe(request.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.queue.claimNextQueuedSurfaceMessage(request),
+      ),
+    releaseExpiredSurfaceMessageClaims: (request) =>
+      request?.surfacePiSessionId
+        ? via(
+            locate(
+              "releaseExpiredSurfaceMessageClaims",
+              `no store owns surface ${request.surfacePiSessionId}`,
+              [surfaceProbe(request.surfacePiSessionId)],
+            ),
+            (registered) => registered.ports.queue.releaseExpiredSurfaceMessageClaims(request),
+          )
+        : fanOutMutationList<RuntimeSurfaceMessageRecord>((registered) =>
+            registered.ports.queue.releaseExpiredSurfaceMessageClaims(request),
+          ),
+    markSurfaceMessageSteering: (request) =>
+      via(
+        locate("markSurfaceMessageSteering", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.markSurfaceMessageSteering(request),
+      ),
+    markSurfaceMessageQueued: (request) =>
+      via(
+        locate("markSurfaceMessageQueued", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.markSurfaceMessageQueued(request),
+      ),
+    markSurfaceMessageDelivered: (request) =>
+      via(
+        locate("markSurfaceMessageDelivered", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.markSurfaceMessageDelivered(request),
+      ),
+    markSurfaceMessageFailed: (request) =>
+      via(
+        locate("markSurfaceMessageFailed", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.markSurfaceMessageFailed(request),
+      ),
+    cancelSurfaceMessage: (request) =>
+      via(
+        locate("cancelSurfaceMessage", `no store owns queue item ${request.id}`, [
+          queueItemProbe(request.id),
+        ]),
+        (registered) => registered.ports.queue.cancelSurfaceMessage(request),
+      ),
+  };
+
+  const request: RuntimeRequestStatePortService = {
+    createRequestInput: (input_) =>
+      via(locatePromptTarget("createRequestInput", input_.target), (registered) =>
+        registered.ports.request.createRequestInput(input_),
+      ),
+    getRequestInput: (input_) =>
+      via(
+        locate("getRequestInput", `no store owns request input ${input_.requestId}`, [
+          requestInputProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.request.getRequestInput(input_),
+      ),
+    listOpenBlockingRequestInputs: (input_) => {
+      if (input_?.surfacePiSessionId) {
+        return via(
+          locate(
+            "listOpenBlockingRequestInputs",
+            `no store owns surface ${input_.surfacePiSessionId}`,
+            [surfaceProbe(input_.surfacePiSessionId)],
+          ),
+          (registered) => registered.ports.request.listOpenBlockingRequestInputs(input_),
+        );
+      }
+      if (input_?.workspaceSessionId) {
+        return via(
+          locate(
+            "listOpenBlockingRequestInputs",
+            `no store owns session ${input_.workspaceSessionId}`,
+            [sessionProbe(input_.workspaceSessionId)],
+          ),
+          (registered) => registered.ports.request.listOpenBlockingRequestInputs(input_),
+        );
+      }
+      return fanOutList<RuntimeRequestInputDetailsRecord>((registered) =>
+        registered.ports.request.listOpenBlockingRequestInputs(input_),
+      );
+    },
+    answerRequestInput: (input_) =>
+      via(
+        locate("answerRequestInput", `no store owns surface ${input_.surfacePiSessionId}`, [
+          surfaceProbe(input_.surfacePiSessionId),
+          requestInputProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.request.answerRequestInput(input_),
+      ),
+    defaultOpenRequestInputQuestions: (input_) =>
+      via(
+        locate(
+          "defaultOpenRequestInputQuestions",
+          `no store owns request input ${input_.requestId}`,
+          [requestInputProbe(input_.requestId)],
+        ),
+        (registered) => registered.ports.request.defaultOpenRequestInputQuestions(input_),
+      ),
+    cancelRequestInput: (input_) =>
+      via(
+        locate("cancelRequestInput", `no store owns request input ${input_.requestId}`, [
+          requestInputProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.request.cancelRequestInput(input_),
+      ),
+    setRequestInputTimerPaused: (input_) =>
+      via(
+        locate("setRequestInputTimerPaused", `no store owns surface ${input_.surfacePiSessionId}`, [
+          surfaceProbe(input_.surfacePiSessionId),
+          requestInputProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.request.setRequestInputTimerPaused(input_),
+      ),
+  };
+
+  const approval: RuntimeApprovalStatePortService = {
+    createApprovalRequest: (input_) =>
+      via(
+        locate("createApprovalRequest", `no store owns surface ${input_.surfacePiSessionId}`, [
+          surfaceProbe(input_.surfacePiSessionId),
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.approval.createApprovalRequest(input_),
+      ),
+    resolveApprovalRequest: (input_) =>
+      via(
+        locate("resolveApprovalRequest", `no store owns approval ${input_.requestId}`, [
+          approvalProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.approval.resolveApprovalRequest(input_),
+      ),
+    getApprovalRequest: (input_) =>
+      via(
+        locate("getApprovalRequest", `no store owns approval ${input_.requestId}`, [
+          approvalProbe(input_.requestId),
+        ]),
+        (registered) => registered.ports.approval.getApprovalRequest(input_),
+      ),
+    listOpenApprovalRequests: (input_) =>
+      input_?.surfacePiSessionId
+        ? via(
+            locate(
+              "listOpenApprovalRequests",
+              `no store owns surface ${input_.surfacePiSessionId}`,
+              [surfaceProbe(input_.surfacePiSessionId)],
+            ),
+            (registered) => registered.ports.approval.listOpenApprovalRequests(input_),
+          )
+        : fanOutList<RuntimeApprovalRecord>((registered) =>
+            registered.ports.approval.listOpenApprovalRequests(input_),
+          ),
+  };
+
+  const commandCreateProbes = (input_: {
+    readonly surfacePiSessionId?: string;
+    readonly turnId?: string | null;
+    readonly workflowTaskAttemptId?: string | null;
+  }): readonly StoreProbe[] => {
+    const probes: StoreProbe[] = [];
+    if (input_.surfacePiSessionId) probes.push(surfaceProbe(input_.surfacePiSessionId));
+    if (input_.turnId) probes.push(turnProbe(input_.turnId));
+    if (input_.workflowTaskAttemptId) probes.push(attemptProbe(input_.workflowTaskAttemptId));
+    return probes;
+  };
+
+  const command: RuntimeCommandStatePortService = {
+    createCommand: (input_) =>
+      via(
+        locate("createCommand", "no store owns the command owner row", commandCreateProbes(input_)),
+        (registered) => registered.ports.command.createCommand(input_),
+      ),
+    createOrReuseStreamingCommand: (input_) =>
+      via(
+        locate(
+          "createOrReuseStreamingCommand",
+          "no store owns the command owner row",
+          commandCreateProbes(input_),
+        ),
+        (registered) => registered.ports.command.createOrReuseStreamingCommand(input_),
+      ),
+    findCommandByToolCallId: (input_) =>
+      via(
+        locate(
+          "findCommandByToolCallId",
+          input_.surfacePiSessionId
+            ? `no store owns surface ${input_.surfacePiSessionId}`
+            : "findCommandByToolCallId requires surfacePiSessionId for routing",
+          input_.surfacePiSessionId ? [surfaceProbe(input_.surfacePiSessionId)] : [],
+        ),
+        (registered) => registered.ports.command.findCommandByToolCallId(input_),
+      ),
+    findCommandById: (input_) =>
+      via(
+        locate("findCommandById", `no store owns command ${input_.commandId}`, [
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.findCommandById(input_),
+      ),
+    updateCommandArguments: (input_) =>
+      via(
+        locate("updateCommandArguments", `no store owns command ${input_.commandId}`, [
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.updateCommandArguments(input_),
+      ),
+    startCommand: (input_) =>
+      via(
+        locate("startCommand", `no store owns command ${input_.commandId}`, [
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.startCommand(input_),
+      ),
+    finishCommand: (input_) =>
+      via(
+        locate("finishCommand", `no store owns command ${input_.commandId}`, [
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.finishCommand(input_),
+      ),
+    recordCommandEvent: (input_) =>
+      via(
+        locate("recordCommandEvent", `no store owns command ${input_.commandId}`, [
+          sessionProbe(input_.sessionId),
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.recordCommandEvent(input_),
+      ),
+    recordStdinWrite: (input_) =>
+      via(
+        locate("recordStdinWrite", `no store owns command ${input_.commandId}`, [
+          sessionProbe(input_.sessionId),
+          commandProbe(input_.commandId),
+        ]),
+        (registered) => registered.ports.command.recordStdinWrite(input_),
+      ),
+    hasCommandOutputEvent: (input_) =>
+      via(
+        locate("hasCommandOutputEvent", `no store owns session ${input_.sessionId}`, [
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.command.hasCommandOutputEvent(input_),
+      ),
+  };
+
+  const sessionWait: RuntimeSessionWaitStatePortService = {
+    setApprovalWait: (input_) =>
+      via(
+        locate("setApprovalWait", `no store owns session ${input_.sessionId}`, [
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.sessionWait.setApprovalWait(input_),
+      ),
+    setUserWait: (input_) =>
+      via(
+        locate("setUserWait", `no store owns session ${input_.sessionId}`, [
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.sessionWait.setUserWait(input_),
+      ),
+    clearSessionWait: (input_) =>
+      via(
+        locate("clearSessionWait", `no store owns session ${input_.sessionId}`, [
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.sessionWait.clearSessionWait(input_),
+      ),
+  };
+
+  const thread: RuntimeThreadStatePortService = {
+    ensureHandlerThreadRunnable: (input_) =>
+      via(
+        locate(
+          "ensureHandlerThreadRunnable",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId), sessionProbe(input_.workspaceSessionId)],
+        ),
+        (registered) => registered.ports.thread.ensureHandlerThreadRunnable(input_),
+      ),
+    startHandlerThreads: (input_) =>
+      via(
+        locate("startHandlerThreads", `no store owns session ${input_.workspaceSessionId}`, [
+          sessionProbe(input_.workspaceSessionId),
+        ]),
+        (registered) => registered.ports.thread.startHandlerThreads(input_),
+      ),
+  };
+
+  const turn: RuntimeTurnStatePortService = {
+    startTurn: (input_) =>
+      via(
+        locate("startTurn", `no store owns surface ${input_.surfacePiSessionId}`, [
+          surfaceProbe(input_.surfacePiSessionId),
+          sessionProbe(input_.sessionId),
+        ]),
+        (registered) => registered.ports.turn.startTurn(input_),
+      ),
+    setTurnDecision: (input_) =>
+      via(
+        locate("setTurnDecision", `no store owns turn ${input_.turnId}`, [
+          turnProbe(input_.turnId),
+        ]),
+        (registered) => registered.ports.turn.setTurnDecision(input_),
+      ),
+    finishTurn: (input_) =>
+      via(
+        locate("finishTurn", `no store owns turn ${input_.turnId}`, [turnProbe(input_.turnId)]),
+        (registered) => registered.ports.turn.finishTurn(input_),
+      ),
+  };
+
+  const episode: RuntimeEpisodeStatePortService = {
+    recordHandlerThreadEpisode: (input_) =>
+      via(
+        locate("recordHandlerThreadEpisode", `no store owns session ${input_.workspaceSessionId}`, [
+          sessionProbe(input_.workspaceSessionId),
+          threadProbe(input_.threadId),
+        ]),
+        (registered) => registered.ports.episode.recordHandlerThreadEpisode(input_),
+      ),
+  };
+
+  return {
+    workspace,
+    surfaceLifecycle,
+    promptDefaults,
+    source,
+    generatedPackage,
+    actorExtensionBinding,
+    queue,
+    request,
+    approval,
+    command,
+    sessionWait,
+    thread,
+    turn,
+    episode,
+    appGlobalStructuredSession: appGlobal.structuredSession,
+    resolveWorkspaceStructuredSession: (workspaceId) =>
+      resolveWorkspace("resolveWorkspaceStructuredSession", workspaceId).pipe(
+        Effect.map((registered) => registered.structuredSession),
+      ),
+  };
+}
+
+export function layerWorkspaceStateRouter(
+  router: WorkspaceStateRouter,
+): Layer.Layer<
+  | RuntimeWorkspaceStatePort
+  | RuntimeSurfaceLifecycleStatePort
+  | RuntimePromptDefaultsStatePort
+  | RuntimeSourceStatePort
+  | RuntimeGeneratedPackageStatePort
+  | RuntimeActorExtensionBindingStatePort
+  | RuntimeQueueStatePort
+  | RuntimeRequestStatePort
+  | RuntimeApprovalStatePort
+  | RuntimeCommandStatePort
+  | RuntimeSessionWaitStatePort
+  | RuntimeThreadStatePort
+  | RuntimeTurnStatePort
+  | RuntimeEpisodeStatePort
+> {
+  return Layer.mergeAll(
+    Layer.succeed(RuntimeWorkspaceStatePort, router.workspace),
+    Layer.succeed(RuntimeSurfaceLifecycleStatePort, router.surfaceLifecycle),
+    Layer.succeed(RuntimePromptDefaultsStatePort, router.promptDefaults),
+    Layer.succeed(RuntimeSourceStatePort, router.source),
+    Layer.succeed(RuntimeGeneratedPackageStatePort, router.generatedPackage),
+    Layer.succeed(RuntimeActorExtensionBindingStatePort, router.actorExtensionBinding),
+    Layer.succeed(RuntimeQueueStatePort, router.queue),
+    Layer.succeed(RuntimeRequestStatePort, router.request),
+    Layer.succeed(RuntimeApprovalStatePort, router.approval),
+    Layer.succeed(RuntimeCommandStatePort, router.command),
+    Layer.succeed(RuntimeSessionWaitStatePort, router.sessionWait),
+    Layer.succeed(RuntimeThreadStatePort, router.thread),
+    Layer.succeed(RuntimeTurnStatePort, router.turn),
+    Layer.succeed(RuntimeEpisodeStatePort, router.episode),
+  );
+}

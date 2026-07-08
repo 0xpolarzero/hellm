@@ -77,7 +77,7 @@ test("renders seeded app logs with badges, redaction, filters, and mark-read beh
 
       const pane = page.locator(".app-logs-pane");
       await pane.waitFor({ state: "visible", timeout: UI_TIMEOUT });
-      await waitForAppLogPaneText(page, "entries");
+      await waitForAppLogPaneText(page, "Background workspace log 12");
       await waitForAppLogPaneText(page, "Seeded compile failure");
       expect((await pane.textContent()).includes(SECRET_TOKEN)).toBe(false);
       await waitForAppLogPaneText(page, "[REDACTED]");
@@ -93,9 +93,20 @@ test("renders seeded app logs with badges, redaction, filters, and mark-read beh
 
       await pane.locator('input[aria-label="Search app logs"]').fill("cmd-seeded-logs");
       await waitForAppLogPaneText(page, "Seeded compile failure");
+      await pane
+        .getByRole("button", { name: "Expand Seeded compile failure" })
+        .first()
+        .click({ force: true });
       await waitForAppLogPaneText(page, "cmd-seeded-logs");
 
-      await pane.getByRole("button", { name: "Mark all read" }).click({ force: true });
+      const unreadLogsButton = page.getByRole("button", {
+        name: "Open app logs: 1 errors, 1 warnings unread",
+      });
+      const markReadDeadline = Date.now() + UI_TIMEOUT;
+      while (Date.now() < markReadDeadline && (await unreadLogsButton.count()) > 0) {
+        await Bun.sleep(150);
+      }
+      expect(await unreadLogsButton.count()).toBe(0);
       await page
         .getByRole("button", {
           name: "Open app logs",

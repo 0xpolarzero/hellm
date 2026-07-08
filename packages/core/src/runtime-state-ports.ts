@@ -712,6 +712,7 @@ export type CreateOrReuseStreamingRuntimeCommandInput =
 
 export const FindRuntimeCommandByToolCallIdInputSchema = Schema.Struct({
   toolCallId: Schema.String,
+  surfacePiSessionId: Schema.optionalKey(SurfacePiSessionId),
 });
 export type FindRuntimeCommandByToolCallIdInput =
   typeof FindRuntimeCommandByToolCallIdInputSchema.Type;

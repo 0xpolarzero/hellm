@@ -2495,6 +2495,7 @@ function findActiveDirectToolCommandForOptions(input: {
     commandState: input.options.commandState,
     runState: input.options.runState,
     sessionId: runtime.workspaceSessionId,
+    surfacePiSessionId: runtime.surfacePiSessionId as SurfacePiSessionId,
     toolCallId: input.toolCallId,
     toolName: input.toolName,
     turnId: runtime.turnId,
@@ -2506,13 +2507,17 @@ function findActiveDirectToolCommand(input: {
   commandState: RuntimeCommandStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
+  surfacePiSessionId: SurfacePiSessionId;
   turnId: string | null;
   workflowTaskAttemptId: string | null;
   toolCallId: string;
   toolName: "exec_command" | "apply_patch";
 }): RuntimeCommandRecord | null {
   const command = input.runState(
-    input.commandState.findCommandByToolCallId({ toolCallId: input.toolCallId }),
+    input.commandState.findCommandByToolCallId({
+      toolCallId: input.toolCallId,
+      surfacePiSessionId: input.surfacePiSessionId,
+    }),
   );
   if (
     !command ||

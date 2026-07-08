@@ -91,3 +91,10 @@ export {
   runtimeWorkspaceStatePortFromStore,
   runtimeWorkspaceStatePortFromStructuredSessionState,
 } from "./runtime-workspace-state-port";
+export { createWorkspaceStateRouter, layerWorkspaceStateRouter } from "./workspace-state-router";
+export { stateCommandsFromRouter, stateReadModelsFromRouter } from "./state-facade";
+export type {
+  WorkspaceStateRegistration,
+  WorkspaceStateRouter,
+  WorkspaceStateRouterInput,
+} from "./workspace-state-router";

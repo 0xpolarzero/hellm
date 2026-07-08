@@ -76,6 +76,7 @@ import {
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import type { StateLayerConfig } from "./state-layer-config";
+import type { WorkspaceStateRouter } from "./workspace-state-router";
 import {
   decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect,
   decodeUnknownMarkAppLogReadCommandInputEffect,
@@ -505,6 +506,26 @@ const makeStateReadModels = Effect.fn("@svvy/state/makeStateReadModels")(functio
   const structuredSession = yield* StructuredSessionState;
   return stateReadModelsFromState({ appLogs, structuredSession });
 });
+
+export function stateReadModelsFromRouter(input: {
+  router: WorkspaceStateRouter;
+  appLogs: AppLogState["Service"];
+}): StateReadModels["Service"] {
+  return stateReadModelsFromState({
+    appLogs: input.appLogs,
+    structuredSession: input.router.appGlobalStructuredSession,
+  });
+}
+
+export function stateCommandsFromRouter(input: {
+  router: WorkspaceStateRouter;
+  appLogs: AppLogState["Service"];
+}): StateCommands["Service"] {
+  return stateCommandsFromState({
+    appLogs: input.appLogs,
+    structuredSession: input.router.appGlobalStructuredSession,
+  });
+}
 
 const layerStateReadModels = Layer.effect(StateReadModels, makeStateReadModels());
 

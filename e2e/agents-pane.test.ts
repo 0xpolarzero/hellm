@@ -1,5 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
+import { seedInitialExtensionSnapshot } from "./support";
 
 setDefaultTimeout(90_000);
 
@@ -39,23 +40,47 @@ async function waitForAgentsPaneTokens(page: SvvyApp["page"]): Promise<string> {
   );
 }
 
+async function waitForButton(page: SvvyApp["page"], name: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      if ((await page.getByRole("button", { name }).count()) > 0) {
+        return;
+      }
+    } catch {
+      // Tolerate transient bridge timeouts while the pane loads.
+    }
+    await Bun.sleep(150);
+  }
+  throw new Error(`Timed out waiting for button: ${name}`);
+}
+
 test("keeps expanded agent token counts visible across extension state refresh", async () => {
-  await withSvvyApp({ openInitialWorkspace: false }, async ({ page }) => {
-    await openAgentsPane(page);
+  await withSvvyApp(
+    {
+      openInitialWorkspace: false,
+      beforeLaunch: async ({ homeDir }) => {
+        await seedInitialExtensionSnapshot(homeDir);
+      },
+    },
+    async ({ page }) => {
+      await openAgentsPane(page);
 
-    await page.getByRole("button", { name: "Expand Default" }).click({ force: true });
-    const initialText = await waitForAgentsPaneTokens(page);
+      await page.getByRole("button", { name: "Expand Default" }).click({ force: true });
+      const initialText = await waitForAgentsPaneTokens(page);
 
-    expect(initialText).toContain("tokens total");
-    expect(initialText).not.toContain("Preview failed");
-    expect(await page.locator(".agents-error").count()).toBe(0);
+      expect(initialText).toContain("tokens total");
+      expect(initialText).not.toContain("Preview failed");
+      expect(await page.locator(".agents-error").count()).toBe(0);
 
-    await page.getByRole("button", { name: "Set Shell to Off" }).click({ force: true });
-    const refreshText = await waitForAgentsPaneTokens(page);
+      await waitForButton(page, "Shell usage state: set Off");
+      await page.getByRole("button", { name: "Shell usage state: set Off" }).click({ force: true });
+      const refreshText = await waitForAgentsPaneTokens(page);
 
-    expect(refreshText).toContain("tokens total");
-    expect(refreshText).not.toContain("Preview failed");
-    expect(await page.locator(".agents-error").count()).toBe(0);
-    expect(await page.getByTestId("agents-pane").isVisible()).toBe(true);
-  });
+      expect(refreshText).toContain("tokens total");
+      expect(refreshText).not.toContain("Preview failed");
+      expect(await page.locator(".agents-error").count()).toBe(0);
+      expect(await page.getByTestId("agents-pane").isVisible()).toBe(true);
+    },
+  );
 });

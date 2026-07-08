@@ -30,7 +30,7 @@ Files:
 - /Users/polarzero/code/projects/svvy/packages/core/src/runtime-state-ports.ts (only where a port input genuinely lacks routing identity)
 - /Users/polarzero/code/projects/svvy/docs/specs/package-architecture/state.spec.md (router + restricted-subpath symbol rows)
 - /Users/polarzero/code/projects/svvy/packages/package-boundaries.test.ts (export ledger rows)
-- /Users/polarzero/code/projects/svvy/src/bun/session-catalog.ts (expose store handles to the adapter boundary; no behavior change)
+- /Users/polarzero/code/projects/svvy/src/bun/session-catalog.ts (expose store handles to the adapter boundary; no behavior change — deferred to increment 2, where app bootstrap actually wires `createWorkspaceStateRouter` over the catalog's store instances; increment 1 ships the router with zero production call sites and pins the seam with test-constructed stores only)
 
 Test strategy: @effect/vitest layer tests: each routed port method reaches the correct fake/temp-file workspace store by explicit workspaceId/scope, durable-id fan-out via committed owner records, typed target-not-found for unregistered workspaces; after-commit descriptors carry the committed scope (not the store they came from); routing-identity audit test enumerating 100% of RuntimeLayerRequirements port methods; shared-store-instance test proving no second SQLite connection opens for a wired workspace; boundary tests reject non-bootstrap consumers of new restricted symbols.
 
@@ -377,3 +377,16 @@ Risks:
 - Request/result shapes for most renderer read-model kinds are genuinely unauthored: state.spec.md:614-616 closes the union ('Additional read-model kinds are not package-root facade contracts unless this spec names their request/result variants, builders, invalidation mappings, root exports, and tests'), and only surfaceTranscript (:3134-3159) and commandInspector (:3161-3190) have authored shapes, while progress.md:221-224 and desktop.spec.md:462-466/:720-724 demand ~15 kinds including sessionNavigation, surface slices, requestInput, approvals, agents, extensions, snippets, workflowsGenerated, handler/task-attempt inspectors, and the workspace layout/panel-binding kind that panel-binding validation requires. Increment 6 authors them into state.spec.md (the sanctioned mechanism), but the exact contract shapes need owner sign-off before implementation — this is spec authorship, not derivable from existing text.
 - Workspace-store entry mechanism into the @svvy/state graph is underdetermined: StateLayerConfig carries exactly one databasePath (state.spec.md:421-430) and state.spec.md:386-391 speaks of 'the same acquired state graph and database handle' (singular), while progress.md:137-139 requires the state router to dispatch 'to the correct app-global or workspace store' (plural). No spec states HOW per-workspace stores/paths enter the state composition (restricted structured-session-adapters symbol extension? layer-config extension? a state-owned acquisition service over committed workspace cwd facts?), nor whether the eventual steady state consolidates into one app DB. Increments 1-3 conservatively route the existing per-workspace stores through the restricted adapters seam with a state-spec ledger extension; the exact allowed-symbol set, and any future single-DB consolidation (which would require inserting a data-migration increment), are owner decisions.
 - appPreferences/settings source of truth: StateCommands.appPreferences and the settings/appPreferences read models are state-DB-backed (state.spec.md:553-576), but the shipped app persists these preferences in the file-backed agent-settings-store (src/bun/agent-settings-store.ts, consumed throughout workspace-runtime-registry.ts). No spec line defines the migration/adapter path from the file store to state-owned rows; increment 5 needs an owner call between a one-time import at first bootstrap versus demoting the file store to a bootstrap-only seed input.
+## Deferred From Increment 1 (resolve no later than the increment noted)
+
+- Increment 2: session-catalog read-only store-handle accessor so bootstrap shares the exact
+  catalog-owned StructuredSessionStateStore instances with the router.
+- Increment 2: layerWorkspaceStateRouter wiring test — build the layer, resolve all 14 port tags,
+  dispatch one call per tag.
+- Increment 3 (before cutover): fan-out mutation partial-failure contract — bare sweeps currently
+  fail fast and drop committed afterCommit descriptors from earlier stores; choose per-store
+  collection or document per-store atomicity, with a pinning test.
+- When profiling justifies: cheap public findTurnById/findWorkflowTaskAttemptById store getters to
+  replace O(sessions x rows) turn/attempt probes.
+- Extensions composition (increment 2): owner decision on extension dependency approval/readiness
+  scope (per-workspace rows today vs app-global sandbox scope naming).
