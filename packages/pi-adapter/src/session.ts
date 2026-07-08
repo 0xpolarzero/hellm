@@ -14,6 +14,7 @@ import type {
   NativeToolDeclaration,
   NativeToolResult,
   PiToolExecutor,
+  PiToolExecutionUpdate,
   RuntimeToolExecutionError,
   SurfacePiSessionId,
   ToolCallId,
@@ -26,7 +27,7 @@ type CreateAgentSessionOptions = NonNullable<Parameters<typeof createAgentSessio
 type PiManagedSessionModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type PiManagedSessionThinkingLevel = NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
 
-export interface CreatePiManagedAgentSessionInput {
+interface CreatePiManagedAgentSessionInput {
   cwd: string;
   agentDir: string;
   sessionManager: SessionManager;
@@ -39,6 +40,13 @@ export interface CreatePiManagedAgentSessionInput {
   runToolEffect: (
     effect: Effect.Effect<NativeToolResult, RuntimeToolExecutionError>,
   ) => Promise<NativeToolResult>;
+  emitToolExecutionUpdate: (input: {
+    readonly turnId: TurnId;
+    readonly surfacePiSessionId: SurfacePiSessionId;
+    readonly piToolCallId: ToolCallId;
+    readonly toolName: string;
+    readonly update: PiToolExecutionUpdate;
+  }) => Effect.Effect<void, RuntimeToolExecutionError>;
   getToolExecutionContext: (input: {
     readonly piToolCallId: ToolCallId;
     readonly toolName: string;
@@ -65,6 +73,7 @@ export async function createPiManagedAgentSession(
     input.tools,
     input.toolExecutor,
     input.runToolEffect,
+    input.emitToolExecutionUpdate,
     input.getToolExecutionContext,
   );
   const modelRegistryFactory = ModelRegistry as unknown as {

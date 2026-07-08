@@ -36,16 +36,8 @@ export type ExtensionDependencyBlockedOperation = {
   completedAt: string | null;
 };
 
-type ExtensionDependencyApprovalRecord = {
-  identity: ExtensionDependencyApprovalIdentity;
-  identityKey: string;
-  approvedAt: string;
-  requestId: string | null;
-};
-
 type ExtensionDependencyApprovalLedger = {
   schemaVersion: 1;
-  approvals: ExtensionDependencyApprovalRecord[];
   blockedOperations: ExtensionDependencyBlockedOperation[];
   requests: ExtensionDependencyApprovalRequest[];
 };
@@ -65,11 +57,6 @@ export class ExtensionDependencyApprovalStore {
       options.path ?? join(resolve(options.extensionsRoot), "state", "dependency-approvals.json");
     this.now = options.now ?? (() => new Date());
     this.createRequestId = options.createRequestId ?? (() => `depapr_${randomUUID()}`);
-  }
-
-  hasApproved(identity: ExtensionDependencyApprovalIdentity): boolean {
-    const key = extensionDependencyApprovalIdentityKey(identity);
-    return this.read().approvals.some((approval) => approval.identityKey === key);
   }
 
   findPendingRequestForIdentity(
@@ -130,9 +117,7 @@ export class ExtensionDependencyApprovalStore {
     extensionId: string;
     identities: readonly ExtensionDependencyApprovalIdentity[];
   }): ExtensionDependencyApprovalRequest | null {
-    const unresolved = uniqueIdentities(
-      input.identities.filter((identity) => !this.hasApproved(identity)),
-    );
+    const unresolved = uniqueIdentities(input.identities);
     if (unresolved.length === 0) {
       return null;
     }
@@ -251,18 +236,6 @@ export class ExtensionDependencyApprovalStore {
       throw new Error(`Dependency approval request is not pending: ${requestId}`);
     }
     const now = this.nowIso();
-    for (const identity of request.identities) {
-      const identityKey = extensionDependencyApprovalIdentityKey(identity);
-      if (ledger.approvals.some((approval) => approval.identityKey === identityKey)) {
-        continue;
-      }
-      ledger.approvals.push({
-        identity,
-        identityKey,
-        approvedAt: now,
-        requestId,
-      });
-    }
     request.status = "approved";
     request.updatedAt = now;
     request.completedAt = now;
@@ -301,22 +274,20 @@ export class ExtensionDependencyApprovalStore {
 
   private read(): ExtensionDependencyApprovalLedger {
     if (!existsSync(this.path)) {
-      return { schemaVersion: 1, approvals: [], blockedOperations: [], requests: [] };
+      return { schemaVersion: 1, blockedOperations: [], requests: [] };
     }
     const raw = JSON.parse(
       readFileSync(this.path, "utf8"),
     ) as Partial<ExtensionDependencyApprovalLedger>;
     if (
       raw.schemaVersion !== 1 ||
-      !Array.isArray(raw.approvals) ||
       !Array.isArray(raw.blockedOperations) ||
       !Array.isArray(raw.requests)
     ) {
-      throw new Error(`Invalid extension dependency approval ledger: ${this.path}`);
+      throw new Error(`Invalid extension dependency approval request ledger: ${this.path}`);
     }
     return {
       schemaVersion: 1,
-      approvals: raw.approvals,
       blockedOperations: raw.blockedOperations,
       requests: raw.requests,
     };

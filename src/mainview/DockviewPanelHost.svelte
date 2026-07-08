@@ -30,7 +30,6 @@
   import type { ChatSurfaceController } from "./chat-runtime";
   import type { QueuedPrompt } from "./chat-runtime";
   import {
-    DEFAULT_AGENT_SETTINGS_STATE,
     type AgentSettingsState,
     type AppAppearance,
   } from "../shared/agent-settings";
@@ -39,7 +38,7 @@
     type AgentContextActor,
     type ExtensionUsageControlItem,
   } from "./agents-pane-extension-usage";
-  import type { ExtensionUsageState } from "@svvy/extensions";
+  import type { ExtensionUsageState } from "@svvy/core";
   import type {
     WorkspaceHandlerThreadSummary,
     WorkspaceSessionSummary,
@@ -186,7 +185,7 @@
       profileId: controller?.agentProfileId ?? "composer-surface",
       usage: composerExtensionUsage,
       extensionInventoryItems: runtime.extensionsInventorySnapshot?.extensions ?? [],
-      extensionDefaults: agentSettings?.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults,
+      inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
       networkAccess: agentSettings?.appPreferences.networkAccess ?? true,
     }),
   );

@@ -3,7 +3,8 @@
 ## Status
 
 - Date: 2026-06-05
-- Status: accepted extension index; loaded instruction text remains in `docs/specs/extensions-and-tools.spec.md`
+- Status: accepted builtin prompt-only extension; loaded instruction source is editable MDX under
+  the builtin extension source root
 - Scope:
   - define Git as a builtin prompt-only extension
   - keep `git` usage on ordinary shell commands through the Shell extension

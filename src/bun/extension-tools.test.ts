@@ -3,15 +3,33 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
-import { createListExtensionsTool, createLoadExtensionTool } from "./extension-tools";
+import {
+  createListExtensionsTool,
+  createLoadExtensionTool as createLoadExtensionToolBase,
+  type RunAcceptedLoadExtension,
+} from "./extension-tools";
+import { resolveExtensionRecord } from "./svvyx-extensions-command";
 import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
-import type { StateContractError } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import type { ListExtensionsDetails } from "@svvy/extensions";
+
+/**
+ * Unwrap a `extFacts(NativeToolResult).commandFacts` payload back into the typed
+ * list/load extension details shape for assertion. The runtime wraps the result
+ * as `details.commandFacts` (a `CommandFactsPayload` JSON record); tests read
+ * the typed fields through this cast.
+ */
+function extFacts(result: {
+  readonly details?: { readonly commandFacts?: unknown } | undefined;
+}): ListExtensionsDetails & { readonly loadedExtensionId?: string } {
+  return result.details!.commandFacts as ListExtensionsDetails & { loadedExtensionId?: string };
+}
+import type { ExtensionId, RefreshGeneratedContextRequest, StateContractError } from "@svvy/core";
 import {
   runtimeActorExtensionBindingStatePortFromStore,
   runtimeCommandStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -34,6 +52,21 @@ const WORKSPACE = {
 
 const stores: StructuredSessionStateStore[] = [];
 
+type TestLoadExtensionToolOptions = Omit<
+  Parameters<typeof createLoadExtensionToolBase>[0],
+  "runAcceptedLoadExtension"
+> & {
+  refreshGeneratedContext?: (input: RefreshGeneratedContextRequest) => Promise<void>;
+};
+
+function createLoadExtensionTool(options: TestLoadExtensionToolOptions) {
+  const { refreshGeneratedContext, ...baseOptions } = options;
+  return createLoadExtensionToolBase({
+    ...baseOptions,
+    runAcceptedLoadExtension: fakeAcceptedLoadExtensionRunner(options, refreshGeneratedContext),
+  });
+}
+
 function createExtensionToolState(store: StructuredSessionStateStore) {
   return {
     actorExtensionBindingState: runtimeActorExtensionBindingStatePortFromStore(store),
@@ -44,6 +77,70 @@ function createExtensionToolState(store: StructuredSessionStateStore) {
 }
 
 async function noopRefreshGeneratedContext() {}
+
+function fakeAcceptedLoadExtensionRunner(
+  options: TestLoadExtensionToolOptions,
+  refreshGeneratedContext: TestLoadExtensionToolOptions["refreshGeneratedContext"],
+): RunAcceptedLoadExtension {
+  return async (request) => {
+    const extensionId = request.arguments.extensionId.trim() as ExtensionId;
+    const record =
+      resolveExtensionRecord(extensionId, options.extensionsRoot) ??
+      getExtensionRecord(extensionId);
+    if (!record || !request.actorBinding.availableExtensionIds.includes(extensionId)) {
+      throw new Error(`Unknown extension: ${extensionId}`);
+    }
+    if (record.envReadiness === "missing" || record.dependencyReadiness === "missing") {
+      throw new Error(`Extension is not ready to load for this actor: ${extensionId}.`);
+    }
+
+    const binding = options.state.runState(
+      options.state.actorExtensionBindingState.updateActorExtensionBinding({
+        target: request.command.target,
+        extensionId,
+        usage: "loaded",
+        reason: "load_extension",
+        sourceCommandId: request.command.commandId,
+      }),
+    ).value;
+    await (refreshGeneratedContext ?? noopRefreshGeneratedContext)({
+      scope: "target",
+      target: request.command.target,
+      actorKind: request.command.target.surface === "handler" ? "handler" : "orchestrator",
+      reason: "load-extension",
+      sourceCommandId: request.command.commandId,
+      refreshBoundSurfaceBeforeNextTurn: true,
+    });
+    options.state.runState(
+      options.state.commandState.finishCommand({
+        commandId: request.command.commandId,
+        status: "succeeded",
+        summary: `Loaded extension ${extensionId} for the current actor.`,
+        facts: {
+          type: "load_extension.finished",
+          status: "succeeded",
+          extensionId,
+          usage: "loaded",
+        },
+      }),
+    );
+    return {
+      toolResult: {
+        content: [{ type: "text", text: `Loaded extension \`${extensionId}\`.` }],
+        details: {
+          summary: `Loaded extension ${extensionId}.`,
+          commandFacts: {
+            type: "load_extension.finished",
+            status: "succeeded",
+            extensionId,
+            usage: "loaded",
+          },
+        },
+      },
+      appliedEffects: [{ type: "actor_extension_binding.update", binding }],
+    };
+  };
+}
 
 function seedPiExtensionState(
   store: StructuredSessionStateStore,
@@ -340,7 +437,7 @@ describe("builtin extension registry", () => {
       runtime,
       state: createExtensionToolState(store),
     }).execute("tool-call-list", {});
-    const byId = new Map(result.details!.loaded.map((extension) => [extension.id, extension]));
+    const byId = new Map(extFacts(result)!.loaded.map((extension) => [extension.id, extension]));
 
     expect(byId.get("cx")?.cliRequirements).toEqual([
       {
@@ -623,29 +720,29 @@ describe("extension loading tools", () => {
       state: createExtensionToolState(store),
     }).execute("tool-call-list", {});
 
-    expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
+    expect(extFacts(result)!.loaded.map((extension) => extension.id)).toEqual([
       "shell",
       "thread-orchestration",
     ]);
-    expect(result.details!.available.map((extension) => extension.id)).toEqual([
+    expect(extFacts(result)!.available.map((extension) => extension.id)).toEqual([
       "smithers",
       "workflows",
     ]);
-    expect(result.details!.loaded[0]).toHaveProperty("instructionSourceFiles");
-    for (const extension of result.details!.available) {
+    expect(extFacts(result)!.loaded[0]).toHaveProperty("instructionSourceFiles");
+    for (const extension of extFacts(result)!.available) {
       expect(extension).not.toHaveProperty("instructionSourceFiles");
       expect(extension.minimalLoadingHint.length).toBeGreaterThan(0);
       expect(extension.minimalInstructionPath).toBeNull();
     }
-    for (const extension of [...result.details!.loaded, ...result.details!.available]) {
+    for (const extension of [...extFacts(result)!.loaded, ...extFacts(result)!.available]) {
       expect(extension).not.toHaveProperty("fingerprint");
       expect(extension).not.toHaveProperty("generatedContextFingerprint");
       expect(extension).not.toHaveProperty("aggregateCacheKey");
       expect(extension).not.toHaveProperty("secretValues");
       expect(extension).not.toHaveProperty("globalProfileState");
     }
-    expect(result.content[0]?.type).toBe("text");
-    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toContain(
+    expect(result.content?.[0]?.type).toBe("text");
+    expect(result.content?.[0]?.type === "text" ? result.content[0].text : "").toContain(
       "Loaded extensions",
     );
     expect(store.getSessionState("session-extension-tools").commands).toEqual([
@@ -695,11 +792,11 @@ describe("extension loading tools", () => {
         extensionsRoot,
       }).execute("tool-call-list-base", {});
 
-      expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
+      expect(extFacts(result)!.loaded.map((extension) => extension.id)).toEqual([
         "base-common",
         "base-orchestrator",
       ]);
-      for (const extension of result.details!.loaded) {
+      for (const extension of extFacts(result)!.loaded) {
         expect(extension.instructionSourceFiles).toHaveLength(1);
         expect(extension.instructionSourceFiles[0]).toContain(
           join(extensionsRoot, "sources", "builtin", extension.id, "instructions", "full"),
@@ -773,8 +870,8 @@ describe("extension loading tools", () => {
         extensionsRoot,
       }).execute("tool-call-list-user-extension", {});
 
-      expect(listed.details!.available.map((extension) => extension.id)).toEqual(["notes"]);
-      expect(listed.details!.available[0]).toMatchObject({
+      expect(extFacts(listed)!.available.map((extension) => extension.id)).toEqual(["notes"]);
+      expect(extFacts(listed)!.available[0]).toMatchObject({
         category: "user",
         interface: "instructions",
         minimalLoadingHint: "Load Notes when workspace notes matter.\n",
@@ -784,12 +881,12 @@ describe("extension loading tools", () => {
         dependencyReadiness: "not_required",
         typescriptApiEnabled: false,
       });
-      expect(listed.details!.available[0]).not.toHaveProperty("instructionSourceFiles");
-      expect(listed.details!.available[0]).not.toHaveProperty("sourceRoot");
-      expect(listed.details!.available[0]).not.toHaveProperty("extensionBuildFingerprint");
-      expect(listed.details!.available[0]).not.toHaveProperty("envDeclarations");
-      expect(listed.details!.available[0]).not.toHaveProperty("dependencies");
-      expect(listed.details!.available[0]).not.toHaveProperty("trustedDependencies");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("instructionSourceFiles");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("sourceRoot");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("extensionBuildFingerprint");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("envDeclarations");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("dependencies");
+      expect(extFacts(listed)!.available[0]).not.toHaveProperty("trustedDependencies");
 
       const store = createStore("session-user-extension-load");
       seedPiExtensionState(store, {
@@ -831,21 +928,21 @@ describe("extension loading tools", () => {
         },
       }).execute("tool-call-load-user-extension", { extensionId: "notes" });
 
-      expect(loaded.details!.loadedExtensionId).toBe("notes");
-      expect(loaded.details!.available.map((extension) => extension.id)).toEqual([]);
-      expect(loaded.details!.loaded.map((extension) => extension.id)).toEqual([
+      expect(extFacts(loaded)!.loadedExtensionId).toBe("notes");
+      expect(extFacts(loaded)!.available.map((extension) => extension.id)).toEqual([]);
+      expect(extFacts(loaded)!.loaded.map((extension) => extension.id)).toEqual([
         "base-common",
         "notes",
         "shell",
       ]);
-      const loadedNotes = loaded.details!.loaded.find((extension) => extension.id === "notes");
+      const loadedNotes = extFacts(loaded)!.loaded.find((extension) => extension.id === "notes");
       expect(loadedNotes).toHaveProperty("instructionSourceFiles");
       expect(loadedNotes).not.toHaveProperty("sourceRoot");
       expect(loadedNotes).not.toHaveProperty("extensionBuildFingerprint");
       expect(loadedNotes).not.toHaveProperty("envDeclarations");
       expect(loadedNotes).not.toHaveProperty("dependencies");
       expect(loadedNotes).not.toHaveProperty("trustedDependencies");
-      expect(loaded.details!).not.toHaveProperty("refreshedContext");
+      expect(extFacts(loaded)!).not.toHaveProperty("refreshedContext");
       expect(refreshCalls).toEqual([
         {
           scope: "target",
@@ -909,7 +1006,7 @@ describe("extension loading tools", () => {
       runtime,
       state: createExtensionToolState(store),
     }).execute("tool-call-list", {});
-    const external = result.details!.loaded.find(
+    const external = extFacts(result)!.loaded.find(
       (extension) => extension.id === externalInstructionExtensionId(source),
     );
 
@@ -922,7 +1019,7 @@ describe("extension loading tools", () => {
       deleteBehavior: "not_allowed",
       state: "loaded",
     });
-    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toContain(
+    expect(result.content?.[0]?.type === "text" ? result.content[0].text : "").toContain(
       externalInstructionExtensionId(source),
     );
   });
@@ -985,16 +1082,16 @@ describe("extension loading tools", () => {
       state: createExtensionToolState(store),
     }).execute("tool-call-list", {});
 
-    expect(result.details!.loaded.map((extension) => extension.id)).not.toContain(
+    expect(extFacts(result)!.loaded.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(handlerOnly),
     );
-    expect(result.details!.loaded.map((extension) => extension.id)).not.toContain(
+    expect(extFacts(result)!.loaded.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(unreadable),
     );
-    expect(result.details!.available.map((extension) => extension.id)).not.toContain(
+    expect(extFacts(result)!.available.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(handlerOnly),
     );
-    expect(result.details!.available.map((extension) => extension.id)).not.toContain(
+    expect(extFacts(result)!.available.map((extension) => extension.id)).not.toContain(
       externalInstructionExtensionId(unreadable),
     );
   });
@@ -1049,14 +1146,14 @@ describe("extension loading tools", () => {
       extensionId: "smithers",
     });
 
-    expect(result.details!.loadedExtensionId).toBe("smithers");
+    expect(extFacts(result)!.loadedExtensionId).toBe("smithers");
     expect(runtime.current?.loadedExtensionIds).toEqual(["shell", "smithers"]);
     expect(runtime.current?.availableExtensionIds).toEqual([]);
-    expect(result.details!).not.toHaveProperty("refreshedContext");
-    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toBe(
+    expect(extFacts(result)!).not.toHaveProperty("refreshedContext");
+    expect(result.content?.[0]?.type === "text" ? result.content[0].text : "").toBe(
       "Loaded extension `smithers`.",
     );
-    expect(result.content[0]?.type === "text" ? result.content[0].text : "").not.toContain(
+    expect(result.content?.[0]?.type === "text" ? result.content[0].text : "").not.toContain(
       "Loaded prompt-only extension: Smithers.",
     );
 
@@ -1137,7 +1234,7 @@ describe("extension loading tools", () => {
       extensionId: "smithers",
     });
 
-    expect(result.details!.loadedExtensionId).toBe("smithers");
+    expect(extFacts(result)!.loadedExtensionId).toBe("smithers");
     expect(runtime.current?.loadedExtensionIds).toEqual(["shell", "smithers"]);
     expect(runtime.current?.availableExtensionIds).toEqual([]);
 
@@ -1305,9 +1402,9 @@ describe("extension loading tools", () => {
       extensionId: "workflows",
     });
 
-    expect(result.details!).not.toHaveProperty("refreshedContext");
-    expect(result.details!).not.toHaveProperty("systemPrompt");
-    expect(result.details!).not.toHaveProperty("executeTypescriptDeclaration");
+    expect(extFacts(result)!).not.toHaveProperty("refreshedContext");
+    expect(extFacts(result)!).not.toHaveProperty("systemPrompt");
+    expect(extFacts(result)!).not.toHaveProperty("executeTypescriptDeclaration");
 
     const refreshed = store.getSessionState("session-extension-tools").pi;
     expect(refreshed.loadedExtensionIds).toEqual(["execute-typescript", "shell", "workflows"]);
@@ -1403,15 +1500,15 @@ describe("extension loading tools", () => {
         refreshGeneratedContext: noopRefreshGeneratedContext,
       }).execute("tool-call-load", { extensionId: "linear" });
 
-      expect(result.details!.loadedExtensionId).toBe("linear");
-      expect(result.details!.loaded.map((extension) => extension.id)).toEqual([
+      expect(extFacts(result)!.loadedExtensionId).toBe("linear");
+      expect(extFacts(result)!.loaded.map((extension) => extension.id)).toEqual([
         "execute-typescript",
         "linear",
       ]);
-      expect(result.details!.available.map((extension) => extension.id)).toEqual([]);
-      expect(result.details!).not.toHaveProperty("refreshedContext");
-      expect(JSON.stringify(result.details!)).not.toContain("staleGeneratedFile");
-      expect(JSON.stringify(result.details!)).not.toContain("LinearExtensionFacade");
+      expect(extFacts(result)!.available.map((extension) => extension.id)).toEqual([]);
+      expect(extFacts(result)!).not.toHaveProperty("refreshedContext");
+      expect(JSON.stringify(extFacts(result)!)).not.toContain("staleGeneratedFile");
+      expect(JSON.stringify(extFacts(result)!)).not.toContain("LinearExtensionFacade");
     } finally {
       rmSync(extensionsRoot, { recursive: true, force: true });
     }

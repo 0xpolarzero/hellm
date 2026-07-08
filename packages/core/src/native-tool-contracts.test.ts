@@ -6,6 +6,10 @@ import type {
   NativeToolSchemaExtension,
   NativeToolSchemasDocument,
 } from "./native-tool-contracts";
+import {
+  encodeNativeToolResultEffect,
+  unsafeDecodeNativeToolDeclarationSyncForTestsAndBootstrap,
+} from "./native-tool-contracts";
 
 const shellExtension: NativeToolSchemaExtension = {
   id: "shell",
@@ -27,6 +31,12 @@ describe("@svvy/core native tool contracts", () => {
         properties: { cmd: { type: "string" } },
         required: ["cmd"],
       },
+      concurrency: {
+        mode: "parallel-safe",
+        stateDomains: ["command"],
+        orderingKey: "command",
+        maxConcurrency: 4,
+      },
     };
     const declaration: NativeToolDeclaration = toolSchema;
     const extensionSchema: NativeToolExtensionSchema = {
@@ -40,5 +50,18 @@ describe("@svvy/core native tool contracts", () => {
 
     expect(declaration).toEqual(toolSchema);
     expect(document.nativeTools[0]).toEqual(extensionSchema);
+  });
+
+  it("exposes hoisted boundary codecs for declarations and results", () => {
+    const decoded = unsafeDecodeNativeToolDeclarationSyncForTestsAndBootstrap({
+      name: "request_user_input",
+      label: "request_user_input",
+      description: "Ask the user a question.",
+      parameters: { type: "object", properties: {} },
+      concurrency: { mode: "serial" },
+    });
+
+    expect(decoded.concurrency).toEqual({ mode: "serial" });
+    expect(typeof encodeNativeToolResultEffect).toBe("function");
   });
 });

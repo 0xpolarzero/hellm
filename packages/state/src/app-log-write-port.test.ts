@@ -6,6 +6,7 @@ import { AppendAppLogInputSchema, AppLogWritePort, StateContractError } from "@s
 import { AppLogState, layerAppLogState } from "./app-log-store";
 import { appLogWritePortFromAppLogState, layerAppLogWritePort } from "./app-log-write-port";
 import { runTestEffect } from "./effect.test-support";
+import { testPlatformLayer } from "./platform-test-support";
 
 describe("AppLogWritePort", () => {
   it("validates and persists app-log writes through the core port", async () => {
@@ -40,7 +41,13 @@ describe("AppLogWritePort", () => {
         const write = yield* port.append(input);
         const readModel = yield* appLogs.query();
         return { write, entry: readModel.entries[0] };
-      }).pipe(Effect.provide(layerAppLogState({ now: () => "2026-06-21T12:35:00.000Z" }))),
+      }).pipe(
+        Effect.provide(
+          layerAppLogState({ now: () => "2026-06-21T12:35:00.000Z" }).pipe(
+            Layer.provide(testPlatformLayer()),
+          ),
+        ),
+      ),
     );
 
     expect(result.write as unknown).toEqual({
@@ -92,7 +99,7 @@ describe("AppLogWritePort", () => {
             Layer.provideMerge(
               layerAppLogState({
                 now: () => "2026-06-21T12:35:00.000Z",
-              }),
+              }).pipe(Layer.provide(testPlatformLayer())),
             ),
           ),
         ),
@@ -126,7 +133,7 @@ describe("AppLogWritePort", () => {
             Layer.provideMerge(
               layerAppLogState({
                 now: () => "2026-06-21T12:35:00.000Z",
-              }),
+              }).pipe(Layer.provide(testPlatformLayer())),
             ),
           ),
         ),

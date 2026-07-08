@@ -21,7 +21,8 @@ Dockview owns:
 - edge groups
 - floating groups
 - popouts
-- serialized layout restore
+- in-memory layout projection
+- the serialized layout format consumed by product state
 
 `@svvy/runtime` owns:
 
@@ -33,6 +34,10 @@ Dockview and the renderer own:
 - transient Dockview projection
 - focus, drag/drop, and scroll state
 - user placement intent before it is submitted through product commands
+
+`@svvy/state` owns durable layout records and restored layout read models. The renderer saves
+durable layout changes through app/bootstrap-injected state command facades and refetches restored
+layout state through app/bootstrap-injected state read facades.
 
 `@svvy/state` owns durable layout records, panel metadata, panel-to-surface bindings, and their read
 models. The renderer submits attach, detach, and layout-save requests through bootstrap-provided
@@ -54,6 +59,7 @@ Dockview-bindable surface kinds:
 - Agents pane
 - Extensions pane
 - Workflows pane
+- Snippets pane
 - Settings pane
 - Open Workspace pane
 
@@ -61,7 +67,7 @@ Dockview-bindable surface kinds:
 
 The Workflows pane is read-only generated `@svvyx/workflows` visibility.
 
-It can be opened in Dockview like any other static pane. It does not create a live pi runtime.
+It can be opened in Dockview like any other static pane. It does not create a live pi surface.
 
 ## Layout Slots
 

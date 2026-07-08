@@ -8,7 +8,16 @@ import {
   type Model,
   type TextContent,
 } from "@mariozechner/pi-ai";
-import type { RuntimeSubmittedAttachment, RuntimeSubmittedMessage } from "@svvy/core";
+import type {
+  AbsolutePath,
+  AttachmentDisplayName,
+  Base64String,
+  MimeType,
+  RuntimeAttachmentId,
+  RuntimeSubmittedAttachment,
+  RuntimeSubmittedMessage,
+  WorkspaceRelativePath,
+} from "@svvy/core";
 import {
   composerAttachmentPromptText,
   serializeComposerAttachmentTextSignature,
@@ -113,7 +122,7 @@ import {
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import type { AppMenuAction } from "../shared/shortcut-registry";
-import type { ExtensionUsageState } from "@svvy/extensions";
+import type { ExtensionUsageState } from "@svvy/core";
 import {
   addDockviewPanel,
   bindPane,
@@ -138,7 +147,7 @@ import {
 } from "./pane-layout";
 import { mergeAppLogEntries } from "./app-logs";
 import { rpc } from "./rpc";
-import { buildWorkspaceSessionNavigation } from "@svvy/state/session-navigation";
+import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 
 export { PRIMARY_CHAT_PANE_ID } from "./pane-layout";
 
@@ -332,21 +341,21 @@ function buildUserMessage(input: ComposerPromptSubmission): Message {
 function buildRuntimeSubmittedMessage(input: ComposerPromptSubmission): RuntimeSubmittedMessage {
   const attachments: RuntimeSubmittedAttachment[] = input.attachments.map((attachment) => {
     const common = {
-      id: attachment.id,
-      name: attachment.name,
-      path: attachment.path,
+      ...(attachment.id !== undefined ? { id: attachment.id as RuntimeAttachmentId } : {}),
+      ...(attachment.name !== undefined ? { name: attachment.name as AttachmentDisplayName } : {}),
+      path: attachment.path as AbsolutePath,
       ...(attachment.workspaceRelativePath !== undefined
-        ? { workspaceRelativePath: attachment.workspaceRelativePath }
+        ? { workspaceRelativePath: attachment.workspaceRelativePath as WorkspaceRelativePath }
         : {}),
-      ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType } : {}),
+      ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType as MimeType } : {}),
       ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
     };
     if (attachment.kind === "image") {
       return {
         ...common,
         kind: "image",
-        dataBase64: attachment.dataBase64,
-        mimeType: attachment.mimeType ?? "application/octet-stream",
+        dataBase64: attachment.dataBase64 as Base64String,
+        mimeType: (attachment.mimeType ?? "application/octet-stream") as MimeType,
       };
     }
     if (attachment.kind === "folder") {

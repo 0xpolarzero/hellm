@@ -1,14 +1,14 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import {
   type AcceptSubmittedRuntimeSurfaceMessageInput,
   type EnqueueRuntimeSurfaceMessageInput,
   type AbortPromptInput,
   type AbsolutePath,
+  type AppLogEntryId,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
   type AnswerRequestInputInput,
@@ -19,47 +19,51 @@ import {
   type CreateOrchestratorSurfaceInput,
   type RuntimeApprovalId,
   type RuntimeApprovalRecord,
-  type RuntimeContractError,
+  type RuntimeActorExtensionBindingStatePortService,
   type RuntimeApprovalStatePortService,
   type RuntimeCommandRecord,
   type RecordRuntimeCommandStdinWriteInput,
-  type ExtensionId,
   type GeneratedPackageName,
   type GeneratedPackagesRefreshResult,
+  IsoDateTimeStringSchema,
+  type IsoDateTimeString,
   type QueueItemId,
   type RefreshGeneratedContextRequest,
-  type RefreshGeneratedPackagesRequest,
   type RecoveryWorkId,
   type ReleaseWorkspaceInput,
+  type RequestInputAnswerId,
   type RequestInputOptionId,
   type RequestInputQuestionId,
   type RequestInputRequestId,
   type RuntimeRequestStatePortService,
+  type RuntimeRequestInputDetailsRecord,
   type RuntimeCommandStatePortService,
+  type SourceInvalidationHint,
+  type SourceReconcileRequest,
   type RuntimeSessionWaitStatePortService,
+  type RuntimeSourceScanFactRecord,
   type RuntimeSourceStatePortService,
   type RuntimeSurfaceLifecycleStatePortService,
+  type RuntimeEpisodeStatePortService,
+  type RuntimeThreadStatePortService,
+  type RuntimeTurnStatePortService,
   type RuntimeWorkspaceStatePortService,
   type StateRevision,
+  type RuntimeClientCorrelationId,
+  type RuntimeClientRequestId,
+  type RuntimeClientSubmissionSource,
   type RuntimeEvent,
-  type RuntimeEventGenerationId,
   type RuntimeEventSequence,
-  type RuntimeEventsInput,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeQueueStatePortService,
   type RuntimeSurfaceMessageRecord,
   type StateMutationResult,
   type OpenSurfaceInput,
-  type OpenExtensionSourceEditInput,
+  type FiniteDurationMs,
+  type PositiveDurationMs,
+  type RecordRuntimeSourceSaveInput,
   type RuntimeOwnerId,
-  type SaveExtensionSourceEditInput,
   type SetRequestInputTimerPausedInput,
-  type SetRequestInputTimerPausedResult,
-  type SourceEditSaveResult,
-  type SourceEditSession,
-  type SourceInvalidationHint,
-  type SourceReconcileRequest,
-  type SourceReconcileResult,
   type StateInvalidationDescriptor,
   type SteerQueuedMessageInput,
   type SubmitMessageInput,
@@ -71,30 +75,26 @@ import {
   type WorkspaceId,
   type WorkspaceSessionId,
   type WriteCommandStdinInput,
+  type SandboxPolicySnapshot,
+  type SandboxPolicySourceService,
 } from "@svvy/core";
 import {
   createCatalogBackedRuntime,
-  refreshRuntimeGeneratedPackagesAtRuntimeBoundary,
   type CatalogBackedRuntimeDependencies,
+  type RuntimeGeneratedPackageRefreshBoundaryHost,
 } from "./runtime-service-adapter";
-import type { RuntimeGeneratedPackageWorkspaceLinkFileHost } from "@svvy/runtime/bootstrap";
+import {
+  defaultRuntimeLayerConfig,
+  type RuntimeGeneratedPackageWorkspaceLinkFileHost,
+} from "@svvy/runtime/bootstrap";
 
 type RuntimePort = Parameters<typeof createCatalogBackedRuntime>[0];
 type TestCatalog = RuntimePort["catalog"];
 type CancelActivePromptCall = Parameters<TestCatalog["cancelActivePrompt"]>[0];
 type CancelPromptCall = Parameters<TestCatalog["cancelPrompt"]>[0];
-type DeleteQueuedMessageCall = Parameters<TestCatalog["deleteQueuedSurfaceMessage"]>[0];
-type RuntimeQueuedMessageAbortedCall = Parameters<
-  TestCatalog["afterRuntimeQueuedMessageAborted"]
->[0];
-type RuntimeSteeredCall = Parameters<TestCatalog["afterRuntimeSurfaceMessageSteered"]>[0];
-type RequestInputAnsweredCall = Parameters<TestCatalog["afterRequestInputAnswered"]>[0];
-type RequestInputTimerPausedCall = Parameters<TestCatalog["afterRequestInputTimerPaused"]>[0];
-type RuntimeQueuedCall = Parameters<TestCatalog["afterRuntimeSurfaceMessageQueued"]>[0];
-type RuntimeQueuedResult = Awaited<ReturnType<TestCatalog["afterRuntimeSurfaceMessageQueued"]>>;
-type RuntimeSourceEditsPort = NonNullable<RuntimePort["sourceEdits"]>;
-type RuntimeSourceInvalidationPort = NonNullable<RuntimePort["sourceInvalidation"]>;
-type RuntimeEventsPort = NonNullable<RuntimePort["events"]>;
+type RuntimeSurfaceQueueWakeCall = Parameters<TestCatalog["wakeRuntimeSurfaceQueue"]>[0];
+type RuntimeGeneratedContextRefreshHost = RuntimePort["generatedContextRefreshHost"];
+type RuntimeGeneratedPackageRefreshHost = RuntimePort["generatedPackageRefreshHost"];
 type RuntimeCommandStdinPort = RuntimePort["commandStdin"];
 type RuntimeCommandControlPort = RuntimePort["commandControl"];
 
@@ -140,6 +140,10 @@ function generatedPackageInvalidations(
     return [{ scope: "app", invalidation: { model: "extensions" } }];
   }
   return [];
+}
+
+function runtimeSourceScanScopeKey(scope: RuntimeSourceScanFactRecord["scope"]): string {
+  return scope.kind === "workspace" ? `workspace:${scope.workspaceId}` : "app-global";
 }
 
 function stateMutation<T>(
@@ -218,6 +222,32 @@ function createGeneratedPackageStatePort(
           afterCommit: generatedPackageInvalidations(input.status.packageName),
         };
       }),
+    markWorkspaceLinksRepairNeeded: (input) =>
+      Effect.sync(() => {
+        calls.push(
+          ...input.packages.map(
+            (packageName) => `repair-needed:${input.workspaceId}:${packageName}`,
+          ),
+        );
+        return {
+          value: {
+            links: input.packages.map((packageName) => ({
+              workspaceId: input.workspaceId,
+              packageName,
+              status: "repair-needed" as const,
+              linkPath: null,
+              targetPath: null,
+              diagnostics: [],
+              sourceCommandId: input.sourceCommandId ?? null,
+              lastRecoveryWorkId: input.recoveryWorkId ?? null,
+              createdAt: input.requestedAt,
+              updatedAt: input.requestedAt,
+            })),
+            recoveryWorkIds: [],
+          },
+          afterCommit: input.packages.flatMap(generatedPackageInvalidations),
+        };
+      }),
     readLinksNeedingRepair: () => Effect.succeed([]),
     readGeneratedPackageFacts: () => Effect.succeed([]),
     reconcileGeneratedPackageManifest: (input) =>
@@ -270,12 +300,120 @@ const handlerTarget = {
   threadId: "thread_runtime_adapter_01" as ThreadId,
 } satisfies SubmitMessageInput["target"];
 
+function answeredRequestInputRecord(
+  input: AnswerRequestInputInput,
+): RuntimeRequestInputDetailsRecord {
+  return {
+    requestId: input.requestId,
+    sessionId: target.workspaceSessionId,
+    surfacePiSessionId: input.surfacePiSessionId,
+    threadId: null,
+    turnId: "turn_runtime_adapter_request_input_01" as TurnId,
+    commandId: "command_runtime_adapter_request_input_01" as CommandId,
+    variant: "nonblocking",
+    status: "completed",
+    questionCount: 1,
+    toolItemId: "tool_runtime_adapter_request_input_01" as ToolItemId,
+    createdAt: "2026-04-18T09:00:00.000Z",
+    completedAt: "2026-04-18T09:01:00.000Z",
+    timeout: null,
+    questions: [
+      {
+        questionId: input.questionId,
+        requestId: input.requestId,
+        ordinal: 0,
+        title: "Decision",
+        question: "Which path should the test take?",
+        defaultAnswer: { kind: "custom", text: "default" },
+        choices: [
+          {
+            optionId: "ruio_runtime_adapter_01" as RequestInputOptionId,
+            ordinal: 0,
+            label: "Use fixture",
+            description: "Exercise the adapter answer path.",
+            recommended: true,
+          },
+        ],
+        status: "answered",
+      },
+    ],
+    answers: [
+      {
+        answerId: "ruia_runtime_adapter_01" as RequestInputAnswerId,
+        requestId: input.requestId,
+        questionId: input.questionId,
+        answer:
+          input.answer.kind === "option"
+            ? { kind: "option", label: "Use fixture", text: "Use fixture" }
+            : input.answer,
+        answeredBy: "user",
+        delivery: input.delivery,
+        queuedItemId: "queue_runtime_adapter_answer_01" as QueueItemId,
+        createdAt: "2026-04-18T09:01:00.000Z",
+      },
+    ],
+  };
+}
+
+function pausedRequestInputRecord(
+  input: SetRequestInputTimerPausedInput,
+): RuntimeRequestInputDetailsRecord {
+  return {
+    requestId: input.requestId,
+    sessionId: target.workspaceSessionId,
+    surfacePiSessionId: input.surfacePiSessionId,
+    threadId: null,
+    turnId: "turn_runtime_adapter_request_input_timer_01" as TurnId,
+    commandId: "command_runtime_adapter_request_input_timer_01" as CommandId,
+    variant: "blocking",
+    status: "open",
+    questionCount: 1,
+    toolItemId: "tool_runtime_adapter_request_input_timer_01" as ToolItemId,
+    createdAt: "2026-04-18T09:00:00.000Z",
+    completedAt: null,
+    timeout: {
+      enabled: true,
+      durationMs: 300_000 as PositiveDurationMs,
+      startedAt: "2026-04-18T09:00:00.000Z",
+      pausedAt: input.paused ? "2026-04-18T09:01:00.000Z" : null,
+      remainingMsWhenPaused: input.paused ? (240_000 as FiniteDurationMs) : null,
+      expiresAt: input.paused ? null : "2026-04-18T09:05:00.000Z",
+    },
+    questions: [],
+    answers: [],
+  };
+}
+
 function submitInput(delivery: SubmitMessageInput["delivery"]): SubmitMessageInput {
   return {
     target,
     message: { text: "Run the adapter test path." },
     delivery,
-    clientSubmission: { source: "test", clientRequestId: "client_request_01" },
+    clientSubmission: {
+      source: "test" as RuntimeClientSubmissionSource,
+      clientRequestId: "client_request_01" as RuntimeClientRequestId,
+    },
+  };
+}
+
+function testSandboxPolicySource(): SandboxPolicySourceService {
+  return {
+    snapshot: (input) => {
+      const snapshot: SandboxPolicySnapshot = {
+        snapshotId: "sandbox_policy_runtime_adapter_01",
+        fingerprint: "sandbox-policy-runtime-adapter",
+        resolvedAt: "2026-04-18T09:00:00.000Z" as typeof IsoDateTimeStringSchema.Type,
+        scope: input.scope,
+        surfacePiSessionId: input.surfacePiSessionId,
+        commandId: input.commandId,
+        launchKind: input.launchKind,
+        cwd: input.cwd,
+        sandboxMode: "omitted_full_access",
+        networkPolicy: "allow",
+        filesystemPolicy: { defaultAccess: "read", entries: [] },
+      };
+      return Effect.succeed(snapshot);
+    },
   };
 }
 
@@ -283,35 +421,33 @@ async function createHarness(
   options: {
     authToken?: string | undefined;
     queuedMessageId?: QueueItemId;
-    afterRuntimeQueuedResult?: RuntimeQueuedResult;
-    sourceEdits?: RuntimeSourceEditsPort;
-    sourceInvalidation?: RuntimeSourceInvalidationPort;
-    events?: RuntimeEventsPort;
+    sourceRoots?: RuntimePort["sourceRoots"];
+    generatedPackageRoots?: RuntimePort["generatedPackageRoots"];
+    extensionStatePort?: RuntimePort["extensionStatePort"];
+    generatedPackageLinkPath?: RuntimePort["generatedPackageLinkPath"];
+    generatedContextRefreshHost?: RuntimeGeneratedContextRefreshHost;
+    generatedPackageRefreshHost?: RuntimeGeneratedPackageRefreshHost;
+    sourceInvalidationScan?: RuntimePort["sourceInvalidationScan"];
+    generatedPackageStateCalls?: string[];
     commandRecord?: RuntimeCommandRecord | null;
     commandStdin?: RuntimeCommandStdinPort;
     commandControl?: RuntimeCommandControlPort;
+    sandboxPolicySource?: SandboxPolicySourceService;
   } = {},
 ) {
   const publishedStateInvalidations: StateInvalidationDescriptor[][] = [];
   const acceptSubmittedSurfaceMessageCalls: AcceptSubmittedRuntimeSurfaceMessageInput[] = [];
   const enqueueSurfaceMessageCalls: EnqueueRuntimeSurfaceMessageInput[] = [];
-  const afterRuntimeQueuedCalls: RuntimeQueuedCall[] = [];
-  const afterRuntimeQueuedMessageAbortedCalls: RuntimeQueuedMessageAbortedCall[] = [];
-  const afterRuntimeSteeredCalls: RuntimeSteeredCall[] = [];
+  const wakeRuntimeSurfaceQueueCalls: RuntimeSurfaceQueueWakeCall[] = [];
   const cancelActivePromptCalls: CancelActivePromptCall[] = [];
   const cancelPromptCalls: CancelPromptCall[] = [];
-  const deleteQueuedMessageCalls: DeleteQueuedMessageCall[] = [];
   const cancelSurfaceMessageCalls: Array<{ id: string }> = [];
   const markSurfaceMessageQueuedCalls: Array<{ id: string; position?: "front" | "back" }> = [];
   const answerRequestInputCalls: AnswerRequestInputInput[] = [];
   const setRequestInputTimerPausedCalls: SetRequestInputTimerPausedInput[] = [];
-  const afterRequestInputAnsweredCalls: RequestInputAnsweredCall[] = [];
-  const afterRequestInputTimerPausedCalls: RequestInputTimerPausedCall[] = [];
-  const resolveRuntimeApprovalAnswerCalls: Array<{
-    approved: boolean;
-    reason?: string | null;
-    requestId: string;
-  }> = [];
+  const recordSourceSaveCalls: RecordRuntimeSourceSaveInput[] = [];
+  const sourceInvalidationScanRequests: SourceReconcileRequest[] = [];
+  const sourceInvalidationReconciliations: SourceReconcileRequest[] = [];
   const resolveApprovalRequestCalls: Array<{
     requestId: RuntimeApprovalId;
     status: "approved" | "denied" | "cancelled";
@@ -328,8 +464,9 @@ async function createHarness(
   const createOrchestratorSurfaceCalls: CreateOrchestratorSurfaceInput[] = [];
   const openSurfaceCalls: OpenSurfaceInput[] = [];
   const closeSurfaceCalls: CloseSurfaceInput[] = [];
-  const devBrowserToolsEvents: Array<{ name: string; details?: Record<string, unknown> }> = [];
-  const generatedPackageStatePort = createGeneratedPackageStatePort();
+  const generatedPackageStatePort = createGeneratedPackageStatePort(
+    options.generatedPackageStateCalls,
+  );
   const queuedMessageId = options.queuedMessageId ?? ("queue_runtime_adapter_01" as QueueItemId);
 
   const createQueuedRecord = (
@@ -513,22 +650,34 @@ async function createHarness(
 
   const requestStatePort = {
     createRequestInput: () => Effect.die("Unexpected createRequestInput call."),
-    getRequestInput: () => Effect.die("Unexpected getRequestInput call."),
-    listOpenBlockingRequestInputs: () =>
-      Effect.die("Unexpected listOpenBlockingRequestInputs call."),
+    getRequestInput: (input) => {
+      const answer = answerRequestInputCalls.find((call) => call.requestId === input.requestId);
+      if (!answer) {
+        return Effect.die(`Unexpected getRequestInput call: ${input.requestId}`);
+      }
+      return Effect.succeed(answeredRequestInputRecord(answer));
+    },
+    listOpenBlockingRequestInputs: () => Effect.succeed([]),
     answerRequestInput: (input) => {
       answerRequestInputCalls.push(input);
       return Effect.succeed(
         stateMutation(
           {
-            requestId: input.requestId,
-            questionId: input.questionId,
-            status: "recorded",
-            delivery: {
-              kind: "nonblocking-queued",
-              queuedItemId: "queue_runtime_adapter_answer_01" as QueueItemId,
+            answer: {
+              requestId: input.requestId,
+              questionId: input.questionId,
+              status: "recorded",
+              delivery: {
+                kind: "nonblocking-queued",
+                queuedItemId: "queue_runtime_adapter_answer_01" as QueueItemId,
+              },
+            } satisfies AnswerRequestInputResult,
+            target: {
+              workspaceSessionId: target.workspaceSessionId,
+              surface: "orchestrator",
+              surfacePiSessionId: input.surfacePiSessionId,
             },
-          } satisfies AnswerRequestInputResult,
+          },
           [
             {
               scope: "workspace",
@@ -545,18 +694,13 @@ async function createHarness(
     setRequestInputTimerPaused: (input) => {
       setRequestInputTimerPausedCalls.push(input);
       return Effect.succeed(
-        stateMutation(
+        stateMutation(pausedRequestInputRecord(input), [
           {
-            requestId: input.requestId,
-          } satisfies SetRequestInputTimerPausedResult,
-          [
-            {
-              scope: "workspace",
-              workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
-              invalidation: { model: "requestInput", ids: [input.requestId] },
-            },
-          ],
-        ),
+            scope: "workspace",
+            workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
+            invalidation: { model: "requestInput", ids: [input.requestId] },
+          },
+        ]),
       );
     },
   } satisfies RuntimeRequestStatePortService;
@@ -577,6 +721,7 @@ async function createHarness(
     patch: null,
     snippetArtifactId: null,
     typescriptCode: null,
+    context: null,
     status: "pending",
     decisionReason: null,
     reviewer: null,
@@ -712,23 +857,37 @@ async function createHarness(
   const sourceStatePort = {
     readSourceVersion: () => Effect.succeed(null),
     recordSourceSave: (input) =>
-      Effect.succeed(
-        stateMutation({
-          sourceKind: input.sourceKind,
-          sourceId: input.sourceId,
-          path: input.path,
-          sourceVersion: input.sourceVersion,
-          fingerprint: input.fingerprint,
-          diagnostics: input.diagnostics,
-          sourceCommandId: input.sourceCommandId ?? null,
-          createdAt: input.savedAt,
-          updatedAt: input.savedAt,
-          deletedAt: null,
-        }),
-      ),
+      Effect.sync(() => {
+        recordSourceSaveCalls.push(input);
+        return stateMutation(
+          {
+            scope: input.scope,
+            scopeKey:
+              input.scope.kind === "workspace"
+                ? `workspace:${input.scope.workspaceId}`
+                : "app-global",
+            sourceKind: input.sourceKind,
+            sourceId: input.sourceId,
+            path: input.path,
+            sourceVersion: input.sourceVersion,
+            fingerprint: input.fingerprint,
+            diagnostics: input.diagnostics,
+            sourceCommandId: input.sourceCommandId ?? null,
+            createdAt: input.savedAt,
+            updatedAt: input.savedAt,
+            deletedAt: null,
+          },
+          [{ scope: "app", invalidation: { model: "extensions" } }],
+        );
+      }),
     recordSourceDelete: (input) =>
       Effect.succeed(
         stateMutation({
+          scope: input.scope,
+          scopeKey:
+            input.scope.kind === "workspace"
+              ? `workspace:${input.scope.workspaceId}`
+              : "app-global",
           sourceKind: input.sourceKind,
           sourceId: input.sourceId,
           path: "/tmp/deleted-source" as AbsolutePath,
@@ -739,6 +898,51 @@ async function createHarness(
           createdAt: input.deletedAt,
           updatedAt: input.deletedAt,
           deletedAt: input.deletedAt,
+        }),
+      ),
+    recordSourceScan: (input) =>
+      Effect.succeed(
+        stateMutation({
+          scope: input.scope,
+          scopeKey: runtimeSourceScanScopeKey(input.scope),
+          domain: input.domain,
+          sourceFingerprint: input.sourceFingerprint,
+          diagnostics: input.diagnostics,
+          lastObservedPath: null,
+          lastObservationKind: "scan",
+          observedAt: input.scannedAt,
+          createdAt: input.scannedAt,
+          updatedAt: input.scannedAt,
+        }),
+      ),
+    recordObservedSourceDeletion: (input) =>
+      Effect.succeed(
+        stateMutation({
+          scope: input.scope,
+          scopeKey: runtimeSourceScanScopeKey(input.scope),
+          domain: input.domain,
+          sourceFingerprint: input.sourceFingerprint ?? `unresolved:${input.domain}`,
+          diagnostics: input.diagnostics,
+          lastObservedPath: input.path,
+          lastObservationKind: "deletion",
+          observedAt: input.observedAt,
+          createdAt: input.observedAt,
+          updatedAt: input.observedAt,
+        }),
+      ),
+    recordSourceDiagnostic: (input) =>
+      Effect.succeed(
+        stateMutation({
+          scope: input.scope,
+          scopeKey: runtimeSourceScanScopeKey(input.scope),
+          domain: input.domain,
+          sourceFingerprint: input.sourceFingerprint ?? `unresolved:${input.domain}`,
+          diagnostics: [input.diagnostic],
+          lastObservedPath: input.path ?? null,
+          lastObservationKind: "diagnostic",
+          observedAt: input.observedAt,
+          createdAt: input.observedAt,
+          updatedAt: input.observedAt,
         }),
       ),
   } satisfies RuntimeSourceStatePortService;
@@ -866,6 +1070,25 @@ async function createHarness(
       }),
   } satisfies RuntimeWorkspaceStatePortService;
 
+  const actorExtensionBindingStatePort = {
+    readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+    updateActorExtensionBinding: () => Effect.die("Unexpected actor binding update."),
+    setActorExtensionBinding: () => Effect.die("Unexpected actor binding set."),
+  } satisfies RuntimeActorExtensionBindingStatePortService;
+
+  const threadStatePort = {
+    ensureHandlerThreadRunnable: () => Effect.die("Unexpected handler thread runnable update."),
+    startHandlerThreads: () => Effect.die("Unexpected handler thread start."),
+  } satisfies RuntimeThreadStatePortService;
+  const turnStatePort = {
+    startTurn: () => Effect.die("Unexpected runtime turn start."),
+    setTurnDecision: () => Effect.die("Unexpected runtime turn decision."),
+    finishTurn: () => Effect.die("Unexpected runtime turn finish."),
+  } satisfies RuntimeTurnStatePortService;
+  const episodeStatePort = {
+    recordHandlerThreadEpisode: () => Effect.die("Unexpected handler thread episode record."),
+  } satisfies RuntimeEpisodeStatePortService;
+
   const catalog = {
     resolvePromptDefaultsForTarget: () => ({
       provider: "openai",
@@ -873,43 +1096,21 @@ async function createHarness(
       reasoningEffort: "medium",
     }),
     getRuntimeApprovalStatePort: () => approvalStatePort,
+    getRuntimeActorExtensionBindingStatePort: () => actorExtensionBindingStatePort,
     getRuntimeCommandStatePort: () => commandStatePort,
     getRuntimeQueueStatePort: () => queueStatePort,
     getRuntimeRequestStatePort: () => requestStatePort,
     getRuntimeSessionWaitStatePort: () => sessionWaitStatePort,
+    getRuntimeThreadStatePort: () => threadStatePort,
+    getRuntimeTurnStatePort: () => turnStatePort,
+    getRuntimeEpisodeStatePort: () => episodeStatePort,
     getRuntimeSourceStatePort: () => sourceStatePort,
     getRuntimeSurfaceLifecycleStatePort: () => surfaceLifecycleStatePort,
     getRuntimeWorkspaceStatePort: () => workspaceStatePort,
     getRuntimeGeneratedPackageStatePort: () => generatedPackageStatePort,
-    resolveRuntimeApprovalAnswer: (input) => {
-      resolveRuntimeApprovalAnswerCalls.push(input);
-    },
-    afterRuntimeSurfaceMessageQueued: async (input) => {
-      afterRuntimeQueuedCalls.push(input);
-      return (
-        options.afterRuntimeQueuedResult ?? {
-          target: input.target,
-          queuedMessageId: input.queuedMessageId,
-          queued: true,
-          dispatched: !input.queueOnly,
-        }
-      );
-    },
-    afterRuntimeQueuedMessageAborted: async (input) => {
-      afterRuntimeQueuedMessageAbortedCalls.push(input);
-      return { ok: true, target: input.target };
-    },
-    afterRuntimeSurfaceMessageSteered: async (input) => {
-      afterRuntimeSteeredCalls.push(input);
-      return { ok: true, target: input.target };
-    },
-    afterRequestInputAnswered: async (input) => {
-      afterRequestInputAnsweredCalls.push(input);
-      return { ok: true, target };
-    },
-    afterRequestInputTimerPaused: async (input) => {
-      afterRequestInputTimerPausedCalls.push(input);
-      return { ok: true };
+    getSandboxPolicySource: () => options.sandboxPolicySource ?? testSandboxPolicySource(),
+    wakeRuntimeSurfaceQueue: async (input) => {
+      wakeRuntimeSurfaceQueueCalls.push(input);
     },
     cancelPrompt: async (input) => {
       cancelPromptCalls.push(input);
@@ -917,31 +1118,39 @@ async function createHarness(
     cancelActivePrompt: async (input) => {
       cancelActivePromptCalls.push(input);
     },
-    deleteQueuedSurfaceMessage: async (input) => {
-      deleteQueuedMessageCalls.push(input);
-      return { ok: true, target: input.target };
-    },
   } satisfies TestCatalog;
 
-  const appLog = {
-    debug: () => null,
-    info: () => null,
-    warning: () => null,
-    error: () => null,
-    subscribe: () => () => {},
-  } satisfies RuntimePort["appLog"];
+  const appLogWritePort = {
+    append: () =>
+      Effect.succeed({
+        value: { appLogEntryId: "app_log_runtime_adapter_test" as AppLogEntryId },
+        afterCommit: [],
+      }),
+  } satisfies RuntimePort["appLogWritePort"];
 
   const dependencies = {
     ensureUsableProviderAuth: async () =>
       Object.hasOwn(options, "authToken") ? options.authToken : "test-api-key",
     getProviderAuthUnavailableMessage: (provider) => `${provider} auth is unavailable.`,
-    recordDevBrowserToolsEvent: (name, details) => {
-      devBrowserToolsEvents.push({ name, details });
-    },
   } satisfies CatalogBackedRuntimeDependencies;
-  const sourceEdits = options.sourceEdits ?? defaultUnexpectedSourceEditsPort();
-  const sourceInvalidation =
-    options.sourceInvalidation ?? defaultUnexpectedSourceInvalidationPort();
+  const generatedContextRefreshHost =
+    options.generatedContextRefreshHost ?? defaultUnexpectedGeneratedContextRefreshHost();
+  const sourceInvalidationScan =
+    options.sourceInvalidationScan ??
+    ({
+      classifyHint: () => Effect.succeed("scan" as const),
+      listAcquiredWorkspaceIds: () =>
+        Effect.succeed(["workspace_runtime_adapter_01" as WorkspaceId]),
+      requestScan: (input) =>
+        Effect.sync(() => {
+          sourceInvalidationScanRequests.push(input);
+        }),
+      reconcile: (input) =>
+        Effect.sync(() => {
+          sourceInvalidationReconciliations.push(input);
+          return null;
+        }),
+    } satisfies RuntimePort["sourceInvalidationScan"]);
   const commandStdin =
     options.commandStdin ??
     ({
@@ -970,39 +1179,90 @@ async function createHarness(
 
   const runtime = await createCatalogBackedRuntime(
     {
+      sourceRoots:
+        options.sourceRoots ??
+        ({
+          extensionsRoot: mkdtempSync(
+            join(tmpdir(), "svvy-runtime-adapter-extensions-"),
+          ) as AbsolutePath,
+          workflowsSourceRoot: mkdtempSync(
+            join(tmpdir(), "svvy-runtime-adapter-workflows-"),
+          ) as AbsolutePath,
+        } satisfies RuntimePort["sourceRoots"]),
+      generatedPackageRoots: options.generatedPackageRoots ?? {
+        extensionsPackageRoot: mkdtempSync(
+          join(tmpdir(), "svvy-runtime-adapter-generated-extensions-"),
+        ) as AbsolutePath,
+        workflowsPackageRoot: mkdtempSync(
+          join(tmpdir(), "svvy-runtime-adapter-generated-workflows-"),
+        ) as AbsolutePath,
+        coreTypeContractPackageRoot: mkdtempSync(
+          join(tmpdir(), "svvy-runtime-adapter-generated-core-type-contract-"),
+        ) as AbsolutePath,
+      },
+      extensionStatePort: options.extensionStatePort ?? {
+        records: {
+          readSourceFingerprint: () => Effect.succeed(null),
+        },
+        dependencies: {
+          isApproved: () => Effect.succeed(false),
+          readReadiness: () => Effect.succeed(null),
+        },
+      },
+      generatedPackageLinkPath:
+        options.generatedPackageLinkPath ??
+        (async ({ packageName, workspaceId }) =>
+          join(
+            tmpdir(),
+            "svvy-runtime-adapter-links",
+            workspaceId,
+            packageName === "@svvyx/workflows" ? "workflows" : "extensions",
+          ) as AbsolutePath),
       catalog,
-      sourceEdits,
-      sourceInvalidation,
+      generatedContextRefreshHost,
+      generatedPackageRefreshHost:
+        options.generatedPackageRefreshHost ?? defaultGeneratedPackageRefreshHost(),
+      sourceInvalidationScan,
       commandStdin,
       commandControl,
-      ...(options.events ? { events: options.events } : {}),
-      publishStateInvalidations: async ({ afterCommit }) => {
-        publishedStateInvalidations.push([...afterCommit]);
-        return [];
-      },
-      appLog,
+      appLogWritePort,
     },
     dependencies,
+    defaultRuntimeLayerConfig,
   );
+  const runtimeEvents = await runtime.facade.events({
+    includeAppEvents: true,
+    afterSequence: 0 as RuntimeEventSequence,
+  });
+  const eventPump = (async () => {
+    for await (const event of runtimeEvents) {
+      publishedStateInvalidations.push(runtimeEventToStateInvalidationDescriptors(event));
+    }
+  })();
 
   return {
     ...runtime,
+    dispose: async () => {
+      await runtimeEvents.close();
+      await eventPump.catch(() => {});
+      await runtime.dispose();
+    },
+    waitForPublishedStateInvalidations: async (count: number) => {
+      const deadline = Date.now() + 1000;
+      while (publishedStateInvalidations.length < count && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    },
     calls: {
       acceptSubmittedSurfaceMessage: acceptSubmittedSurfaceMessageCalls,
       enqueueSurfaceMessage: enqueueSurfaceMessageCalls,
-      afterRuntimeSurfaceMessageQueued: afterRuntimeQueuedCalls,
-      afterRuntimeQueuedMessageAborted: afterRuntimeQueuedMessageAbortedCalls,
-      afterRuntimeSurfaceMessageSteered: afterRuntimeSteeredCalls,
+      wakeRuntimeSurfaceQueue: wakeRuntimeSurfaceQueueCalls,
       cancelActivePrompt: cancelActivePromptCalls,
       cancelPrompt: cancelPromptCalls,
-      deleteQueuedSurfaceMessage: deleteQueuedMessageCalls,
       cancelSurfaceMessage: cancelSurfaceMessageCalls,
       markSurfaceMessageQueued: markSurfaceMessageQueuedCalls,
       answerRequestInput: answerRequestInputCalls,
       setRequestInputTimerPaused: setRequestInputTimerPausedCalls,
-      afterRequestInputAnswered: afterRequestInputAnsweredCalls,
-      afterRequestInputTimerPaused: afterRequestInputTimerPausedCalls,
-      resolveRuntimeApprovalAnswer: resolveRuntimeApprovalAnswerCalls,
       resolveApprovalRequest: resolveApprovalRequestCalls,
       startCommand: startCommandCalls,
       finishCommand: finishCommandCalls,
@@ -1016,47 +1276,89 @@ async function createHarness(
       createOrchestratorSurface: createOrchestratorSurfaceCalls,
       openSurface: openSurfaceCalls,
       closeSurface: closeSurfaceCalls,
-      devBrowserToolsEvents,
       publishedStateInvalidations,
+      recordSourceSave: recordSourceSaveCalls,
+      sourceInvalidationScanRequests,
+      sourceInvalidationReconciliations,
     },
   };
 }
 
-function defaultUnexpectedSourceEditsPort(): RuntimeSourceEditsPort {
-  return {
-    open: async () => unexpectedSourceEditCall("open"),
-    save: async () => unexpectedSourceEditCall("save"),
-  };
-}
-
-function unexpectedSourceEditCall(method: string): never {
-  throw new Error(`Unexpected source edit ${method} call.`);
-}
-
-function defaultUnexpectedSourceInvalidationPort(): RuntimeSourceInvalidationPort {
-  return {
-    hint: async () => unexpectedSourceInvalidationCall("hint"),
-    reconcile: async () => unexpectedSourceInvalidationCall("reconcile"),
-    refreshGeneratedContext: async () =>
-      unexpectedSourceInvalidationCall("refreshGeneratedContext"),
-    refreshGeneratedPackages: async () =>
-      unexpectedSourceInvalidationCall("refreshGeneratedPackages"),
-  };
-}
-
-function unexpectedSourceInvalidationCall(method: string): never {
-  throw new Error(`Unexpected source invalidation ${method} call.`);
-}
-
-async function collectEvents(iterable: AsyncIterable<RuntimeEvent>): Promise<RuntimeEvent[]> {
-  const events: RuntimeEvent[] = [];
-  for await (const event of iterable) {
-    events.push(event);
+function runtimeEventToStateInvalidationDescriptors(
+  event: RuntimeEvent,
+): StateInvalidationDescriptor[] {
+  if (event.type === "workspace_read_model.changed") {
+    return [
+      {
+        scope: "workspace",
+        workspaceId: event.workspaceId,
+        invalidation: event.invalidation,
+      },
+    ];
   }
-  return events;
+  if (event.type === "app_read_model.changed") {
+    return [
+      {
+        scope: "app",
+        invalidation: event.invalidation,
+      },
+    ];
+  }
+  return [];
+}
+
+function defaultUnexpectedGeneratedContextRefreshHost(): RuntimeGeneratedContextRefreshHost {
+  return {
+    refresh: async () => {
+      throw new Error("Unexpected generated-context refresh call.");
+    },
+  };
+}
+
+function defaultGeneratedPackageRefreshHost(
+  calls: string[] = [],
+): RuntimeGeneratedPackageRefreshHost {
+  return {
+    listAcquiredWorkspaceIds: () =>
+      Effect.succeed(["workspace_runtime_adapter_generated_01" as WorkspaceId]),
+    listRecoverableWorkspaceIds: () => Effect.succeed([]),
+    materializeCoreTypeContractPackage: () =>
+      Effect.sync(() => {
+        calls.push("materialize-core-type-contract");
+      }),
+    now: () => Effect.succeed("2026-04-18T09:00:00.000Z" as IsoDateTimeString),
+    workspaceLinkFileHost: fakeWorkspaceLinkFileHost(
+      new Map([
+        ["/workspace/.smithers", { kind: "directory" }],
+        ["/generated/workflows", { kind: "directory" }],
+        ["/generated/extensions", { kind: "directory" }],
+      ]),
+      calls,
+    ),
+  };
 }
 
 describe("catalog-backed runtime service adapter", () => {
+  it("keeps runtime construction in the catalog-free adapter seam", () => {
+    const source = readFileSync(join(import.meta.dir, "runtime-service-adapter.ts"), "utf8");
+    const wrapperStart = source.indexOf("export async function createCatalogBackedRuntime(");
+    const adapterStart = source.indexOf("export async function createRuntimeServiceAdapter(");
+    const adapterEnd = source.indexOf("function catalogBackedRuntimePort(", adapterStart);
+    const wrapperSource = source.slice(wrapperStart, adapterStart);
+    const adapterSource = source.slice(adapterStart, adapterEnd);
+
+    expect(wrapperStart).toBeGreaterThanOrEqual(0);
+    expect(adapterStart).toBeGreaterThan(wrapperStart);
+    expect(adapterEnd).toBeGreaterThan(adapterStart);
+    expect(wrapperSource).toContain("catalogBackedRuntimePort(port)");
+    expect(adapterSource).toContain("ManagedRuntime.make(");
+    expect(adapterSource).toContain("await managedRuntime.context();");
+    expect(adapterSource).toContain("await awaitRuntimeStartupReadiness(managedRuntime);");
+    expect(adapterSource).toContain("createRuntimeFacade(managedRuntime)");
+    expect(adapterSource).not.toContain("WorkspaceSessionCatalog");
+    expect(adapterSource).not.toContain("port.catalog");
+  });
+
   it("routes workspace and surface lifecycle facade calls through runtime state ports", async () => {
     const runtime = await createHarness();
     const owner = {
@@ -1086,6 +1388,7 @@ describe("catalog-backed runtime service adapter", () => {
       target,
     } satisfies OpenSurfaceInput;
     const closeSurfaceInput = {
+      workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
       target,
       closeReason: "test",
     } satisfies CloseSurfaceInput;
@@ -1141,15 +1444,16 @@ describe("catalog-backed runtime service adapter", () => {
       expect(runtime.calls.createOrchestratorSurface).toEqual([createSurfaceInput]);
       expect(runtime.calls.openSurface).toEqual([openSurfaceInput]);
       expect(runtime.calls.closeSurface).toEqual([closeSurfaceInput]);
-      expect(runtime.calls.publishedStateInvalidations).toHaveLength(6);
-      expect(runtime.calls.publishedStateInvalidations[0]).toEqual([
+      await runtime.waitForPublishedStateInvalidations(9);
+      expect(runtime.calls.publishedStateInvalidations.length).toBeGreaterThanOrEqual(9);
+      expect(runtime.calls.publishedStateInvalidations).toContainEqual([
         {
           scope: "workspace",
           workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
           invalidation: { model: "sessionNavigation" },
         },
       ]);
-      expect(runtime.calls.publishedStateInvalidations[3]).toEqual([
+      expect(runtime.calls.publishedStateInvalidations).toContainEqual([
         {
           scope: "workspace",
           workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
@@ -1161,7 +1465,7 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("submits enqueue-and-run messages through the facade, queues, and asks the catalog to run", async () => {
+  it("submits enqueue-and-run messages through the facade, queues, and wakes the surface queue", async () => {
     const runtime = await createHarness({
       queuedMessageId: "queue_runtime_adapter_run" as QueueItemId,
     });
@@ -1173,7 +1477,7 @@ describe("catalog-backed runtime service adapter", () => {
           target,
           status: "queued",
           receipt: {
-            clientRequestId: "client_request_01",
+            clientRequestId: "client_request_01" as RuntimeClientRequestId,
             outcome: "accepted",
             acceptedAt: "2026-04-18T09:00:00.000Z" as SubmitMessageResult["receipt"]["acceptedAt"],
             stateRevision: 1 as SubmitMessageResult["receipt"]["stateRevision"],
@@ -1190,11 +1494,16 @@ describe("catalog-backed runtime service adapter", () => {
       expect(
         JSON.parse(runtime.calls.acceptSubmittedSurfaceMessage[0]?.payloadJson ?? "{}"),
       ).toMatchObject({
-        clientSubmission: { source: "test", clientRequestId: "client_request_01" },
+        clientSubmission: {
+          source: "test" as RuntimeClientSubmissionSource,
+          clientRequestId: "client_request_01" as RuntimeClientRequestId,
+        },
         telemetry: { messageCount: 1, userMessageCount: 1, textBlockCount: 1, imageCount: 0 },
       });
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued).toHaveLength(1);
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued[0]?.queueOnly).toBe(false);
+      expect(runtime.calls.wakeRuntimeSurfaceQueue).toEqual([
+        { target, reason: "message-submitted" },
+      ]);
+      await runtime.waitForPublishedStateInvalidations(1);
       expect(runtime.calls.publishedStateInvalidations).toEqual([
         [
           {
@@ -1209,7 +1518,7 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("submits queue-only messages through the facade, queues, and asks the catalog not to run", async () => {
+  it("submits queue-only messages through the facade without waking the surface queue", async () => {
     const runtime = await createHarness({
       queuedMessageId: "queue_runtime_adapter_only" as QueueItemId,
     });
@@ -1220,15 +1529,14 @@ describe("catalog-backed runtime service adapter", () => {
         target,
         status: "queued",
         receipt: {
-          clientRequestId: "client_request_01",
+          clientRequestId: "client_request_01" as RuntimeClientRequestId,
           outcome: "accepted",
           acceptedAt: "2026-04-18T09:00:00.000Z" as SubmitMessageResult["receipt"]["acceptedAt"],
           stateRevision: 1 as SubmitMessageResult["receipt"]["stateRevision"],
         },
       });
       expect(runtime.calls.acceptSubmittedSurfaceMessage).toHaveLength(1);
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued).toHaveLength(1);
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued[0]?.queueOnly).toBe(true);
+      expect(runtime.calls.wakeRuntimeSurfaceQueue).toEqual([]);
     } finally {
       await runtime.dispose();
     }
@@ -1247,7 +1555,7 @@ describe("catalog-backed runtime service adapter", () => {
       });
       expect(runtime.calls.acceptSubmittedSurfaceMessage).toEqual([]);
       expect(runtime.calls.enqueueSurfaceMessage).toEqual([]);
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued).toEqual([]);
+      expect(runtime.calls.wakeRuntimeSurfaceQueue).toEqual([]);
     } finally {
       await runtime.dispose();
     }
@@ -1270,8 +1578,7 @@ describe("catalog-backed runtime service adapter", () => {
       });
       expect(runtime.calls.acceptSubmittedSurfaceMessage).toEqual([]);
       expect(runtime.calls.enqueueSurfaceMessage).toEqual([]);
-      expect(runtime.calls.afterRuntimeSurfaceMessageQueued).toEqual([]);
-      expect(runtime.calls.devBrowserToolsEvents).toEqual([]);
+      expect(runtime.calls.wakeRuntimeSurfaceQueue).toEqual([]);
     } finally {
       await runtime.dispose();
     }
@@ -1289,13 +1596,12 @@ describe("catalog-backed runtime service adapter", () => {
       await expect(runtime.facade.messages.abort(input)).resolves.toBeUndefined();
       expect(runtime.calls.cancelPrompt).toEqual([handlerTarget]);
       expect(runtime.calls.cancelActivePrompt).toEqual([]);
-      expect(runtime.calls.deleteQueuedSurfaceMessage).toEqual([]);
     } finally {
       await runtime.dispose();
     }
   });
 
-  it("cancels queued prompt aborts through runtime state and emits the post-commit catalog sync", async () => {
+  it("cancels queued prompt aborts through runtime state and publishes invalidations", async () => {
     const runtime = await createHarness({
       queuedMessageId: "queue_runtime_adapter_abort" as QueueItemId,
     });
@@ -1325,13 +1631,6 @@ describe("catalog-backed runtime service adapter", () => {
           },
         ],
       ]);
-      expect(runtime.calls.afterRuntimeQueuedMessageAborted).toEqual([
-        {
-          target: handlerTarget,
-          queuedMessageId: "queue_runtime_adapter_abort" as QueueItemId,
-        },
-      ]);
-      expect(runtime.calls.deleteQueuedSurfaceMessage).toEqual([]);
       expect(runtime.calls.cancelPrompt).toEqual([]);
       expect(runtime.calls.cancelActivePrompt).toEqual([]);
     } finally {
@@ -1357,13 +1656,37 @@ describe("catalog-backed runtime service adapter", () => {
         },
       ]);
       expect(runtime.calls.cancelPrompt).toEqual([]);
-      expect(runtime.calls.deleteQueuedSurfaceMessage).toEqual([]);
     } finally {
       await runtime.dispose();
     }
   });
 
-  it("steers queued messages through runtime state and wakes the catalog after commit", async () => {
+  it("rejects active-turn prompt aborts without a turn id before catalog dispatch", async () => {
+    const runtime = await createHarness();
+    const input = {
+      target: handlerTarget,
+      mode: "active-turn",
+      reason: "missing active turn",
+    } satisfies AbortPromptInput;
+
+    try {
+      await expect(runtime.facade.messages.abort(input)).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "typed-failure",
+        error: {
+          _tag: "RuntimeContractError",
+          reason: "invalid-input",
+          message: "Active-turn prompt abort requires turnId.",
+        },
+      });
+      expect(runtime.calls.cancelActivePrompt).toEqual([]);
+      expect(runtime.calls.cancelPrompt).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("steers queued messages through runtime state and wakes the surface queue after commit", async () => {
     const runtime = await createHarness({
       queuedMessageId: "queue_runtime_adapter_steer" as QueueItemId,
     });
@@ -1392,10 +1715,10 @@ describe("catalog-backed runtime service adapter", () => {
           },
         ],
       ]);
-      expect(runtime.calls.afterRuntimeSurfaceMessageSteered).toEqual([
+      expect(runtime.calls.wakeRuntimeSurfaceQueue).toEqual([
         {
           target: handlerTarget,
-          queuedMessageId: "queue_runtime_adapter_steer" as QueueItemId,
+          reason: "queue-steered",
         },
       ]);
     } finally {
@@ -1403,7 +1726,7 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("records request-input answers, publishes invalidations, and runs the bootstrap wake callback", async () => {
+  it("records request-input answers and publishes invalidations", async () => {
     const runtime = await createHarness();
     const input = {
       surfacePiSessionId: target.surfacePiSessionId,
@@ -1412,8 +1735,8 @@ describe("catalog-backed runtime service adapter", () => {
       answer: { kind: "option", optionId: "ruio_runtime_adapter_01" as RequestInputOptionId },
       delivery: "enqueue-and-run",
       clientSubmission: {
-        correlationId: "runtime-adapter-answer-01",
-        source: "test",
+        correlationId: "runtime-adapter-answer-01" as RuntimeClientCorrelationId,
+        source: "test" as RuntimeClientSubmissionSource,
       },
     } satisfies AnswerRequestInputInput;
 
@@ -1428,13 +1751,6 @@ describe("catalog-backed runtime service adapter", () => {
         },
       });
       expect(runtime.calls.answerRequestInput).toEqual([input]);
-      expect(runtime.calls.afterRequestInputAnswered).toEqual([
-        {
-          surfacePiSessionId: target.surfacePiSessionId,
-          requestId: "rui_runtime_adapter_01" as RequestInputRequestId,
-          queuedItemId: "queue_runtime_adapter_answer_01" as QueueItemId,
-        },
-      ]);
       expect(runtime.calls.publishedStateInvalidations).toEqual([
         [
           {
@@ -1452,15 +1768,15 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("sets request-input timer pause, publishes invalidations, and runs the bootstrap timer callback", async () => {
+  it("sets request-input timer pause and publishes invalidations", async () => {
     const runtime = await createHarness();
     const input = {
       surfacePiSessionId: target.surfacePiSessionId,
       requestId: "rui_runtime_adapter_timer_01" as RequestInputRequestId,
       paused: true,
       clientSubmission: {
-        correlationId: "runtime-adapter-timer-01",
-        source: "test",
+        correlationId: "runtime-adapter-timer-01" as RuntimeClientCorrelationId,
+        source: "test" as RuntimeClientSubmissionSource,
       },
     } satisfies SetRequestInputTimerPausedInput;
 
@@ -1469,9 +1785,6 @@ describe("catalog-backed runtime service adapter", () => {
         requestId: "rui_runtime_adapter_timer_01" as RequestInputRequestId,
       });
       expect(runtime.calls.setRequestInputTimerPaused).toEqual([input]);
-      expect(runtime.calls.afterRequestInputTimerPaused).toEqual([
-        { requestId: "rui_runtime_adapter_timer_01" as RequestInputRequestId },
-      ]);
       expect(runtime.calls.publishedStateInvalidations).toEqual([
         [
           {
@@ -1489,27 +1802,6 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("keeps command dependency actions unsupported until runtime dependency command lifecycle is wired", async () => {
-    const runtime = await createHarness();
-
-    try {
-      await expect(
-        runtime.facade.commands.runExtensionDependencyAction({
-          scope: { kind: "app-global" },
-          extensionId: "extension_web" as ExtensionId,
-          requirementId: "tinyfish",
-          action: "install",
-        }),
-      ).rejects.toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
-        error: { _tag: "RuntimeContractError" },
-      });
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
   it("cancels command ids through runtime command control and records terminal command facts", async () => {
     const runtime = await createHarness();
 
@@ -1518,7 +1810,10 @@ describe("catalog-backed runtime service adapter", () => {
         runtime.facade.commands.cancel({
           commandId: "cmd_runtime_adapter_approval_01" as CommandId,
           reason: "test cancellation",
-          clientSubmission: { source: "test", clientRequestId: "cancel_request_01" },
+          clientSubmission: {
+            source: "test" as RuntimeClientSubmissionSource,
+            clientRequestId: "cancel_request_01" as RuntimeClientRequestId,
+          },
         }),
       ).resolves.toEqual({
         commandId: "cmd_runtime_adapter_approval_01" as CommandId,
@@ -1528,7 +1823,10 @@ describe("catalog-backed runtime service adapter", () => {
         {
           commandId: "cmd_runtime_adapter_approval_01" as CommandId,
           reason: "test cancellation",
-          clientSubmission: { source: "test", clientRequestId: "cancel_request_01" },
+          clientSubmission: {
+            source: "test" as RuntimeClientSubmissionSource,
+            clientRequestId: "cancel_request_01" as RuntimeClientRequestId,
+          },
         },
       ]);
       expect(runtime.calls.finishCommand).toEqual([
@@ -1559,7 +1857,10 @@ describe("catalog-backed runtime service adapter", () => {
         runtime.facade.commands.writeStdin({
           commandId: "cmd_runtime_adapter_approval_01" as CommandId,
           text: "yes\n",
-          clientSubmission: { source: "test", clientRequestId: "stdin_request_01" },
+          clientSubmission: {
+            source: "test" as RuntimeClientSubmissionSource,
+            clientRequestId: "stdin_request_01" as RuntimeClientRequestId,
+          },
         }),
       ).resolves.toEqual({
         commandId: "cmd_runtime_adapter_approval_01" as CommandId,
@@ -1570,7 +1871,10 @@ describe("catalog-backed runtime service adapter", () => {
         {
           commandId: "cmd_runtime_adapter_approval_01" as CommandId,
           text: "yes\n",
-          clientSubmission: { source: "test", clientRequestId: "stdin_request_01" },
+          clientSubmission: {
+            source: "test" as RuntimeClientSubmissionSource,
+            clientRequestId: "stdin_request_01" as RuntimeClientRequestId,
+          },
         },
       ]);
       expect(runtime.calls.recordStdinWrite).toEqual([
@@ -1666,7 +1970,7 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("answers runtime approvals through state ports, events, command state, wait state, and live waiter host", async () => {
+  it("answers runtime approvals through state ports, events, command state, wait state, and the runtime-owned waiter", async () => {
     const runtime = await createHarness();
 
     try {
@@ -1693,13 +1997,6 @@ describe("catalog-backed runtime service adapter", () => {
       ]);
       expect(runtime.calls.finishCommand).toEqual([]);
       expect(runtime.calls.clearSessionWait).toEqual([{ sessionId: "session_runtime_adapter_01" }]);
-      expect(runtime.calls.resolveRuntimeApprovalAnswer).toEqual([
-        {
-          requestId: "approval_runtime_adapter_01",
-          approved: true,
-          reason: "Looks correct.",
-        },
-      ]);
       expect(runtime.calls.publishedStateInvalidations).toEqual([
         [
           {
@@ -1736,122 +2033,119 @@ describe("catalog-backed runtime service adapter", () => {
     }
   });
 
-  it("delegates source edit requests through the required source edit port", async () => {
-    const opened: OpenExtensionSourceEditInput[] = [];
-    const saved: SaveExtensionSourceEditInput[] = [];
-    const sourcePath = "/tmp/svvy/extensions/web/index.ts" as AbsolutePath;
-    const session = {
-      sourceKind: "user-extension",
-      sourceId: "web",
-      path: sourcePath,
-      sourceVersion: "version_01",
-      fingerprint: "fingerprint_01",
-      text: "export default {};",
-      diagnostics: [],
-    } satisfies SourceEditSession;
-    const saveResult = {
-      status: "saved",
-      sourceVersion: "version_02",
-      fingerprint: "fingerprint_02",
-      diagnostics: [],
-      reconcileRequired: true,
-    } satisfies SourceEditSaveResult;
-    const runtime = await createHarness({
-      sourceEdits: {
-        open: async (input) => {
-          opened.push(input);
-          return session;
-        },
-        save: async (input) => {
-          saved.push(input);
-          return saveResult;
-        },
-      },
-    });
+  it("opens and saves source edits through Extensions.sources and RuntimeSourceStatePort", async () => {
+    const sourceRoots = {
+      extensionsRoot: mkdtempSync(
+        join(tmpdir(), "svvy-runtime-adapter-extensions-"),
+      ) as AbsolutePath,
+      workflowsSourceRoot: mkdtempSync(
+        join(tmpdir(), "svvy-runtime-adapter-workflows-"),
+      ) as AbsolutePath,
+    } satisfies RuntimePort["sourceRoots"];
+    const runtime = await createHarness({ sourceRoots });
 
     try {
-      await expect(
-        runtime.facade.sourceEdits.open({
-          sourceKind: "user-extension",
-          sourceId: "web",
-        }),
-      ).resolves.toEqual(session);
-      await expect(
-        runtime.facade.sourceEdits.save({
-          sourceKind: "user-extension",
-          sourceId: "web",
-          expectedSourceVersion: "version_01",
-          text: "export default { loaded: true };",
-          saveMode: "compare-and-swap",
-          sourceCommandId: "cmd_source_save_01" as CommandId,
-        }),
-      ).resolves.toEqual(saveResult);
-      expect(opened).toEqual([{ sourceKind: "user-extension", sourceId: "web" }]);
-      expect(saved).toHaveLength(1);
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
-  it("uses a fail-fast required source edit harness when a test does not wire source edits", async () => {
-    const runtime = await createHarness();
-
-    try {
-      let caught: unknown;
-      try {
-        await runtime.facade.sourceEdits.open({
-          sourceKind: "user-extension",
-          sourceId: "web",
-        });
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
+      const session = await runtime.facade.sourceEdits.open({
+        sourceKind: "builtin-extension",
+        sourceId: "base-common",
       });
-      const typedError = (caught as { readonly error?: unknown }).error as RuntimeContractError;
-      expect(typedError._tag).toBe("RuntimeContractError");
-      expect(typedError.operation).toBe("runtime.sourceEdits.open");
-      expect(typedError.reason).toBe("unsupported-operation");
-      expect(typedError.message).toBe("Unexpected source edit open call.");
+      expect(session).toMatchObject({
+        sourceKind: "builtin-extension",
+        sourceId: "base-common",
+        text: "Load Base Common only when shared svvy operating rules are missing.\n",
+        diagnostics: [],
+      });
+      expect(session.path).toBe(
+        join(
+          sourceRoots.extensionsRoot as string,
+          "sources",
+          "builtin",
+          "base-common",
+          "instructions",
+          "minimal.md",
+        ) as AbsolutePath,
+      );
+
+      const saveResult = await runtime.facade.sourceEdits.save({
+        sourceKind: "builtin-extension",
+        sourceId: "base-common",
+        expectedSourceVersion: session.sourceVersion,
+        text: "Load Base Common when shared svvy rules are needed.\n",
+        saveMode: "compare-and-swap",
+        sourceCommandId: "cmd_source_save_01" as CommandId,
+      });
+
+      expect(saveResult).toMatchObject({
+        status: "saved",
+        diagnostics: [],
+        reconcileRequired: true,
+      });
+      if (saveResult.status !== "saved") {
+        throw new Error("Expected source edit save to succeed.");
+      }
+      expect(readFileSync(session.path, "utf8")).toBe(
+        "Load Base Common when shared svvy rules are needed.\n",
+      );
+      expect(runtime.calls.recordSourceSave).toHaveLength(1);
+      expect(runtime.calls.recordSourceSave[0]).toMatchObject({
+        sourceKind: "builtin-extension",
+        sourceId: "base-common",
+        path: session.path,
+        previousSourceVersion: null,
+        sourceCommandId: "cmd_source_save_01",
+      });
+      expect(runtime.calls.recordSourceSave[0]?.sourceVersion).toBe(saveResult.sourceVersion);
+      expect(runtime.calls.recordSourceSave[0]?.fingerprint).toBe(saveResult.fingerprint);
+      await runtime.waitForPublishedStateInvalidations(1);
+      expect(runtime.calls.publishedStateInvalidations).toEqual([
+        [{ scope: "app", invalidation: { model: "extensions" } }],
+      ]);
     } finally {
       await runtime.dispose();
     }
   });
 
-  it("delegates source invalidation requests through the required invalidation port", async () => {
-    const fileHints: SourceInvalidationHint[] = [];
-    const reconciliations: SourceReconcileRequest[] = [];
+  it("routes source invalidation scans and generated-context refresh through separate runtime seams", async () => {
     const contextRefreshes: RefreshGeneratedContextRequest[] = [];
-    const packageRefreshes: RefreshGeneratedPackagesRequest[] = [];
-    const reconcileResult = {
-      changedReadModelCount: 0,
-      generatedPackageRefreshes: [],
-      recoveryWorkIds: [],
-    } satisfies SourceReconcileResult;
+    const generatedPackageHostCalls: string[] = [];
+    const sourceInvalidationScanRequests: SourceReconcileRequest[] = [];
+    const sourceInvalidationReconciliations: SourceReconcileRequest[] = [];
     const packageRefreshResult = {
       scope: "app-global",
       packages: [{ packageName: "@svvyx/extensions", action: "written" }],
       workspaceLinks: [],
       recoveryWorkIds: [],
-    } satisfies GeneratedPackagesRefreshResult;
+    } satisfies Partial<GeneratedPackagesRefreshResult>;
     const runtime = await createHarness({
-      sourceInvalidation: {
-        hint: async (input) => {
-          fileHints.push(input);
-        },
-        reconcile: async (input) => {
-          reconciliations.push(input);
-          return reconcileResult;
-        },
-        refreshGeneratedContext: async (input) => {
+      generatedContextRefreshHost: {
+        refresh: async (input) => {
           contextRefreshes.push(input);
         },
-        refreshGeneratedPackages: async (input) => {
-          packageRefreshes.push(input);
-          return packageRefreshResult;
-        },
+      },
+      generatedPackageRefreshHost: defaultGeneratedPackageRefreshHost(generatedPackageHostCalls),
+      sourceInvalidationScan: {
+        classifyHint: () => Effect.succeed("scan" as const),
+        listAcquiredWorkspaceIds: () =>
+          Effect.succeed(["workspace_runtime_adapter_01" as WorkspaceId]),
+        requestScan: (input) =>
+          Effect.sync(() => {
+            sourceInvalidationScanRequests.push(input);
+          }),
+        reconcile: (input) =>
+          Effect.sync(() => {
+            sourceInvalidationReconciliations.push(input);
+            return {
+              domains: [...(input.domains ?? [])],
+              reason: input.reason,
+              sourceFingerprints: {
+                extensions: "fingerprint_extensions_01",
+                workflows: "fingerprint_workflows_01",
+                external_instructions: "fingerprint_external_01",
+                host_snippets: "fingerprint_snippets_01",
+              },
+              afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+            };
+          }),
       },
     });
     const changedPath = "/tmp/svvy/extensions/web/index.ts" as AbsolutePath;
@@ -1879,24 +2173,25 @@ describe("catalog-backed runtime service adapter", () => {
         reason: "typed-failure",
         error: { _tag: "RuntimeContractError" },
       });
-      expect(fileHints).toEqual([]);
-      expect(reconciliations).toEqual([]);
 
-      await expect(
-        runtime.facade.sourceInvalidation.hint({
-          scope: { kind: "app-global" },
-          domain: "extensions",
-          path: changedPath,
-          observedAt: "2026-06-19T08:00:00.000Z",
-        }),
-      ).resolves.toBeUndefined();
+      const hint = {
+        scope: { kind: "app-global" },
+        domain: "extensions",
+        path: changedPath,
+        observedAt: "2026-06-19T08:00:00.000Z",
+      } as SourceInvalidationHint;
+      await expect(runtime.facade.sourceInvalidation.hint(hint)).resolves.toBeUndefined();
       await expect(
         runtime.facade.sourceInvalidation.reconcile({
           scope: { kind: "workspace", workspaceId: "workspace_runtime_adapter_01" as WorkspaceId },
           domains: ["external_instructions", "host_snippets"],
           reason: "watcher-debounce",
         }),
-      ).resolves.toEqual(reconcileResult);
+      ).resolves.toEqual({
+        changedReadModelCount: 1,
+        generatedPackageRefreshes: [],
+        recoveryWorkIds: [],
+      });
       await expect(
         runtime.facade.sourceInvalidation.refreshGeneratedContext({
           scope: "workspace",
@@ -1912,37 +2207,36 @@ describe("catalog-backed runtime service adapter", () => {
           sourceCommandId: "cmd_generated_refresh_01" as CommandId,
           recoveryWorkId: "recovery_generated_refresh_01" as RecoveryWorkId,
         }),
-      ).resolves.toEqual(packageRefreshResult);
+      ).resolves.toMatchObject(packageRefreshResult);
 
-      expect(fileHints).toEqual([
-        {
-          scope: { kind: "app-global" },
-          domain: "extensions",
-          path: changedPath,
-          observedAt: "2026-06-19T08:00:00.000Z",
-        },
-      ]);
-      expect(reconciliations).toEqual([
-        {
-          scope: { kind: "workspace", workspaceId: "workspace_runtime_adapter_01" as WorkspaceId },
-          domains: ["external_instructions", "host_snippets"],
-          reason: "watcher-debounce",
-        },
-      ]);
       expect(contextRefreshes).toEqual([
+        {
+          scope: "workspace",
+          workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
+          reason: "external-instruction-changed",
+        },
         {
           scope: "workspace",
           workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
           reason: "extension-source-changed",
         },
       ]);
-      expect(packageRefreshes).toEqual([
+      expect(generatedPackageHostCalls).toEqual([]);
+      expect(sourceInvalidationScanRequests).toEqual([
         {
-          scope: "app-global",
-          packages: ["@svvyx/extensions"],
-          reason: "source-changed",
-          sourceCommandId: "cmd_generated_refresh_01" as CommandId,
-          recoveryWorkId: "recovery_generated_refresh_01" as RecoveryWorkId,
+          scope: { kind: "app-global" },
+          domains: ["extensions"],
+          reason: "watcher-debounce",
+        },
+      ]);
+      expect(sourceInvalidationReconciliations).toEqual([
+        {
+          scope: {
+            kind: "workspace",
+            workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
+          },
+          domains: ["external_instructions", "host_snippets"],
+          reason: "watcher-debounce",
         },
       ]);
     } finally {
@@ -1965,6 +2259,7 @@ describe("catalog-backed runtime service adapter", () => {
     const workspaceLinkFileHost = fakeWorkspaceLinkFileHost(
       new Map([
         [join(workspaceRoot, ".smithers"), { kind: "directory" }],
+        [extensionsPackageRoot, { kind: "directory" }],
         [workflowsPackageRoot, { kind: "directory" }],
       ]),
       linkCalls,
@@ -1977,6 +2272,10 @@ describe("catalog-backed runtime service adapter", () => {
       generatedPackageRoots: {
         extensionsPackageRoot: extensionsPackageRoot as AbsolutePath,
         workflowsPackageRoot: workflowsPackageRoot as AbsolutePath,
+        coreTypeContractPackageRoot: join(
+          tmpdir(),
+          "svvy-runtime-adapter-generated-core-type-contract",
+        ) as AbsolutePath,
       },
       extensionStatePort: {
         records: {
@@ -1997,98 +2296,109 @@ describe("catalog-backed runtime service adapter", () => {
           input.packageName === "@svvyx/workflows" ? "workflows" : "extensions",
         ) as AbsolutePath;
       },
+      listAcquiredWorkspaceIds: () =>
+        Effect.succeed(["workspace_generated_link_01" as WorkspaceId]),
+      listRecoverableWorkspaceIds: () => Effect.succeed([]),
+      materializeCoreTypeContractPackage: () => Effect.void,
+      now: () => Effect.succeed("2026-04-18T09:00:00.000Z" as IsoDateTimeString),
       workspaceLinkFileHost,
-    } satisfies Parameters<typeof refreshRuntimeGeneratedPackagesAtRuntimeBoundary>[0]["host"];
-    const generatedPackageStatePort = createGeneratedPackageStatePort(stateCalls);
+    } satisfies RuntimeGeneratedPackageRefreshBoundaryHost &
+      Pick<
+        RuntimePort,
+        "extensionStatePort" | "generatedPackageLinkPath" | "generatedPackageRoots" | "sourceRoots"
+      >;
+    const runtime = await createHarness({
+      sourceRoots: boundaryHost.sourceRoots,
+      generatedPackageRoots: boundaryHost.generatedPackageRoots,
+      extensionStatePort: boundaryHost.extensionStatePort,
+      generatedPackageLinkPath: boundaryHost.generatedPackageLinkPath,
+      generatedPackageRefreshHost: {
+        listAcquiredWorkspaceIds: boundaryHost.listAcquiredWorkspaceIds,
+        listRecoverableWorkspaceIds: boundaryHost.listRecoverableWorkspaceIds,
+        materializeCoreTypeContractPackage: boundaryHost.materializeCoreTypeContractPackage,
+        now: boundaryHost.now,
+        workspaceLinkFileHost: boundaryHost.workspaceLinkFileHost,
+      },
+      generatedPackageStateCalls: stateCalls,
+    });
 
-    await expect(
-      refreshRuntimeGeneratedPackagesAtRuntimeBoundary({
-        request: {
+    try {
+      await expect(
+        runtime.facade.sourceInvalidation.refreshGeneratedPackages({
           scope: "app-global",
           packages: ["@svvyx/extensions"],
           reason: "startup-recovery",
           sourceCommandId: "cmd_generated_refresh_01" as CommandId,
           recoveryWorkId: "recovery_generated_refresh_01" as RecoveryWorkId,
+        }),
+      ).resolves.toMatchObject({
+        scope: "app-global",
+        packages: [{ packageName: "@svvyx/extensions", action: "written" }],
+        workspaceLinks: [],
+      });
+      expect(linkPathInputs).toEqual([
+        {
+          workspaceId: "workspace_generated_link_01" as WorkspaceId,
+          packageName: "@svvyx/extensions",
         },
-        host: boundaryHost,
-        generatedPackageStatePort,
-      }),
-    ).resolves.toMatchObject({
-      scope: "app-global",
-      packages: [{ packageName: "@svvyx/extensions", action: "written" }],
-      workspaceLinks: [],
-    });
-    expect(linkPathInputs).toEqual([]);
-    expect(linkCalls).toEqual([]);
-    expect(stateCalls).toEqual(["build:@svvyx/extensions"]);
+      ]);
+      expect(linkCalls).toEqual([
+        `mkdir:${join(workspaceRoot, ".smithers", "node_modules", "@svvyx")}`,
+        `symlink:${join(
+          workspaceRoot,
+          ".smithers",
+          "node_modules",
+          "@svvyx",
+          "extensions",
+        )}->${extensionsPackageRoot}`,
+      ]);
+      expect(stateCalls).toEqual([
+        "build:@svvyx/extensions",
+        "link:workspace_generated_link_01:@svvyx/extensions",
+      ]);
 
-    await expect(
-      refreshRuntimeGeneratedPackagesAtRuntimeBoundary({
-        request: {
+      await expect(
+        runtime.facade.sourceInvalidation.refreshGeneratedPackages({
           scope: "workspace-link-repair",
           workspaceId: "workspace_generated_link_01" as WorkspaceId,
           packages: ["@svvyx/workflows"],
           reason: "startup-recovery",
           sourceCommandId: "cmd_generated_link_01" as CommandId,
           recoveryWorkId: "recovery_generated_link_01" as RecoveryWorkId,
-        },
-        host: boundaryHost,
-        generatedPackageStatePort,
-      }),
-    ).resolves.toMatchObject({
-      scope: "workspace-link-repair",
-      packages: [],
-      workspaceLinks: [
+        } as never),
+      ).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "typed-failure",
+      });
+      expect(linkPathInputs).toEqual([
         {
           workspaceId: "workspace_generated_link_01" as WorkspaceId,
-          packageName: "@svvyx/workflows",
-          status: "linked",
+          packageName: "@svvyx/extensions",
         },
-      ],
-    });
-    expect(linkPathInputs).toEqual([
-      {
-        workspaceId: "workspace_generated_link_01" as WorkspaceId,
-        packageName: "@svvyx/workflows",
-      },
-    ]);
-    expect(linkCalls).toEqual([
-      `mkdir:${join(workspaceRoot, ".smithers", "node_modules", "@svvyx")}`,
-      `symlink:${join(
-        workspaceRoot,
-        ".smithers",
-        "node_modules",
-        "@svvyx",
-        "workflows",
-      )}->${workflowsPackageRoot}`,
-    ]);
-    expect(stateCalls).toEqual([
-      "build:@svvyx/extensions",
-      "link:workspace_generated_link_01:@svvyx/workflows",
-    ]);
+      ]);
+      expect(linkCalls).toEqual([
+        `mkdir:${join(workspaceRoot, ".smithers", "node_modules", "@svvyx")}`,
+        `symlink:${join(
+          workspaceRoot,
+          ".smithers",
+          "node_modules",
+          "@svvyx",
+          "extensions",
+        )}->${extensionsPackageRoot}`,
+      ]);
+      expect(stateCalls).toEqual([
+        "build:@svvyx/extensions",
+        "link:workspace_generated_link_01:@svvyx/extensions",
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it("uses required source invalidation methods independently", async () => {
-    const fileHints: SourceInvalidationHint[] = [];
-    const calls: string[] = [];
+    const generatedPackageHostCalls: string[] = [];
     const runtime = await createHarness({
-      sourceInvalidation: {
-        hint: async (input) => {
-          fileHints.push(input);
-        },
-        reconcile: async () => {
-          calls.push("reconcile");
-          return unexpectedSourceInvalidationCall("reconcile");
-        },
-        refreshGeneratedContext: async () => {
-          calls.push("refreshGeneratedContext");
-          return unexpectedSourceInvalidationCall("refreshGeneratedContext");
-        },
-        refreshGeneratedPackages: async () => {
-          calls.push("refreshGeneratedPackages");
-          return unexpectedSourceInvalidationCall("refreshGeneratedPackages");
-        },
-      },
+      generatedPackageRefreshHost: defaultGeneratedPackageRefreshHost(generatedPackageHostCalls),
     });
 
     try {
@@ -2099,19 +2409,15 @@ describe("catalog-backed runtime service adapter", () => {
           path: "/tmp/svvy/extensions/web/index.ts" as AbsolutePath,
         }),
       ).resolves.toBeUndefined();
-      expect(fileHints).toHaveLength(1);
       await expect(
         runtime.facade.sourceInvalidation.reconcile({
           scope: { kind: "app-global" },
           reason: "manual",
         }),
-      ).rejects.toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
-        error: {
-          _tag: "RuntimeContractError",
-          operation: "runtime.sourceInvalidation.reconcile",
-        },
+      ).resolves.toEqual({
+        changedReadModelCount: 0,
+        generatedPackageRefreshes: [],
+        recoveryWorkIds: [],
       });
       await expect(
         runtime.facade.sourceInvalidation.refreshGeneratedPackages({
@@ -2119,68 +2425,90 @@ describe("catalog-backed runtime service adapter", () => {
           packages: ["@svvyx/extensions"],
           reason: "source-changed",
         }),
-      ).rejects.toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
-        error: {
-          _tag: "RuntimeContractError",
-          operation: "runtime.sourceInvalidation.refreshGeneratedPackages",
+      ).resolves.toMatchObject({
+        scope: "app-global",
+        packages: [{ packageName: "@svvyx/extensions", action: "written" }],
+        workspaceLinks: [],
+      });
+      await expect(
+        runtime.facade.sourceInvalidation.applyCommittedScanEvent({
+          scope: { kind: "app-global" },
+          event: {
+            domains: [],
+            reason: "manual",
+            sourceFingerprints: {
+              extensions: "extensions_fingerprint",
+              workflows: "workflows_fingerprint",
+              external_instructions: "external_instructions_fingerprint",
+              host_snippets: "host_snippets_fingerprint",
+            },
+            afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+          },
+        }),
+      ).resolves.toEqual({
+        changedReadModelCount: 1,
+        generatedPackageRefreshes: [],
+        recoveryWorkIds: [],
+      });
+      expect(generatedPackageHostCalls).toEqual([]);
+      expect(runtime.calls.sourceInvalidationScanRequests).toEqual([
+        {
+          scope: { kind: "app-global" },
+          domains: ["extensions"],
+          reason: "watcher-debounce",
+        },
+      ]);
+      expect(runtime.calls.sourceInvalidationReconciliations).toEqual([
+        {
+          scope: { kind: "app-global" },
+          reason: "manual",
+        },
+      ]);
+      await runtime.waitForPublishedStateInvalidations(1);
+      expect(runtime.calls.publishedStateInvalidations).toContainEqual([
+        { scope: "app", invalidation: { model: "extensions" } },
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("streams runtime-owned event bus events through the facade", async () => {
+    const runtime = await createHarness();
+    const events = await runtime.facade.events({
+      workspaceId: "workspace_runtime_adapter_01" as WorkspaceId,
+    });
+    const iterator = events[Symbol.asyncIterator]();
+
+    try {
+      const nextEvent = iterator.next();
+      await runtime.facade.workspaces.acquire({
+        cwd: "/tmp/runtime-adapter-user-workspace" as AbsolutePath,
+        owner: {
+          ownerId: "runtime_adapter_owner_01" as RuntimeOwnerId,
+          kind: "test",
+        },
+        openReason: "test",
+      });
+      await expect(nextEvent).resolves.toMatchObject({
+        done: false,
+        value: {
+          type: "workspace_read_model.changed",
+          workspaceId: "workspace_runtime_adapter_01",
+          invalidation: { model: "sessionNavigation" },
         },
       });
-      expect(calls).toEqual(["reconcile", "refreshGeneratedPackages"]);
     } finally {
+      await iterator.return?.();
       await runtime.dispose();
     }
   });
 
-  it("delegates runtime events through the optional event port", async () => {
-    const eventGenerationId = "runtime-events-generation-test" as RuntimeEventGenerationId;
-    const event = {
-      type: "app_read_model.changed",
-      eventGenerationId,
-      sequence: 1 as RuntimeEventSequence,
-      invalidation: { model: "extensions" },
-    } satisfies RuntimeEvent;
-    const subscriptions: RuntimeEventsInput[] = [];
-    const runtime = await createHarness({
-      events: (input) => {
-        if (input) {
-          subscriptions.push(input);
-        }
-        return Effect.succeed({
-          stream: input?.includeAppEvents === true ? Stream.make(event) : Stream.empty,
-          close: () => Effect.void,
-          closed: Effect.succeed({
-            reason: "closed",
-            eventGenerationId,
-            lastContiguousSequence: event.sequence,
-            rebaselineRequired: false,
-          }),
-        });
-      },
-    });
+  it("threads caller-provided runtime layer config into the managed runtime layer", () => {
+    const source = readFileSync(new URL("./runtime-service-adapter.ts", import.meta.url), "utf8");
 
-    try {
-      await expect(
-        collectEvents(await runtime.facade.events({ includeAppEvents: true })),
-      ).resolves.toEqual([event]);
-      expect(subscriptions).toEqual([{ includeAppEvents: true }]);
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
-  it("fails runtime event subscriptions when no event port is supplied", async () => {
-    const runtime = await createHarness();
-
-    try {
-      await expect(runtime.facade.events()).rejects.toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
-        error: { _tag: "RuntimeEventStreamError" },
-      });
-    } finally {
-      await runtime.dispose();
-    }
+    expect(source).toContain("config: RuntimeLayerConfig");
+    expect(source).toContain("createRuntimeLayerConfigLayer(config)");
+    expect(source).not.toContain("createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig)");
   });
 });

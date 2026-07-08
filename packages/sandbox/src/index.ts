@@ -1,5 +1,17 @@
-export * from "./filesystem-sandbox-policy";
-export * from "./launch-policy";
-export * from "./sandbox";
-export * from "./sandbox-denial";
-export * from "./sandbox-helper";
+export {
+  HostProcessReferencePort,
+  Sandbox,
+  SandboxHelperCandidatesPort,
+  checkSandboxPathAccess,
+  layer,
+} from "./sandbox";
+export type {
+  CheckPathAccessInput,
+  HostProcessReferencePortService,
+  HostProcessReferenceSnapshot,
+  PathAccessDecision,
+  SandboxDenial,
+  SandboxDenialInput,
+  SandboxHelperCandidatesPortService,
+  SandboxHelperCandidatesSnapshot,
+} from "./sandbox";

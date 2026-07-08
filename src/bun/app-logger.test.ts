@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { createAppLogFacade } from "@svvy/state";
 import { createAppLogger } from "./app-logger";
+import { createStateAppLogsFacade } from "@svvy/state";
+
+const testClock = () => "2026-06-21T12:00:00.000Z";
 
 describe("bun app logger", () => {
   it("forwards the same redacted entry shape used by app logs to the bridge", () => {
-    const appLogs = createAppLogFacade();
+    const appLogs = createStateAppLogsFacade({ now: testClock });
     const forwarded: unknown[] = [];
     const logger = createAppLogger({
       appLogs,
@@ -42,7 +44,7 @@ describe("bun app logger", () => {
   });
 
   it("uses warn as the bridge level for warning producer calls", () => {
-    const appLogs = createAppLogFacade();
+    const appLogs = createStateAppLogsFacade({ now: testClock });
     const forwarded: unknown[] = [];
     const logger = createAppLogger({
       appLogs,

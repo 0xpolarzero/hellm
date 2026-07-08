@@ -9,7 +9,7 @@
   - define cx as prompt-only direct CLI guidance
   - define the exact cx CLI commands agents may use as shell commands
   - define the versioned cx CLI requirement used by build/readiness checks
-  - define the generated upstream cx skill instruction source and script contract
+  - define the generated upstream cx skill instruction output and script contract
   - reject native `cx_*` tools, `svvyx cx`, and generated cx TypeScript facades
 
 This document is the source of truth for the resolved cx extension direction.
@@ -85,10 +85,10 @@ The builtin cx extension record is:
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `loaded` |
-| Handler thread | `loaded` |
+| Actor kind          | State    |
+| ------------------- | -------- |
+| Orchestrator        | `loaded` |
+| Handler thread      | `loaded` |
 | Workflow task agent | `loaded` |
 
 The cx extension being loaded by default means the generated actor prompt includes the loaded cx
@@ -157,8 +157,8 @@ The generated file must contain only the upstream cx skill Markdown extracted fr
 versioned `cx-cli` package artifact. It must not append, prepend, or interleave `svvy`-owned product
 boundary notes.
 
-If `svvy` later needs cx-specific local runtime guidance, that guidance must be placed in a separate
-hand-authored instruction file that sorts after the generated upstream skill, for example:
+Cx-specific local runtime guidance belongs in a separate hand-authored instruction file that sorts
+after the generated upstream skill, for example:
 
 ```text
 instructions/full/020-cx-svvy-usage.mdx
@@ -213,8 +213,10 @@ The package artifact should also be checked for these identity markers:
 - `src/main.rs` implements the `skill` command by printing the embedded `skill.md` content
 
 A pinned GitHub commit for `ind-igo/cx` may be used only as a secondary cross-check. It is not the
-primary generated-instruction source because the released crates.io artifact is the package actually
-identified by the CLI requirement.
+primary generated-instruction input because the released crates.io artifact is the package actually
+identified by the CLI requirement. The generated Markdown is read-only build output, not editable
+source material; the editable source material is the packaged extension script and its pinned
+upstream artifact contract.
 
 ## Generated Script Contract
 
@@ -236,7 +238,7 @@ For the current cx extension, build resolves the `--version` value from:
 "versionCliRequirementId": "cx"
 ```
 
-That id refers to the cx CLI requirement declaration whose `version` is currently `0.7.1`.
+That id refers to the cx CLI requirement declaration whose `version` is `0.7.1`.
 
 The script must:
 
@@ -281,7 +283,7 @@ Stdout is diagnostic build output only. The generated Markdown content must be w
 `--output`.
 
 The script needs network access unless the `.crate` artifact and sparse-index entry are vendored or
-provided through a future packaged-app cache. It must not fetch cx instructions dynamically during
+provided through a packaged-app cache. It must not fetch cx instructions dynamically during
 actor prompt generation or at runtime. Fetching is a generated-instruction build step only.
 
 ## Generated Output Validation
@@ -442,17 +444,17 @@ agent-facing cx instruction files only when there is a concrete, user-relevant b
 
 ## `execute_typescript`
 
-cx has no generated TypeScript facades in v1.
+cx has no generated TypeScript facades.
 
 The following generated facades are explicitly not part of the intended product surface:
 
 - `api.cx_*`
 - `extensions.cx.*`
 
-cx has no generated TypeScript facades in v1 because the product surface is prompt-only official CLI
+cx has no generated TypeScript facades because the product surface is prompt-only official CLI
 guidance.
 
-cx TypeScript facades are outside the current contract. cx remains direct CLI guidance.
+cx TypeScript facades are not part of the cx product contract. cx remains direct CLI guidance.
 
 ## Testing
 

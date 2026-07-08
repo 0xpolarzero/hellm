@@ -9,9 +9,9 @@ behavior.
 
 ## Extension Secret Egress Proxy
 
-Status: open follow-up, not adopted v1 product scope.
+Status: open follow-up, not adopted shipped product behavior.
 
-Current v1 boundary: extension secrets use trusted invocation-local injection as specified in
+Current boundary: extension secrets use trusted invocation-local injection as specified in
 `docs/prd.md` and `docs/specs/extensions-and-tools.spec.md`.
 
 Question: whether a later extension-authenticated network boundary should require an
@@ -22,9 +22,9 @@ Reference: `docs/specs/extensions-and-tools.spec.md`.
 
 ## Extension-Scoped Command Visualization
 
-Status: open follow-up, not adopted v1 product scope.
+Status: open follow-up, not adopted shipped product behavior.
 
-Current v1 boundary: authoritative action capture comes from svvy-owned tool and command
+Current boundary: authoritative action capture comes from svvy-owned tool and command
 boundaries. Arbitrary shell commands and arbitrary TypeScript side effects remain opaque except for
 process lifecycle, output, approvals, running-session state, and observed workspace changes after
 the fact.

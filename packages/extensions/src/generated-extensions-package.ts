@@ -33,7 +33,7 @@ export interface GeneratedExtensionDependencyDeclaration {
 
 export type GeneratedExtensionsPackageDependencyEvidence = Extract<
   GeneratedPackageDependencyEvidence,
-  { readonly kind: "package" }
+  { readonly dependencyClass: "workspace-authoring-external" }
 >;
 
 export interface GeneratedExtensionsPackageEvidence {
@@ -63,6 +63,7 @@ export interface WriteGeneratedExtensionsPackageInput {
   generatedPackagePath: AbsolutePath;
   extensionExportIds: ReadonlySet<string> | readonly string[];
   dependencies?: readonly GeneratedExtensionsPackageDependencyEvidence[];
+  sourceFingerprintParts?: readonly string[];
   createdAt?: IsoDateTimeString;
 }
 
@@ -81,6 +82,7 @@ export type GeneratedExtensionsPackageContentsInput = GeneratedExtensionExportId
 
 export interface GeneratedExtensionsPackageContents {
   extensionIds: readonly string[];
+  sourceFingerprintParts: readonly string[];
   dependencies: readonly GeneratedExtensionsPackageDependencyEvidence[];
   files: readonly GeneratedExtensionsPackageFile[];
   evidence: GeneratedExtensionsPackageEvidence;
@@ -107,6 +109,7 @@ export function renderGeneratedExtensionsPackageFiles(
   extensionExportIds: ReadonlySet<string> | readonly string[],
   options: {
     dependencies?: readonly GeneratedExtensionsPackageDependencyEvidence[];
+    sourceFingerprintParts?: readonly string[];
     createdAt?: IsoDateTimeString;
   } = {},
 ): readonly GeneratedExtensionsPackageFile[] {
@@ -117,6 +120,8 @@ export function renderGeneratedExtensionsPackageFiles(
     createdAt: options.createdAt ?? ("1970-01-01T00:00:00.000Z" as IsoDateTimeString),
     dependencies: options.dependencies ?? [],
     extensionIds: exportedIds,
+    sourceFingerprintParts:
+      options.sourceFingerprintParts ?? sourceFingerprintPartsFromIds(exportedIds),
     generatedFiles: [
       { relativePath: "package.json", contents: packageJson },
       { relativePath: "index.ts", contents: index },
@@ -228,11 +233,16 @@ export const generatedExtensionsPackageContents = Effect.fn(
 )(function* (input: GeneratedExtensionsPackageContentsInput) {
   const exportRecords = yield* generatedExtensionExportRecords(input);
   const extensionIds = exportRecords.map((record) => record.extensionId).toSorted();
+  const sourceFingerprintParts = sourceFingerprintPartsFromRecords(exportRecords);
   const dependencies = generatedExtensionsPackageDependencies(exportRecords);
-  const files = renderGeneratedExtensionsPackageFiles(extensionIds, { dependencies });
+  const files = renderGeneratedExtensionsPackageFiles(extensionIds, {
+    dependencies,
+    sourceFingerprintParts,
+  });
   const manifest = files.find((file) => file.relativePath === GENERATED_PACKAGE_EVIDENCE_MANIFEST);
   return {
     extensionIds,
+    sourceFingerprintParts,
     dependencies,
     evidence: readGeneratedExtensionsPackageEvidenceManifest(manifest?.contents),
     files,
@@ -257,11 +267,16 @@ export function generatedExtensionsPackageContentsFromHost(
 ): GeneratedExtensionsPackageContents {
   const exportRecords = generatedExtensionExportRecordsFromHost(input, host);
   const extensionIds = exportRecords.map((record) => record.extensionId).toSorted();
+  const sourceFingerprintParts = sourceFingerprintPartsFromRecords(exportRecords);
   const dependencies = generatedExtensionsPackageDependencies(exportRecords);
-  const files = renderGeneratedExtensionsPackageFiles(extensionIds, { dependencies });
+  const files = renderGeneratedExtensionsPackageFiles(extensionIds, {
+    dependencies,
+    sourceFingerprintParts,
+  });
   const manifest = files.find((file) => file.relativePath === GENERATED_PACKAGE_EVIDENCE_MANIFEST);
   return {
     extensionIds,
+    sourceFingerprintParts,
     dependencies,
     evidence: readGeneratedExtensionsPackageEvidenceManifest(manifest?.contents),
     files,
@@ -275,6 +290,9 @@ export const writeGeneratedExtensionsPackage = Effect.fn(
   const createdAt = input.createdAt ?? (yield* currentGeneratedPackageTimestamp);
   const files = renderGeneratedExtensionsPackageFiles(input.extensionExportIds, {
     ...(input.dependencies ? { dependencies: input.dependencies } : {}),
+    ...(input.sourceFingerprintParts
+      ? { sourceFingerprintParts: input.sourceFingerprintParts }
+      : {}),
     createdAt,
   });
   const manifest = files.find((file) => file.relativePath === GENERATED_PACKAGE_EVIDENCE_MANIFEST);
@@ -308,12 +326,14 @@ export const refreshGeneratedExtensionsPackage = Effect.fn(
     dependencies: contents.dependencies,
     generatedPackagePath: input.generatedPackagePath,
     extensionExportIds: contents.extensionIds,
+    sourceFingerprintParts: contents.sourceFingerprintParts,
   });
 });
 
 interface GeneratedExtensionExportRecord {
   readonly extensionId: string;
   readonly dependencies: readonly GeneratedExtensionDependencyDeclaration[];
+  readonly sourceFingerprint: string;
 }
 
 const generatedExtensionExportRecords = Effect.fn(
@@ -321,7 +341,11 @@ const generatedExtensionExportRecords = Effect.fn(
 )(function* (input: GeneratedExtensionExportIdsInput) {
   return [
     ...(input.builtinExtensionIds ?? workflowTaskReferenceableBuiltinExtensionIds()).map(
-      (extensionId) => ({ extensionId, dependencies: [] }),
+      (extensionId) => ({
+        extensionId,
+        dependencies: [],
+        sourceFingerprint: `builtin:${extensionId}`,
+      }),
     ),
     ...(yield* readReadyUserExtensionExportRecords(input)),
   ].toSorted((left, right) => left.extensionId.localeCompare(right.extensionId));
@@ -333,7 +357,11 @@ function generatedExtensionExportRecordsFromHost(
 ): readonly GeneratedExtensionExportRecord[] {
   return [
     ...(input.builtinExtensionIds ?? workflowTaskReferenceableBuiltinExtensionIds()).map(
-      (extensionId) => ({ extensionId, dependencies: [] }),
+      (extensionId) => ({
+        extensionId,
+        dependencies: [],
+        sourceFingerprint: `builtin:${extensionId}`,
+      }),
     ),
     ...readReadyUserExtensionExportRecordsFromHost(input, host),
   ].toSorted((left, right) => left.extensionId.localeCompare(right.extensionId));
@@ -342,33 +370,20 @@ function generatedExtensionExportRecordsFromHost(
 function generatedExtensionsPackageDependencies(
   records: readonly GeneratedExtensionExportRecord[],
 ): readonly GeneratedExtensionsPackageDependencyEvidence[] {
-  const byName = new Map<string, GeneratedExtensionsPackageDependencyEvidence>();
-  for (const record of records) {
-    for (const dependency of record.dependencies) {
-      byName.set(`${dependency.name}@${dependency.version}`, {
-        kind: "package",
-        name: dependency.name,
-        resolution: "package-manager",
-        version: dependency.version,
-      });
-    }
-  }
-  return [...byName.values()].toSorted((left, right) =>
-    `${left.name}@${left.version}`.localeCompare(`${right.name}@${right.version}`),
-  );
+  void records;
+  return [];
 }
 
 function generatedExtensionsPackageEvidence(input: {
   createdAt: IsoDateTimeString;
   dependencies: readonly GeneratedExtensionsPackageDependencyEvidence[];
   extensionIds: readonly string[];
+  sourceFingerprintParts: readonly string[];
   generatedFiles: readonly { readonly relativePath: string; readonly contents: string }[];
 }): GeneratedExtensionsPackageEvidence {
   const sourceFingerprint = stableFingerprint("source", [
-    ...input.extensionIds,
-    ...input.dependencies.map(
-      (dependency) => `${dependency.resolution}:${dependency.name}@${dependency.version}`,
-    ),
+    ...input.sourceFingerprintParts,
+    ...input.dependencies.map((dependency) => JSON.stringify(dependency)),
   ]);
   const outputFingerprint = stableFingerprint(
     "output",
@@ -383,6 +398,16 @@ function generatedExtensionsPackageEvidence(input: {
   };
 }
 
+function sourceFingerprintPartsFromRecords(
+  records: readonly GeneratedExtensionExportRecord[],
+): readonly string[] {
+  return records.map((record) => `${record.extensionId}\0${record.sourceFingerprint}`).toSorted();
+}
+
+function sourceFingerprintPartsFromIds(extensionIds: readonly string[]): readonly string[] {
+  return extensionIds.map((extensionId) => `${extensionId}\0builtin:${extensionId}`).toSorted();
+}
+
 function readGeneratedExtensionsPackageEvidenceManifest(
   contents: string | undefined,
 ): GeneratedExtensionsPackageEvidence {
@@ -392,10 +417,7 @@ function readGeneratedExtensionsPackageEvidenceManifest(
     createdAt: manifest.createdAt as IsoDateTimeString,
     dependencies: Array.isArray(manifest.dependencies)
       ? manifest.dependencies.filter(isGeneratedPackageDependencyEvidence).map((dependency) => ({
-          kind: dependency.kind,
-          name: dependency.name,
-          resolution: dependency.resolution,
-          version: dependency.version,
+          ...dependency,
         }))
       : [],
     outputFingerprint: String(manifest.outputFingerprint ?? ""),
@@ -522,6 +544,7 @@ const readyUserExtensionExportRecord = Effect.fn("@svvy/extensions/readyUserExte
     return {
       dependencies: dependencies.map((dependency) => dependency),
       extensionId: input.extensionId,
+      sourceFingerprint,
     };
   },
 );
@@ -573,6 +596,7 @@ function readyUserExtensionExportRecordFromHost(input: {
   return {
     dependencies: dependencies.map((dependency) => dependency),
     extensionId: input.extensionId,
+    sourceFingerprint,
   };
 }
 
@@ -887,9 +911,15 @@ function isGeneratedPackageDependencyEvidence(
 ): value is GeneratedExtensionsPackageDependencyEvidence {
   return (
     isRecord(value) &&
-    value.kind === "package" &&
-    typeof value.name === "string" &&
+    typeof value.specifier === "string" &&
+    (value.importKind === "type-only" || value.importKind === "runtime") &&
+    value.dependencyClass === "workspace-authoring-external" &&
     typeof value.version === "string" &&
-    (value.resolution === "app-owned-package" || value.resolution === "package-manager")
+    (value.resolutionAuthority === "workspace-smithers-package" ||
+      value.resolutionAuthority === "external-ambient-declaration") &&
+    (value.manifestDependency === "dependency" ||
+      value.manifestDependency === "dev-type-dependency" ||
+      value.manifestDependency === "peer-workspace-expectation" ||
+      value.manifestDependency === "ambient-declaration")
   );
 }

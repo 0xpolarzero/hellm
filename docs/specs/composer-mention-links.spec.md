@@ -2,10 +2,13 @@
 
 ## Scope
 
-This document defines `@` file and folder mentions as a composer path-link convenience, not as prompt-side context attachments.
+This document defines `@` file and folder mentions as a composer path-link convenience, not as
+prompt-side context attachments.
 
 It defines composer behavior, transcript behavior, path opening, and product requirements for
-composer mention links. Persistence contracts live in `@svvy/core`/`@svvy/state`.
+composer mention links. Persistence contracts for metadata live in `@svvy/core`/`@svvy/state`;
+`@svvy/runtime` owns submitted-message materialization and `@svvy/pi-adapter` owns final pi
+content-block conversion.
 
 ## Purpose
 
@@ -286,6 +289,7 @@ Composer attachment state is durable submitted-message metadata and transcript t
 folder attachment chips persist tagged path metadata only; they do not trigger prompt expansion,
 file reads, folder expansion, or a context-target contract. Image attachment chips persist the same
 metadata and may also contribute runtime-delivered image content blocks for vision-capable models.
+State persists attachment metadata only; delivery behavior belongs to runtime and pi-adapter.
 
 Agent-visible attachment metadata must lead with the readable workspace-relative path, not the
 attachment display name. If an attachment was imported from outside the workspace, the metadata
@@ -310,12 +314,10 @@ If a transcript link points to a missing path, the renderer should show it as a 
 
 The mention picker should use a workspace path index or cache.
 
-`@svvy/state` owns the authoritative path-index read model. `@svvy/state` commits path-index facts
-and returns `StateMutationResult.afterCommit`; `@svvy/runtime` maps those descriptors to typed
-notifications on workspace open or first picker activation. The renderer may request activation
-through bootstrap-provided facades and searches only a non-authoritative warm cache of that read
-model, but it refetches after typed runtime notifications and never traverses workspace files
-directly.
+The mention picker uses runtime-owned workspace path discovery exposed to the renderer through
+app/bootstrap-provided read facades. The renderer may request activation through bootstrap-provided
+facades and searches only a non-authoritative warm cache of the returned path list; it refreshes
+after renderer-safe invalidations and never traverses workspace files directly.
 
 The implementation must not traverse the full workspace tree on every keypress.
 

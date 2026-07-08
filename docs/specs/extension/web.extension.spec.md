@@ -43,7 +43,7 @@ The Web model is:
 - `svvy` does not expose `web_search`, `web_fetch`, `svvyx web`, `api.web_*`, or generated Web
   TypeScript facades.
 - `svvy` does not own Web provider selection, Web provider readiness, Web provider API keys, Web
-  schemas, Web tool output, or Web artifacts in v1.
+  schemas, Web tool output, or Web artifacts.
 
 This is intentional. The default extension architecture should prefer simple provider-owned CLI
 usage when a provider has a clear agent-facing CLI and `svvy` has no concrete product reason to wrap
@@ -84,10 +84,10 @@ The builtin Web extension record is:
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `loaded` when `networkAccess` is true; `unavailable` when false |
-| Handler thread | `loaded` when `networkAccess` is true; `unavailable` when false |
+| Actor kind          | State                                                           |
+| ------------------- | --------------------------------------------------------------- |
+| Orchestrator        | `loaded` when `networkAccess` is true; `unavailable` when false |
+| Handler thread      | `loaded` when `networkAccess` is true; `unavailable` when false |
 | Workflow task agent | `loaded` when `networkAccess` is true; `unavailable` when false |
 
 The Web extension being loaded by default means the generated actor prompt includes the loaded Web
@@ -198,14 +198,14 @@ The generator must remove:
 - provider-auth explanations that imply `svvy` owns TinyFish API keys
 - Claude Code settings, hooks, permissions, `CLAUDE.md` mutation instructions, or
   `tinyfish config-claude` setup workflow
-- fallback guidance to native `WebSearch`, native `WebFetch`, or other host-native Web tools
+- alternate-tool guidance for native `WebSearch`, native `WebFetch`, or other host-native Web tools
 - MCP setup instructions, SDK-first integration guidance, raw REST examples, and docs-site
   navigation
 
 The generator may use `CLAUDE_MD_BLOCK` only as versioned evidence that TinyFish wants agents to use
 `tinyfish search query "<query>"` and `tinyfish fetch content get "<url>"`. It must not emit the
 Claude-specific block as-is because it mentions Claude Code configuration, native WebSearch/WebFetch
-fallbacks, and host hooks that are outside `svvy`'s Web v1 product boundary.
+fallbacks, and host hooks that are outside `svvy`'s Web product boundary.
 
 The mutable upstream skill remains useful research input but is not an authoritative generated
 source for selected-version builds:
@@ -299,7 +299,7 @@ TinyFish CLI auth behavior:
 - TinyFish, not `svvy`, owns the CLI auth file and auth flow.
 - Agent-facing Web guidance must not ask users to paste TinyFish secrets into chat or shell
   commands.
-- `svvy` does not use app-managed extension env for TinyFish auth in v1.
+- `svvy` does not use app-managed extension env for TinyFish auth.
 
 Search:
 
@@ -364,8 +364,8 @@ returns a remote browser session usable through CDP. The agent may use the retur
 Playwright, Puppeteer, or another CDP client when raw browser control is genuinely needed.
 
 Using a TinyFish `cdp_url` is still ordinary shell or script execution chosen by the agent. `svvy`
-does not register, own, inspect, or mediate that remote browser as a Web extension capability in v1,
-and generated actor context must not describe it as a `svvy` browser tool.
+does not register, own, inspect, or mediate that remote browser as a Web extension capability, and
+generated actor context must not describe it as a `svvy` browser tool.
 
 ### Output Handling
 
@@ -377,7 +377,7 @@ tinyfish fetch content get https://example.com
 tinyfish search query "web automation tools"
 ```
 
-was:
+are:
 
 - JSON is written to stdout by default.
 - `--pretty` writes human-readable output to stdout.
@@ -410,7 +410,7 @@ explicitly redirects stderr too.
 
 The extension must not claim that TinyFish fetch is automatically `svvy` artifact-backed. A
 redirected file is an ordinary file produced by shell command execution. It is not a first-class
-`svvy` artifact record unless a future product feature explicitly promotes it.
+`svvy` artifact record under the Web extension surface.
 
 ## Agent Guidance
 
@@ -452,7 +452,7 @@ The Web extension instructions must tell agents:
   current-event claims.
 
 TinyFish's own public-web request validation and browser behavior are provider-owned behavior. `svvy`
-does not claim to enforce a separate Web URL policy in v1.
+does not claim to enforce a separate Web URL policy.
 
 TinyFish CLI calls obey the resolved shell/network policy from
 `docs/specs/extensions-and-tools.spec.md`. That policy is part of the shared execution boundary, not a
@@ -503,9 +503,9 @@ Firecrawl is not part of Web v1.
 - a native Web tool adapter
 - a generated Web TypeScript facade
 - a loaded by default Web instruction source
-- a hidden fallback when TinyFish is unavailable
+- an alternate hidden provider when TinyFish is unavailable
 
-Future Firecrawl support requires a separate product decision that names its concrete surface:
+Firecrawl support is outside this spec. Any Firecrawl product surface must name its concrete surface:
 prompt-only CLI guidance, a `svvyx` extension, native tools, or another explicit integration model.
 
 ## Browser-Like Tooling
@@ -519,7 +519,7 @@ browser sessions, DOM APIs, screenshots, user cookies, or authenticated user bro
 When an agent uses TinyFish browser-backed CLI commands, that is ordinary shell execution of the
 TinyFish CLI under the actor's existing shell/network policy. It is not a `svvy` browser surface.
 
-Any future `svvy` browser-like Web surface must be specified separately because it raises different
+A `svvy` browser-like Web surface is outside this spec and requires separate specification because it raises different
 questions about session state, cookies, private data, screenshots, DOM interaction, navigation,
 approval, and network policy.
 
@@ -537,9 +537,9 @@ Because Web is a builtin prompt-only extension:
 - Web can be customized only through the normal builtin local source mechanisms described in
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension_managing.extension.spec.md`
 - Web has an editable generated-instruction TypeScript script under `scripts/`
-- Web has no editable extension runtime source in v1
-- Web has no generated TypeScript declaration file in v1
-- Web has no executable or `svvyx` source build step in v1
+- Web has no editable extension runtime source
+- Web has no generated TypeScript declaration file
+- Web has no executable or `svvyx` source build step
 - Web still participates in the normal Extension Managing validation/build path for prompt-only
   extensions so changed local instruction source regenerates generated agent context and extension
   fingerprints
@@ -549,13 +549,12 @@ detected installed version when available, the default target version `0.1.6`, a
 state. Missing or unknown TinyFish CLI status is surfaced as extension readiness diagnostics.
 Generated actor context uses the last ready Web instructions when available; a fresh Web build fails
 until the requirement is satisfied. A different detected installed TinyFish version is available,
-becomes the current version for UI state, and is not a build blocker. UI install/update actions and
-agent-initiated installs both use shared CLI requirement action semantics, with no caller-specific
-readiness rules. Agent-initiated TinyFish installs use the concrete install command returned by
-inspect/build through ordinary Shell `exec_command`. Extensions UI install/update actions use the
-shared tracked CLI requirement action: desktop submits through the runtime facade, `@svvy/extensions` validates the
-immutable command plan, and `@svvy/runtime` executes and records it. There is no Web-specific install
-flow.
+becomes the current version for UI state, and is not a build blocker. Agent-initiated TinyFish
+installs use the concrete install command returned by inspect/build through ordinary Shell
+`exec_command`. Extensions UI install/update controls remain unavailable until the complete runtime
+dependency-action lifecycle is promoted with exact schemas, planning, approval linkage, sandboxed
+execution, command facts, readiness refresh, public error mapping, and tests. There is no
+Web-specific install flow.
 
 ## Testing
 
@@ -572,14 +571,14 @@ Required doc/extension tests:
 - Generated actor context does not include `web_search` or `web_fetch` tool declarations.
 - Generated actor context does not include `svvyx web` guidance.
 - Generated `execute_typescript` declarations do not include Web facades.
-- Settings snapshots do not expose a Web Provider selector as part of the intended Web v1 product
+- Settings snapshots do not expose a Web Provider selector as part of the intended Web product
   surface.
-- Firecrawl does not appear as a Web v1 provider in generated Web instructions.
+- Firecrawl does not appear as a Web provider in generated Web instructions.
 - Web instructions include TinyFish auth, search, and fetch commands.
 - Generated TinyFish instructions do not include package installation instructions.
 - Generated TinyFish instructions do not include `tinyfish config-claude`, Claude Code settings,
-  Claude hooks, `CLAUDE.md` mutation instructions, native WebSearch fallback, or native WebFetch
-  fallback guidance.
+  Claude hooks, `CLAUDE.md` mutation instructions, native WebSearch guidance, or native WebFetch
+  guidance.
 - Web instructions include TinyFish agent and browser CLI guidance, or explicitly explain why those
   package CLI sections were intentionally omitted from the generated Web instructions.
 - Web instructions tell agents to redirect large fetch output to a file when useful.
@@ -623,7 +622,7 @@ key.
 - Web teaches the official TinyFish CLI.
 - Web generates its TinyFish CLI instruction file from selected exact-version `@tiny-fish/cli`
   npm package artifacts.
-- Web does not use mutable TinyFish GitHub skill files as generated instruction sources.
+- Web does not use mutable TinyFish GitHub skill files as generated instruction inputs.
 - Web keeps generated TinyFish content separate from hand-authored `svvy` Web guidance.
 - Web does not expose `web_search`.
 - Web does not expose `web_fetch`.

@@ -6,43 +6,53 @@ source of architecture; current behavior is defined by `docs/prd.md`, `docs/feat
 
 ## Product Guardrails
 
-- [x] Review the diff for all changed product docs outside `docs/references/**` and vendor docs. Treat `docs/prd.md`, `docs/features.ts`, `docs/progress.md`, and `docs/specs/**` as source-of-truth docs; treat `docs/execution-model.md`, `docs/optimizations.md`, `docs/todo.md`, `docs/draft-notes.md`, `docs/external-library-followups.md`, `docs/research/*`, and `docs/ui/**` as non-authoritative inputs unless a source-of-truth doc explicitly promotes their behavior.
+- [x] Review the diff for all changed product docs outside `docs/references/**` and vendor docs. Treat `docs/prd.md`, `docs/features.ts`, `docs/progress.md`, and `docs/specs/**` as source-of-truth docs; treat `docs/execution-model.md`, `docs/optimizations.md`, `docs/draft-notes.md`, `docs/external-library-followups.md`, `docs/research/*`, and `docs/ui/**` as non-authoritative inputs unless a source-of-truth doc explicitly promotes their behavior.
 - [x] Treat `docs/vendor/smithers/smithers-0.22.0.llms-full.txt` as a pinned upstream input only for Smithers prompt-generation content, CLI command forms, and Smithers concept tests; do not treat it as product architecture to port wholesale.
 - [x] Treat `docs/references/smithers/**` as refreshed Smithers reference material, not as shipped `svvy` runtime architecture. Product requirements must come from the `svvy` docs; the pinned vendor `llms-full` document is only evidence for official Smithers CLI guidance content. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`, `docs/specs/extension/smithers.extension.spec.md`.
-- [x] Acceptance coverage matches the current PRD/features/spec surface: one pi-backed runtime, the Effect package graph, app-owned Workflows source libraries, and the runtime-owned Smithers task-agent bridge. The product has no alternate workflow runtime, prompt-library pane, Web wrapper tool, Project CI surface, alias surface, dual schema, or non-pi terminal loop unless a current spec explicitly requires it.
+- [ ] Package-architecture acceptance rows cover the seven `@svvy/*` package roots, allowed public subpaths, app/bootstrap-owned `ManagedRuntime`, generated-package ownership, runtime-owned workspace-link repair, and the narrow Smithers `runTaskAgent` bridge.
 - [x] Keep POC/product-doc dependencies out of the shipped runtime unless a current spec explicitly promotes them.
-- [x] Keep product docs steady-state oriented: source-of-truth docs describe the current resolved architecture and product surface, not prior designs or transitional implementation paths. Sources: root `AGENTS.md`, `docs/prd.md`.
+- [x] Keep product docs steady-state oriented: source-of-truth docs describe only the current resolved architecture and product surface. Sources: root `AGENTS.md`, `docs/prd.md`.
 
 ## Implementation Tracks
 
 These tracks split unchecked acceptance rows into coherent implementation slices. A row is checked
 only when the capability and its tests are present.
 
-- [x] Agents/profile/editor forms track: complete app-global profile storage, workflow-agent source
+- [x] Agents/profile/editor forms track covers app-global profile storage, workflow-agent source
       records, pi-normalized model/reasoning selection, and TanStack Form validation for complex
       settings.
-- [ ] Extension platform track: implement Extension records, generated actor context completeness,
+- [ ] Extension platform track covers Extension records, generated actor context completeness,
       actor-local loading, Extension Managing snapshots/storage/builds, env/secrets, CLI readiness,
       real app-owned `svvyx` CLI execution, generated `execute_typescript` facade declarations,
-      builtin Artifacts/Workflows generated TypeScript facades, hidden/unavailable user `svvyx` TypeScript
-      facades until sandboxed facade execution exists, and related tests.
-- [ ] Approval/sandbox/execution-policy track: implement approval modes, managed filesystem/network
-      boundaries, sandbox packaging, artifact-directory grants, and TypeScript approval routing.
-- [x] Workflows/Smithers source-library and generated-package track: implement app-global workflow source roots,
-      generated-package file production, immutable workspace-link plan generation, runtime-owned
-      workspace-link repair, `svvyx workflows` list/save/build/models, Smithers prompt
-      generation from pinned docs, and shipped packaged-app safety.
-- [x] Snippets track: implement product-owned Snippets alongside Agents/Extensions generated
+      builtin Artifacts/Workflows generated TypeScript facades, explicit omission of user `svvyx`
+      `execute_typescript` facades, and related tests.
+- [ ] Effect/package architecture track covers exact root/subpath exports for `@svvy/core`,
+      `@svvy/state`, `@svvy/extensions`, `@svvy/sandbox`, `@svvy/pi-adapter`, `@svvy/runtime`,
+      and `@svvy/desktop`; renderer-safe desktop DTOs with no pi-shaped bridge contracts; one
+      app-owned `ManagedRuntime`; app/bootstrap-only composition; runtime startup/shutdown lifecycle;
+      core-owned state-port consumption plus approved state read/command facades; exact
+      app/bootstrap restricted-import boundaries; and facade-only desktop/browser/headless access.
+- [ ] Approval/sandbox/execution-policy track covers approval modes, managed filesystem/network
+      boundaries, sandbox packaging, exact Bun app-edge sandbox import restrictions,
+      runtime-owned launch-policy acquisition for Shell/Apply Patch/Execute TypeScript,
+      artifact-directory grants, and TypeScript approval routing.
+- [ ] Workflows/Smithers source-library and generated-package track covers app-global workflow source roots,
+      `@svvy/extensions` generated-package file production and immutable workspace-link plan
+      generation, `@svvy/runtime` generated-package refresh scheduling, workspace-link repair, and
+      state-fact recording, `svvyx workflows` list/save/build/models, Smithers prompt generation
+      from pinned docs, and shipped packaged-app safety.
+- [x] Snippets track covers product-owned Snippets alongside Agents/Extensions generated
       context, discovery, composer picker, expansion, provenance, and host-template disabling.
-- [ ] Live projection/structured recovery track: complete command records, live tool projection,
+- [ ] Live projection/structured recovery track covers command records, live tool projection,
       child command facts, structured state derivations, durable scheduler records, targeted app
       logging, and recovery tests.
-- [ ] Dockview/navigation polish track: complete Dockview adapters, placement commands, drag/drop
+- [ ] Dockview/navigation polish track covers Dockview adapters, placement commands, drag/drop
       sources, edge/floating/popout restore, panel-location indicators, focused highlighting,
       handler row summaries, and default-workspace broad-surface verification.
-- [x] Markdown/context-budget/UI verification track: finish assistant Markdown rendering, remaining
-      context-budget surfaces, UI/e2e verification screenshots with `electrobun-browser-tools`,
-      OrbStack e2e lane, and final `bun run check`.
+- [ ] Markdown/context-budget/UI verification track covers regression verification for shipped
+      assistant Markdown rendering and shipped context-budget observability, UI/e2e verification
+      screenshots with `electrobun-browser-tools`, OrbStack e2e lane, and final `bun run check` for
+      the Effect/package architecture acceptance surface.
 
 ## Product Architecture
 
@@ -75,7 +85,7 @@ only when the capability and its tests are present.
 - [x] Allow users to create, duplicate, order, edit, and inline-single-confirm delete user-created orchestrator profiles. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Drive the New orchestrator picker order, profile-specific command-palette actions, and surface profile badges from Agents-pane orchestrator-profile order. Sources: `docs/prd.md`, `docs/specs/command-palette.spec.md`.
 - [x] Persist each top-level session's selected orchestrator profile, profile snapshot, and generated agent-context fingerprint at creation. Sources: `docs/prd.md`.
-- [x] Let profile-backed orchestrator sessions optionally save composer model/reasoning changes back to that profile for future sessions. Sources: `docs/prd.md`.
+- [x] Let profile-backed orchestrator sessions optionally save composer model/reasoning changes back to that profile for newly created sessions using that profile. Sources: `docs/prd.md`.
 - [x] Use `threadHandler` for delegated handler-thread surfaces. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
 - [x] Apply `thread_start.threads[].overrides` as creation-time partial overrides over `threadHandler` extension usage states. Sources: `docs/prd.md`, `docs/progress.md`.
 - [x] Represent workflow-agent parameter records as structured Workflows source records that generate `Agents.*` exports. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
@@ -88,7 +98,7 @@ only when the capability and its tests are present.
 
 ## Extensions Model
 
-- [x] Implement Extensions as builtin, user, and external_instruction records with category, instruction source files, minimal available-loading hints, interface kind, optional generated `execute_typescript` facade declarations, env/dependency readiness, reset/delete behavior, and read-only usage views. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Implement Extensions as builtin, user, and external_instruction records with category, instruction source files, minimal available-loading hints, interface kind, generated `execute_typescript` facade declarations only for app-owned builtin TypeScript-enabled `svvyx` extensions, env/dependency readiness, reset/delete behavior, and read-only usage views. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [x] Support extension usage states `loaded`, `available`, and `unavailable` per profile/actor, except fixed app-native controls such as Extension Loading. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [x] Implement the exhaustive builtin extension inventory: `base-common`, `base-orchestrator`, `base-handler`, `base-workflow-task`, `shell`, `apply-patch`, `execute-typescript`, `extension-loading`, `extension-managing`, `request-user-input`, `thread-orchestration`, `thread-handling`, `cx`, `git`, `github`, `web`, `smithers`, `workflows`, `artifacts`, and external instructions. Sources: `docs/specs/extensions-and-tools.spec.md`.
 - [x] Load by default `base-common`, Shell, Apply Patch, Execute TypeScript, Extension Loading, cx, Git, and Artifacts for orchestrators, handler threads, and workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
@@ -105,12 +115,8 @@ only when the capability and its tests are present.
   - [x] Compose resolved loaded extension full instruction files into actor context with file-boundary headings, while omitting instruction files configured as bypassed. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Use resolved available extension records for minimal hints, including user extensions, without exposing full instruction sources for available records. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Wire resolved user and builtin-source extension records into session prompt previews, prompt binding generation, `list_extensions`, and `load_extension` refreshed context. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
-  - [x] Keep generated TypeScript declarations for user `svvyx` extension builds out of generated actor context and Execute TypeScript declarations until sandboxed facade execution exists. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
+  - [x] Keep generated TypeScript declarations for user `svvyx` extension builds out of generated actor context and Execute TypeScript declarations; user `svvyx` extensions do not contribute `execute_typescript` facades. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
   - [x] Emit generated TypeScript declarations for builtin Artifacts and Workflows facades with schema-backed command metadata, generated `Run.Result` declarations, and output-control input fields.
-  - [ ] Add sandboxed user facade execution through public Incur client semantics, preserving
-        schema-backed input/output, rich `Client.ClientError` payloads, recursive exact secret
-        redaction, parent-linked child command facts, and no exposure of local Incur actions or
-        generated internals to snippets.
   - [ ] Cover streaming response projection and CTA command runner execution through the shared child-command recording path for `Run.StreamResponse` and `Cta.run()` executions.
 - [x] Store generated context fingerprints for sessions, handler threads, and workflow task-agent attempts. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
 - [x] Mark existing surfaces stale only when their binding fingerprint differs from current ready context, show the Extensions-changed banner with checked-by-default update-before-next-turn intent, and refresh automatically before prompt-bearing dispatch when enabled. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
@@ -123,7 +129,7 @@ only when the capability and its tests are present.
   - [x] Add durable generated-context binding records that preserve the bound context payload across app/runtime restarts and later source changes, then render historical bound context from those records instead of rebuilding it only from current sources.
   - [x] Implement `svvyx extensions snapshots load` for local source/config/package restore, immediate same-pipeline build attempts, and durable dependency approval pauses.
   - [x] Preserve local snapshot secret state through app-managed secret storage during snapshot save/load/delete, exposing only coarse preservation and restore status.
-  - [x] Mark existing orchestrator, handler, and workflow task-agent attempt surfaces stale by fingerprint after successful snapshot load, and drop removed user extensions from their stored loaded/available extension ids before the next opted-in safe prompt-bearing pre-dispatch refresh.
+  - [x] Mark existing orchestrator, handler, and workflow task-agent attempt surfaces stale by fingerprint after successful snapshot load, and reconcile stored loaded/available extension ids so only extension ids present in the restored source set remain eligible before the next opted-in safe prompt-bearing pre-dispatch refresh.
   - [x] Add dependency-approval resume/install completion after snapshot load, with conflict protection for restored state that changes while approval is pending.
 
 ## Ambient Agent Resources
@@ -158,12 +164,14 @@ only when the capability and its tests are present.
 - [x] Inject env values only into the specific trusted extension runtime invocation that needs them. Sources: `docs/prd.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`.
 - [x] Never expose secret values through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Sources: `docs/prd.md`.
 - [x] Let agent-facing extension inspection report only declaration metadata and missing/configured readiness. Sources: `docs/prd.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
-- [x] Defer workspace-scoped extension env values and egress-proxy credential boundaries; do not implement them in v1. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Keep extension env values app-global per extension; workspace-scoped extension env values and
+      egress-proxy credential boundaries are absent from the shipped product surface. Sources:
+      `docs/prd.md`, `docs/features.ts`.
 
 ## Extension Managing And `svvyx` Runtime
 
-- [x] Implement a stable `svvyx <extension-id> ...` dispatcher through the runtime-owned extension command lane. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
-  - [x] Route non-builtin `svvyx <extension-id> ...` commands from `exec_command` through the runtime-owned dispatcher exposed by app bootstrap, preserving builtin `svvyx artifacts`, `svvyx workflows`, and `svvyx extensions` command-family routing.
+- [x] Implement stable `svvyx <extension-id> ...` command interpretation through `@svvy/extensions`, with `@svvy/runtime` owning Shell command execution, command facts, approval/sandbox lifecycle, extension handler invocation, and ordered application of returned operations. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
+  - [x] Route non-builtin `svvyx <extension-id> ...` commands from `exec_command` through the `@svvy/extensions` dispatch service and runtime-owned command lane, preserving builtin `svvyx artifacts`, `svvyx workflows`, and `svvyx extensions` command-family routing. App/bootstrap binds facades and host edges only.
   - [x] Reject user-extension dispatcher invocations mixed with shell control syntax so `svvyx <extension-id> ...` runtime routing remains a standalone command-family path.
 - [x] Resolve extension current builds through the dispatcher and import default-exported Incur CLIs. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
   - [x] Materialize bundled user `svvyx` runtime modules into current builds, resolve current build manifests at dispatch time, and validate/import default-exported Incur CLIs without consulting editable source files as activation state.
@@ -171,8 +179,8 @@ only when the capability and its tests are present.
   - [x] Invoke dispatched user extension CLIs with unchanged extension argv, captured stdout/exit handling, per-extension invocation env assembled from safe defaults plus app-managed values supplied to the runtime, and secret-value redaction for returned stdout.
 - [x] Validate Incur-backed extension builds so default-exported CLIs are accepted and top-level `.serve()` usage is rejected. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Bundle and import user `svvyx` build output before promotion so missing or invalid default exports fail the build, while obvious top-level `.serve()` source calls remain rejected.
-- [x] Stage extension builds under `builds/.../staging/<build-run-id>/` and atomically promote successful builds to `current/`; failed builds must leave the previous current build in place. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
-  - [x] Stage Extension Managing builds in unique `staging/<build-run-id>/` directories and promote successful builds to `current/` only after validation/readiness calculation succeeds, preserving previous user-extension `current/` output on validation failure.
+- [x] Stage extension builds under `builds/.../staging/<build-run-id>/` and atomically promote successful builds to `current/`; failed builds leave the active current build unchanged. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
+  - [x] Stage Extension Managing builds in unique `staging/<build-run-id>/` directories and promote successful builds to `current/` only after validation/readiness calculation succeeds; validation failure leaves the active user-extension `current/` output unchanged.
 - [x] Record final `svvyx` dispatcher facts, structured runtime errors, final stdout/stderr or JSON output, and recovered command-inspector output through ordinary `exec_command` command records. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/live-tool-projection.spec.md`.
   - [x] Return dispatcher stdout, exit code, extension argv, runtime readiness, structured runtime errors, dependency runtime blockers, current-build module validation, and command facts through the existing `exec_command` result path for user `svvyx` dispatch.
   - [x] Include blocked dispatcher facts for missing/deleted extensions, missing current builds, env readiness failures, dependency blockers, and invalid current builds with `runtimeReady: false`, `errorCode`, and current-build status metadata.
@@ -181,11 +189,10 @@ only when the capability and its tests are present.
   - [x] Expose persisted command output events through the recovered command inspector read model and render stdout/stderr sections in the ordinary command inspector instead of adding a workflow-specific recovery surface.
 - [x] Record builtin generated extension-facade calls inside `execute_typescript` as parent-linked child commands with readiness, env injection, redaction, product-state validation, output, and failure semantics. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`.
   - [x] Record builtin Artifacts and Workflows extension-facade calls as parent-linked child commands with success/failure status, visibility, command facts, and `Client.ClientError` failure propagation.
-  - [x] Keep loaded app-owned builtin TypeScript facades hidden and unavailable at runtime until their runtime-backed child-command execution exists.
-  - [ ] Add user facade execution with schema-backed current-build invocation so object `args`, `options`, output controls, and the non-streaming `Run.Result` envelope preserve generated Incur semantics without accepting the unsupported `output` input object.
-  - [ ] Use public Incur client semantics for future user facade execution, including rich
-        `Client.ClientError` metadata, recursive exact secret redaction, and no exposure of local
-        Incur actions or generated internals.
+  - [x] Expose loaded app-owned builtin TypeScript facades only when runtime-backed child-command execution exists, and record those calls as parent-linked child commands.
+  - [x] Add tests proving user `svvyx` extensions dispatch through Shell and generated
+        `@svvyx/extensions` authoring references only, with no generated `execute_typescript` facade
+        declarations or runtime facade calls.
   - [ ] Cover streaming `Run.StreamResponse` projection and CTA command runner execution through the shared child-command recording path for streaming and CTA executions.
 - [x] Stream `svvyx` command output/progress and recover shared live UI projection from ordinary command records without a workflow-specific renderer. Sources: `docs/specs/live-tool-projection.spec.md`.
 - [x] Treat extension usage state as generated guidance/facade visibility, not as shell-level impossibility to type a command. Sources: `docs/progress.md`.
@@ -193,10 +200,13 @@ only when the capability and its tests are present.
   - [x] Validate user-extension build inputs for unknown instruction-file config, generated-instruction output/script containment, generated-instruction CLI requirement references, exact dependency/trusted-dependency versions, env declaration defaults, default-exported `svvyx` source presence, and top-level `cli.serve()` rejection, while refusing generated-instruction activation until generator execution is implemented.
   - [x] Harden manifest schema validation for malformed optional CLI requirement fields, `installCommand` template/version coupling, generated-instruction requirement id types, duplicate generated outputs, and generated-output collisions with existing full instruction files.
   - [x] Extract and validate built user `svvyx` Incur command manifests into current build metadata, including command schemas, examples, and best-effort aliases/streaming markers when available from the CLI runtime.
-  - [x] Generate and validate user `svvyx` TypeScript facade declaration files from extracted Incur command manifests.
+  - [x] Generate and validate user `svvyx` command metadata from extracted Incur command manifests without emitting user `execute_typescript` facade declarations.
 - [x] Implement Extension Managing source/storage, editable manifest schema, instruction source file lifecycle, snapshots, change history, reset, delete, revert, build, usage setting, and inspection contracts. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
-  - [x] Scaffold missing builtin local source directories during `inspect` before returning editable paths, keep packaged defaults read-only, and baseline initial source fingerprints so scaffolding alone is not treated as a dirty build.
-- [x] Store app-global extension state under `~/.config/svvy/extensions/` with `sources/user`, `sources/builtin`, `generated`, `builds`, `package`, `trash`, and `snapshots`; do not implement workspace-local extensions in v1. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
+  - [x] Materialize missing builtin local source directories during `inspect` before returning editable paths, keep packaged defaults read-only, and baseline initial source fingerprints so first materialization is not treated as a dirty build.
+- [x] Store app-global extension state under `~/.config/svvy/extensions/` with `sources/user`,
+      `sources/builtin`, `generated`, `builds`, `package`, `trash`, and `snapshots`;
+      workspace-local extension sources are absent from the shipped product surface. Sources:
+      `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Treat manifest, hand-authored instructions, generator scripts, `source/`, minimal instructions, and shared `package.json` as editable extension files. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Treat generated instructions, generated types, aggregate outputs, builds, lockfiles, `node_modules`, trash, and snapshots as non-editable generated or internal extension files. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Reject and roll back ordinary Shell and `apply_patch` writes to app-global Extension generated output, generated instruction outputs declared in manifests, generated type outputs, aggregate outputs, current/staging builds, package lockfile, `node_modules`, trash, and snapshots while leaving editable manifest, hand-authored instruction, generator script, `source/`, minimal instruction, and shared `package.json` inputs writable through direct tools.
@@ -219,7 +229,7 @@ only when the capability and its tests are present.
   - [x] Extend instruction lifecycle commands to builtin local source files and reset metadata without mutating packaged defaults.
 - [x] Validate instruction lifecycle basenames, collisions, ordering, and bypass booleans; record reversible changes and set `buildRequired`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Validate user-extension lifecycle Markdown basenames, existing/missing files, duplicate and omitted reorder entries, rename/reorder collisions, exact boolean bypass values, lexicographic source truth, durable before/after lifecycle change records, and dirty build state while leaving current builds active.
-  - [x] Validate builtin lifecycle commands before source scaffolding so invalid filenames, duplicate reorder inputs, and other preflight failures do not create or mutate `sources/builtin/<id>`.
+  - [x] Validate builtin lifecycle commands before builtin source materialization so invalid filenames, duplicate reorder inputs, and other preflight failures do not create or mutate `sources/builtin/<id>`.
   - [x] Reject instruction lifecycle commands against read-only `external_instruction:*` records with `EXTERNAL_INSTRUCTION_READONLY` instead of treating them as editable or unknown extensions.
   - [x] Wire user-extension instruction lifecycle change records through `svvyx extensions revert <change-id> --json`, with exact after-state conflict detection, `extension_files` revert output, manifest-path reporting for config-only changes, follow-up change records, and focused command tests.
   - [x] Run the existing build path after successful instruction lifecycle reverts and project success or blocked auto-build results in `extension_files` output, while preserving exact-conflict failures without building.
@@ -229,10 +239,10 @@ only when the capability and its tests are present.
 - [x] Split extension build result into `contextReady` and `runtimeReady`; missing required env may keep `contextReady: true` while producing `runtimeReady: false`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Make missing or unknown required CLI status fail build before dependency installation and generator scripts, while detected installed versions remain available and become the current generator version. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Keep missing/unknown required CLI requirements as structured build failures before staging promotion, dependency approval, or generator execution, while detected installed versions succeed and surface update metadata.
-- [x] Keep dependency approval separate from shell approval, with exact dependency/trusted-dependency identities, an approval ledger, exact versions only, no Bun default trusted allowlist, and lifecycle scripts disabled unless that trusted identity is approved. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
-  - [x] Add an app-global durable dependency approval ledger and pending-request records for explicit `svvyx extensions build <id> --json`, keyed by exact dependency and trusted-dependency identities with package manager, source, package name, exact version, and optional integrity/resolution metadata.
+- [x] Keep dependency approval separate from shell approval, with DB/product-state-backed committed approval facts for exact dependency/trusted-dependency identities, exact versions only, no Bun default trusted allowlist, and lifecycle scripts disabled unless that trusted identity is approved. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
+  - [x] Add DB/product-state-backed `@svvy/state` dependency approval facts and pending-request records for explicit `svvyx extensions build <id> --json`, keyed by exact dependency and trusted-dependency identities with package manager, source, package name, exact version, and optional integrity/resolution metadata.
   - [x] Pause explicit builds that need dependency approval before staging promotion, return the durable approval request id with `blockedOperation: "build"`, and leave the current build untouched until dependencies are approved.
-  - [x] Reuse an unresolved dependency approval request for repeated explicit builds with the same unapproved identity set, project existing pending request ids through later inspect/readiness output, record approvals into the ledger, retire stale requests when the extension no longer requires those identities, and require a new request when a dependency or trusted-dependency identity changes.
+  - [x] Reuse an unresolved dependency approval request for repeated explicit builds with the same unapproved identity set, project existing pending request ids through later inspect/readiness output, record approvals as committed dependency approval facts, retire pending requests whose identities are absent from the current extension dependency plan, and require a new request when a dependency or trusted-dependency identity changes.
   - [x] Resume blocked install/build work after dependency approval, install approved packages with lifecycle scripts disabled unless the exact trusted identity is approved, and report installed/missing package artifacts from the app-owned package area.
 - [x] Make `set-usage` mutate persistent agent-profile extension usage, queue context refresh for affected sessions, and never directly mutate the caller's current binding. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Implement `set-usage` for orchestrator and `threadHandler` profiles with persistent tri-state usage, exact profile ids, actor-compatibility rejection, affected-surface reporting, no direct caller-binding mutation, reversible usage change records, and exact revert conflict detection.
@@ -242,7 +252,7 @@ only when the capability and its tests are present.
   - [x] Implement user-extension `svvyx extensions delete <id> --json` by recording an app-global reversible change before moving local source into trash, rejecting builtin deletes, blocking stale `svvyx` runtime dispatch for deleted builds, and restoring deleted sources through `svvyx extensions revert <change-id> --json` with collision and build-required handling.
   - [x] Implement local `svvyx extensions snapshots list/save/rename/delete --json` metadata commands with path-free summaries, source/package/registry-state snapshot payloads, and exclusion of generated outputs, build outputs, `node_modules`, and unsafe path/token-bearing package files.
   - [x] Record and revert `set-usage` product-state changes with exact after-state conflict detection and context-refresh impact output.
-  - [x] Implement builtin `svvyx extensions reset <id> --scope instructions --json` for instruction sources by restoring builtin full instruction files, removing source-added/renamed files, restoring builtin bypass config and generated instruction declarations, restoring `instructions/minimal.mdx`, rejecting user-extension reset with `NOT_BUILTIN`, rejecting unsupported scopes, and recording a reversible instruction reset change.
+  - [x] Implement builtin `svvyx extensions reset <id> --scope instructions --json` so instruction source files exactly match the packaged builtin instruction set, builtin bypass config and generated instruction declarations are restored, `instructions/minimal.mdx` is restored, user-extension reset fails with `NOT_BUILTIN`, unsupported scopes are rejected, and the operation records a reversible instruction reset change.
   - [x] Implement builtin reset-triggered rebuilds through the current Extension build path, surfacing successful and blocked auto-build results in reset output.
   - [x] Implement durable dependency approval requests for reset-triggered auto-build pauses.
   - [x] Implement durable dependency approval requests for snapshot-load auto-build pauses.
@@ -253,18 +263,20 @@ only when the capability and its tests are present.
   - [x] Implement local snapshot secret-state preservation and coarse restore reporting without exposing raw secrets, keychain ids, or snapshot-secret storage ids.
   - [x] Implement dependency-approval resume/install completion.
 - [x] Keep generated extension facades behind `extensions["<id>"].run(extensionCommandId, input)`; dot access only for identifier-safe ids. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
-- [x] Generate `@svvyx/extensions` as part of Extension build before Workflows build consumes extension usage override keys. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/workflow-library.spec.md`.
-  - [x] Refresh the generated `@svvyx/extensions` package during the Workflows build path from workflow-task-safe builtin extension ids plus file/build-eligible user `svvyx` extensions that opt into workflow task-agent reference export generation, have approved dependencies, and have successful current source/build evidence, excluding deleted source, instruction-only extensions, dependency-blocked current builds, and extensions that fail build validation.
-  - [x] Refresh the generated `@svvyx/extensions` package transactionally during successful `svvyx extensions build` at the generated-package output root resolved through `GeneratedPackageRootPort`, preserving the previous ready generated output if package refresh fails.
-  - [x] Fail Workflows build before workflow-agent source validation when app-owned user Extension source is invalid or a TypeScript-enabled `svvyx` extension cannot be rebuilt successfully, preserving generated-package transactionality and avoiding generic unavailable-extension diagnostics for build-input failures.
-  - [x] Run the Extension build/validation pipeline before Workflows build validates workflow-agent extension usage overrides, including automatic rebuild of dirty TypeScript-enabled user `svvyx` extensions and dependency/CLI-aware build outcomes, instead of only validating current build readiness and recomputing the generated export set from existing current builds.
+- [x] Generate `@svvyx/extensions` through `@svvy/extensions` with dependency-approved package resolution, generated Incur command-schema extraction, and generated-package output roots resolved through `GeneratedPackageRootPort`. Sources: `docs/specs/extensions-and-tools.spec.md`, `docs/specs/workflow-library.spec.md`.
+  - [x] Refresh the workflow-task-safe `@svvyx/extensions` package from workflow-task-safe builtin extension ids plus file/build-eligible user `svvyx` extensions that opt into workflow task-agent reference export generation, have approved dependencies, and have successful current source/build evidence, excluding deleted source, instruction-only extensions, dependency-blocked current builds, and extensions that fail build validation.
+  - [x] Preserve generated-package transactionality so refresh failure leaves the active ready generated output in service and surfaces Extension-specific diagnostics for invalid Extension build inputs.
 
 ## CLI Requirements
 
 - [x] Let extensions declare required command providers with binary name, optional package name, default target version, version-check command, and reusable exact-version install/update command template. Sources: `docs/features.ts`, `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Report missing, unknown, available, detected/current/latest versions, and update-available status through Extension Managing inspect/build and the Extensions UI. Sources: `docs/features.ts`.
 - [x] Fail build with ordinary structured errors when a required CLI is missing or unknown, while using the detected installed version when a global PATH binary is available. Sources: `docs/features.ts`.
-- [x] Keep extension CLI installation/update split by initiator: user-clicked Extensions UI actions run as tracked runtime commands from extension-validated command plans with readiness feedback, while agent-initiated setup remains ordinary Shell work. Sources: `docs/prd.md`, `docs/features.ts`.
+- [ ] Extension CLI installation/update is split by initiator: the Extensions UI has no
+      user-clicked install/update admission surface without a lifecycle-complete runtime-owned
+      dependency-action command path with exact contracts, approval linkage, sandbox launch policy,
+      subprocess lifetime, command facts, readiness refresh, and tests; agent-initiated setup
+      remains ordinary Shell work. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Declare default target CLI versions for `cx-cli@0.7.1`, `smithers-orchestrator@0.22.0` invoked through the official `bunx smithers-orchestrator ...` command path, and `@tiny-fish/cli@0.1.6`; keep Git and GitHub CLI requirements unversioned. Sources: `docs/features.ts`, `docs/specs/extension/cx.extension.spec.md`, `docs/specs/extension/web.extension.spec.md`, `docs/specs/extension/smithers.extension.spec.md`.
 
 ## Direct Tools, Shell, Apply Patch, And Sandbox
@@ -276,31 +288,59 @@ only when the capability and its tests are present.
 - [x] Split Execute TypeScript loaded instructions into base TypeScript execution guidance plus separate Incur facade usage guidance. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
 - [x] Implement Codex-like approval modes: `auto-review`, `user`, and `full-access`. Sources: `docs/prd.md`.
   - [x] Persist app-global `approvalMode` with the documented `auto-review`, `user`, and `full-access` values, normalize invalid values back to `auto-review`, and expose the mode in General settings.
-- [x] Enforce approval boundary decisions in runtime for `exec_command`, `svvyx ...`, `apply_patch`, and top-level `execute_typescript`; do not rely on model memory. Sources: `docs/prd.md`.
-  - [x] Add an injectable runtime approval-boundary seam that runs before ordinary `exec_command`, app-owned `svvyx ...` command-family dispatch, and `apply_patch`, and omits the injected seam when `approvalMode: "full-access"` is active.
+- [ ] Enforce approval boundary decisions in runtime-owned accepted native-tool lanes for
+      `exec_command`, `svvyx ...`, `apply_patch`, and top-level `execute_typescript`; do not rely on
+      model memory. Sources: `docs/prd.md`.
+  - [ ] Runtime owns the approval-boundary seam before ordinary `exec_command`, app-owned `svvyx ...`
+        command-family dispatch, `apply_patch`, and top-level `execute_typescript`, and omits that
+        boundary when `approvalMode: "full-access"` is active.
   - [x] Run all agent Shell usage of `svvyx ...` command families as ordinary Shell `exec_command` input to the real app-owned Incur CLI, preserving command facts, approval, sandboxing, output streaming, and projection on the same path as other shell commands.
-    - [x] Route Artifacts `create`, `inspect`, `list`, and `delete` through the real app-owned `svvyx` CLI process, with parsed CLI output returned by the process while product-state mutations are represented as ordered `ExtensionRuntimeOperation` items or artifact `ExtensionExecutionPlan` values that `@svvy/runtime` applies through artifact storage and `@svvy/state` ports.
+    - [x] Route Artifacts `create`, `inspect`, `list`, and `delete` through the real app-owned `svvyx` CLI process, with parsed CLI output returned by the process while product-state mutations are represented as ordered `ExtensionRuntimeOperation` items wrapping closed `RuntimeEffectRequest` values or immutable `ExtensionExecutionPlan` values that `@svvy/runtime` applies through runtime-owned lanes, artifact storage, and core-owned state ports.
     - [x] Route Artifacts `open`, Workflows, Extensions, and user/runtime `svvyx <extension-id> ...` dispatch through the real app-owned `svvyx` CLI process, returning declarative runtime operation items, execution plans, and command facts that desktop consumes through authoritative read models for inspector-only UI actions.
-  - [x] Pass the injected mode-aware runtime approval boundary into session-created direct tools and top-level `execute_typescript`, with runtime approval-boundary denial coverage for both surfaces.
+  - [ ] Accepted native-tool execution uses the runtime-owned mode-aware approval boundary for direct
+        tools and top-level `execute_typescript`, with denial coverage for both surfaces.
   - [x] Wire the injected runtime approval-boundary seam to app-owned automatic reviewer and actor-local user approval request handling, with durable runtime approval records, pending user approval projection, and approve/deny RPC/UI actions.
   - [x] Settle denied and cancelled user approval requests by clearing session wait state, resolving the blocked tool call without running it, and recording cancelled command facts instead of leaving pending approval promises open.
   - [x] Use a fail-closed app-owned automatic review policy that classifies and denies unsafe approval-boundary requests without relying on prompt memory.
-- [x] In `full-access`, omit the approval boundary and managed OS sandbox enforcement for direct tools; `networkAccess: false` still disables Web prompt guidance, but Shell egress denial depends on the sandbox profile and therefore is not enforced when the profile is omitted. Sources: `docs/prd.md`.
-  - [x] Treat `approvalMode: "full-access"` as the runtime mode that omits direct-tool protected-write enforcement so generated/internal direct-edit validation is disabled by policy rather than prompt memory.
-  - [x] Treat `approvalMode: "full-access"` as the runtime mode that omits the direct-tool approval-boundary seam.
-  - [x] Treat `approvalMode: "full-access"` as the runtime mode that omits the top-level `execute_typescript` approval-boundary seam.
+- [ ] In `full-access`, runtime omits the approval boundary and managed OS sandbox enforcement for
+      direct tools; `networkAccess: false` still disables Web prompt guidance, but Shell egress denial
+      depends on the sandbox profile and therefore is not enforced when the profile is omitted.
+      Sources: `docs/prd.md`.
+  - [ ] Runtime treats `approvalMode: "full-access"` as the mode that omits direct-tool and
+        top-level `execute_typescript` approval-boundary admission, resolves launch policy to
+        `sandboxMode: "omitted_full_access"`, and starts no managed sandbox helper/profile for that
+        launch.
 - [x] Default `networkAccess` to true and restrict network plus disable Web extension when false. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
   - [x] Persist default-on `networkAccess` in app preferences, expose it in General settings, keep Web generated context omitted through existing extension binding when false, and run ordinary Shell commands through a deny-network sandbox profile when disabled and `approvalMode` is not `full-access`.
-- [x] Package macOS sandboxing through an app-owned Codex-derived native helper that applies direct-tool sandbox policy via `/usr/bin/sandbox-exec`. Sources: `docs/prd.md`, `docs/progress.md`.
+- [ ] Package macOS sandboxing through runtime-owned launch-policy acquisition and a packaged
+      Codex-derived native helper that enforces scoped sandbox launch facts via
+      `/usr/bin/sandbox-exec` when managed sandboxing is active. Sources: `docs/prd.md`,
+      `docs/progress.md`.
   - [x] Preserve the implemented Codex filesystem semantics for `Read`/`Write`/`None` entries, most-specific path precedence, equal-specific `None > Write > Read` precedence, default read access, writable roots, read-only subpaths, protected metadata carveouts, network allow/deny, full-access sandbox omission, sandbox-denial reporting, and fail-closed helper setup.
-  - [x] Route ordinary `exec_command` subprocesses through the packaged helper whenever managed sandboxing is active.
-  - [x] Run `apply_patch` file effects through Codex-derived sandbox-aware filesystem execution instead of relying only on TypeScript target preflight plus a host `patch` subprocess.
+  - [ ] Route ordinary `exec_command` subprocesses through runtime-owned `SandboxLaunchFacts` and
+        the packaged helper whenever managed sandboxing is active.
+  - [ ] `apply_patch` file effects use runtime-owned `SandboxLaunchFacts` and Codex-derived
+        sandbox-aware filesystem execution, with TypeScript target preflight limited to validation
+        and diagnostics.
   - [x] Add a packaged, testable native sandbox helper seam so unit tests exercise helper behavior instead of asking the unit-test host process to launch raw nested `sandbox-exec`.
-  - [ ] Implement full Codex `Managed`/`Disabled`/`External` permission-profile compilation, symbolic roots, denied-read globs, runtime policy transforms, and managed-network approval behavior in the native helper.
+  - [ ] Native helper enforcement covers svvy managed launch facts: symbolic roots, denied-read
+        paths and globs with fail-closed invalid-glob handling, normalized filesystem/network
+        policy, executor-required runtime-readable roots, scoped helper/profile artifacts, and
+        full-access omission represented only as `sandboxMode: "omitted_full_access"`.
 - [x] Preserve Codex filesystem policy semantics: `Read`, `Write`, and `None`; most-specific path precedence; writable roots with read-only subpaths; protected metadata carveouts; fail-closed behavior. Sources: `docs/progress.md`, `docs/research/agent-sandboxing.research.md`.
   - [x] Add a tested internal managed filesystem policy model for `Read`, `Write`, and `None`, most-specific/equal-specific precedence, workspace-write roots, `/tmp`/`$TMPDIR` writable roots, full-access sandbox omission, and protected `.git`, `.agents`, and `.codex` metadata carveouts.
-  - [x] The native sandbox helper owns direct-tool sandbox enforcement. The TypeScript policy model is retained only for product policy assembly and focused tests.
-  - [ ] Implement full native-helper coverage for any remaining Codex permission-profile features still represented only in the TypeScript policy model.
+  - [ ] `RuntimeAcceptedNativeToolExecution` owns direct-tool approval, launch-policy acquisition,
+        and command lifecycle for accepted native-tool execution; it consumes the package-private
+        `RuntimeLaunchPolicyService`, and the native sandbox helper enforces scoped sandbox launch
+        facts at the OS process edge. App-edge TypeScript code does not assemble product launch
+        policy or helper argv.
+  - [ ] Only package-private `@svvy/runtime` launch-policy services call
+        `Sandbox.buildLaunchPolicy(...)`; app/bootstrap, desktop bridge, browser-tool bridge,
+        headless entrypoints, and Bun tool edges provide host-support ports and facades but do not
+        synthesize sandbox policy or helper argv.
+  - [ ] Native helper tests cover every permission-profile feature accepted by
+        `Sandbox.buildLaunchPolicy(...)`, proving TypeScript policy models are descriptive contract
+        inputs rather than subprocess-edge enforcement.
 - [x] Grant the active session artifact directory as writable while making that session's `immutable/` child read-only; do not grant broad artifact-root or other-session artifact writes. Sources: `docs/progress.md`, `docs/specs/extension/artifacts.extension.spec.md`.
   - [x] Allow ordinary Shell writes to the active session's mutable artifact directory while rejecting and rolling back Shell and `apply_patch` writes to that session's `immutable/` child and other existing session artifact directories through the direct-tool protection path.
 - [x] Keep extension package dependency installation as explicit user-confirmation because it can download and execute third-party code. Sources: `docs/prd.md`.
@@ -321,29 +361,37 @@ only when the capability and its tests are present.
 - [x] Compile or typecheck every snippet before execution and block invalid snippets with structured diagnostics. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
 - [x] Route top-level `execute_typescript` through the same approval-boundary path as approval-gated native actions before running arbitrary TypeScript. Sources: `docs/prd.md`, `docs/progress.md`.
   - [x] Keep a tested top-level `execute_typescript` approval-boundary hook that uses the shared mode-aware runtime approval request shape, persists the snippet artifact, omits the boundary in `full-access`, and stops before diagnostics or runtime when denied.
-  - [x] Pass the injected mode-aware approval boundary into session-created `execute_typescript` tools and verify denial through a real managed session tool instance.
-  - [x] Provide the app-owned automatic-reviewer and actor-local user-approval boundary implementation used by session-created `execute_typescript` tools.
-  - [x] Launch `execute_typescript` through the real managed session execution lane with app `networkAccess` and managed sandbox settings applied before submitted TypeScript runs.
+  - [ ] Runtime applies the mode-aware approval boundary for top-level `execute_typescript` and
+        verifies denial through the accepted native-tool lane.
+  - [ ] Runtime uses the app-owned automatic reviewer and actor-local user-approval records through
+        the runtime approval service rather than a session-created tool callback.
+  - [x] Launch the top-level `execute_typescript` runtime process from runtime-owned
+        `SandboxLaunchFacts` acquired through `RuntimeAcceptedNativeToolExecution`, using a
+        closeable app-bootstrap internal handle so the scoped launch receipt lives until the
+        subprocess lane settles.
   - [x] Wire actor-scoped builtin Artifacts and Workflows facade declarations and dispatch metadata into the `execute_typescript` runtime.
 - [x] Record generated extension-facade calls inside approved snippets as child commands with readiness, env injection, redaction, product-state validation, and failure semantics. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
   - [x] Record Artifacts and Workflows extension-facade calls as parent-linked child commands with success/failure status, visibility, command facts, and `Client.ClientError` failure propagation.
-  - [x] Keep user `svvyx` generated `execute_typescript` facade declarations hidden and generated TypeScript facades unavailable until sandboxed facade execution exists.
-  - [ ] Add sandboxed user `svvyx` facade execution with parent-linked child commands, shared runtime readiness facts, scoped env injection, redacted output, invocation-time product-state validation, schema-backed input/output semantics, output controls, and `Client.ClientError` failure propagation.
+  - [x] Add tests proving user `svvyx` extensions dispatch through Shell and generated
+        `@svvyx/extensions` authoring references only, with no generated `execute_typescript` facade
+        declarations or runtime facade calls.
 - [x] Keep the top-level `execute_typescript` attempt as the parent semantic unit and roll child facts under it. Sources: `docs/features.ts`, `docs/specs/live-tool-projection.spec.md`.
 - [x] Render accepted source, persisted artifact, diagnostics, nested child commands, runtime progress, and final parent command facts through shared live tool projection. Sources: `docs/prd.md`, `docs/specs/live-tool-projection.spec.md`.
   - [x] Persist accepted `execute_typescript` source on the parent command, keep the snippet as a file-backed artifact, record extension-facade child command accepted inputs, and stream captured console output into durable command-subject output events for shared transcript/inspector recovery.
   - [x] Project blocking static `execute_typescript` diagnostics as first-class durable command diagnostic events, recover them into command rollups/inspectors, and render them through neutral transcript and inspector surfaces without parsing final tool-result prose.
   - [x] Recover durable `command.progress` events into command rollups, neutral transcript tool cards, and command inspectors so runtime progress is projected through the shared live tool model.
-  - [x] Test pre-runtime generic-direct-tool argument streaming for `exec_command` and `apply_patch` through pi incremental tool-event partial argument events.
-  - [ ] Extend pre-runtime streaming tests to `execute_typescript` source, native-control objective/report/question arguments, in-progress `apply_patch` patch previews, and approval-state live updates.
+  - [x] Test runtime-owned generic-direct-tool argument snapshot streaming for `exec_command` and `apply_patch`, sourced from pi incremental tool-event partial argument events and committed through durable command projection.
+  - [ ] Extend runtime-owned incremental projection tests to `execute_typescript` source, native-control objective/report/question arguments, in-progress `apply_patch` patch previews, and approval-state live updates.
 - [x] Keep cx out of generated Execute TypeScript facades; do not expose `api.cx_*` or `extensions.cx.*`. Sources: `docs/progress.md`, `docs/specs/extension/cx.extension.spec.md`.
 
 ## Live Tool Projection And Command State
 
 - [x] Use Codex-like turn items for all tools: show a tool card as soon as tool name is known. Sources: `docs/prd.md`, `docs/specs/live-tool-projection.spec.md`.
-  - [x] Persist running/waiting command records at execution start for direct tools and native control tools using the current pi tool-start/native-tool seams, with tests covering `exec_command` and blocking `request_user_input`.
-- [x] Stream large/freeform argument snapshots before runtime execution for generic direct tools through pi incremental tool-call argument events. Sources: `docs/prd.md`, `docs/specs/live-tool-projection.spec.md`. Commit(s): pending local changes
-  - [ ] Extend pre-runtime streaming to `execute_typescript` source, `apply_patch` in-progress patch previews, native-control objective/report/question arguments, and approval-state live updates with full projection and reload recovery coverage.
+  - [x] Persist running/waiting command records at execution start for direct tools and native
+        control tools through the runtime-owned accepted native-tool lane, with tests covering
+        `exec_command` and blocking `request_user_input`.
+- [x] Have runtime record and project large/freeform argument snapshots for generic direct tools from pi incremental tool-call argument events before accepted handler execution begins. Sources: `docs/prd.md`, `docs/specs/live-tool-projection.spec.md`.
+  - [ ] Extend runtime-owned incremental argument/progress projection to `execute_typescript` source, `apply_patch` in-progress patch previews, native-control objective/report/question arguments, and approval-state live updates with full projection and reload recovery coverage.
 - [x] Render `apply_patch` as structured file-change snapshots with patch facts, not as transcript-only text or many tiny tool calls. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Stream `exec_command` output deltas and runtime progress through durable command events. Sources: `docs/prd.md`, `docs/features.ts`.
   - [x] Append ordinary `exec_command` stdout/stderr chunks to durable command-subject `command.output` events while the command runs, update the original command with final continuation facts for long-running `write_stdin` sessions, and suppress duplicate final-result output events when live stream events already exist.
@@ -390,6 +438,9 @@ only when the capability and its tests are present.
 - [x] Support blocking behavior with a default-enabled five-minute timeout that falls back to the default answer. Sources: `docs/features.ts`, `docs/specs/extension/request_user_input.extension.spec.md`.
 - [x] Keep request-user-input tool results free of mode, timer, UI availability, and internal id fields. Sources: `docs/features.ts`, `docs/specs/extension/request_user_input.extension.spec.md`.
 - [x] Persist request/wait records and restore pending clarification state after restart. Sources: `docs/specs/structured-session-state.spec.md`, `docs/progress.md`.
+- [ ] Return `status: "duplicate"` with the original delivery result for duplicate normalized `clientSubmission` answers, without inserting second answer/queue rows, publishing duplicate invalidations, resolving waits again, or settling commands again. Sources: `docs/specs/package-architecture/runtime.spec.md`, `docs/progress.md`.
+- [ ] Resolve blocking answers, timeout defaults, cancellation, interruption, close recovery, and startup recovery through one durable compare-and-set transition where the first terminal commit wins and losing contenders observe `stale-state`. Sources: `docs/specs/package-architecture/runtime.spec.md`, `docs/progress.md`.
+- [ ] Preserve paused blocking timers across shutdown/restart without reforking timeout fibers, and resume by committing a new deadline from stored remaining duration before starting a process-local timer. Sources: `docs/specs/package-architecture/runtime.spec.md`, `docs/progress.md`.
 
 ## Thread Orchestration And Handler Threads
 
@@ -438,15 +489,15 @@ only when the capability and its tests are present.
 ## Workflows Source Library And Extension
 
 - [x] Implement app-global reusable source under `~/.config/svvy/workflows/agents`, `prompts`, `components`, and `workflows`. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
-- [x] Store generated `@svvyx/workflows` and `@svvyx/extensions` package output in app-owned generated roots resolved through `GeneratedPackageRootPort`. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
+- [ ] Store generated `@svvyx/workflows` and `@svvyx/extensions` package output in app-owned generated roots resolved through `GeneratedPackageRootPort`; `@svvy/extensions` writes generated files/build evidence through refresh and returns immutable workspace-link plans only through the separate link-planning operation, while `@svvy/runtime` schedules refresh/link repair and records generated-package facts through state ports. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Keep generated package roots outside the safe writable boundary; reject ordinary agent direct edits to generated package files and workspace links. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Use workspace `.smithers/` as the only workspace workflow source location. Sources: root `AGENTS.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Generate package `@svvyx/workflows` with exactly four root namespace exports: `Agents`, `Components`, `Prompts`, and `Workflows`. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Put `Agents.defineTaskAgent`, type `Agents.TaskAgentParametersSource`, and generated task-agent parameter exports under `Agents.*`; do not export reusable values as flat root symbols. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Specify that generated `Agents.*` exports are persisted `TaskAgentParametersSource` records, `Agents.defineTaskAgent(parametersOrAgentsExport)` returns the Smithers-compatible `AgentLike` for `<Task agent={...}>`, and the returned AgentLike calls svvy through the narrow authenticated `runTaskAgent` workflow task-agent bridge. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Generate group indexes mechanically from source files so exportable runtime values are not missed by manual curation. Sources: `docs/specs/workflow-library.spec.md`.
-- [x] Idempotently link generated `@svvyx/workflows` into `<workspace>/.smithers/node_modules/@svvyx/workflows` through runtime-owned workspace link repair on workspace open/prepare and after build. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
-- [x] Link generated `@svvyx/extensions` into `.smithers/node_modules` through runtime-owned workspace link repair whenever current generated facts exist, without deciding link creation by scanning workflow imports. Sources: `docs/specs/workflow-library.spec.md`.
+- [ ] Runtime applies immutable workspace-link plans for `@svvyx/workflows` on workspace open/prepare and after successful generated-package fact commits. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
+- [ ] Runtime applies immutable workspace-link plans for `@svvyx/extensions` whenever current generated-package facts exist, without deciding link creation by scanning workflow imports. Sources: `docs/specs/workflow-library.spec.md`.
 - [x] Do not rely on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or source-checkout-relative package paths. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
   - [x] Resolve `@svvyx/workflows` through generated-package symlinks under workspace `.smithers/node_modules`, not ambient globals, parent `node_modules`, or source-checkout paths.
   - [x] Resolve `@svvyx/extensions` through generated-package symlinks under workspace `.smithers/node_modules`, not ambient globals, parent `node_modules`, or source-checkout paths.
@@ -455,12 +506,12 @@ only when the capability and its tests are present.
 - [x] Make `list` return mechanically available export identity and source/generated paths only; do not infer titles, summaries, usefulness, recommendations, or stale diagnostics. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
 - [x] Implement `svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json`. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
   - [x] Make non-agent `--export` behavior explicit: reject prompt `--export`, extract selected component/workflow exports when safe, and fail closed for unsafe runtime top-level dependencies, relative-import relocation, self-renames, and default exports.
-- [x] Make `save` reject overwrites unless `--overwrite` is present and run the full build pipeline after success. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
-  - [x] Make `save` reject overwrites unless `--overwrite` is present, preserve the saved source with diagnostics when refresh fails, keep the previous ready generated package active, and handle workspace-link repair as separate runtime-owned recovery/fact work.
+- [x] Make `save` reject overwrites unless `--overwrite` is present, return a model-facing result plus an ordered `generated_packages.refresh` runtime operation, then have runtime call `@svvy/extensions` to produce generated files/build evidence, record generated-package facts through state ports, and schedule runtime-owned workspace-link repair. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
+  - [x] Make `save` reject overwrites unless `--overwrite` is present, preserve the saved source with diagnostics when refresh fails, leave the active ready generated package in service, and handle workspace-link repair as separate runtime-owned recovery/fact work.
 - [x] For `--kind agent`, statically extract `Agents.defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic inputs with structured diagnostics. Sources: `docs/progress.md`, `docs/specs/workflow-library.spec.md`.
   - [x] Extract literal `Agents.defineTaskAgent(...)` records, including `Extensions.<id>.id` and `Extensions["<id>"].id` references, without executing TypeScript; reject dynamic required fields and bare extension references that are not namespace-qualified through `Extensions.<id>.id` or `Extensions["<id>"].id`.
   - [x] Resolve accepted static spreads from known saved `Agents.*` records and reject unresolved spreads.
-- [x] Implement `svvyx workflows build --json` to build Extensions, generate/refresh `@svvyx/extensions`, validate Workflows source, validate workflow-agent provider/model/reasoning and extension usage overrides, generate `@svvyx/workflows`, produce immutable workspace-link plans, and let runtime apply workspace-link repair. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
+- [ ] Implement `svvyx workflows build --json` so `@svvy/extensions` produces generated-package files/build evidence through refresh, while `@svvy/runtime` commits generated-package facts, separately requests immutable workspace-link plans, and applies workspace-link repair through core-owned state ports. Sources: `docs/prd.md`, `docs/specs/extension/workflows.extension.spec.md`.
   - [x] Implement the Workflows source validation and `@svvyx/workflows` generation portion of `svvyx workflows build --json`.
   - [x] Generate and refresh the current workflow-task-safe `@svvyx/extensions` package before `@svvyx/workflows`, including workflow-task-safe builtin ids plus file/build-eligible user `svvyx` extensions that opt into workflow task-agent reference export generation, have approved dependencies, and have successful current source/build evidence, emit generated agent imports from `@svvyx/extensions`, refresh generated packages through the generated-package refresh lane, and repair workspace links through the separate runtime-owned workspace-link repair lane.
   - [x] Rebuild dirty or unbuilt TypeScript-enabled user `svvyx` Extensions through the Extension build command before Workflows source validation, forward CLI/env/secret/build-root inputs through `svvyx workflows build` and `save`, and fail closed on Extension build errors before workflow-agent extension override diagnostics.
@@ -572,11 +623,11 @@ only when the capability and its tests are present.
 
 ## Workspace Runtime, Tabs, And Default Workspace
 
-- [x] Use one workspace runtime per canonical cwd, with explicit `workspaceId` routing for every workspace-scoped request and sync event. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Use one workspace runtime scope per canonical cwd inside the single app-owned runtime graph, with explicit `workspaceId` addressing for every workspace-scoped request and sync event that is not already identified by a durable surface, command, queue, session, or layout id. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Keep app-global auth/preferences outside workspace recovery and workspace routing. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
 - [x] Keep workspace tabs as chrome selectors for `workspaceId` and active layout id, not durable layout owners. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Use stable `workspaceTabId` separate from `workspaceId`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Allow duplicate same-cwd tabs as separate visual tabs sharing one workspace runtime, session catalog, pi sessions, structured state, queues, handler threads, app logs, Workflows metadata, and fixed layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Allow duplicate same-cwd tabs as separate visual tabs sharing one workspace runtime scope, session catalog, pi sessions, structured state, queues, handler threads, app logs, Workflows metadata, and fixed layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] Restore workspace tabs in durable user-defined order, left-aligned, horizontally scrollable when crowded, and draggable for reorder. Sources: `docs/prd.md`.
 - [x] Render compact workspace-tab controls and status badges for running, unread, waiting, and error counts only when above zero, in stable order, with hover context. Sources: `docs/prd.md`.
 - [x] On startup, restore persisted user workspace tabs; if none restore, create one real svvy-owned default workspace tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
@@ -589,14 +640,14 @@ only when the capability and its tests are present.
 - [x] Do not fabricate workspace-local Smithers source or runnable Workflows entries in the default workspace. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Implement `Open Workspace` as a normal Dockview workbench panel, not a modal-only or full-app empty page. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] `Open Workspace` retargets the current visual tab to the selected user workspace; preserve tab id/order, acquire runtime, load active layout slot, focus tab, and persist state. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] `New Tab` creates another default workspace tab over the shared default runtime and selected durable layout slot. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] `New Tab` creates another default workspace tab over the shared default workspace runtime scope and selected durable layout slot. Sources: `docs/prd.md`, `docs/features.ts`.
 - [x] `Open Workspace in New Tab` creates a selected user workspace tab from the picker. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Implement app menu/shortcut actions `workspace.open`, `workspace.newTab`, and `workspace.openInNewTab`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Bind default workspace shortcuts through the shortcut registry/app-menu path: `Cmd+O` for Open Workspace, `Cmd+T` for New Tab, and `Cmd+Shift+O` for Open Workspace in New Tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Use the current command-palette sidebar order: `Cmd+Shift+1` Logs, `Cmd+Shift+2` Agents, `Cmd+Shift+3` Extensions, `Cmd+Shift+4` Workflows. Sources: `docs/specs/command-palette.spec.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Implement bootstrap-provided runtime facade workspace lifecycle calls `runtime.workspaces.acquire`, `runtime.workspaces.acquireDefault`, and `runtime.workspaces.release`; duplicate visual tabs share one canonical-cwd runtime. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Implement Open Workspace RPC input with `{ cwd?, workspaceTabId?, placement? }`; the desktop bridge resolves and canonicalizes the requested cwd, calls `@svvy/runtime` facades to acquire or release workspace runtime ownership, and uses state/runtime facades for durable tab/layout updates; the renderer owns visual placement intent and local chrome projection. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [x] Retargeting, closing, or opening workspace tabs must not cancel running prompts or handler threads in prior/other runtimes; keep background runtimes while work or tabs reference them. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Runtime workspace lifecycle facades expose `runtime.workspaces.acquire`, `runtime.workspaces.acquireDefault`, and `runtime.workspaces.release`; duplicate visual tabs share one canonical-cwd workspace runtime scope inside the single app-owned `ManagedRuntime`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`, `docs/specs/package-architecture/generated-packages.spec.md`.
+- [x] Open Workspace RPC accepts `{ cwd?, workspaceTabId?, placement? }`; the desktop bridge resolves and canonicalizes the requested cwd, calls `@svvy/runtime` facades to acquire or release workspace runtime-scope ownership, and uses state/runtime facades for durable tab/layout updates; the renderer owns visual placement intent and local chrome projection. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Retargeting, closing, or opening workspace tabs must not cancel running prompts or handler threads in prior/other workspace runtime scopes; keep background scopes alive while work or tabs reference them. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Persist known/recent workspaces for user workspaces only; exclude the default workspace from recents. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Restore failed user workspace tabs as default tabs with one `Open Workspace` pane plus inline restore error; do not block app startup because one tab failed. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [x] Replacing a default workspace tab must not delete default workspace sessions or logs. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
@@ -670,13 +721,13 @@ only when the capability and its tests are present.
 - [x] Command mode discovers existing product actions for sessions, surfaces, Dockview placement, settings, Agents, Extensions, read-only Workflows, and generated context previews. Sources: `docs/specs/command-palette.spec.md`.
 - [x] Do not expose Smithers-specific palette actions or make the palette an alternate execution engine, shell, terminal loop, or workflow abstraction. Sources: `docs/specs/command-palette.spec.md`.
 - [x] Unmatched non-empty command-mode text creates a normal New orchestrator session using text after `>`, through normal prompt history, system prompt loading, turn state, and live runtime ownership. Sources: `docs/specs/command-palette.spec.md`.
-- [x] Reserve unprefixed quick-open mode for future file quick-open; until file surfaces exist, keep it disabled/empty/no-op rather than fabricating file surfaces. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Reserve unprefixed quick-open mode as the file quick-open entry point; until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist, keep it as a reserved entry point with no alternate file browsing path. Sources: `docs/specs/command-palette.spec.md`.
 - [x] Use `cmdk-sv` as the intended Svelte UI primitive. Sources: `docs/features.ts`.
 - [x] Implement a product-owned shortcut registry with stable ids, labels, platform chords, compact/readable display strings, scopes, input policy, and app-menu routing metadata, while command availability and palette result metadata stay on product action definitions. Sources: `docs/specs/command-palette.spec.md`.
-- [x] Use TanStack Hotkeys as renderer shortcut binding for palette, quick-open, sidebar actions, dialogs, pane placement, and future focused-pane actions. Sources: `docs/progress.md`, `docs/specs/command-palette.spec.md`.
+- [x] Use TanStack Hotkeys as renderer shortcut binding for palette, quick-open, sidebar actions, dialogs, pane placement, and focused-pane actions. Sources: `docs/progress.md`, `docs/specs/command-palette.spec.md`.
 - [x] Implement sidebar shortcuts in order: `Cmd+Shift+1` Logs, `Cmd+Shift+2` Agents, `Cmd+Shift+3` Extensions, `Cmd+Shift+4` Workflows. Sources: `docs/specs/command-palette.spec.md`.
 - [x] Implement New orchestrator shortcuts: `Cmd+N` for focused pane and `Cmd+Shift+N` for new pane. Sources: `docs/features.ts`.
-- [x] Add compact shortcut hints on hover/focus for sidebar shell actions and consistent keycap chips in tooltips for icon-only/ambiguous controls. Sources: `docs/features.ts`.
+- [x] Add compact shortcut hints on hover/focus for sidebar app actions and consistent keycap chips in tooltips for icon-only/ambiguous controls. Sources: `docs/features.ts`.
 
 ## Composer Mentions, Attachments, Prompt History, And Markdown
 
@@ -698,7 +749,7 @@ only when the capability and its tests are present.
 - [x] Show a sidebar Logs entry with compact action-worthy unread badges for warning/error logs only, not info-only unread logs. Sources: `docs/progress.md`, `docs/features.ts`.
 - [x] Render dense Dockview Logs pane with TanStack Virtual long-scroll, older-page loading, variable-height expanded rows, stable identity, filters by level/grouped source/search, viewport-based read marking during unfiltered browsing, persisted scroll position during live updates, explicit `New logs` affordance, smooth jump-to-latest with reduced-motion fallback, expandable details, normalized errors, stack traces, and related ids/links. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
 - [x] Emit targeted product logs for lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers CLI guidance, Workflows build validation, direct tools, Execute TypeScript, artifacts, external editor handoff, and renderer bridge issues. Sources: `docs/progress.md`.
-  - [x] Emit `app.lifecycle` logs when workspace runtimes open and close, including live renderer updates and workspace runtime facts without using logs as lifecycle state.
+  - [x] Emit `app.lifecycle` logs when workspace runtime scopes open and close, including live renderer updates and workspace runtime facts without using logs as lifecycle state.
   - [x] Emit targeted `execute_typescript` app logs for start, static-diagnostic blockers, success, and runtime failure with related session, surface, thread, command, and artifact ids while keeping command/artifact records canonical.
   - [x] Emit targeted `artifact` app logs for `svvyx artifacts` direct commands and generated Artifacts facades on success and validation failure, while keeping structured command and artifact records canonical.
   - [x] Emit targeted `direct-tool` app logs from the shared tool command tracker for generic tool start, success, failure, and cancellation, while keeping structured command records canonical.
@@ -722,7 +773,7 @@ only when the capability and its tests are present.
 
 ## Recovery And Scheduler
 
-- [x] Implement one runtime-owned recovery coordinator per acquired workspace runtime; duplicate same-cwd tabs share recovery state. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
+- [x] Implement one runtime-owned recovery coordinator per acquired workspace runtime scope; duplicate same-cwd tabs share recovery state. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
 - [x] Use durable scheduler records with transactional claims and idempotency keys for prompts, queues, initial handler starts, thread report notifications, report requests, request-user-input records and answers, waits, title jobs, Workflows generated-package refresh, separate workspace-link repair, and recovery observability. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
 - [x] Keep renderer layout restore as a consumer of state-backed read models, not as recovery authority. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
 - [x] Restore pending request-user-input clarification, waiting state, thread report notifications, per-surface prompt locks, queues, title jobs, and live surface/panel bindings after restart. Sources: `docs/progress.md`.
@@ -739,6 +790,15 @@ only when the capability and its tests are present.
 - [x] Boundary tests prove there is no Project CI lane, prompt context, request context, command-palette action, app-log link type, workflow entry, `productKind = "project-ci"`, `ci_run`, or `ci_check_result` as current product surface. Sources: `docs/features.ts`.
 - [x] Boundary tests prove there is no Project CI surface, workflow-run monitor registry, workflow inspector pane, Smithers DevTools projection, or handler wakeup path from Smithers workflow state. Sources: `docs/specs/structured-session-state.spec.md`.
 - [x] Add generated-context and extension-inventory tests proving actor-specific defaults, Web gating by `networkAccess`, prompt-only boundaries, facade omissions, and unavailable extension hiding. Sources: `docs/progress.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [ ] Verify package-boundary tests cover exact public package exports/subpaths, allowed Effect
+      imports, service ids, dependency pins, `@effect/vitest` lane placement, no unapproved
+      `ManagedRuntime.make` or `Effect.run*`, facade-only desktop/browser/headless access,
+      renderer-safe desktop DTOs with no pi-shaped message/session/model payloads, restricted
+      state/pi/sandbox subpaths, no app/bootstrap source-relative private imports into package
+      internals, runtime startup/shutdown lifecycle ownership, runtime-owned generated-package
+      refresh/link repair, and generated core public-symbol index drift. Sources: `docs/prd.md`, `docs/features.ts`,
+      `docs/specs/package-architecture/effect-v4.spec.md`,
+      `docs/specs/package-architecture/generated-packages.spec.md`.
 - [x] Add tests for Extension Managing inspect/build/create/instructions/snapshots/reset/delete/revert and CLI/env readiness. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Add focused Extension Managing tests for user instruction lifecycle revert, including exact revert output and conflict error details.
   - [x] Add focused Extension Managing tests for user extension delete, builtin delete rejection, delete revert, delete-revert collision handling, and stale built-runtime dispatch after delete.
@@ -746,14 +806,14 @@ only when the capability and its tests are present.
   - [x] Add focused Extension Managing inspect/build tests for Web/TinyFish CLI readiness, cx/Smithers generated-instruction CLI blockers, missing/unknown structured build errors, detected-version build success, update metadata, internal inspect-field omissions, and absence of Web native direct tools.
   - [x] Add focused Extension Managing create tests for app-owned user skeleton storage, create/inspect/build coherence, instructions-only vs `svvyx` source behavior, neutral generated files, Incur default export/no `serve`, direct-tool routing, and builtin/reserved/manifest-collision/duplicate/native/invalid rejection.
   - [x] Add focused user instruction lifecycle tests for add/rename/remove/configure, idempotent bypass configuration, lexicographic file-source ordering instead of manifest ordering, deterministic reorder prefix renames with content preservation, dirty build/current build state, JSON error results through `exec_command`, invalid filenames, collisions, bad reorder inputs, non-boolean bypass values, missing files, and non-editable builtin rejection.
-  - [x] Add focused Extension Managing build/readiness tests for env status redaction, missing-required-env `contextReady`/`runtimeReady` split and post-build inspect state, required CLI blockers outside generated instructions, optional CLI version commands, dependency runtime blockers, staged build activation, validation failure without staging promotion, previous-current preservation, non-exact dependency rejection, generated-instruction validation and non-activation, secret-default rejection, unknown instruction config rejection, and narrowed top-level `cli.serve()` rejection.
+  - [x] Add focused Extension Managing build/readiness tests for env status redaction, missing-required-env `contextReady`/`runtimeReady` split and post-build inspect state, required CLI blockers outside generated instructions, optional CLI version commands, dependency runtime blockers, staged build activation, validation failure without staging promotion, active-current retention on validation failure, non-exact dependency rejection, generated-instruction validation and non-activation, secret-default rejection, unknown instruction config rejection, and narrowed top-level `cli.serve()` rejection.
   - [x] Add focused Extension Managing tests for durable dependency approval request creation/reuse on explicit builds, no-promotion approval pauses, inspect projection of existing pending request ids, exact dependency/trusted-dependency approval recording, changed trusted identity negative coverage, stale request obsolescence, and revert-triggered auto-build dependency approval pauses.
   - [x] Add focused Extension Managing `set-usage` tests for persistent profile usage mutation, affected-surface reporting, fixed Extension Loading rejection, reversible usage changes, and exact conflict errors.
   - [x] Add focused Extension Managing builtin reset tests for instruction-source restore, builtin minimal prompt restore, generated instruction declaration restore, reversible reset conflict coverage through `revert`, user-extension `NOT_BUILTIN`, and unsupported reset scopes.
   - [x] Add focused Extension Managing snapshot-load tests for source/config/package restore, restored-extension builds, live source removal when absent from the snapshot, package `node_modules` exclusion, durable dependency approval request creation, and pending request reuse.
   - [x] Add focused Extension Managing snapshot secret-state tests for save/load restore, `exec_command` direct dispatch wiring, redacted command output, coarse status reporting, and delete cleanup.
-  - [x] Add focused Extension Managing snapshot-load tests for loaded-session fingerprint staleness and removed user-extension loaded/available state cleanup.
-  - [x] Add focused Extension Managing snapshot-load negative coverage for failed replacement builds preserving existing current builds and bypassing loaded-session refresh.
+  - [x] Add focused Extension Managing snapshot-load tests for loaded-session fingerprint staleness and loaded/available bindings matching the restored extension inventory.
+  - [x] Add focused Extension Managing snapshot-load negative coverage proving failed snapshot-load rebuilds leave the active current build unchanged and do not commit generated-context refresh facts.
   - [x] Add focused Extension Managing dependency-approval resume/install tests for explicit build resume, rejection, failed install preservation, default installer package-state pruning, shared approved package-plan union, exact installed artifact validation, snapshot-load paused build resume, and snapshot resume conflict protection.
 - [x] Add generated instruction builder tests for cx and Web pinned artifact identity, required markers, forbidden phrases, absent install guidance in prompts, and generated actor context inclusion only when loaded/eligible. Sources: `docs/specs/extension/cx.extension.spec.md`, `docs/specs/extension/web.extension.spec.md`.
 - [x] Add tests for `svvyx` dispatcher command facts, env injection, redaction, generated `execute_typescript` TypeScript facade declarations, injected `execute_typescript` extension facade calls, and error semantics. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`.
@@ -761,15 +821,15 @@ only when the capability and its tests are present.
 - [x] Add extension readiness tests where missing required env yields `runtimeReady: false` while context can remain ready, and where blockers do not create failed context-refresh rows. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Add redaction tests across env inspection, `svvyx` output/errors, generated `execute_typescript` TypeScript facade results, injected `execute_typescript` extension facade child-command facts, artifacts, logs, snapshots, command facts, transcripts, and TypeScript console output. Sources: `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/extension/artifacts.extension.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Add Execute TypeScript tests for preflight diagnostics, artifact persistence, approval boundary, generated declarations, `incur/client` import, child command facts, and blocked invalid snippets. Sources: `docs/specs/extension/execute_typescript.extension.spec.md`.
-  - [x] Add focused Execute TypeScript extension-facade tests for actor-local declarations, runtime exposure, `incur/client` import, Artifacts and Workflows child command facts, invalid dynamic input, and removed command/API absence.
+  - [x] Add focused Execute TypeScript extension-facade tests for actor-local declarations, runtime exposure, `incur/client` import, Artifacts and Workflows child command facts, invalid dynamic input, and exposure of only current actor-local generated facade commands.
 - [x] Add live tool projection tests for the implemented durable projection surface and split incremental streaming gaps into follow-up work. Sources: `docs/specs/live-tool-projection.spec.md`.
   - [x] Add focused durable projection tests for generic tool start/end records, apply_patch final facts, wait semantic blocks, nested command rollups, command inspectors, and reload recovery from structured command records rather than transcript prose.
   - [x] Add focused Execute TypeScript live-projection tests for accepted source recovery, extension-facade child input snapshots, captured console stdout/stderr output events, redaction, and neutral command inspector recovery.
   - [x] Add focused Execute TypeScript diagnostic projection tests for durable `command.diagnostics` events, selector recovery, command inspector grouping, and neutral transcript source-contract rendering.
   - [x] Add focused command-progress projection tests for durable `command.progress` selector recovery, renderer grouping, and neutral transcript source-contract rendering.
-  - [x] Implement and test incremental streamed argument snapshots for generic direct tools (`exec_command`, `apply_patch`), streaming-to-execution handoff, and durable recovery through pi incremental tool-call updates. Commit(s): pending local changes
+  - [x] Implement and test runtime-owned incremental argument snapshots for generic direct tools (`exec_command`, `apply_patch`), handoff from streamed pi tool-call updates to accepted handler execution, and durable recovery.
   - [ ] Wire durable `command.arg_snapshot` recovery into command rollup and inspector rendering so reload surfaces the incremental argument history.
-  - [ ] Extend incremental streaming to specialized tools (`execute_typescript` source, native-control objective/report/question arguments, in-progress apply_patch patch-preview updates, approval-state live updates) with full projection and reload recovery coverage.
+  - [ ] Extend runtime-owned incremental projection to specialized tools (`execute_typescript` source, native-control objective/report/question arguments, in-progress `apply_patch` patch-preview updates, approval-state live updates) with full projection and reload recovery coverage.
 - [x] Add Request User Input tests for blocking/nonblocking variants, defaults, generated ids, side-panel answer flow, queue delivery, timeout fallback, cancellation, and restart restore. Sources: `docs/specs/extension/request_user_input.extension.spec.md`.
 - [x] Add thread-control tests for `thread_start` history modes, extension overrides, group append, followup targeting, activation, report requests, update/conclusion episodes, notifications, and actor-specific schemas. Sources: `docs/specs/extension/thread_managing.extension.spec.md`.
 - [x] Add Workflows build/save/list/models tests for source roots, overwrite rejection, static agent extraction, generated namespaces, package linking, provider/model validation, extension validation dependency, and absence of runner commands. Sources: `docs/specs/workflow-library.spec.md`, `docs/specs/extension/workflows.extension.spec.md`.

@@ -7,7 +7,7 @@ Status: non-authoritative execution-model note. Current product behavior is defi
 The model is one shared command system:
 
 ```text
-message submit -> durable queue commit -> queue wake/claim -> turn record commit -> pi stream -> streamed tool intent -> accepted tool call -> runtime command envelope -> extension handler -> ExtensionRuntimeOperation processing -> runtime_effect application / execution_plan execution -> state commit -> runtime notification/live patch -> UI refetch or stream rebaseline -> recovery scan
+message submit -> durable queue commit -> queue wake/claim -> prompt defaults/binding read -> required generated-context refresh -> turn record commit -> pi stream -> streamed tool intent -> accepted tool call -> runtime command envelope -> extension handler -> ExtensionRuntimeOperation processing -> runtime_effect application / execution_plan execution -> state commit -> runtime notification/live patch -> UI refetch or stream rebaseline -> recovery scan
 ```
 
 The target surface may be:
@@ -32,9 +32,9 @@ flowchart TD
     SubmitUser --> Queue["Persist durable surface queue row in @svvy/state"]
     SubmitInternal --> Queue
     Queue --> Claim["Runtime queue wake/claim atomically claims the next row for surfacePiSessionId"]
-    Claim --> Refresh["Refresh stale generated context at the safe pre-dispatch boundary when enabled"]
-    Refresh --> Load["Load durable workspace, session, surface, thread, episode, artifact, wait, generated-context, and app state from @svvy/state"]
-    Load --> Surface["Acquire or reopen the scoped pi surface through @svvy/pi-adapter from persisted pi session references"]
+    Claim --> Load["Read durable prompt defaults, surface bindings, workspace, session, surface, thread, episode, artifact, wait, generated-context, and app state from @svvy/state"]
+    Load --> Refresh["Refresh required stale generated context at the safe pre-dispatch boundary when enabled"]
+    Refresh --> Surface["Acquire or reopen the scoped pi surface through @svvy/pi-adapter from persisted pi session references"]
     Surface --> Turn["Commit the turn record and deliver the real user or control message through @svvy/pi-adapter"]
     Turn --> Stream["Pi stream emits reasoning, text, and streamed tool intents"]
     Stream --> Decide["Runtime accepts the next pi-backed actor action"]
@@ -56,7 +56,7 @@ flowchart TD
     Direct --> State["Commit reply/turn facts through @svvy/state ports"]
     Effects --> RuntimeEffect["runtime_effect requests apply through state ports and package services"]
     Effects --> Plan["execution_plan values run through runtime approval/sandbox/subprocess/file/stdin/child-command lanes"]
-    RuntimeEffect --> State["Runtime collects committed StateMutationResult.afterCommit descriptors"]
+    RuntimeEffect --> State["Runtime collects committed after-commit descriptors"]
     Plan --> State
     State --> Notify["Runtime publishes post-commit notifications and live stream patches"]
     Notify --> UI["UI refetches authoritative read models or applies stream rebaselines"]
@@ -138,7 +138,7 @@ evidence, and immutable workspace-link plan construction for the canonical gener
 `@svvyx/workflows` and `@svvyx/extensions`. `@svvy/runtime` owns generated-package refresh
 scheduling and ordered refresh application, commits generated-package facts through `@svvy/state`,
 schedules workspace-link repair after those facts commit, and applies link plans for acquired
-workspace runtimes. Repo-root `workflows/`, generated authoring databases, and
+workspace runtime scopes. Repo-root `workflows/`, generated authoring databases, and
 source-checkout-relative Smithers paths are authoring inputs for maintaining `svvy` itself, not
 shipped product runtime boundaries.
 
@@ -174,7 +174,8 @@ product prerequisite. It is not a separate execution subsystem.
 - `svvyx ...` command families are ordinary Shell commands and may also expose injected
   `execute_typescript` generated TypeScript facades plus generated declaration blocks when the
   extension supports
-  TypeScript facades. Those facades are not generated `@svvyx/*` package imports.
+  TypeScript facades. Those facades are not generated `@svvyx/workflows` or
+  `@svvyx/extensions` package imports.
 - Thread Orchestration controls, Thread Handling controls, `load_extension`, `list_extensions`, and
   `request_user_input` remain `svvy`-native control tools.
 - `svvyx workflows ...` manages reusable source and generated imports; it does not run Smithers.

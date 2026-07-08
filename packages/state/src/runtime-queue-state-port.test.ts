@@ -8,7 +8,8 @@ import {
   type SurfacePiSessionId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeQueueStatePort, runtimeQueueStatePortFromStore } from "./index";
+import { layerRuntimeQueueStatePort } from "./index";
+import { runtimeQueueStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,

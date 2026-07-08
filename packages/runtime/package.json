@@ -5,7 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./bootstrap": "./src/bootstrap.ts"
+    "./accepted-native-tool-execution": "./src/accepted-native-tool-execution.ts",
+    "./bootstrap": "./src/bootstrap.ts",
+    "./prompt-execution-context": "./src/prompt-execution-context.ts",
+    "./source-invalidation-coordinator-adapter": "./src/source-invalidation-coordinator-adapter.ts"
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.0-beta.84",

@@ -49,6 +49,7 @@ struct Entry {
     access: Access,
     path: PathBuf,
     raw_path: PathBuf,
+    recursive: bool,
     protected_metadata_names: Vec<String>,
 }
 
@@ -81,8 +82,14 @@ struct CheckAccess {
 
 struct AccessRoot {
     root: PathBuf,
-    excluded_subpaths: Vec<PathBuf>,
+    recursive: bool,
+    excluded_subpaths: Vec<AccessExclusion>,
     protected_metadata_names: Vec<String>,
+}
+
+struct AccessExclusion {
+    path: PathBuf,
+    recursive: bool,
 }
 
 struct SeatbeltProfile {
@@ -207,7 +214,8 @@ fn parse_args(args: Vec<OsString>) -> Result<HelperArgs, String> {
                     "--entry path",
                 )?))?;
                 let path = normalize_path_for_sandbox(&raw_path);
-                let protected_metadata_names = required_arg(&args, index + 3, "--entry protected")?
+                let recursive = parse_bool(&required_arg(&args, index + 3, "--entry recursive")?)?;
+                let protected_metadata_names = required_arg(&args, index + 4, "--entry protected")?
                     .split(',')
                     .filter(|name| !name.is_empty())
                     .map(ToOwned::to_owned)
@@ -216,9 +224,10 @@ fn parse_args(args: Vec<OsString>) -> Result<HelperArgs, String> {
                     access,
                     path,
                     raw_path,
+                    recursive,
                     protected_metadata_names,
                 });
-                index += 3;
+                index += 4;
             }
             "--check-access" => {
                 let access =
@@ -236,6 +245,14 @@ fn parse_args(args: Vec<OsString>) -> Result<HelperArgs, String> {
         index += 1;
     }
     Err("missing -- command separator".into())
+}
+
+fn parse_bool(value: &str) -> Result<bool, String> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("unknown filesystem recursive flag: {value}")),
+    }
 }
 
 fn required_arg(args: &[OsString], index: usize, name: &str) -> Result<String, String> {
@@ -297,7 +314,11 @@ fn build_seatbelt_profile(args: &HelperArgs) -> Result<SeatbeltProfile, String> 
                 "READ_ROOT",
                 vec![AccessRoot {
                     root: PathBuf::from("/"),
-                    excluded_subpaths: unreadable_roots(args),
+                    recursive: true,
+                    excluded_subpaths: unreadable_roots(args)
+                        .into_iter()
+                        .map(access_exclusion_from_entry)
+                        .collect(),
                     protected_metadata_names: Vec::new(),
                 }],
                 &mut parameters,
@@ -310,13 +331,15 @@ fn build_seatbelt_profile(args: &HelperArgs) -> Result<SeatbeltProfile, String> 
             "READ_ROOT",
             readable_roots(args)
                 .into_iter()
-                .map(|root| AccessRoot {
+                .map(|entry| AccessRoot {
                     excluded_subpaths: unreadable_roots(args)
                         .into_iter()
-                        .filter(|path| path_starts_with(path, &root))
+                        .filter(|excluded| entry_contains_path(&entry, &excluded.path))
+                        .map(access_exclusion_from_entry)
                         .collect(),
                     protected_metadata_names: Vec::new(),
-                    root,
+                    root: entry.path,
+                    recursive: entry.recursive,
                 })
                 .collect(),
             &mut parameters,
@@ -331,10 +354,11 @@ fn build_seatbelt_profile(args: &HelperArgs) -> Result<SeatbeltProfile, String> 
     } else {
         let writable = writable_roots(args)
             .into_iter()
-            .map(|root| AccessRoot {
-                protected_metadata_names: protected_metadata_names_for_writable_root(args, &root),
-                excluded_subpaths: read_only_subpaths_for_writable_root(args, &root),
-                root,
+            .map(|entry| AccessRoot {
+                protected_metadata_names: protected_metadata_names_for_writable_root(args, &entry),
+                excluded_subpaths: read_only_subpaths_for_writable_root(args, &entry),
+                root: entry.path,
+                recursive: entry.recursive,
             })
             .collect();
         build_seatbelt_access_policy("file-write*", "WRITE_ROOT", writable, &mut parameters)
@@ -371,21 +395,27 @@ fn build_seatbelt_access_policy(
         let root = normalize_path_for_sandbox(&access_root.root);
         let root_param = format!("{parameter_prefix}_{root_index}");
         parameters.push((root_param.clone(), root.to_string_lossy().to_string()));
-        let mut require_parts = vec![format!(r#"(subpath (param "{root_param}"))"#)];
+        let mut require_parts = if access_root.recursive {
+            vec![format!(r#"(subpath (param "{root_param}"))"#)]
+        } else {
+            vec![format!(r#"(literal (param "{root_param}"))"#)]
+        };
         for (excluded_index, excluded) in access_root.excluded_subpaths.into_iter().enumerate() {
-            let excluded = normalize_path_for_sandbox(&excluded);
+            let excluded_path = normalize_path_for_sandbox(&excluded.path);
             let excluded_param =
                 format!("{parameter_prefix}_{root_index}_EXCLUDED_{excluded_index}");
             parameters.push((
                 excluded_param.clone(),
-                excluded.to_string_lossy().to_string(),
+                excluded_path.to_string_lossy().to_string(),
             ));
             require_parts.push(format!(
                 r#"(require-not (literal (param "{excluded_param}")))"#
             ));
-            require_parts.push(format!(
-                r#"(require-not (subpath (param "{excluded_param}")))"#
-            ));
+            if excluded.recursive {
+                require_parts.push(format!(
+                    r#"(require-not (subpath (param "{excluded_param}")))"#
+                ));
+            }
         }
         for metadata_name in access_root.protected_metadata_names {
             let regex = seatbelt_protected_metadata_name_regex(&root, &metadata_name);
@@ -434,7 +464,7 @@ fn resolve_access(args: &HelperArgs, path: &Path) -> Access {
     let target = normalize_path_for_sandbox(path);
     args.entries
         .iter()
-        .filter(|entry| path_starts_with(&target, &entry.path))
+        .filter(|entry| entry_matches_path(entry, &target))
         .max_by(|left, right| {
             path_specificity(&left.path)
                 .cmp(&path_specificity(&right.path))
@@ -460,65 +490,87 @@ fn has_full_disk_read_access(args: &HelperArgs) -> bool {
     can_read_path(args, Path::new("/"))
 }
 
-fn readable_roots(args: &HelperArgs) -> Vec<PathBuf> {
+fn readable_roots(args: &HelperArgs) -> Vec<Entry> {
     roots_for(args, |access| access.can_read())
 }
 
-fn writable_roots(args: &HelperArgs) -> Vec<PathBuf> {
+fn writable_roots(args: &HelperArgs) -> Vec<Entry> {
     roots_for(args, |access| access.can_write())
         .into_iter()
-        .filter(|path| can_write_path(args, path))
+        .filter(|entry| can_write_path(args, &entry.path))
         .collect()
 }
 
-fn roots_for(args: &HelperArgs, predicate: impl Fn(Access) -> bool) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = args
+fn roots_for(args: &HelperArgs, predicate: impl Fn(Access) -> bool) -> Vec<Entry> {
+    let mut roots: Vec<Entry> = args
         .entries
         .iter()
         .filter(|entry| predicate(entry.access))
         .filter(|entry| resolve_access(args, &entry.path) == entry.access)
-        .map(|entry| entry.path.clone())
+        .cloned()
         .collect();
-    roots.sort();
-    roots.dedup();
+    roots.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.recursive.cmp(&right.recursive))
+    });
+    roots.dedup_by(|left, right| left.path == right.path && left.recursive == right.recursive);
     roots
 }
 
-fn unreadable_roots(args: &HelperArgs) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = args
+fn unreadable_roots(args: &HelperArgs) -> Vec<Entry> {
+    let mut roots: Vec<Entry> = args
         .entries
         .iter()
         .filter(|entry| entry.access == Access::None)
         .filter(|entry| resolve_access(args, &entry.path) == Access::None)
-        .map(|entry| entry.path.clone())
+        .cloned()
         .collect();
-    roots.sort();
-    roots.dedup();
+    roots.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.recursive.cmp(&right.recursive))
+    });
+    roots.dedup_by(|left, right| left.path == right.path && left.recursive == right.recursive);
     roots
 }
 
-fn read_only_subpaths_for_writable_root(args: &HelperArgs, root: &Path) -> Vec<PathBuf> {
+fn read_only_subpaths_for_writable_root(args: &HelperArgs, root: &Entry) -> Vec<AccessExclusion> {
     args.entries
         .iter()
         .filter(|entry| entry.access != Access::Write)
-        .filter(|entry| path_starts_with(&entry.path, root))
+        .filter(|entry| entry_contains_path(root, &entry.path))
         .filter(|entry| !can_write_path(args, &entry.path))
-        .map(|entry| entry.path.clone())
+        .map(|entry| AccessExclusion {
+            path: entry.path.clone(),
+            recursive: entry.recursive,
+        })
         .collect()
 }
 
-fn protected_metadata_names_for_writable_root(args: &HelperArgs, root: &Path) -> Vec<String> {
+fn access_exclusion_from_entry(entry: Entry) -> AccessExclusion {
+    AccessExclusion {
+        path: entry.path,
+        recursive: entry.recursive,
+    }
+}
+
+fn protected_metadata_names_for_writable_root(args: &HelperArgs, root: &Entry) -> Vec<String> {
     let mut names = args
         .entries
         .iter()
-        .filter(|entry| entry.access == Access::Write && entry.path == root)
+        .filter(|entry| {
+            entry.access == Access::Write
+                && entry.path == root.path
+                && entry.recursive == root.recursive
+        })
         .flat_map(|entry| entry.protected_metadata_names.clone())
         .collect::<Vec<_>>();
     for name in [".git", ".agents", ".codex"] {
         if names.iter().any(|existing| existing == name) {
             continue;
         }
-        let path = root.join(name);
+        let path = root.path.join(name);
         if !can_write_path(args, &path) {
             names.push(name.to_string());
         }
@@ -570,8 +622,8 @@ fn has_explicit_metadata_write(
         entry.access == Access::Write
             && entry.raw_path != broad_writable_root
             && path_starts_with(&entry.raw_path, metadata_root)
-            && (path_starts_with(raw_target, &entry.raw_path)
-                || path_starts_with(normalized_target, &entry.path))
+            && (entry_matches_raw_path(entry, raw_target)
+                || entry_matches_path(entry, normalized_target))
     })
 }
 
@@ -581,4 +633,28 @@ fn path_specificity(path: &Path) -> usize {
 
 fn path_starts_with(path: &Path, root: &Path) -> bool {
     path == root || path.starts_with(root)
+}
+
+fn entry_matches_path(entry: &Entry, path: &Path) -> bool {
+    if entry.recursive {
+        path_starts_with(path, &entry.path)
+    } else {
+        path == entry.path
+    }
+}
+
+fn entry_matches_raw_path(entry: &Entry, path: &Path) -> bool {
+    if entry.recursive {
+        path_starts_with(path, &entry.raw_path)
+    } else {
+        path == entry.raw_path
+    }
+}
+
+fn entry_contains_path(entry: &Entry, path: &Path) -> bool {
+    if entry.recursive {
+        path_starts_with(path, &entry.path)
+    } else {
+        path == entry.path
+    }
 }

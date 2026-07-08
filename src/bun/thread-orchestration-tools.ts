@@ -1,6 +1,7 @@
 import type { NativeToolDefinition } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import { nativeToolParameters } from "./native-tool-parameters";
 import type {
   CommandFactsPayload,
   RuntimeCommandStatePortService,
@@ -74,13 +75,13 @@ export function createThreadFollowupTool(options: {
   turnState: RuntimeTurnStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadOrchestrationBridge;
-}): NativeToolDefinition<ThreadFollowupParams, ThreadFollowupQueueResult> {
+}): NativeToolDefinition<ThreadFollowupParams> {
   return {
     label: "Thread Followup",
     name: THREAD_FOLLOWUP_TOOL_NAME,
     description:
       "Queue corrections, clarifications, or later instructions to exact handler threads or one thread group.",
-    parameters: threadFollowupParamsSchema,
+    parameters: nativeToolParameters(threadFollowupParamsSchema),
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveOrchestratorRuntime(options.runtime, THREAD_FOLLOWUP_TOOL_NAME);
       const message = params.message.trim();
@@ -167,7 +168,7 @@ export function createThreadFollowupTool(options: {
           threadGroupId,
           threads: [],
           error: failure,
-        } as ThreadFollowupQueueResult & { error: string });
+        });
       }
     },
   };
@@ -179,13 +180,13 @@ export function createThreadRequestReportTool(options: {
   turnState: RuntimeTurnStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadOrchestrationBridge;
-}): NativeToolDefinition<ThreadRequestReportParams, ThreadRequestReportQueueResult> {
+}): NativeToolDefinition<ThreadRequestReportParams> {
   return {
     label: "Thread Request Report",
     name: THREAD_REQUEST_REPORT_TOOL_NAME,
     description:
       "Ask one handler thread for an explicit thread_report update without changing its objective.",
-    parameters: threadRequestReportParamsSchema,
+    parameters: nativeToolParameters(threadRequestReportParamsSchema),
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveOrchestratorRuntime(
         options.runtime,
@@ -251,7 +252,7 @@ export function createThreadRequestReportTool(options: {
           surfacePiSessionId: "",
           queuedMessageId: "",
           error: failure,
-        } as ThreadRequestReportQueueResult & { error: string });
+        });
       }
     },
   };
@@ -279,6 +280,6 @@ function jsonToolResult<T>(details: T) {
         text: JSON.stringify(details),
       },
     ],
-    details,
+    details: { commandFacts: details as CommandFactsPayload },
   };
 }

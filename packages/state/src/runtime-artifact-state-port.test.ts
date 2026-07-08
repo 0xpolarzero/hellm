@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeArtifactStatePort,
-  StateContractError,
-  type AbsolutePath,
   type ArtifactId,
   type CommandId,
   type RuntimeArtifactStatePortService,
@@ -28,6 +27,9 @@ import {
 
 const tempDirs: string[] = [];
 const stores: StructuredSessionStateStore[] = [];
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -63,19 +65,39 @@ describe("runtime artifact state port", () => {
             createdAt: "2026-04-18T09:00:00.000Z",
             updatedAt: "2026-04-18T09:00:00.000Z",
           });
+          const turn = yield* state.startTurn({
+            sessionId,
+            surfacePiSessionId: "surface-runtime-artifact-layer",
+            requestSummary: "Create artifact.",
+          });
+          const command = yield* state.createCommand({
+            turnId: turn.id,
+            surfacePiSessionId: "surface-runtime-artifact-layer",
+            toolName: "exec_command",
+            executor: "orchestrator",
+            visibility: "surface",
+            title: "Create artifact",
+            summary: "Create artifact.",
+          });
 
           const port = yield* RuntimeArtifactStatePort;
-          const createdResult = yield* port.createArtifact({
-            sessionId,
+          const createdResult = yield* port.recordArtifactMetadata({
+            workspaceSessionId: sessionId,
+            sourceCommandId: command.id as CommandId,
             kind: "text",
             name: "layer.md",
-            content: "layer",
+            storedPath: join(artifactDir, sessionId, "layer.md") as never,
+            mimeType: "text/markdown",
+            byteSize: 5,
+            sha256: testDigest.sha256Hex("layer"),
+            immutable: false,
+            materializationStatus: "ready",
           });
           const created = createdResult.value;
-          const listed = yield* port.listArtifacts({ sessionId });
+          const listed = yield* port.listArtifacts({ workspaceSessionId: sessionId });
 
           expect(created.name).toBe("layer.md");
-          expect(listed.map((artifact) => artifact.id)).toEqual([created.id]);
+          expect(listed.map((artifact) => artifact.artifactId)).toEqual([created.artifactId]);
         }).pipe(
           Effect.provide(
             layerRuntimeArtifactStatePort.pipe(
@@ -87,6 +109,7 @@ describe("runtime artifact state port", () => {
                     cwd: workspaceCwd,
                     artifactDir,
                   },
+                  digest: testDigest,
                 }),
               ),
             ),
@@ -96,35 +119,40 @@ describe("runtime artifact state port", () => {
     );
   });
 
-  it("creates, reads, lists, and deletes artifact metadata through an Effect service", async () => {
+  it("records, reads, lists, and marks artifact metadata deleted through an Effect service", async () => {
     const { artifactDir, commandId, port, sessionId, workspaceCwd } = createFixture();
     const workspaceId = workspaceCwd as WorkspaceId;
+    const storedPath = join(artifactDir, sessionId, "immutable", "handoff.md");
 
     const createdResult = await runTestEffect(
-      port.createArtifact({
-        sessionId,
+      port.recordArtifactMetadata({
+        workspaceSessionId: sessionId,
         sourceCommandId: commandId,
         kind: "text",
         name: "handoff.md",
-        content: "handoff body",
+        storedPath: storedPath as never,
+        mimeType: "text/markdown",
+        byteSize: "handoff body".length,
+        sha256: "4f7af4d83d10ee9be864a76e2fe30c8c5197350d38805efddba3d8a12e2b8d8c",
         immutable: true,
+        materializationStatus: "ready",
       }),
     );
     const created = createdResult.value;
 
-    const createdArtifactId = created.id;
+    const createdArtifactId = created.artifactId;
     expect(createdArtifactId).toMatch(/^artifact-/);
     expect(created).toMatchObject({
-      id: createdArtifactId,
-      sessionId,
+      artifactId: createdArtifactId,
+      workspaceSessionId: sessionId,
       sourceCommandId: commandId,
-      kind: "text",
       name: "handoff.md",
-      path: join(artifactDir, sessionId, "immutable", "handoff.md"),
+      storedPath,
       mimeType: "text/markdown",
-      bytes: "handoff body".length,
+      byteSize: "handoff body".length,
       sha256: "4f7af4d83d10ee9be864a76e2fe30c8c5197350d38805efddba3d8a12e2b8d8c",
       immutable: true,
+      materializationStatus: "ready",
       deletedAt: null,
     });
     expect(createdResult.afterCommit).toEqual([
@@ -142,64 +170,80 @@ describe("runtime artifact state port", () => {
         },
       },
     ]);
-    expect(existsSync(created.path!)).toBeTrue();
 
     const inspected = await runTestEffect(
       port.inspectArtifact({
-        sessionId,
+        workspaceSessionId: sessionId,
         artifactId: createdArtifactId,
       }),
     );
     const listed = await runTestEffect(
       port.listArtifacts({
-        sessionId,
+        workspaceSessionId: sessionId,
       }),
     );
     const deletedResult = await runTestEffect(
-      port.deleteArtifact({
-        sessionId,
+      port.markArtifactMetadataDeleted({
+        workspaceSessionId: sessionId,
         artifactId: createdArtifactId,
       }),
     );
     const deleted = deletedResult.value;
+    const deletedAgain = await runTestEffect(
+      port.markArtifactMetadataDeleted({
+        workspaceSessionId: sessionId,
+        artifactId: createdArtifactId,
+      }),
+    );
     const afterDelete = await runTestEffect(
       port.listArtifacts({
-        sessionId,
+        workspaceSessionId: sessionId,
       }),
     );
 
     expect(inspected).toEqual(created);
-    expect(listed.map((artifact) => artifact.id)).toEqual([created.id]);
+    expect(listed.map((artifact) => artifact.artifactId)).toEqual([created.artifactId]);
     expect(deleted.deletedAt).toEqual(expect.any(String));
+    expect(deleted.materializationStatus).toBe("deleted");
+    expect(deletedAgain.value.deletedAt).toBe(deleted.deletedAt);
     expect(deletedResult.afterCommit).toEqual(createdResult.afterCommit);
-    expect(existsSync(created.path!)).toBeFalse();
     expect(afterDelete).toEqual([]);
   });
 
   it("maps artifact store errors to typed state contract reasons without hiding command prefixes", async () => {
-    const { commandId, port, sessionId } = createFixture();
+    const { artifactDir, commandId, port, sessionId } = createFixture();
     await runTestEffect(
-      port.createArtifact({
-        sessionId,
+      port.recordArtifactMetadata({
+        workspaceSessionId: sessionId,
         sourceCommandId: commandId,
         kind: "text",
         name: "duplicate.md",
-        content: "",
+        storedPath: join(artifactDir, sessionId, "duplicate.md") as never,
+        mimeType: "text/markdown",
+        byteSize: 0,
+        sha256: testDigest.sha256Hex(""),
+        immutable: false,
+        materializationStatus: "ready",
       }),
     );
 
     await expect(
       runTestEffect(
-        port.createArtifact({
-          sessionId,
+        port.recordArtifactMetadata({
+          workspaceSessionId: sessionId,
           sourceCommandId: commandId,
           kind: "text",
           name: "duplicate.md",
-          content: "",
+          storedPath: join(artifactDir, sessionId, "duplicate-again.md") as never,
+          mimeType: "text/markdown",
+          byteSize: 0,
+          sha256: testDigest.sha256Hex(""),
+          immutable: false,
+          materializationStatus: "ready",
         }),
       ),
     ).rejects.toMatchObject({
-      operation: "runtime-artifact.create",
+      operation: "runtime-artifact.record-metadata",
       reason: "conflict",
       message: expect.stringContaining("ARTIFACT_EXISTS:"),
     });
@@ -207,7 +251,7 @@ describe("runtime artifact state port", () => {
     await expect(
       runTestEffect(
         port.inspectArtifact({
-          sessionId,
+          workspaceSessionId: sessionId,
           artifactId: "artifact_missing" as ArtifactId,
         }),
       ),
@@ -219,120 +263,24 @@ describe("runtime artifact state port", () => {
 
     await expect(
       runTestEffect(
-        port.createArtifact({
-          sessionId,
+        port.recordArtifactMetadata({
+          workspaceSessionId: sessionId,
           sourceCommandId: commandId,
           kind: "file",
           name: "missing.txt",
-          path: join(artifactDirFor(sessionId), "missing.txt") as AbsolutePath,
-        }),
-      ),
-    ).rejects.toBeInstanceOf(StateContractError);
-    await expect(
-      runTestEffect(
-        port.createArtifact({
-          sessionId,
-          sourceCommandId: commandId,
-          kind: "file",
-          name: "missing.txt",
-          path: join(artifactDirFor(sessionId), "missing.txt") as AbsolutePath,
+          storedPath: join(artifactDirFor(sessionId), "missing.txt") as never,
+          mimeType: "text/plain",
+          byteSize: 0,
+          sha256: testDigest.sha256Hex(""),
+          immutable: false,
+          materializationStatus: "ready",
         }),
       ),
     ).rejects.toMatchObject({
-      operation: "runtime-artifact.create",
+      operation: "runtime-artifact.record-metadata",
       reason: "invalid-input",
-      message: expect.stringContaining("SOURCE_NOT_FOUND:"),
+      message: expect.stringContaining("INVALID_ARGUMENT:"),
     });
-  });
-
-  it("maps artifact materialization failures to transaction-failed", async () => {
-    const { artifactDir, commandId, port, sessionId } = createFixture();
-    rmSync(artifactDir, { recursive: true, force: true });
-    writeFileSync(artifactDir, "not a directory\n");
-
-    await expect(
-      runTestEffect(
-        port.createArtifact({
-          sessionId,
-          sourceCommandId: commandId,
-          kind: "text",
-          name: "blocked.md",
-          content: "",
-        }),
-      ),
-    ).rejects.toMatchObject({
-      operation: "runtime-artifact.create",
-      reason: "transaction-failed",
-      message: expect.stringContaining("COPY_FAILED:"),
-    });
-  });
-
-  it("maps artifact deletion failures to transaction-failed without tombstoning", async () => {
-    const { commandId, port, sessionId } = createFixture();
-    const artifact = (
-      await runTestEffect(
-        port.createArtifact({
-          sessionId,
-          sourceCommandId: commandId,
-          kind: "text",
-          name: "blocked.md",
-          content: "blocked\n",
-        }),
-      )
-    ).value;
-    rmSync(artifact.path!);
-    mkdirSync(artifact.path!);
-
-    await expect(
-      runTestEffect(
-        port.deleteArtifact({
-          sessionId,
-          artifactId: artifact.id,
-        }),
-      ),
-    ).rejects.toMatchObject({
-      operation: "runtime-artifact.delete",
-      reason: "transaction-failed",
-      message: expect.stringContaining("DELETE_FAILED:"),
-    });
-    await expect(
-      runTestEffect(
-        port.inspectArtifact({
-          sessionId,
-          artifactId: artifact.id,
-        }),
-      ),
-    ).resolves.toMatchObject({
-      deletedAt: null,
-    });
-  });
-
-  it("copies source files into the artifact store without exposing source path ownership", async () => {
-    const { commandId, port, sessionId, workspaceCwd } = createFixture();
-    const sourcePath = join(workspaceCwd, "report.json");
-    writeFileSync(sourcePath, '{"ok":true}');
-
-    const artifact = (
-      await runTestEffect(
-        port.createArtifact({
-          sessionId,
-          sourceCommandId: commandId,
-          kind: "json",
-          path: sourcePath as AbsolutePath,
-        }),
-      )
-    ).value;
-
-    expect(artifact).toMatchObject({
-      sessionId,
-      sourceCommandId: commandId,
-      kind: "json",
-      name: "report.json",
-      mimeType: "application/json",
-      bytes: '{"ok":true}'.length,
-    });
-    expect(artifact.path).not.toBe(sourcePath);
-    expect(existsSync(artifact.path!)).toBeTrue();
   });
 });
 
@@ -348,6 +296,7 @@ function createFixture(): {
   mkdirSync(artifactDir, { recursive: true });
   const sessionId = "session-runtime-artifact-port" as WorkspaceSessionId;
   const store = createStructuredSessionStateStore({
+    digest: testDigest,
     workspace: {
       id: workspaceCwd,
       label: "svvy",

@@ -7,6 +7,7 @@ import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 import {
   type CommandId,
+  type PositiveDurationMs,
   type RequestInputAnswerId,
   type RequestInputQuestionId,
   type RequestInputRequestId,
@@ -27,6 +28,7 @@ const surfacePiSessionId = "pi_runtime_blocking_rui" as SurfacePiSessionId;
 const requestId = "rui_runtime_blocking_rui" as RequestInputRequestId;
 const commandId = "cmd_runtime_blocking_rui" as CommandId;
 const questionId = "ruiq_runtime_blocking_rui" as RequestInputQuestionId;
+const SHORT_TIMEOUT_MS = 500 as PositiveDurationMs;
 
 function stateMutation<T>(value: T) {
   return { value, afterCommit: [] };
@@ -133,7 +135,7 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
       const state = makeEffectState({ request, commandEvents, waits });
       const scope = yield* Scope.make("sequential");
       const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry().pipe(
-        Scope.provide(scope),
+        Effect.provideService(Scope.Scope, scope),
       );
 
       const waitFiber = yield* registry
@@ -269,7 +271,7 @@ function makeEffectState(input: {
               }
             : null,
         };
-        return stateMutation({ requestId });
+        return stateMutation(currentRequest);
       }),
     defaultOpenRequestInputQuestions: () =>
       Effect.sync(() => {
@@ -360,7 +362,7 @@ function makeOpenRequest(): RuntimeRequestInputDetailsRecord {
     completedAt: null,
     timeout: {
       enabled: true,
-      durationMs: 500,
+      durationMs: SHORT_TIMEOUT_MS,
       startedAt: "2026-06-21T00:00:01.000Z",
       pausedAt: null,
       remainingMsWhenPaused: null,

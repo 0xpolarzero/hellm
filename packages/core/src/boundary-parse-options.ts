@@ -1,4 +1,11 @@
+import type * as SchemaAST from "effect/SchemaAST";
+
 export const strictBoundaryParseOptions = {
   onExcessProperty: "error",
   errors: "all",
-} as const;
+} satisfies SchemaAST.ParseOptions;
+
+export function isPublicSchemaAnnotationKey(key: string): boolean {
+  void key;
+  return false;
+}

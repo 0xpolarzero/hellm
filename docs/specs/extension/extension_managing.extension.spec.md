@@ -28,12 +28,13 @@ Extension Managing is a builtin extension for managing extension definitions and
 
 It exposes extension lifecycle commands, dependency readiness and approval-request surfaces,
 usage-state commands, snapshot commands, and loaded source contributor lifecycle commands.
-`@svvy/state` persists approval/profile/snapshot facts, `@svvy/runtime` schedules and applies
-resulting effects, and `@svvy/extensions` validates command intent and returns
-`ExtensionRuntimeOperation` items wrapping closed plans or `RuntimeEffectRequest` values. It does not
-own text-editing commands for instruction or source bodies and does not provide a separate command
-for installing CLI requirements. Authoring-facing Incur guidance belongs to this extension's loaded
-instructions, but the internal runtime plumbing for making built Incur CLIs callable belongs to
+`@svvy/extensions` owns snapshot payload shape/application, source/config interpretation, generated
+context inputs, command validation, and `ExtensionRuntimeOperation` construction. `@svvy/runtime`
+schedules and applies resulting effects. `@svvy/state` persists committed approval/profile/snapshot
+facts and binding facts only. Extension Managing does not own text-editing commands for instruction
+or source bodies and does not provide a separate command for installing CLI requirements.
+Authoring-facing Incur guidance belongs to this extension's loaded instructions, but the internal
+runtime plumbing for making built Incur CLIs callable belongs to
 `docs/specs/extension/svvyx-incur-runtime.spec.md`.
 
 Default usage state:
@@ -91,9 +92,10 @@ manifest, source, or editable package file submits a runtime source-edit save re
 structured source reference, expected source version, text, and save mode. `@svvy/runtime` asks
 `@svvy/extensions` to perform the compare-and-swap or overwrite file write, then commits
 source-version, fingerprint, diagnostic, reversible-change, `draftChanged`, and `buildRequired`
-facts through `@svvy/state` command ports. After commit, runtime turns returned descriptors and
-receipts into typed notifications; consumers refetch read models from state. The UI never writes
-returned paths directly and must not store editor text as hidden prompt state outside these files.
+facts through core-owned runtime-facing state ports implemented by `@svvy/state`. After commit,
+runtime turns returned descriptors and receipts into typed notifications; consumers refetch read
+models from state. The UI never writes returned paths directly and must not store editor text as
+hidden prompt state outside these files.
 
 `inspect` returns relevant resource paths; it does not need an `editable`/`readonly` path taxonomy.
 The Extension Managing instructions define what may be edited:
@@ -184,9 +186,11 @@ Workspace-local extensions are not part of the product surface. Extension files 
 not workspace files. They are still normal filesystem paths so agents can inspect them through shell
 commands and edit editable paths through `apply_patch`.
 
-`svvy` owns extension source, generated aggregate cache, dependency state, and build output under
-`~/.config/svvy/extensions/`. Pi extension paths and Smithers `.smithers/` workflow directories are
-runtime references, not `svvy` extension storage roots.
+`svvy` owns extension source, generated aggregate cache files, dependency package files/install
+artifacts, and build output under `~/.config/svvy/extensions/`. DB/product-state-backed dependency
+approval, readiness, and installed-artifact facts live in `@svvy/state` and are read or written only
+through the package ports named by the package architecture specs. Pi extension paths and Smithers
+`.smithers/` workflow directories are runtime references, not `svvy` extension storage roots.
 
 Editable file-backed content includes:
 
@@ -196,7 +200,8 @@ Editable file-backed content includes:
 - editable generated-instruction TypeScript scripts under `scripts/`
 - minimal instructions
 - extension command source code for `svvyx` extensions
-- the shared extension `package/package.json` when dependency state needs manual adjustment
+- the shared extension `package/package.json` when editable dependency declarations or package
+  manifest content need manual adjustment
 
 Generated Markdown outputs, command schemas, tool schemas, and generated `execute_typescript` facade
 declarations are returned for inspection and prompt-generation traceability, but they are read-only
@@ -290,8 +295,10 @@ Rules:
   TypeScript generator under `scripts/` with the read-only generated Markdown/plain prompt output from the last generation
   under `instructions/full/`. Build regenerates all scripted contributors, and the UI may expose a
   targeted regenerate action that runs the same build path for the owning extension.
-- Loaded instruction contributor ordering is explicit app-owned extension state. Numeric filename
-  prefixes remain a convenient storage/display convention, not the product contract.
+- Loaded instruction contributor ordering is explicit extension source/config interpreted by
+  `@svvy/extensions`; `@svvy/state` stores only committed facts derived from successful operations.
+  Numeric filename prefixes remain a convenient storage/display convention, not the product
+  contract.
 - Additional implementation-private manifest fields are allowed only if build preserves them and
   they do not alter the actor-facing contract without being added to this spec.
 
@@ -322,9 +329,10 @@ equivalent internal separators after editable MDX and scripted generated output 
 prompt text. Generated Markdown/plain prompt output is read-only build output. To change it, edit the
 generator script or the source data it reads, then regenerate/build.
 
-Loaded source contributor ordering is explicit app-owned extension state stored in the manifest or
-equivalent extension record. Builtin defaults and generated user skeletons should use zero-padded
-numeric filename prefixes as a readable storage/display convention, for example:
+Loaded source contributor ordering is explicit extension source/config interpreted by
+`@svvy/extensions` from the manifest or equivalent extension record. Builtin defaults and generated
+user skeletons should use zero-padded numeric filename prefixes as a readable storage/display
+convention, for example:
 
 ```text
 010-svvyx-extension-managing.mdx
@@ -342,11 +350,12 @@ source config. Bypassed contributors remain visible in inspect/UI, and scripted 
 still generated by build, but bypassed contributors are omitted when loaded instructions are
 concatenated for actor prompts.
 
-The source of truth for loaded source contributor ordering is the app-owned manifest or equivalent
-extension record, not a directory listing. Build validation must reject unreadable referenced files
-under `instructions/full/` and must warn on unreferenced non-MDX files in that directory when they
-look accidental. Build validation must reject duplicate `instructionFiles` entries and entries that
-reference unknown files. Missing referenced files and duplicate logical entries are build errors.
+The source of truth for loaded source contributor ordering is the extension manifest or equivalent
+source record interpreted by `@svvy/extensions`, not a directory listing. Build validation must
+reject unreadable referenced files under `instructions/full/` and must warn on unreferenced non-MDX
+files in that directory when they look accidental. Build validation must reject duplicate
+`instructionFiles` entries and entries that reference unknown files. Missing referenced files and
+duplicate logical entries are build errors.
 
 Minimal instructions are a single concise loading-hint file:
 
@@ -368,11 +377,11 @@ lifecycle and usage:
 - per-session loaded and available extension bindings
 - build/readiness facts needed by runtime and read models
 - requirement status facts
-- dependency approval ledger for approved dependency identities and approved trusted dependency
-  identities
+- DB/product-state-backed committed dependency approval facts for approved dependency identities and
+  approved trusted dependency identities
 - pending dependency approval records that can be referenced by app panes and conversation tool cards
 - reversible change/revert history
-- user-named snapshot metadata and payloads
+- user-named snapshot facts and extension-owned payload references
 
 Canonical extension records, category/interface definitions, instruction-file config, source
 manifests, current build metadata interpretation, generated-context construction, and dependency
@@ -395,8 +404,8 @@ Builtin extensions have packaged defaults plus local editable source directories
   cannot be edited through Extension Managing
 - `inspect` ensures the builtin local source directory exists, scaffolded from packaged defaults when
   missing, then returns those editable paths so shell inspection and `apply_patch` work normally
-- `reset` restores builtin defaults by replacing the selected local source scope from packaged
-  defaults
+- `reset` asks `@svvy/extensions` to replace the selected local source scope from packaged builtin
+  defaults; runtime coordinates the operation and state stores committed facts
 
 External instruction records are a separate category:
 
@@ -454,13 +463,17 @@ Generated agent context aggregates use a package-private lightweight cache:
 - cache hits must validate the indexed blob exists and matches the blob manifest before use
 - cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
   `blobs/<aggregate-cache-key>/`
-- session, handler-thread, and workflow task-attempt generated-context bindings store the aggregate
-  cache key plus the exact generated aggregate payload they received: `prompt.md`,
-  `svvyx-guidance.md`, `commands.d.ts`, `native-tool-schemas.json`, the generated context
-  fingerprint, loaded and available extension ids, and external source hashes
-- bindings use the aggregate cache key for traceability and cache reuse, but historical inspection
-  uses the durable bound payload; if a cache entry is missing, new/current aggregate generation can
-  regenerate it from current source inputs without changing older bound payloads
+- session, handler-thread, and workflow task-attempt generated-context bindings store product-state
+  facts only: the aggregate cache key, generated context fingerprint, loaded and available extension
+  ids, external-instruction metadata, source/content hashes, trace facts, and references needed to
+  prove which generated aggregate was bound; `@svvy/extensions` owns generated-context production
+  and binding-input reconciliation
+- bindings do not duplicate generated file bodies or aggregate payloads such as `prompt.md`,
+  `svvyx-guidance.md`, `commands.d.ts`, or `native-tool-schemas.json` into product state; those
+  bodies remain file-backed cache artifacts under the aggregate cache
+- bindings use the aggregate cache key for traceability and cache reuse; if a cache entry is
+  missing, new/current aggregate generation can regenerate it from current source inputs without
+  changing older binding facts
 - aggregate cache deletion is always safe; it must never be treated as deleting product history
 - aggregate cache pruning is based only on cache mechanics and must not encode product semantics; the
   default cache budget is 256 MiB total under `generated/aggregates/blobs/`, with entries unused
@@ -508,7 +521,7 @@ Revertability:
 | `reset`                                                                                  | Restore the pre-reset files and usage/product state recorded by that reset change.                                                                                                                                          |
 | `delete`                                                                                 | Restore the extension directory from app-managed trash and restore its registry state.                                                                                                                                      |
 | `create`                                                                                 | No revert affordance; the UI may show Delete for the created extension.                                                                                                                                                     |
-| `build`                                                                                  | No user-facing rollback or activation command. Build status may be shown as indicators only; the current build is replaced atomically after success.                                                                        |
+| `build`                                                                                  | No user-facing rollback or activation command. Build status may be shown as indicators only; a successful build atomically promotes a new current build.                                                                    |
 | Dependency install                                                                       | No rollback promise. Reverting source, manifest, or package changes can make dependency identities disappear for future builds, but package caches, Bun lifecycle-script effects, and installed artifacts are not reverted. |
 | Secret entry, update, or removal                                                         | Not agent-readable and not part of Extension Managing revert.                                                                                                                                                               |
 | External shell side effects                                                              | Not reverted by Extension Managing.                                                                                                                                                                                         |
@@ -530,10 +543,9 @@ Build behavior:
 
 - Ordinary agent file edits do not auto-build.
 - `BUILD_REQUIRED` is based on the current source fingerprint differing from the last successful
-  current build fingerprint, not on whether the source differs from packaged defaults. If a user
-  builds a customized builtin and then manually edits the source back to its packaged default, the
-  extension is no longer customized but still requires a build before that restored source becomes
-  the active generated context.
+  current build fingerprint, not on whether the source differs from packaged defaults. A restored
+  source may match packaged defaults, but `buildRequired: true` remains until a successful build
+  activates that source as the current generated context.
 - User/product-triggered source or config changes may auto-build immediately after the action. This
   includes revert, reset when it changes build inputs, and loading a snapshot.
 - Auto-builds use the same `build` implementation and dependency approval gate as a normal explicit
@@ -587,7 +599,9 @@ not the shell-dispatch security boundary. It is separate from the native `list_e
 Extension Managing is an app-owned builtin `svvyx` namespace. Its command schema is exposed as a
 read-only app-owned generated contract for UI and prompt inspection. It does not have editable
 extension runtime source under `source/index.ts`; its implementation is an app-owned builtin handler
-in `@svvy/extensions`, invoked through the runtime/state service graph.
+in `@svvy/extensions`. `@svvy/runtime` invokes that handler during accepted command execution and
+applies any returned `ExtensionRuntimeOperation` items through runtime-owned lanes and core-owned
+state ports.
 
 ## Extension Managing Loaded Instruction Files
 
@@ -882,8 +896,8 @@ svvyx tool list -s closed -l 10
 
 App-owned `svvyx` command contracts are generated from current source contracts only. When a command
 shape changes, the source contract, generated help, skill docs, and JSON Schema update in the same
-change. Agents and UI callers use only the current generated contract. Older command behavior is not
-kept unless an explicit current product spec defines it as the shipped behavior.
+change. Agents and UI callers use only the current generated contract. The shipped command surface
+consists only of behavior defined by current product specs and generated contracts.
 
 ### Environment Variables
 
@@ -1448,14 +1462,10 @@ type ExtensionIssue = {
 ```
 
 `CliRequirementStatus.installCommand` and `CliRequirementStatus.updateCommand` are directly runnable
-shell commands when non-null. The Extensions UI treats install/update as explicit user-initiated
-product actions: `@svvy/desktop` submits the action through the runtime facade for that exact
-extension requirement, `@svvy/extensions` validates the immutable command plan, `@svvy/runtime`
-executes the scoped subprocess and records command facts, and the UI opens a closeable inline
-command-output panel under that requirement. The panel streams stdout/stderr from the tracked
-command while the process runs, shows pending/success/failure state, and refreshes inventory
-afterward. Closing the panel only hides the displayed output; it does not cancel the user-initiated
-install/update process.
+shell commands when non-null. User-clicked Extensions UI install/update actions remain unavailable
+until the dependency-action lifecycle is promoted with exact core/runtime admission schemas,
+state/package contracts, approval linkage, sandbox launch policy, subprocess lifetime, command
+facts, readiness refresh, public error mapping, and tests.
 Agent-initiated installs are still ordinary Shell work. The manifest stores one reusable
 exact-version template; inspect and build-error output resolve `{{version}}` before returning the
 status object. Missing requirements resolve the template with `defaultVersion`. Update actions
@@ -1870,7 +1880,10 @@ Applicability:
 - any extension record without editable local instruction source must reject these commands with
   `INSTRUCTIONS_NOT_EDITABLE`
 
-All successful lifecycle commands that change source files or instruction-file config:
+Lifecycle handlers validate the requested source or instruction-file config change and return closed
+source/config change operations. Runtime applies those operations through runtime-owned lanes and
+core-owned state ports. Successful runtime-applied lifecycle operations that change source files or
+instruction-file config:
 
 - record a reversible file-level Extension Managing change
 - set `draftChanged: true`
@@ -1878,7 +1891,7 @@ All successful lifecycle commands that change source files or instruction-file c
 - leave the current successful build active until the next successful `build`
 - return the updated ordered `instructionsFull` array and `instructionsFullDir`
 
-Instruction-file config currently contains one setting: `bypassed`. A bypassed file remains present
+Instruction-file config contains one setting: `bypassed`. A bypassed file remains present
 under `instructions/full/`, appears in `inspect`, may be generated by build, and may be read by an
 agent, but it is bypassed when `svvy` concatenates loaded full instructions for actor prompts.
 Bypassing a file is not the same as removing it and is not the same as setting the whole extension to
@@ -2085,8 +2098,8 @@ For example, `030-client.mdx` in the second position becomes `020-client.mdx`, a
 
 Rename safety:
 
-- prefix width is exactly three digits in v1
-- prefix step is exactly ten in v1
+- prefix width is exactly three digits
+- prefix step is exactly ten
 - case-insensitive collisions must be detected before any rename, because the app must behave safely
   on case-insensitive filesystems
 - the implementation must use an atomic two-phase rename plan through temporary names inside the same
@@ -2172,22 +2185,23 @@ Rules:
 - `configure` must not edit file content, rename files, generate files, or run build.
 - `configure` must reject unknown files with `INSTRUCTION_FILE_NOT_FOUND`.
 - `configure` must reject non-boolean `--bypassed` values with `INVALID_INSTRUCTION_CONFIG`.
-- for builtin extensions, `configure` writes local source metadata and never mutates packaged
-  defaults directly
-- for user extensions, `configure` writes the extension's editable `manifest.json` or equivalent
-  local config file
+- for builtin extensions, `configure` returns a closed operation for local source metadata mutation
+  and never mutates packaged defaults directly
+- for user extensions, `configure` returns a closed operation for the extension's editable
+  `manifest.json` or equivalent local config file
 - if the requested value equals the current value, the command is idempotent: it returns
   `changed: false`, records no reversible change, leaves `buildRequired` unchanged, and does not queue
   follow-up work
-- if the value changes, the command records a reversible change, sets `draftChanged: true`, sets
-  `buildRequired: true`, and leaves existing generated contexts active until the next successful
-  `build`
+- if the value changes, runtime applies the closed operation, records a reversible change, sets
+  `draftChanged: true`, sets `buildRequired: true`, and leaves existing generated contexts active
+  until the next successful `build`
 - after the next successful build, changed bypass state affects generated-context fingerprints and
   affected sessions become stale until the normal update-before-next-turn refresh rule applies
 
 ## `build`
 
-Use case: validate files, regenerate derived extension context, and activate the new successful build.
+Use case: validate files, regenerate derived extension context, and make the successful build the
+current extension build.
 
 ```bash
 svvyx extensions build <id> --json
@@ -2200,11 +2214,14 @@ Parameters:
 | `<id>`    | yes      | Stable extension id.          |
 | `--json`  | no       | Return machine-readable JSON. |
 
-Successful builds always activate the new generated extension context for future extension
-resolution. There is no separate user-facing activation command and no user-facing build rollback
-command. A build writes to `builds/extensions/<id>/staging/<build-run-id>/` while it is running;
-after validation succeeds, `svvy` atomically replaces `builds/extensions/<id>/current/` with that
-staged output. Failed or blocked builds must not replace `current/`.
+Build handlers validate build intent and return a runtime operation. Runtime invokes
+`@svvy/extensions` to validate source, write generated build artifacts, and return build evidence;
+runtime then commits build/readiness facts through core-owned state ports and publishes
+notifications after commit. Successful builds become the current generated extension context for
+subsequent extension resolution through those committed facts. There is no separate user-facing activation command and no user-facing build
+rollback command. A build writes to `builds/extensions/<id>/staging/<build-run-id>/` while it is
+running; after validation succeeds, `svvy` atomically replaces `builds/extensions/<id>/current/`
+with that staged output. Failed or blocked builds must not replace `current/`.
 
 Build results split context readiness from runtime readiness:
 
@@ -2213,8 +2230,8 @@ Build results split context readiness from runtime readiness:
   generated extension context and affect extension context fingerprints.
 - `runtimeReady` means all runtime prerequisites for loading or invoking the extension are satisfied,
   including required app-managed env values and required installed dependencies or external binaries.
-- A successful build with `contextReady: true` and `runtimeReady: false` still activates the new
-  generated context and may make affected bindings stale by fingerprint mismatch. The affected
+- A successful build with `contextReady: true` and `runtimeReady: false` still commits current
+  generated context facts and may make affected bindings stale by fingerprint mismatch. The affected
   actor may see updated instructions, declarations, and readiness issues, but runtime invocation or
   `load_extension` still fails until the runtime blocker is resolved.
 
@@ -2313,9 +2330,9 @@ required CLI status cannot be determined, build fails with an ordinary JSON erro
 whose detected version differs from the manifest default does not fail build; build uses the
 detected version and reports update metadata for the UI. Build must not create a dependency approval
 request, must not run the declared install command, and must not leave a blocked build that can
-resume automatically. The user can run the returned install/update command through the tracked
-Extensions UI action, or an agent can run it from Shell when the agent is explicitly handling setup,
-then rerun build.
+resume automatically. The user cannot run the returned install/update command through an Extensions
+UI action until the dependency-action lifecycle is promoted; an agent can run it from Shell when the
+agent is explicitly handling setup, then rerun build.
 
 Missing CLI example:
 
@@ -2445,15 +2462,15 @@ Dependency confirmation example:
 ```
 
 Failed builds must leave the current successful build untouched. The failed staging directory is
-discarded unless retained only long enough to surface diagnostics for that build attempt; it is not a
-preserved build artifact or rollback target.
+diagnostic scratch space for that build attempt only; it is not a preserved build artifact or
+rollback target.
 
 Failed installs must leave the current successful build untouched. `package.json` remains as the
 user's or agent's requested dependency state. `bun.lock` may have changed only if Bun reached the
 lockfile write step before failure; after any failed, interrupted, or externally modified install,
 the next startup, refresh, or build must validate `package.json`, `bun.lock`, installed artifacts,
-and the approval ledger before using that dependency state. A stale or inconsistent lockfile is a
-validation problem to report, not a reason to use best-effort dependency state.
+and committed dependency approval facts before using that dependency state. A stale or inconsistent
+lockfile is a validation problem to report, not a reason to use best-effort dependency state.
 
 When a build succeeds, `buildRequired` becomes `false`. When the build is blocked by dependency
 approval, fails validation, or fails during install/build, `buildRequired` remains `true`. The UI
@@ -2503,7 +2520,7 @@ Dependency identity and approval rules:
 Dependency availability checks without install:
 
 - `inspect`, startup refresh, and extension refresh may read manifests, `package.json`, `bun.lock`,
-  `node_modules`, build state, and the approval ledger
+  `node_modules`, build state, and committed dependency approval facts
 - these checks must not install packages, compile extension source, rewrite `package.json`, rewrite
   `bun.lock`, resolve `latest`, or make network requests only to improve a status label
 - if status cannot be known without install or build, the status must be reported as a concrete
@@ -2520,9 +2537,9 @@ Dependency approval UI:
   the command result appears as a tool card requiring approval in that conversation
 - both UI placements point at the same durable approval request when they are blocked on the same
   unresolved dependency identities
-- approving a request records the listed dependency and trusted dependency identities in the approval
-  ledger and updates every pane, conversation tool card, and blocked operation that references that
-  request
+- approving a request commits the listed dependency and trusted dependency identities as
+  DB/product-state-backed approval facts and updates every pane, conversation tool card, and blocked
+  operation that references that request
 - approval resumes blocked app-level build work and any still-pending conversation tool card whose
   blocked operation is an install/build for the same approval request; it does not create a new actor
   binding or expose new generated extension guidance to a session
@@ -2530,13 +2547,14 @@ Dependency approval UI:
   conversation tool card, leaves `buildRequired: true`, and leaves the current build unchanged
 - rejection does not create a permanent deny rule; a later explicit build or refresh may create a new
   approval request if the same unapproved identities are still required
-- unanswered approval requests remain pending and visible until approved, rejected, or retired
-  by later source/package changes that no longer require the same identities
+- unanswered approval requests remain pending and visible until approved, rejected, retired, or made
+  unnecessary by later source/package changes
 
-Dependency approval is not the Codex-like shell approval path. It is a product-state approval ledger
-for exact dependency and trusted dependency identities. It must not be sent to the auto-reviewer as a
-generic policy fact, must not grant shell approval, must not grant a command-prefix rule, and must not
-load an extension or expose generated extension guidance by itself. If an agent runs
+Dependency approval is not the Codex-like shell approval path. It is a set of
+DB/product-state-backed committed approval facts for exact dependency and trusted dependency
+identities. It must not be sent to the auto-reviewer as a generic policy fact, must not grant shell
+approval, must not grant a command-prefix rule, and must not load an extension or expose generated
+extension guidance by itself. If an agent runs
 `svvyx extensions build <id> --json` and that
 build reaches dependency approval, the command result references the durable dependency approval
 request; the blocked install/build resumes only after that dependency request is approved.
@@ -2547,8 +2565,8 @@ The normal build pipeline is:
 files changed
   -> build required
   -> validate source, manifest, package metadata, and lockfile
-  -> maybe ask approval for unapproved dependency or trusted dependency identities
-  -> maybe install
+  -> request dependency approval when unapproved dependency or trusted dependency identities are required
+  -> install required dependencies only after validation and required approvals succeed
   -> build
   -> atomically activate only after success
 ```
@@ -2577,11 +2595,13 @@ Use case: change whether an extension is loaded, available, or unavailable for a
 Any actor session with the Extension Managing extension loaded may request an extension usage change
 for any agent profile, not only the profile currently bound to that actor session. This is a profile
 management command: Extension Managing validates intent and produces a closed state-change request.
-When called in-process, `@svvy/runtime` applies that request through state-owned profile ports. When
-called through shell `exec_command`, the trusted `svvyx extensions` child subprocess serializes the
-request as a signed `runtime_effect.request` transport intent in the subprocess result, and the
-parent runtime process decodes and applies it after signature validation. The child process must not
-open the state database, construct state ports, or decide which live sessions are affected.
+`@svvy/runtime` applies that request through the appropriate core-owned profile/actor-usage state
+contract implemented by `@svvy/state`. When called through Shell `exec_command`,
+`svvyx extensions` is ordinary app-owned CLI input. The accepted command is routed back through
+`@svvy/runtime`, which invokes the Extension Managing handler and applies the returned
+`ExtensionRuntimeOperation` items through runtime-owned lanes and core-owned state ports. The CLI
+subprocess never emits runtime-effect transport intents, opens the state database, constructs state
+ports, or decides which live sessions are affected.
 
 The applied request changes the target agent profile's persistent extension usage state and reports
 existing sessions or task attempts that are bound to the affected profile and whose generated agent
@@ -2596,9 +2616,8 @@ current binding use `load_extension`; agents that want to change profile default
 `svvyx extensions set-usage`.
 
 Reverting a usage change uses the same affected-surface path. The revert command restores the
-recorded previous profile usage value, emits a signed `runtime_effect.request` transport intent when
-shell-dispatched, and the parent runtime process derives affected surfaces, command facts, and
-read-model invalidations from the committed state change.
+recorded previous profile usage value, and the parent runtime process derives affected surfaces,
+command facts, and read-model invalidations from the committed state change.
 
 Fixed app-native control extensions cannot be changed by `set-usage`. Extension Loading is
 fixed `loaded` and attempts to set it to any state must fail with a clear error.
@@ -2667,10 +2686,10 @@ Parameters:
 
 For `--scope instructions`, reset applies to the complete instruction source set:
 
-- the builtin loaded source contributor set under `instructions/full/*.mdx` is restored exactly
-- source-added loaded source contributors are moved to app-managed trash
-- source-removed builtin loaded source contributors are restored
-- renamed loaded source contributors are restored to builtin names
+- the loaded source contributor set under `instructions/full/*.mdx` exactly matches the packaged
+  builtin contributor set
+- contributor files outside the packaged builtin contributor set are moved to app-managed trash
+- packaged builtin contributor files are present with their canonical ids and filenames
 - builtin instruction-file config, including `bypassed`, is restored exactly
 - `instructions/minimal.mdx` is restored
 
@@ -2903,9 +2922,9 @@ Use case: save and restore named extension presets from the Extensions surface.
 
 Snapshot operations are user-first product actions. They may also be exposed through Extension
 Managing commands so an agent can inspect or apply them when the user asks, but snapshot content is
-not an agent-readable dump of secrets. Snapshots are local-only in v1. Exporting snapshots,
-importing snapshots on another machine, and cross-machine secret restore are not product concerns
-and are unsupported.
+not an agent-readable dump of secrets. Snapshots are local-only. Exporting snapshots, importing
+snapshots on another machine, and cross-machine secret restore are not product concerns and are
+unsupported.
 
 Command shape:
 
@@ -2981,6 +3000,10 @@ Snapshot command output must not include raw snapshot file paths by default. If 
 needed for an app-owned support workflow, it must still not expose raw secret values, encrypted
 secret blobs, keychain item ids, generated aggregate cache paths, or build output paths.
 
+Snapshot payload shape and application are owned by `@svvy/extensions`. `@svvy/state` stores
+snapshot facts, metadata, coarse secret references, and committed operation/readiness facts; it does
+not own source/config/package payload authority.
+
 Snapshot payload includes:
 
 - user extension source files and manifests
@@ -3003,12 +3026,12 @@ Snapshot payload excludes:
   value-correlating secret metadata
 
 Loading a snapshot restores source/config/package state and immediately requests builds for affected
-extensions. If dependency install is needed, the normal install-boundary dependency approval ledger is
-checked. If all dependency and trusted dependency identities are already approved, install proceeds
-without prompting. If at least one dependency or trusted dependency identity is unapproved, loading
-creates or reuses the durable pending approval request for those identities and pauses before
-install/build continues. Approving the request records the listed identities and resumes the blocked
-snapshot build work. Rejecting it marks the snapshot load's build work blocked, leaves
+extensions. If dependency install is needed, the normal install-boundary committed dependency
+approval facts are checked. If all dependency and trusted dependency identities are already approved,
+install proceeds without prompting. If at least one dependency or trusted dependency identity is
+unapproved, loading creates or reuses the durable pending approval request for those identities and
+pauses before install/build continues. Approving the request records the listed identities and resumes
+the blocked snapshot build work. Rejecting it marks the snapshot load's build work blocked, leaves
 `buildRequired: true` for affected extensions, and leaves current builds unchanged.
 
 Snapshot dependency approvals follow the same separation as build dependency approvals: they are not
@@ -3020,16 +3043,16 @@ snapshot removes an extension that an existing session had loaded or available, 
 the missing extension exactly as it would after extension deletion and then becomes stale by
 fingerprint mismatch.
 
-Snapshot load context impact is a DB/product-state-backed operation. Extension Managing computes the
-closed input `{ affectedExtensionIds, affectedUsageProfiles, removedUserExtensionIds }`. When
-shell-dispatched, the child emits a signed `runtime_effect.request` transport intent in the
-subprocess result and receives no affected surfaces locally. The parent runtime process applies
-snapshot context impact through the runtime-owned generated-context binding update path, commits
-binding changes through `@svvy/state` ports, and returns the affected surfaces. The update drops
-removed user extensions from existing orchestrator session and handler-thread generated-context
-bindings. The parent patches those surfaces into
-`agentContextImpact.affectedSurfaces` and sets `commandFacts.affectedAgentContextSurfaces`. The
-child process must not perform these SQLite writes.
+Snapshot load context impact is coordinated by runtime from extension-owned restored source/config
+and generated-context binding inputs plus state-backed committed facts. Extension Managing validates
+the snapshot-load intent through `@svvy/extensions` and returns a closed operation describing the
+source/package changes and affected input ids. When shell-dispatched, the accepted
+`svvyx extensions` command is routed through `@svvy/runtime`, which applies the operation through
+the generated-context binding update path, commits binding facts through `@svvy/state` ports,
+derives affected surfaces, command facts, and read-model invalidations, and publishes notifications
+after commit. Existing orchestrator session and handler-thread generated-context bindings are
+reconciled to the restored extension inventory before the next safe prompt-bearing refresh. The CLI
+subprocess receives no affected surfaces locally and performs no SQLite writes.
 
 Load success example:
 

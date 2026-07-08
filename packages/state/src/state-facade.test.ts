@@ -1,29 +1,128 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { AppLogWritePort, IsoDateTimeStringSchema, StateContractError } from "@svvy/core";
-import type { AppLogEntryId, WorkspaceId } from "@svvy/core";
+import * as Schema from "effect/Schema";
+import {
+  AppLogWritePort,
+  AbsolutePath,
+  IsoDateTimeStringSchema,
+  ProviderAuthStatusStatePort,
+  RuntimeWorkspaceStatePort,
+  SandboxPolicySource,
+  StateCommandPostCommitNotificationPort,
+  StateContractError,
+} from "@svvy/core";
+import type {
+  AppLogEntryId,
+  CommandId,
+  RuntimeClientRequestId,
+  RuntimeClientSubmissionSource,
+  RuntimeOwnerId,
+  ProviderId,
+  StateCommandPostCommitNotificationInput,
+  StateRevision,
+  WorkspaceId,
+} from "@svvy/core";
 import {
   StateFacadeError,
   StateReadModels,
+  createStateAppLogsFacade,
   createStateCommandsFacade,
   createStateFacade,
   layer,
   type StateReadModelResult,
 } from "./state-facade";
+import { StateLayerConfigSchema } from "./state-layer-config";
+import { testPlatformLayer } from "./platform-test-support";
 
 const iso = (value: string) => value as typeof IsoDateTimeStringSchema.Type;
 const noop = () => {};
+const rootWorkspaceId = "workspace_state_root" as WorkspaceId;
+const openaiProviderId = "openai" as ProviderId;
+const anthropicProviderId = "anthropic" as ProviderId;
+const defaultArtifactDirectory = () => join(homedir(), ".config", "svvy", "artifacts");
+const stateLayerConfig = () =>
+  Schema.decodeUnknownSync(StateLayerConfigSchema)({
+    databasePath: ":memory:",
+    artifactRoot: "/tmp/svvy-state-facade-root-artifacts",
+    busyTimeoutMs: 1_000,
+  });
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
+const stateLayer = () =>
+  layer({ config: stateLayerConfig(), digest: testDigest }).pipe(
+    Layer.provide(testPlatformLayer()),
+  );
+const stateLayerWithNotifications = (published: StateCommandPostCommitNotificationInput[] = []) =>
+  Layer.merge(
+    stateLayer(),
+    Layer.succeed(
+      StateCommandPostCommitNotificationPort,
+      StateCommandPostCommitNotificationPort.of({
+        notifyCommittedStateCommand: (input) =>
+          Effect.sync(() => {
+            published.push(input);
+            return {
+              receipt: input.receipt,
+              acceptedDescriptorCount: input.descriptors.length,
+              rebaselineRequired: false,
+            };
+          }),
+      }),
+    ),
+  );
 
 describe("State app-log facade slice", () => {
+  it("adapts app-bootstrap app logs and the write port over one state-owned store", async () => {
+    const appLogs = createStateAppLogsFacade({
+      now: () => "2026-06-21T12:00:00.000Z",
+    });
+    try {
+      const entries: string[] = [];
+      const unsubscribe = appLogs.subscribe((updated) => {
+        entries.push(...updated.map((entry) => entry.message));
+      });
+
+      appLogs.append({
+        level: "info",
+        source: "app.lifecycle",
+        message: "AUTH_TOKEN=secret-value-here was ignored",
+      });
+      expect(typeof appLogs.writePort.append).toBe("function");
+      appLogs.append({
+        level: "warn",
+        source: "workspace",
+        message: "Bearer abcdefghijklmnop was ignored",
+      });
+
+      expect(entries).toEqual([
+        "AUTH_TOKEN=[REDACTED] was ignored",
+        "Bearer [REDACTED] was ignored",
+      ]);
+      expect(appLogs.query().entries.map((entry) => entry.message)).toEqual(entries);
+      expect(appLogs.summary()).toMatchObject({
+        latestSeq: 2,
+        unread: { total: 2, info: 1, warn: 1 },
+      });
+      unsubscribe();
+    } finally {
+      appLogs.close();
+    }
+  });
+
   it("reads app-log read models through the final StateFacade surface", async () => {
-    const managedRuntime = ManagedRuntime.make(
-      layer({ appLogs: { now: () => "2026-06-21T12:00:00.000Z" } }),
-    );
+    const managedRuntime = ManagedRuntime.make(stateLayer());
     try {
       await managedRuntime.runPromise(
         Effect.gen(function* () {
+          const sandboxPolicySource = yield* SandboxPolicySource;
+          expect(sandboxPolicySource).toHaveProperty("snapshot");
+
           const appLogWritePort = yield* AppLogWritePort;
           yield* appLogWritePort.append({
             workspaceId: "workspace_state_facade_read" as WorkspaceId,
@@ -65,12 +164,55 @@ describe("State app-log facade slice", () => {
     }
   });
 
-  it("runs app-log read-state commands and publishes committed invalidations", async () => {
-    const workspaceId = "workspace_state_facade_command" as WorkspaceId;
+  it("projects sandbox policy roots from state layer config", async () => {
     const managedRuntime = ManagedRuntime.make(
-      layer({ appLogs: { now: () => "2026-06-21T12:00:00.000Z" } }),
+      layer({
+        config: Schema.decodeUnknownSync(StateLayerConfigSchema)({
+          databasePath: ":memory:",
+          artifactRoot: "/tmp/svvy-state-facade-sandbox-artifacts",
+          busyTimeoutMs: 1_000,
+          sandboxPolicy: {
+            generatedOutputRoots: ["/tmp/svvy-state-facade-generated/core-type-contract"],
+            temporaryRoots: ["/tmp/svvy-state-facade-tmp"],
+          },
+        }),
+        digest: testDigest,
+      }).pipe(Layer.provide(testPlatformLayer())),
     );
-    const published: unknown[] = [];
+    try {
+      await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const sandboxPolicySource = yield* SandboxPolicySource;
+          const snapshot = yield* sandboxPolicySource.snapshot({
+            scope: { kind: "workspace", workspaceId: rootWorkspaceId },
+            commandId: "cmd_state_facade_sandbox_policy" as CommandId,
+            launchKind: "direct_shell",
+            cwd: "/tmp" as typeof AbsolutePath.Type,
+          });
+
+          expect(snapshot.filesystemPolicy.entries).toContainEqual({
+            access: "read",
+            path: "/tmp/svvy-state-facade-generated/core-type-contract" as typeof AbsolutePath.Type,
+            recursive: true,
+            source: "generated-output",
+          });
+          expect(snapshot.filesystemPolicy.entries).toContainEqual({
+            access: "write",
+            path: "/tmp/svvy-state-facade-tmp" as typeof AbsolutePath.Type,
+            recursive: true,
+            source: "temporary",
+          });
+        }),
+      );
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("runs app-log read-state commands through the final command facade", async () => {
+    const workspaceId = "workspace_state_facade_command" as WorkspaceId;
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
 
     try {
       await managedRuntime.runPromise(
@@ -93,25 +235,25 @@ describe("State app-log facade slice", () => {
         }),
       );
 
-      const commands = createStateCommandsFacade(managedRuntime, {
-        invalidationSink: {
-          publishCommittedStateInvalidations: async (input) => {
-            published.push(input);
-          },
-        },
-      });
+      const commands = createStateCommandsFacade(managedRuntime);
 
       const first = await commands.appLogs.markRead({
         workspaceId,
         entryIds: ["app-log-1" as AppLogEntryId],
-        readAt: "2026-06-21T12:02:00.000Z",
-        clientSubmission: { clientRequestId: "mark-read-1", source: "test" },
+        readAt: iso("2026-06-21T12:02:00.000Z"),
+        clientSubmission: {
+          clientRequestId: "mark-read-1" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
       });
       const duplicate = await commands.appLogs.markRead({
         workspaceId,
         entryIds: ["app-log-1" as AppLogEntryId],
-        readAt: "2026-06-21T12:02:00.000Z",
-        clientSubmission: { clientRequestId: "mark-read-1", source: "test" },
+        readAt: iso("2026-06-21T12:02:00.000Z"),
+        clientSubmission: {
+          clientRequestId: "mark-read-1" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
       });
       const state = createStateFacade(managedRuntime);
       const summary = await state.readModels.fetch({ kind: "appLogSummary", workspaceId });
@@ -132,9 +274,13 @@ describe("State app-log facade slice", () => {
       expect(summary.value.unread).toEqual({ total: 1, debug: 0, info: 0, warn: 0, error: 1 });
       expect(published).toEqual([
         {
-          source: "state-command-facade",
+          operation: "stateCommands.appLogs.markRead",
+          receipt: first.receipt,
           descriptors: [{ scope: "workspace", workspaceId, invalidation: { model: "appLogs" } }],
-          clientSubmission: { clientRequestId: "mark-read-1", source: "test" },
+          clientSubmission: {
+            clientRequestId: "mark-read-1" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
         },
       ]);
       commands.close();
@@ -144,8 +290,478 @@ describe("State app-log facade slice", () => {
     }
   });
 
+  it("publishes app-scope app-log invalidations for app-global read-state commands", async () => {
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
+
+    try {
+      await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const appLogWritePort = yield* AppLogWritePort;
+          yield* appLogWritePort.append({
+            level: "warn",
+            source: "app.lifecycle",
+            message: "global warning",
+            occurredAt: iso("2026-06-21T12:00:00.000Z"),
+          });
+        }),
+      );
+
+      const commands = createStateCommandsFacade(managedRuntime);
+      const result = await commands.appLogs.clearWorkspaceUnread({
+        readAt: iso("2026-06-21T12:02:00.000Z"),
+        clientSubmission: {
+          clientRequestId: "clear-global-unread" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const state = createStateFacade(managedRuntime);
+      const refetched = await state.readModels.refetchInvalidation({
+        descriptor: { scope: "app", invalidation: { model: "appLogs" } },
+      });
+
+      expect(result.receipt).toMatchObject({
+        clientRequestId: "clear-global-unread",
+        outcome: "applied",
+        committedAt: "2026-06-21T12:02:00.000Z",
+        stateRevision: 1,
+      });
+      expect(published).toEqual([
+        {
+          operation: "stateCommands.appLogs.clearWorkspaceUnread",
+          receipt: result.receipt,
+          descriptors: [{ scope: "app", invalidation: { model: "appLogs" } }],
+          clientSubmission: {
+            clientRequestId: "clear-global-unread" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        },
+      ]);
+      expect(refetched.map((readModel) => readModel.kind)).toEqual(["appLogs", "appLogSummary"]);
+      commands.close();
+      state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("reads app preferences and settings read models through the final StateFacade surface", async () => {
+    const managedRuntime = ManagedRuntime.make(stateLayer());
+
+    try {
+      const state = createStateFacade(managedRuntime);
+      const appPreferences = await state.readModels.fetch({ kind: "appPreferences" });
+      const settings = await state.readModels.fetch({ kind: "settings" });
+      const baseline = await state.readModels.rebaseline({ reason: "renderer-startup" });
+
+      expect(appPreferences.kind).toBe("appPreferences");
+      if (appPreferences.kind !== "appPreferences") {
+        throw new Error("Expected appPreferences read model.");
+      }
+      expect(appPreferences.value).toMatchObject({
+        appearance: "system",
+        externalEditor: null,
+        artifactDirectory: defaultArtifactDirectory(),
+        approvalMode: "auto-review",
+        networkAccess: true,
+        ambientResources: {},
+        updatedAt: "1970-01-01T00:00:00.000Z",
+        revision: 0,
+      });
+      expect(settings).toEqual({
+        kind: "settings",
+        value: { preferences: appPreferences.value },
+      });
+      expect(baseline.app.map((readModel) => readModel.kind)).toEqual([
+        "appLogSummary",
+        "appPreferences",
+        "settings",
+        "providerAuth",
+      ]);
+      state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("updates app preferences through the final command facade", async () => {
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
+
+    try {
+      const commands = createStateCommandsFacade(managedRuntime);
+      const first = await commands.appPreferences.update({
+        patch: {
+          appearance: "dark",
+          externalEditor: "code",
+          artifactDirectory: "/tmp/svvy-custom-artifacts" as typeof AbsolutePath.Type,
+          approvalMode: "user",
+          networkAccess: false,
+          ambientResources: { skills: true, commands: false },
+        },
+        clientSubmission: {
+          clientRequestId: "settings-save-01" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const duplicate = await commands.appPreferences.update({
+        patch: { approvalMode: "full-access" },
+        clientSubmission: {
+          clientRequestId: "settings-save-01" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const state = createStateFacade(managedRuntime);
+      const appPreferences = await state.readModels.fetch({ kind: "appPreferences" });
+      const settingsRefetch = await state.readModels.refetchInvalidation({
+        descriptor: { scope: "app", invalidation: { model: "settings" } },
+      });
+
+      expect(first.receipt).toMatchObject({
+        clientRequestId: "settings-save-01",
+        outcome: "applied",
+        committedAt: "1970-01-01T00:00:00.000Z",
+        stateRevision: 1,
+      });
+      expect(duplicate.receipt).toMatchObject({
+        clientRequestId: "settings-save-01",
+        outcome: "duplicate",
+      });
+      expect(appPreferences.kind).toBe("appPreferences");
+      if (appPreferences.kind !== "appPreferences") {
+        throw new Error("Expected appPreferences read model.");
+      }
+      expect(appPreferences.value).toMatchObject({
+        appearance: "dark",
+        externalEditor: "code",
+        artifactDirectory: "/tmp/svvy-custom-artifacts",
+        approvalMode: "user",
+        networkAccess: false,
+        ambientResources: { skills: true, commands: false },
+        updatedAt: "1970-01-01T00:00:00.000Z",
+        revision: 1,
+      });
+      expect(settingsRefetch).toEqual([
+        { kind: "settings", value: { preferences: appPreferences.value } },
+      ]);
+      expect(published).toEqual([
+        {
+          operation: "stateCommands.appPreferences.update",
+          receipt: first.receipt,
+          descriptors: [
+            { scope: "app", invalidation: { model: "appPreferences" } },
+            { scope: "app", invalidation: { model: "settings" } },
+          ],
+          clientSubmission: {
+            clientRequestId: "settings-save-01" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        },
+      ]);
+      commands.close();
+      state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("reads provider auth statuses through the final StateFacade surface", async () => {
+    const managedRuntime = ManagedRuntime.make(stateLayer());
+
+    try {
+      await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const providerAuth = yield* ProviderAuthStatusStatePort;
+          yield* providerAuth.recordProviderStatus({
+            status: {
+              providerId: openaiProviderId,
+              health: "usable",
+              redactedAccountLabel: "acct-openai",
+              refreshedAt: iso("2026-06-21T12:00:00.000Z"),
+            },
+            observedAt: iso("2026-06-21T12:00:00.000Z"),
+            source: "startup_scan",
+          });
+          yield* providerAuth.recordProviderStatus({
+            status: {
+              providerId: anthropicProviderId,
+              health: "expired",
+              redactedAccountLabel: "acct-anthropic",
+              expiresAt: iso("2026-06-21T11:00:00.000Z"),
+              issue: "credential expired",
+            },
+            observedAt: iso("2026-06-21T12:01:00.000Z"),
+            source: "provider_refresh",
+          });
+        }),
+      );
+
+      const state = createStateFacade(managedRuntime);
+      const providerAuth = await state.readModels.fetch({ kind: "providerAuth" });
+      const refetched = await state.readModels.refetchInvalidation({
+        descriptor: { scope: "app", invalidation: { model: "providerAuth" } },
+      });
+      const baseline = await state.readModels.rebaseline({ reason: "renderer-startup" });
+
+      expect(providerAuth.kind).toBe("providerAuth");
+      if (providerAuth.kind !== "providerAuth") {
+        throw new Error("Expected providerAuth read model.");
+      }
+      expect(providerAuth.value.providers.map((provider) => provider.providerId)).toEqual([
+        anthropicProviderId,
+        openaiProviderId,
+      ]);
+      expect(providerAuth.value.usableModelProviders).toEqual([openaiProviderId]);
+      expect(refetched).toEqual([{ kind: "providerAuth", value: providerAuth.value }]);
+      expect(baseline.app.map((readModel) => readModel.kind)).toContain("providerAuth");
+      state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("records provider auth status through the final command facade", async () => {
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
+
+    try {
+      const commands = createStateCommandsFacade(managedRuntime);
+      const first = await commands.providerAuth.recordStatus({
+        status: {
+          providerId: openaiProviderId,
+          health: "usable",
+          redactedAccountLabel: "acct-openai",
+          refreshedAt: iso("2026-06-21T12:00:00.000Z"),
+        },
+        observedAt: iso("2026-06-21T12:00:00.000Z"),
+        source: "startup_scan",
+        clientSubmission: {
+          clientRequestId: "provider-status-01" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const duplicate = await commands.providerAuth.recordStatus({
+        status: {
+          providerId: anthropicProviderId,
+          health: "missing",
+          issue: "not configured",
+        },
+        observedAt: iso("2026-06-21T12:01:00.000Z"),
+        source: "runtime_retry",
+        clientSubmission: {
+          clientRequestId: "provider-status-01" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const workspaceId = "workspace_provider_status_01" as WorkspaceId;
+      const workspaceStatus = await commands.providerAuth.recordStatus({
+        status: {
+          providerId: openaiProviderId,
+          workspaceId,
+          health: "expired",
+          redactedAccountLabel: "acct-openai-workspace",
+          expiresAt: iso("2026-06-21T12:30:00.000Z"),
+          issue: "workspace credential expired",
+        },
+        observedAt: iso("2026-06-21T12:02:00.000Z"),
+        source: "provider_refresh",
+        clientSubmission: {
+          clientRequestId: "provider-status-workspace-01" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      const state = createStateFacade(managedRuntime);
+      const providerAuth = await state.readModels.fetch({ kind: "providerAuth" });
+      const workspaceProviderAuth = await state.readModels.fetch({
+        kind: "providerAuth",
+        workspaceId,
+      });
+      const refetched = await state.readModels.refetchInvalidation({
+        descriptor: {
+          scope: "app",
+          invalidation: { model: "providerAuth", ids: [openaiProviderId] },
+        },
+      });
+      const baseline = await state.readModels.rebaseline({ reason: "manual-refresh" });
+
+      expect(first.receipt).toMatchObject({
+        clientRequestId: "provider-status-01",
+        outcome: "applied",
+        committedAt: "2026-06-21T12:00:00.000Z",
+        stateRevision: 1,
+      });
+      expect(workspaceStatus.receipt).toMatchObject({
+        clientRequestId: "provider-status-workspace-01",
+        outcome: "applied",
+        committedAt: "2026-06-21T12:02:00.000Z",
+        stateRevision: 2,
+      });
+      expect(duplicate.receipt).toMatchObject({
+        clientRequestId: "provider-status-01",
+        outcome: "duplicate",
+      });
+      expect(providerAuth.kind).toBe("providerAuth");
+      if (providerAuth.kind !== "providerAuth") {
+        throw new Error("Expected providerAuth read model.");
+      }
+      expect(providerAuth.value.providers.map((provider) => provider.providerId)).toEqual([
+        openaiProviderId,
+      ]);
+      expect(workspaceProviderAuth.kind).toBe("providerAuth");
+      if (workspaceProviderAuth.kind !== "providerAuth") {
+        throw new Error("Expected workspace providerAuth read model.");
+      }
+      expect(workspaceProviderAuth.value.providers).toEqual([
+        {
+          providerId: openaiProviderId,
+          workspaceId,
+          health: "expired",
+          redactedAccountLabel: "acct-openai-workspace",
+          expiresAt: iso("2026-06-21T12:30:00.000Z"),
+          issue: "workspace credential expired",
+        },
+      ]);
+      expect(workspaceProviderAuth.value.usableModelProviders).toEqual([]);
+      expect(refetched).toEqual([{ kind: "providerAuth", value: providerAuth.value }]);
+      expect(baseline.revision).toBe(2 as StateRevision);
+      expect(published).toEqual([
+        {
+          operation: "stateCommands.providerAuth.recordStatus",
+          receipt: first.receipt,
+          descriptors: [
+            {
+              scope: "app",
+              invalidation: { model: "providerAuth", ids: [openaiProviderId] },
+            },
+          ],
+          clientSubmission: {
+            clientRequestId: "provider-status-01" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        },
+        {
+          operation: "stateCommands.providerAuth.recordStatus",
+          receipt: workspaceStatus.receipt,
+          descriptors: [
+            {
+              scope: "app",
+              invalidation: { model: "providerAuth", ids: [openaiProviderId] },
+            },
+          ],
+          clientSubmission: {
+            clientRequestId: "provider-status-workspace-01" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        },
+      ]);
+      commands.close();
+      state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("maps post-commit notification failures to the committed-receipt facade error", async () => {
+    const workspaceId = "workspace_state_facade_post_commit_failure" as WorkspaceId;
+    const managedRuntime = ManagedRuntime.make(
+      Layer.merge(
+        stateLayer(),
+        Layer.succeed(
+          StateCommandPostCommitNotificationPort,
+          StateCommandPostCommitNotificationPort.of({
+            notifyCommittedStateCommand: (input) =>
+              Effect.fail({
+                type: "state-command-post-commit-notification-error",
+                operation: input.operation,
+                reason: "publication-failed",
+                receipt: input.receipt,
+                message: "notification bus unavailable",
+                affectedReadModels: input.descriptors,
+              }),
+          }),
+        ),
+      ),
+    );
+
+    try {
+      await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const appLogWritePort = yield* AppLogWritePort;
+          yield* appLogWritePort.append({
+            workspaceId,
+            level: "info",
+            source: "workspace",
+            message: "first",
+            occurredAt: iso("2026-06-21T12:00:00.000Z"),
+          });
+        }),
+      );
+
+      const commands = createStateCommandsFacade(managedRuntime);
+      await commands.appLogs
+        .clearWorkspaceUnread({
+          workspaceId,
+          readAt: iso("2026-06-21T12:02:00.000Z"),
+          clientSubmission: {
+            clientRequestId: "clear-unread-fail-post-commit" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        })
+        .then(
+          () => {
+            throw new Error("Expected post-commit notification failure.");
+          },
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(StateFacadeError);
+            const contract = (error as StateFacadeError).contract;
+            expect(contract.reason).toBe("post-commit-notification-failed");
+            if (contract.reason === "post-commit-notification-failed") {
+              expect(contract.receipt).toMatchObject({
+                clientRequestId: "clear-unread-fail-post-commit",
+                outcome: "applied",
+                committedAt: "2026-06-21T12:02:00.000Z",
+              });
+              expect(contract.notificationError).toMatchObject({
+                type: "state-command-post-commit-notification-error",
+                operation: "stateCommands.appLogs.clearWorkspaceUnread",
+                reason: "publication-failed",
+                message: "notification bus unavailable",
+              });
+              expect(contract.message).toContain("notification bus unavailable");
+            }
+          },
+        );
+      commands.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("provides structured-session ports from the private root layer composition", async () => {
+    const managedRuntime = ManagedRuntime.make(stateLayer());
+
+    try {
+      const acquired = await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const workspaces = yield* RuntimeWorkspaceStatePort;
+          return yield* workspaces.acquireDefaultWorkspace({
+            owner: {
+              ownerId: "runtime_owner_state_facade_root" as RuntimeOwnerId,
+              kind: "test",
+            },
+            openReason: "test",
+          });
+        }),
+      );
+
+      expect(acquired.value.workspaceId).toBe(rootWorkspaceId);
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
   it("maps invalid app-log command input to a typed StateFacadeError", async () => {
-    const managedRuntime = ManagedRuntime.make(layer());
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications());
     try {
       const commands = createStateCommandsFacade(managedRuntime);
       await expect(
@@ -182,7 +798,7 @@ describe("State app-log facade slice", () => {
   });
 
   it("rejects excess app-log command fields at the state facade boundary", async () => {
-    const managedRuntime = ManagedRuntime.make(layer());
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications());
     try {
       const commands = createStateCommandsFacade(managedRuntime);
       await commands.appLogs

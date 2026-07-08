@@ -12,7 +12,14 @@ import type {
   WorkflowAgentSettings,
 } from "./agent-settings";
 import type { FileBackedSaveMode } from "./file-backed-edit";
-import type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "@svvy/core";
+import type {
+  ExtensionCategory,
+  ExtensionInterfaceKind,
+  ExtensionUsageState,
+  WorkspaceSessionNavigationReadModel as CoreWorkspaceSessionNavigationReadModel,
+  WorkspaceSessionNavigationSectionId,
+  WorkspaceSessionNavigationSectionState,
+} from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type {
   GeneratedAgentContextActor,
@@ -414,24 +421,24 @@ export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceSc
 
 export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  name: string;
+  envName: string;
   value: string;
 }
 
 export interface RemoveExtensionEnvSecretRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  name: string;
+  envName: string;
 }
 
 export interface SetExtensionEnvOverrideRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  name: string;
+  envName: string;
   value: string;
 }
 
 export interface RemoveExtensionEnvOverrideRequest extends WorkspaceScopedRequest {
   extensionId: string;
-  name: string;
+  envName: string;
 }
 
 export type StaticInspectorPaneTarget =
@@ -1232,22 +1239,10 @@ export interface WorkspaceSessionSummary {
   };
 }
 
-export type WorkspaceSessionNavigationSectionId = "pinned" | "active" | "archived";
+export type { WorkspaceSessionNavigationSectionId, WorkspaceSessionNavigationSectionState };
 
-export interface WorkspaceSessionNavigationSectionState {
-  collapsed: boolean;
-  sizePx: number;
-}
-
-export interface WorkspaceSessionNavigationReadModel {
-  pinnedSessions: WorkspaceSessionSummary[];
-  activeSessions: WorkspaceSessionSummary[];
-  sections: Record<WorkspaceSessionNavigationSectionId, WorkspaceSessionNavigationSectionState>;
-  archived: {
-    collapsed: boolean;
-    sessions: WorkspaceSessionSummary[];
-  };
-}
+export type WorkspaceSessionNavigationReadModel =
+  CoreWorkspaceSessionNavigationReadModel<WorkspaceSessionSummary>;
 
 export type WorkspaceRequestUserInputDelivery = RuntimeMessageDelivery;
 

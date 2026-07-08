@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
@@ -22,11 +23,14 @@ const workspace = {
   id: "workspace_runtime_episode_state_port",
   cwd: "/tmp/svvy-runtime-episode-state-port",
   label: "Runtime episode state port",
-  artifactDir: join(tmpdir(), "svvy-runtime-episode-state-port-artifacts"),
+  artifactDir: join(tmpdir(), `svvy-runtime-episode-state-port-artifacts-${process.pid}`),
 };
 
 const workspaceSessionId = "session-runtime-episode-state-port" as WorkspaceSessionId;
 const workspaceId = workspace.id as WorkspaceId;
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 describe("RuntimeEpisodeStatePort", () => {
   it("records handler-thread episodes and concludes the thread when an outcome is present", async () => {
@@ -148,6 +152,7 @@ describe("RuntimeEpisodeStatePort", () => {
               Layer.provideMerge(
                 layerStructuredSessionState({
                   workspace,
+                  digest: testDigest,
                 }),
               ),
             ),

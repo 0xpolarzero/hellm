@@ -1,9 +1,22 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
-import type { SourceDomain } from "@svvy/core";
+import { RuntimeContractError, StateContractError } from "@svvy/core";
+import type {
+  AbsolutePath,
+  RecordRuntimeSourceScanInput,
+  RuntimeSourceStatePortService,
+  SourceDomain,
+  SourceInvalidationHint,
+  SourceInvalidationScope,
+  StateInvalidationDescriptor,
+} from "@svvy/core";
 
 export type SourceInvalidationDomain = SourceDomain;
 
@@ -11,6 +24,7 @@ export interface SourceWatchInput {
   domain: SourceInvalidationDomain;
   path: string;
   kind: "directory" | "file";
+  fingerprintChildDirectories?: boolean;
   recursive?: boolean;
   includeExtensions?: readonly string[];
   includeBasenames?: readonly string[];
@@ -18,9 +32,10 @@ export interface SourceWatchInput {
 }
 
 export interface SourceInvalidationEvent {
-  domains: SourceInvalidationDomain[];
-  reason: string;
-  sourceFingerprints: Record<SourceInvalidationDomain, string>;
+  readonly domains: readonly SourceInvalidationDomain[];
+  readonly reason: string;
+  readonly sourceFingerprints: Readonly<Record<SourceInvalidationDomain, string>>;
+  readonly afterCommit: readonly StateInvalidationDescriptor[];
 }
 
 export interface SourceInvalidationDirectoryEntry {
@@ -41,6 +56,7 @@ export interface SourceInvalidationHost {
     isFile(path: string): boolean;
     readDirectory(path: string): readonly SourceInvalidationDirectoryEntry[];
     readFileString(path: string): string;
+    realPath(path: string): string | null;
   };
   hashStrings(parts: readonly string[]): string;
   watch: SourceWatcher;
@@ -51,10 +67,24 @@ export type SourceWatcher = (
   listener: (eventType: string, filename: string | Buffer | null) => Effect.Effect<void>,
 ) => { close(): void };
 
+export type SourceInvalidationHintClassification = "scan" | "scan-parent-domain" | "ignore";
+
+export interface SourceInvalidationScanRequest {
+  readonly domains?: readonly SourceInvalidationDomain[];
+  readonly reason: string;
+}
+
 export interface SourceInvalidationCoordinator {
+  classifyHint(
+    input: SourceInvalidationHint,
+  ): Effect.Effect<SourceInvalidationHintClassification, RuntimeContractError>;
   close(): Effect.Effect<void>;
+  reconcile(input: {
+    domains?: readonly SourceInvalidationDomain[];
+    reason: string;
+  }): Effect.Effect<SourceInvalidationEvent | null>;
   refreshWatchedInputs(reason?: string): Effect.Effect<void>;
-  requestScan(reason: string): Effect.Effect<void>;
+  requestScan(input: string | SourceInvalidationScanRequest): Effect.Effect<void>;
   start(): Effect.Effect<void>;
 }
 
@@ -70,10 +100,18 @@ export interface ExternalInstructionsWatchSettings {
 export interface SourceInvalidationCoordinatorOptions {
   debounceMs?: number;
   host: SourceInvalidationHost;
+  maxCoalescingLatencyMs?: number;
   reconciliationIntervalMs?: number;
   readInputs: () => readonly SourceWatchInput[];
   onDomainsChanged: (event: SourceInvalidationEvent) => Effect.Effect<void>;
   onWatchError?: (error: unknown, path: string) => void;
+  retryInitialDelayMs?: number;
+  retryMaxAttempts?: number;
+  retryMaxDelayMs?: number;
+  sourceScanRecorder?: {
+    scope: SourceInvalidationScope;
+    statePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
+  };
   watchEnabled?: boolean;
 }
 
@@ -87,12 +125,16 @@ export class RuntimeSourceInvalidationCoordinator extends Context.Service<
 export function makeRuntimeSourceInvalidationCoordinator(
   options: SourceInvalidationCoordinatorOptions,
 ) {
-  return Effect.acquireRelease(
-    Effect.sync(() => createSourceInvalidationCoordinator(options)).pipe(
-      Effect.tap((coordinator) => coordinator.start()),
-    ),
-    (coordinator) => coordinator.close(),
-  );
+  return Effect.gen(function* () {
+    const parentScope = yield* Scope.Scope;
+    const timerScope = yield* Scope.fork(parentScope, "sequential");
+    return yield* Effect.acquireRelease(
+      Effect.sync(() => createSourceInvalidationCoordinator({ ...options, timerScope })).pipe(
+        Effect.tap((coordinator) => coordinator.start()),
+      ),
+      (coordinator) => coordinator.close(),
+    );
+  });
 }
 
 export function layerRuntimeSourceInvalidationCoordinator(
@@ -105,21 +147,27 @@ export function layerRuntimeSourceInvalidationCoordinator(
 }
 
 export function createSourceInvalidationCoordinator(
-  input: SourceInvalidationCoordinatorOptions,
+  input: SourceInvalidationCoordinatorOptions & { timerScope: Scope.Scope },
 ): SourceInvalidationCoordinator {
-  const debounceMs = input.debounceMs ?? 200;
-  const reconciliationIntervalMs = input.reconciliationIntervalMs ?? 5_000;
+  const debounceMs = input.debounceMs ?? 250;
+  const maxCoalescingLatencyMs = input.maxCoalescingLatencyMs ?? 2_000;
+  const reconciliationIntervalMs = input.reconciliationIntervalMs ?? 60_000;
+  const retryInitialDelayMs = input.retryInitialDelayMs ?? 500;
+  const retryMaxDelayMs = input.retryMaxDelayMs ?? 10_000;
+  const retryMaxAttempts = input.retryMaxAttempts ?? 5;
   const watchEnabled = input.watchEnabled ?? true;
   const host = input.host;
   let closed = false;
   let running = false;
   let rerunReason: string | null = null;
   let debounceVersion = 0;
+  let pendingScan: ({ id: number } & SourceInvalidationScanRequest) | null = null;
+  let pendingScanId = 0;
   let watchers: Array<{ close(): void }> = [];
   let watchedPaths = new Set<string>();
   let currentInputs = normalizeInputs(input.readInputs(), host);
-  let fingerprints = fingerprintDomains(currentInputs, host);
-  const timerScope = Scope.makeUnsafe("sequential");
+  let fingerprints = startupSourceFingerprints(currentInputs, host);
+  const timerScope = input.timerScope;
 
   const closeWatchers = (): void => {
     for (const watcher of watchers) {
@@ -144,7 +192,10 @@ export function createSourceInvalidationCoordinator(
     }
     for (const path of [...paths].toSorted()) {
       try {
-        const watcher = host.watch(path, () => scheduleScan("filesystem_event"));
+        const watcher = host.watch(path, (_eventType, filename) => {
+          const reason = watcherEventScanReason(path, filename, currentInputs, host);
+          return reason ? scheduleScan(reason) : Effect.void;
+        });
         watchers.push(watcher);
         watchedPaths.add(path);
       } catch (error) {
@@ -154,31 +205,69 @@ export function createSourceInvalidationCoordinator(
   };
 
   const scheduleScan = Effect.fn("@svvy/runtime/sourceInvalidation.scheduleScan")(function* (
-    reason: string,
+    requestInput: string | SourceInvalidationScanRequest,
   ): Effect.fn.Return<void> {
     if (closed) {
       return;
     }
+    const request =
+      typeof requestInput === "string"
+        ? { reason: requestInput }
+        : normalizeScanRequest(requestInput);
+    if (!pendingScan) {
+      pendingScan = { id: ++pendingScanId, ...request };
+      const pendingId = pendingScan.id;
+      yield* Effect.sleep(maxCoalescingLatencyMs).pipe(
+        Effect.flatMap(() =>
+          pendingScan?.id === pendingId ? flushPendingScan(pendingScan) : Effect.void,
+        ),
+        Effect.forkIn(timerScope),
+        Effect.asVoid,
+      );
+    } else {
+      pendingScan = mergePendingScanRequest(pendingScan, request);
+    }
     const timerVersion = ++debounceVersion;
+    const pendingId = pendingScan.id;
     yield* Effect.sleep(debounceMs).pipe(
-      Effect.flatMap(() => (timerVersion === debounceVersion ? scan(reason) : Effect.void)),
+      Effect.flatMap(() =>
+        pendingScan?.id === pendingId && timerVersion === debounceVersion
+          ? flushPendingScan(pendingScan)
+          : Effect.void,
+      ),
       Effect.forkIn(timerScope),
       Effect.asVoid,
     );
   });
 
+  const flushPendingScan = Effect.fn("@svvy/runtime/sourceInvalidation.flushPendingScan")(
+    function* (request: SourceInvalidationScanRequest): Effect.fn.Return<void> {
+      if (!pendingScan || closed) {
+        return;
+      }
+      pendingScan = null;
+      debounceVersion += 1;
+      yield* scan(request.reason, request.domains ? { domains: request.domains } : {});
+    },
+  );
+
   const scan = Effect.fn("@svvy/runtime/sourceInvalidation.scan")(function* (
     reason: string,
-  ): Effect.fn.Return<void> {
+    options: {
+      readonly domains?: readonly SourceInvalidationDomain[];
+      readonly notify?: boolean;
+    } = {},
+  ): Effect.fn.Return<SourceInvalidationEvent | null> {
     if (closed) {
-      return;
+      return null;
     }
     if (running) {
       rerunReason = reason;
-      return;
+      return null;
     }
     running = true;
     try {
+      const requestedDomains = options.domains ? new Set(options.domains) : null;
       const nextInputs = normalizeInputs(input.readInputs(), host);
       const nextWatchPaths = new Set(
         nextInputs.flatMap((watchInput) => watchPathsForInput(watchInput, host)),
@@ -191,17 +280,109 @@ export function createSourceInvalidationCoordinator(
         installWatchers();
       }
       const nextFingerprints = fingerprintDomains(currentInputs, host);
+      const nextSourceRoots = fingerprintSourceRoots(currentInputs, host);
       const domains = (Object.keys(nextFingerprints) as SourceInvalidationDomain[]).filter(
-        (domain) => nextFingerprints[domain] !== fingerprints[domain],
+        (domain) =>
+          (!requestedDomains || requestedDomains.has(domain)) &&
+          nextFingerprints[domain] !== fingerprints[domain],
       );
-      fingerprints = nextFingerprints;
       if (domains.length > 0) {
-        yield* input.onDomainsChanged({
-          domains,
+        const afterCommit: StateInvalidationDescriptor[] = [];
+        const acceptedDomains: SourceInvalidationDomain[] = [];
+        for (const domain of domains) {
+          let scanCommitted = true;
+          if (input.sourceScanRecorder) {
+            const scannedAt = DateTime.formatIso(yield* DateTime.now);
+            const recordSourceScan = input.sourceScanRecorder.statePort.recordSourceScan({
+              scope: input.sourceScanRecorder.scope,
+              domain,
+              sourceFingerprint: nextFingerprints[domain],
+              sourceRoots: nextSourceRoots[domain],
+              diagnostics: [],
+              scannedAt: scannedAt as RecordRuntimeSourceScanInput["scannedAt"],
+            });
+            const retriedRecordSourceScan =
+              retryMaxAttempts > 0
+                ? recordSourceScan.pipe(
+                    Effect.retry({
+                      times: retryMaxAttempts,
+                      while: isRetryableSourceScanStateError,
+                      schedule: Schedule.exponential(retryInitialDelayMs).pipe(
+                        Schedule.modifyDelay((_, delay) =>
+                          Effect.succeed(Duration.min(delay, Duration.millis(retryMaxDelayMs))),
+                        ),
+                      ),
+                    }),
+                  )
+                : recordSourceScan;
+            const result = yield* retriedRecordSourceScan.pipe(
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  input.onWatchError?.(error, `source-scan:${domain}`);
+                  return null;
+                }),
+              ),
+            );
+            if (result) {
+              afterCommit.push(...result.afterCommit);
+            } else {
+              scanCommitted = false;
+            }
+          }
+          if (scanCommitted) {
+            acceptedDomains.push(domain);
+          }
+        }
+        if (acceptedDomains.length === 0) {
+          return null;
+        }
+        const event = {
+          domains: acceptedDomains,
           reason,
           sourceFingerprints: nextFingerprints,
-        });
+          afterCommit,
+        } satisfies SourceInvalidationEvent;
+        if (options.notify ?? true) {
+          const notified = yield* input.onDomainsChanged(event).pipe(
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.sync(() => {
+                input.onWatchError?.(
+                  Cause.squash(cause),
+                  `source-notification:${acceptedDomains.join(",")}`,
+                );
+                return false;
+              }),
+            ),
+          );
+          if (!notified) {
+            return null;
+          }
+        }
+        fingerprints = requestedDomains
+          ? {
+              ...fingerprints,
+              ...Object.fromEntries(
+                acceptedDomains.map((domain) => [domain, nextFingerprints[domain]]),
+              ),
+            }
+          : {
+              ...fingerprints,
+              ...Object.fromEntries(
+                acceptedDomains.map((domain) => [domain, nextFingerprints[domain]]),
+              ),
+            };
+        return event;
       }
+      fingerprints = requestedDomains
+        ? {
+            ...fingerprints,
+            ...Object.fromEntries(
+              [...requestedDomains].map((domain) => [domain, nextFingerprints[domain]]),
+            ),
+          }
+        : nextFingerprints;
+      return null;
     } finally {
       running = false;
       if (rerunReason && !closed) {
@@ -226,18 +407,39 @@ export function createSourceInvalidationCoordinator(
       if (closed) {
         return;
       }
-      yield* scheduleScan("periodic_reconciliation");
+      yield* scan("periodic_reconciliation");
     }
   });
 
   installWatchers();
 
   return {
+    classifyHint: (hint) =>
+      Effect.try({
+        try: () => classifySourceInvalidationHint(hint, currentInputs, host),
+        catch: (cause) =>
+          cause instanceof RuntimeContractError
+            ? cause
+            : new RuntimeContractError({
+                operation: "runtime.sourceInvalidation.hint",
+                reason: "state-conflict",
+                message:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Source invalidation hint classification failed.",
+                cause,
+              }),
+      }),
     close: () =>
       Effect.gen(function* () {
         closed = true;
         closeWatchers();
         yield* Scope.close(timerScope, Exit.void).pipe(Effect.ignore);
+      }),
+    reconcile: (request) =>
+      scan(request.reason, {
+        ...(request.domains ? { domains: request.domains } : {}),
+        notify: false,
       }),
     refreshWatchedInputs: (reason = "watched_inputs_changed") =>
       Effect.gen(function* () {
@@ -329,6 +531,15 @@ export function buildWorkspaceSourceWatchInputs(input: {
   ];
 }
 
+function isRetryableSourceScanStateError(error: StateContractError): boolean {
+  return (
+    error.reason === "transaction-failed" ||
+    error.reason === "conflict" ||
+    error.reason === "stale-state" ||
+    error.reason === "claim-conflict"
+  );
+}
+
 function fingerprintDomains(
   inputs: readonly SourceWatchInput[],
   host: SourceInvalidationHost,
@@ -345,6 +556,114 @@ function fingerprintDomains(
   return Object.fromEntries(
     Object.entries(byDomain).map(([domain, parts]) => [domain, host.hashStrings(parts.toSorted())]),
   ) as Record<SourceInvalidationDomain, string>;
+}
+
+function fingerprintSourceRoots(
+  inputs: readonly SourceWatchInput[],
+  host: SourceInvalidationHost,
+): Record<SourceInvalidationDomain, NonNullable<RecordRuntimeSourceScanInput["sourceRoots"]>> {
+  type SourceRootFingerprint = NonNullable<RecordRuntimeSourceScanInput["sourceRoots"]>[number];
+  const byDomain: Record<SourceInvalidationDomain, SourceRootFingerprint[]> = {
+    extensions: [],
+    external_instructions: [],
+    host_snippets: [],
+    workflows: [],
+  };
+  for (const input of inputs) {
+    const rootInputs = input.fingerprintChildDirectories
+      ? childDirectorySourceRootInputs(input, host)
+      : [input];
+    for (const rootInput of rootInputs) {
+      byDomain[input.domain].push({
+        sourceRoot: rootInput.path as AbsolutePath,
+        rootFingerprint: sourceRootBuildFingerprint(rootInput.path, host),
+      });
+    }
+  }
+  return {
+    extensions: byDomain.extensions.toSorted((left, right) =>
+      left.sourceRoot.localeCompare(right.sourceRoot),
+    ),
+    external_instructions: byDomain.external_instructions.toSorted((left, right) =>
+      left.sourceRoot.localeCompare(right.sourceRoot),
+    ),
+    host_snippets: byDomain.host_snippets.toSorted((left, right) =>
+      left.sourceRoot.localeCompare(right.sourceRoot),
+    ),
+    workflows: byDomain.workflows.toSorted((left, right) =>
+      left.sourceRoot.localeCompare(right.sourceRoot),
+    ),
+  };
+}
+
+function childDirectorySourceRootInputs(
+  input: SourceWatchInput,
+  host: SourceInvalidationHost,
+): SourceWatchInput[] {
+  if (input.kind !== "directory" || !host.fileSystem.exists(input.path)) {
+    return [];
+  }
+  let entries: readonly SourceInvalidationDirectoryEntry[];
+  try {
+    entries = host.fileSystem.readDirectory(input.path);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.kind === "directory")
+    .map((entry) => ({
+      ...input,
+      fingerprintChildDirectories: false,
+      path: host.path.join(input.path, entry.name),
+    }))
+    .toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+function sourceRootBuildFingerprint(sourceRoot: string, host: SourceInvalidationHost): string {
+  const files = listFingerprintedFiles(
+    sourceRoot,
+    { domain: "extensions", kind: "directory", path: sourceRoot, recursive: true },
+    host,
+  );
+  const parts: string[] = [];
+  for (const file of files.toSorted((left, right) => left.localeCompare(right))) {
+    parts.push(file.slice(sourceRoot.length + 1));
+    parts.push(host.fileSystem.readFileString(file));
+  }
+  return host.hashStrings(parts);
+}
+
+function startupSourceFingerprints(
+  inputs: readonly SourceWatchInput[],
+  host: SourceInvalidationHost,
+): Record<SourceInvalidationDomain, string> {
+  const fingerprints = fingerprintDomains([], host);
+  for (const input of inputs) {
+    fingerprints[input.domain] = "startup_unknown";
+  }
+  return fingerprints;
+}
+
+function normalizeScanRequest(input: SourceInvalidationScanRequest): SourceInvalidationScanRequest {
+  return {
+    ...(input.domains ? { domains: [...new Set(input.domains)] } : {}),
+    reason: input.reason,
+  };
+}
+
+function mergePendingScanRequest(
+  pending: { id: number } & SourceInvalidationScanRequest,
+  next: SourceInvalidationScanRequest,
+): { id: number } & SourceInvalidationScanRequest {
+  const domains =
+    pending.domains || next.domains
+      ? [...new Set([...(pending.domains ?? []), ...(next.domains ?? [])])]
+      : undefined;
+  return {
+    id: pending.id,
+    ...(domains ? { domains } : {}),
+    reason: next.reason,
+  };
 }
 
 function fingerprintInput(input: SourceWatchInput, host: SourceInvalidationHost): string {
@@ -381,6 +700,9 @@ function listFingerprintedFiles(
   }
   const files: string[] = [];
   for (const entry of entries) {
+    if (entry.name === ".svvy") {
+      continue;
+    }
     const path = host.path.join(root, entry.name);
     if (entry.kind === "directory") {
       if (input.recursive) {
@@ -421,6 +743,128 @@ function watchPathsForInput(input: SourceWatchInput, host: SourceInvalidationHos
     }
   }
   return [...paths];
+}
+
+function classifySourceInvalidationHint(
+  hint: SourceInvalidationHint,
+  inputs: readonly SourceWatchInput[],
+  host: SourceInvalidationHost,
+): SourceInvalidationHintClassification {
+  const canonicalPath = canonicalSourcePath(hint.path, host);
+  const domainInputs = inputs.filter((input) => input.domain === hint.domain);
+  const matchesAllowedRoot = domainInputs.some((input) =>
+    sourceInputContainsPath(input, canonicalPath, host),
+  );
+  if (!matchesAllowedRoot) {
+    throw new RuntimeContractError({
+      operation: "runtime.sourceInvalidation.hint",
+      reason: "invalid-input",
+      message: `Source invalidation hint path is outside configured ${hint.scope.kind}/${hint.domain} source roots.`,
+      issues: [
+        {
+          path: ["path"],
+          message: "Path is outside the configured source roots for the hinted source domain.",
+        },
+      ],
+    });
+  }
+  if (isIgnoredSourceHintPath(canonicalPath)) {
+    return domainInputs.some(
+      (input) => input.kind === "directory" && sourceInputContainsPath(input, canonicalPath, host),
+    )
+      ? "scan-parent-domain"
+      : "ignore";
+  }
+  return "scan";
+}
+
+function watcherEventScanReason(
+  watchRoot: string,
+  filename: string | Buffer | null,
+  inputs: readonly SourceWatchInput[],
+  host: SourceInvalidationHost,
+): string | null {
+  if (!filename) {
+    return "filesystem_event";
+  }
+  const eventPath = watcherEventPath(watchRoot, filename, host);
+  const canonicalPath = canonicalSourcePath(eventPath, host);
+  const matchingInputs = inputs.filter((input) =>
+    sourceInputContainsPath(input, canonicalPath, host),
+  );
+  if (matchingInputs.length === 0) {
+    return null;
+  }
+  if (isIgnoredSourceHintPath(canonicalPath)) {
+    return matchingInputs.some((input) => input.kind === "directory")
+      ? "ignored-path-parent-domain-scan"
+      : null;
+  }
+  return "filesystem_event";
+}
+
+function watcherEventPath(
+  watchRoot: string,
+  filename: string | Buffer,
+  host: SourceInvalidationHost,
+): string {
+  const rawPath = String(filename).replace(/\\/g, "/");
+  const resolved = host.path.resolve(rawPath);
+  return resolved === rawPath ? resolved : host.path.resolve(host.path.join(watchRoot, rawPath));
+}
+
+function sourceInputContainsPath(
+  input: SourceWatchInput,
+  canonicalPath: string,
+  host: SourceInvalidationHost,
+): boolean {
+  const root = canonicalSourcePath(input.path, host);
+  return input.kind === "file"
+    ? canonicalPath === root
+    : canonicalPath === root || canonicalPath.startsWith(`${root}/`);
+}
+
+function canonicalSourcePath(path: string, host: SourceInvalidationHost): string {
+  const resolved = host.path.resolve(path);
+  const realPath = host.fileSystem.realPath(resolved);
+  if (realPath) {
+    return host.path.resolve(realPath);
+  }
+  const existingParent = nearestExistingDirectory(resolved, host);
+  if (!existingParent) {
+    return resolved;
+  }
+  const realParent = host.fileSystem.realPath(existingParent) ?? existingParent;
+  const suffix = resolved.slice(existingParent.length).replace(/^\/+/, "");
+  return suffix
+    ? host.path.resolve(host.path.join(realParent, suffix))
+    : host.path.resolve(realParent);
+}
+
+function isIgnoredSourceHintPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (
+    basename.endsWith("~") ||
+    basename.endsWith(".tmp") ||
+    basename.endsWith(".swp") ||
+    basename.endsWith(".swx") ||
+    basename.startsWith(".#") ||
+    (basename.startsWith(".") && basename.endsWith(".swp"))
+  ) {
+    return true;
+  }
+  return (
+    normalized.includes("/.Trash/") ||
+    normalized.includes("/.trash/") ||
+    normalized.includes("/snapshots/") ||
+    normalized.includes("/.snapshots/") ||
+    normalized.includes("/node_modules/.") ||
+    normalized.includes("/.smithers/node_modules/@svvyx/") ||
+    normalized.includes("/.svvy/generated/") ||
+    normalized.includes("/extensions/generated/") ||
+    normalized.includes("/extensions/builds/")
+  );
 }
 
 function listDirectories(root: string, host: SourceInvalidationHost): string[] {
@@ -467,6 +911,9 @@ function normalizeInputs(
       kind: input.kind,
       path: host.path.resolve(expandHome(input.path, host)),
     };
+    if (input.fingerprintChildDirectories !== undefined) {
+      item.fingerprintChildDirectories = input.fingerprintChildDirectories;
+    }
     if (input.recursive !== undefined) item.recursive = input.recursive;
     if (input.watchWhenMissing !== undefined) item.watchWhenMissing = input.watchWhenMissing;
     if (input.includeBasenames) item.includeBasenames = [...input.includeBasenames].toSorted();

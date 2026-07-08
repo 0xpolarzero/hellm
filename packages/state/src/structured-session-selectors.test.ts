@@ -1743,8 +1743,6 @@ describe("structured session selectors", () => {
           createdAt: "2026-04-18T10:04:30.000Z",
         },
       ],
-      loadedExtensionIds: ["shell", "thread-handling"],
-      availableExtensionIds: ["web"],
     });
   });
 
@@ -1818,6 +1816,7 @@ describe("structured session selectors", () => {
         {
           id: "episode-current",
           threadId: "thread-current",
+          kind: "change",
           title: "Current body",
           summary: "Current summary.",
           body: "Current durable body.",
@@ -1826,6 +1825,7 @@ describe("structured session selectors", () => {
         {
           id: "episode-sibling",
           threadId: "thread-sibling",
+          kind: "report",
           title: "Sibling body",
           summary: "Sibling summary.",
           body: "Sibling durable body.",
@@ -1835,12 +1835,18 @@ describe("structured session selectors", () => {
     });
 
     expect(
-      buildStructuredThreadEpisodesReadModel(snapshot, { defaultThreadId: "thread-current" }),
+      buildStructuredThreadEpisodesReadModel(snapshot, {
+        target: { kind: "thread", threadId: "thread-current" },
+      }),
     ).toEqual({
       episodes: [
         {
           id: "episode-current",
+          sessionId: "session-selectors",
           threadId: "thread-current",
+          threadGroupId: "thread-group-a",
+          sourceCommandId: "command-001",
+          kind: "change",
           title: "Current body",
           summary: "Current summary.",
           body: "Current durable body.",
@@ -1850,7 +1856,7 @@ describe("structured session selectors", () => {
     });
     expect(
       buildStructuredThreadEpisodesReadModel(snapshot, {
-        threadGroupId: "thread-group-a",
+        target: { kind: "thread-group", threadGroupId: "thread-group-a" },
         limit: 1,
       }).episodes.map((episode) => episode.id),
     ).toEqual(["episode-sibling"]);

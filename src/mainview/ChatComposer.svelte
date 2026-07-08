@@ -46,7 +46,7 @@
 	import QueuedMessagesStrip from "./QueuedMessagesStrip.svelte";
 	import type { QueuedPrompt } from "./chat-runtime";
 	import type { AgentContextActor, ExtensionUsageControlItem } from "./agents-pane-extension-usage";
-	import type { ExtensionUsageState } from "@svvy/extensions";
+	import type { ExtensionUsageState } from "@svvy/core";
 	import type {
 		ComposerAttachment,
 		ComposerDraft,

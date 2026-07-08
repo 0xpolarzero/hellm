@@ -2,8 +2,10 @@ import type { NativeToolDefinition } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
 import type { AgentProfileSettings } from "../shared/agent-settings";
 import type { AppLoggerEvent } from "./app-logger";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import { nativeToolParameters } from "./native-tool-parameters";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type {
+  CommandFactsPayload,
   RuntimeCommandStatePortService,
   RuntimeTurnStatePortService,
   StateContractError,
@@ -85,12 +87,12 @@ export function createStartThreadTool(options: {
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   bridge: ThreadStartBridge;
   onAppLog?: (event: AppLoggerEvent) => void;
-}): NativeToolDefinition<StartThreadParams, Record<string, unknown>> {
+}): NativeToolDefinition<StartThreadParams> {
   return {
     label: "Thread",
     name: START_THREAD_TOOL_NAME,
     description: START_THREAD_DESCRIPTION,
-    parameters: startThreadParamsSchema,
+    parameters: nativeToolParameters(startThreadParamsSchema),
     execute: async (_toolCallId, params) => {
       const runtime = options.runtime.current;
       if (!runtime) {
@@ -220,7 +222,7 @@ export function createStartThreadTool(options: {
               text: JSON.stringify(details),
             },
           ],
-          details,
+          details: { commandFacts: details as CommandFactsPayload },
         };
       } catch (error) {
         const message =
@@ -258,9 +260,11 @@ export function createStartThreadTool(options: {
             },
           ],
           details: {
-            ok: false,
-            commandId: command.id,
-            error: message,
+            commandFacts: {
+              ok: false,
+              commandId: command.id,
+              error: message,
+            } as CommandFactsPayload,
           },
         };
       }

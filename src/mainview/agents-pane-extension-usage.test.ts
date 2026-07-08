@@ -49,7 +49,7 @@ function extensionInventoryItem(
 }
 
 describe("Agents pane extension usage helpers", () => {
-  it("resolves implicit builtin Web usage from the local network-aware baseline", () => {
+  it("resolves implicit builtin usage from inventory defaults", () => {
     const web = extensionInventoryItem({
       id: "web",
       usage: [
@@ -67,6 +67,19 @@ describe("Agents pane extension usage helpers", () => {
         actor: "orchestrator",
         extension: web,
         explicitUsage: {},
+        inventoryDefaults: {
+          order: ["web"],
+          usage: {
+            web: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "unavailable",
+              },
+            ],
+          },
+        },
         inventoryUsage: web.usage[0] ?? null,
         networkAccess: false,
       }),
@@ -77,6 +90,19 @@ describe("Agents pane extension usage helpers", () => {
         actor: "orchestrator",
         extension: web,
         explicitUsage: {},
+        inventoryDefaults: {
+          order: ["web"],
+          usage: {
+            web: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "loaded",
+              },
+            ],
+          },
+        },
         inventoryUsage: { ...web.usage[0]!, state: "unavailable" },
         networkAccess: true,
       }),
@@ -101,6 +127,19 @@ describe("Agents pane extension usage helpers", () => {
         actor: "orchestrator",
         extension: web,
         explicitUsage: { web: "loaded" },
+        inventoryDefaults: {
+          order: ["web"],
+          usage: {
+            web: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "unavailable",
+              },
+            ],
+          },
+        },
         inventoryUsage: web.usage[0] ?? null,
         networkAccess: false,
       }),
@@ -111,6 +150,19 @@ describe("Agents pane extension usage helpers", () => {
         actor: "orchestrator",
         extension: web,
         explicitUsage: { web: "unavailable" },
+        inventoryDefaults: {
+          order: ["web"],
+          usage: {
+            web: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "loaded",
+              },
+            ],
+          },
+        },
         inventoryUsage: web.usage[0] ?? null,
         networkAccess: true,
       }),
@@ -165,6 +217,19 @@ describe("Agents pane extension usage helpers", () => {
           ],
         }),
       ],
+      inventoryDefaults: {
+        order: ["smithers"],
+        usage: {
+          smithers: [
+            {
+              actorKind: "orchestrator",
+              configurable: true,
+              customized: false,
+              state: "available",
+            },
+          ],
+        },
+      },
       networkAccess: true,
       profileId: "default",
       usage: { smithers: "available" },
@@ -197,6 +262,19 @@ describe("Agents pane extension usage helpers", () => {
           ],
         }),
       ],
+      inventoryDefaults: {
+        order: ["smithers"],
+        usage: {
+          smithers: [
+            {
+              actorKind: "orchestrator",
+              configurable: true,
+              customized: false,
+              state: "available",
+            },
+          ],
+        },
+      },
       networkAccess: true,
       profileId: "default",
       usage: { smithers: "loaded" },
@@ -271,13 +349,25 @@ describe("Agents pane extension usage helpers", () => {
   it("projects app extension defaults into non-handler profile rows", () => {
     const items = extensionUsageItems({
       actor: "orchestrator",
-      extensionDefaults: {
+      inventoryDefaults: {
         order: ["team-notes", "smithers"],
         usage: {
-          orchestrator: {
-            "team-notes": "loaded",
-            smithers: "loaded",
-          },
+          "team-notes": [
+            {
+              actorKind: "orchestrator",
+              configurable: true,
+              customized: false,
+              state: "loaded",
+            },
+          ],
+          smithers: [
+            {
+              actorKind: "orchestrator",
+              configurable: true,
+              customized: false,
+              state: "loaded",
+            },
+          ],
         },
       },
       extensionInventoryItems: [
@@ -307,12 +397,17 @@ describe("Agents pane extension usage helpers", () => {
   it("keeps actor-default Off rows editable when the builtin extension supports the actor", () => {
     const items = extensionUsageItems({
       actor: "orchestrator",
-      extensionDefaults: {
+      inventoryDefaults: {
         order: [],
         usage: {
-          orchestrator: {
-            web: "unavailable",
-          },
+          web: [
+            {
+              actorKind: "orchestrator",
+              configurable: true,
+              customized: false,
+              state: "unavailable",
+            },
+          ],
         },
       },
       extensionInventoryItems: [
@@ -346,13 +441,9 @@ describe("Agents pane extension usage helpers", () => {
   it("keeps handler profile rows owned by Agents instead of app extension defaults", () => {
     const items = extensionUsageItems({
       actor: "handler",
-      extensionDefaults: {
+      inventoryDefaults: {
         order: ["team-notes"],
-        usage: {
-          handler: {
-            "team-notes": "loaded",
-          },
-        },
+        usage: {},
       },
       extensionInventoryItems: [
         extensionInventoryItem({

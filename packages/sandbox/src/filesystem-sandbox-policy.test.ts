@@ -45,6 +45,56 @@ describe("filesystem sandbox policy", () => {
     expect(resolveFileSystemAccess(policy, target, cwd)).toBe("none");
   });
 
+  it("honors exact-path entries when recursive is false", () => {
+    const cwd = "/repo";
+    const exactWrite = join(cwd, "generated", "manifest.json");
+    const exactNone = join(cwd, "src", "blocked.ts");
+    const policy = {
+      kind: "restricted" as const,
+      entries: [
+        { path: cwd, access: "read" as const },
+        { path: join(cwd, "src"), access: "write" as const },
+        { path: exactWrite, access: "write" as const, recursive: false },
+        { path: exactNone, access: "none" as const, recursive: false },
+      ],
+    };
+
+    expect(canWriteFileSystemPath(policy, exactWrite, cwd)).toBe(true);
+    expect(canWriteFileSystemPath(policy, join(exactWrite, "child"), cwd)).toBe(false);
+    expect(resolveFileSystemAccess(policy, exactNone, cwd)).toBe("none");
+    expect(resolveFileSystemAccess(policy, join(exactNone, "child"), cwd)).toBe("write");
+
+    const exactProfilePolicy = {
+      kind: "restricted" as const,
+      entries: [{ path: exactWrite, access: "write" as const, recursive: false }],
+    };
+    const profile = buildMacOsSeatbeltProfile(exactProfilePolicy, cwd, { networkAccess: false });
+    expect(profile.profile).toContain('(literal (param "WRITABLE_ROOT_0"))');
+    expect(profile.profile).not.toContain('(subpath (param "WRITABLE_ROOT_0"))');
+    expect(profile.parameters).toMatchObject({
+      WRITABLE_ROOT_0: exactWrite,
+    });
+
+    const exactExclusionPolicy = {
+      kind: "restricted" as const,
+      entries: [
+        { path: cwd, access: "write" as const },
+        { path: exactNone, access: "none" as const, recursive: false },
+      ],
+    };
+    const exclusionProfile = buildMacOsSeatbeltProfile(exactExclusionPolicy, cwd, {
+      networkAccess: false,
+    });
+    expect(exclusionProfile.profile).toContain('(literal (param "WRITABLE_ROOT_0_EXCLUDED_0"))');
+    expect(exclusionProfile.profile).not.toContain(
+      '(subpath (param "WRITABLE_ROOT_0_EXCLUDED_0"))',
+    );
+    expect(exclusionProfile.parameters).toMatchObject({
+      WRITABLE_ROOT_0: cwd,
+      WRITABLE_ROOT_0_EXCLUDED_0: exactNone,
+    });
+  });
+
   it("protects workspace metadata under writable roots unless explicitly re-enabled", () => {
     const cwd = "/repo";
     const policy = buildManagedWorkspaceWriteFileSystemPolicy({
@@ -63,6 +113,20 @@ describe("filesystem sandbox policy", () => {
       entries: [...policy.entries, { path: join(cwd, ".codex"), access: "write" as const }],
     };
     expect(canWriteFileSystemPath(explicit, join(cwd, ".codex", "settings.toml"), cwd)).toBe(true);
+
+    const exactExplicit = {
+      kind: "restricted" as const,
+      entries: [
+        ...policy.entries,
+        { path: join(cwd, ".codex", "settings.toml"), access: "write" as const, recursive: false },
+      ],
+    };
+    expect(canWriteFileSystemPath(exactExplicit, join(cwd, ".codex", "settings.toml"), cwd)).toBe(
+      true,
+    );
+    expect(canWriteFileSystemPath(exactExplicit, join(cwd, ".codex", "other.toml"), cwd)).toBe(
+      false,
+    );
   });
 
   it("treats unrestricted policy as full write access", () => {

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
-import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -170,9 +173,9 @@ describe("thread orchestration tools", () => {
         message: "Inspect the failing parser again.",
         activate: true,
       },
-      facts: result.details,
+      facts: result.details!.commandFacts,
     });
-    expect(result.details).toEqual({
+    expect(result.details!.commandFacts).toEqual({
       threadGroupId: "group-a",
       threads: [
         {
@@ -267,9 +270,9 @@ describe("thread orchestration tools", () => {
         threadId: "thread-a",
         request: "Send a concise status update.",
       },
-      facts: result.details,
+      facts: result.details!.commandFacts,
     });
-    expect(result.details).toEqual({
+    expect(result.details!.commandFacts).toEqual({
       threadId: "thread-a",
       surfacePiSessionId: "surface-thread-a",
       queuedMessageId: "queued-report-request-a",

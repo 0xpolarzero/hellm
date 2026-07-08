@@ -1,15 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import {
-  decodeOpenExtensionSourceEditInput,
-  decodeSaveExtensionSourceEditInput,
-  decodeSourceEditSaveResult,
-  decodeSourceEditSession,
+  unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap,
+  unsafeDecodeSaveExtensionSourceEditInputSyncForTestsAndBootstrap,
+  unsafeDecodeSourceEditSaveResultSyncForTestsAndBootstrap,
+  unsafeDecodeSourceEditSessionSyncForTestsAndBootstrap,
 } from "./runtime-source-edit-contracts";
 
 describe("runtime source edit contracts", () => {
   it("decodes file-backed source edit sessions without UI conflict state", () => {
     expect(
-      decodeSourceEditSession({
+      unsafeDecodeSourceEditSessionSyncForTestsAndBootstrap({
         sourceKind: "workflow-agent",
         sourceId: "agent_review",
         path: "/tmp/svvy/workflows/agents/review.agent.json",
@@ -47,7 +47,7 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(() =>
-      decodeSourceEditSession({
+      unsafeDecodeSourceEditSessionSyncForTestsAndBootstrap({
         sourceKind: "workflow-agent",
         sourceId: "agent_review",
         path: "/tmp/svvy/workflows/agents/review.agent.json",
@@ -62,7 +62,7 @@ describe("runtime source edit contracts", () => {
 
   it("decodes source edit open, save, and stale conflict results", () => {
     expect(
-      decodeOpenExtensionSourceEditInput({
+      unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "user-extension",
         sourceId: "web",
       }) as unknown,
@@ -72,7 +72,7 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(
-      decodeSaveExtensionSourceEditInput({
+      unsafeDecodeSaveExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "user-extension",
         sourceId: "web",
         expectedSourceVersion: "version_01",
@@ -90,7 +90,7 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(
-      decodeSourceEditSaveResult({
+      unsafeDecodeSourceEditSaveResultSyncForTestsAndBootstrap({
         status: "saved",
         sourceVersion: "version_02",
         fingerprint: "fingerprint_02",
@@ -106,7 +106,7 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(
-      decodeSourceEditSaveResult({
+      unsafeDecodeSourceEditSaveResultSyncForTestsAndBootstrap({
         status: "stale",
         current: {
           sourceKind: "user-extension",
@@ -132,7 +132,7 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(
-      decodeOpenExtensionSourceEditInput({
+      unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "workflow-workflow",
         sourceId: "repair_loop",
       }) as unknown,
@@ -142,14 +142,14 @@ describe("runtime source edit contracts", () => {
     });
 
     expect(() =>
-      decodeOpenExtensionSourceEditInput({
+      unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "workflow-module",
         sourceId: "repair_loop",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeOpenExtensionSourceEditInput({
+      unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "user-extension",
         sourceId: "web",
         path: "/tmp/svvy/extensions/web/index.ts",
@@ -159,7 +159,7 @@ describe("runtime source edit contracts", () => {
 
   it("rejects source edit payloads that mix renderer-owned draft metadata into file contracts", () => {
     expect(() =>
-      decodeSaveExtensionSourceEditInput({
+      unsafeDecodeSaveExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "user-extension",
         sourceId: "web",
         expectedSourceVersion: "version_01",
@@ -170,7 +170,7 @@ describe("runtime source edit contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSaveExtensionSourceEditInput({
+      unsafeDecodeSaveExtensionSourceEditInputSyncForTestsAndBootstrap({
         sourceKind: "user-extension",
         sourceId: "web",
         path: "/tmp/svvy/extensions/web/index.ts",

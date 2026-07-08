@@ -4,10 +4,6 @@ import type {
   ListRuntimeThreadsInput,
   NativeToolResult,
   ReadRuntimeThreadEpisodesInput,
-  RuntimeThreadCurrentReadModel,
-  RuntimeThreadEpisodesReadModel,
-  RuntimeThreadGroupReadModel,
-  RuntimeThreadListReadModel,
   RuntimeCommandStatePortService,
   RuntimeReadModelStatePortService,
   RuntimeTurnStatePortService,
@@ -17,8 +13,9 @@ import type {
 } from "@svvy/core";
 import type { NativeToolDefinition } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type * as Effect from "effect/Effect";
+import { nativeToolParameters } from "./native-tool-parameters";
 
 export const THREAD_CURRENT_TOOL_NAME = "thread_current";
 export const THREAD_LIST_TOOL_NAME = "thread_list";
@@ -68,13 +65,13 @@ export interface ThreadStateToolServices {
 export function createThreadCurrentTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ThreadStateToolServices;
-}): NativeToolDefinition<EmptyParams, RuntimeThreadCurrentReadModel> {
+}): NativeToolDefinition<EmptyParams> {
   return {
     label: "Thread Current",
     name: THREAD_CURRENT_TOOL_NAME,
     description:
       "Return the current handler thread identity, objective state, extension ids, report requests, and latest episode.",
-    parameters: emptyParamsSchema,
+    parameters: nativeToolParameters(emptyParamsSchema),
     async execute(_toolCallId, _params: EmptyParams) {
       const runtime = requireActiveRuntime(options.runtime, THREAD_CURRENT_TOOL_NAME);
       return jsonToolResult(
@@ -108,13 +105,13 @@ export function createThreadCurrentTool(options: {
 export function createThreadListTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ThreadStateToolServices;
-}): NativeToolDefinition<ThreadListParams, RuntimeThreadListReadModel> {
+}): NativeToolDefinition<ThreadListParams> {
   return {
     label: "Thread List",
     name: THREAD_LIST_TOOL_NAME,
     description:
       "List delegated handler threads that may need attention, with compact objective, status, wait, and latest episode metadata.",
-    parameters: threadListParamsSchema,
+    parameters: nativeToolParameters(threadListParamsSchema),
     async execute(_toolCallId, params: ThreadListParams) {
       const runtime = requireActiveRuntime(options.runtime, THREAD_LIST_TOOL_NAME);
       const threadGroupId = params.threadGroupId?.trim() || null;
@@ -152,12 +149,12 @@ export function createThreadListTool(options: {
 export function createThreadEpisodesTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ThreadStateToolServices;
-}): NativeToolDefinition<ThreadEpisodesParams, RuntimeThreadEpisodesReadModel> {
+}): NativeToolDefinition<ThreadEpisodesParams> {
   return {
     label: "Thread Episodes",
     name: THREAD_EPISODES_TOOL_NAME,
     description: "Read durable handler-thread episodes when exact episode content matters.",
-    parameters: threadEpisodesParamsSchema,
+    parameters: nativeToolParameters(threadEpisodesParamsSchema),
     async execute(_toolCallId, params: ThreadEpisodesParams) {
       const runtime = requireActiveRuntime(options.runtime, THREAD_EPISODES_TOOL_NAME);
       const limit = clampLimit(params.limit, 10, 50);
@@ -195,8 +192,21 @@ export function createThreadEpisodesTool(options: {
               options.state.readModelState.readThreadEpisodes({
                 workspaceSessionId:
                   runtime.workspaceSessionId as ReadRuntimeThreadEpisodesInput["workspaceSessionId"],
-                threadId: resolvedThreadId as ReadRuntimeThreadEpisodesInput["threadId"],
-                threadGroupId: threadGroupId as ReadRuntimeThreadEpisodesInput["threadGroupId"],
+                target: threadGroupId
+                  ? {
+                      kind: "thread-group",
+                      threadGroupId: threadGroupId as Extract<
+                        ReadRuntimeThreadEpisodesInput["target"],
+                        { kind: "thread-group" }
+                      >["threadGroupId"],
+                    }
+                  : {
+                      kind: "thread",
+                      threadId: resolvedThreadId as Extract<
+                        ReadRuntimeThreadEpisodesInput["target"],
+                        { kind: "thread" }
+                      >["threadId"],
+                    },
                 limit,
               }),
             );
@@ -210,13 +220,13 @@ export function createThreadEpisodesTool(options: {
 export function createThreadGroupTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ThreadStateToolServices;
-}): NativeToolDefinition<EmptyParams, RuntimeThreadGroupReadModel> {
+}): NativeToolDefinition<EmptyParams> {
   return {
     label: "Thread Group",
     name: THREAD_GROUP_TOOL_NAME,
     description:
       "Return the current handler thread group topology and sibling objective summaries.",
-    parameters: emptyParamsSchema,
+    parameters: nativeToolParameters(emptyParamsSchema),
     async execute(_toolCallId, _params: EmptyParams) {
       const runtime = requireActiveRuntime(options.runtime, THREAD_GROUP_TOOL_NAME);
       return jsonToolResult(
@@ -325,9 +335,9 @@ function clampLimit(value: number | undefined, fallback: number, max: number): n
   return Math.max(1, Math.min(max, Math.trunc(value!)));
 }
 
-function jsonToolResult<TDetails>(details: TDetails): NativeToolResult<TDetails> {
+function jsonToolResult<TDetails>(details: TDetails): NativeToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(details, null, 2) }],
-    details,
+    details: { commandFacts: details as CommandFactsPayload },
   };
 }

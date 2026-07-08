@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -23,6 +24,10 @@ function createDeterministicClock(start = "2026-04-18T09:00:00.000Z") {
     return next;
   };
 }
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 function seedSession(store: StructuredSessionStateStore, sessionId = "session-001") {
   store.upsertPiSession({
@@ -58,6 +63,7 @@ describe("structured session state write API", () => {
     const workspaceCwd = mkdtempSync(join(tmpdir(), "svvy-structured-store-"));
     tempDirs.push(workspaceCwd);
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: workspaceCwd,
         label: "svvy",
@@ -114,6 +120,7 @@ describe("structured session state write API", () => {
               artifactDir: join(workspaceCwd, "artifact-store"),
             },
             now: createDeterministicClock(),
+            digest: testDigest,
           }),
         ),
       ),
@@ -1456,7 +1463,6 @@ describe("structured session state write API", () => {
       messageJson: JSON.stringify({ role: "user", content: "Ordinary follow-up" }),
     });
     const answered = store.answerRequestUserInput({
-      sessionId: "session-rui-answer",
       surfacePiSessionId: thread.surfacePiSessionId,
       requestId: request.requestId,
       questionId: question.questionId,
@@ -1564,7 +1570,6 @@ describe("structured session state write API", () => {
     });
 
     const firstAnswer = store.answerRequestUserInput({
-      sessionId: "session-rui-fifo",
       surfacePiSessionId: "session-rui-fifo",
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
@@ -1572,7 +1577,6 @@ describe("structured session state write API", () => {
       delivery: "enqueue-and-run",
     });
     const secondAnswer = store.answerRequestUserInput({
-      sessionId: "session-rui-fifo",
       surfacePiSessionId: "session-rui-fifo",
       requestId: request.requestId,
       questionId: request.questions[1]!.questionId,
@@ -1627,7 +1631,6 @@ describe("structured session state write API", () => {
     });
 
     const answered = store.answerRequestUserInput({
-      sessionId: "session-rui-cancel-answer",
       surfacePiSessionId: "session-rui-cancel-answer",
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
@@ -1696,7 +1699,6 @@ describe("structured session state write API", () => {
 
     expect(() =>
       store.answerRequestUserInput({
-        sessionId: "session-rui-invalid",
         surfacePiSessionId: "other-surface",
         requestId: request.requestId,
         questionId: request.questions[0]!.questionId,
@@ -1707,7 +1709,6 @@ describe("structured session state write API", () => {
 
     expect(() =>
       store.answerRequestUserInput({
-        sessionId: "session-rui-invalid",
         surfacePiSessionId: "session-rui-invalid",
         requestId: request.requestId,
         questionId: request.questions[0]!.questionId,
@@ -1759,6 +1760,7 @@ describe("structured session state write API", () => {
     });
 
     const paused = store.setRequestUserInputTimerPaused({
+      surfacePiSessionId: "session-rui-timer",
       requestId: request.requestId,
       paused: true,
     });
@@ -1769,6 +1771,7 @@ describe("structured session state write API", () => {
     });
 
     const resumed = store.setRequestUserInputTimerPaused({
+      surfacePiSessionId: "session-rui-timer",
       requestId: request.requestId,
       paused: false,
     });
@@ -1782,6 +1785,7 @@ describe("structured session state write API", () => {
   it("claims recovery work with idempotency keys, leases, and owner locks", () => {
     const store = createStore();
     const first = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
       kind: "queue_delivery",
       ownerScope: {
         kind: "surface",
@@ -1796,6 +1800,7 @@ describe("structured session state write API", () => {
       maxAttempts: 3,
     });
     const duplicate = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
       kind: "queue_delivery",
       ownerScope: {
         kind: "surface",
@@ -1810,6 +1815,7 @@ describe("structured session state write API", () => {
       maxAttempts: 3,
     });
     store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
       kind: "active_turn_recovery",
       ownerScope: {
         kind: "surface",
@@ -1863,6 +1869,7 @@ describe("structured session state write API", () => {
   it("persists generated package refresh and title generation scheduler records", () => {
     const store = createStore();
     const workflowsRefresh = store.ensureRecoveryWork({
+      scope: { kind: "app" },
       kind: "generated_package_refresh",
       ownerScope: { kind: "workspace" },
       idempotencyKey: "generated_package_refresh:workspace",
@@ -1877,6 +1884,7 @@ describe("structured session state write API", () => {
       },
     });
     const duplicate = store.ensureRecoveryWork({
+      scope: { kind: "app" },
       kind: "generated_package_refresh",
       ownerScope: { kind: "workspace" },
       idempotencyKey: "generated_package_refresh:workspace",
@@ -1887,6 +1895,7 @@ describe("structured session state write API", () => {
       maxAttempts: 3,
     });
     store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
       kind: "title_generation",
       ownerScope: { kind: "title_job", titleJobId: "session:session-recovery-title" },
       idempotencyKey: "title_generation:session:session-recovery-title",
@@ -1902,6 +1911,7 @@ describe("structured session state write API", () => {
     expect(store.claimNextRecoveryWork({ claimedBy: "coordinator-a" })).toMatchObject({
       id: workflowsRefresh.id,
       kind: "generated_package_refresh",
+      scope: { kind: "app" },
       status: "claimed",
       attempts: 1,
       ownerScope: { kind: "workspace" },
@@ -1910,6 +1920,75 @@ describe("structured session state write API", () => {
         extensionsGeneratedPackagePath: "/tmp/generated-extensions",
       },
     });
+  });
+
+  it("keeps app and workspace recovery idempotency buckets distinct", () => {
+    const store = createStore();
+    const appWork = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "source_reconcile:shared",
+      orderingKey: "app:source-reconcile",
+      orderingSeq: 0,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+    });
+    const workspaceWork = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
+      kind: "source_reconcile",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "source_reconcile:shared",
+      orderingKey: `workspace:${store.workspaceId}`,
+      orderingSeq: 0,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+    });
+
+    expect(workspaceWork.id).not.toBe(appWork.id);
+    expect(store.listRecoveryWork({ scope: { kind: "app" } })).toEqual([appWork]);
+    expect(
+      store.listRecoveryWork({ scope: { kind: "workspace", workspaceId: store.workspaceId } }),
+    ).toEqual([workspaceWork]);
+    expect(
+      store.claimNextRecoveryWork({
+        claimedBy: "coordinator-app",
+        scope: { kind: "app" },
+        kinds: ["source_reconcile"],
+      }),
+    ).toMatchObject({ id: appWork.id, scope: { kind: "app" } });
+  });
+
+  it("rejects generated-package recovery work in the wrong scope", () => {
+    const store = createStore();
+    expect(() =>
+      store.ensureRecoveryWork({
+        scope: { kind: "workspace", workspaceId: store.workspaceId },
+        kind: "generated_package_refresh",
+        ownerScope: { kind: "workspace" },
+        idempotencyKey: "generated_package_refresh:invalid-workspace",
+        orderingKey: `workspace:${store.workspaceId}`,
+        orderingSeq: 0,
+        priority: 5,
+        availableAt: "2026-04-18T09:00:00.000Z",
+        maxAttempts: 3,
+      }),
+    ).toThrow("generated_package_refresh recovery work must be app-scoped");
+    expect(() =>
+      store.ensureRecoveryWork({
+        scope: { kind: "app" },
+        kind: "workspace_generated_package_link_repair",
+        ownerScope: { kind: "workspace" },
+        idempotencyKey: "workspace_generated_package_link_repair:invalid-app",
+        orderingKey: "app:generated-package-link",
+        orderingSeq: 0,
+        priority: 5,
+        availableAt: "2026-04-18T09:00:00.000Z",
+        maxAttempts: 3,
+      }),
+    ).toThrow("workspace_generated_package_link_repair recovery work must be workspace-scoped");
   });
 
   it("normalizes stale recovery leases and interrupted queue rows on coordinator startup", () => {
@@ -1922,6 +2001,7 @@ describe("structured session state write API", () => {
     });
     store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "surface-recovery-normalize" });
     const work = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
       kind: "queue_delivery",
       ownerScope: {
         kind: "surface",

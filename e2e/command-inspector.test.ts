@@ -1,4 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
@@ -15,6 +16,9 @@ setDefaultTimeout(120_000);
 
 const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
 const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -67,6 +71,7 @@ async function seedStructuredCommandInspector(input: {
   const sessionDir = getTestSessionDir(input.homeDir, input.workspaceDir);
   const store = createStructuredSessionStateStore({
     databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+    digest: testDigest,
     workspace: {
       id: input.workspaceDir,
       label: basename(input.workspaceDir),

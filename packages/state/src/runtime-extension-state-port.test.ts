@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   CommandId,
+  ExtensionDependencyApprovalIdentity,
   ExtensionDependencyReadiness,
   ExtensionId,
   IsoDateTimeString,
@@ -20,6 +21,18 @@ const extensionId = (value: string): ExtensionId => value as ExtensionId;
 const checkedAt = (value: string): NonNullable<ExtensionDependencyReadiness["checkedAt"]> =>
   value as NonNullable<ExtensionDependencyReadiness["checkedAt"]>;
 const isoDateTime = (value: string): IsoDateTimeString => value as IsoDateTimeString;
+const extensionDependencyApprovalIdentity = (
+  input: Pick<ExtensionDependencyApprovalIdentity, "kind" | "name" | "version"> &
+    Partial<Omit<ExtensionDependencyApprovalIdentity, "kind" | "name" | "version">>,
+): ExtensionDependencyApprovalIdentity => ({
+  kind: input.kind,
+  packageManager: input.packageManager ?? "bun",
+  source: input.source ?? "npm",
+  name: input.name,
+  version: input.version,
+  integrity: input.integrity ?? null,
+  resolution: input.resolution ?? null,
+});
 
 function createDeterministicClock(start = "2026-04-18T09:00:00.000Z") {
   let cursor = Date.parse(start);
@@ -61,6 +74,43 @@ describe("runtime extension state port", () => {
     stores.push(store);
     return store;
   }
+
+  it("records dependency approval as product state and invalidates extensions", async () => {
+    const store = createStore();
+    const port = runtimeExtensionStatePortFromStore(store);
+    const dependency = extensionDependencyApprovalIdentity({
+      kind: "dependency",
+      name: "tinyfish",
+      version: "1.2.3",
+      integrity: "sha512-good",
+      resolution: "https://registry.npmjs.org/tinyfish/-/tinyfish-1.2.3.tgz",
+    });
+
+    const result = await runTestEffect(
+      port.recordDependencyApproval({
+        dependency,
+        approvedAt: isoDateTime("2026-04-18T09:00:03.000Z"),
+        approvedBy: "user",
+        sourceCommandId: commandId("cmd_dependency_approval_01"),
+      }),
+    );
+
+    expect(result.value).toBeUndefined();
+    expect(result.afterCommit).toEqual([{ scope: "app", invalidation: { model: "extensions" } }]);
+    expect(store.readExtensionDependencyApproval({ dependency })).toBe(true);
+
+    const updated = await runTestEffect(
+      port.recordDependencyApproval({
+        dependency,
+        approvedAt: isoDateTime("2026-04-18T09:00:04.000Z"),
+        approvedBy: "user",
+        sourceCommandId: commandId("cmd_dependency_approval_02"),
+      }),
+    );
+
+    expect(updated.value).toBeUndefined();
+    expect(store.readExtensionDependencyApproval({ dependency })).toBe(true);
+  });
 
   it("records dependency readiness as product state and invalidates extensions", async () => {
     const store = createStore();

@@ -1,6 +1,7 @@
 import type { NativeToolDefinition } from "@svvy/extensions";
 import * as Exit from "effect/Exit";
 import { Type } from "typebox";
+import { nativeToolParameters } from "./native-tool-parameters";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
@@ -17,38 +18,39 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type {
+  AbsolutePath,
   CommandId,
   CommandEventPayload,
   JsonValue,
-  RuntimeArtifactRecord,
   RuntimeArtifactStatePortService,
   RuntimeCommandRecord,
   RuntimeCommandStatePortService,
   RuntimeExtensionContextChangedSurface,
   RuntimeExtensionContextImpactStateFacade,
   StateContractError,
+  SurfacePiSessionId,
   SvvyxRuntimeEffectTransportIntent,
   SvvyxRuntimeEffectTransportRequest,
+  ThreadId,
+  ToolItemId,
+  TurnId,
+  WorkspaceId,
   WorkspaceSessionId,
+  BuildLaunchPolicyInput,
+  SandboxLaunchFacts,
 } from "@svvy/core";
 import { decodeUnknownSvvyxRuntimeEffectTransportIntentExit } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import {
-  buildDirectToolLaunchPolicy,
-  buildSandboxHelperArgs,
-  buildSvvyxLaunchPolicy,
-  canWriteFileSystemPath,
   isSandboxDenialOutput,
   isSandboxHelperBootstrapFailure,
-  resolveSandboxHelperPath,
   sandboxDenialFacts,
-  type FileSystemSandboxPolicy,
-  type SandboxLaunchPolicy,
-} from "@svvy/sandbox";
+} from "@svvy/sandbox/diagnostics";
+import { checkSandboxPathAccess } from "@svvy/sandbox";
 import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import type {
   LiveCommandCancelResult,
@@ -64,6 +66,11 @@ import {
   type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
+import {
+  artifactRootForSession,
+  materializeRuntimeArtifact,
+  type RuntimeArtifactMaterializedRecord,
+} from "./runtime-artifact-materializer";
 import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
 import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
 import type { SvvyxWorkflowsModelCatalogReader } from "./svvyx-workflows-command";
@@ -80,12 +87,15 @@ type RunningCommandSession = {
   protectedWriteSnapshot: ProtectedWriteSnapshot;
   liveProjection: LiveCommandProjection | null;
   outputRedactions: readonly string[];
+  closeLaunchFacts?: () => Promise<void>;
 };
 
 type LiveCommandProjection = {
   artifactState: RuntimeArtifactStatePortService;
   commandState: RuntimeCommandStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+  cwd: string;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   sessionId: string;
   commandId: string;
   managedSandbox: boolean;
@@ -131,10 +141,11 @@ const MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE =
 
 type DirectToolOptions = {
   cwd: string;
+  workspaceId?: string;
   runtime?: PromptExecutionRuntimeHandle;
   artifactState?: RuntimeArtifactStatePortService;
   commandState?: RuntimeCommandStatePortService;
-  readWorkspaceForSession?: (sessionId: string) => unknown | null;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   runState?: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
@@ -145,7 +156,6 @@ type DirectToolOptions = {
   workflowsGeneratedPackagePath?: string;
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
-  workflowsWorkspaceCwds?: () => readonly string[];
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
@@ -157,6 +167,14 @@ type DirectToolOptions = {
   approvalMode?: ApprovalMode | (() => ApprovalMode);
   managedSandbox?: boolean | (() => boolean);
   networkAccess?: boolean | (() => boolean);
+  acquireDirectToolLaunch?: (
+    input: Omit<BuildLaunchPolicyInput, "launchKind"> & {
+      toolName: "exec_command" | "apply_patch" | "execute_typescript";
+    },
+  ) => Promise<{
+    facts: SandboxLaunchFacts;
+    close(): Promise<void>;
+  }>;
   onAppLog?: (event: AppLoggerEvent) => void;
   runTaskAgentBridge?: runTaskAgentBridgeEnvProvider;
   runtimeCommandStdin?: LiveCommandStdinRegistry;
@@ -170,7 +188,7 @@ export type runTaskAgentBridgeEnvProvider = (input: {
 }) => Record<string, string> | null;
 
 type DirectToolSet = {
-  codingTools: NativeToolDefinition<unknown, Record<string, unknown>>[];
+  codingTools: NativeToolDefinition<unknown>[];
 };
 
 export type DirectToolApprovalBoundary = RuntimeApprovalBoundary;
@@ -185,20 +203,23 @@ export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet
   };
 }
 
-function createWriteStdinTool(
-  options: DirectToolOptions,
-): NativeToolDefinition<unknown, Record<string, unknown>> {
+function createWriteStdinTool(options: DirectToolOptions): NativeToolDefinition<unknown> {
   return {
     name: "write_stdin",
     label: "write_stdin",
     description:
       "Write text to a running exec_command session. This is only valid for command sessions that returned a session_id.",
-    parameters: Type.Object(
-      {
-        session_id: Type.String({ minLength: 1, description: "Running exec_command session id." }),
-        input: Type.String({ description: "Text to write to the process stdin." }),
-      },
-      { additionalProperties: false },
+    parameters: nativeToolParameters(
+      Type.Object(
+        {
+          session_id: Type.String({
+            minLength: 1,
+            description: "Running exec_command session id.",
+          }),
+          input: Type.String({ description: "Text to write to the process stdin." }),
+        },
+        { additionalProperties: false },
+      ),
     ),
     async execute(_toolCallId, input) {
       const params = input as { session_id?: unknown; input?: unknown };
@@ -239,11 +260,6 @@ function createWriteStdinTool(
               }),
             },
           ],
-          details: {
-            sessionId: params.session_id,
-            exitCode: session.exitCode,
-            exitSignal: session.exitSignal,
-          },
         };
       }
       const writeResult = writeRunningCommandSessionStdin(session, params.input);
@@ -261,7 +277,6 @@ function createWriteStdinTool(
             ),
           },
         ],
-        details: { sessionId: params.session_id },
       };
     },
   };
@@ -323,22 +338,24 @@ function cancelRunningCommandSession(
     return { status: "already_terminal" };
   }
   const killed = session.process.kill("SIGTERM");
+  void session.closeLaunchFacts?.();
+  session.closeLaunchFacts = undefined;
   return { status: killed ? "cancelled" : "cancelling" };
 }
 
-function createApplyPatchTool(
-  options: DirectToolOptions,
-): NativeToolDefinition<unknown, Record<string, unknown>> {
+function createApplyPatchTool(options: DirectToolOptions): NativeToolDefinition<unknown> {
   return {
     name: "apply_patch",
     label: "apply_patch",
     description:
       "Apply a unified patch to files in the current workspace. Use this for targeted source edits.",
-    parameters: Type.Object(
-      {
-        patch: Type.String({ minLength: 1, description: "Patch text to apply." }),
-      },
-      { additionalProperties: false },
+    parameters: nativeToolParameters(
+      Type.Object(
+        {
+          patch: Type.String({ minLength: 1, description: "Patch text to apply." }),
+        },
+        { additionalProperties: false },
+      ),
     ),
     async execute(toolCallId, input) {
       const params = input as { patch?: unknown };
@@ -346,32 +363,52 @@ function createApplyPatchTool(
         throw new Error("apply_patch requires patch.");
       }
       assertPatchDoesNotEditWorkflowsGeneratedOutput(params.patch, options);
-      assertPatchRespectsManagedFilesystemPolicy(params.patch, options);
       await assertDirectToolApproved({
         options,
         patch: params.patch,
         toolCallId,
         toolName: "apply_patch",
       });
-      const launchPolicy = directToolLaunchPolicy(options);
+      const activeCommand = findActiveDirectToolCommandForOptions({
+        options,
+        toolCallId,
+        toolName: "apply_patch",
+      });
+      const launchHandle = await acquireRuntimeDirectToolLaunchFacts({
+        activeCommand,
+        command: ["patch", "-p0", "--forward"],
+        cwd: options.cwd,
+        envFacts: [],
+        options,
+        toolName: "apply_patch",
+      });
       const patchCommandInput = {
         cwd: options.cwd,
-        fileSystemPolicy: launchPolicy.fileSystemPolicy,
-        managedSandbox: launchPolicy.managedSandbox,
+        launchFacts: launchHandle?.facts ?? null,
+        managedSandbox: launchFactsManagedSandbox(launchHandle?.facts),
         patch: params.patch,
       };
-      let result = spawnPatchCommand(patchCommandInput);
+      let result: ReturnType<typeof spawnPatchCommand>;
       let resultManagedSandbox = patchCommandInput.managedSandbox;
-      if (isEscalatableSandboxDeniedPatchResult(result, patchCommandInput.managedSandbox)) {
-        await assertSandboxEscalationApproved({
-          options,
-          patch: params.patch,
-          result,
-          toolCallId,
-          toolName: "apply_patch",
-        });
-        result = spawnPatchCommand({ ...patchCommandInput, managedSandbox: false });
-        resultManagedSandbox = false;
+      try {
+        assertPatchRespectsRuntimeLaunchFacts(params.patch, launchHandle?.facts ?? null);
+        result = spawnPatchCommand(patchCommandInput);
+        if (isEscalatableSandboxDeniedPatchResult(result, patchCommandInput.managedSandbox)) {
+          await assertSandboxEscalationApproved({
+            options,
+            patch: params.patch,
+            result,
+            toolCallId,
+            toolName: "apply_patch",
+          });
+          result = spawnPatchCommand({
+            ...patchCommandInput,
+            launchFacts: null,
+          });
+          resultManagedSandbox = false;
+        }
+      } finally {
+        await launchHandle?.close();
       }
       const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
       if (result.status !== 0) {
@@ -468,26 +505,26 @@ function parseUnifiedDiffHeaderPath(
   return rawPath.startsWith("a/") || rawPath.startsWith("b/") ? rawPath.slice(2) : rawPath;
 }
 
-function createExecCommandTool(
-  options: DirectToolOptions,
-): NativeToolDefinition<unknown, Record<string, unknown>> {
+function createExecCommandTool(options: DirectToolOptions): NativeToolDefinition<unknown> {
   return {
     name: "exec_command",
     label: "exec_command",
     description:
       "Execute a shell command in the current workspace. Returns stdout and stderr. Use this for command-family work such as svvyx, git, gh, cx, smithers, tests, and builds.",
-    parameters: Type.Object(
-      {
-        cmd: Type.String({ minLength: 1, description: "Shell command to execute." }),
-        workdir: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description: "Working directory for the command. Defaults to the workspace root.",
-          }),
-        ),
-        timeout: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
-      },
-      { additionalProperties: false },
+    parameters: nativeToolParameters(
+      Type.Object(
+        {
+          cmd: Type.String({ minLength: 1, description: "Shell command to execute." }),
+          workdir: Type.Optional(
+            Type.String({
+              minLength: 1,
+              description: "Working directory for the command. Defaults to the workspace root.",
+            }),
+          ),
+          timeout: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
+        },
+        { additionalProperties: false },
+      ),
     ),
     async execute(toolCallId, input, signal, _onUpdate) {
       const params = input as { cmd?: unknown; timeout?: unknown; workdir?: unknown };
@@ -514,30 +551,11 @@ function createExecCommandTool(
         toolCallId,
         toolName: "exec_command",
       });
-      const activeCommand =
-        options.runtime?.current && options.commandState && options.runState
-          ? findActiveExecCommand({
-              commandState: options.commandState,
-              runState: options.runState,
-              sessionId: options.runtime.current.workspaceSessionId,
-              turnId: options.runtime.current.turnId,
-              workflowTaskAttemptId: options.runtime.current.workflowTaskAttemptId ?? null,
-              toolCallId,
-            })
-          : null;
-      const activeLiveProjection =
-        activeCommand && options.artifactState && options.commandState && options.runState
-          ? {
-              artifactState: options.artifactState,
-              commandState: options.commandState,
-              runState: options.runState,
-              sessionId: activeCommand.sessionId,
-              commandId: activeCommand.id,
-              managedSandbox: directToolLaunchPolicy(options).managedSandbox,
-              outputEventBytes: { stderr: 0, stdout: 0 },
-              outputEventRetainedStreams: new Set<"stderr" | "stdout">(),
-            }
-          : null;
+      const activeCommand = findActiveDirectToolCommandForOptions({
+        options,
+        toolCallId,
+        toolName: "exec_command",
+      });
       const svvyxSubprocess = prepareSvvyxSubprocess({
         activeCommand,
         command: params.cmd,
@@ -550,16 +568,38 @@ function createExecCommandTool(
         commandCwd,
         options,
       });
-      const launchPolicy = svvyxSubprocess
-        ? svvyxLaunchPolicy(options)
-        : directToolLaunchPolicy(options);
+      const env = { ...runTaskAgentBridgeEnv, ...svvyxSubprocess?.env };
+      const launchHandle = await acquireRuntimeDirectToolLaunchFacts({
+        activeCommand,
+        command: [getShell(), "-lc", params.cmd],
+        cwd: commandCwd,
+        envFacts: environmentFactsForEnv(env),
+        options,
+        toolName: "exec_command",
+      });
+      const managedSandbox = launchFactsManagedSandbox(launchHandle?.facts);
+      const activeLiveProjection =
+        activeCommand && options.artifactState && options.commandState && options.runState
+          ? {
+              artifactState: options.artifactState,
+              commandState: options.commandState,
+              runState: options.runState,
+              cwd: commandCwd,
+              readArtifactRootForSession: options.readArtifactRootForSession,
+              sessionId: activeCommand.sessionId,
+              commandId: activeCommand.id,
+              managedSandbox,
+              outputEventBytes: { stderr: 0, stdout: 0 },
+              outputEventRetainedStreams: new Set<"stderr" | "stdout">(),
+            }
+          : null;
       const execInput = {
         cwd: commandCwd,
         cmd: params.cmd,
-        env: { ...runTaskAgentBridgeEnv, ...svvyxSubprocess?.env },
-        fileSystemPolicy: launchPolicy.fileSystemPolicy,
-        managedSandbox: launchPolicy.managedSandbox,
-        networkAccess: launchPolicy.networkAccess,
+        env,
+        launchFacts: launchHandle?.facts ?? null,
+        managedSandbox,
+        networkAccess: launchFactsNetworkAccess(launchHandle?.facts, options),
         protectedWriteRoots: svvyxSubprocess ? [] : protectedDirectEditRoots(options),
         protectedWriteAllowedRoots: svvyxSubprocess ? [] : protectedDirectEditAllowedRoots(options),
         timeoutMs:
@@ -570,6 +610,7 @@ function createExecCommandTool(
         liveProjection: activeLiveProjection,
         outputRedactions: runTaskAgentBridgeOutputRedactions(runTaskAgentBridgeEnv),
         runtimeCommandStdin: options.runtimeCommandStdin,
+        closeLaunchFacts: launchHandle?.close,
       };
       const result = await runExecCommandWithSandboxEscalation({
         input: execInput,
@@ -704,7 +745,6 @@ function prepareSvvyxSubprocess(input: {
     workflowModelCatalog: input.options.workflowsModelCatalog?.() ?? null,
     workflowsGeneratedPackagePath: input.options.workflowsGeneratedPackagePath,
     workflowsSourceRoot: input.options.workflowsSourceRoot,
-    workflowsWorkspaceCwds: input.options.workflowsWorkspaceCwds?.() ?? null,
     workspaceCwd: input.options.cwd,
   };
   return {
@@ -976,6 +1016,7 @@ async function applySvvyxSubprocessIntents(
         operation: intent.operation,
         runtime: subprocess.runtime,
         runState: options.runState,
+        readArtifactRootForSession: options.readArtifactRootForSession,
         sourceCommand: { id: subprocess.sourceCommandId as CommandId },
         onAppLog: options.onAppLog,
         openArtifact: options.openArtifact,
@@ -1429,13 +1470,25 @@ function assertPatchDoesNotEditWorkflowsGeneratedOutput(
   }
 }
 
-function assertPatchRespectsManagedFilesystemPolicy(
+function assertPatchRespectsRuntimeLaunchFacts(
   patch: string,
-  options: WorkflowsGeneratedProtectionOptions,
+  launchFacts: SandboxLaunchFacts | null,
 ): void {
-  const policy = directToolLaunchPolicy(options).fileSystemPolicy;
+  if (!launchFacts || launchFacts.mode !== "managed") {
+    return;
+  }
   for (const path of readPatchTouchedPaths(patch)) {
-    if (!canWriteFileSystemPath(policy, path, options.cwd)) {
+    const candidatePath = isAbsolute(path)
+      ? resolvePath(path)
+      : resolvePath(launchFacts.policySnapshot.cwd, path);
+    const decision = checkSandboxPathAccess({
+      cwd: launchFacts.policySnapshot.cwd as AbsolutePath,
+      followSymlinks: false,
+      operation: "write",
+      path: candidatePath as AbsolutePath,
+      snapshot: launchFacts.policySnapshot,
+    });
+    if (decision.status !== "allowed") {
       throw new Error(MANAGED_FILESYSTEM_DENIED_WRITE_MESSAGE);
     }
   }
@@ -1454,13 +1507,22 @@ async function assertDirectToolApproved(input: {
   if (approvalMode === "full-access" || !input.options.approvalBoundary) {
     return;
   }
+  const activeCommand = findActiveDirectToolCommandForOptions({
+    options: input.options,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+  });
   const approval = await input.options.approvalBoundary({
     approvalMode,
     command: input.command,
     commandFamily: input.commandFamily,
     cwd: input.commandCwd ?? input.options.cwd,
     patch: input.patch,
-    toolCallId: input.toolCallId,
+    ...directToolApprovalTarget({
+      activeCommand,
+      options: input.options,
+      toolCallId: input.toolCallId,
+    }),
     toolName: input.toolName,
   });
   if (approval.approved === false) {
@@ -1486,17 +1548,25 @@ async function assertSandboxEscalationApproved(input: {
   if (!input.options.approvalBoundary) {
     throw new Error("Unsandboxed retry after sandbox denial requires approval.");
   }
+  const activeCommand = findActiveDirectToolCommandForOptions({
+    options: input.options,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+  });
   const approval = await input.options.approvalBoundary({
     approvalMode,
     command: input.command,
     context: {
       reason: "sandbox_denial_escalation",
       sandboxDenied: true,
-      result: sandboxEscalationResultContext(input.result),
     },
     cwd: input.commandCwd ?? input.options.cwd,
     patch: input.patch,
-    toolCallId: input.toolCallId,
+    ...directToolApprovalTarget({
+      activeCommand,
+      options: input.options,
+      toolCallId: input.toolCallId,
+    }),
     toolName: input.toolName,
   });
   if (approval.approved === false) {
@@ -1504,24 +1574,30 @@ async function assertSandboxEscalationApproved(input: {
   }
 }
 
-function sandboxEscalationResultContext(
-  result:
-    | ReturnType<typeof spawnSync>
-    | { content: { type: "text"; text: string }[]; details: Record<string, unknown> },
-): Record<string, unknown> {
-  if ("details" in result) {
-    return {
-      exitCode: result.details.exitCode,
-      exitSignal: result.details.exitSignal,
-      stderr: result.details.stderr,
-      stdout: result.details.stdout,
-    };
-  }
+function directToolApprovalTarget(input: {
+  activeCommand: RuntimeCommandRecord | null;
+  options: DirectToolOptions;
+  toolCallId: string;
+}): {
+  commandId?: CommandId | null;
+  sessionId?: WorkspaceSessionId;
+  surfacePiSessionId?: SurfacePiSessionId;
+  threadId?: ThreadId | null;
+  toolCallId: ToolItemId;
+  turnId?: TurnId | null;
+} {
+  const runtime = input.options.runtime?.current;
   return {
-    exitCode: result.status,
-    exitSignal: result.signal,
-    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
-    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
+    commandId: input.activeCommand?.id as CommandId | undefined,
+    sessionId: (input.activeCommand?.sessionId ?? runtime?.workspaceSessionId) as
+      | WorkspaceSessionId
+      | undefined,
+    surfacePiSessionId: (input.activeCommand?.surfacePiSessionId ?? runtime?.surfacePiSessionId) as
+      | SurfacePiSessionId
+      | undefined,
+    threadId: (input.activeCommand?.threadId ?? runtime?.threadId ?? null) as ThreadId | null,
+    toolCallId: input.toolCallId as ToolItemId,
+    turnId: (input.activeCommand?.turnId ?? runtime?.turnId ?? null) as TurnId | null,
   };
 }
 
@@ -1611,56 +1687,12 @@ type WorkflowsGeneratedProtectionOptions = Pick<
   | "approvalMode"
   | "cwd"
   | "extensionsRoot"
-  | "readWorkspaceForSession"
+  | "readArtifactRootForSession"
   | "runtime"
   | "workflowsExtensionsGeneratedPackagePath"
   | "workflowsGeneratedPackagePath"
   | "workflowsSourceRoot"
 >;
-
-function directToolLaunchPolicy(options: WorkflowsGeneratedProtectionOptions): SandboxLaunchPolicy {
-  const directEditPolicy = protectedDirectEditPolicy(options);
-  const extensionsRoot = resolvePath(options.extensionsRoot ?? defaultExtensionsRoot());
-  return buildDirectToolLaunchPolicy({
-    approvalMode: resolveApprovalMode(options),
-    cwd: options.cwd,
-    extensionsPackageRoot: resolvePath(extensionsRoot, "package"),
-    extensionsSourceRoot: resolvePath(extensionsRoot, "sources"),
-    managedSandbox: resolveManagedSandbox(options),
-    networkAccess: resolveNetworkAccess(options),
-    workflowsSourceRoot: options.workflowsSourceRoot
-      ? resolvePath(options.workflowsSourceRoot)
-      : null,
-    allowedRoots: directEditPolicy.allowedRoots,
-    protectedRoots: directEditPolicy.protectedRoots,
-    alwaysProtectedRoots: directEditPolicy.alwaysProtectedRoots,
-    tmpdir: process.env.TMPDIR ?? null,
-  });
-}
-
-function svvyxLaunchPolicy(options: WorkflowsGeneratedProtectionOptions): SandboxLaunchPolicy {
-  const extensionsRoot = resolvePath(options.extensionsRoot ?? defaultExtensionsRoot());
-  const artifactPolicy = protectedArtifactDirectEditPolicy(options);
-  return buildSvvyxLaunchPolicy({
-    approvalMode: resolveApprovalMode(options),
-    cwd: options.cwd,
-    extensionsGeneratedPackagePath: effectiveExtensionsGeneratedPackagePath({
-      extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
-      generatedPackagePath: options.workflowsGeneratedPackagePath,
-    }),
-    extensionsRoot,
-    managedSandbox: resolveManagedSandbox(options),
-    networkAccess: resolveNetworkAccess(options),
-    workflowsGeneratedPackagePath: resolvePath(
-      options.workflowsGeneratedPackagePath ?? getWorkflowsGeneratedPackagePath(),
-    ),
-    workflowsSourceRoot: options.workflowsSourceRoot
-      ? resolvePath(options.workflowsSourceRoot)
-      : null,
-    artifactAllowedRoots: artifactPolicy.allowedRoots,
-    tmpdir: process.env.TMPDIR ?? null,
-  });
-}
 
 function protectedDirectEditRoots(options: WorkflowsGeneratedProtectionOptions): string[] {
   const policy = protectedDirectEditPolicy(options);
@@ -1697,16 +1729,12 @@ function protectedArtifactDirectEditPolicy(options: WorkflowsGeneratedProtection
   allowedRoots: string[];
 } {
   const runtime = options.runtime?.current;
-  if (!runtime || !options.readWorkspaceForSession) {
+  if (!runtime || !options.readArtifactRootForSession) {
     return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
   }
   let artifactDir: string;
   try {
-    const workspace = options.readWorkspaceForSession(runtime.workspaceSessionId);
-    if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) {
-      return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
-    }
-    const candidate = (workspace as { artifactDir?: unknown }).artifactDir;
+    const candidate = options.readArtifactRootForSession(runtime.workspaceSessionId);
     if (typeof candidate !== "string" || candidate.length === 0) {
       return { protectedRoots: [], alwaysProtectedRoots: [], allowedRoots: [] };
     }
@@ -1824,7 +1852,7 @@ async function runExecCommand(input: {
   cwd: string;
   cmd: string;
   env?: NodeJS.ProcessEnv;
-  fileSystemPolicy: FileSystemSandboxPolicy;
+  launchFacts?: SandboxLaunchFacts | null;
   managedSandbox: boolean;
   networkAccess: boolean;
   protectedWriteRoots: readonly string[];
@@ -1834,18 +1862,17 @@ async function runExecCommand(input: {
   liveProjection?: LiveCommandProjection | null;
   outputRedactions?: readonly string[];
   runtimeCommandStdin?: LiveCommandStdinRegistry;
+  closeLaunchFacts?: () => Promise<void>;
 }): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
   const protectedWriteSnapshot = captureProtectedWriteSnapshot(
     input.protectedWriteRoots,
     input.protectedWriteAllowedRoots,
   );
   const child = spawnShellCommand({
-    cwd: input.cwd,
+    cwd: input.cwd as AbsolutePath,
     cmd: input.cmd,
     env: input.env,
-    fileSystemPolicy: input.fileSystemPolicy,
-    managedSandbox: input.managedSandbox,
-    networkAccess: input.networkAccess,
+    launchFacts: input.launchFacts ?? null,
   });
   const session: RunningCommandSession = {
     process: child,
@@ -1873,6 +1900,18 @@ async function runExecCommand(input: {
   child.on("exit", (code, signal) => {
     session.exitCode = code;
     session.exitSignal = signal;
+  });
+  let launchFactsClosed = false;
+  const closeLaunchFacts = async () => {
+    if (launchFactsClosed) {
+      return;
+    }
+    launchFactsClosed = true;
+    await input.closeLaunchFacts?.();
+  };
+  session.closeLaunchFacts = closeLaunchFacts;
+  child.once("close", () => {
+    void closeLaunchFacts();
   });
 
   const abortHandler = () => child.kill();
@@ -1932,6 +1971,9 @@ async function runExecCommand(input: {
     };
   } finally {
     input.signal?.removeEventListener("abort", abortHandler);
+    if (session.exitCode !== null || session.exitSignal !== null) {
+      await closeLaunchFacts();
+    }
   }
 }
 
@@ -1960,6 +2002,8 @@ async function runExecCommandWithSandboxEscalation(input: {
   });
   return await runExecCommand({
     ...input.input,
+    closeLaunchFacts: undefined,
+    launchFacts: null,
     managedSandbox: false,
   });
 }
@@ -1977,7 +2021,7 @@ function recordLiveCommandOutput(
   const nextBytes = previousBytes + bytes;
   const remainingEventBytes = RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES - previousBytes;
   if (remainingEventBytes <= 0) {
-    recordRetainedCommandOutputEvent(liveProjection, stream, nextBytes);
+    recordRetainedCommandOutputEvent(liveProjection, stream);
     liveProjection.outputEventBytes[stream] = nextBytes;
     return;
   }
@@ -2001,14 +2045,13 @@ function recordLiveCommandOutput(
   }
   liveProjection.outputEventBytes[stream] = nextBytes;
   if (nextBytes > RETAINED_COMMAND_OUTPUT_ARTIFACT_THRESHOLD_BYTES) {
-    recordRetainedCommandOutputEvent(liveProjection, stream, nextBytes);
+    recordRetainedCommandOutputEvent(liveProjection, stream);
   }
 }
 
 function recordRetainedCommandOutputEvent(
   liveProjection: LiveCommandProjection,
   stream: "stdout" | "stderr",
-  bytes: number,
 ): void {
   if (liveProjection.outputEventRetainedStreams.has(stream)) {
     return;
@@ -2023,7 +2066,6 @@ function recordRetainedCommandOutputEvent(
         stream,
         source: "retained-log-artifact",
         text: RETAINED_COMMAND_OUTPUT_EVENT_MESSAGE,
-        bytes,
       },
     }),
   );
@@ -2055,17 +2097,22 @@ function retainCommandOutputArtifacts(
     ) {
       continue;
     }
-    const artifact = liveProjection.runState(
-      liveProjection.artifactState.createArtifact({
-        sessionId: liveProjection.sessionId as WorkspaceSessionId,
-        sourceCommandId: liveProjection.commandId as CommandId,
-        kind: "log",
-        name: `command-output-${stream}-${randomUUID()}.log`,
-        content: text,
-        mimeType: "text/plain",
-        immutable: true,
+    const artifact = materializeRuntimeArtifact({
+      artifactRoot: artifactRootForSession({
+        cwd: liveProjection.cwd,
+        sessionId: liveProjection.sessionId,
+        readArtifactRootForSession: liveProjection.readArtifactRootForSession,
       }),
-    ).value;
+      artifactState: liveProjection.artifactState,
+      runState: liveProjection.runState,
+      workspaceSessionId: liveProjection.sessionId as WorkspaceSessionId,
+      sourceCommandId: liveProjection.commandId as CommandId,
+      kind: "log",
+      name: `command-output-${stream}-${randomUUID()}.log`,
+      content: text,
+      mimeType: "text/plain",
+      immutable: true,
+    });
     retained.push(retainedCommandOutputArtifact(stream, artifact));
   }
   return retained;
@@ -2073,11 +2120,11 @@ function retainCommandOutputArtifacts(
 
 function retainedCommandOutputArtifact(
   stream: "stderr" | "stdout",
-  artifact: RuntimeArtifactRecord,
+  artifact: RuntimeArtifactMaterializedRecord,
 ): RetainedCommandOutputArtifact {
   return {
-    artifactId: artifact.id,
-    bytes: artifact.bytes,
+    artifactId: artifact.artifactId,
+    bytes: artifact.byteSize,
     name: artifact.name,
     stream,
   };
@@ -2153,67 +2200,40 @@ function spawnShellCommand(input: {
   cwd: string;
   cmd: string;
   env?: NodeJS.ProcessEnv;
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
-  networkAccess: boolean;
+  launchFacts?: SandboxLaunchFacts | null;
 }): ChildProcessWithoutNullStreams {
   const shell = getShell();
   const env = { ...process.env, ...input.env };
-  if (!input.managedSandbox) {
-    return spawn(shell, ["-lc", input.cmd], {
-      cwd: input.cwd,
+  if (input.launchFacts) {
+    return spawn(input.launchFacts.spawn.executable, input.launchFacts.spawn.args, {
+      cwd: input.launchFacts.spawn.cwd,
       env,
     });
   }
-  return spawn(
-    resolveSandboxHelperPath({
-      configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
-      executablePath: process.execPath,
-    }),
-    buildSandboxHelperArgs({
-      command: [shell, "-lc", input.cmd],
-      cwd: input.cwd,
-      fileSystemPolicy: input.fileSystemPolicy,
-      networkAccess: input.networkAccess,
-    }),
-    {
-      cwd: input.cwd,
-      env,
-    },
-  );
+  return spawn(shell, ["-lc", input.cmd], {
+    cwd: input.cwd,
+    env,
+  });
 }
 
 function spawnPatchCommand(input: {
   cwd: string;
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
+  launchFacts?: SandboxLaunchFacts | null;
   patch: string;
 }): ReturnType<typeof spawnSync> {
   const command = ["patch", "-p0", "--forward"] as const;
-  if (!input.managedSandbox) {
-    return spawnSync("patch", command.slice(1), {
-      cwd: input.cwd,
+  if (input.launchFacts) {
+    return spawnSync(input.launchFacts.spawn.executable, input.launchFacts.spawn.args, {
+      cwd: input.launchFacts.spawn.cwd,
       input: input.patch,
       encoding: "utf8",
     });
   }
-  return spawnSync(
-    resolveSandboxHelperPath({
-      configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
-      executablePath: process.execPath,
-    }),
-    buildSandboxHelperArgs({
-      command,
-      cwd: input.cwd,
-      fileSystemPolicy: input.fileSystemPolicy,
-      networkAccess: false,
-    }),
-    {
-      cwd: input.cwd,
-      input: input.patch,
-      encoding: "utf8",
-    },
-  );
+  return spawnSync("patch", command.slice(1), {
+    cwd: input.cwd,
+    input: input.patch,
+    encoding: "utf8",
+  });
 }
 
 function isEscalatableSandboxDeniedPatchResult(
@@ -2233,6 +2253,9 @@ function isEscalatableSandboxDeniedPatchResult(
 }
 
 function resolveNetworkAccess(options: DirectToolOptions): boolean {
+  if (resolveApprovalMode(options) === "full-access") {
+    return true;
+  }
   if (typeof options.networkAccess === "function") {
     return options.networkAccess() !== false;
   }
@@ -2240,6 +2263,9 @@ function resolveNetworkAccess(options: DirectToolOptions): boolean {
 }
 
 function resolveManagedSandbox(options: DirectToolOptions): boolean {
+  if (resolveApprovalMode(options) === "full-access") {
+    return false;
+  }
   if (typeof options.managedSandbox === "function") {
     return options.managedSandbox() !== false;
   }
@@ -2456,13 +2482,34 @@ function formatCommandOutput(input: {
   return parts.filter(Boolean).join("\n");
 }
 
-function findActiveExecCommand(input: {
+function findActiveDirectToolCommandForOptions(input: {
+  options: DirectToolOptions;
+  toolCallId: string;
+  toolName: "exec_command" | "apply_patch";
+}): RuntimeCommandRecord | null {
+  const runtime = input.options.runtime?.current;
+  if (!runtime || !input.options.commandState || !input.options.runState) {
+    return null;
+  }
+  return findActiveDirectToolCommand({
+    commandState: input.options.commandState,
+    runState: input.options.runState,
+    sessionId: runtime.workspaceSessionId,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    turnId: runtime.turnId,
+    workflowTaskAttemptId: runtime.workflowTaskAttemptId ?? null,
+  });
+}
+
+function findActiveDirectToolCommand(input: {
   commandState: RuntimeCommandStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   sessionId: string;
   turnId: string | null;
   workflowTaskAttemptId: string | null;
   toolCallId: string;
+  toolName: "exec_command" | "apply_patch";
 }): RuntimeCommandRecord | null {
   const command = input.runState(
     input.commandState.findCommandByToolCallId({ toolCallId: input.toolCallId }),
@@ -2472,11 +2519,69 @@ function findActiveExecCommand(input: {
     command.sessionId !== input.sessionId ||
     command.turnId !== input.turnId ||
     command.workflowTaskAttemptId !== input.workflowTaskAttemptId ||
-    command.toolName !== "exec_command" ||
+    command.toolName !== input.toolName ||
     command.status !== "running" ||
     command.facts?.toolCallId !== input.toolCallId
   ) {
     return null;
   }
   return command;
+}
+
+async function acquireRuntimeDirectToolLaunchFacts(input: {
+  activeCommand: RuntimeCommandRecord | null;
+  command: readonly string[];
+  cwd: string;
+  envFacts: BuildLaunchPolicyInput["envFacts"];
+  options: DirectToolOptions;
+  toolName: "exec_command" | "apply_patch";
+}): Promise<{ facts: SandboxLaunchFacts; close(): Promise<void> } | null> {
+  if (!input.options.acquireDirectToolLaunch) {
+    if (resolveManagedSandbox(input.options)) {
+      throw new Error(`Runtime launch acquisition for ${input.toolName} is required.`);
+    }
+    return null;
+  }
+  const runtime = input.options.runtime?.current;
+  if (!runtime) {
+    throw new Error(`Runtime launch acquisition for ${input.toolName} requires prompt context.`);
+  }
+  if (!input.options.workspaceId) {
+    throw new Error(`Runtime launch acquisition for ${input.toolName} requires workspaceId.`);
+  }
+  if (!input.activeCommand) {
+    throw new Error(`Runtime launch acquisition for ${input.toolName} requires an active command.`);
+  }
+  return input.options.acquireDirectToolLaunch({
+    scope: {
+      kind: "workspace",
+      workspaceId: input.options.workspaceId as WorkspaceId,
+    },
+    surfacePiSessionId: runtime.surfacePiSessionId as SurfacePiSessionId,
+    commandId: input.activeCommand.id as CommandId,
+    toolName: input.toolName,
+    command: [...input.command],
+    cwd: input.cwd as AbsolutePath,
+    envFacts: input.envFacts,
+  });
+}
+
+function launchFactsManagedSandbox(facts: SandboxLaunchFacts | undefined): boolean {
+  return facts?.mode === "managed";
+}
+
+function launchFactsNetworkAccess(
+  facts: SandboxLaunchFacts | undefined,
+  options: DirectToolOptions,
+): boolean {
+  return facts ? facts.policySnapshot.networkPolicy === "allow" : resolveNetworkAccess(options);
+}
+
+function environmentFactsForEnv(env: NodeJS.ProcessEnv): BuildLaunchPolicyInput["envFacts"] {
+  return Object.keys(env)
+    .toSorted()
+    .map((key) => ({
+      key,
+      redactionLabel: "direct_tool_env",
+    }));
 }

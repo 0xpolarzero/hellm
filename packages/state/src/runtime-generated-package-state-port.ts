@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeGeneratedPackageStatePort,
+  type MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
@@ -10,9 +11,16 @@ import {
 } from "@svvy/core";
 import {
   StructuredSessionState,
+  createStructuredSessionStateStore,
   structuredSessionStateFromStore,
+  type CreateStructuredSessionStateStoreOptions,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
+
+export type MarkPersistedWorkspaceGeneratedPackageLinksRepairNeededInput = {
+  readonly store: CreateStructuredSessionStateStoreOptions;
+  readonly request: MarkWorkspaceGeneratedPackageLinksRepairNeededInput;
+};
 
 function generatedPackageInvalidationsForPackage(
   packageName: string,
@@ -59,6 +67,17 @@ export function runtimeGeneratedPackageStatePortFromStructuredSessionState(
             mutationResult(link, generatedPackageInvalidationsForPackage(link.packageName)),
           ),
         ),
+    markWorkspaceLinksRepairNeeded: (input) =>
+      state.markWorkspaceLinksRepairNeeded(input).pipe(
+        Effect.map((result) =>
+          mutationResult(
+            result,
+            result.links.flatMap((link) =>
+              generatedPackageInvalidationsForPackage(link.packageName),
+            ),
+          ),
+        ),
+      ),
     readLinksNeedingRepair: state.readLinksNeedingRepair,
     readGeneratedPackageFacts: state.readGeneratedPackageFacts,
     reconcileGeneratedPackageManifest: (input) =>
@@ -79,6 +98,19 @@ export function runtimeGeneratedPackageStatePortFromStore(
     structuredSessionStateFromStore(store),
   );
 }
+
+export const markPersistedWorkspaceGeneratedPackageLinksRepairNeeded = Effect.fn(
+  "@svvy/state/markPersistedWorkspaceGeneratedPackageLinksRepairNeeded",
+)(function* (input: MarkPersistedWorkspaceGeneratedPackageLinksRepairNeededInput) {
+  const store = createStructuredSessionStateStore(input.store);
+  try {
+    return yield* runtimeGeneratedPackageStatePortFromStore(store).markWorkspaceLinksRepairNeeded(
+      input.request,
+    );
+  } finally {
+    store.close();
+  }
+});
 
 export const makeRuntimeGeneratedPackageStatePort = Effect.fn(
   "@svvy/state/makeRuntimeGeneratedPackageStatePort",

@@ -2,9 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeThreadStatePort,
-  StateContractError,
-  type ExtensionId,
-  type RuntimeSurfaceMessageRecord,
+  type QueueItemId,
   type RuntimeThreadStatePortService,
   type StartRuntimeHandlerThreadsResult,
   type SurfacePiSessionId,
@@ -13,7 +11,6 @@ import {
   type WorktreeId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { getStructuredThread } from "./structured-session-selectors";
 import {
   commandInspectorInvalidation,
   dedupeInvalidations,
@@ -40,6 +37,7 @@ function mapStartHandlerThreadsResult(
       threadGroupId: thread.threadGroupId as ThreadGroupId,
       workspaceSessionId: thread.sessionId as WorkspaceSessionId,
       surfacePiSessionId: thread.surfacePiSessionId as SurfacePiSessionId,
+      parentThreadId: (thread.parentThreadId ?? null) as ThreadId | null,
       title: thread.title,
       objective: thread.objective,
       historyMode: thread.historyMode,
@@ -47,12 +45,10 @@ function mapStartHandlerThreadsResult(
       status: "running-handler",
       wait: null,
       worktreeId: (thread.worktree ?? null) as WorktreeId | null,
-      loadedExtensionIds: thread.loadedExtensionIds as ExtensionId[],
-      availableExtensionIds: thread.availableExtensionIds as ExtensionId[],
       generatedAgentContextFingerprint:
         generatedAgentContextBinding.generatedAgentContextFingerprint,
       generatedAgentContextBindingId: generatedAgentContextBinding.id,
-      queuedMessage: queuedMessage as RuntimeSurfaceMessageRecord,
+      queuedMessageId: queuedMessage.id as QueueItemId,
     })),
   };
 }
@@ -89,33 +85,22 @@ export function runtimeThreadStatePortFromStructuredSessionState(
 ): RuntimeThreadStatePortService {
   return {
     ensureHandlerThreadRunnable: (input) =>
-      Effect.gen(function* () {
-        const snapshot = yield* state.getSessionState(input.workspaceSessionId);
-        const thread = getStructuredThread(snapshot, input.threadId);
-        if (!thread || thread.surfacePiSessionId !== input.surfacePiSessionId) {
-          return yield* Effect.fail(
-            new StateContractError({
-              operation: "runtime-thread.ensure-handler-runnable",
-              reason: "not-found",
-              message: `Handler thread ${input.threadId} was not found for surface ${input.surfacePiSessionId}.`,
-            }),
-          );
-        }
-
-        if (thread.status === "running-handler" && thread.wait === null) {
-          return mutationResult(undefined);
-        }
-
-        yield* state.updateThread({
-          threadId: input.threadId,
-          status: "running-handler",
-          wait: null,
-        });
-        return mutationResult(
-          undefined,
-          handlerThreadInvalidations(state.workspaceId, input.surfacePiSessionId, input.threadId),
-        );
-      }),
+      state
+        .ensureHandlerThreadRunnable(input)
+        .pipe(
+          Effect.map((result) =>
+            mutationResult(
+              undefined,
+              result.committed
+                ? handlerThreadInvalidations(
+                    state.workspaceId,
+                    result.thread.surfacePiSessionId,
+                    result.thread.id,
+                  )
+                : [],
+            ),
+          ),
+        ),
     startHandlerThreads: (input) =>
       state.startHandlerThreads(input as unknown as StructuredStartRuntimeHandlerThreadsInput).pipe(
         Effect.map((result) => {

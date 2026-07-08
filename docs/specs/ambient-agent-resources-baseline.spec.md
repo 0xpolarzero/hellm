@@ -13,9 +13,11 @@
   - define Snippets as explicit user-inserted prompt macros
   - define disabled ambient commands and hooks
   - define host UI and interaction resources as unsupported
-  - define provider and model adapters as app-owned
-  - define credentials and auth state as app-owned
-  - define execution policy as app-owned
+- define provider/model authority as `svvy`-owned and adapted through `@svvy/pi-adapter`
+- define credentials and redacted auth state as `svvy`-owned product state exposed through approved
+  provider-auth ports
+- define execution policy as `svvy`-owned product/runtime/sandbox policy, with app/bootstrap only
+  supplying host-edge capabilities
   - define ambient runtime state import as unsupported
   - define the pi opt-outs needed for orchestrator, handler-thread, and workflow task-agent surfaces
 
@@ -224,8 +226,8 @@ The adopted generated agent context order is:
 3. loaded extension instructions and command guidance
 4. generated actor-specific tool declarations and TypeScript declarations
 
-Generated actor-specific declarations remain last so exact tool declarations and generated contracts
-stay close to the end of the system prompt.
+Generated actor-specific declarations remain last so exact native-tool declarations and generated
+`execute_typescript` facade declarations stay close to the end of the system prompt.
 
 ### Agent Context Freshness
 
@@ -282,17 +284,18 @@ Product contract:
 - do not import them
 - do not let pi append or replace prompt text with them
 
-Supported prompt sources are `svvy` generated prompts and supported external instruction records.
+Supported prompt inputs are extension-owned source contributors and supported external instruction
+records. Generated actor context and system prompts are compiled output from those inputs, not
+independent prompt sources.
 
-For every pi-backed `svvy` actor, the resource loader must receive:
+For every pi-backed `svvy` actor, `@svvy/runtime` resolves generated context and extension bindings,
+then `@svvy/pi-adapter` delivers the bound prompt through pi's real provider-visible `systemPrompt`
+channel. The adapter may use pi resource-loader hooks internally only as implementation detail; no
+product package outside `@svvy/pi-adapter` receives or exports `systemPromptOverride` or
+`appendSystemPromptOverride` inputs.
 
-```ts
-systemPromptOverride: () => svvyComposedActorPrompt,
-appendSystemPromptOverride: () => []
-```
-
-For pi `AgentSession`, `systemPromptOverride` is only the loader input. The adapter must also bypass
-pi's normal `buildSystemPrompt(...)` wrapping or overwrite the provider-visible session prompt
+For pi `AgentSession`, the adapter must bypass pi's normal `buildSystemPrompt(...)` wrapping or
+overwrite the provider-visible session prompt
 immediately before the prompt-bearing call so pi date/cwd footer text, ambient tool prose, skills,
 context files, `.pi/SYSTEM.md`, and `.pi/APPEND_SYSTEM.md` cannot enter the effective prompt unless
 runtime explicitly supplied that content.
@@ -589,8 +592,8 @@ Pi-specific rule:
 - keep `themesOverride: () => ({ themes: [], diagnostics: [] })`
 - keep `noExtensions: true` so extension-provided UI cannot load
 
-Theme and keybinding customization, when present, belongs in native `svvy` settings rather than host
-compatibility.
+Theme and keybinding customization, when present, belongs in native `svvy` settings rather than
+ambient host integration.
 
 ## 9. Provider And Model Adapters
 
@@ -624,11 +627,11 @@ Baseline decision:
 This category is already covered by `svvy` provider auth and settings plus pi's explicit model
 registry and stream normalization surface. Supported provider choices and auth readiness come from
 `svvy` product state. Model lists, reasoning controls, supported thinking levels, context-window
-metadata, modality metadata, and provider request quirks come from pi's normalized `Model` metadata
-and pi runtime APIs rather than a parallel `svvy` provider/model table.
+metadata, modality metadata, and provider request quirks come from model metadata exposed through
+`@svvy/pi-adapter` rather than a parallel `svvy` provider/model table.
 
 Provider adapter support requires an explicit import or native provider integration, not ambient
-host compatibility.
+host integration.
 
 Pi-specific rule:
 
@@ -711,8 +714,10 @@ Baseline decision:
 - do not let host hooks or extensions act as policy gates
 - do not let external instructions or future prompt assets change execution policy
 
-Actor execution policy must come from `svvy` product settings, actor contracts, Smithers
-configuration where applicable, and product-owned tool registries.
+Actor execution policy must come from `svvy` product settings, core-owned runtime contracts,
+runtime-owned approval and command lanes, sandbox policy snapshots, and product-owned tool
+registries. Smithers configuration may describe workflow graph/task behavior, but it must not become
+`svvy` approval, sandbox, filesystem, network, or tool-execution policy.
 
 Adding a host config file must not silently change whether shell commands are allowed, whether network
 is enabled, whether approvals are required, which directories are writable, which tools can run, or
@@ -722,8 +727,9 @@ Resolved `svvy` execution policy:
 
 - normal direct tool execution uses the Codex-like `exec_command`, `write_stdin`, and `apply_patch`
   surface defined in `docs/specs/extensions-and-tools.spec.md`
-- on macOS, managed filesystem sandboxing uses an app-owned Codex-derived native helper that applies
-  Codex permission-profile and filesystem policy semantics through `/usr/bin/sandbox-exec`
+- on macOS, `@svvy/sandbox` turns immutable Codex-derived permission-profile and filesystem policy
+  snapshots into launch constraints and denial classification, while an app-owned native helper is
+  only the enforcement mechanism that invokes `/usr/bin/sandbox-exec`
 - the default managed filesystem policy follows Codex workspace-write semantics: broad reads, writes
   to workspace roots and configured writable roots, writes to `/tmp` and `$TMPDIR` unless excluded,
   and protected metadata carveouts such as `.git`, `.agents`, and `.codex`

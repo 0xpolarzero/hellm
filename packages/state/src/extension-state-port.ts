@@ -11,19 +11,22 @@ import {
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 
-type ExtensionStatePortHostOverrides = {
-  readonly records: ExtensionStatePortService["records"];
-  readonly dependencies: Pick<ExtensionStatePortService["dependencies"], "isApproved">;
-};
-
 export function extensionStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
-  overrides: ExtensionStatePortHostOverrides,
 ): ExtensionStatePortService {
   return {
-    records: overrides.records,
+    records: {
+      readSourceFingerprint: (input) =>
+        state.readRuntimeSourceRootFingerprint(input).pipe(
+          Effect.map((record) => record?.rootFingerprint ?? null),
+          Effect.mapError((cause): StateContractError => cause),
+        ),
+    },
     dependencies: {
-      isApproved: overrides.dependencies.isApproved,
+      isApproved: (input) =>
+        state
+          .readExtensionDependencyApproval(input)
+          .pipe(Effect.mapError((cause): StateContractError => cause)),
       readReadiness: (input) =>
         state
           .readExtensionDependencyReadiness(input)
@@ -34,20 +37,13 @@ export function extensionStatePortFromStructuredSessionState(
 
 export function extensionStatePortFromStore(
   store: StructuredSessionStateStore,
-  overrides: ExtensionStatePortHostOverrides,
 ): ExtensionStatePortService {
-  return extensionStatePortFromStructuredSessionState(
-    structuredSessionStateFromStore(store),
-    overrides,
-  );
+  return extensionStatePortFromStructuredSessionState(structuredSessionStateFromStore(store));
 }
 
-export const makeExtensionStatePort = Effect.fn("@svvy/state/makeExtensionStatePort")(function* (
-  overrides: ExtensionStatePortHostOverrides,
-) {
+export const makeExtensionStatePort = Effect.fn("@svvy/state/makeExtensionStatePort")(function* () {
   const state = yield* StructuredSessionState;
-  return extensionStatePortFromStructuredSessionState(state, overrides);
+  return extensionStatePortFromStructuredSessionState(state);
 });
 
-export const layerExtensionStatePort = (overrides: ExtensionStatePortHostOverrides) =>
-  Layer.effect(ExtensionStatePort, makeExtensionStatePort(overrides));
+export const layerExtensionStatePort = Layer.effect(ExtensionStatePort, makeExtensionStatePort());

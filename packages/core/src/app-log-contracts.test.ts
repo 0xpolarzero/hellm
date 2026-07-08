@@ -5,6 +5,12 @@ import {
   AppendAppLogInputSchema,
   AppLogWriteResultSchema,
   AppLogEntrySchema,
+  decodeUnknownAppendAppLogInputEffect,
+  decodeUnknownAppLogRelatedLinkEffect,
+  decodeUnknownAppLogWriteResultEffect,
+  encodeAppendAppLogInputEffect,
+  encodeAppLogRelatedLinkEffect,
+  encodeAppLogWriteResultEffect,
   SvvyObservationAnnotationSchema,
 } from "./app-log-contracts";
 
@@ -71,6 +77,15 @@ describe("@svvy/core app-log contracts", () => {
         invalidation: { model: "appLogs" },
       },
     ]);
+  });
+
+  it("exports strict Effect boundary helpers for app-log write DTOs", () => {
+    expect(typeof decodeUnknownAppLogRelatedLinkEffect).toBe("function");
+    expect(typeof encodeAppLogRelatedLinkEffect).toBe("function");
+    expect(typeof decodeUnknownAppendAppLogInputEffect).toBe("function");
+    expect(typeof encodeAppendAppLogInputEffect).toBe("function");
+    expect(typeof decodeUnknownAppLogWriteResultEffect).toBe("function");
+    expect(typeof encodeAppLogWriteResultEffect).toBe("function");
   });
 
   it("keeps observation annotations closed to normalized product metadata", () => {

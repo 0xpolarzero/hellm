@@ -138,10 +138,10 @@ Product-state-backed settings and runtime records:
 
 Request User Input settings are DB/product-state-backed extension settings. The user-facing
 extension pane submits an explicit runtime request. `@svvy/runtime` commits active variant and
-blocking-timeout configuration through `@svvy/state` command ports, receives after-commit
-descriptors, and publishes typed notifications after commit. Runtime reads the committed settings
-when generating/binding the active extension variant and when resolving accepted tool behavior.
-Extension handlers never write these settings.
+blocking-timeout configuration through core-owned state ports implemented by `@svvy/state`, receives
+after-commit descriptors, and publishes typed notifications after commit. Runtime reads the
+committed settings when generating/binding the active extension variant and when resolving accepted
+tool behavior. Extension handlers never write these settings.
 
 Blocking wait and timeout execution is runtime-owned. The blocking implementation uses
 `RuntimeRequestStatePort`, `RuntimeCommandStatePort`, `RuntimeSessionWaitStatePort`, a
@@ -339,7 +339,9 @@ rejected because no option is explicitly recommended.
 
 ## Tool Result API
 
-Both variants return the same output shape:
+This is the final model-facing result delivered by `@svvy/runtime` after applying the
+`request_input.create` effect. The extension handler returns only validated accepted intent plus the
+ordered runtime operation. Both variants deliver the same final output shape:
 
 ```ts
 type RequestUserInputResult = {
@@ -452,12 +454,13 @@ Runtime sequence:
 
 1. The model starts composing a `request_user_input` tool call.
 2. Live tool projection may show a disabled draft card from streamed arguments.
-3. When arguments complete and validate, the extension handler returns one ordered
-   `ExtensionRuntimeOperation` item wrapping a `request_input.create` `RuntimeEffectRequest` carrying
-   the validated questions, options, and defaults.
-4. `@svvy/runtime` applies the wrapped request by creating request/question/option/default-answer state
-   through `RuntimeRequestStatePort`; nonblocking creation does not create a
-   `request_user_input_answer` queue row.
+3. When arguments complete and validate, the extension handler returns validated question/default
+   payload only, wrapped in one ordered `ExtensionRuntimeOperation` item for a
+   `request_input.create` runtime effect.
+4. `@svvy/runtime` attaches `workspaceSessionId`, `surfacePiSessionId`, optional `threadId`,
+   `sourceCommandId`, `turnId`, `toolItemId`, active mode, and timeout policy from accepted
+   invocation context and committed settings before calling `RuntimeRequestStatePort`;
+   nonblocking creation does not create a `request_user_input_answer` queue row.
 5. `@svvy/runtime` records created request/question progress through
    `RuntimeCommandStatePort.recordCommandEvent(...)`, then completes the current command through
    `RuntimeCommandStatePort.finishCommand(...)` with final facts containing the default
@@ -500,10 +503,13 @@ Runtime sequence:
    carrying the validated questions, options, and defaults. `@svvy/runtime` applies it through the
    core-owned request-input state port implemented by `@svvy/state`; that implementation allocates
    request/question/option ids and commits the durable records.
-4. The side panel shows the request as answerable.
-5. The command enters `waiting`.
-6. The surface wait projection records that this turn is waiting on user input.
-7. The tool call returns only after every question receives either a user answer or a timeout
+4. Runtime registers the scoped wait, records command waiting state and session wait projection,
+   races committed answers against timeout, and settles the original command/tool result. The
+   extension handler does not wait, own `Deferred`s or timers, write wait rows, or resolve answers.
+5. The side panel shows the request as answerable.
+6. The command enters `waiting`.
+7. The surface wait projection records that this turn is waiting on user input.
+8. The tool call returns only after every question receives either a user answer or a timeout
    default.
 8. The runtime clears the surface wait projection when the tool result is delivered.
 
@@ -547,7 +553,9 @@ Timer behavior:
 - the timer is per request
 - the timeout completes any unanswered questions with their recommended/default answers
 - answered questions stay answered if the timer later expires for other questions
-- the side panel shows the remaining time while running
+- the side panel shows the remaining time while running as derived display state from durable
+  `expiresAt`, `pausedAt`, `remainingMsWhenPaused`, and `timerVersion`; UI countdown state never
+  drives timeout resolution
 - the side panel has a pause button
 - pausing freezes the countdown without resolving the tool call
 - typing any non-empty text in the custom answer input automatically pauses the timer
@@ -583,10 +591,11 @@ Submission controls:
 - Enter submits with `delivery: "enqueue-and-run"`
 - Cmd+Enter submits with `delivery: "queue-only"`
 - visible buttons provide the same two actions
-- in blocking mode, either action resolves the waiting tool call; there is no later queued
-  answer
+- in blocking mode, either action resolves the waiting tool call and returns
+  `delivery: { kind: "blocking-resolved", queuedItemId: null }`; there is no later queued answer
 - in nonblocking mode, either action may create a durable `request_user_input_answer` queue item
-  when model delivery is still applicable; otherwise runtime records the answer and returns
+  and return `delivery: { kind: "nonblocking-queued", queuedItemId }` when model delivery is still
+  applicable; otherwise runtime records the answer and returns
   `delivery: { kind: "nonblocking-recorded", queuedItemId: null }`
 
 The panel must keep unanswered requests visible even if no Dockview panel currently shows the owning
@@ -603,6 +612,7 @@ type AnswerRequestInputInput = {
   questionId: RequestInputQuestionId;
   answer: { kind: "option"; optionId: RequestInputOptionId } | { kind: "custom"; text: string };
   delivery: RuntimeMessageDelivery;
+  clientSubmission?: RuntimeClientSubmissionInput;
 };
 
 type AnswerRequestInputResult = {
@@ -617,9 +627,10 @@ type AnswerRequestInputResult = {
 ```
 
 In nonblocking mode, a later user answer may become a durable surface queue item. Queue insertion is
-a runtime-owned effect of the user's answer action; the extension schema defines the answer payload
-shape, but the extension handler does not create queue rows. The queue payload is only the
-nonblocking delivery artifact needed to validate, order, cancel, and deliver the answer:
+a runtime-owned effect of the user's answer action. The core-owned runtime answer contract defines
+the answer payload shape. The Request User Input extension owns model-facing question validation and
+default derivation only; it does not handle later answers or create queue rows. The queue payload is
+only the nonblocking delivery artifact needed to validate, order, cancel, and deliver the answer:
 
 ```ts
 type RequestUserInputAnswerQueuePayload = {
@@ -676,8 +687,10 @@ Queue rules:
 - within `request_user_input_answer`, ordering is FIFO by answer creation time unless the user
   cancels a row before delivery.
 - `delivery` uses `RuntimeMessageDelivery`; it is not a steering mode.
-- row-level `Steer` remains a separate queue action over the returned `queuedItemId`.
-- if the surface is idle, either delivery mode may be claimed immediately by the shared queue runner.
+- row-level `Steer` remains a separate queue action over the `queuedItemId` returned only by
+  `delivery.kind === "nonblocking-queued"`.
+- if the surface is idle, either delivery mode may be claimed immediately by the shared
+  runtime-owned queue dispatcher lane.
 - if delivery fails before pi accepts it, runtime marks the queue item `failed` with `failedAt` and
   `failureError`; the failed row remains inspectable and dismissable and is not silently returned to
   the queue front.
@@ -696,6 +709,12 @@ refetch read models after runtime-published notifications. Desktop/headless hand
 request-input settings through state command facades directly. `@svvy/runtime` owns answer
 recording, wait resolution, timeout completion, committed state effects, and notification
 publication.
+
+Desktop/headless/app-bootstrap handlers call only the runtime facade group, such as
+`runtime.requestInput.answer(...)`, `runtime.requestInput.setVariant(...)`, and
+`runtime.requestInput.setTimerPaused(...)` as named by the runtime/core contract. They never call
+`RuntimeRequestStatePort`, `RuntimeSessionWaitStatePort`, state command facades, or extension
+handlers directly.
 
 Set active variant:
 
@@ -790,9 +809,10 @@ Runtime projection:
   through `RuntimeCommandStatePort.recordCommandEvent(...)`
 - successful nonblocking execution immediately finishes the command with default answers through
   `RuntimeCommandStatePort.finishCommand(...)`
-- blocking execution records command status `waiting` through
-  `RuntimeCommandStatePort.finishCommand(...)` and later terminalizes the same command when user
-  answer, timeout, or cancellation resolves the wait
+- blocking execution records request creation progress, then the runtime-owned blocking wait
+  lifecycle records the command as `waiting` through nonterminal command-state/wait-state ports;
+  `RuntimeCommandStatePort.finishCommand(...)` is used only when user answer, timeout default, or
+  cancellation resolves the wait and terminalizes the command
 - blocking timer progress may be rendered as command progress or request-card state
 - final command facts contain the delivered `RequestUserInputResult`, question count, and
   `answeredBy` source
@@ -812,7 +832,7 @@ Required request record:
 ```ts
 type RequestUserInputRequestRecord = {
   requestId: RequestInputRequestId;
-  workspaceSessionId: WorkspaceSessionId;
+  sessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
   threadId?: ThreadId;
   turnId: TurnId;
@@ -829,6 +849,7 @@ type RequestUserInputRequestRecord = {
     pausedAt: ISODateString | null;
     remainingMsWhenPaused: number | null;
     expiresAt: ISODateString | null;
+    timerVersion: number;
   };
 };
 ```
@@ -868,6 +889,11 @@ type RequestUserInputAnswerRecord = {
   createdAt: ISODateString;
 };
 ```
+
+`delivery` records the submitted delivery intent only for later nonblocking user answers. It is
+`null` for default answers, timeout defaults, and blocking answers because blocking answers resolve
+the current wait instead of creating queued model delivery. `queuedItemId` is non-null only when the
+public result is `delivery.kind === "nonblocking-queued"`.
 
 The records above are authoritative `svvy` product state for request-input waits. They may link to
 surface wait projection, but they do not mirror pi, Smithers, or renderer-local wait state.

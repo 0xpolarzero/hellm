@@ -26,20 +26,12 @@ export const RequestUserInputResultSchema = Schema.Struct({
 
 export type RequestUserInputResult = typeof RequestUserInputResultSchema.Type;
 
-export const decodeRequestUserInputInput = Schema.decodeUnknownSync(
-  RequestUserInputInputSchema,
-  strictBoundaryParseOptions,
-);
 export const decodeRequestUserInputInputExit = Schema.decodeUnknownExit(
   RequestUserInputInputSchema,
   strictBoundaryParseOptions,
 );
 export const decodeRequestUserInputInputEffect = Schema.decodeUnknownEffect(
   RequestUserInputInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeRequestUserInputResult = Schema.decodeUnknownSync(
-  RequestUserInputResultSchema,
   strictBoundaryParseOptions,
 );
 export const decodeRequestUserInputResultExit = Schema.decodeUnknownExit(

@@ -10,16 +10,21 @@ import {
   type RequestInputOptionId,
   type RequestInputQuestionId,
   type RuntimeRequestStatePortService,
+  type PositiveDurationMs,
   type SurfacePiSessionId,
   type ToolItemId,
   type TurnId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeRequestStatePort, runtimeRequestStatePortFromStore } from "./index";
+import { layerRuntimeRequestStatePort } from "./index";
+import { runtimeRequestStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,
+  type StructuredRequestUserInputAnswerRecord,
+  type StructuredRequestUserInputRequestRecord,
   type StructuredSessionStateStore,
+  type StructuredSurfaceQueuedMessageRecord,
 } from "./structured-session-state";
 import { runTestEffect } from "./effect.test-support";
 
@@ -30,6 +35,7 @@ const workspace = {
 };
 
 const workspaceSessionId = "session-runtime-request-state-port" as WorkspaceSessionId;
+const timeoutDurationMs = 300_000 as PositiveDurationMs;
 
 describe("RuntimeRequestStatePort", () => {
   it("creates, reads, answers, and queues nonblocking request input through an Effect service", async () => {
@@ -134,18 +140,19 @@ describe("RuntimeRequestStatePort", () => {
               }),
             ],
           });
-          expect(answered.value.requestId).toBe(requestRecord.requestId);
-          expect(answered.value.questionId).toBe(questionId);
-          expect(answered.value.status).toBe("recorded");
-          expect(answered.value.delivery.kind).toBe("nonblocking-queued");
-          expect(answered.value.delivery.queuedItemId).toMatch(/^queued-message-/);
+          expect(answered.value.answer.requestId).toBe(requestRecord.requestId);
+          expect(answered.value.answer.questionId).toBe(questionId);
+          expect(answered.value.answer.status).toBe("recorded");
+          expect(answered.value.answer.delivery.kind).toBe("nonblocking-queued");
+          expect(answered.value.answer.delivery.queuedItemId).toMatch(/^queued-message-/);
+          expect(answered.value.target).toEqual(orchestratorTarget());
           expect(answered.afterCommit as unknown).toEqual(request.afterCommit as unknown);
           expect(completed.status).toBe("completed");
           expect(completed.answers).toContainEqual(
             expect.objectContaining({
               answeredBy: "user",
               delivery: "enqueue-and-run",
-              queuedItemId: answered.value.delivery.queuedItemId,
+              queuedItemId: answered.value.answer.delivery.queuedItemId,
               answer: { kind: "option", label: "Full suite", text: "Full suite" },
             }),
           );
@@ -175,7 +182,7 @@ describe("RuntimeRequestStatePort", () => {
             toolItemId: "tool-call-request-state-blocking" as ToolItemId,
             sourceCommandId: command.id as CommandId,
             mode: "blocking",
-            timeout: { enabled: true, durationMs: 300_000 },
+            timeout: { enabled: true, durationMs: timeoutDurationMs },
             questions: [
               {
                 title: "Release note tone",
@@ -207,7 +214,7 @@ describe("RuntimeRequestStatePort", () => {
             toolItemId: "tool-call-request-state-cancel" as ToolItemId,
             sourceCommandId: cancelHarness.command.id as CommandId,
             mode: "blocking",
-            timeout: { enabled: false, durationMs: 300_000 },
+            timeout: { enabled: false, durationMs: timeoutDurationMs },
             questions: [
               {
                 title: "Repair direction",
@@ -222,7 +229,13 @@ describe("RuntimeRequestStatePort", () => {
           });
 
           expect(open.map((entry) => entry.requestId)).toEqual([requestRecord.requestId]);
-          expect(paused.value).toEqual({ requestId: requestRecord.requestId });
+          expect(paused.value).toMatchObject({
+            requestId: requestRecord.requestId,
+            timeout: expect.objectContaining({
+              pausedAt: expect.any(String),
+              expiresAt: null,
+            }),
+          });
           expect(paused.afterCommit as unknown).toEqual(request.afterCommit as unknown);
           expect(defaulted.value).toMatchObject({
             requestId: requestRecord.requestId,
@@ -266,7 +279,7 @@ describe("RuntimeRequestStatePort", () => {
             toolItemId: "tool-call-request-state-wrong-surface" as ToolItemId,
             sourceCommandId: command.id as CommandId,
             mode: "blocking",
-            timeout: { enabled: true, durationMs: 300_000 },
+            timeout: { enabled: true, durationMs: timeoutDurationMs },
             questions: [
               {
                 title: "Pause timer",
@@ -296,6 +309,146 @@ describe("RuntimeRequestStatePort", () => {
         ),
       ),
     );
+  });
+
+  it("answers request input without adapter-level request pre-read", async () => {
+    const request = createStructuredRequestUserInputRecord({
+      variant: "nonblocking",
+      status: "completed",
+    });
+    const answer: StructuredRequestUserInputAnswerRecord = {
+      answerId: "request-answer-no-pre-read",
+      requestId: request.requestId,
+      questionId: request.questions[0]!.questionId,
+      answer: { kind: "custom", text: "Run the full suite." },
+      answeredBy: "user",
+      delivery: "enqueue-and-run",
+      queuedItemId: "queued-message-no-pre-read",
+      createdAt: "2026-04-18T08:56:00.000Z",
+    };
+    const queuedMessage = createStructuredQueuedMessageRecord(request);
+    const port = runtimeRequestStatePortFromStore({
+      workspaceId: workspace.id,
+      databasePath: ":memory:",
+      close: () => undefined,
+      getRequestUserInputRequest: () => {
+        throw new Error("adapter pre-read should not happen");
+      },
+      answerRequestUserInput: (
+        input: Parameters<StructuredSessionStateStore["answerRequestUserInput"]>[0],
+      ) => {
+        expect(input).toEqual({
+          surfacePiSessionId: request.surfacePiSessionId,
+          requestId: request.requestId,
+          questionId: request.questions[0]!.questionId,
+          answer: { kind: "custom", text: "Run the full suite." },
+          delivery: "enqueue-and-run",
+        });
+        return { request, answer, queuedMessage };
+      },
+    } as unknown as StructuredSessionStateStore);
+
+    const result = await runTestEffect(
+      port.answerRequestInput({
+        surfacePiSessionId: request.surfacePiSessionId as SurfacePiSessionId,
+        requestId: request.requestId as RequestInputRequestId,
+        questionId: request.questions[0]!.questionId as RequestInputQuestionId,
+        answer: { kind: "custom", text: "Run the full suite." },
+        delivery: "enqueue-and-run",
+      }),
+    );
+
+    expect(result.value.answer as unknown).toEqual({
+      requestId: request.requestId,
+      questionId: request.questions[0]!.questionId,
+      status: "recorded",
+      delivery: { kind: "nonblocking-queued", queuedItemId: queuedMessage.id },
+    });
+    expect(result.value.target as unknown).toEqual({
+      workspaceSessionId,
+      surface: "orchestrator",
+      surfacePiSessionId: request.surfacePiSessionId,
+    });
+    expect(result.afterCommit as unknown).toEqual([
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "requestInput", ids: [request.requestId] },
+      },
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "surface", ids: [request.surfacePiSessionId] },
+      },
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "commandInspector", ids: [request.commandId] },
+      },
+    ]);
+  });
+
+  it("pauses request input timers without adapter-level request pre-read", async () => {
+    const request = createStructuredRequestUserInputRecord({
+      variant: "blocking",
+      status: "open",
+      timeout: {
+        enabled: true,
+        durationMs: 300_000,
+        startedAt: "2026-04-18T08:55:00.000Z",
+        pausedAt: "2026-04-18T08:56:00.000Z",
+        remainingMsWhenPaused: 240_000,
+        expiresAt: null,
+      },
+    });
+    const port = runtimeRequestStatePortFromStore({
+      workspaceId: workspace.id,
+      databasePath: ":memory:",
+      close: () => undefined,
+      getRequestUserInputRequest: () => {
+        throw new Error("adapter pre-read should not happen");
+      },
+      setRequestUserInputTimerPaused: (
+        input: Parameters<StructuredSessionStateStore["setRequestUserInputTimerPaused"]>[0],
+      ) => {
+        expect(input).toEqual({
+          surfacePiSessionId: request.surfacePiSessionId,
+          requestId: request.requestId,
+          paused: true,
+        });
+        return request;
+      },
+    } as unknown as StructuredSessionStateStore);
+
+    const result = await runTestEffect(
+      port.setRequestInputTimerPaused({
+        surfacePiSessionId: request.surfacePiSessionId as SurfacePiSessionId,
+        requestId: request.requestId as RequestInputRequestId,
+        paused: true,
+      }),
+    );
+
+    expect(result.value as unknown).toMatchObject({
+      requestId: request.requestId,
+      timeout: request.timeout,
+    });
+    expect(result.afterCommit as unknown).toEqual([
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "requestInput", ids: [request.requestId] },
+      },
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "surface", ids: [request.surfacePiSessionId] },
+      },
+      {
+        scope: "workspace",
+        workspaceId: workspace.id,
+        invalidation: { model: "commandInspector", ids: [request.commandId] },
+      },
+    ]);
   });
 
   it("maps store failures to typed state errors through the runtime request port", async () => {
@@ -353,6 +506,91 @@ function createPortHarness(label: string) {
     const port = yield* RuntimeRequestStatePort;
     return { port, turn, command };
   });
+}
+
+function createStructuredRequestUserInputRecord(
+  overrides: Partial<StructuredRequestUserInputRequestRecord> = {},
+): StructuredRequestUserInputRequestRecord {
+  return {
+    ...createStructuredRequestUserInputRecordBase(),
+    ...overrides,
+  };
+}
+
+function createStructuredRequestUserInputRecordBase(): StructuredRequestUserInputRequestRecord {
+  return {
+    requestId: "request-input-no-pre-read",
+    sessionId: workspaceSessionId,
+    surfacePiSessionId: "session-runtime-request-state-port",
+    threadId: null,
+    turnId: "turn-no-pre-read",
+    commandId: "command-no-pre-read",
+    toolItemId: "tool-call-no-pre-read",
+    variant: "nonblocking" as const,
+    status: "open" as const,
+    createdAt: "2026-04-18T08:55:00.000Z",
+    completedAt: null,
+    timeout: null,
+    questions: [
+      {
+        questionId: "question-no-pre-read",
+        requestId: "request-input-no-pre-read",
+        ordinal: 0,
+        title: "CI scope",
+        question: "Should CI run only unit checks or the full suite?",
+        defaultAnswer: { kind: "custom" as const, text: "Run unit checks." },
+        choices: [],
+        status: "open" as const,
+      },
+    ],
+    answers: [
+      {
+        answerId: "default-answer-no-pre-read",
+        requestId: "request-input-no-pre-read",
+        questionId: "question-no-pre-read",
+        answer: { kind: "custom" as const, text: "Run unit checks." },
+        answeredBy: "default" as const,
+        delivery: null,
+        queuedItemId: null,
+        createdAt: "2026-04-18T08:55:00.000Z",
+      },
+    ],
+  };
+}
+
+function createStructuredQueuedMessageRecord(
+  request: StructuredRequestUserInputRequestRecord,
+): StructuredSurfaceQueuedMessageRecord {
+  return {
+    id: "queued-message-no-pre-read",
+    sessionId: request.sessionId,
+    surfacePiSessionId: request.surfacePiSessionId,
+    threadId: request.threadId,
+    workflowTaskAttemptId: null,
+    kind: "request_user_input_answer",
+    idempotencyKey: "request_user_input_answer:request-answer-no-pre-read",
+    messageJson: "{}",
+    payloadJson: null,
+    status: "steering",
+    priority: "interactive",
+    orderingKey: `surface:${request.surfacePiSessionId}`,
+    sequence: 1,
+    position: 1,
+    sourceCommandId: null,
+    claimOwnerId: null,
+    claimLeaseExpiresAt: null,
+    leaseVersion: 0,
+    attemptCount: 0,
+    maxAttempts: 3,
+    nextAttemptAt: null,
+    lastErrorJson: null,
+    createdAt: "2026-04-18T08:56:00.000Z",
+    updatedAt: "2026-04-18T08:56:00.000Z",
+    deliveredAt: null,
+    failedAt: null,
+    failureError: null,
+    cancelledAt: null,
+  };
 }
 
 function expectStateFailure<A>(effect: Effect.Effect<A, StateContractError>) {

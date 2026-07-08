@@ -7,12 +7,13 @@
   `docs/specs/ambient-agent-resources-baseline.spec.md`, and freshness is governed by
   `docs/specs/source-invalidation.spec.md`
 - Scope:
-  - define discovered external instruction files as extension records
+  - define discovered external instruction files as separate `external_instruction`
+    generated-context input records
   - keep external instruction source read-only from Extension Managing
 
-## Extension Record
+## External-Instruction Record
 
-External instruction files use extension records with:
+External instruction files are represented by separate external-instruction records with:
 
 ```json
 {
@@ -44,7 +45,8 @@ External Instructions exposes no native tools, no `svvyx` command namespace, and
 
 - External files are read-only generated-context inputs.
 - They appear in the Extensions UI under a distinct External Instructions category.
-- Extension Managing may inspect their metadata and usage state.
+- Extension Managing may inspect their metadata, enablement, selected actor kinds, diagnostics, and
+  freshness state.
 - Extension Managing must not expose the external files as editable extension source paths.
 
 Detailed behavior and package ownership are defined across:

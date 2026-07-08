@@ -4,10 +4,18 @@ import { describe, expect, it } from "bun:test";
 import * as ts from "typescript";
 import { PRODUCT_FEATURES } from "../docs/features";
 import {
+  adoptedEffectInstanceMemberPolicies,
   adoptedEffectRuntimeModuleExports,
   adoptedEffectTypeOnlyModules,
+  auditedEffectInstalledExports,
+  auditedEffectInstalledExportMemberPolicies,
+  auditedEffectInstalledExportPolicies,
 } from "./effect-adoption-manifest";
-import { renderGeneratedExtensionsPackageFiles } from "./extensions/src/generated-extensions-package";
+import type { AbsolutePath, GeneratedPackageBuildId, IsoDateTimeString } from "./core/src/ids";
+import {
+  renderGeneratedExtensionsPackageFiles,
+  renderGeneratedWorkflowsPackageFiles,
+} from "@svvy/extensions";
 
 const projectRoot = join(import.meta.dir, "..");
 const packageRoot = join(projectRoot, "packages");
@@ -22,10 +30,11 @@ const implementationPackageRoots = [
 const edgePackageRoots = [join(packageRoot, "desktop", "src")];
 const sourceRoots = [...implementationPackageRoots, ...edgePackageRoots];
 const appSourceRoot = join(projectRoot, "src");
+const mainviewSourceRoot = join(projectRoot, "src", "mainview");
 const sharedSourceRoot = join(projectRoot, "src", "shared");
 const productSpecRoot = join(projectRoot, "docs", "specs");
 const packageArchitectureSpecRoot = join(projectRoot, "docs", "specs", "package-architecture");
-const migratedNativeToolModules = [
+const packageOwnedNativeToolModules = [
   join(projectRoot, "src", "bun", "execute-typescript-tool.ts"),
   join(projectRoot, "src", "bun", "extension-tools.ts"),
   join(projectRoot, "src", "bun", "request-user-input-tool.ts"),
@@ -37,31 +46,40 @@ const migratedNativeToolModules = [
 ];
 const runtimeServiceAdapterModule = join(projectRoot, "src", "bun", "runtime-service-adapter.ts");
 const sessionCatalogModule = join(projectRoot, "src", "bun", "session-catalog.ts");
-const expectedLegacySandboxRootExportSymbols = [
-  "DirectToolLaunchPolicyInput",
-  "ExecuteTypescriptLaunchPolicyInput",
-  "SandboxApprovalMode",
-  "SandboxLaunchPolicy",
-  "SandboxSettingsInput",
-  "SvvyxLaunchPolicyInput",
-  "buildDirectToolLaunchPolicy",
-  "buildExecuteTypescriptLaunchPolicy",
-  "buildSandboxHelperArgs",
-  "buildSvvyxLaunchPolicy",
-  "isSandboxDenialOutput",
-  "isSandboxHelperBootstrapFailure",
-  "resolveSandboxLaunchSettings",
-  "resolveSandboxHelperPath",
-  "sandboxDenialFacts",
-  "sandboxLaunchFacts",
-];
-const expectedLegacySandboxAppImports = [
-  "src/bun/execute-typescript-tool.ts -> @svvy/sandbox",
+const expectedSandboxAppImports = [
+  "src/bun/runtime-service-adapter.ts -> @svvy/sandbox",
+  // Pure path-access check over runtime-acquired launch facts; not launch-policy construction.
   "src/bun/svvy-direct-tools.ts -> @svvy/sandbox",
+  "src/bun/svvy-direct-tools.ts -> @svvy/sandbox/diagnostics",
 ];
 
-const IMPORT_PATTERN =
-  /\bimport\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|export\s+(?:type\s+)?[^'"]*?\s+from\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
+const effectSchemaCompilerNames = [
+  "is",
+  "decodeEffect",
+  "decodeUnknownEffect",
+  "decodeExit",
+  "decodeUnknownExit",
+  "decodeOption",
+  "decodeUnknownOption",
+  "decodePromise",
+  "decodeUnknownPromise",
+  "decodeSync",
+  "decodeUnknownSync",
+  "encodeEffect",
+  "encodeUnknownEffect",
+  "encodeExit",
+  "encodeUnknownExit",
+  "encodeOption",
+  "encodeUnknownOption",
+  "encodePromise",
+  "encodeUnknownPromise",
+  "encodeSync",
+  "encodeUnknownSync",
+  "decodeUnknownResult",
+  "decodeResult",
+  "encodeUnknownResult",
+  "encodeResult",
+] as const;
 
 const expectedPackageDependencies = new Map<string, string[]>([
   ["@svvy/core", ["effect"]],
@@ -83,7 +101,7 @@ const expectedPackageDependencies = new Map<string, string[]>([
       "effect",
     ],
   ],
-  ["@svvy/desktop", ["@svvy/core", "@svvy/runtime", "@svvy/state", "effect"]],
+  ["@svvy/desktop", ["@svvy/core", "@svvy/runtime", "@svvy/state"]],
 ]);
 const expectedPackageDependencySpecifiers = new Map<string, Record<string, string>>([
   ["@svvy/core", { effect: "4.0.0-beta.84" }],
@@ -116,7 +134,6 @@ const expectedPackageDependencySpecifiers = new Map<string, Record<string, strin
       "@svvy/core": "workspace:*",
       "@svvy/runtime": "workspace:*",
       "@svvy/state": "workspace:*",
-      effect: "4.0.0-beta.84",
     },
   ],
 ]);
@@ -171,6 +188,7 @@ const expectedPackageDirectories = [
   "state",
 ];
 const expectedPackageArchitectureSpecFiles = [
+  "core-public-symbol-index.generated.md",
   "core.spec.md",
   "desktop.spec.md",
   "effect-v4.spec.md",
@@ -187,6 +205,7 @@ const expectedPackageArchitectureSourceSpecs = [
   "docs/specs/package-architecture/package-architecture.spec.md",
   "docs/specs/package-architecture/effect-v4.spec.md",
   "docs/specs/package-architecture/core.spec.md",
+  "docs/specs/package-architecture/core-public-symbol-index.generated.md",
   "docs/specs/package-architecture/state.spec.md",
   "docs/specs/package-architecture/sandbox.spec.md",
   "docs/specs/package-architecture/pi-adapter.spec.md",
@@ -197,19 +216,34 @@ const expectedPackageArchitectureSourceSpecs = [
 ];
 const expectedPublicExports = new Map<string, Record<string, string>>([
   [
+    "@svvy/sandbox",
+    {
+      ".": "./src/index.ts",
+      "./diagnostics": "./src/sandbox-denial.ts",
+    },
+  ],
+  [
+    "@svvy/extensions",
+    {
+      ".": "./src/index.ts",
+    },
+  ],
+  [
     "@svvy/pi-adapter",
     {
       ".": "./src/index.ts",
       "./messages": "./src/messages.ts",
-      "./internal/session": "./src/session.ts",
+      "./session": "./src/session.ts",
     },
   ],
   [
     "@svvy/state",
     {
       ".": "./src/index.ts",
+      "./generated-package-maintenance": "./src/generated-package-maintenance.ts",
       "./session-navigation": "./src/session-navigation.ts",
-      "./structured-session-selectors": "./src/structured-session-selectors.ts",
+      "./structured-session-adapters": "./src/structured-session-adapters.ts",
+      "./structured-session-projections": "./src/structured-session-projections.ts",
       "./structured-session-state": "./src/structured-session-state.ts",
     },
   ],
@@ -217,1279 +251,47 @@ const expectedPublicExports = new Map<string, Record<string, string>>([
     "@svvy/runtime",
     {
       ".": "./src/index.ts",
+      "./accepted-native-tool-execution": "./src/accepted-native-tool-execution.ts",
       "./bootstrap": "./src/bootstrap.ts",
+      "./prompt-execution-context": "./src/prompt-execution-context.ts",
+      "./source-invalidation-coordinator-adapter":
+        "./src/source-invalidation-coordinator-adapter.ts",
     },
   ],
 ]);
-const expectedPiAdapterInternalPiRuntimeExports = new Map<string, string>([
-  ["@svvy/pi-adapter/internal/session", join(packageRoot, "pi-adapter", "src", "session.ts")],
-]);
 const expectedPublicSymbols = new Map<string, string[]>([
-  [
-    "@svvy/core",
-    [
-      "AbortPromptInput",
-      "AbortPromptInputSchema",
-      "AbortActiveTurnPromptInputSchema",
-      "AbortAllForSurfacePromptInputSchema",
-      "AbortQueuedPromptInputSchema",
-      "AbsolutePath",
-      "NonNegativeSafeInteger",
-      "NonNegativeSafeIntegerSchema",
-      "ActorKind",
-      "ActorKindSchema",
-      "AgentProfileId",
-      "BuildLaunchPolicyInput",
-      "BuildLaunchPolicyInputSchema",
-      "AnswerRequestInputInput",
-      "AnswerRequestInputInputSchema",
-      "AnswerRequestInputDeliveryResultSchema",
-      "AnswerRequestInputResult",
-      "AnswerRequestInputResultSchema",
-      "AppendAppLogInput",
-      "AppendAppLogInputSchema",
-      "AppLogWriteResult",
-      "AppLogWriteResultSchema",
-      "AppLogWriteResultValue",
-      "AppLogWriteResultValueSchema",
-      "AppLogCounts",
-      "AppLogCountsSchema",
-      "AppLogEntry",
-      "AppLogEntryId",
-      "AppLogEntrySchema",
-      "AppLogError",
-      "AppLogErrorSchema",
-      "decodeUnknownAppLogErrorEffect",
-      "decodeUnknownAppLogErrorExit",
-      "encodeAppLogErrorEffect",
-      "encodeAppLogErrorExit",
-      "AppLogLevel",
-      "AppLogLevelSchema",
-      "AppLogQuery",
-      "AppLogQuerySchema",
-      "AppLogReadModel",
-      "AppLogReadModelSchema",
-      "AppLogRelatedLink",
-      "AppLogRelatedLinkSchema",
-      "AppLogSource",
-      "AppLogSourceSchema",
-      "AppLogSummary",
-      "AppLogSummarySchema",
-      "AppLogUpdateMessage",
-      "AppLogUpdateMessageSchema",
-      "AppLogWritePort",
-      "AppLogWritePortService",
-      "SvvyObservationAnnotation",
-      "SvvyObservationAnnotationSchema",
-      "SvvyObservationOperation",
-      "SvvyObservationOperationSchema",
-      "SvvyObservationPackage",
-      "SvvyObservationPackageSchema",
-      "SvvyObservationReasonClass",
-      "SvvyObservationReasonClassSchema",
-      "AppReadModelInvalidation",
-      "AppReadModelInvalidationSchema",
-      "AcquireDefaultWorkspaceInput",
-      "AcquireDefaultWorkspaceInputSchema",
-      "AcquireDefaultWorkspaceOpenReason",
-      "AcquireDefaultWorkspaceOpenReasonSchema",
-      "AcquireWorkspaceInput",
-      "AcquireWorkspaceInputSchema",
-      "AcquireWorkspaceOpenReason",
-      "AcquireWorkspaceOpenReasonSchema",
-      "AcquireWorkspaceResult",
-      "AcquireWorkspaceResultSchema",
-      "WorkspaceReadinessDetail",
-      "WorkspaceReadinessDetailSchema",
-      "WorkspaceReadinessDisabledCapability",
-      "WorkspaceReadinessDisabledCapabilitySchema",
-      "AnswerRuntimeApprovalInput",
-      "AnswerRuntimeApprovalInputSchema",
-      "AnswerRuntimeApprovalResult",
-      "AnswerRuntimeApprovalResultSchema",
-      "ArtifactId",
-      "ArtifactMaterializationStatus",
-      "ArtifactMaterializationStatusSchema",
-      "ArtifactMetadataRecord",
-      "ArtifactMetadataRecordSchema",
-      "CreateRuntimeArtifactInput",
-      "CreateRuntimeArtifactInputSchema",
-      "DeleteRuntimeArtifactInput",
-      "DeleteRuntimeArtifactInputSchema",
-      "InspectRuntimeArtifactInput",
-      "InspectRuntimeArtifactInputSchema",
-      "ListRuntimeArtifactsInput",
-      "ListRuntimeArtifactsInputSchema",
-      "BoundaryIssue",
-      "BoundaryIssueSchema",
-      "boundarySchemaErrorDetails",
-      "strictBoundaryParseOptions",
-      "CONTEXT_BUDGET_ORANGE_PERCENT",
-      "CONTEXT_BUDGET_RED_PERCENT",
-      "CancelCommandInput",
-      "CancelCommandInputSchema",
-      "CancelCommandResult",
-      "CancelCommandResultSchema",
-      "ChildProcessCommandExecutionPlan",
-      "ChildProcessCommandExecutionPlanSchema",
-      "CommandEventId",
-      "CommandEventPayload",
-      "CommandFactsPayload",
-      "CommandFactsPayloadSchema",
-      "CommandId",
-      "CommandResultEnvelope",
-      "CommandResultEnvelopeSchema",
-      "COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX",
-      "ComposerAttachment",
-      "ComposerAttachmentKind",
-      "ComposerAttachmentKindSchema",
-      "ComposerAttachmentSchema",
-      "ComposerSnippetMention",
-      "ComposerSnippetMentionSchema",
-      "composerAttachmentPromptText",
-      "ContextBudget",
-      "ContextBudgetSchema",
-      "ContextBudgetTone",
-      "ContextBudgetToneSchema",
-      "ClosePiSessionInput",
-      "ClosePiSessionInputSchema",
-      "CloseSurfaceInput",
-      "CloseSurfaceInputSchema",
-      "CloseSurfaceReason",
-      "CloseSurfaceReasonSchema",
-      "CloseSurfaceResult",
-      "CloseSurfaceResultSchema",
-      "CreatePiSessionInput",
-      "CreatePiSessionInputSchema",
-      "CreateOrchestratorSurfaceInput",
-      "CreateOrchestratorSurfaceInputSchema",
-      "CreateOrReuseStreamingRuntimeCommandInput",
-      "CreateOrReuseStreamingRuntimeCommandInputSchema",
-      "CreateRequestInputRequest",
-      "CreateRequestInputRequestSchema",
-      "CreateRuntimeCommandInput",
-      "CreateRuntimeCommandInputSchema",
-      "CreateRuntimeRequestInputInput",
-      "CreateRuntimeRequestInputInputSchema",
-      "CreateSurfaceResult",
-      "CreateSurfaceResultSchema",
-      "DeletePiSessionReferenceInput",
-      "DeletePiSessionReferenceInputSchema",
-      "EpisodeId",
-      "ExecutionPlanOperation",
-      "ExecutionPlanOperationSchema",
-      "ExtensionCategory",
-      "ExtensionCategorySchema",
-      "ExtensionExecutionCommandDescription",
-      "ExtensionExecutionCommandDescriptionSchema",
-      "ExtensionExecutionEnvPlan",
-      "ExtensionExecutionEnvPlanSchema",
-      "ExtensionExecutionPlan",
-      "ExtensionExecutionPlanId",
-      "ExtensionExecutionPlanSchema",
-      "ExtensionDependencyApprovalIdentity",
-      "ExtensionDependencyReadiness",
-      "ExtensionDependencyReadinessSchema",
-      "ExtensionDependencyReadinessStatus",
-      "ExtensionDependencyReadinessStatusSchema",
-      "ExtensionError",
-      "decodeUnknownExtensionErrorEffect",
-      "decodeUnknownExtensionErrorExit",
-      "encodeExtensionErrorEffect",
-      "encodeExtensionErrorExit",
-      "ExtensionHandlerResult",
-      "ExtensionHandlerResultSchema",
-      "ExtensionRuntimeOperation",
-      "ExtensionRuntimeOperationSchema",
-      "ExtensionId",
-      "ExtensionInterfaceKind",
-      "ExtensionInterfaceKindSchema",
-      "ExtensionSourceKind",
-      "ExtensionSourceKindSchema",
-      "ExtensionStatePort",
-      "ExtensionStatePortService",
-      "ExtensionUsageState",
-      "ExtensionUsageStateSchema",
-      "ExternalInstructionSourceId",
-      "EnvironmentFact",
-      "EnvironmentFactSchema",
-      "FileSystemSandboxPolicy",
-      "FileSystemSandboxPolicyEntry",
-      "FileSystemSandboxPolicyEntrySchema",
-      "FileSystemSandboxPolicySchema",
-      "FileEffectApplyPatchExecutionPlan",
-      "FileEffectApplyPatchExecutionPlanSchema",
-      "formatBoundaryIssues",
-      "normalizeBoundaryIssuePath",
-      "ClearRuntimeSessionWaitInput",
-      "ClearRuntimeSessionWaitInputSchema",
-      "CreateRuntimeApprovalRequestInput",
-      "CreateRuntimeApprovalRequestInputSchema",
-      "FindRuntimeCommandByIdInput",
-      "FindRuntimeCommandByIdInputSchema",
-      "FindRuntimeCommandByToolCallIdInput",
-      "FindRuntimeCommandByToolCallIdInputSchema",
-      "FinishRuntimeCommandInput",
-      "FinishRuntimeCommandInputSchema",
-      "ForkPiHistoryEntryInput",
-      "ForkPiHistoryEntryInputSchema",
-      "GenerateTitleInput",
-      "GenerateTitleInputSchema",
-      "GenerateTitleResult",
-      "GenerateTitleResultSchema",
-      "GeneratedContextFingerprint",
-      "GeneratedContextRevision",
-      "GeneratedPackageBuildId",
-      "GeneratedPackageBuildInput",
-      "GeneratedPackageBuildInputSchema",
-      "GeneratedPackageBuildPlanResult",
-      "GeneratedPackageBuildPlanResultSchema",
-      "GeneratedPackageName",
-      "GeneratedPackageNameSchema",
-      "HasRuntimeCommandOutputEventInput",
-      "HasRuntimeCommandOutputEventInputSchema",
-      "HandlerInheritedHistoryBlock",
-      "HandlerInheritedHistoryBlockSchema",
-      "HandlerPromptTargetSchema",
-      "HandlerThreadInitialQueueInput",
-      "HandlerThreadInitialQueueInputSchema",
-      "InitialHandlerStartQueuePayloadSchema",
-      "InsertQueueItemRequest",
-      "InsertQueueItemRequestSchema",
-      "MessageId",
-      "ModelId",
-      "ModelInfo",
-      "ModelInfoSchema",
-      "ModelSelection",
-      "ModelSelectionSchema",
-      "NativeToolContent",
-      "NativeToolContentSchema",
-      "NativeToolDeclaration",
-      "NativeToolExecutionInput",
-      "NativeToolExecutor",
-      "NativeToolExtensionSchema",
-      "NativeToolImageContent",
-      "NativeToolImageContentSchema",
-      "NativeToolResult",
-      "NativeToolResultSchema",
-      "NativeToolSchema",
-      "NativeToolSchemaExtension",
-      "NativeToolSchemasDocument",
-      "NativeToolTextContent",
-      "NativeToolTextContentSchema",
-      "NativeToolUpdateHandler",
-      "InterruptPiTurnInput",
-      "InterruptPiTurnInputSchema",
-      "OpenPiSessionInput",
-      "OpenPiSessionInputSchema",
-      "OpenExtensionSourceEditInput",
-      "OpenExtensionSourceEditInputSchema",
-      "OpenSurfaceInput",
-      "OpenSurfaceInputSchema",
-      "OpenSurfaceResult",
-      "OpenSurfaceResultSchema",
-      "OrchestratorPromptTargetSchema",
-      "PromptExecutionContext",
-      "PromptExecutionEpisodeKind",
-      "PromptExecutionExternalInstructionSource",
-      "PromptExecutionRuntimeHandle",
-      "PromptExecutionSurfaceKind",
-      "createPromptExecutionContext",
-      "PiAmbientPiResourceEnablement",
-      "PiAmbientPiResourceEnablementSchema",
-      "PiAmbientPiResourceKind",
-      "PiAmbientPiResourceKindSchema",
-      "PiAdapterError",
-      "decodeUnknownPiAdapterErrorEffect",
-      "decodeUnknownPiAdapterErrorExit",
-      "encodePiAdapterErrorEffect",
-      "encodePiAdapterErrorExit",
-      "PiHistoryEntryRef",
-      "PiHistoryEntryRefSchema",
-      "PiRuntimeEvent",
-      "PiRuntimeEventSchema",
-      "PiRuntimePathsPort",
-      "PiRuntimePathsPortService",
-      "PiRuntimePathsSnapshot",
-      "PiRuntimePathsSnapshotSchema",
-      "PiSessionRef",
-      "PiSessionRefSchema",
-      "PiSessionReference",
-      "PiSessionReferencePort",
-      "PiSessionReferencePortError",
-      "decodeUnknownPiSessionReferencePortErrorEffect",
-      "decodeUnknownPiSessionReferencePortErrorExit",
-      "encodePiSessionReferencePortErrorEffect",
-      "encodePiSessionReferencePortErrorExit",
-      "PiSessionReferencePortService",
-      "PiSessionReferencePublic",
-      "PiSessionReferencePublicSchema",
-      "PiSessionReferenceSchema",
-      "PiSessionReferenceValidation",
-      "PiSessionReferenceValidationSchema",
-      "PiSystemPromptBinding",
-      "PiSystemPromptBindingSchema",
-      "PiToolExecutionInput",
-      "PiToolExecutionInputSchema",
-      "PiToolExecutionUpdate",
-      "PiToolExecutionUpdateSchema",
-      "PiToolExecutor",
-      "PromptTarget",
-      "PromptTargetSchema",
-      "ProviderAuthHealth",
-      "ProviderAuthHealthSchema",
-      "ProviderAuthPort",
-      "ProviderAuthPortError",
-      "decodeUnknownProviderAuthPortErrorEffect",
-      "decodeUnknownProviderAuthPortErrorExit",
-      "encodeProviderAuthPortErrorEffect",
-      "encodeProviderAuthPortErrorExit",
-      "ProviderAuthPortService",
-      "ProviderAuthStatus",
-      "ProviderAuthStatusStatePort",
-      "ProviderAuthStatusStatePortService",
-      "ProviderAuthStatusSchema",
-      "ProviderCredentialSecret",
-      "ProviderCredentialSecretSchema",
-      "ProviderCredentialSnapshot",
-      "ProviderCredentialSnapshotSchema",
-      "ProviderUnusableCredentialSnapshot",
-      "ProviderUnusableCredentialSnapshotSchema",
-      "ProviderUsableCredentialSnapshot",
-      "ProviderUsableCredentialSnapshotSchema",
-      "ProviderId",
-      "ProviderRefreshReason",
-      "ProviderRefreshReasonSchema",
-      "QueueItemId",
-      "QueueItemPayload",
-      "QueueItemPayloadSchema",
-      "RUNTIME_TURN_DECISIONS",
-      "ReasoningEffort",
-      "ReasoningEffortSchema",
-      "ReasoningSelection",
-      "ReasoningSelectionSchema",
-      "RecordEpisodeRequest",
-      "RecordEpisodeRequestSchema",
-      "RecoveryWorkId",
-      "ReleaseWorkspaceInput",
-      "ReleaseWorkspaceInputSchema",
-      "ReleaseWorkspaceReason",
-      "ReleaseWorkspaceReasonSchema",
-      "ReleaseWorkspaceResult",
-      "ReleaseWorkspaceResultSchema",
-      "RefreshGeneratedContextRequest",
-      "RefreshGeneratedContextReasonSchema",
-      "RefreshGeneratedContextRequestSchema",
-      "GeneratedPackageDependencyEvidence",
-      "GeneratedPackageDependencyEvidenceSchema",
-      "GeneratedPackageFileEvidence",
-      "GeneratedPackageFileEvidenceSchema",
-      "GeneratedPackageRefreshStatus",
-      "GeneratedPackageRefreshStatusSchema",
-      "GeneratedPackageWorkspaceLinkRepairInput",
-      "GeneratedPackageWorkspaceLinkRepairInputSchema",
-      "GeneratedPackageWorkspaceLinkRepairPlan",
-      "GeneratedPackageWorkspaceLinkRepairPlanSchema",
-      "GeneratedPackageWorkspaceLinkStatus",
-      "GeneratedPackageWorkspaceLinkStatusSchema",
-      "RefreshGeneratedPackagesRequest",
-      "RefreshGeneratedPackagesRequestSchema",
-      "GeneratedPackagesRefreshResult",
-      "GeneratedPackagesRefreshResultSchema",
-      "GetCurrentRuntimeThreadInput",
-      "GetPiSessionReferenceInput",
-      "GetPiSessionReferenceInputSchema",
-      "GetProviderAuthSnapshotInput",
-      "GetProviderAuthSnapshotInputSchema",
-      "GetRuntimeThreadGroupInput",
-      "GetSecretStatusInput",
-      "ReportRequestQueuePayloadSchema",
-      "InputModality",
-      "InputModalitySchema",
-      "IsoDateTimeString",
-      "IsoDateTimeStringSchema",
-      "JsonArray",
-      "JsonObject",
-      "JsonPrimitive",
-      "JsonValue",
-      "ListModelsInput",
-      "ListSecretStatusInput",
-      "ListModelsInputSchema",
-      "ListProviderStatusesInput",
-      "ListProviderStatusesInputSchema",
-      "ListRuntimeThreadsInput",
-      "MarkGeneratedPackageRefreshNeededInput",
-      "MarkGeneratedPackageRefreshNeededInputSchema",
-      "ReadGeneratedPackageFactsInput",
-      "ReadGeneratedPackageFactsInputSchema",
-      "ReadGeneratedPackageLinksNeedingRepairInput",
-      "ReadGeneratedPackageLinksNeedingRepairInputSchema",
-      "ReadRuntimeSourceVersionInput",
-      "ReadRuntimeSourceVersionInputSchema",
-      "ReadRuntimeThreadEpisodesInput",
-      "RecordProviderAuthStatusInput",
-      "RecordProviderAuthStatusInputSchema",
-      "RequestInputAnswerId",
-      "RequestInputChoiceOptionRequest",
-      "RequestInputChoiceOptionRequestSchema",
-      "RequestInputChoiceQuestionRequest",
-      "RequestInputChoiceQuestionRequestSchema",
-      "RequestInputFreeformQuestionRequest",
-      "RequestInputFreeformQuestionRequestSchema",
-      "RequestInputOptionId",
-      "RequestInputQuestionId",
-      "RequestInputQuestionRequest",
-      "RequestInputQuestionRequestSchema",
-      "RequestInputRequestId",
-      "RequestProviderRefreshInput",
-      "RequestProviderRefreshInputSchema",
-      "RecordGeneratedPackageBuildInput",
-      "RecordGeneratedPackageBuildInputSchema",
-      "RecordGeneratedPackageFailureInput",
-      "RecordGeneratedPackageFailureInputSchema",
-      "RecordGeneratedPackageWorkspaceLinkInput",
-      "RecordGeneratedPackageWorkspaceLinkInputSchema",
-      "RecordRuntimeCommandEventInput",
-      "RecordRuntimeCommandEventInputSchema",
-      "RecordRuntimeCommandStdinWriteInput",
-      "RecordRuntimeCommandStdinWriteInputSchema",
-      "RecordRuntimeSourceDeleteInput",
-      "RecordRuntimeSourceDeleteInputSchema",
-      "RecordRuntimeSourceSaveInput",
-      "RecordRuntimeSourceSaveInputSchema",
-      "RequestUserInputAnswer",
-      "RequestUserInputAnswerDeliveryPayload",
-      "RequestUserInputAnswerDeliveryPayloadSchema",
-      "RequestUserInputAnswerQueuePayload",
-      "RequestUserInputAnswerQueuePayloadSchema",
-      "RequestUserInputAnswerSchema",
-      "RequestUserInputResolvedAnswer",
-      "RequestUserInputResolvedAnswerSchema",
-      "ResolvePiRuntimePathsInput",
-      "ResolvePiRuntimePathsInputSchema",
-      "ResolveSecretInvocationValueInput",
-      "RestorePiHistoryEntryInput",
-      "RestorePiHistoryEntryInputSchema",
-      "RunExtensionDependencyActionInput",
-      "RunExtensionDependencyActionInputSchema",
-      "RunExtensionDependencyActionResult",
-      "RunExtensionDependencyActionResultSchema",
-      "RunPiTurnInput",
-      "AuthenticatedRunTaskAgentInput",
-      "AuthenticatedRunTaskAgentInputSchema",
-      "RuntimeApprovalId",
-      "RuntimeApprovalDecision",
-      "RuntimeApprovalDecisionSchema",
-      "RuntimeApprovalMode",
-      "RuntimeApprovalModeSchema",
-      "RuntimeApprovalRecord",
-      "RuntimeApprovalRecordSchema",
-      "RuntimeApprovalReviewer",
-      "RuntimeApprovalReviewerSchema",
-      "RuntimeApprovalResolvedStatusSchema",
-      "RuntimeApprovalsApiEffect",
-      "RuntimeApprovalRequest",
-      "RuntimeApprovalRequestSchema",
-      "RuntimeApprovalStatePort",
-      "RuntimeApprovalStatePortService",
-      "RuntimeApprovalStatus",
-      "RuntimeApprovalStatusSchema",
-      "RuntimeApprovalToolName",
-      "RuntimeApprovalToolNameSchema",
-      "RuntimeActorExtensionBindingRecord",
-      "RuntimeActorExtensionBindingRecordSchema",
-      "RuntimeActorExtensionBindingStatePort",
-      "RuntimeActorExtensionBindingStatePortService",
-      "RuntimeArtifactKind",
-      "RuntimeArtifactKindSchema",
-      "RuntimeArtifactRecord",
-      "RuntimeArtifactRecordSchema",
-      "RuntimeArtifactStatePort",
-      "RuntimeArtifactStatePortService",
-      "RuntimeComposerDraftStatePort",
-      "RuntimeComposerDraftStatePortService",
-      "RuntimeClientSubmission",
-      "RuntimeClientSubmissionInput",
-      "RuntimeClientSubmissionInputSchema",
-      "RuntimeClientSubmissionMetadata",
-      "RuntimeClientSubmissionMetadataSchema",
-      "RuntimeClientSubmissionSchema",
-      "RuntimeCommandsApiEffect",
-      "RuntimeCommandsApiPromise",
-      "RuntimeCommandCreateStatus",
-      "RuntimeCommandCreateStatusSchema",
-      "RuntimeCommandExecutor",
-      "RuntimeCommandExecutorSchema",
-      "RuntimeCommandEventKind",
-      "RuntimeCommandEventKindSchema",
-      "RuntimeCommandFinishStatus",
-      "RuntimeCommandFinishStatusSchema",
-      "RuntimeCommandOutputSource",
-      "RuntimeCommandOutputSourceSchema",
-      "RuntimeCommandOutputStreamSchema",
-      "RuntimeCommandRecord",
-      "RuntimeCommandRecordSchema",
-      "RuntimeCommandStatePort",
-      "RuntimeCommandStatePortService",
-      "RuntimeCommandStatus",
-      "RuntimeCommandStatusSchema",
-      "RuntimeCommandVisibility",
-      "RuntimeCommandVisibilitySchema",
-      "ClearSubmittedComposerDraftInput",
-      "ClearSubmittedComposerDraftInputSchema",
-      "RuntimeExtensionContextChangedReason",
-      "RuntimeExtensionContextChangedReasonSchema",
-      "RuntimeExtensionContextChangedSurface",
-      "RuntimeExtensionContextChangedSurfaceSchema",
-      "RuntimeExtensionContextImpactStateFacade",
-      "RuntimeExtensionContextImpactStatePort",
-      "RuntimeExtensionContextImpactStatePortService",
-      "RuntimeExtensionSnapshotContextImpactTransportInput",
-      "RuntimeExtensionSnapshotContextImpactTransportInputSchema",
-      "RuntimeExtensionUsageContextImpactTransportInput",
-      "RuntimeExtensionUsageContextImpactTransportInputSchema",
-      "RuntimeExtensionUsageProfileKey",
-      "RuntimeExtensionUsageProfileKeySchema",
-      "RuntimeExtensionUsageProfileKeyTransport",
-      "RuntimeExtensionUsageProfileKeyTransportSchema",
-      "RuntimeSessionWaitOwner",
-      "RuntimeSessionWaitOwnerSchema",
-      "RuntimeSessionWaitStatePort",
-      "RuntimeSessionWaitStatePortService",
-      "RuntimeContractError",
-      "decodeUnknownRuntimeContractErrorEffect",
-      "decodeUnknownRuntimeContractErrorExit",
-      "encodeRuntimeContractErrorEffect",
-      "encodeRuntimeContractErrorExit",
-      "RuntimeFacadeErrorContract",
-      "RuntimeFacadeErrorContractSchema",
-      "RuntimeOwnerId",
-      "RuntimeOwnerKind",
-      "RuntimeOwnerKindSchema",
-      "RuntimeOwnerRef",
-      "RuntimeOwnerRefSchema",
-      "RuntimeEventGenerationId",
-      "RuntimeEventSequence",
-      "RuntimeEventError",
-      "decodeUnknownRuntimeEventErrorEffect",
-      "decodeUnknownRuntimeEventErrorExit",
-      "encodeRuntimeEventErrorEffect",
-      "encodeRuntimeEventErrorExit",
-      "EnsureRuntimeHandlerThreadRunnableInput",
-      "SetRuntimeApprovalSessionWaitInput",
-      "SetRuntimeApprovalSessionWaitInputSchema",
-      "SetRuntimeActorExtensionBindingInput",
-      "SetRuntimeActorExtensionBindingInputSchema",
-      "SetRuntimeUserSessionWaitInput",
-      "SetRuntimeUserSessionWaitInputSchema",
-      "GetRuntimeApprovalRequestInput",
-      "GetRuntimeApprovalRequestInputSchema",
-      "ListOpenRuntimeApprovalRequestsInput",
-      "ListOpenRuntimeApprovalRequestsInputSchema",
-      "ResolveRuntimeApprovalRequestInput",
-      "ResolveRuntimeApprovalRequestInputSchema",
-      "RuntimeEventErrorSchema",
-      "RuntimeEventRebaselineRequired",
-      "decodeUnknownRuntimeEventRebaselineRequiredEffect",
-      "decodeUnknownRuntimeEventRebaselineRequiredExit",
-      "encodeRuntimeEventRebaselineRequiredEffect",
-      "encodeRuntimeEventRebaselineRequiredExit",
-      "RuntimeEffectRequest",
-      "RuntimeEffectRequestSchema",
-      "RuntimeEffectOperation",
-      "RuntimeEffectOperationSchema",
-      "RuntimeEvent",
-      "RuntimeEventSchema",
-      "RuntimeEventStreamError",
-      "decodeUnknownRuntimeEventStreamErrorEffect",
-      "decodeUnknownRuntimeEventStreamErrorExit",
-      "encodeRuntimeEventStreamErrorEffect",
-      "encodeRuntimeEventStreamErrorExit",
-      "RuntimeEventSubscriptionClose",
-      "RuntimeEventSubscriptionCloseSchema",
-      "RuntimeEventsInput",
-      "RuntimeEventsInputSchema",
-      "RuntimeEpisodeKind",
-      "RuntimeEpisodeRecord",
-      "RuntimeEpisodeStatePort",
-      "RuntimeEpisodeStatePortService",
-      "RuntimeExtensionStatePort",
-      "RuntimeExtensionStatePortService",
-      "RuntimeMessageDelivery",
-      "RuntimeMessageDeliverySchema",
-      "RuntimeMessagesApiEffect",
-      "RuntimePromptTelemetryContentBlock",
-      "RuntimePromptTelemetryMessage",
-      "RuntimePromptTelemetrySummary",
-      "ReadExtensionDependencyApprovalInput",
-      "ReadExtensionDependencyReadinessInput",
-      "ReadExtensionSourceFingerprintInput",
-      "RecordExtensionDependencyReadinessInput",
-      "RecordExtensionDependencyReadinessInputSchema",
-      "RuntimeGeneratedPackageFactRecord",
-      "RuntimeGeneratedPackageFactRecordSchema",
-      "RuntimeGeneratedPackageFactStatus",
-      "RuntimeGeneratedPackageFactStatusSchema",
-      "RuntimeGeneratedPackageStatePort",
-      "RuntimeGeneratedPackageStatePortService",
-      "RuntimeGeneratedPackageWorkspaceLinkRecord",
-      "RuntimeGeneratedPackageWorkspaceLinkRecordSchema",
-      "StateCommandReceipt",
-      "StateCommandReceiptSchema",
-      "StateFacadeErrorContract",
-      "StateFacadeErrorContractSchema",
-      "StateMutationResult",
-      "StateMutationResultSchema",
-      "RuntimeRecoveryStartupQueueStatus",
-      "RuntimeRecoveryStartupQueueStatusSchema",
-      "RuntimeRecoveryStartupSnapshot",
-      "RuntimeRecoveryStartupSnapshotSchema",
-      "RuntimeRecoveryStartupThreadStatus",
-      "RuntimeRecoveryStartupThreadStatusSchema",
-      "RuntimeRecoveryStartupTitleGenerationStatus",
-      "RuntimeRecoveryStartupTitleGenerationStatusSchema",
-      "RuntimeRecoveryStartupTurnStatus",
-      "RuntimeRecoveryStartupTurnStatusSchema",
-      "RuntimeRecoveryStatePort",
-      "RuntimeRecoveryStatePortService",
-      "RuntimeRecoveryWorkKind",
-      "RuntimeRecoveryWorkKindSchema",
-      "RuntimeRecoveryWorkOwnerScope",
-      "RuntimeRecoveryWorkOwnerScopeSchema",
-      "RuntimeRecoveryWorkRecord",
-      "RuntimeRecoveryWorkRecordSchema",
-      "RuntimeRecoveryWorkStatus",
-      "RuntimeRecoveryWorkStatusSchema",
-      "ApplyRuntimeExtensionSnapshotContextImpactInput",
-      "ApplyRuntimeExtensionSnapshotContextImpactInputSchema",
-      "ClaimNextRuntimeRecoveryWorkInput",
-      "ClaimNextRuntimeRecoveryWorkInputSchema",
-      "CompleteRuntimeRecoveryWorkInput",
-      "CompleteRuntimeRecoveryWorkInputSchema",
-      "EnsureRuntimeRecoveryWorkInput",
-      "EnsureRuntimeRecoveryWorkInputSchema",
-      "FailOrRetryRuntimeRecoveryWorkInput",
-      "FailOrRetryRuntimeRecoveryWorkInputSchema",
-      "ListRuntimeExtensionUsageContextAffectedSurfacesInput",
-      "ListRuntimeExtensionUsageContextAffectedSurfacesInputSchema",
-      "NormalizeRuntimeRecoveryStateInput",
-      "NormalizeRuntimeRecoveryStateInputSchema",
-      "RuntimeHandlerThreadEpisodeRequest",
-      "RuntimeReadModelStatePort",
-      "RuntimeReadModelStatePortService",
-      "ReconcileGeneratedPackageManifestInput",
-      "ReconcileGeneratedPackageManifestInputSchema",
-      "RuntimeSubmittedAttachment",
-      "RuntimeSubmittedAttachmentSchema",
-      "RuntimeSubmittedMessage",
-      "RuntimeSubmittedMessageSchema",
-      "RuntimeSurfaceTarget",
-      "RuntimeSurfaceTargetSchema",
-      "RuntimeSurfacesApiEffect",
-      "RuntimeSurfacesApiPromise",
-      "RuntimeQueueStatePort",
-      "RuntimeQueueStatePortService",
-      "RuntimeQueuesApiEffect",
-      "RuntimeSurfaceQueueItemKindSchema",
-      "RuntimeSurfaceQueuePosition",
-      "RuntimeSurfaceQueuePositionSchema",
-      "RuntimeSurfaceQueuePrioritySchema",
-      "RuntimeSurfaceQueueStatusSchema",
-      "CancelRuntimeRequestInputInput",
-      "CancelRuntimeRequestInputInputSchema",
-      "DefaultOpenRuntimeRequestInputQuestionsInput",
-      "DefaultOpenRuntimeRequestInputQuestionsInputSchema",
-      "GetRuntimeRequestInputInput",
-      "GetRuntimeRequestInputInputSchema",
-      "ListOpenBlockingRuntimeRequestInputsInput",
-      "ListOpenBlockingRuntimeRequestInputsInputSchema",
-      "RuntimeRequestInputAnsweredBy",
-      "RuntimeRequestInputAnsweredBySchema",
-      "RuntimeRequestInputAnswerRecord",
-      "RuntimeRequestInputAnswerRecordSchema",
-      "RuntimeRequestInputChoiceInputSchema",
-      "RuntimeRequestInputChoiceRecord",
-      "RuntimeRequestInputChoiceRecordSchema",
-      "RuntimeRequestInputDelivery",
-      "RuntimeRequestInputDeliverySchema",
-      "RuntimeRequestInputDetailsRecord",
-      "RuntimeRequestInputDetailsRecordSchema",
-      "RuntimeRequestInputModeSchema",
-      "RuntimeRequestInputQuestionInput",
-      "RuntimeRequestInputQuestionInputSchema",
-      "RuntimeRequestInputQuestionRecord",
-      "RuntimeRequestInputQuestionRecordSchema",
-      "RuntimeRequestInputQuestionStatus",
-      "RuntimeRequestInputQuestionStatusSchema",
-      "RuntimeRequestInputRecord",
-      "RuntimeRequestInputRecordSchema",
-      "RuntimeRequestInputTimeoutRecord",
-      "RuntimeRequestInputTimeoutInputSchema",
-      "RuntimeRequestInputTimeoutRecordSchema",
-      "RuntimeRequestInputStatusSchema",
-      "RuntimeRequestInputApiEffect",
-      "RuntimeRequestStatePort",
-      "RuntimeRequestStatePortService",
-      "RuntimeSourceFactRecord",
-      "RuntimeSourceFactRecordSchema",
-      "RuntimeSourceInvalidationApiEffect",
-      "RuntimeSourceStatePort",
-      "RuntimeSourceStatePortService",
-      "RuntimeSurfaceMessageRecord",
-      "RuntimeSurfaceMessageRecordSchema",
-      "RuntimeSurfaceLifecycleStatePort",
-      "RuntimeSurfaceLifecycleStatePortService",
-      "RuntimeSurfaceQueueItemKind",
-      "RuntimeSurfaceQueuePriority",
-      "RuntimeSurfaceQueueStatus",
-      "RuntimeHandlerThreadGeneratedContextBindingInput",
-      "RuntimeHandlerThreadInitialQueueInput",
-      "RuntimeThreadCompactRow",
-      "RuntimeThreadCurrentReadModel",
-      "RuntimeThreadEpisodesReadModel",
-      "RuntimeThreadGroupReadModel",
-      "RuntimeThreadListReadModel",
-      "RuntimeThreadPendingReportRequest",
-      "RuntimeThreadReadModelEpisodeSummary",
-      "RuntimeThreadReadModelWait",
-      "RuntimeThreadStatePort",
-      "RuntimeThreadStatePortService",
-      "RuntimeThreadStatus",
-      "RuntimeTurnDecision",
-      "RuntimeTurnDecisionSchema",
-      "RuntimeTurnRecord",
-      "RuntimeTurnRecordSchema",
-      "RuntimeToolExecutionError",
-      "decodeUnknownRuntimeToolExecutionErrorEffect",
-      "decodeUnknownRuntimeToolExecutionErrorExit",
-      "encodeRuntimeToolExecutionErrorEffect",
-      "encodeRuntimeToolExecutionErrorExit",
-      "RuntimeTurnStatePort",
-      "RuntimeTurnStatePortService",
-      "RuntimeTurnStatus",
-      "RuntimeTurnStatusSchema",
-      "RuntimeWorkspacesApiEffect",
-      "RuntimeWorkspacesApiPromise",
-      "RuntimeWorkspaceStatePort",
-      "RuntimeWorkspaceStatePortService",
-      "SaveExtensionSourceEditInput",
-      "SaveExtensionSourceEditInputSchema",
-      "SandboxLaunchFacts",
-      "SandboxLaunchFactsSchema",
-      "SandboxLaunchKind",
-      "SandboxLaunchKindSchema",
-      "SandboxLaunchScope",
-      "SandboxLaunchScopeSchema",
-      "SandboxPolicySnapshot",
-      "SandboxPolicySnapshotInput",
-      "SandboxPolicySnapshotInputSchema",
-      "SandboxPolicySnapshotSchema",
-      "SandboxPolicySource",
-      "SandboxPolicySourceService",
-      "SourceDiagnostic",
-      "SourceDiagnosticSchema",
-      "SourceDomain",
-      "SourceDomainSchema",
-      "SourceInvalidationHint",
-      "SourceInvalidationHintSchema",
-      "SourceInvalidationScope",
-      "SourceInvalidationScopeSchema",
-      "SourceReconcileReason",
-      "SourceReconcileReasonSchema",
-      "SourceReconcileRequest",
-      "SourceReconcileRequestSchema",
-      "SourceReconcileResult",
-      "SourceReconcileResultSchema",
-      "SourceEditSaveResult",
-      "SourceEditSaveResultSchema",
-      "SourceEditSession",
-      "SourceEditSessionSchema",
-      "SetRequestInputTimerPausedInput",
-      "SetRequestInputTimerPausedInputSchema",
-      "SetRequestInputTimerPausedResult",
-      "SetRequestInputTimerPausedResultSchema",
-      "AcceptSubmittedRuntimeSurfaceMessageInput",
-      "AcceptSubmittedRuntimeSurfaceMessageInputSchema",
-      "CancelRuntimeSurfaceMessageInput",
-      "CancelRuntimeSurfaceMessageInputSchema",
-      "ClaimNextRuntimeSurfaceMessageInput",
-      "ClaimNextRuntimeSurfaceMessageInputSchema",
-      "EnqueueRuntimeSurfaceMessageInput",
-      "EnqueueRuntimeSurfaceMessageInputSchema",
-      "FinishRuntimeTurnInput",
-      "FinishRuntimeTurnInputSchema",
-      "FinishRuntimeTurnStatusSchema",
-      "GetRuntimeSurfaceMessageInput",
-      "GetRuntimeSurfaceMessageInputSchema",
-      "MarkRuntimeSurfaceMessageDeliveredInput",
-      "MarkRuntimeSurfaceMessageDeliveredInputSchema",
-      "MarkRuntimeSurfaceMessageFailedInput",
-      "MarkRuntimeSurfaceMessageFailedInputSchema",
-      "MarkRuntimeSurfaceMessageQueuedInput",
-      "MarkRuntimeSurfaceMessageQueuedInputSchema",
-      "MarkRuntimeSurfaceMessageSteeringInput",
-      "MarkRuntimeSurfaceMessageSteeringInputSchema",
-      "ReleaseExpiredRuntimeSurfaceMessageClaimsInput",
-      "ReleaseExpiredRuntimeSurfaceMessageClaimsInputSchema",
-      "SetRuntimeTurnDecisionInput",
-      "SetRuntimeTurnDecisionInputSchema",
-      "StartRuntimeTurnInput",
-      "StartRuntimeTurnInputSchema",
-      "SandboxPolicyError",
-      "decodeUnknownSandboxPolicyErrorEffect",
-      "decodeUnknownSandboxPolicyErrorExit",
-      "encodeSandboxPolicyErrorEffect",
-      "encodeSandboxPolicyErrorExit",
-      "SavePiSessionReferenceInput",
-      "SavePiSessionReferenceInputSchema",
-      "SecretInvocationValue",
-      "SecretStatusSnapshot",
-      "SecretStatusSnapshotSchema",
-      "SecretStorePort",
-      "SecretStorePortError",
-      "decodeUnknownSecretStorePortErrorEffect",
-      "decodeUnknownSecretStorePortErrorExit",
-      "encodeSecretStorePortErrorEffect",
-      "encodeSecretStorePortErrorExit",
-      "SecretStorePortService",
-      "SentSnippetProvenance",
-      "SentSnippetProvenanceSchema",
-      "serializeComposerAttachmentTextSignature",
-      "SnippetId",
-      "SnippetMetadata",
-      "SnippetMetadataSchema",
-      "SnippetSource",
-      "SnippetSourceSchema",
-      "StateContractError",
-      "decodeUnknownStateContractErrorEffect",
-      "decodeUnknownStateContractErrorExit",
-      "encodeStateContractErrorEffect",
-      "encodeStateContractErrorExit",
-      "StateInvalidationDescriptor",
-      "StateInvalidationDescriptorSchema",
-      "StateRevision",
-      "StateRevisionSchema",
-      "StateStoredError",
-      "StateStoredErrorSchema",
-      "decodeUnknownStateStoredErrorEffect",
-      "decodeUnknownStateStoredErrorExit",
-      "encodeStateStoredErrorEffect",
-      "encodeStateStoredErrorExit",
-      "StartedRuntimeHandlerThread",
-      "StartRuntimeHandlerThreadInput",
-      "StartRuntimeHandlerThreadsInput",
-      "StartRuntimeHandlerThreadsResult",
-      "StartRuntimeCommandInput",
-      "StartRuntimeCommandInputSchema",
-      "StartHandlerThreadItem",
-      "StartHandlerThreadItemSchema",
-      "StartHandlerThreadRequest",
-      "StartHandlerThreadRequestSchema",
-      "SteerQueuedMessageInput",
-      "SteerQueuedMessageInputSchema",
-      "StoredErrorReason",
-      "StoredErrorReasonSchema",
-      "SubmitMessageInput",
-      "SubmitMessageInputSchema",
-      "SubmitMessageResult",
-      "SubmitMessageResultSchema",
-      "SurfacePiSessionId",
-      "SurfaceQueueItemKind",
-      "SurfaceQueueItemKindSchema",
-      "SurfaceStreamGenerationId",
-      "SurfaceStreamPatchInput",
-      "SurfaceStreamPatchInputSchema",
-      "SurfaceStreamSequence",
-      "SvvyxRuntimeEffectTransportIntent",
-      "SvvyxRuntimeEffectTransportIntentSchema",
-      "SvvyxRuntimeEffectTransportRequest",
-      "SvvyxRuntimeEffectTransportRequestSchema",
-      "SmithersObservedJson",
-      "SmithersObservedJsonSchema",
-      "SmithersTaskAttemptIdentity",
-      "SmithersTaskAttemptIdentitySchema",
-      "SmithersTaskContextSnapshot",
-      "SmithersTaskContextSnapshotSchema",
-      "SmithersTaskSourceContextSnapshot",
-      "SmithersTaskSourceContextSnapshotSchema",
-      "ValidatedTaskAgentParameters",
-      "ValidatedTaskAgentParametersSchema",
-      "ThreadFollowupQueuePayloadSchema",
-      "ThreadGroupId",
-      "ThreadHistoryMode",
-      "ThreadHistoryModeSchema",
-      "ThreadId",
-      "ThreadReportNotificationQueuePayloadSchema",
-      "TitleJobId",
-      "ToolCallId",
-      "ToolItemId",
-      "TurnId",
-      "UpdateRuntimeCommandArgumentsInput",
-      "UpdateRuntimeCommandArgumentsInputSchema",
-      "UpdateActorExtensionBindingRequest",
-      "UpdateActorExtensionBindingRequestSchema",
-      "UserMessageQueuePayloadSchema",
-      "ValidatePiSessionReferenceInput",
-      "ValidatePiSessionReferenceInputSchema",
-      "WriteCommandStdinInput",
-      "WriteCommandStdinInputSchema",
-      "WriteCommandStdinResult",
-      "WriteCommandStdinResultSchema",
-      "WorkflowRunId",
-      "RunTaskAgentOperation",
-      "RunTaskAgentOperationSchema",
-      "TaskAgentParametersSource",
-      "TaskAgentParametersSourceSchema",
-      "RunTaskAgentMessage",
-      "RunTaskAgentMessageSchema",
-      "RunTaskAgentPromptSource",
-      "RunTaskAgentPromptSourceSchema",
-      "RunTaskAgentInput",
-      "RunTaskAgentInputSchema",
-      "RunTaskAgentSourceInput",
-      "RunTaskAgentSourceInputSchema",
-      "RunTaskAgentError",
-      "RunTaskAgentErrorCode",
-      "RunTaskAgentErrorCodeSchema",
-      "RunTaskAgentErrorSchema",
-      "RunTaskAgentResult",
-      "RunTaskAgentResultSchema",
-      "WorkflowTaskAgentContext",
-      "WorkflowTaskAgentContextSchema",
-      "WorkflowTaskAgentStartQueuePayloadSchema",
-      "WorkflowTaskAttemptId",
-      "WorkflowTaskRuntimeSurfaceTarget",
-      "WorkflowTaskRuntimeSurfaceTargetSchema",
-      "WorkspaceId",
-      "WorkspacePaneId",
-      "WorkspaceReadModelInvalidation",
-      "WorkspaceReadModelInvalidationSchema",
-      "WorkspaceSessionId",
-      "WorkspaceSessionNavigationReadModel",
-      "WorkspaceSessionNavigationSectionId",
-      "WorkspaceSessionNavigationSectionState",
-      "WorkspaceSessionNavigationSummary",
-      "WorkspaceTabId",
-      "WorktreeId",
-      "UtcDateTime",
-      "createContextBudget",
-      "decodeAbortPromptInput",
-      "decodeAbortPromptInputEffect",
-      "decodeAbortPromptInputExit",
-      "decodeAcquireDefaultWorkspaceInput",
-      "decodeAcquireDefaultWorkspaceInputEffect",
-      "decodeAcquireDefaultWorkspaceInputExit",
-      "decodeAcquireWorkspaceInput",
-      "decodeAcquireWorkspaceInputEffect",
-      "decodeAcquireWorkspaceInputExit",
-      "decodeAcquireWorkspaceResult",
-      "decodeAcquireWorkspaceResultEffect",
-      "decodeAcquireWorkspaceResultExit",
-      "decodeAnswerRuntimeApprovalInput",
-      "decodeAnswerRuntimeApprovalInputEffect",
-      "decodeAnswerRuntimeApprovalInputExit",
-      "decodeAnswerRuntimeApprovalResult",
-      "decodeAnswerRuntimeApprovalResultEffect",
-      "decodeAnswerRuntimeApprovalResultExit",
-      "decodeAnswerRequestInputInput",
-      "decodeAnswerRequestInputInputEffect",
-      "decodeAnswerRequestInputInputExit",
-      "decodeAnswerRequestInputResult",
-      "decodeAnswerRequestInputResultEffect",
-      "decodeAnswerRequestInputResultExit",
-      "decodeSetRequestInputTimerPausedInput",
-      "decodeSetRequestInputTimerPausedInputEffect",
-      "decodeSetRequestInputTimerPausedInputExit",
-      "decodeSetRequestInputTimerPausedResult",
-      "decodeSetRequestInputTimerPausedResultEffect",
-      "decodeSetRequestInputTimerPausedResultExit",
-      "decodeCancelCommandInput",
-      "decodeCancelCommandInputEffect",
-      "decodeCancelCommandInputExit",
-      "decodeCancelCommandResult",
-      "decodeCancelCommandResultEffect",
-      "decodeCancelCommandResultExit",
-      "decodeCloseSurfaceInput",
-      "decodeCloseSurfaceInputEffect",
-      "decodeCloseSurfaceInputExit",
-      "decodeCloseSurfaceResult",
-      "decodeCloseSurfaceResultEffect",
-      "decodeCloseSurfaceResultExit",
-      "decodeCommandResultEnvelope",
-      "decodeCommandResultEnvelopeEffect",
-      "decodeCommandResultEnvelopeExit",
-      "decodeCreateOrchestratorSurfaceInput",
-      "decodeCreateOrchestratorSurfaceInputEffect",
-      "decodeCreateOrchestratorSurfaceInputExit",
-      "decodeCreateRequestInputRequest",
-      "decodeCreateRequestInputRequestEffect",
-      "decodeCreateRequestInputRequestExit",
-      "decodeCreateSurfaceResult",
-      "decodeCreateSurfaceResultEffect",
-      "decodeCreateSurfaceResultExit",
-      "decodeExtensionExecutionPlan",
-      "decodeExtensionExecutionPlanEffect",
-      "decodeExtensionExecutionPlanExit",
-      "decodeExtensionHandlerResult",
-      "decodeExtensionHandlerResultEffect",
-      "decodeExtensionHandlerResultExit",
-      "decodeGeneratedPackageBuildInput",
-      "decodeGeneratedPackageBuildInputEffect",
-      "decodeGeneratedPackageBuildInputExit",
-      "decodeGeneratedPackageBuildPlanResult",
-      "decodeGeneratedPackageBuildPlanResultEffect",
-      "decodeGeneratedPackageBuildPlanResultExit",
-      "decodeGeneratedPackageWorkspaceLinkRepairInput",
-      "decodeGeneratedPackageWorkspaceLinkRepairInputEffect",
-      "decodeGeneratedPackageWorkspaceLinkRepairInputExit",
-      "decodeGeneratedPackagesRefreshResult",
-      "decodeGeneratedPackagesRefreshResultEffect",
-      "decodeGeneratedPackagesRefreshResultExit",
-      "decodeNativeToolResult",
-      "decodeNativeToolResultEffect",
-      "decodeNativeToolResultExit",
-      "decodeUnknownClosePiSessionInputEffect",
-      "decodeUnknownClosePiSessionInputExit",
-      "decodeUnknownCreatePiSessionInputEffect",
-      "decodeUnknownCreatePiSessionInputExit",
-      "decodeUnknownDeletePiSessionReferenceInputEffect",
-      "decodeUnknownDeletePiSessionReferenceInputExit",
-      "decodeUnknownGenerateTitleInputEffect",
-      "decodeUnknownGenerateTitleInputExit",
-      "decodeUnknownGenerateTitleResultEffect",
-      "decodeUnknownGenerateTitleResultExit",
-      "decodeUnknownGetPiSessionReferenceInputEffect",
-      "decodeUnknownGetPiSessionReferenceInputExit",
-      "decodeUnknownGetProviderAuthSnapshotInputEffect",
-      "decodeUnknownGetProviderAuthSnapshotInputExit",
-      "decodeUnknownInterruptPiTurnInputEffect",
-      "decodeUnknownInterruptPiTurnInputExit",
-      "decodeUnknownListProviderStatusesInputEffect",
-      "decodeUnknownListProviderStatusesInputExit",
-      "decodeUnknownListModelsInputEffect",
-      "decodeUnknownListModelsInputExit",
-      "decodeUnknownModelInfoEffect",
-      "decodeUnknownModelInfoExit",
-      "unsafeDecodePiRuntimeEventSyncForTestsAndBootstrap",
-      "decodeUnknownPiRuntimeEventEffect",
-      "decodeUnknownPiRuntimeEventExit",
-      "decodeUnknownPiRuntimePathsSnapshotEffect",
-      "decodeUnknownPiRuntimePathsSnapshotExit",
-      "decodeUnknownModelSelectionEffect",
-      "decodeUnknownModelSelectionExit",
-      "decodeUnknownOpenPiSessionInputEffect",
-      "decodeUnknownOpenPiSessionInputExit",
-      "decodeUnknownReasoningSelectionEffect",
-      "decodeUnknownReasoningSelectionExit",
-      "decodeUnknownRecordProviderAuthStatusInputEffect",
-      "decodeUnknownRecordProviderAuthStatusInputExit",
-      "decodeUnknownRequestProviderRefreshInputEffect",
-      "decodeUnknownRequestProviderRefreshInputExit",
-      "decodeUnknownResolvePiRuntimePathsInputEffect",
-      "decodeUnknownResolvePiRuntimePathsInputExit",
-      "decodeUnknownSavePiSessionReferenceInputEffect",
-      "decodeUnknownSavePiSessionReferenceInputExit",
-      "decodeUnknownValidatePiSessionReferenceInputEffect",
-      "decodeUnknownValidatePiSessionReferenceInputExit",
-      "decodeRequestUserInputAnswerDeliveryPayload",
-      "decodeRequestUserInputAnswerDeliveryPayloadEffect",
-      "decodeRequestUserInputAnswerDeliveryPayloadExit",
-      "decodeRequestUserInputAnswerQueuePayload",
-      "decodeRequestUserInputAnswerQueuePayloadEffect",
-      "decodeRequestUserInputAnswerQueuePayloadExit",
-      "decodeRefreshGeneratedContextRequest",
-      "decodeRefreshGeneratedContextRequestEffect",
-      "decodeRefreshGeneratedContextRequestExit",
-      "decodeRefreshGeneratedPackagesRequest",
-      "decodeRefreshGeneratedPackagesRequestEffect",
-      "decodeRefreshGeneratedPackagesRequestExit",
-      "decodeRunExtensionDependencyActionInput",
-      "decodeRunExtensionDependencyActionInputEffect",
-      "decodeRunExtensionDependencyActionInputExit",
-      "decodeRunExtensionDependencyActionResult",
-      "decodeRunExtensionDependencyActionResultEffect",
-      "decodeRunExtensionDependencyActionResultExit",
-      "decodeRuntimeClientSubmissionMetadata",
-      "decodeRuntimeClientSubmissionMetadataEffect",
-      "decodeRuntimeClientSubmissionMetadataExit",
-      "unsafeDecodeRuntimeEffectRequestSyncForTestsAndBootstrap",
-      "decodeUnknownRuntimeEffectRequestEffect",
-      "decodeUnknownRuntimeEffectRequestExit",
-      "decodeUnknownSvvyxRuntimeEffectTransportIntentEffect",
-      "decodeUnknownSvvyxRuntimeEffectTransportIntentExit",
-      "encodeDeletePiSessionReferenceInputEffect",
-      "encodeDeletePiSessionReferenceInputExit",
-      "encodeClosePiSessionInputEffect",
-      "encodeClosePiSessionInputExit",
-      "encodeCreatePiSessionInputEffect",
-      "encodeCreatePiSessionInputExit",
-      "encodeGenerateTitleInputEffect",
-      "encodeGenerateTitleInputExit",
-      "encodeGenerateTitleResultEffect",
-      "encodeGenerateTitleResultExit",
-      "encodeGetPiSessionReferenceInputEffect",
-      "encodeGetPiSessionReferenceInputExit",
-      "encodeGetProviderAuthSnapshotInputEffect",
-      "encodeGetProviderAuthSnapshotInputExit",
-      "encodeInterruptPiTurnInputEffect",
-      "encodeInterruptPiTurnInputExit",
-      "encodeListModelsInputEffect",
-      "encodeListModelsInputExit",
-      "encodeListProviderStatusesInputEffect",
-      "encodeListProviderStatusesInputExit",
-      "encodeModelInfoEffect",
-      "encodeModelInfoExit",
-      "encodeModelSelectionEffect",
-      "encodeModelSelectionExit",
-      "encodeOpenPiSessionInputEffect",
-      "encodeOpenPiSessionInputExit",
-      "encodePiRuntimeEventEffect",
-      "encodePiRuntimeEventExit",
-      "encodePiRuntimePathsSnapshotEffect",
-      "encodePiRuntimePathsSnapshotExit",
-      "encodeReasoningSelectionEffect",
-      "encodeReasoningSelectionExit",
-      "encodeRecordProviderAuthStatusInputEffect",
-      "encodeRecordProviderAuthStatusInputExit",
-      "encodeRequestProviderRefreshInputEffect",
-      "encodeRequestProviderRefreshInputExit",
-      "encodeResolvePiRuntimePathsInputEffect",
-      "encodeResolvePiRuntimePathsInputExit",
-      "encodeRuntimeEffectRequestEffect",
-      "encodeRuntimeEffectRequestExit",
-      "encodeSavePiSessionReferenceInputEffect",
-      "encodeSavePiSessionReferenceInputExit",
-      "encodeSvvyxRuntimeEffectTransportIntentEffect",
-      "encodeSvvyxRuntimeEffectTransportIntentExit",
-      "encodeValidatePiSessionReferenceInputEffect",
-      "encodeValidatePiSessionReferenceInputExit",
-      "unsafeDecodeSvvyxRuntimeEffectTransportIntentSyncForTestsAndBootstrap",
-      "decodeRuntimeEvent",
-      "decodeRuntimeEventEffect",
-      "decodeRuntimeEventError",
-      "decodeRuntimeEventErrorEffect",
-      "decodeRuntimeEventErrorExit",
-      "decodeRuntimeEventExit",
-      "decodeRuntimeEventSubscriptionClose",
-      "decodeRuntimeEventSubscriptionCloseEffect",
-      "decodeRuntimeEventSubscriptionCloseExit",
-      "decodeRuntimeEventsInput",
-      "decodeRuntimeEventsInputEffect",
-      "decodeRuntimeEventsInputExit",
-      "decodeOpenExtensionSourceEditInput",
-      "decodeOpenExtensionSourceEditInputEffect",
-      "decodeOpenExtensionSourceEditInputExit",
-      "decodeSaveExtensionSourceEditInput",
-      "decodeSaveExtensionSourceEditInputEffect",
-      "decodeSaveExtensionSourceEditInputExit",
-      "decodeSourceEditSaveResult",
-      "decodeSourceEditSaveResultEffect",
-      "decodeSourceEditSaveResultExit",
-      "decodeSourceEditSession",
-      "decodeSourceEditSessionEffect",
-      "decodeSourceEditSessionExit",
-      "decodeUnknownRuntimeFacadeErrorContractEffect",
-      "decodeUnknownRuntimeFacadeErrorContractExit",
-      "decodeUnknownStateFacadeErrorContractEffect",
-      "decodeUnknownStateFacadeErrorContractExit",
-      "encodeRuntimeFacadeErrorContractEffect",
-      "encodeRuntimeFacadeErrorContractExit",
-      "encodeStateFacadeErrorContractEffect",
-      "encodeStateFacadeErrorContractExit",
-      "unsafeDecodeRuntimeFacadeErrorContractSyncForTestsAndBootstrap",
-      "unsafeDecodeStateFacadeErrorContractSyncForTestsAndBootstrap",
-      "decodeRuntimeSubmittedMessage",
-      "decodeRuntimeSubmittedMessageEffect",
-      "decodeRuntimeSubmittedMessageExit",
-      "decodeOpenSurfaceInput",
-      "decodeOpenSurfaceInputEffect",
-      "decodeOpenSurfaceInputExit",
-      "decodeOpenSurfaceResult",
-      "decodeOpenSurfaceResultEffect",
-      "decodeOpenSurfaceResultExit",
-      "decodeReleaseWorkspaceInput",
-      "decodeReleaseWorkspaceInputEffect",
-      "decodeReleaseWorkspaceInputExit",
-      "decodeReleaseWorkspaceResult",
-      "decodeReleaseWorkspaceResultEffect",
-      "decodeReleaseWorkspaceResultExit",
-      "decodeRuntimeOwnerRef",
-      "decodeRuntimeOwnerRefEffect",
-      "decodeRuntimeOwnerRefExit",
-      "decodeSourceInvalidationHint",
-      "decodeSourceInvalidationHintEffect",
-      "decodeSourceInvalidationHintExit",
-      "decodeSourceReconcileRequest",
-      "decodeSourceReconcileRequestEffect",
-      "decodeSourceReconcileRequestExit",
-      "decodeSourceReconcileResult",
-      "decodeSourceReconcileResultEffect",
-      "decodeSourceReconcileResultExit",
-      "decodeStateInvalidationDescriptor",
-      "decodeStateInvalidationDescriptorEffect",
-      "decodeStateInvalidationDescriptorExit",
-      "decodeAuthenticatedRunTaskAgentInput",
-      "decodeAuthenticatedRunTaskAgentInputEffect",
-      "decodeAuthenticatedRunTaskAgentInputExit",
-      "schemaErrorMessage",
-      "decodeSteerQueuedMessageInput",
-      "decodeSteerQueuedMessageInputEffect",
-      "decodeSteerQueuedMessageInputExit",
-      "decodeSubmitMessageInput",
-      "decodeSubmitMessageInputEffect",
-      "decodeSubmitMessageInputExit",
-      "decodeSubmitMessageResult",
-      "decodeSubmitMessageResultEffect",
-      "decodeSubmitMessageResultExit",
-      "decodeWriteCommandStdinInput",
-      "decodeWriteCommandStdinInputEffect",
-      "decodeWriteCommandStdinInputExit",
-      "decodeWriteCommandStdinResult",
-      "decodeWriteCommandStdinResultEffect",
-      "decodeWriteCommandStdinResultExit",
-      "unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap",
-      "decodeUnknownRunTaskAgentInputEffect",
-      "decodeUnknownRunTaskAgentInputExit",
-      "unsafeDecodeRunTaskAgentSourceInputSyncForTestsAndBootstrap",
-      "decodeUnknownRunTaskAgentSourceInputEffect",
-      "decodeUnknownRunTaskAgentSourceInputExit",
-      "unsafeDecodeRunTaskAgentResultSyncForTestsAndBootstrap",
-      "decodeUnknownRunTaskAgentResultEffect",
-      "decodeUnknownRunTaskAgentResultExit",
-      "unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap",
-      "decodeUnknownRunTaskAgentErrorEffect",
-      "decodeUnknownRunTaskAgentErrorExit",
-      "encodeRunTaskAgentErrorEffect",
-      "encodeRunTaskAgentErrorExit",
-      "encodeRequestUserInputAnswerDeliveryPayload",
-      "encodeRequestUserInputAnswerQueuePayload",
-      "formatContextBudgetTooltip",
-      "getContextBudgetTone",
-      "isRuntimePromptTelemetrySummary",
-      "normalizeRuntimeClientSubmissionMetadata",
-      "readContextBudgetFromMeta",
-      "runtimeClientSubmissionLogDetails",
-      "summarizeRuntimePromptMessagesForTelemetry",
-    ],
-  ],
+  ["@svvy/core", readCorePublicSymbolIndexNames()],
   [
     "@svvy/state",
     [
-      "AppLogAppendInput",
-      "AppLogAppender",
-      "AppLogFacade",
+      "AppPreferenceAppearance",
+      "AppPreferenceAppearanceSchema",
+      "AppPreferenceApprovalMode",
+      "AppPreferenceApprovalModeSchema",
+      "AppPreferencesReadModel",
+      "AppPreferencesReadModelRequest",
+      "AppPreferencesStateCommands",
       "AppLogReadModelRequest",
       "AppLogReadStateCommands",
-      "BuildStructuredThreadEpisodesReadModelInput",
-      "BuildStructuredThreadListReadModelInput",
       "ClearWorkspaceAppLogUnreadCommandInput",
-      "CreateAppLogFacadeOptions",
-      "CreateStateCommandsFacadeOptions",
-      "DEFAULT_SESSION_SECTION_SIZES",
+      "ClearWorkspaceAppLogUnreadCommandInputSchema",
+      "CreateStateAppLogsFacadeOptions",
       "MarkAppLogReadCommandInput",
+      "MarkAppLogReadCommandInputSchema",
       "MarkVisibleAppLogRangeReadCommandInput",
-      "SandboxPolicySourceSettings",
-      "StateCommandInvalidationSink",
+      "MarkVisibleAppLogRangeReadCommandInputSchema",
+      "RemoveExtensionSecretValueCommandInput",
+      "RemoveExtensionSecretValueCommandInputSchema",
+      "RemoveProviderCredentialCommandInput",
+      "RemoveProviderCredentialCommandInputSchema",
+      "ProviderAuthReadModel",
+      "ProviderAuthReadModelRequest",
+      "ProviderAuthStateCommands",
+      "RecordProviderAuthStatusCommandInput",
+      "RecordProviderAuthStatusCommandInputSchema",
+      "SettingsReadModel",
+      "SetExtensionSecretValueCommandInput",
+      "SetExtensionSecretValueCommandInputSchema",
       "StateCommandResult",
       "StateCommands",
       "StateCommandsFacade",
@@ -1497,7 +299,10 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "StateFacade",
       "StateFacadeCallOptions",
       "StateFacadeError",
-      "StateLayerInput",
+      "StateAppLogAppendInput",
+      "StateAppLogsFacade",
+      "StateLayerConfig",
+      "StateLayerConfigSchema",
       "StateReadModelBaseline",
       "StateReadModelInvalidationRefetchRequest",
       "StateReadModelRebaselineRequest",
@@ -1505,68 +310,51 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "StateReadModelResult",
       "StateReadModels",
       "StateReadModelsService",
-      "StructuredCommandArgumentSnapshot",
-      "StructuredCommandArtifactLink",
-      "StructuredCommandDiagnostic",
-      "StructuredCommandDiagnosticSnapshot",
-      "StructuredCommandInspector",
-      "StructuredCommandInspectorChild",
-      "StructuredCommandOutputEvent",
-      "StructuredCommandPatchFile",
-      "StructuredCommandPatchSnapshot",
-      "StructuredCommandProgressEvent",
-      "StructuredCommandRollup",
-      "StructuredCommandRollupChild",
-      "StructuredCommandStdinEvent",
-      "StructuredCommandStdinState",
-      "StructuredHandlerThreadEpisodeSummary",
-      "StructuredHandlerThreadInspector",
-      "StructuredHandlerThreadSummary",
-      "StructuredHandlerThreadWorkflowSummary",
-      "StructuredProductEvent",
-      "StructuredSessionSummaryProjection",
-      "StructuredSessionView",
-      "StructuredSidebarHandlerThreadRow",
-      "StructuredSidebarRowSubtitle",
-      "StructuredSidebarWorkflowRow",
-      "StructuredThreadCompactRow",
-      "StructuredThreadCurrentReadModel",
-      "StructuredThreadEpisodesReadModel",
-      "StructuredThreadGroupReadModel",
-      "StructuredThreadPendingReportRequest",
-      "StructuredThreadReadModelEpisodeSummary",
-      "StructuredThreadReadModelWait",
-      "StructuredThreadListReadModel",
-      "StructuredWorkflowTaskAttemptInspector",
-      "StructuredWorkflowTaskAttemptSummary",
-      "StructuredWorkflowTaskAttemptTranscriptMessage",
-      "buildStructuredArtifactLink",
-      "buildStructuredCommandInspector",
-      "buildStructuredHandlerThreadInspector",
-      "buildStructuredHandlerThreadSummaries",
-      "buildStructuredSessionSummaryProjection",
-      "buildStructuredSessionView",
-      "buildStructuredSidebarThreadRows",
-      "buildStructuredThreadCompactRow",
-      "buildStructuredThreadCurrentReadModel",
-      "buildStructuredThreadEpisodesReadModel",
-      "buildStructuredThreadGroupReadModel",
-      "buildStructuredThreadListReadModel",
-      "buildStructuredWorkflowTaskAttemptInspector",
-      "buildWorkspaceSessionNavigation",
-      "createAppLogFacade",
+      "UpdateAppPreferencesCommandInput",
+      "UpdateAppPreferencesCommandInputSchema",
+      "UpdateAppPreferencesPatch",
+      "UpdateAppPreferencesPatchSchema",
+      "UpsertProviderCredentialCommandInput",
+      "UpsertProviderCredentialCommandInputSchema",
+      "createStateAppLogsFacade",
       "createStateCommandsFacade",
       "createStateFacade",
-      "deriveStructuredSessionStatus",
-      "flattenWorkspaceSessionNavigation",
-      "getDefaultSessionNavigationSectionState",
-      "getLatestFailureContext",
-      "getStructuredThread",
-      "groupThreadIdsByStatus",
-      "hasStructuredThreadGroup",
-      "hasStructuredSessionFacts",
-      "extensionStatePortFromStore",
-      "extensionStatePortFromStructuredSessionState",
+      "decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect",
+      "decodeUnknownClearWorkspaceAppLogUnreadCommandInputExit",
+      "decodeUnknownMarkAppLogReadCommandInputEffect",
+      "decodeUnknownMarkAppLogReadCommandInputExit",
+      "decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect",
+      "decodeUnknownMarkVisibleAppLogRangeReadCommandInputExit",
+      "decodeUnknownRemoveExtensionSecretValueCommandInputEffect",
+      "decodeUnknownRemoveExtensionSecretValueCommandInputExit",
+      "decodeUnknownRemoveProviderCredentialCommandInputEffect",
+      "decodeUnknownRemoveProviderCredentialCommandInputExit",
+      "decodeUnknownRecordProviderAuthStatusCommandInputEffect",
+      "decodeUnknownRecordProviderAuthStatusCommandInputExit",
+      "decodeUnknownSetExtensionSecretValueCommandInputEffect",
+      "decodeUnknownSetExtensionSecretValueCommandInputExit",
+      "decodeUnknownUpdateAppPreferencesCommandInputEffect",
+      "decodeUnknownUpdateAppPreferencesCommandInputExit",
+      "decodeUnknownUpsertProviderCredentialCommandInputEffect",
+      "decodeUnknownUpsertProviderCredentialCommandInputExit",
+      "encodeClearWorkspaceAppLogUnreadCommandInputEffect",
+      "encodeClearWorkspaceAppLogUnreadCommandInputExit",
+      "encodeMarkAppLogReadCommandInputEffect",
+      "encodeMarkAppLogReadCommandInputExit",
+      "encodeMarkVisibleAppLogRangeReadCommandInputEffect",
+      "encodeMarkVisibleAppLogRangeReadCommandInputExit",
+      "encodeRemoveExtensionSecretValueCommandInputEffect",
+      "encodeRemoveExtensionSecretValueCommandInputExit",
+      "encodeRemoveProviderCredentialCommandInputEffect",
+      "encodeRemoveProviderCredentialCommandInputExit",
+      "encodeRecordProviderAuthStatusCommandInputEffect",
+      "encodeRecordProviderAuthStatusCommandInputExit",
+      "encodeSetExtensionSecretValueCommandInputEffect",
+      "encodeSetExtensionSecretValueCommandInputExit",
+      "encodeUpdateAppPreferencesCommandInputEffect",
+      "encodeUpdateAppPreferencesCommandInputExit",
+      "encodeUpsertProviderCredentialCommandInputEffect",
+      "encodeUpsertProviderCredentialCommandInputExit",
       "layer",
       "layerAppLogWritePort",
       "layerExtensionStatePort",
@@ -1580,6 +368,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeExtensionContextImpactStatePort",
       "layerRuntimeExtensionStatePort",
       "layerRuntimeGeneratedPackageStatePort",
+      "layerRuntimePromptDefaultsStatePort",
       "layerRuntimeQueueStatePort",
       "layerRuntimeReadModelStatePort",
       "layerRuntimeRecoveryStatePort",
@@ -1591,118 +380,27 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeTurnStatePort",
       "layerRuntimeWorkspaceStatePort",
       "layerSandboxPolicySource",
-      "makeRuntimeActorExtensionBindingStatePort",
-      "makeRuntimeApprovalStatePort",
-      "makeRuntimeArtifactStatePort",
-      "makeRuntimeComposerDraftStatePort",
-      "makeRuntimeCommandStatePort",
-      "makeRuntimeEpisodeStatePort",
-      "makeExtensionStatePort",
-      "makeRuntimeExtensionContextImpactStatePort",
-      "makeRuntimeExtensionStatePort",
-      "makeRuntimeGeneratedPackageStatePort",
-      "makeRuntimeQueueStatePort",
-      "makeRuntimeReadModelStatePort",
-      "makeRuntimeRecoveryStatePort",
-      "makeRuntimeRequestStatePort",
-      "makeRuntimeSessionWaitStatePort",
-      "makeRuntimeSourceStatePort",
-      "makeRuntimeSurfaceLifecycleStatePort",
-      "makeRuntimeThreadStatePort",
-      "makeRuntimeTurnStatePort",
-      "makeRuntimeWorkspaceStatePort",
-      "makeProviderAuthStatusStatePort",
-      "makeSandboxPolicySource",
-      "providerAuthStatusStatePortFromStore",
-      "providerAuthStatusStatePortFromStructuredSessionState",
-      "runtimeActorExtensionBindingStatePortFromStore",
-      "runtimeActorExtensionBindingStatePortFromStructuredSessionState",
-      "runtimeApprovalStatePortFromStore",
-      "runtimeApprovalStatePortFromStructuredSessionState",
-      "runtimeArtifactStatePortFromStore",
-      "runtimeArtifactStatePortFromStructuredSessionState",
-      "runtimeComposerDraftStatePortFromStore",
-      "runtimeComposerDraftStatePortFromStructuredSessionState",
-      "runtimeCommandStatePortFromStore",
-      "runtimeCommandStatePortFromStructuredSessionState",
-      "runtimeEpisodeStatePortFromStore",
-      "runtimeEpisodeStatePortFromStructuredSessionState",
-      "runtimeExtensionContextImpactStateFacadeFromStore",
-      "runtimeExtensionContextImpactStatePortFromStore",
-      "runtimeExtensionContextImpactStatePortFromStructuredSessionState",
-      "runtimeExtensionStatePortFromStore",
-      "runtimeExtensionStatePortFromStructuredSessionState",
-      "runtimeGeneratedPackageStatePortFromStore",
-      "runtimeGeneratedPackageStatePortFromStructuredSessionState",
-      "runtimeQueueStatePortFromStore",
-      "runtimeQueueStatePortFromStructuredSessionState",
-      "runtimeReadModelStatePortFromStore",
-      "runtimeReadModelStatePortFromStructuredSessionState",
-      "runtimeRecoveryStatePortFromStore",
-      "runtimeRecoveryStatePortFromStructuredSessionState",
-      "runtimeRequestStatePortFromStore",
-      "runtimeRequestStatePortFromStructuredSessionState",
-      "runtimeSessionWaitStatePortFromStore",
-      "runtimeSessionWaitStatePortFromStructuredSessionState",
-      "runtimeSourceStatePortFromStore",
-      "runtimeSourceStatePortFromStructuredSessionState",
-      "runtimeSurfaceLifecycleStatePortFromStore",
-      "runtimeSurfaceLifecycleStatePortFromStructuredSessionState",
-      "runtimeThreadStatePortFromStore",
-      "runtimeThreadStatePortFromStructuredSessionState",
-      "runtimeTurnStatePortFromStore",
-      "runtimeTurnStatePortFromStructuredSessionState",
-      "runtimeWorkspaceStatePortFromStore",
-      "runtimeWorkspaceStatePortFromStructuredSessionState",
-      "sandboxPolicySourceFromSettings",
-      "sortVisibleSessionsByRecency",
+      "layerSandboxPolicySourceWithConfig",
+      "layerPiSessionReferencePort",
+      "SandboxPolicySourceConfig",
     ],
   ],
   [
     "@svvy/sandbox",
     [
       "CheckPathAccessInput",
-      "FileSystemAccessMode",
-      "FileSystemSandboxEntry",
-      "FileSystemSandboxPolicy",
       "HostProcessReferencePort",
       "HostProcessReferencePortService",
       "HostProcessReferenceSnapshot",
-      "MacOsSeatbeltProfile",
-      "ManagedWorkspaceWritePolicyInput",
       "PathAccessDecision",
       "Sandbox",
       "SandboxDenial",
-      "SandboxDenialFacts",
       "SandboxDenialInput",
       "SandboxHelperCandidatesPort",
       "SandboxHelperCandidatesPortService",
       "SandboxHelperCandidatesSnapshot",
-      "DirectToolLaunchPolicyInput",
-      "ExecuteTypescriptLaunchPolicyInput",
-      "SandboxApprovalMode",
-      "SandboxLaunchPolicy",
-      "SandboxSettingsInput",
-      "SvvyxLaunchPolicyInput",
-      "buildDirectToolLaunchPolicy",
-      "buildExecuteTypescriptLaunchPolicy",
-      "buildMacOsSeatbeltProfile",
-      "buildManagedWorkspaceWriteFileSystemPolicy",
-      "buildSandboxHelperArgs",
-      "buildSvvyxLaunchPolicy",
-      "canReadFileSystemPath",
-      "canWriteFileSystemPath",
-      "isSandboxDenialOutput",
-      "isSandboxHelperBootstrapFailure",
+      "checkSandboxPathAccess",
       "layer",
-      "makeSandbox",
-      "protectedMetadataNames",
-      "resolveFileSystemAccess",
-      "resolveSandboxLaunchSettings",
-      "resolveSandboxHelperPath",
-      "sandboxDenialFacts",
-      "sandboxLaunchFacts",
-      "unrestrictedFileSystemPolicy",
     ],
   ],
   [
@@ -1724,11 +422,13 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "ExtensionInterfaceKind",
       "ExtensionUsageState",
       "Extensions",
+      "ExtensionsLayerRequirements",
       "ExtensionsService",
       "ActorExtensionBinding",
       "BuildVisibleExtensionRecordsInput",
       "CommandInvocationContext",
       "AcceptedNativeToolArguments",
+      "ARTIFACTS_FACADE_DECLARATION",
       "ExtensionHandler",
       "ExtensionHandlerDeps",
       "ExtensionInvocation",
@@ -1750,16 +450,14 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "NativeToolActorAvailabilityMap",
       "NativeToolActorKind",
       "NativeToolCommandMetadata",
-      "NativeToolCommandMetadataInput",
       "NativeToolCommandVisibility",
       "NativeToolDefinition",
       "NativeToolExecutionCommandPolicy",
-      "NativeToolSchemaJsonForExtensionInput",
-      "NativeToolSchemasJsonInput",
       "NativeToolStreamingArgumentPolicy",
       "NativeToolTurnDecision",
+      "ToolDeclarationInput",
+      "ToolMetadataInput",
       "ResolvedExtensionInvocationEnv",
-      "NativeToolHandlerInput",
       "RequestUserInputHandlerInvocation",
       "RequestUserInputInput",
       "RequestUserInputInputSchema",
@@ -1775,7 +473,9 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "VisibleExtensionRecord",
       "VisibleLoadedExtensionRecord",
       "VisibleExtensionRecordsResult",
+      "WORKFLOWS_FACADE_DECLARATION",
       "ResolveActorExtensionBindingInput",
+      "buildExecuteTypescriptFacadeDeclarations",
       "buildNativeToolSchemaJsonForExtension",
       "buildNativeToolSchemasJson",
       "builtinDefaultExtensionOrder",
@@ -1785,34 +485,35 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "createLoadExtensionHandler",
       "createRequestUserInputHandler",
       "createThreadStartHandler",
-      "decodeRequestUserInputInput",
       "decodeRequestUserInputInputEffect",
       "decodeRequestUserInputInputExit",
-      "decodeRequestUserInputResult",
       "decodeRequestUserInputResultEffect",
       "decodeRequestUserInputResultExit",
-      "decodeThreadStartInput",
       "decodeThreadStartInputEffect",
       "decodeThreadStartInputExit",
       "externalInstructionExtensionId",
       "GENERATED_EXTENSIONS_PACKAGE_NAME",
+      "generatedExtensionExportIds",
       "generatedExtensionExportIdsFromHost",
       "generatedExtensionReferenceExpression",
+      "generatedExtensionsPackageContents",
       "generatedExtensionsPackageContentsFromHost",
       "getExtensionRecord",
       "getNativeToolCommandMetadata",
       "layerExtensionSourceRootsPort",
       "layerGeneratedPackageRootPort",
-      "layerExtensions",
+      "layer",
       "layerPackagedExtensionTemplatesPort",
       "layerWorkspaceSourceLinkPort",
       "listExtensionsForActor",
       "listExtensionsHandler",
       "loadExtensionHandler",
       "makeExtensions",
+      "nativeToolDeclarationsForExtensions",
       "nativeToolCommandMetadata",
       "requestUserInputHandler",
       "renderGeneratedExtensionsPackageFiles",
+      "renderGeneratedWorkflowsPackageFiles",
       "resolveActorExtensionState",
       "summarizeListExtensions",
       "threadStartHandler",
@@ -1848,147 +549,112 @@ const expectedPublicSymbols = new Map<string, string[]>([
 ]);
 const expectedPublicSubpathSymbols = new Map<string, string[]>([
   [
+    "@svvy/sandbox/diagnostics",
+    [
+      "SandboxDenialFacts",
+      "SandboxDenialDiagnosticsInput",
+      "isSandboxDenialOutput",
+      "isSandboxHelperBootstrapFailure",
+      "sandboxDenialFacts",
+    ],
+  ],
+  [
+    "@svvy/pi-adapter/session",
+    ["CreatePiManagedAgentSessionResult", "createPiManagedAgentSession"],
+  ],
+  [
+    "@svvy/runtime/accepted-native-tool-execution",
+    [
+      "AcceptedDirectToolApprovalDecision",
+      "AcceptedDirectToolApprovalInput",
+      "AcceptedDirectToolLaunchInput",
+      "AcceptedDirectToolLaunchHandle",
+      "acquireAcceptedDirectToolLaunch",
+      "requestAcceptedDirectToolApproval",
+      "runAcceptedLoadExtension",
+      "runAcceptedRequestUserInput",
+    ],
+  ],
+  [
     "@svvy/runtime/bootstrap",
     [
       "awaitRuntimeStartupReadiness",
       "createRuntimeLayerConfigLayer",
       "defaultRuntimeLayerConfig",
+      "layerRuntimeShutdownPreparation",
+      "layerRuntimeStartupReadiness",
       "prepareRuntimeShutdown",
       "RuntimeLayerConfigFromEnv",
       "RuntimeLayerConfigInputSchema",
       "RuntimeLayerConfigSchema",
       "RuntimeLayerConfigService",
       "RuntimeLayerError",
+      "RuntimeLayerErrorSchema",
       "RuntimeShutdownPreparation",
+      "RuntimeStartupError",
+      "RuntimeStartupErrorSchema",
+      "RuntimeStartupPhase",
       "RuntimeStartupReadiness",
+      "decodeUnknownRuntimeLayerErrorEffect",
+      "decodeUnknownRuntimeLayerErrorExit",
+      "encodeRuntimeLayerErrorEffect",
+      "encodeRuntimeLayerErrorExit",
       "layerRuntimeBunPlatform",
       "RuntimeBunPlatformServices",
       "RuntimeLayerConfig",
-      "RuntimePrepareShutdownInput",
       "RuntimePrepareShutdownReason",
       "RuntimePrepareShutdownRequest",
       "RuntimePrepareShutdownResult",
-      "RuntimeLayerApprovalPostCommitPort",
-      "RuntimeLayerAppLogPort",
+      "RuntimeStartupDegradedPhase",
+      "RuntimeStartupReadinessReceipt",
       "RuntimeLayerCommandControlPort",
       "RuntimeLayerCommandStdinPort",
-      "RuntimeLayerDevTelemetryPort",
-      "RuntimeLayerEventsPort",
+      "RuntimeGeneratedContextRefreshHostPort",
+      "RuntimeGeneratedPackageRefreshHostPort",
       "RuntimeLayerModelResolverPort",
-      "RuntimeLayerPromptHostPort",
+      "RuntimeLayerPromptControlHostPort",
       "RuntimeLayerProviderAuthPort",
-      "RuntimeLayerRequestInputPostCommitPort",
-      "RuntimeLayerSourceEditsPort",
-      "RuntimeLayerSourceInvalidationPort",
-      "RuntimeLayerApprovalPostCommitPortService",
-      "RuntimeLayerAppLogPortService",
+      "RuntimeLayerSurfaceQueueWakePort",
+      "RuntimeSourceInvalidationScanPort",
+      "RuntimeSurfaceQueueWakeReason",
       "RuntimeLayerCommandControlPortService",
       "RuntimeLayerCommandStdinPortService",
-      "RuntimeLayerDevTelemetryPortService",
-      "RuntimeLayerEventsPortService",
+      "RuntimeGeneratedContextRefreshHostPortService",
+      "RuntimeGeneratedPackageRefreshHostPortService",
       "RuntimeLayerModelResolverPortService",
-      "RuntimeLayerPromptHostPortService",
+      "RuntimeLayerPromptControlHostPortService",
       "RuntimeLayerProviderAuthPortService",
-      "RuntimeLayerRequestInputPostCommitPortService",
-      "RuntimeLayerRequirements",
-      "RuntimeLayerSourceEditsPortService",
-      "RuntimeLayerSourceInvalidationPortService",
-      "runAcceptedRequestUserInputToolCall",
-      "RunAcceptedRequestUserInputToolCallInput",
-      "RunAcceptedRequestUserInputToolCallResult",
-      "runAcceptedLoadExtensionToolCall",
-      "RunAcceptedLoadExtensionToolCallInput",
-      "RunAcceptedLoadExtensionToolCallResult",
-      "RuntimeQueueInsertPostCommitLane",
-      "RuntimeQueueInsertPostCommitLaneService",
-      "RuntimeQueueInsertPostCommitInput",
-      "answerRuntimeApproval",
-      "RuntimeApprovalAnswerPostCommitHost",
-      "RuntimeApprovalAnsweredInput",
-      "RuntimeApprovalAnswerPostCommitHostService",
-      "answerRuntimeRequestInput",
-      "RuntimeRequestInputPostCommitLane",
-      "setRuntimeRequestInputTimerPaused",
-      "RuntimeRequestInputAnswerCommittedInput",
-      "RuntimeRequestInputPostCommitLaneService",
-      "RuntimeRequestInputTimerPausedCommittedInput",
-      "makeRuntimeBlockingRequestInputWaitRegistry",
-      "RuntimeBlockingRequestInputEffectState",
-      "RuntimeBlockingRequestInputWaitRegistry",
-      "RuntimeBlockingRequestInputWaitRegistryOptions",
-      "applyGeneratedPackageWorkspaceLinkRepairPlan",
-      "generatedContextReasonForRuntimeSourceInvalidation",
-      "generatedPackagesForRuntimeSourceInvalidation",
-      "refreshRuntimeGeneratedPackages",
-      "RuntimeGeneratedPackageRefreshHost",
-      "RuntimeGeneratedPackageRefreshStatus",
+      "RuntimeLayerSurfaceQueueWakePortService",
+      "RuntimeSourceInvalidationScanPortService",
       "RuntimeGeneratedPackageWorkspaceLinkFileHost",
-      "RuntimeGeneratedPackageWorkspaceLinkStatus",
-      "materializeRuntimeSubmittedMessageForQueue",
-      "RuntimeMessageSubmissionPostCommitLane",
-      "submitRuntimeMessage",
-      "summarizeRuntimeSubmittedMessageForTelemetry",
-      "RuntimeMaterializedSubmittedMessage",
-      "RuntimeMessageSubmissionInput",
-      "RuntimeMessageSubmissionPostCommitLaneService",
-      "RuntimeSubmittedMessagePostCommitInput",
-      "abortRuntimeQueuedMessage",
-      "RuntimeQueuedMessageAbortPostCommitHost",
-      "RuntimeQueuedMessageAbortedInput",
-      "RuntimeQueuedMessageAbortInput",
-      "RuntimeQueuedMessageAbortPostCommitHostService",
-      "RuntimeQueueSteeringPostCommitLane",
-      "steerRuntimeQueuedMessage",
-      "RuntimeQueuedMessageSteeredInput",
-      "RuntimeQueueSteeringPostCommitLaneService",
-      "buildAppGlobalSourceWatchInputs",
-      "RuntimeSourceInvalidationCoordinator",
-      "buildWorkspaceSourceWatchInputs",
-      "createSourceInvalidationCoordinator",
-      "layerRuntimeSourceInvalidationCoordinator",
-      "makeRuntimeSourceInvalidationCoordinator",
-      "createSurfaceQueueDispatcher",
-      "SurfaceQueueDispatcher",
-      "SurfaceQueueDispatchHost",
-      "SurfaceQueueMaterializedMessage",
-      "SurfaceQueueStartedPrompt",
-      "ExternalInstructionRootInput",
-      "ExternalInstructionsWatchSettings",
-      "RuntimeSourceInvalidationCoordinatorService",
-      "SourceInvalidationCoordinator",
-      "SourceInvalidationCoordinatorOptions",
-      "SourceInvalidationDirectoryEntry",
-      "SourceInvalidationDomain",
-      "SourceInvalidationEvent",
-      "SourceInvalidationHost",
-      "SourceWatcher",
-      "SourceWatchInput",
-      "makeRuntimeEventBus",
-      "RuntimeEventBus",
-      "RuntimeEventBusOptions",
-      "RuntimeEventDraft",
-      "RuntimeEventSubscriptionEffect",
+      "RuntimeSourceInvalidationDirectoryEntry",
+      "RuntimeSourceInvalidationDomain",
+      "RuntimeSourceInvalidationEvent",
+      "RuntimeSourceInvalidationHost",
+      "RuntimeSourceWatchInput",
+    ],
+  ],
+  [
+    "@svvy/runtime/prompt-execution-context",
+    ["PromptExecutionRuntimeHandle", "createPromptExecutionContext"],
+  ],
+  [
+    "@svvy/runtime/source-invalidation-coordinator-adapter",
+    [
+      "RuntimeSourceInvalidationCoordinatorHandle",
+      "RuntimeSourceInvalidationCoordinatorHandleOptions",
+      "createRuntimeSourceInvalidationCoordinatorHandle",
     ],
   ],
   [
     "@svvy/pi-adapter/messages",
-    [
-      "SvvyPiUserMessageMetadata",
-      "SvvyPiTextContent",
-      "SvvyPiImageContent",
-      "SvvyPiUserMessageContent",
-      "SvvyPiUserMessage",
-      "RuntimeSubmittedMessagePiOptions",
-      "buildPiUserMessageFromRuntimeSubmittedMessage",
-      "runtimeSubmittedMessagePromptText",
-    ],
+    ["buildPiUserMessageFromRuntimeSubmittedMessage", "runtimeSubmittedMessagePromptText"],
   ],
   [
-    "@svvy/pi-adapter/internal/session",
+    "@svvy/state/generated-package-maintenance",
     [
-      "CreatePiManagedAgentSessionInput",
-      "CreatePiManagedAgentSessionResult",
-      "createPiManagedAgentSession",
+      "MarkPersistedWorkspaceGeneratedPackageLinksRepairNeededInput",
+      "markPersistedWorkspaceGeneratedPackageLinksRepairNeeded",
     ],
   ],
   [
@@ -2002,64 +668,74 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
     ],
   ],
   [
-    "@svvy/state/structured-session-selectors",
+    "@svvy/state/structured-session-adapters",
     [
-      "StructuredCommandRollupChild",
-      "StructuredCommandRollup",
-      "StructuredCommandArtifactLink",
-      "StructuredCommandOutputEvent",
-      "StructuredCommandStdinEvent",
-      "StructuredCommandStdinState",
-      "StructuredCommandProgressEvent",
-      "StructuredCommandArgumentSnapshot",
-      "StructuredCommandPatchSnapshot",
-      "StructuredCommandPatchFile",
-      "StructuredCommandDiagnosticSnapshot",
-      "StructuredCommandDiagnostic",
-      "StructuredProductEvent",
-      "StructuredCommandInspectorChild",
-      "StructuredCommandInspector",
-      "StructuredHandlerThreadWorkflowSummary",
-      "StructuredHandlerThreadEpisodeSummary",
-      "StructuredWorkflowTaskAttemptTranscriptMessage",
-      "StructuredWorkflowTaskAttemptSummary",
-      "StructuredWorkflowTaskAttemptInspector",
-      "StructuredHandlerThreadSummary",
-      "StructuredHandlerThreadInspector",
-      "StructuredSidebarRowSubtitle",
-      "StructuredSidebarWorkflowRow",
-      "StructuredSidebarHandlerThreadRow",
-      "StructuredSessionView",
-      "StructuredSessionSummaryProjection",
+      "extensionStatePortFromStore",
+      "extensionStatePortFromStructuredSessionState",
+      "piSessionReferencePortFromStore",
+      "piSessionReferencePortFromStructuredSessionState",
+      "providerAuthStatusStatePortFromStore",
+      "providerAuthStatusStatePortFromStructuredSessionState",
+      "runtimeActorExtensionBindingStatePortFromStore",
+      "runtimeActorExtensionBindingStatePortFromStructuredSessionState",
+      "runtimeApprovalStatePortFromStore",
+      "runtimeApprovalStatePortFromStructuredSessionState",
+      "runtimeArtifactStatePortFromStore",
+      "runtimeArtifactStatePortFromStructuredSessionState",
+      "runtimeCommandStatePortFromStore",
+      "runtimeCommandStatePortFromStructuredSessionState",
+      "runtimeComposerDraftStatePortFromStore",
+      "runtimeComposerDraftStatePortFromStructuredSessionState",
+      "runtimeEpisodeStatePortFromStore",
+      "runtimeEpisodeStatePortFromStructuredSessionState",
+      "runtimeExtensionContextImpactStateFacadeFromStore",
+      "runtimeExtensionContextImpactStatePortFromStore",
+      "runtimeExtensionContextImpactStatePortFromStructuredSessionState",
+      "runtimeExtensionStatePortFromStore",
+      "runtimeExtensionStatePortFromStructuredSessionState",
+      "runtimeGeneratedPackageStatePortFromStore",
+      "runtimeGeneratedPackageStatePortFromStructuredSessionState",
+      "runtimePromptDefaultsStatePortFromStore",
+      "runtimePromptDefaultsStatePortFromStructuredSessionState",
+      "runtimeQueueStatePortFromStore",
+      "runtimeQueueStatePortFromStructuredSessionState",
+      "runtimeReadModelStatePortFromStore",
+      "runtimeReadModelStatePortFromStructuredSessionState",
+      "runtimeRecoveryStatePortFromStore",
+      "runtimeRecoveryStatePortFromStructuredSessionState",
+      "runtimeRequestStatePortFromStore",
+      "runtimeRequestStatePortFromStructuredSessionState",
+      "runtimeSessionWaitStatePortFromStore",
+      "runtimeSessionWaitStatePortFromStructuredSessionState",
+      "runtimeSourceStatePortFromStore",
+      "runtimeSourceStatePortFromStructuredSessionState",
+      "runtimeSurfaceLifecycleStatePortFromStore",
+      "runtimeSurfaceLifecycleStatePortFromStructuredSessionState",
+      "runtimeThreadStatePortFromStore",
+      "runtimeThreadStatePortFromStructuredSessionState",
+      "runtimeTurnStatePortFromStore",
+      "runtimeTurnStatePortFromStructuredSessionState",
+      "runtimeWorkspaceStatePortFromStore",
+      "runtimeWorkspaceStatePortFromStructuredSessionState",
+    ],
+  ],
+  [
+    "@svvy/state/structured-session-projections",
+    [
       "buildStructuredArtifactLink",
-      "buildStructuredSidebarThreadRows",
-      "deriveStructuredSessionStatus",
-      "buildStructuredSessionView",
-      "buildStructuredSessionSummaryProjection",
-      "groupThreadIdsByStatus",
-      "hasStructuredSessionFacts",
       "buildStructuredCommandInspector",
-      "buildStructuredWorkflowTaskAttemptInspector",
-      "buildStructuredHandlerThreadSummaries",
       "buildStructuredHandlerThreadInspector",
-      "StructuredThreadReadModelWait",
-      "StructuredThreadReadModelEpisodeSummary",
-      "StructuredThreadCompactRow",
-      "StructuredThreadPendingReportRequest",
-      "StructuredThreadCurrentReadModel",
-      "StructuredThreadListReadModel",
-      "StructuredThreadEpisodesReadModel",
-      "StructuredThreadGroupReadModel",
-      "BuildStructuredThreadListReadModelInput",
-      "BuildStructuredThreadEpisodesReadModelInput",
-      "getStructuredThread",
-      "hasStructuredThreadGroup",
-      "buildStructuredThreadCompactRow",
-      "buildStructuredThreadCurrentReadModel",
-      "buildStructuredThreadListReadModel",
-      "buildStructuredThreadEpisodesReadModel",
-      "buildStructuredThreadGroupReadModel",
-      "getLatestFailureContext",
+      "buildStructuredHandlerThreadSummaries",
+      "buildStructuredSessionSummaryProjection",
+      "buildStructuredSessionView",
+      "buildStructuredWorkflowTaskAttemptInspector",
+      "hasStructuredSessionFacts",
+      "StructuredCommandInspector",
+      "StructuredHandlerThreadInspector",
+      "StructuredHandlerThreadSummary",
+      "StructuredSessionSummaryProjection",
+      "StructuredSessionView",
+      "StructuredWorkflowTaskAttemptInspector",
     ],
   ],
   [
@@ -2091,6 +767,10 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredGeneratedAgentContextBindingOwner",
       "StructuredWorkflowTaskMessageSource",
       "StructuredTitleGenerationStatus",
+      "StructuredAppPreferenceAppearance",
+      "StructuredAppPreferenceApprovalMode",
+      "StructuredAppPreferencesRecord",
+      "StructuredAppPreferencesPatch",
       "StructuredWorkspaceRecord",
       "StructuredWorkspaceInput",
       "StructuredPiSessionRecord",
@@ -2126,9 +806,11 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredRecoveryWorkKind",
       "StructuredRecoveryWorkStatus",
       "StructuredRecoveryWorkOwnerScope",
+      "StructuredRecoveryWorkScope",
       "StructuredRecoveryWorkRecord",
       "StructuredGeneratedPackageFactRecord",
       "StructuredGeneratedPackageWorkspaceLinkRecord",
+      "StructuredExtensionDependencyApprovalRecord",
       "StructuredExtensionDependencyReadinessRecord",
       "StructuredSurfaceQueuedMessageRecord",
       "StructuredRuntimeHandlerThreadGeneratedContextBindingInput",
@@ -2141,6 +823,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredWorkspaceSidebarState",
       "StructuredThreadDetail",
       "CreateStructuredSessionStateStoreOptions",
+      "StateDigestHelper",
       "StructuredSessionStateStore",
       "StructuredSessionStateService",
       "StructuredSessionState",
@@ -2151,6 +834,62 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
     ],
   ],
 ]);
+const runtimeBootstrapSpecApprovedSymbols = [
+  "awaitRuntimeStartupReadiness",
+  "createRuntimeLayerConfigLayer",
+  "defaultRuntimeLayerConfig",
+  "layerRuntimeShutdownPreparation",
+  "layerRuntimeStartupReadiness",
+  "prepareRuntimeShutdown",
+  "RuntimeLayerConfigFromEnv",
+  "RuntimeLayerConfigInputSchema",
+  "RuntimeLayerConfigSchema",
+  "RuntimeLayerConfigService",
+  "RuntimeLayerError",
+  "RuntimeLayerErrorSchema",
+  "RuntimeShutdownPreparation",
+  "RuntimeStartupError",
+  "RuntimeStartupErrorSchema",
+  "RuntimeStartupPhase",
+  "RuntimeStartupReadiness",
+  "decodeUnknownRuntimeLayerErrorEffect",
+  "decodeUnknownRuntimeLayerErrorExit",
+  "encodeRuntimeLayerErrorEffect",
+  "encodeRuntimeLayerErrorExit",
+  "layerRuntimeBunPlatform",
+  "RuntimeBunPlatformServices",
+  "RuntimeLayerConfig",
+  "RuntimePrepareShutdownReason",
+  "RuntimePrepareShutdownRequest",
+  "RuntimePrepareShutdownResult",
+  "RuntimeStartupDegradedPhase",
+  "RuntimeStartupReadinessReceipt",
+  "RuntimeLayerPromptControlHostPort",
+  "RuntimeLayerPromptControlHostPortService",
+  "RuntimeLayerCommandControlPort",
+  "RuntimeLayerCommandStdinPort",
+  "RuntimeGeneratedContextRefreshHostPort",
+  "RuntimeGeneratedPackageRefreshHostPort",
+  "RuntimeLayerModelResolverPort",
+  "RuntimeLayerProviderAuthPort",
+  "RuntimeLayerSurfaceQueueWakePort",
+  "RuntimeSourceInvalidationScanPort",
+  "RuntimeSurfaceQueueWakeReason",
+  "RuntimeLayerCommandControlPortService",
+  "RuntimeLayerCommandStdinPortService",
+  "RuntimeGeneratedContextRefreshHostPortService",
+  "RuntimeGeneratedPackageRefreshHostPortService",
+  "RuntimeLayerModelResolverPortService",
+  "RuntimeLayerProviderAuthPortService",
+  "RuntimeLayerSurfaceQueueWakePortService",
+  "RuntimeSourceInvalidationScanPortService",
+  "RuntimeGeneratedPackageWorkspaceLinkFileHost",
+  "RuntimeSourceInvalidationDirectoryEntry",
+  "RuntimeSourceInvalidationDomain",
+  "RuntimeSourceInvalidationEvent",
+  "RuntimeSourceInvalidationHost",
+  "RuntimeSourceWatchInput",
+] as const;
 const allowedPublicSubpathImports = new Set(
   Array.from(expectedPublicExports.entries()).flatMap(([packageName, exports]) =>
     Object.keys(exports)
@@ -2173,6 +912,30 @@ function listTypeScriptFiles(root: string): string[] {
   return files;
 }
 
+function listPackageRootTypeScriptTestFiles(): string[] {
+  const packageRootTests = readdirSync(packageRoot)
+    .map((entry) => join(packageRoot, entry))
+    .filter((path) => statSync(path).isFile())
+    .filter(isTestFile);
+  const packageDirectoryTests = readdirSync(packageRoot).flatMap((entry) => {
+    const packageDirectory = join(packageRoot, entry);
+    if (!statSync(packageDirectory).isDirectory()) return [];
+    return readdirSync(packageDirectory)
+      .map((file) => join(packageDirectory, file))
+      .filter((file) => statSync(file).isFile())
+      .filter(isTestFile);
+  });
+  return [...packageRootTests, ...packageDirectoryTests].toSorted();
+}
+
+function listPackageRootTypeScriptFiles(): string[] {
+  return readdirSync(packageRoot)
+    .map((entry) => join(packageRoot, entry))
+    .filter((path) => statSync(path).isFile())
+    .filter((path) => path.endsWith(".ts") || path.endsWith(".tsx"))
+    .toSorted();
+}
+
 function packageNameForSourceFile(file: string): string {
   const relativePath = relative(packageRoot, file);
   const [packageDirectory] = relativePath.split(sep);
@@ -2193,58 +956,870 @@ function listMarkdownFiles(root: string): string[] {
   return files;
 }
 
-function readImports(path: string): string[] {
-  const source = readFileSync(path, "utf8");
-  return Array.from(
-    source.matchAll(IMPORT_PATTERN),
-    (match) => match[1] ?? match[2] ?? match[3] ?? match[4],
-  ).filter((specifier): specifier is string => Boolean(specifier));
+type ModuleSpecifierReadKind = "static" | "runtime";
+
+function readModuleSpecifierSourceFiles(path: string, source: string): ts.SourceFile[] {
+  if (!path.endsWith(".svelte")) {
+    return [ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)];
+  }
+
+  return [...source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map((match, index) =>
+    ts.createSourceFile(`${path}#script-${index}.ts`, match[1] ?? "", ts.ScriptTarget.Latest, true),
+  );
 }
 
-function readValueImportBindings(
+function readModuleSpecifiersFromSource(
   path: string,
-  moduleSpecifier: string,
-): Array<
-  | { kind: "namespace"; localName: string }
-  | { kind: "named"; importedName: string; localName: string }
-> {
-  const source = readFileSync(path, "utf8");
-  const escapedModule = moduleSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const importPattern = new RegExp(
-    `\\bimport\\s+(type\\s+)?([\\s\\S]*?)\\s+from\\s+["']${escapedModule}["']`,
-    "g",
-  );
-  return Array.from(source.matchAll(importPattern)).flatMap((match) => {
-    const isTypeImport = Boolean(match[1]);
-    const clause = match[2]?.trim();
-    if (isTypeImport || !clause || clause.startsWith("type ")) return [];
+  source: string,
+  kinds: ReadonlySet<ModuleSpecifierReadKind>,
+): string[] {
+  const specifiers: string[] = [];
 
-    const namespace = clause.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
-    if (namespace) {
-      return [{ kind: "namespace" as const, localName: namespace[1]! }];
+  for (const sourceFile of readModuleSpecifierSourceFiles(path, source)) {
+    const visit = (node: ts.Node): void => {
+      if (kinds.has("static")) {
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+          specifiers.push(node.moduleSpecifier.text);
+        }
+        if (
+          ts.isExportDeclaration(node) &&
+          node.moduleSpecifier &&
+          ts.isStringLiteral(node.moduleSpecifier)
+        ) {
+          specifiers.push(node.moduleSpecifier.text);
+        }
+      }
+
+      if (kinds.has("runtime") && ts.isCallExpression(node)) {
+        const [firstArg] = node.arguments;
+        if (firstArg && ts.isStringLiteral(firstArg)) {
+          if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+            specifiers.push(firstArg.text);
+          }
+          if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+            specifiers.push(firstArg.text);
+          }
+        }
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+  }
+
+  return specifiers;
+}
+
+function readModuleSpecifiers(path: string, kinds: ReadonlySet<ModuleSpecifierReadKind>): string[] {
+  return readModuleSpecifiersFromSource(path, readFileSync(path, "utf8"), kinds);
+}
+
+function readImports(path: string): string[] {
+  return readModuleSpecifiers(path, new Set(["static", "runtime"]));
+}
+
+type ValueImportBinding =
+  | { kind: "namespace"; localName: string }
+  | { kind: "named"; importedName: string; localName: string };
+
+function moduleExportNameText(name: ts.ModuleExportName): string {
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : name.getText();
+}
+
+function readValueImportBindingsFromSourceFile(
+  sourceFile: ts.SourceFile,
+  moduleSpecifier: string,
+): ValueImportBinding[] {
+  const bindings: ValueImportBinding[] = [];
+  sourceFile.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    if (node.moduleSpecifier.text !== moduleSpecifier) return;
+    if (!node.importClause || node.importClause.isTypeOnly) return;
+    const namedBindings = node.importClause.namedBindings;
+    if (!namedBindings) return;
+    if (ts.isNamespaceImport(namedBindings)) {
+      bindings.push({ kind: "namespace", localName: namedBindings.name.text });
+      return;
+    }
+    for (const element of namedBindings.elements) {
+      if (element.isTypeOnly) continue;
+      bindings.push({
+        kind: "named",
+        importedName: moduleExportNameText(element.propertyName ?? element.name),
+        localName: element.name.text,
+      });
+    }
+  });
+  return bindings;
+}
+
+function readValueImportBindings(path: string, moduleSpecifier: string): ValueImportBinding[] {
+  const source = readFileSync(path, "utf8");
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  return readValueImportBindingsFromSourceFile(sourceFile, moduleSpecifier);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readManualEffectRuntimeReads(file: string): string[] {
+  const source = readSource(file);
+  return readManualEffectRuntimeReadsFromSource(file, source);
+}
+
+function readManualEffectRuntimeReadsFromSource(file: string, source: string): string[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const effectRunnerMembers = new Set([
+    "runPromise",
+    "runPromiseWith",
+    "runPromiseExit",
+    "runPromiseExitWith",
+    "runSync",
+    "runSyncWith",
+    "runSyncExit",
+    "runSyncExitWith",
+    "runFork",
+    "runForkWith",
+    "runCallback",
+    "runCallbackWith",
+  ]);
+  const reads: string[] = [];
+  const effectNamespaces = new Set(["Effect"]);
+  const managedRuntimeNamespaces = new Set(["ManagedRuntime"]);
+  const layerNamespaces = new Set(["Layer"]);
+  const effectRunnerCallables = new Map<string, string>();
+  const managedRuntimeMakeCallables = new Set<string>();
+  const layerLaunchCallables = new Set<string>();
+  const runMainCallables = new Set(["runMain"]);
+
+  for (const binding of readValueImportBindingsFromSourceFile(sourceFile, "effect/Effect")) {
+    if (binding.kind === "namespace") {
+      effectNamespaces.add(binding.localName);
+    } else if (effectRunnerMembers.has(binding.importedName)) {
+      effectRunnerCallables.set(binding.localName, `Effect.${binding.importedName}`);
+    }
+  }
+  for (const binding of readValueImportBindingsFromSourceFile(sourceFile, "effect")) {
+    if (binding.kind === "named" && binding.importedName === "Effect") {
+      effectNamespaces.add(binding.localName);
+    }
+  }
+  for (const binding of readValueImportBindingsFromSourceFile(
+    sourceFile,
+    "effect/ManagedRuntime",
+  )) {
+    if (binding.kind === "namespace") {
+      managedRuntimeNamespaces.add(binding.localName);
+    } else if (binding.importedName === "make") {
+      managedRuntimeMakeCallables.add(binding.localName);
+    }
+  }
+  for (const binding of readValueImportBindingsFromSourceFile(sourceFile, "effect/Layer")) {
+    if (binding.kind === "namespace") {
+      layerNamespaces.add(binding.localName);
+    } else if (binding.importedName === "launch") {
+      layerLaunchCallables.add(binding.localName);
+    }
+  }
+
+  const memberName = (node: ts.Expression): string | null => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      return node.argumentExpression.text;
+    }
+    return null;
+  };
+
+  const receiverName = (node: ts.Expression): string | null => {
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      return ts.isIdentifier(node.expression) ? node.expression.text : null;
+    }
+    return null;
+  };
+
+  const registerObjectBinding = (
+    name: ts.BindingName,
+    memberReaders: ReadonlySet<string>,
+    displayName: (member: string) => string,
+  ): void => {
+    if (!ts.isObjectBindingPattern(name)) return;
+    for (const element of name.elements) {
+      if (!ts.isIdentifier(element.name)) continue;
+      const importedName = element.propertyName
+        ? ts.isIdentifier(element.propertyName) || ts.isStringLiteralLike(element.propertyName)
+          ? element.propertyName.text
+          : null
+        : element.name.text;
+      if (!importedName || !memberReaders.has(importedName)) continue;
+      reads.push(displayName(importedName));
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && ts.isIdentifier(node.initializer)) {
+        if (effectNamespaces.has(node.initializer.text)) effectNamespaces.add(node.name.text);
+        if (managedRuntimeNamespaces.has(node.initializer.text)) {
+          managedRuntimeNamespaces.add(node.name.text);
+        }
+        if (layerNamespaces.has(node.initializer.text)) layerNamespaces.add(node.name.text);
+      }
+      if (ts.isIdentifier(node.initializer)) {
+        if (effectNamespaces.has(node.initializer.text)) {
+          registerObjectBinding(node.name, effectRunnerMembers, (member) => `Effect.${member}`);
+        }
+        if (managedRuntimeNamespaces.has(node.initializer.text)) {
+          registerObjectBinding(node.name, new Set(["make"]), () => "ManagedRuntime.make");
+        }
+        if (layerNamespaces.has(node.initializer.text)) {
+          registerObjectBinding(node.name, new Set(["launch"]), () => "Layer.launch");
+        }
+      }
+      if (
+        ts.isIdentifier(node.name) &&
+        ts.isAwaitExpression(node.initializer) &&
+        ts.isCallExpression(node.initializer.expression) &&
+        node.initializer.expression.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.initializer.expression.arguments.length === 1
+      ) {
+        const [specifier] = node.initializer.expression.arguments;
+        if (specifier && ts.isStringLiteralLike(specifier)) {
+          if (specifier.text === "effect/Effect") effectNamespaces.add(node.name.text);
+          if (specifier.text === "effect/ManagedRuntime") {
+            managedRuntimeNamespaces.add(node.name.text);
+          }
+          if (specifier.text === "effect/Layer") layerNamespaces.add(node.name.text);
+        }
+      }
     }
 
-    const named = clause.match(/\{([\s\S]*?)\}/);
-    if (!named) return [];
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const callable = effectRunnerCallables.get(node.expression.text);
+      if (callable) reads.push(callable);
+      if (managedRuntimeMakeCallables.has(node.expression.text)) reads.push("ManagedRuntime.make");
+      if (layerLaunchCallables.has(node.expression.text)) reads.push("Layer.launch");
+      if (runMainCallables.has(node.expression.text)) reads.push("runMain");
+    }
 
-    return named[1]!
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .flatMap((part) => {
-        if (part.startsWith("type ")) return [];
-        const alias = part.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
-        if (!alias) return [];
-        const importedName = alias[1]!;
-        return [
-          {
-            kind: "named" as const,
-            importedName,
-            localName: alias[2] ?? importedName,
-          },
-        ];
-      });
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const receiver = receiverName(node);
+      const member = memberName(node);
+      if (receiver && member && effectNamespaces.has(receiver) && effectRunnerMembers.has(member)) {
+        reads.push(`Effect.${member}`);
+      }
+      if (receiver && member === "make" && managedRuntimeNamespaces.has(receiver)) {
+        reads.push("ManagedRuntime.make");
+      }
+      if (receiver && member === "launch" && layerNamespaces.has(receiver)) {
+        reads.push("Layer.launch");
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return reads;
+}
+
+function readConfigProviderFromEnvReads(file: string): Array<{
+  readonly displayName: "ConfigProvider.fromEnv";
+  readonly zeroArgument: boolean;
+}> {
+  const source = readSource(file);
+  const namespaceNames = new Set<string>();
+  const callableNames = new Set<string>();
+
+  if (/\bConfigProvider\s*\.\s*fromEnv\s*\(/.test(source)) {
+    namespaceNames.add("ConfigProvider");
+  }
+
+  for (const binding of readValueImportBindings(file, "effect/ConfigProvider")) {
+    if (binding.kind === "namespace") {
+      namespaceNames.add(binding.localName);
+    } else if (binding.importedName === "fromEnv") {
+      callableNames.add(binding.localName);
+    }
+  }
+
+  for (const binding of readValueImportBindings(file, "effect")) {
+    if (binding.kind === "named" && binding.importedName === "ConfigProvider") {
+      namespaceNames.add(binding.localName);
+    }
+  }
+
+  const discoveredNamespaceNames = Array.from(namespaceNames);
+  for (const namespaceName of discoveredNamespaceNames) {
+    const escaped = escapeRegExp(namespaceName);
+    for (const match of source.matchAll(
+      new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${escaped}\\b`, "g"),
+    )) {
+      namespaceNames.add(match[1]!);
+    }
+    for (const match of source.matchAll(
+      new RegExp(`\\b(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*${escaped}\\b`, "g"),
+    )) {
+      for (const part of match[1]!.split(",")) {
+        const trimmed = part.trim();
+        const alias = trimmed.match(/^fromEnv\s*:\s*([A-Za-z_$][\w$]*)$/);
+        if (alias) {
+          callableNames.add(alias[1]!);
+        } else if (/^fromEnv\b/.test(trimmed)) {
+          callableNames.add("fromEnv");
+        }
+      }
+    }
+  }
+
+  const calls = [
+    ...[...namespaceNames].map((name) => `${escapeRegExp(name)}\\s*\\.\\s*fromEnv`),
+    ...[...callableNames].map((name) => escapeRegExp(name)),
+  ];
+
+  return calls.flatMap((call) =>
+    Array.from(source.matchAll(new RegExp(`\\b${call}\\s*\\(`, "g")), (match) => {
+      const afterOpenParen = source.slice((match.index ?? 0) + match[0].length);
+      return {
+        displayName: "ConfigProvider.fromEnv" as const,
+        zeroArgument: /^\s*\)/.test(afterOpenParen),
+      };
+    }),
+  );
+}
+
+function readManagedRuntimeInstanceMemberReads(file: string): Array<{
+  readonly receiver: string;
+  readonly member: string;
+}> {
+  const source = readSource(file);
+  return readManagedRuntimeInstanceMemberReadsFromSource(file, source);
+}
+
+function readManagedRuntimeInstanceMemberReadsFromSource(
+  file: string,
+  source: string,
+): Array<{
+  readonly receiver: string;
+  readonly member: string;
+}> {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const managedRuntimeNamespaces = new Set(["ManagedRuntime"]);
+  const makeCallables = new Set<string>();
+  const receivers = new Set(["managedRuntime"]);
+  const members = new Set(["context", "dispose", "runPromise", "runPromiseExit"]);
+  const reads: Array<{ receiver: string; member: string }> = [];
+
+  for (const binding of readValueImportBindingsFromSourceFile(
+    sourceFile,
+    "effect/ManagedRuntime",
+  )) {
+    if (binding.kind === "namespace") {
+      managedRuntimeNamespaces.add(binding.localName);
+    } else if (binding.importedName === "make") {
+      makeCallables.add(binding.localName);
+    }
+  }
+
+  const expressionMemberName = (node: ts.Expression): string | null => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      return node.argumentExpression.text;
+    }
+    return null;
+  };
+
+  const isManagedRuntimeMakeCall = (node: ts.Expression): boolean => {
+    if (ts.isIdentifier(node)) return makeCallables.has(node.text);
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return false;
+    const member = expressionMemberName(node);
+    return (
+      member === "make" &&
+      ts.isIdentifier(node.expression) &&
+      managedRuntimeNamespaces.has(node.expression.text)
+    );
+  };
+
+  const receiverPath = (node: ts.Expression): string | null => {
+    if (ts.isIdentifier(node)) return node.text;
+    if (ts.isPropertyAccessExpression(node)) {
+      const prefix = receiverPath(node.expression);
+      return prefix ? `${prefix}.${node.name.text}` : null;
+    }
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      const prefix = receiverPath(node.expression);
+      return prefix ? `${prefix}.${node.argumentExpression.text}` : null;
+    }
+    return null;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (
+        ts.isCallExpression(node.initializer) &&
+        isManagedRuntimeMakeCall(node.initializer.expression)
+      ) {
+        receivers.add(node.name.text);
+      } else if (ts.isIdentifier(node.initializer) && receivers.has(node.initializer.text)) {
+        receivers.add(node.name.text);
+      }
+    }
+
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const member = expressionMemberName(node);
+      const path = receiverPath(node.expression);
+      const receiver = path?.split(".").at(-1);
+      if (member && receiver && members.has(member) && receivers.has(receiver)) {
+        reads.push({ receiver, member });
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return reads;
+}
+
+const injectedEffectServiceReceivers = [
+  {
+    module: "effect/FileSystem",
+    namespace: "FileSystem",
+    service: "FileSystem",
+    receiver: "FileSystem.FileSystem",
+  },
+  {
+    module: "effect/Path",
+    namespace: "Path",
+    service: "Path",
+    receiver: "Path.Path",
+  },
+  {
+    module: "effect/Crypto",
+    namespace: "Crypto",
+    service: "Crypto",
+    receiver: "Crypto.Crypto",
+  },
+  {
+    module: "effect/Semaphore",
+    namespace: "Semaphore",
+    service: "Semaphore",
+    receiver: "Semaphore.Semaphore",
+  },
+] as const;
+
+function readInjectedEffectServiceInstanceMemberReads(file: string): Array<{
+  readonly module: string;
+  readonly receiver: string;
+  readonly member: string;
+}> {
+  return readInjectedEffectServiceInstanceMemberReadsFromSource(file, readSource(file));
+}
+
+function readInjectedEffectServiceInstanceMemberReadsFromSource(
+  file: string,
+  source: string,
+): Array<{
+  readonly module: string;
+  readonly receiver: string;
+  readonly member: string;
+}> {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const serviceSelectors = new Map<
+    string,
+    { readonly module: string; readonly service: string; readonly receiver: string }
+  >();
+  const semaphoreMakeSelectors = new Set<string>();
+  sourceFile.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    const service = injectedEffectServiceReceivers.find(
+      (candidate) => candidate.module === node.moduleSpecifier.text,
+    );
+    if (!service) return;
+    const namedBindings = node.importClause?.namedBindings;
+    if (!namedBindings) return;
+    if (ts.isNamespaceImport(namedBindings)) {
+      serviceSelectors.set(namedBindings.name.text, service);
+      return;
+    }
+    for (const element of namedBindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (importedName === service.service) {
+        serviceSelectors.set(element.name.text, service);
+      }
+      if (service.receiver === "Semaphore.Semaphore" && importedName === "make") {
+        semaphoreMakeSelectors.add(element.name.text);
+      }
+    }
   });
+  if (serviceSelectors.size === 0 && semaphoreMakeSelectors.size === 0) return [];
+
+  type Receiver = { readonly module: string; readonly receiver: string };
+  const reads: Array<{ module: string; receiver: string; member: string }> = [];
+
+  const serviceReceiverForSelector = (node: ts.Expression): Receiver | null => {
+    if (ts.isIdentifier(node)) {
+      const imported = serviceSelectors.get(node.text);
+      return imported ? { module: imported.module, receiver: imported.receiver } : null;
+    }
+    if (!ts.isPropertyAccessExpression(node)) return null;
+    if (!ts.isIdentifier(node.expression)) return null;
+    const imported = serviceSelectors.get(node.expression.text);
+    if (!imported || node.name.text !== imported.service) return null;
+    return { module: imported.module, receiver: imported.receiver };
+  };
+
+  const serviceReceiverForType = (node: ts.TypeNode | undefined): Receiver | null => {
+    if (!node || !ts.isTypeReferenceNode(node)) return null;
+    const typeName = node.typeName;
+    if (ts.isIdentifier(typeName)) {
+      const imported = serviceSelectors.get(typeName.text);
+      return imported ? { module: imported.module, receiver: imported.receiver } : null;
+    }
+    if (!ts.isQualifiedName(typeName) || !ts.isIdentifier(typeName.left)) return null;
+    const imported = serviceSelectors.get(typeName.left.text);
+    if (!imported || typeName.right.text !== imported.service) return null;
+    return { module: imported.module, receiver: imported.receiver };
+  };
+
+  const serviceReceiversForParameter = (
+    node: ts.ParameterDeclaration,
+  ): ReadonlyArray<{ readonly path: string; readonly receiver: Receiver }> => {
+    if (!ts.isIdentifier(node.name)) return [];
+    const parameterName = node.name.text;
+    const directReceiver = serviceReceiverForType(node.type);
+    if (directReceiver) return [{ path: parameterName, receiver: directReceiver }];
+    if (!node.type || !ts.isTypeLiteralNode(node.type)) return [];
+    return node.type.members.flatMap((member) => {
+      if (!ts.isPropertySignature(member) || !member.type || !ts.isIdentifier(member.name)) {
+        return [];
+      }
+      const receiver = serviceReceiverForType(member.type);
+      return receiver ? [{ path: `${parameterName}.${member.name.text}`, receiver }] : [];
+    });
+  };
+
+  const serviceReceiverFromYield = (node: ts.Expression | undefined): Receiver | null => {
+    if (!node || !ts.isYieldExpression(node) || !node.asteriskToken) return null;
+    const selectorReceiver = serviceReceiverForSelector(node.expression);
+    if (selectorReceiver) return selectorReceiver;
+    if (!ts.isCallExpression(node.expression)) return null;
+    const expression = node.expression.expression;
+    if (ts.isIdentifier(expression) && semaphoreMakeSelectors.has(expression.text)) {
+      const semaphore = injectedEffectServiceReceivers.find(
+        (candidate) => candidate.receiver === "Semaphore.Semaphore",
+      );
+      return semaphore ? { module: semaphore.module, receiver: semaphore.receiver } : null;
+    }
+    if (!ts.isPropertyAccessExpression(expression)) return null;
+    if (!ts.isIdentifier(expression.expression) || expression.name.text !== "make") return null;
+    const imported = serviceSelectors.get(expression.expression.text);
+    if (!imported || imported.receiver !== "Semaphore.Semaphore") return null;
+    return { module: imported.module, receiver: imported.receiver };
+  };
+
+  const receiverPath = (node: ts.Expression): string | null => {
+    if (ts.isIdentifier(node)) return node.text;
+    if (ts.isPropertyAccessExpression(node)) {
+      const prefix = receiverPath(node.expression);
+      return prefix ? `${prefix}.${node.name.text}` : null;
+    }
+    return null;
+  };
+
+  const bindingNames = (name: ts.BindingName): string[] => {
+    if (ts.isIdentifier(name)) return [name.text];
+    return name.elements.flatMap((element) =>
+      ts.isBindingElement(element) ? bindingNames(element.name) : [],
+    );
+  };
+
+  const visit = (node: ts.Node, receivers: Map<string, Receiver>): void => {
+    if (
+      ts.isSourceFile(node) ||
+      ts.isBlock(node) ||
+      ts.isModuleBlock(node) ||
+      ts.isCaseBlock(node)
+    ) {
+      node.forEachChild((child) => visit(child, receivers));
+      return;
+    }
+
+    if (ts.isFunctionLike(node)) {
+      const scopedReceivers = new Map(receivers);
+      for (const parameter of node.parameters) {
+        for (const name of bindingNames(parameter.name)) {
+          scopedReceivers.delete(name);
+        }
+        for (const serviceParameter of serviceReceiversForParameter(parameter)) {
+          scopedReceivers.set(serviceParameter.path, serviceParameter.receiver);
+        }
+      }
+      if (node.body) visit(node.body, scopedReceivers);
+      return;
+    }
+
+    if (ts.isVariableDeclaration(node)) {
+      if (node.initializer) visit(node.initializer, receivers);
+      for (const name of bindingNames(node.name)) {
+        receivers.delete(name);
+      }
+      const serviceReceiver = serviceReceiverFromYield(node.initializer);
+      if (serviceReceiver && ts.isIdentifier(node.name)) {
+        receivers.set(node.name.text, serviceReceiver);
+      }
+      return;
+    }
+
+    if (ts.isPropertyAccessExpression(node)) {
+      const path = receiverPath(node.expression);
+      if (path) {
+        const receiver = receivers.get(path);
+        if (receiver) {
+          reads.push({ ...receiver, member: node.name.text });
+        }
+      }
+      if (
+        ts.isParenthesizedExpression(node.expression) &&
+        ts.isYieldExpression(node.expression.expression)
+      ) {
+        const receiver = serviceReceiverFromYield(node.expression.expression);
+        if (receiver) {
+          reads.push({ ...receiver, member: node.name.text });
+        }
+      }
+    }
+
+    node.forEachChild((child) => visit(child, receivers));
+  };
+
+  visit(sourceFile, new Map());
+  return reads;
+}
+
+function readRuntimeFacadeCallIndexes(file: string): number[] {
+  const source = readSource(file);
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const namedImports: string[] = [];
+  const namespaceImports: string[] = [];
+
+  sourceFile.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    if (node.moduleSpecifier.text !== "@svvy/runtime") return;
+    const namedBindings = node.importClause?.namedBindings;
+    if (!namedBindings) return;
+    if (ts.isNamespaceImport(namedBindings)) {
+      namespaceImports.push(namedBindings.name.text);
+      return;
+    }
+    for (const element of namedBindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (importedName === "createRuntimeFacade") {
+        namedImports.push(element.name.text);
+      }
+    }
+  });
+
+  return [
+    ...namedImports.flatMap((localName) =>
+      Array.from(
+        source.matchAll(new RegExp(`\\b${escapeRegExp(localName)}\\s*\\(`, "g")),
+        (match) => match.index ?? 0,
+      ),
+    ),
+    ...namespaceImports.flatMap((localName) =>
+      Array.from(
+        source.matchAll(
+          new RegExp(`\\b${escapeRegExp(localName)}\\s*\\.\\s*createRuntimeFacade\\s*\\(`, "g"),
+        ),
+        (match) => match.index ?? 0,
+      ),
+    ),
+  ].toSorted((left, right) => left - right);
+}
+
+function readEffectSchemaCompilerConstructionReads(file: string): Array<{
+  readonly index: number;
+  readonly label: string;
+}> {
+  const source = readSource(file);
+  return readEffectSchemaCompilerConstructionReadsFromSource(file, source);
+}
+
+function readEffectSchemaCompilerConstructionReadsFromSource(
+  file: string,
+  source: string,
+): Array<{
+  readonly index: number;
+  readonly label: string;
+}> {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const compilerNames = new Set(effectSchemaCompilerNames);
+  const namespaceNames = new Set(["Schema"]);
+  const compilerCallables = new Map<string, string>();
+  const reads: Array<{ index: number; label: string }> = [];
+
+  for (const binding of readValueImportBindingsFromSourceFile(sourceFile, "effect/Schema")) {
+    if (binding.kind === "namespace") {
+      namespaceNames.add(binding.localName);
+    } else if (compilerNames.has(binding.importedName)) {
+      compilerCallables.set(
+        binding.localName,
+        `effect/Schema ${binding.importedName} named import`,
+      );
+    }
+  }
+
+  const propertyName = (name: ts.PropertyName | ts.BindingName): string | null => {
+    if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+    return null;
+  };
+
+  const expressionMember = (node: ts.Expression): string | null => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      return node.argumentExpression.text;
+    }
+    return null;
+  };
+
+  const schemaCompilerLabel = (node: ts.Expression): string | null => {
+    if (ts.isIdentifier(node)) return compilerCallables.get(node.text) ?? null;
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return null;
+    if (!ts.isIdentifier(node.expression)) return null;
+    if (!namespaceNames.has(node.expression.text)) return null;
+    const member = expressionMember(node);
+    if (!member || !compilerNames.has(member)) return null;
+    return node.expression.text === "Schema"
+      ? `Schema.${member}`
+      : `effect/Schema ${member} namespace alias`;
+  };
+
+  const registerCompilerBindingAlias = (name: ts.BindingName, initializer: ts.Expression): void => {
+    const label = schemaCompilerLabel(initializer);
+    if (label && ts.isIdentifier(name)) {
+      compilerCallables.set(
+        name.text,
+        label.startsWith("Schema.") ? `${label} local alias` : label,
+      );
+      return;
+    }
+    if (!ts.isObjectBindingPattern(name) || !ts.isIdentifier(initializer)) return;
+    if (!namespaceNames.has(initializer.text)) return;
+    for (const element of name.elements) {
+      if (!ts.isIdentifier(element.name)) continue;
+      const member = propertyName(element.propertyName ?? element.name);
+      if (!member || !compilerNames.has(member)) continue;
+      compilerCallables.set(
+        element.name.text,
+        initializer.text === "Schema"
+          ? `Schema.${member} local alias`
+          : `effect/Schema ${member} namespace alias`,
+      );
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && ts.isIdentifier(node.initializer)) {
+        if (namespaceNames.has(node.initializer.text)) namespaceNames.add(node.name.text);
+      }
+      registerCompilerBindingAlias(node.name, node.initializer);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isCallExpression(node.expression) &&
+      schemaCompilerLabel(node.expression.expression)
+    ) {
+      reads.push({
+        index: node.expression.expression.getStart(sourceFile),
+        label: schemaCompilerLabel(node.expression.expression)!,
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return reads;
+}
+
+function readEffectSchemaAssertReads(file: string): string[] {
+  const source = readSource(file);
+  return readEffectSchemaAssertReadsFromSource(file, source);
+}
+
+function readEffectSchemaAssertReadsFromSource(file: string, source: string): string[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const namespaceNames = new Set(["Schema"]);
+  const assertCallables = new Set<string>();
+  const reads: string[] = [];
+
+  for (const binding of readValueImportBindingsFromSourceFile(sourceFile, "effect/Schema")) {
+    if (binding.kind === "namespace") {
+      namespaceNames.add(binding.localName);
+    } else if (binding.importedName === "asserts") {
+      assertCallables.add(binding.localName);
+    }
+  }
+
+  const expressionMember = (node: ts.Expression): string | null => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      return node.argumentExpression.text;
+    }
+    return null;
+  };
+
+  const assertLabel = (node: ts.Expression): string | null => {
+    if (ts.isIdentifier(node))
+      return assertCallables.has(node.text) ? "effect/Schema asserts" : null;
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return null;
+    if (!ts.isIdentifier(node.expression) || !namespaceNames.has(node.expression.text)) return null;
+    return expressionMember(node) === "asserts"
+      ? node.expression.text === "Schema"
+        ? "Schema.asserts"
+        : "effect/Schema asserts namespace alias"
+      : null;
+  };
+
+  const registerAssertAlias = (name: ts.BindingName, initializer: ts.Expression): void => {
+    if (assertLabel(initializer) && ts.isIdentifier(name)) {
+      assertCallables.add(name.text);
+      return;
+    }
+    if (!ts.isObjectBindingPattern(name) || !ts.isIdentifier(initializer)) return;
+    if (!namespaceNames.has(initializer.text)) return;
+    for (const element of name.elements) {
+      if (!ts.isIdentifier(element.name)) continue;
+      const member = element.propertyName
+        ? ts.isIdentifier(element.propertyName) || ts.isStringLiteralLike(element.propertyName)
+          ? element.propertyName.text
+          : null
+        : element.name.text;
+      if (member === "asserts") assertCallables.add(element.name.text);
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && ts.isIdentifier(node.initializer)) {
+        if (namespaceNames.has(node.initializer.text)) namespaceNames.add(node.name.text);
+      }
+      registerAssertAlias(node.name, node.initializer);
+    }
+    if (ts.isCallExpression(node)) {
+      const label = assertLabel(node.expression);
+      if (label) reads.push(label);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return reads;
 }
 
 function isEffectPackageSpecifier(specifier: string): boolean {
@@ -2278,6 +1853,9 @@ function readEffectRuntimeMemberReads(path: string): Map<string, Set<string>> {
       continue;
     }
     const importClause = statement.importClause;
+    if (!importClause.isTypeOnly && importClause.name) {
+      addEffectMemberRead(moduleMembers, moduleSpecifier, "default");
+    }
     const namedBindings = importClause.namedBindings;
     if (!namedBindings) {
       continue;
@@ -2296,12 +1874,83 @@ function readEffectRuntimeMemberReads(path: string): Map<string, Set<string>> {
       }
     }
   }
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isExportDeclaration(statement) ||
+      statement.isTypeOnly ||
+      !statement.moduleSpecifier ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    const moduleSpecifier = statement.moduleSpecifier.text;
+    if (!isEffectPackageSpecifier(moduleSpecifier)) {
+      continue;
+    }
+    const exportClause = statement.exportClause;
+    if (!exportClause) {
+      addEffectMemberRead(moduleMembers, moduleSpecifier, "*");
+      continue;
+    }
+    if (ts.isNamespaceExport(exportClause)) {
+      addEffectMemberRead(moduleMembers, moduleSpecifier, "*");
+      continue;
+    }
+    for (const exportSpecifier of exportClause.elements) {
+      if (exportSpecifier.isTypeOnly) {
+        continue;
+      }
+      const exportedName = (exportSpecifier.propertyName ?? exportSpecifier.name).text;
+      addEffectMemberRead(moduleMembers, moduleSpecifier, exportedName);
+    }
+  }
 
   function visit(node: ts.Node): void {
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
       const moduleSpecifier = namespaceImports.get(node.expression.text);
       if (moduleSpecifier) {
         addEffectMemberRead(moduleMembers, moduleSpecifier, node.name.text);
+      }
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      ts.isStringLiteralLike(node.argumentExpression)
+    ) {
+      const moduleSpecifier = namespaceImports.get(node.expression.text);
+      if (moduleSpecifier) {
+        addEffectMemberRead(moduleMembers, moduleSpecifier, node.argumentExpression.text);
+      }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      ts.isIdentifier(node.name)
+    ) {
+      const moduleSpecifier = namespaceImports.get(node.initializer.text);
+      if (moduleSpecifier) {
+        namespaceImports.set(node.name.text, moduleSpecifier);
+      }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      ts.isObjectBindingPattern(node.name)
+    ) {
+      const moduleSpecifier = namespaceImports.get(node.initializer.text);
+      if (moduleSpecifier) {
+        for (const element of node.name.elements) {
+          if (element.dotDotDotToken) {
+            addEffectMemberRead(moduleMembers, moduleSpecifier, "*");
+            continue;
+          }
+          const propertyName = element.propertyName ?? element.name;
+          if (ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName)) {
+            addEffectMemberRead(moduleMembers, moduleSpecifier, propertyName.text);
+          }
+        }
       }
     }
     ts.forEachChild(node, visit);
@@ -2363,40 +2012,117 @@ function addEffectMemberRead(
 
 function readNamedImportNames(path: string, moduleSpecifier: string): string[] {
   const source = readFileSync(path, "utf8");
-  const escapedModule = moduleSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const importPattern = new RegExp(
-    `\\bimport\\s+(?:type\\s+)?([\\s\\S]*?)\\s+from\\s+["']${escapedModule}["']`,
-    "g",
-  );
-  return Array.from(source.matchAll(importPattern)).flatMap((match) => {
-    const clause = match[1]?.trim();
-    const named = clause?.match(/\{([\s\S]*?)\}/);
-    if (!named) return [];
-    return named[1]!
-      .split(",")
-      .map((part) => part.trim().replace(/^type\s+/, ""))
-      .filter(Boolean)
-      .map((part) => part.match(/^([A-Za-z_$][\w$]*)/)?.[1])
-      .filter((name): name is string => Boolean(name));
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const names: string[] = [];
+
+  sourceFile.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    if (node.moduleSpecifier.text !== moduleSpecifier) return;
+    const namedBindings = node.importClause?.namedBindings;
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) return;
+    for (const element of namedBindings.elements) {
+      names.push(element.propertyName?.text ?? element.name.text);
+    }
   });
+
+  return names;
 }
 
 function readStaticSourceImports(path: string): string[] {
-  const source = readFileSync(path, "utf8");
-  return Array.from(
-    source.matchAll(
-      /(?:^|\n)\s*import\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|(?:^|\n)\s*export\s+(?:type\s+)?[^'"]*?\s+from\s+["']([^"']+)["']/g,
-    ),
-    (match) => match[1] ?? match[2],
-  ).filter((specifier): specifier is string => Boolean(specifier));
+  return readModuleSpecifiers(path, new Set(["static"]));
+}
+
+function readStaticTypeOnlyImportViolations(
+  path: string,
+  packageSpecifiers: ReadonlySet<string>,
+): string[] {
+  const violations: string[] = [];
+  const source = readSource(path);
+
+  for (const sourceFile of readModuleSpecifierSourceFiles(path, source)) {
+    sourceFile.forEachChild((node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const specifier = node.moduleSpecifier.text;
+        if (!packageSpecifiers.has(specifier)) return;
+        const importClause = node.importClause;
+        if (!importClause) return;
+        if (importClause.isTypeOnly) return;
+        if (importClause.name) {
+          violations.push(`${display(path)} -> ${specifier}: default value import`);
+          return;
+        }
+        const namedBindings = importClause.namedBindings;
+        if (!namedBindings) return;
+        if (ts.isNamespaceImport(namedBindings)) {
+          violations.push(`${display(path)} -> ${specifier}: namespace value import`);
+          return;
+        }
+        const valueNames = namedBindings.elements
+          .filter((element) => !element.isTypeOnly)
+          .map((element) => moduleExportNameText(element.propertyName ?? element.name));
+        if (valueNames.length > 0) {
+          violations.push(
+            `${display(path)} -> ${specifier}: value imports ${valueNames.join(", ")}`,
+          );
+        }
+      }
+
+      if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const specifier = node.moduleSpecifier.text;
+        if (!packageSpecifiers.has(specifier)) return;
+        if (node.isTypeOnly) return;
+        violations.push(`${display(path)} -> ${specifier}: value re-export`);
+      }
+    });
+  }
+
+  return violations;
+}
+
+function resolveStateSourceImport(fromFile: string, specifier: string): string | null {
+  const stateSourceRoot = join(packageRoot, "state", "src");
+  const candidates = (() => {
+    if (specifier.startsWith(".")) {
+      const basePath = resolve(dirname(fromFile), specifier);
+      return [basePath, `${basePath}.ts`, join(basePath, "index.ts")];
+    }
+
+    if (specifier === "@svvy/state") {
+      return [join(stateSourceRoot, "index.ts")];
+    }
+
+    if (specifier.startsWith("@svvy/state/")) {
+      const exports = expectedPublicExports.get("@svvy/state") ?? {};
+      const exportTarget = exports[`.${specifier.slice("@svvy/state".length)}`];
+      return exportTarget ? [join(packageRoot, "state", exportTarget)] : [];
+    }
+
+    return [];
+  })();
+
+  for (const candidate of candidates) {
+    const normalized = resolve(candidate);
+    const relativeToState = relative(stateSourceRoot, normalized);
+    if (
+      relativeToState &&
+      !relativeToState.startsWith("..") &&
+      !relativeToState.startsWith(sep) &&
+      existsSync(normalized)
+    ) {
+      return normalized;
+    }
+  }
+
+  return null;
 }
 
 function readRuntimeModuleLoads(path: string): string[] {
-  const source = readFileSync(path, "utf8");
-  return Array.from(
-    source.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g),
-    (match) => match[1] ?? match[2],
-  ).filter((specifier): specifier is string => Boolean(specifier));
+  return readModuleSpecifiers(path, new Set(["runtime"]));
 }
 
 function readPackageNameFromSpecifier(specifier: string): string | null {
@@ -2405,6 +2131,47 @@ function readPackageNameFromSpecifier(specifier: string): string | null {
   }
   const parts = specifier.split("/");
   return specifier.startsWith("@") && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0]!;
+}
+
+function readCorePublicSymbolIndexNames(): string[] {
+  const source = readSource(
+    join(packageArchitectureSpecRoot, "core-public-symbol-index.generated.md"),
+  );
+  return source
+    .split("\n")
+    .filter((line) => line.startsWith("| `"))
+    .map((line) => line.match(/^\| `([^`]+)`\s+\|/)?.[1])
+    .filter((name): name is string => Boolean(name))
+    .toSorted();
+}
+
+function readCorePublicSymbolIndexRows(): Array<{
+  readonly symbol: string;
+  readonly sourceModule: string;
+  readonly contractKind: string;
+  readonly schemaSymbol: string;
+  readonly encodedType: string;
+}> {
+  const source = readSource(
+    join(packageArchitectureSpecRoot, "core-public-symbol-index.generated.md"),
+  );
+  return source
+    .split("\n")
+    .filter((line) => line.startsWith("| `"))
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    )
+    .map((cells) => ({
+      symbol: cells[0]?.match(/^`([^`]+)`$/)?.[1] ?? "",
+      sourceModule: cells[1]?.match(/^`([^`]+)`$/)?.[1] ?? "",
+      contractKind: cells[4] ?? "",
+      schemaSymbol: cells[5] ?? "",
+      encodedType: cells[6] ?? "",
+    }))
+    .filter((row) => row.symbol.length > 0);
 }
 
 function readPublicExportedNames(path: string, visited = new Set<string>()): string[] {
@@ -2440,6 +2207,11 @@ function readPublicExportedNames(path: string, visited = new Set<string>()): str
   return [...names, ...reExportedNames];
 }
 
+function hasPublicDefaultExport(path: string): boolean {
+  const source = readSource(path);
+  return /^\s*export\s+default\b/m.test(source);
+}
+
 function listLocalExportClosure(path: string, visited = new Set<string>()): string[] {
   if (visited.has(path)) return [];
   visited.add(path);
@@ -2458,6 +2230,61 @@ function listLocalExportClosure(path: string, visited = new Set<string>()): stri
 
 function readSource(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function readAmbientHostEnvReads(path: string): string[] {
+  const sourceFile = ts.createSourceFile(path, readSource(path), ts.ScriptTarget.Latest, true);
+  const reads = new Set<string>();
+
+  function visit(node: ts.Node): void {
+    if (ts.isPropertyAccessExpression(node)) {
+      const name = expressionPathWithImportMeta(node);
+      if (name && isAmbientHostEnvRead(name)) reads.add(name);
+    } else if (ts.isElementAccessExpression(node)) {
+      const baseName = expressionPathWithImportMeta(node.expression);
+      if (baseName && isAmbientHostEnvRead(baseName)) {
+        const key = ts.isStringLiteralLike(node.argumentExpression)
+          ? node.argumentExpression.text
+          : "<dynamic>";
+        reads.add(`${baseName}[${key}]`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return Array.from(reads).toSorted();
+}
+
+function isAmbientHostEnvRead(name: string): boolean {
+  return name === "process.env" || name === "Bun.env" || name === "import.meta.env";
+}
+
+function expressionPathWithImportMeta(expression: ts.Expression): string | null {
+  if (ts.isMetaProperty(expression)) {
+    return expression.keywordToken === ts.SyntaxKind.ImportKeyword
+      ? `import.${expression.name.text}`
+      : expression.name.text;
+  }
+  return expressionPath(expression);
+}
+
+function expressionPath(expression: ts.Expression): string | null {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) {
+    const parent = expressionPathWithImportMeta(expression.expression);
+    return parent ? `${parent}.${expression.name.text}` : expression.name.text;
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    const parent = expressionPathWithImportMeta(expression.expression);
+    return parent
+      ? `${parent}.${expression.argumentExpression.text}`
+      : expression.argumentExpression.text;
+  }
+  return null;
 }
 
 function readPackageManifest(packageName: string): {
@@ -2499,7 +2326,15 @@ function readBunLock(): {
 
 function isTestFile(path: string): boolean {
   return (
-    path.endsWith(".test.ts") || path.endsWith(".spec.ts") || path.endsWith(".test-support.ts")
+    path.endsWith(".test.ts") ||
+    path.endsWith(".test.tsx") ||
+    path.endsWith(".spec.ts") ||
+    path.endsWith(".spec.tsx") ||
+    path.endsWith("_test.ts") ||
+    path.endsWith("_test.tsx") ||
+    path.endsWith("_spec.ts") ||
+    path.endsWith("_spec.tsx") ||
+    path.endsWith(".test-support.ts")
   );
 }
 
@@ -2512,8 +2347,43 @@ function display(path: string): string {
   return relative(projectRoot, path).split(sep).join("/");
 }
 
+function matchesRepositoryGlob(path: string, glob: string): boolean {
+  const doubleStar = "__SVVY_DOUBLE_STAR__";
+  const singleStar = "__SVVY_SINGLE_STAR__";
+  const escaped = glob
+    .replaceAll("**", doubleStar)
+    .replaceAll("*", singleStar)
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const pattern = escaped.replaceAll(doubleStar, "[\\s\\S]*").replaceAll(singleStar, "[^/]*");
+  return new RegExp(`^${pattern}$`).test(path);
+}
+
+function isVendoredSourcePath(path: string): boolean {
+  return display(path).split("/").includes("node_modules");
+}
+
+function countEntries(entries: readonly string[]): Record<string, number> {
+  return entries.reduce<Record<string, number>>((counts, entry) => {
+    counts[entry] = (counts[entry] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function countAuditPoliciesByState(
+  policies: readonly { readonly adoptionState: string }[],
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(
+      policies.reduce<Record<string, number>>((counts, policy) => {
+        counts[policy.adoptionState] = (counts[policy.adoptionState] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
 }
 
 describe("package boundaries", () => {
@@ -2629,6 +2499,58 @@ describe("package boundaries", () => {
     });
   });
 
+  it("multi-write state port adapters delegate to structured-session transaction methods", () => {
+    const runtimeThreadStatePort = readSource(
+      join(packageRoot, "state", "src", "runtime-thread-state-port.ts"),
+    );
+    const runtimeExtensionContextImpactStatePort = readSource(
+      join(packageRoot, "state", "src", "runtime-extension-context-impact-state-port.ts"),
+    );
+    const runtimeEpisodeStatePort = readSource(
+      join(packageRoot, "state", "src", "runtime-episode-state-port.ts"),
+    );
+    const runtimeRequestStatePort = readSource(
+      join(packageRoot, "state", "src", "runtime-request-state-port.ts"),
+    );
+    const structuredSessionState = readSource(
+      join(packageRoot, "state", "src", "structured-session-state.ts"),
+    );
+
+    expect(runtimeThreadStatePort).toMatch(/state\s*\.\s*ensureHandlerThreadRunnable\(input\)/);
+    expect(runtimeThreadStatePort).not.toContain("state.getSessionState(input.workspaceSessionId)");
+    expect(runtimeThreadStatePort).not.toContain("state.updateThread({");
+
+    expect(runtimeExtensionContextImpactStatePort).toMatch(
+      /state\s*\.\s*applySnapshotContextImpact\(input\)/,
+    );
+    expect(runtimeExtensionContextImpactStatePort).not.toContain(
+      "applySnapshotContextImpactToState",
+    );
+    expect(runtimeExtensionContextImpactStatePort).not.toContain(
+      "applySnapshotContextImpactToStore",
+    );
+
+    expect(runtimeEpisodeStatePort).toMatch(/state\s*\.\s*recordHandlerThreadEpisode\(input\)/);
+    expect(runtimeEpisodeStatePort).not.toContain(
+      "state.getSessionState(input.workspaceSessionId)",
+    );
+    expect(runtimeEpisodeStatePort).not.toContain("state.createEpisode({");
+    expect(runtimeEpisodeStatePort).not.toContain("state.updateThread({");
+
+    expect(runtimeRequestStatePort).toContain("state.answerRequestUserInput({");
+    expect(runtimeRequestStatePort).toContain("state.setRequestUserInputTimerPaused({");
+    expect(runtimeRequestStatePort).not.toContain(
+      "const request = yield* state.getRequestUserInputRequest(input.requestId);",
+    );
+
+    expect(structuredSessionState).toContain("ensureHandlerThreadRunnable(input: {");
+    expect(structuredSessionState).toContain("applySnapshotContextImpact(");
+    expect(structuredSessionState).toContain("recordHandlerThreadEpisode(input: {");
+    expect(structuredSessionState).toContain("const ensureRunnable = this.db.transaction");
+    expect(structuredSessionState).toContain("const applyImpact = this.db.transaction");
+    expect(structuredSessionState).toContain("const recordEpisode = this.db.transaction");
+  });
+
   it("obsolete package architecture todo directory does not exist", () => {
     expect(existsSync(join(projectRoot, "docs", "specs", "package-architecture.todo"))).toBe(false);
   });
@@ -2655,6 +2577,65 @@ describe("package boundaries", () => {
       return stalePatterns
         .filter((pattern) => pattern.test(source))
         .map((pattern) => `${display(file)} -> ${pattern.source}`);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("source-of-truth docs avoid transitional Effect package architecture wording", () => {
+    const productDocFiles = [
+      join(projectRoot, "docs", "prd.md"),
+      join(projectRoot, "docs", "features.ts"),
+      join(projectRoot, "docs", "progress.md"),
+      join(projectRoot, "docs", "redesign-implementation-checklist.md"),
+      ...listMarkdownFiles(productSpecRoot),
+    ];
+    const stalePhrases = [
+      "currently consumed by app/bootstrap host-edge code",
+      "explicit unchecked boundary items below",
+      "App-edge tool wrappers and extension handlers import the runtime-owned constructor/live handle",
+      "signed closed transport intents",
+      "broader extension state-change replay",
+      "Extension platform track: implement",
+      "Approval/sandbox/execution-policy track: implement",
+      "Workflows/Smithers source-library and generated-package track: implement",
+      "Snippets track: implement",
+      "Agents/profile/editor forms track: complete",
+      "Live projection/structured recovery track: complete",
+      "Dockview/navigation polish track: complete",
+      "Markdown/context-budget/UI verification track: finish",
+      "explicit recovery ledger",
+      "retirement ledger",
+      "refactor ledger",
+      "while the package facade lands",
+      "while runtime launch moves to Sandbox",
+      "current WorkspaceRuntime still",
+      "current workspace RPC routing",
+      "tracked package-internal inventory",
+      "target product PRD",
+      "target reusable package architecture",
+      "target public packages",
+      "not target ownership",
+      "target design",
+      "target package architecture",
+      "target public contracts",
+      "promoted implementation",
+      "exact target names",
+      "target package names",
+      "target architecture",
+      "target-architecture",
+      "Target-Ready Boundary Gates",
+      "target-ready",
+      "target package-root",
+      "target state architecture",
+      "future process-adoption patch",
+      "not current production architecture",
+    ];
+    const violations = productDocFiles.flatMap((file) => {
+      const source = readSource(file);
+      return stalePhrases
+        .filter((phrase) => source.includes(phrase))
+        .map((phrase) => `${display(file)} -> ${phrase}`);
     });
 
     expect(violations).toEqual([]);
@@ -2770,11 +2751,15 @@ describe("package boundaries", () => {
 
   it("@svvy/state depends only on core, Effect, local modules, and platform storage modules", () => {
     const allowedPackageImports = new Set(["@svvy/core"]);
-    const allowedPrefixes = ["effect/", "node:", "bun:sqlite", "./"];
+    const allowedNodeImports = new Set(["node:fs", "node:os", "node:path"]);
+    const allowedTestNodeImports = new Set(["node:crypto"]);
+    const allowedPrefixes = ["effect/", "bun:sqlite", "./"];
     const violations = listTypeScriptFiles(join(packageRoot, "state", "src")).flatMap((file) =>
       readImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
+          if (allowedNodeImports.has(specifier)) return false;
+          if (isTestFile(file) && allowedTestNodeImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
           if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
@@ -2788,11 +2773,15 @@ describe("package boundaries", () => {
 
   it("@svvy/sandbox depends only on core, Effect, local modules, and Node platform modules", () => {
     const allowedPackageImports = new Set(["@svvy/core"]);
-    const allowedPrefixes = ["effect/", "node:", "./"];
+    const allowedNodeImports = new Set(["node:fs", "node:path"]);
+    const allowedTestNodeImports = new Set(["node:child_process", "node:crypto", "node:os"]);
+    const allowedPrefixes = ["effect/", "./"];
     const violations = listTypeScriptFiles(join(packageRoot, "sandbox", "src")).flatMap((file) =>
       readImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
+          if (allowedNodeImports.has(specifier)) return false;
+          if (isTestFile(file) && allowedTestNodeImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
           if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
@@ -2810,12 +2799,15 @@ describe("package boundaries", () => {
       "@mariozechner/pi-ai",
       "@mariozechner/pi-coding-agent",
     ]);
-    const allowedPrefixes = ["node:", "effect/", "@mariozechner/pi-coding-agent/", "./"];
+    const allowedNodeImports = new Set(["node:path"]);
+    const allowedPrefixes = ["effect/", "@mariozechner/pi-coding-agent/", "./"];
     const violations = listTypeScriptFiles(join(packageRoot, "pi-adapter", "src")).flatMap((file) =>
       readImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
+          if (allowedNodeImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
+          if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
           return true;
         })
@@ -2823,6 +2815,45 @@ describe("package boundaries", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  it("extracted package production Node imports stay on the exact platform inventory", () => {
+    const checkedRoots = [
+      join(packageRoot, "state", "src"),
+      join(packageRoot, "sandbox", "src"),
+      join(packageRoot, "pi-adapter", "src"),
+      join(packageRoot, "runtime", "src"),
+      join(packageRoot, "extensions", "src"),
+      join(packageRoot, "desktop", "src"),
+      join(packageRoot, "core", "src"),
+    ];
+    const actual = checkedRoots
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readImports(file)
+              .filter((specifier) => specifier.startsWith("node:"))
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(
+      [
+        "packages/pi-adapter/src/pi-adapter.ts -> node:path",
+        "packages/pi-adapter/src/session.ts -> node:path",
+        "packages/sandbox/src/filesystem-sandbox-policy.ts -> node:path",
+        "packages/sandbox/src/sandbox-helper.ts -> node:fs",
+        "packages/sandbox/src/sandbox-helper.ts -> node:path",
+        "packages/state/src/app-log-store.ts -> node:fs",
+        "packages/state/src/app-log-store.ts -> node:path",
+        "packages/state/src/sandbox-policy-source.ts -> node:path",
+        "packages/state/src/structured-session-state.ts -> node:fs",
+        "packages/state/src/structured-session-state.ts -> node:os",
+        "packages/state/src/structured-session-state.ts -> node:path",
+      ].toSorted(),
+    );
   });
 
   it("@svvy/runtime depends only on target runtime dependencies, Effect, local modules, and approved platform modules", () => {
@@ -2833,11 +2864,15 @@ describe("package boundaries", () => {
       "@svvy/pi-adapter",
       "@svvy/sandbox",
     ]);
-    const allowedPrefixes = ["@effect/platform-bun/", "effect/", "node:", "./"];
+    const allowedNodeImports = new Set<string>();
+    const allowedTestNodeImports = new Set(["node:crypto", "node:fs", "node:os", "node:path"]);
+    const allowedPrefixes = ["@effect/platform-bun/", "effect/", "./"];
     const violations = listTypeScriptFiles(join(packageRoot, "runtime", "src")).flatMap((file) =>
       readImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
+          if (allowedNodeImports.has(specifier)) return false;
+          if (isTestFile(file) && allowedTestNodeImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
           if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
@@ -2876,6 +2911,7 @@ describe("package boundaries", () => {
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
+          if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
           return true;
         })
@@ -2885,10 +2921,9 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("@svvy/desktop depends only on core, state, runtime, Effect, local modules, and UI/app edge modules", () => {
+  it("@svvy/desktop depends only on type-only core/state/runtime contracts, local modules, and UI/app edge modules", () => {
     const allowedPackageImports = new Set(["@svvy/core", "@svvy/state", "@svvy/runtime"]);
     const allowedPrefixes = [
-      "effect/",
       "@fontsource",
       "@lucide/",
       "@tanstack/",
@@ -2902,7 +2937,7 @@ describe("package boundaries", () => {
       "./",
     ];
     const violations = listTypeScriptFiles(join(packageRoot, "desktop", "src")).flatMap((file) =>
-      readImports(file)
+      readStaticSourceImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
@@ -2913,6 +2948,57 @@ describe("package boundaries", () => {
     );
 
     expect(violations).toEqual([]);
+
+    const desktopContractSpecifiers = new Set(["@svvy/core", "@svvy/state", "@svvy/runtime"]);
+    const contractImportViolations = listTypeScriptFiles(join(packageRoot, "desktop", "src"))
+      .flatMap((file) => [
+        ...readStaticTypeOnlyImportViolations(file, desktopContractSpecifiers),
+        ...readStaticSourceImports(file)
+          .filter(
+            (specifier) =>
+              specifier === "@svvy/runtime/bootstrap" ||
+              specifier.startsWith("@svvy/runtime/") ||
+              specifier.startsWith("@svvy/state/") ||
+              specifier.startsWith("@svvy/core/"),
+          )
+          .map((specifier) => `${display(file)} -> ${specifier}: forbidden desktop subpath`),
+      ])
+      .toSorted();
+
+    expect(contractImportViolations).toEqual([]);
+  });
+
+  it("@svvy/desktop exposes renderer-safe state facades without lifecycle or catch-all command authority", () => {
+    const source = readSource(join(packageRoot, "desktop", "src", "index.ts"));
+
+    expect(source).toContain("type BootstrapStateFacade = ReturnType<typeof createStateFacade>;");
+    expect(source).toContain("export interface RendererStateFacade");
+    expect(source).toContain('BootstrapStateFacade["readModels"]');
+    expect(source).toContain('"fetch" | "refetchInvalidation" | "rebaseline"');
+    expect(source).toContain(
+      "export type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;",
+    );
+    expect(source).toContain(
+      'export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;',
+    );
+    expect(source).not.toContain("export type DesktopRuntimeActionsFacade = Pick<");
+    expect(source).not.toContain(
+      "export type RendererStateFacade = ReturnType<typeof createStateFacade>;",
+    );
+    expect(source).not.toContain('BootstrapStateFacade["commands"]');
+    expect(source).not.toContain('BootstrapStateFacade["close"]');
+    expect(source).toContain('readonly kind: "read-model-changed";');
+    expect(source).toContain('readonly kind: "surface-stream-patch";');
+    expect(source).toContain("readonly sequence: RuntimeEventSequence;");
+    expect(source).not.toContain("readonly target: RuntimeSurfaceTarget;");
+    expect(source).toContain("StateInvalidationDescriptor");
+    expect(source).toContain("SurfaceStreamPatchInput");
+    expect(source).not.toContain('readonly kind: "runtime-event"');
+    expect(source).not.toContain("RuntimeEvent,");
+    expect(source).not.toContain("event: RuntimeEvent");
+    expect(source).not.toContain("close(): void;");
+    expect(source).not.toContain("readonly [group: string]: unknown;");
+    expect(source).not.toContain("options?: unknown");
   });
 
   it("only @svvy/pi-adapter imports pi runtime packages from extracted packages", () => {
@@ -2939,7 +3025,10 @@ describe("package boundaries", () => {
         .filter((specifier) => specifier.startsWith("@mariozechner/"))
         .map((specifier) => `${display(file)} -> ${specifier}`),
     );
-    const expected: string[] = [];
+    const expected = [
+      "packages/pi-adapter/src/pi-adapter.ts -> @mariozechner/pi-ai",
+      "packages/pi-adapter/src/pi-adapter.ts -> @mariozechner/pi-coding-agent",
+    ];
 
     expect(violations).toEqual(expected);
   });
@@ -2959,6 +3048,30 @@ describe("package boundaries", () => {
       .map((pattern) => `${display(messagesModule)} -> ${pattern}`);
 
     expect([...imports, ...leakedTypeAliases]).toEqual([]);
+  });
+
+  it("@svvy/pi-adapter public service declaration does not expose pi-native managed session internals", () => {
+    const adapterModule = join(packageRoot, "pi-adapter", "src", "pi-adapter.ts");
+    const source = readSource(adapterModule);
+    const serviceDeclaration = source.match(
+      /export interface PiAdapterService \{[\s\S]*?\n\}/,
+    )?.[0];
+
+    expect(serviceDeclaration).toBeDefined();
+    expect(serviceDeclaration).not.toMatch(
+      /\bcreateManagedAgentSession\b|\bCreatePiManagedAgentSession(?:Input|Result)\b/,
+    );
+  });
+
+  it("@svvy/pi-adapter turn stream queue stays bounded and backpressured", () => {
+    const adapterModule = join(packageRoot, "pi-adapter", "src", "pi-adapter.ts");
+    const source = readSource(adapterModule);
+    const forbiddenConstructors = ["Queue.unbounded", "Queue.dropping", "Queue.sliding"].filter(
+      (constructorName) => source.includes(constructorName),
+    );
+
+    expect(source).toContain("Queue.bounded<PiRuntimeEvent, PiAdapterError>(256)");
+    expect(forbiddenConstructors).toEqual([]);
   });
 
   it("@svvy/core owns pi-adapter boundary contracts without importing pi native packages", () => {
@@ -3007,8 +3120,8 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("@svvy/core migrated data-only ports use function-syntax Context.Service", () => {
-    const migratedCoreDataOnlyPorts = [
+  it("@svvy/core data-only ports use function-syntax Context.Service", () => {
+    const coreDataOnlyPorts = [
       { file: "extension-state-ports.ts", names: ["ExtensionStatePort"] },
       { file: "app-log-contracts.ts", names: ["AppLogWritePort"] },
       { file: "sandbox-policy-contracts.ts", names: ["SandboxPolicySource"] },
@@ -3030,6 +3143,7 @@ describe("package boundaries", () => {
           "RuntimeExtensionContextImpactStatePort",
           "RuntimeExtensionStatePort",
           "RuntimeGeneratedPackageStatePort",
+          "RuntimePromptDefaultsStatePort",
           "RuntimeQueueStatePort",
           "RuntimeReadModelStatePort",
           "RuntimeRecoveryStatePort",
@@ -3044,7 +3158,7 @@ describe("package boundaries", () => {
       },
     ];
 
-    for (const { file, names } of migratedCoreDataOnlyPorts) {
+    for (const { file, names } of coreDataOnlyPorts) {
       const source = readSource(join(packageRoot, "core", "src", file));
       const normalized = source.replace(/\s+/g, " ");
 
@@ -3068,15 +3182,15 @@ describe("package boundaries", () => {
       runtimeStatePortSource.matchAll(/\bexport\s+interface\s+(Runtime[A-Za-z]+StatePort)\s*\{/g),
       (match) => match[1]!,
     ).toSorted();
-    const expectedRuntimeStatePorts = migratedCoreDataOnlyPorts
+    const expectedRuntimeStatePorts = coreDataOnlyPorts
       .find(({ file }) => file === "runtime-state-ports.ts")!
       .names.toSorted();
 
     expect(actualRuntimeStatePorts).toEqual(expectedRuntimeStatePorts);
   });
 
-  it("package-local migrated host/config ports use function-syntax Context.Service", () => {
-    const migratedPackageLocalPorts = [
+  it("package-local host/config ports use function-syntax Context.Service", () => {
+    const packageLocalPorts = [
       {
         packageName: "extensions",
         file: "extension-source-roots-port.ts",
@@ -3102,9 +3216,40 @@ describe("package boundaries", () => {
         file: "sandbox.ts",
         names: ["SandboxHelperCandidatesPort", "HostProcessReferencePort"],
       },
+      {
+        packageName: "runtime",
+        file: "runtime-layer.ts",
+        names: [
+          "RuntimeLayerCommandControlPort",
+          "RuntimeLayerCommandStdinPort",
+          "RuntimeLayerModelResolverPort",
+          "RuntimeLayerPromptControlHostPort",
+          "RuntimeLayerProviderAuthPort",
+        ],
+      },
+      {
+        packageName: "runtime",
+        file: "runtime-surface-queue-wake-port.ts",
+        names: ["RuntimeLayerSurfaceQueueWakePort"],
+      },
+      {
+        packageName: "runtime",
+        file: "runtime-generated-context-refresh-service.ts",
+        names: ["RuntimeGeneratedContextRefreshHostPort"],
+      },
+      {
+        packageName: "runtime",
+        file: "runtime-generated-package-refresh-service.ts",
+        names: ["RuntimeGeneratedPackageRefreshHostPort"],
+      },
+      {
+        packageName: "runtime",
+        file: "runtime-source-invalidation-service.ts",
+        names: ["RuntimeSourceInvalidationScanPort"],
+      },
     ];
 
-    for (const { packageName, file, names } of migratedPackageLocalPorts) {
+    for (const { packageName, file, names } of packageLocalPorts) {
       const source = readSource(join(packageRoot, packageName, "src", file));
       const normalized = source.replace(/\s+/g, " ");
 
@@ -3136,13 +3281,7 @@ describe("package boundaries", () => {
       )
       .map(({ exportName }) => exportName)
       .toSorted();
-    const expected = Array.from(expectedPiAdapterInternalPiRuntimeExports.keys()).toSorted();
-
-    expect(actual).toEqual(expected);
-    for (const [exportName, file] of expectedPiAdapterInternalPiRuntimeExports) {
-      const exportTarget = exports[`./${exportName.split("/").slice(2).join("/")}`];
-      expect(exportTarget).toBe(`./${relative(join(packageRoot, "pi-adapter"), file)}`);
-    }
+    expect(actual).toEqual(["@svvy/pi-adapter/session"]);
   });
 
   it("extracted packages use direct Effect v4 module imports and do not import effect/Runtime", () => {
@@ -3164,70 +3303,108 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("extracted packages import only adopted Effect modules", () => {
-    const allowedEffectImports = new Set([
-      "effect/Cause",
-      "effect/Clock",
-      "effect/Config",
-      "effect/ConfigProvider",
-      "effect/Context",
-      "effect/Crypto",
-      "effect/DateTime",
-      "effect/Deferred",
-      "effect/Effect",
-      "effect/Encoding",
-      "effect/Exit",
-      "effect/Fiber",
-      "effect/FileSystem",
-      "effect/JsonSchema",
-      "effect/Layer",
-      "effect/Logger",
-      "effect/ManagedRuntime",
-      "effect/Metric",
-      "effect/Option",
-      "effect/Path",
-      "effect/PlatformError",
-      "effect/PubSub",
-      "effect/Queue",
-      "effect/Redacted",
-      "effect/Ref",
-      "effect/Schedule",
-      "effect/Schema",
-      "effect/SchemaIssue",
-      "effect/Scope",
-      "effect/Semaphore",
-      "effect/Stream",
-      "effect/Tracer",
-      "effect/unstable/process",
-      "effect/unstable/process/ChildProcess",
-      "effect/unstable/process/ChildProcessSpawner",
-    ]);
-    const violations = sourceRoots.flatMap((root) =>
-      listTypeScriptFiles(root).flatMap((file) =>
-        readImports(file)
-          .filter((specifier) => specifier === "effect" || specifier.startsWith("effect/"))
-          .filter((specifier) => {
-            if (specifier === "effect/testing") {
-              return !isEffectTestLaneFile(file);
-            }
-            return !allowedEffectImports.has(specifier);
-          })
-          .map((specifier) => `${display(file)} -> ${specifier}`),
-      ),
+  it("production code does not import unadopted Effect SQL or Node platform adapters", () => {
+    const scannedRoots = [
+      ...sourceRoots,
+      appSourceRoot,
+      sharedSourceRoot,
+      join(projectRoot, "generated"),
+    ].filter((root) => existsSync(root));
+    const violations = scannedRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readImports(file)
+            .filter(
+              (specifier) =>
+                specifier === "effect/unstable/sql" ||
+                specifier.startsWith("effect/unstable/sql/") ||
+                specifier === "@effect/platform-node" ||
+                specifier.startsWith("@effect/platform-node/") ||
+                specifier.startsWith("@effect/sql-sqlite-"),
+            )
+            .map((specifier) => `${display(file)} -> ${specifier}`),
+        ),
     );
 
+    expect(violations).toEqual([]);
+  });
+
+  it("extracted packages import only adopted Effect modules", () => {
+    const allowedEffectImports = new Set([
+      ...adoptedEffectRuntimeModuleExports.map((entry) => entry.module),
+      ...adoptedEffectTypeOnlyModules,
+    ]);
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isEffectTestLaneFile(file))
+        .flatMap((file) =>
+          readImports(file)
+            .filter((specifier) => specifier === "effect" || specifier.startsWith("effect/"))
+            .filter((specifier) => {
+              if (specifier === "effect/testing") {
+                return !isEffectTestLaneFile(file);
+              }
+              return !allowedEffectImports.has(specifier);
+            })
+            .map((specifier) => `${display(file)} -> ${specifier}`),
+        ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("conditional Effect installed-export canaries are not production import permissions", () => {
+    const conditionalEffectModules = new Set(
+      auditedEffectInstalledExportPolicies
+        .filter((entry) => entry.adoptionState === "conditional")
+        .map((entry) => entry.module),
+    );
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readImports(file)
+            .filter((specifier) => conditionalEffectModules.has(specifier))
+            .map((specifier) => `${display(file)} -> ${specifier}`),
+        ),
+    );
+
+    expect([...conditionalEffectModules].toSorted()).toEqual([
+      "effect/Cache",
+      "effect/Fiber",
+      "effect/FiberHandle",
+      "effect/FiberMap",
+      "effect/FiberSet",
+      "effect/JsonPatch",
+      "effect/Latch",
+      "effect/LayerMap",
+      "effect/Logger",
+      "effect/Metric",
+      "effect/Pool",
+      "effect/RcMap",
+      "effect/RcRef",
+      "effect/Request",
+      "effect/RequestResolver",
+      "effect/Resource",
+      "effect/ScopedCache",
+      "effect/ScopedRef",
+      "effect/SubscriptionRef",
+      "effect/SynchronizedRef",
+      "effect/Tracer",
+      "effect/unstable/process",
+    ]);
     expect(violations).toEqual([]);
   });
 
   it("Bun app production code imports only adopted Effect edge modules", () => {
     const allowedEffectEdgeImports = new Set([
       "effect/Cause",
+      "effect/ConfigProvider",
       "effect/Effect",
       "effect/Exit",
-      "effect/Layer",
-      "effect/ManagedRuntime",
+      "effect/Redacted",
       "effect/Schema",
-      "effect/Scope",
     ]);
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
@@ -3239,7 +3416,16 @@ describe("package boundaries", () => {
               specifier.startsWith("effect/") ||
               specifier.startsWith("@effect/"),
           )
-          .filter((specifier) => !allowedEffectEdgeImports.has(specifier))
+          .filter((specifier) => {
+            if (
+              specifier === "effect/ManagedRuntime" ||
+              specifier === "effect/Layer" ||
+              specifier === "effect/Scope"
+            ) {
+              return display(file) !== "src/bun/runtime-service-adapter.ts";
+            }
+            return !allowedEffectEdgeImports.has(specifier);
+          })
           .map((specifier) => `${display(file)} -> ${specifier}`),
       );
 
@@ -3272,8 +3458,7 @@ describe("package boundaries", () => {
       },
       {
         kind: "Context.Reference",
-        pattern:
-          /\bContext\.Reference\s*<[\s\S]*?>\s*(?:\(\)\s*)?\(\s*["']([^"']+)["']\s*(?:,|\))/g,
+        pattern: /\bContext\.Reference\s*<[\s\S]*?>\s*\(\s*["']([^"']+)["']\s*,/g,
       },
       {
         kind: "LayerMap.Service",
@@ -3314,6 +3499,50 @@ describe("package boundaries", () => {
     expect({ wrongScope, duplicates }).toEqual({ wrongScope: [], duplicates: [] });
   });
 
+  it("Context.Reference declarations use the direct Context namespace form", () => {
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) => {
+          const source = readSource(file);
+          return readValueImportBindings(file, "effect/Context").flatMap((binding) => {
+            if (binding.kind === "namespace") {
+              const localName = binding.localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              return [
+                ...(binding.localName === "Context"
+                  ? []
+                  : Array.from(
+                      source.matchAll(new RegExp(`\\b${localName}\\.Reference\\s*<`, "g")),
+                      () => `${display(file)} -> effect/Context Reference namespace alias`,
+                    )),
+                ...Array.from(
+                  source.matchAll(
+                    new RegExp(
+                      `\\b(?:const|let|var)\\s*\\{[^}]*\\bReference\\b[^}]*\\}\\s*=\\s*${localName}\\b`,
+                      "g",
+                    ),
+                  ),
+                  () => `${display(file)} -> effect/Context destructured Reference`,
+                ),
+                ...Array.from(
+                  source.matchAll(
+                    new RegExp(`\\b${localName}\\s*\\[\\s*["']Reference["']\\s*\\]`, "g"),
+                  ),
+                  () => `${display(file)} -> effect/Context bracket Reference`,
+                ),
+              ];
+            }
+            return binding.importedName === "Reference" &&
+              new RegExp(`\\b${binding.localName}\\s*\\(`).test(source)
+              ? [`${display(file)} -> effect/Context Reference named import`]
+              : [];
+          });
+        }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("extracted package Effect service ids end with their exported service name", () => {
     const servicePattern =
       /\bexport\s+(?:class\s+([A-Za-z_$][\w$]*)\s+extends\s+Context\.Service|const\s+([A-Za-z_$][\w$]*)\s*=\s*Context\.Service)[\s\S]*?<[\s\S]*?>\s*(?:\(\)\s*)?\(\s*["']([^"']+)["']/g;
@@ -3346,6 +3575,7 @@ describe("package boundaries", () => {
           "packages/state/src/app-log-store.ts -> layerAppLogState",
           "packages/state/src/app-log-write-port.ts -> layerAppLogWritePort",
           "packages/state/src/extension-state-port.ts -> layerExtensionStatePort",
+          "packages/state/src/pi-session-reference-port.ts -> layerPiSessionReferencePort",
           "packages/state/src/provider-auth-status-state-port.ts -> layerProviderAuthStatusStatePort",
           "packages/state/src/runtime-actor-extension-binding-state-port.ts -> layerRuntimeActorExtensionBindingStatePort",
           "packages/state/src/runtime-approval-state-port.ts -> layerRuntimeApprovalStatePort",
@@ -3356,6 +3586,7 @@ describe("package boundaries", () => {
           "packages/state/src/runtime-extension-context-impact-state-port.ts -> layerRuntimeExtensionContextImpactStatePort",
           "packages/state/src/runtime-extension-state-port.ts -> layerRuntimeExtensionStatePort",
           "packages/state/src/runtime-generated-package-state-port.ts -> layerRuntimeGeneratedPackageStatePort",
+          "packages/state/src/runtime-prompt-defaults-state-port.ts -> layerRuntimePromptDefaultsStatePort",
           "packages/state/src/runtime-queue-state-port.ts -> layerRuntimeQueueStatePort",
           "packages/state/src/runtime-read-model-state-port.ts -> layerRuntimeReadModelStatePort",
           "packages/state/src/runtime-recovery-state-port.ts -> layerRuntimeRecoveryStatePort",
@@ -3376,10 +3607,11 @@ describe("package boundaries", () => {
         resources: [
           "SQLite database handle",
           "Migration and pragma setup",
-          "Secret-store adapter",
-          "Artifact durable root metadata",
-          "Artifact temporary staging directories",
+          "Host secret-store implementation",
+          "Artifact durable metadata",
           "State read-model projection rows",
+          "State port projection graph",
+          "Pi session reference state port",
           "App log rows",
         ],
       },
@@ -3391,7 +3623,7 @@ describe("package boundaries", () => {
         ],
         resources: [
           "Sandbox policy snapshot",
-          "Temporary sandbox profile file",
+          "Temporary sandbox profile artifact, when file-backed",
           "Helper artifact/path resolution",
           "Trusted launch object with raw env",
         ],
@@ -3414,7 +3646,7 @@ describe("package boundaries", () => {
         specFile: "extensions.spec.md",
         exports: [
           "packages/extensions/src/extensions-service.ts -> Extensions",
-          "packages/extensions/src/extensions-service.ts -> layerExtensions",
+          "packages/extensions/src/extensions-service.ts -> layer",
         ],
         resources: [
           "Extension source file read/edit session",
@@ -3434,22 +3666,40 @@ describe("package boundaries", () => {
         exports: [
           "packages/runtime/src/index.ts -> Runtime",
           "packages/runtime/src/index.ts -> layer",
-          "packages/runtime/src/runtime-event-bus.ts -> RuntimeEventBus",
-          "packages/runtime/src/runtime-event-bus.ts -> layerRuntimeEventBus",
+          "packages/runtime/src/runtime-approval-wait-service.ts -> RuntimeApprovalWaitService",
+          "packages/runtime/src/runtime-approval-wait-service.ts -> layerRuntimeApprovalWaitService",
+          "packages/runtime/src/runtime-effect-requests.ts -> RuntimeExecutionPlanExecutor",
+          "packages/runtime/src/runtime-effect-requests.ts -> layerRuntimeExecutionPlanExecutor",
+          "packages/runtime/src/runtime-request-input-wait-service.ts -> RuntimeRequestInputWaitService",
+          "packages/runtime/src/runtime-request-input-wait-service.ts -> layerRuntimeRequestInputWaitService",
+          "packages/runtime/src/runtime-surface-event-publisher.ts -> RuntimeSurfaceEventPublisher",
+          "packages/runtime/src/runtime-surface-event-publisher.ts -> layerRuntimeSurfaceEventPublisher",
+          "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeSourceInvalidationScanPort",
+          "packages/runtime/src/workspace-runtime-scope-service.ts -> RuntimeWorkspaceScopeService",
+          "packages/runtime/src/workspace-runtime-scope-service.ts -> layerRuntimeWorkspaceScopeService",
+          "packages/runtime/src/runtime-layer-config.ts -> layerRuntimeShutdownPreparation",
+          "packages/runtime/src/runtime-layer-config.ts -> layerRuntimeStartupReadiness",
           "packages/runtime/src/source-invalidation-coordinator.ts -> RuntimeSourceInvalidationCoordinator",
           "packages/runtime/src/source-invalidation-coordinator.ts -> layerRuntimeSourceInvalidationCoordinator",
         ],
         resources: [
-          "App runtime event bus",
-          "`WorkspaceRuntimeMap` entry",
-          "`SurfaceRuntimeMap` entry",
+          "Runtime event bus",
+          "Surface stream cursor lane",
+          "Workspace runtime scope service",
+          "Surface runtime scope service",
           "Workflow task-attempt runtime",
           "Prompt lock",
           "Active turn fiber",
           "Queue dispatcher and wakeup queue",
           "Recovery coordinator",
           "Title worker",
+          "Approval wait registry",
           "Request-input wait registry",
+          "RuntimeSourceInvalidationScanPort",
+          "Runtime startup readiness barrier",
+          "Runtime shutdown preparation service",
+          "RuntimeExecutionPlanExecutor",
+          "Artifact file materialization lane",
           "App/workspace source coordinators",
           "Generated-package refresh worker",
           "Workspace link-repair worker",
@@ -3479,6 +3729,7 @@ describe("package boundaries", () => {
       "packages/core/src/pi-adapter-ports.ts -> PiSessionReferencePort",
       "packages/core/src/provider-auth-ports.ts -> ProviderAuthPort",
       "packages/core/src/provider-auth-ports.ts -> ProviderAuthStatusStatePort",
+      "packages/core/src/runtime-state-ports.ts -> StateCommandPostCommitNotificationPort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeActorExtensionBindingStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeApprovalStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeArtifactStatePort",
@@ -3488,6 +3739,7 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionContextImpactStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeGeneratedPackageStatePort",
+      "packages/core/src/runtime-state-ports.ts -> RuntimePromptDefaultsStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeQueueStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeReadModelStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeRecoveryStatePort",
@@ -3499,30 +3751,45 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeTurnStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeWorkspaceStatePort",
       "packages/core/src/sandbox-policy-contracts.ts -> SandboxPolicySource",
+      "packages/state/src/sandbox-policy-source.ts -> SandboxPolicySourceConfigPort",
+      "packages/state/src/sandbox-policy-source.ts -> layerSandboxPolicySourceWithConfig",
       "packages/core/src/secret-store-ports.ts -> SecretStorePort",
+      "packages/core/src/secret-store-ports.ts -> SecretStoreMutationPort",
       "packages/runtime/src/bun-platform.ts -> layerRuntimeBunPlatform",
-      "packages/runtime/src/request-input-lifecycle.ts -> RuntimeRequestInputPostCommitLane",
-      "packages/runtime/src/runtime-approval-answer.ts -> RuntimeApprovalAnswerPostCommitHost",
       "packages/runtime/src/runtime-effect-requests.ts -> RuntimeHandlerThreadStartPreparationHost",
       "packages/runtime/src/runtime-effect-requests.ts -> RuntimeQueueInsertPostCommitLane",
       "packages/runtime/src/runtime-layer-config.ts -> RuntimeLayerConfigService",
       "packages/runtime/src/runtime-layer-config.ts -> RuntimeShutdownPreparation",
       "packages/runtime/src/runtime-layer-config.ts -> RuntimeStartupReadiness",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerAppLogPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerApprovalPostCommitPort",
+      "packages/runtime/src/runtime-event-bus.ts -> RuntimeEventBus",
+      "packages/runtime/src/runtime-event-bus.ts -> layerRuntimeEventBus",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerCommandControlPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerCommandStdinPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerDevTelemetryPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerEventsPort",
+      "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedContextRefreshHostPort",
+      "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedPackageRefreshHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerModelResolverPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerPromptHostPort",
+      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerPromptControlHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerProviderAuthPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerRequestInputPostCommitPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerSourceEditsPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerSourceInvalidationPort",
-      "packages/runtime/src/runtime-message-abort.ts -> RuntimeQueuedMessageAbortPostCommitHost",
+      "packages/runtime/src/runtime-surface-queue-wake-port.ts -> RuntimeLayerSurfaceQueueWakePort",
+      "packages/runtime/src/runtime-queue-wake-service.ts -> RuntimeQueueWakeService",
+      "packages/runtime/src/runtime-queue-wake-service.ts -> layerRuntimeQueueWakeService",
+      "packages/runtime/src/runtime-prompt-defaults-service.ts -> RuntimePromptDefaultsService",
+      "packages/runtime/src/runtime-prompt-defaults-service.ts -> layerRuntimePromptDefaultsService",
+      "packages/runtime/src/runtime-launch-policy-service.ts -> RuntimeLaunchPolicyService",
+      "packages/runtime/src/runtime-launch-policy-service.ts -> layerRuntimeLaunchPolicyService",
+      "packages/runtime/src/runtime-generated-context-refresh-service.ts -> RuntimeGeneratedContextRefreshHostPort",
+      "packages/runtime/src/runtime-generated-context-refresh-service.ts -> RuntimeGeneratedContextRefreshService",
+      "packages/runtime/src/runtime-generated-context-refresh-service.ts -> layerRuntimeGeneratedContextRefreshService",
+      "packages/runtime/src/runtime-generated-package-refresh-service.ts -> RuntimeGeneratedPackageRefreshHostPort",
+      "packages/runtime/src/runtime-generated-package-refresh-service.ts -> RuntimeGeneratedPackageRefreshService",
+      "packages/runtime/src/runtime-generated-package-refresh-service.ts -> layerRuntimeGeneratedPackageRefreshService",
+      "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeSourceInvalidationService",
+      "packages/runtime/src/runtime-source-invalidation-service.ts -> layerRuntimeSourceInvalidationService",
+      "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeAcceptedNativeToolExecution",
+      "packages/runtime/src/accepted-native-tool-execution-service.ts -> layerRuntimeAcceptedNativeToolExecution",
       "packages/runtime/src/runtime-message-submission.ts -> RuntimeMessageSubmissionPostCommitLane",
       "packages/runtime/src/runtime-queue-steering.ts -> RuntimeQueueSteeringPostCommitLane",
+      "packages/runtime/src/state-command-post-commit-notification.ts -> layerStateCommandPostCommitNotificationPort",
       "packages/sandbox/src/sandbox.ts -> HostProcessReferencePort",
       "packages/sandbox/src/sandbox.ts -> SandboxHelperCandidatesPort",
       "packages/extensions/src/extension-source-roots-port.ts -> ExtensionSourceRootsPort",
@@ -3853,6 +4120,7 @@ describe("package boundaries", () => {
 
     expect({
       check: scripts.check,
+      checkCoreIndex: scripts["check:core-index"],
       testUnit: scripts["test:unit"],
       testEffect: scripts["test:effect"],
       effectVitest: devDependencies["@effect/vitest"],
@@ -3860,7 +4128,8 @@ describe("package boundaries", () => {
       packageDevDependencyViolations,
     }).toEqual({
       check:
-        "bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+        "bun run check:core-index && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+      checkCoreIndex: "bun scripts/generate-core-public-symbol-index.ts --check",
       testUnit:
         "bun run generate:api && bun test $(rg --files ./src ./packages -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' -g '!*.effect.test.ts')",
       testEffect: "vitest run --root . $(rg --files packages -g '*.effect.test.ts')",
@@ -3874,7 +4143,10 @@ describe("package boundaries", () => {
     const auditFile = join(packageRoot, "effect-installed-exports.effect.test.ts");
     const productionEffectFiles = [
       ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listPackageRootTypeScriptFiles(),
       ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+      ...listTypeScriptFiles(mainviewSourceRoot),
+      ...listTypeScriptFiles(sharedSourceRoot),
     ].filter((file) => !isTestFile(file) && basename(file) !== "effect.test-support.ts");
     const actualRuntimeMembers = new Map<string, Set<string>>();
     const actualTypeOnlyModules = new Set<string>();
@@ -3899,6 +4171,10 @@ describe("package boundaries", () => {
       ]),
     );
     const expectedTypeOnlyModules = new Set<string>(adoptedEffectTypeOnlyModules);
+    const expectedProductionEffectImportModules = new Set<string>([
+      ...adoptedEffectRuntimeModuleExports.map((entry) => entry.module),
+      ...adoptedEffectTypeOnlyModules,
+    ]);
     const runtimeMemberViolations = [
       ...Array.from(actualRuntimeMembers).flatMap(([moduleSpecifier, actualMembers]) => {
         const expectedMembers = expectedRuntimeMembers.get(moduleSpecifier);
@@ -3927,29 +4203,595 @@ describe("package boundaries", () => {
         .filter((moduleSpecifier) => !actualTypeOnlyModules.has(moduleSpecifier))
         .map((moduleSpecifier) => `${moduleSpecifier} is type-manifested but not type-imported`),
     ].toSorted();
+    const productionEffectImportModuleViolations = productionEffectFiles
+      .flatMap((file) =>
+        readImports(file)
+          .filter(isEffectPackageSpecifier)
+          .filter((moduleSpecifier) => !expectedProductionEffectImportModules.has(moduleSpecifier))
+          .map(
+            (moduleSpecifier) =>
+              `${display(file)} -> ${moduleSpecifier} is imported but unmanifested`,
+          ),
+      )
+      .toSorted();
+    const auditedExportModules = auditedEffectInstalledExports
+      .map((entry) => entry.module)
+      .toSorted();
+    const auditedPolicyModules = auditedEffectInstalledExportPolicies
+      .map((entry) => entry.module)
+      .toSorted();
+    const auditedPolicyDuplicateModules = auditedPolicyModules.filter(
+      (module, index) => auditedPolicyModules.indexOf(module) !== index,
+    );
+    const auditedExportMembersByModule = new Map(
+      auditedEffectInstalledExports.map((entry) => [entry.module, new Set(entry.members)]),
+    );
+    const adoptedMembersByModule = new Map(
+      adoptedEffectRuntimeModuleExports.map((entry) => [entry.module, new Set(entry.members)]),
+    );
+    const auditedMemberPolicyKeys = auditedEffectInstalledExportMemberPolicies.map(
+      (entry) => `${entry.module}.${entry.member}`,
+    );
+    const auditedMemberPolicyDuplicateKeys = auditedMemberPolicyKeys.filter(
+      (key, index) => auditedMemberPolicyKeys.indexOf(key) !== index,
+    );
+    const auditedMemberPolicyViolations = auditedEffectInstalledExportMemberPolicies
+      .flatMap((entry) => {
+        const auditedMembers = auditedExportMembersByModule.get(entry.module);
+        const adoptedMembers = adoptedMembersByModule.get(entry.module);
+        return [
+          ...(auditedMembers?.has(entry.member)
+            ? []
+            : entry.adoptionState === "adopted-source-gated" && adoptedMembers?.has(entry.member)
+              ? []
+              : [`${entry.module}.${entry.member} has a member policy but no audited export row`]),
+          ...(entry.adoptionState === "adopted-source-gated" && !adoptedMembers?.has(entry.member)
+            ? [`${entry.module}.${entry.member} source-gated policy is not production-adopted`]
+            : []),
+          ...(entry.adoptionState !== "adopted-source-gated" && adoptedMembers?.has(entry.member)
+            ? [
+                `${entry.module}.${entry.member} is both production-adopted and member-policy ${entry.adoptionState}`,
+              ]
+            : []),
+          ...((entry.adoptionState !== "test-only" &&
+            entry.adoptionState !== "adopted-source-gated") ||
+          entry.allowedSourceGlobs.length > 0
+            ? []
+            : [`${entry.module}.${entry.member} member policy has no allowed source globs`]),
+        ];
+      })
+      .toSorted();
+    const auditedConditionalMemberPolicies = auditedEffectInstalledExportMemberPolicies.filter(
+      (entry) => entry.adoptionState === "conditional",
+    );
+    const auditedTestOnlyMemberPolicies = auditedEffectInstalledExportMemberPolicies.filter(
+      (entry) => entry.adoptionState === "test-only",
+    );
+    const auditedProductionSourceGatedMemberPolicies =
+      auditedEffectInstalledExportMemberPolicies.filter(
+        (entry) => entry.adoptionState === "adopted-source-gated",
+      );
+    const scannedTestFiles = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listPackageRootTypeScriptTestFiles(),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+      ...listTypeScriptFiles(mainviewSourceRoot),
+      ...listTypeScriptFiles(sharedSourceRoot),
+    ].filter(isTestFile);
+    const conditionalMemberPolicyViolations = scannedTestFiles
+      .flatMap((file) =>
+        Array.from(readEffectRuntimeMemberReads(file)).flatMap(([moduleSpecifier, members]) =>
+          auditedConditionalMemberPolicies
+            .filter((entry) => entry.module === moduleSpecifier && members.has(entry.member))
+            .map(
+              (entry) =>
+                `${display(file)} -> ${entry.module}.${entry.member} is conditional audit-only`,
+            ),
+        ),
+      )
+      .toSorted();
+    const testOnlyMemberPolicyViolations = scannedTestFiles
+      .flatMap((file) =>
+        Array.from(readEffectRuntimeMemberReads(file)).flatMap(([moduleSpecifier, members]) =>
+          auditedTestOnlyMemberPolicies
+            .filter((entry) => entry.module === moduleSpecifier && members.has(entry.member))
+            .filter(
+              (entry) =>
+                !entry.allowedSourceGlobs.some((sourceGlob) =>
+                  matchesRepositoryGlob(display(file), sourceGlob),
+                ),
+            )
+            .map((entry) => `${display(file)} -> ${entry.module}.${entry.member}`),
+        ),
+      )
+      .toSorted();
+    const productionSourceGatedMemberPolicyViolations = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(readEffectRuntimeMemberReads(file)).flatMap(([moduleSpecifier, members]) =>
+          auditedProductionSourceGatedMemberPolicies
+            .filter((entry) => entry.module === moduleSpecifier && members.has(entry.member))
+            .filter(
+              (entry) =>
+                !entry.allowedSourceGlobs.some((sourceGlob) =>
+                  matchesRepositoryGlob(display(file), sourceGlob),
+                ),
+            )
+            .map((entry) => `${display(file)} -> ${entry.module}.${entry.member}`),
+        ),
+      )
+      .toSorted();
 
     expect({
       auditExists: existsSync(auditFile),
       manifestImport: readSource(auditFile).includes("./effect-adoption-manifest"),
+      auditedExportRows: auditedEffectInstalledExports.length,
+      auditedPolicyModulesMatchExports:
+        JSON.stringify(auditedPolicyModules) === JSON.stringify(auditedExportModules),
+      auditedPolicyDuplicateModules,
+      auditPolicyCounts: countAuditPoliciesByState(auditedEffectInstalledExportPolicies),
+      auditedMemberPolicyEntries: auditedEffectInstalledExportMemberPolicies.map((entry) => [
+        entry.module,
+        entry.member,
+        entry.adoptionState,
+        entry.allowedSourceGlobs,
+      ]),
+      adoptedInstanceMemberPolicies: adoptedEffectInstanceMemberPolicies.map((entry) => [
+        entry.module,
+        entry.receiver,
+        entry.members,
+        entry.allowedSourceGlobs,
+      ]),
+      auditedMemberPolicyDuplicateKeys,
+      auditedMemberPolicyViolations,
+      conditionalMemberPolicyViolations,
+      testOnlyMemberPolicyViolations,
+      productionSourceGatedMemberPolicyViolations,
+      inlineAuditArrays: [
+        "const adoptedFunctions",
+        "const adoptedLayers",
+        "const adoptedValues",
+      ].filter((pattern) => readSource(auditFile).includes(pattern)),
+      productionEffectImportModuleViolations,
       runtimeMemberViolations,
       typeModuleViolations,
     }).toEqual({
       auditExists: true,
       manifestImport: true,
+      auditedExportRows: 72,
+      auditedPolicyModulesMatchExports: true,
+      auditedPolicyDuplicateModules: [],
+      auditPolicyCounts: {
+        "adoptable-member-gated": 39,
+        conditional: 22,
+        "scoped-adoptable-member-gated": 8,
+        "test-only": 3,
+      },
+      auditedMemberPolicyEntries: [
+        [
+          "effect/Effect",
+          "scoped",
+          "test-only",
+          [
+            "packages/effect-installed-exports.effect.test.ts",
+            "packages/**/*.effect.test.ts",
+            "packages/state/src/effect.test-support.ts",
+            "packages/state/src/*.test.ts",
+          ],
+        ],
+        [
+          "effect/Effect",
+          "forkScoped",
+          "test-only",
+          ["packages/effect-installed-exports.effect.test.ts", "packages/**/*.effect.test.ts"],
+        ],
+        [
+          "effect/Layer",
+          "provideMerge",
+          "adopted-source-gated",
+          [
+            "packages/effect-installed-exports.effect.test.ts",
+            "packages/**/*.effect.test.ts",
+            "packages/state/src/*.test.ts",
+            "packages/runtime/src/index.ts",
+          ],
+        ],
+        ["effect/Layer", "withSpan", "conditional", []],
+        [
+          "effect/Effect",
+          "serviceOption",
+          "adopted-source-gated",
+          [
+            "packages/runtime/src/accepted-native-tool-execution-service.ts",
+            "packages/runtime/src/runtime-effect-requests.ts",
+          ],
+        ],
+        ["effect/Queue", "fail", "adopted-source-gated", ["packages/pi-adapter/src/pi-adapter.ts"]],
+        [
+          "effect/Effect",
+          "runPromise",
+          "adopted-source-gated",
+          [
+            "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
+            "src/bun/runtime-service-adapter.ts",
+          ],
+        ],
+        [
+          "effect/Effect",
+          "runPromiseWith",
+          "adopted-source-gated",
+          ["packages/pi-adapter/src/pi-adapter.ts"],
+        ],
+        [
+          "effect/Effect",
+          "runPromiseExitWith",
+          "adopted-source-gated",
+          ["packages/pi-adapter/src/pi-adapter.ts"],
+        ],
+        [
+          "effect/Effect",
+          "uninterruptible",
+          "adopted-source-gated",
+          ["packages/extensions/src/generated-package-writer.ts"],
+        ],
+        ["effect/Redacted", "make", "adopted-source-gated", ["src/bun/session-catalog.ts"]],
+        [
+          "effect/Redacted",
+          "value",
+          "adopted-source-gated",
+          ["packages/pi-adapter/src/pi-adapter.ts"],
+        ],
+        [
+          "effect/SchemaIssue",
+          "makeFormatterStandardSchemaV1",
+          "adopted-source-gated",
+          ["packages/core/src/errors.ts"],
+        ],
+        ["effect/Fiber", "interrupt", "test-only", ["packages/**/*.effect.test.ts"]],
+        ["effect/Fiber", "join", "test-only", ["packages/**/*.effect.test.ts"]],
+        [
+          "effect/Schema",
+          "encodeSync",
+          "test-only",
+          [
+            "packages/core/src/core-module-boundaries.test.ts",
+            "packages/core/src/provider-auth-ports.effect.test.ts",
+          ],
+        ],
+        [
+          "effect/Schema",
+          "toCodecJson",
+          "test-only",
+          [
+            "packages/core/src/core-module-boundaries.test.ts",
+            "packages/core/src/provider-auth-ports.effect.test.ts",
+          ],
+        ],
+        [
+          "effect/Stream",
+          "empty",
+          "test-only",
+          ["packages/**/*.effect.test.ts", "packages/runtime/src/runtime-facade.test.ts"],
+        ],
+        [
+          "effect/Stream",
+          "make",
+          "test-only",
+          ["packages/**/*.effect.test.ts", "packages/runtime/src/runtime-facade.test.ts"],
+        ],
+        [
+          "effect/Stream",
+          "never",
+          "test-only",
+          ["packages/**/*.effect.test.ts", "packages/runtime/src/runtime-facade.test.ts"],
+        ],
+        [
+          "effect/Stream",
+          "runCollect",
+          "test-only",
+          ["packages/**/*.effect.test.ts", "packages/runtime/src/runtime-facade.test.ts"],
+        ],
+        [
+          "effect/Stream",
+          "take",
+          "test-only",
+          ["packages/**/*.effect.test.ts", "packages/runtime/src/runtime-facade.test.ts"],
+        ],
+      ],
+      adoptedInstanceMemberPolicies: [
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["context", "dispose", "runPromise"],
+          ["src/bun/runtime-service-adapter.ts"],
+        ],
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["runPromise", "runPromiseExit"],
+          ["packages/runtime/src/runtime-layer-config.ts"],
+        ],
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["runPromiseExit"],
+          ["packages/runtime/src/index.ts"],
+        ],
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["runPromise"],
+          ["packages/runtime/src/accepted-native-tool-execution.ts"],
+        ],
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["runPromiseExit"],
+          ["packages/state/src/state-facade.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["access", "exists", "readFile", "realPath", "stat"],
+          ["packages/sandbox/src/sandbox.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "makeDirectory", "readFileString", "rename", "stat", "writeFileString"],
+          ["packages/extensions/src/source-edit-sessions.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "makeDirectory", "makeTempDirectory", "remove", "rename", "writeFileString"],
+          ["packages/extensions/src/generated-package-writer.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["readDirectory", "readFileString", "stat"],
+          ["packages/extensions/src/generated-extensions-package.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["readDirectory", "readFileString", "stat"],
+          ["packages/extensions/src/generated-workflows-package.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["makeDirectory"],
+          ["packages/state/src/state-facade.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["makeDirectory"],
+          ["packages/state/src/app-log-store.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "isAbsolute", "join", "normalize", "relative", "resolve"],
+          ["packages/sandbox/src/sandbox.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "join", "resolve"],
+          ["packages/extensions/src/source-edit-sessions.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["basename", "dirname", "join"],
+          ["packages/extensions/src/generated-package-writer.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["join"],
+          ["packages/extensions/src/generated-extensions-package.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["join", "relative"],
+          ["packages/extensions/src/generated-workflows-package.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname"],
+          ["packages/extensions/src/extensions-service.ts"],
+        ],
+        ["effect/Path", "Path.Path", ["dirname"], ["packages/state/src/state-facade.ts"]],
+        ["effect/Path", "Path.Path", ["dirname"], ["packages/state/src/app-log-store.ts"]],
+        ["effect/Crypto", "Crypto.Crypto", ["digest"], ["packages/sandbox/src/sandbox.ts"]],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["digest", "randomUUIDv4"],
+          ["packages/extensions/src/source-edit-sessions.ts"],
+        ],
+        [
+          "effect/Semaphore",
+          "Semaphore.Semaphore",
+          ["withPermit"],
+          [
+            "packages/runtime/src/runtime-event-bus.ts",
+            "packages/runtime/src/runtime-surface-event-publisher.ts",
+          ],
+        ],
+      ],
+      auditedMemberPolicyDuplicateKeys: [],
+      auditedMemberPolicyViolations: [],
+      conditionalMemberPolicyViolations: [],
+      testOnlyMemberPolicyViolations: [],
+      productionSourceGatedMemberPolicyViolations: [],
+      inlineAuditArrays: [],
+      productionEffectImportModuleViolations: [],
       runtimeMemberViolations: [],
       typeModuleViolations: [],
     });
   });
 
+  it("production code does not bypass Effect installed-export auditing with namespace destructuring or bracket reads", () => {
+    const productionEffectFiles = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listPackageRootTypeScriptFiles(),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+      ...listTypeScriptFiles(mainviewSourceRoot),
+      ...listTypeScriptFiles(sharedSourceRoot),
+    ].filter((file) => !isTestFile(file) && basename(file) !== "effect.test-support.ts");
+    const violations = productionEffectFiles.flatMap((file) => {
+      const source = readSource(file);
+      return readImports(file)
+        .filter(isEffectPackageSpecifier)
+        .flatMap((specifier) =>
+          readValueImportBindings(file, specifier)
+            .filter((binding) => binding.kind === "namespace")
+            .flatMap((binding) => {
+              const localName = binding.localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const namespaceDestructurePattern = new RegExp(
+                `\\b(?:const|let|var)\\s*\\{[\\s\\S]*?\\}\\s*=\\s*${localName}\\b`,
+                "g",
+              );
+              const bracketReadPattern = new RegExp(`\\b${localName}\\s*\\[`, "g");
+              return [
+                ...Array.from(
+                  source.matchAll(namespaceDestructurePattern),
+                  () => `${display(file)} -> ${specifier}: namespace destructuring`,
+                ),
+                ...Array.from(
+                  source.matchAll(bracketReadPattern),
+                  () => `${display(file)} -> ${specifier}: bracket member read`,
+                ),
+              ];
+            }),
+        );
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("source-gated Effect members stay on their exact production seams", () => {
+    const productionEffectFiles = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listPackageRootTypeScriptFiles(),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+      ...listTypeScriptFiles(mainviewSourceRoot),
+      ...listTypeScriptFiles(sharedSourceRoot),
+    ].filter((file) => !isTestFile(file) && basename(file) !== "effect.test-support.ts");
+
+    const serviceOptionCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(
+          readSource(file).matchAll(/\bEffect\.serviceOption\s*\(\s*([A-Za-z_$][\w$]*)/g),
+          (match) => `${display(file)} -> ${match[1]}`,
+        ),
+      )
+      .toSorted();
+    const queueFailCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(/\bQueue\.fail\s*\(/g), () => display(file)),
+      )
+      .toSorted();
+    const queueFailCauseCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(/\bQueue\.failCause\s*\(/g), () => display(file)),
+      )
+      .toSorted();
+    const redactedMakeCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(/\bRedacted\.make\s*\(/g), () => display(file)),
+      )
+      .toSorted();
+    const redactedValueCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(/\bRedacted\.value\s*\(/g), () => display(file)),
+      )
+      .toSorted();
+    const schemaIssueFormatterCalls = productionEffectFiles
+      .flatMap((file) =>
+        Array.from(
+          readSource(file).matchAll(/\bSchemaIssue\.makeFormatterStandardSchemaV1\s*\(/g),
+          () => display(file),
+        ),
+      )
+      .toSorted();
+
+    expect({
+      serviceOptionCalls,
+      queueFailCalls,
+      queueFailCauseCalls,
+      redactedMakeCalls,
+      redactedValueCalls,
+      schemaIssueFormatterCalls,
+    }).toEqual({
+      serviceOptionCalls: [
+        "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeHandlerThreadStartPreparationHost",
+        "packages/runtime/src/runtime-effect-requests.ts -> RuntimeHandlerThreadStartPreparationHost",
+      ],
+      queueFailCalls: [
+        "packages/pi-adapter/src/pi-adapter.ts",
+        "packages/pi-adapter/src/pi-adapter.ts",
+      ],
+      queueFailCauseCalls: [],
+      redactedMakeCalls: ["src/bun/session-catalog.ts"],
+      redactedValueCalls: [
+        "packages/pi-adapter/src/pi-adapter.ts",
+        "packages/pi-adapter/src/pi-adapter.ts",
+      ],
+      schemaIssueFormatterCalls: ["packages/core/src/errors.ts"],
+    });
+  });
+
+  it("production metric construction stays in package metric catalog modules", () => {
+    const metricConstructionPattern = /\bMetric\.(?:counter|timer|histogram|withAttributes)\s*\(/;
+    const allowedMetricFiles = (file: string) => {
+      const fileName = basename(file);
+      const normalized = display(file);
+      return (
+        fileName === "metrics.ts" ||
+        normalized.includes("/diagnostics/") ||
+        normalized.includes("/exporters/")
+      );
+    };
+    const productionFiles = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+    ].filter((file) => !isTestFile(file));
+    const violations = productionFiles
+      .filter((file) => !allowedMetricFiles(file))
+      .filter((file) => metricConstructionPattern.test(readSource(file)))
+      .map(display)
+      .toSorted();
+
+    expect(violations).toEqual([]);
+  });
+
   it("extracted package production code reads host process facts only through explicit host zones", () => {
     const allowedHostReadFiles = new Set<string>();
     const hostReadPattern =
-      /\bprocess\.(?:platform|arch|env|cwd|execPath)\b|\b(?:hostname|os\.hostname)\s*\(/;
+      /\bprocess\s*\.\s*(?:platform|arch|env|argv|cwd|chdir|exit|execPath)\b|\bBun\s*\.\s*argv\b|\bimport\s*\.\s*meta\s*\.\s*main\b|\b(?:hostname|os\.hostname)\s*\(/;
     const violations = sourceRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
         .filter((file) => !allowedHostReadFiles.has(display(file)))
         .filter((file) => hostReadPattern.test(readSource(file)))
+        .map(display),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("extracted package production code does not use console fallbacks", () => {
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .filter((file) => /\bconsole\.(?:debug|log|info|warn|error)\s*\(/.test(readSource(file)))
         .map(display),
     );
 
@@ -3972,7 +4814,27 @@ describe("package boundaries", () => {
     expect(source).not.toMatch(/\bnodeWatch\b|\bFSWatcher\b|\bhomedir\s*\(/);
   });
 
-  it("extracted packages do not use removed Effect v3 service/runtime patterns", () => {
+  it("production source watching does not adopt Effect WatchBackend or Stream callback APIs", () => {
+    const checkedFiles = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+    ].filter((file) => !isTestFile(file));
+    const forbiddenPatterns = [
+      { pattern: /\bFileSystem\.WatchBackend\b/, name: "FileSystem.WatchBackend" },
+      { pattern: /\bFileSystem\.watch\s*\(/, name: "FileSystem.watch" },
+      { pattern: /\bStream\.callback\s*\(/, name: "Stream.callback" },
+    ];
+    const violations = checkedFiles.flatMap((file) => {
+      const source = readSource(file);
+      return forbiddenPatterns
+        .filter(({ pattern }) => pattern.test(source))
+        .map(({ name }) => `${display(file)} -> ${name}`);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("extracted package production code does not create or run Effect runtimes outside facade and bootstrap boundaries", () => {
     const bannedSourcePatterns = [
       { pattern: /\bContext\.Tag\b/, name: "Context.Tag" },
       { pattern: /\bContext\.GenericTag\b/, name: "Context.GenericTag" },
@@ -4012,6 +4874,8 @@ describe("package boundaries", () => {
       { pattern: /\bEffect\.catchSome\b/, name: "Effect.catchSome" },
       { pattern: /\bEffect\.catchSomeCause\b/, name: "Effect.catchSomeCause" },
       { pattern: /\bScope\.extend\b/, name: "Scope.extend" },
+      { pattern: /\bScope\.provide\b/, name: "Scope.provide" },
+      { pattern: /\bScope\.use\b/, name: "Scope.use" },
       { pattern: /\bEffect\.forkDaemon\b/, name: "Effect.forkDaemon" },
       { pattern: /\bEffect\.forkAll\b/, name: "Effect.forkAll" },
       { pattern: /\bEffect\.forkWithErrorHandler\b/, name: "Effect.forkWithErrorHandler" },
@@ -4020,6 +4884,7 @@ describe("package boundaries", () => {
       { pattern: /\bLayer\.buildWithMemoMap\b/, name: "Layer.buildWithMemoMap" },
       { pattern: /\bLayer\.forkMemoMapUnsafe\b/, name: "Layer.forkMemoMapUnsafe" },
       { pattern: /\bLayer\.effectDiscard\b/, name: "Layer.effectDiscard" },
+      { pattern: /\bLayer\.effectContext\b/, name: "Layer.effectContext" },
       { pattern: /\bLayer\.buildWithScope\b/, name: "Layer.buildWithScope" },
       { pattern: /\bLayer\.unwrap\b/, name: "Layer.unwrap" },
       { pattern: /\bLayer\.suspend\b/, name: "Layer.suspend" },
@@ -4029,17 +4894,30 @@ describe("package boundaries", () => {
         pattern: /\bEffect\.provide\s*\([\s\S]*?\{\s*local\s*:\s*true\s*\}/,
         name: "Effect.provide local true",
       },
+      {
+        pattern: /\b(?!Scope\b)[A-Z][A-Za-z0-9_]*\.use(?:Sync)?\s*\(/,
+        name: "Service.use/useSync",
+      },
     ];
-    const violations = sourceRoots.flatMap((root) =>
-      listTypeScriptFiles(root)
-        .filter((file) => !isTestFile(file))
-        .flatMap((file) => {
-          const source = readSource(file);
-          return bannedSourcePatterns
-            .filter(({ pattern }) => pattern.test(source))
-            .map(({ name }) => `${display(file)} -> ${name}`);
-        }),
-    );
+    const violations = sourceRoots
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) => {
+            const source = readSource(file);
+            return bannedSourcePatterns
+              .filter(({ pattern }) => pattern.test(source))
+              .map(({ name }) => `${display(file)} -> ${name}`);
+          }),
+      )
+      .filter(
+        (violation) =>
+          ![
+            "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
+            "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseExitWith",
+            "packages/runtime/src/source-invalidation-coordinator-adapter.ts -> Effect.runPromise",
+          ].includes(violation),
+      );
 
     expect(violations).toEqual([]);
   });
@@ -4091,7 +4969,10 @@ describe("package boundaries", () => {
     expect(runtimeFacadeSource).toContain(
       'abortPolicy === "request-runtime-cancel" ? { signal: options?.signal } : undefined',
     );
-    expect(runtimeFacadeSource).toContain(
+    expect(runtimeFacadeSource).toContain("const activeFacadeCalls = new Set");
+    expect(runtimeFacadeSource).toContain('signal.addEventListener("abort", onAbort');
+    expect(runtimeFacadeSource).toContain("signal.removeEventListener");
+    expect(runtimeFacadeSource).not.toContain(
       "Promise.race([runEffect, waitForAbort(operation, options.signal)])",
     );
 
@@ -4148,9 +5029,19 @@ describe("package boundaries", () => {
             "effect/ManagedRuntime",
           ).flatMap((binding) => {
             if (binding.kind === "namespace") {
-              return new RegExp(`\\b${binding.localName}\\.make\\b`).test(source)
-                ? [`${display(file)} -> effect/ManagedRuntime make`]
-                : [];
+              return [
+                ...(new RegExp(`\\b${binding.localName}\\.make\\b`).test(source)
+                  ? [`${display(file)} -> effect/ManagedRuntime make`]
+                  : []),
+                ...(new RegExp(
+                  `\\b(?:const|let|var)\\s*\\{[^}]*\\bmake\\b[^}]*\\}\\s*=\\s*${binding.localName}\\b`,
+                ).test(source)
+                  ? [`${display(file)} -> effect/ManagedRuntime destructured make`]
+                  : []),
+                ...(new RegExp(`\\b${binding.localName}\\s*\\[\\s*["']make["']\\s*\\]`).test(source)
+                  ? [`${display(file)} -> effect/ManagedRuntime bracket make`]
+                  : []),
+              ];
             }
             return binding.importedName === "make" &&
               new RegExp(`\\b${binding.localName}\\s*\\(`).test(source)
@@ -4172,7 +5063,18 @@ describe("package boundaries", () => {
             ])
             .filter(({ pattern }) => pattern.test(source))
             .map(({ name }) => `${display(file)} -> ${name}`);
-          return [...effectViolations, ...managedRuntimeViolations, ...destructuringViolations];
+          return [
+            ...effectViolations,
+            ...managedRuntimeViolations,
+            ...destructuringViolations,
+          ].filter(
+            (violation) =>
+              ![
+                "packages/pi-adapter/src/pi-adapter.ts -> effect/Effect runPromiseWith",
+                "packages/pi-adapter/src/pi-adapter.ts -> effect/Effect runPromiseExitWith",
+                "packages/runtime/src/source-invalidation-coordinator-adapter.ts -> effect/Effect runPromise",
+              ].includes(violation),
+          );
         }),
     );
 
@@ -4197,16 +5099,30 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("extracted package tests do not create manual Effect runtimes except facade and known debt cases", () => {
+  it("extracted package tests do not create manual Effect runtimes except explicit facade and bootstrap cases", () => {
     const allowedManualRuntimeReads = new Map<string, string[]>([
       [
         "packages/runtime/src/runtime-layer-config.bootstrap.integration.test.ts",
-        ["ManagedRuntime.make", "ManagedRuntime.make"],
+        ["ManagedRuntime.make", "ManagedRuntime.make", "ManagedRuntime.make"],
       ],
       ["packages/runtime/src/runtime-facade.test.ts", ["ManagedRuntime.make"]],
       [
         "packages/state/src/state-facade.test.ts",
-        ["ManagedRuntime.make", "ManagedRuntime.make", "ManagedRuntime.make"],
+        [
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+          "ManagedRuntime.make",
+        ],
       ],
     ]);
     const manualRuntimePatterns = [
@@ -4260,11 +5176,29 @@ describe("package boundaries", () => {
             "effect/ManagedRuntime",
           ).flatMap((binding) => {
             if (binding.kind === "namespace") {
-              if (binding.localName === "ManagedRuntime") return [];
-              return Array.from(
-                source.matchAll(new RegExp(`\\b${binding.localName}\\.make\\b`, "g")),
-                () => `${display(file)} -> ManagedRuntime.make`,
-              );
+              return [
+                ...(binding.localName === "ManagedRuntime"
+                  ? []
+                  : Array.from(
+                      source.matchAll(new RegExp(`\\b${binding.localName}\\.make\\b`, "g")),
+                      () => `${display(file)} -> ManagedRuntime.make`,
+                    )),
+                ...Array.from(
+                  source.matchAll(
+                    new RegExp(
+                      `\\b(?:const|let|var)\\s*\\{[^}]*\\bmake\\b[^}]*\\}\\s*=\\s*${binding.localName}\\b`,
+                      "g",
+                    ),
+                  ),
+                  () => `${display(file)} -> ManagedRuntime.make`,
+                ),
+                ...Array.from(
+                  source.matchAll(
+                    new RegExp(`\\b${binding.localName}\\s*\\[\\s*["']make["']\\s*\\]`, "g"),
+                  ),
+                  () => `${display(file)} -> ManagedRuntime.make`,
+                ),
+              ];
             }
             return binding.importedName === "make"
               ? Array.from(
@@ -4279,8 +5213,14 @@ describe("package boundaries", () => {
     const allowed = Array.from(allowedManualRuntimeReads.entries()).flatMap(([file, names]) =>
       names.map((name) => `${file} -> ${name}`),
     );
-    const violations = actual.filter((entry) => !allowed.includes(entry));
-    const missingAllowed = allowed.filter((entry) => !actual.includes(entry));
+    const actualCounts = countEntries(actual);
+    const allowedCounts = countEntries(allowed);
+    const violations = Object.entries(actualCounts)
+      .filter(([entry, count]) => count > (allowedCounts[entry] ?? 0))
+      .map(([entry, count]) => `${entry} x${count}`);
+    const missingAllowed = Object.entries(allowedCounts)
+      .filter(([entry, count]) => (actualCounts[entry] ?? 0) < count)
+      .map(([entry, count]) => `${entry} x${count}`);
 
     expect({ violations, missingAllowed }).toEqual({ violations: [], missingAllowed: [] });
   });
@@ -4311,14 +5251,462 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("Effect test lane files use the Effect test runtime", () => {
+    const violations = [packageRoot, appSourceRoot].flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter(isEffectTestLaneFile)
+        .flatMap((file) => {
+          const imports = readImports(file);
+          return [
+            ...(!imports.includes("@effect/vitest")
+              ? [`${display(file)} does not import @effect/vitest`]
+              : []),
+            ...(imports.includes("bun:test") ? [`${display(file)} imports bun:test`] : []),
+          ];
+        }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("non-state Bun-lane package tests do not exercise Effect service or layer APIs", () => {
+    const stateSourceRoot = join(packageRoot, "state", "src");
+    const stateProductionFiles = listTypeScriptFiles(stateSourceRoot).filter(
+      (file) => !isTestFile(file),
+    );
+    const stateRootBarrel = join(stateSourceRoot, "index.ts");
+    const sqliteBackedStateRoots = new Set([
+      join(stateSourceRoot, "app-log-store.ts"),
+      join(stateSourceRoot, "structured-session-state.ts"),
+    ]);
+    const sqliteBackedFileCache = new Map<string, boolean>();
+    const importsBunSqlite = (file: string, visiting = new Set<string>()): boolean => {
+      if (sqliteBackedStateRoots.has(file)) return true;
+      const cached = sqliteBackedFileCache.get(file);
+      if (cached !== undefined) return cached;
+      if (visiting.has(file)) return false;
+      visiting.add(file);
+
+      const imports = readStaticSourceImports(file);
+      const importsSqlite =
+        imports.includes("bun:sqlite") ||
+        imports.some((specifier) => {
+          const resolved = resolveStateSourceImport(file, specifier);
+          return (
+            resolved !== null &&
+            resolved !== stateRootBarrel &&
+            stateProductionFiles.includes(resolved) &&
+            importsBunSqlite(resolved, visiting)
+          );
+        });
+
+      visiting.delete(file);
+      sqliteBackedFileCache.set(file, importsSqlite);
+      return importsSqlite;
+    };
+    const importsSqliteBackedState = (file: string): boolean => {
+      const imports = readStaticSourceImports(file);
+      return (
+        imports.includes("bun:sqlite") ||
+        imports.some((specifier) => {
+          const resolved = resolveStateSourceImport(file, specifier);
+          return (
+            resolved !== null &&
+            resolved !== stateRootBarrel &&
+            stateProductionFiles.includes(resolved) &&
+            importsBunSqlite(resolved)
+          );
+        })
+      );
+    };
+    const allowedStateBunLaneEffectFiles = new Set(
+      listTypeScriptFiles(stateSourceRoot)
+        .filter(isTestFile)
+        .filter((file) => !isEffectTestLaneFile(file))
+        .filter(importsSqliteBackedState),
+    );
+    const allowedFacadeAndBootstrapHarnessFiles = new Set([
+      join(packageRoot, "runtime", "src", "runtime-facade.test.ts"),
+      join(packageRoot, "runtime", "src", "runtime-layer-config.bootstrap.integration.test.ts"),
+      join(packageRoot, "state", "src", "state-facade.test.ts"),
+    ]);
+    const serviceLayerPatterns = [
+      { pattern: /\bEffect\.provide\s*\(/, name: "Effect.provide" },
+      {
+        pattern: /\bLayer\.(?:succeed|effect|merge|mergeAll|provide|provideMerge)\b/,
+        name: "Layer service fixture",
+      },
+      { pattern: /\bit\.effect\b/, name: "it.effect" },
+    ];
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter(isTestFile)
+        .filter((file) => !isEffectTestLaneFile(file))
+        .filter((file) => !allowedStateBunLaneEffectFiles.has(file))
+        .filter((file) => !allowedFacadeAndBootstrapHarnessFiles.has(file))
+        .flatMap((file) => {
+          const source = readSource(file);
+          const imports = readImports(file);
+          return [
+            ...(imports.includes("effect/Layer") ? [`${display(file)} -> effect/Layer`] : []),
+            ...(imports.includes("effect/testing") ? [`${display(file)} -> effect/testing`] : []),
+            ...serviceLayerPatterns
+              .filter(({ pattern }) => pattern.test(source))
+              .map(({ name }) => `${display(file)} -> ${name}`),
+          ];
+        }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("Effect test lane imports only the approved @effect/vitest helpers", () => {
+    const allowedVitestHelpers = new Set(["assert", "describe", "it", "layer"]);
+    const violations = [packageRoot, appSourceRoot].flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter(isEffectTestLaneFile)
+        .flatMap((file) => {
+          const source = readFileSync(file, "utf8");
+          const sourceFile = ts.createSourceFile(
+            file,
+            source,
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TS,
+          );
+          return sourceFile.statements.flatMap((statement) => {
+            if (
+              !ts.isImportDeclaration(statement) ||
+              !ts.isStringLiteral(statement.moduleSpecifier) ||
+              statement.moduleSpecifier.text !== "@effect/vitest"
+            ) {
+              return [];
+            }
+            const importClause = statement.importClause;
+            if (!importClause) {
+              return [`${display(file)} -> side-effect import`];
+            }
+            if (importClause.name) {
+              return [`${display(file)} -> default import`];
+            }
+            const namedBindings = importClause.namedBindings;
+            if (!namedBindings) {
+              return [`${display(file)} -> missing named imports`];
+            }
+            if (ts.isNamespaceImport(namedBindings)) {
+              return [`${display(file)} -> namespace import`];
+            }
+            return namedBindings.elements
+              .map((element) => element.propertyName?.text ?? element.name.text)
+              .filter((name) => !allowedVitestHelpers.has(name))
+              .map((name) => `${display(file)} -> ${name}`);
+          });
+        }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("Effect testing services stay confined to the Effect test lane", () => {
     const violations = [...sourceRoots, appSourceRoot].flatMap((root) =>
       listTypeScriptFiles(root)
-        .filter(isTestFile)
-        .filter((file) => readImports(file).includes("effect/testing"))
+        .filter((file) =>
+          readImports(file).some(
+            (specifier) =>
+              specifier === "effect/testing" || specifier.startsWith("effect/testing/"),
+          ),
+        )
         .filter((file) => !isEffectTestLaneFile(file))
         .map(display),
     );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("Effect test lane files do not import Bun-only SQLite modules", () => {
+    const stateSourceRoot = join(packageRoot, "state", "src");
+    const stateProductionFiles = listTypeScriptFiles(stateSourceRoot).filter(
+      (file) => !isTestFile(file),
+    );
+    const stateRootBarrel = join(stateSourceRoot, "index.ts");
+    const sqliteBackedStateRoots = new Set([
+      join(stateSourceRoot, "app-log-store.ts"),
+      join(stateSourceRoot, "structured-session-state.ts"),
+    ]);
+    const sqliteBackedFileCache = new Map<string, boolean>();
+
+    const importsBunSqlite = (file: string, visiting = new Set<string>()): boolean => {
+      if (sqliteBackedStateRoots.has(file)) return true;
+      const cached = sqliteBackedFileCache.get(file);
+      if (cached !== undefined) return cached;
+      if (visiting.has(file)) return false;
+      visiting.add(file);
+
+      const imports = readStaticSourceImports(file);
+      const importsSqlite =
+        imports.includes("bun:sqlite") ||
+        imports.some((specifier) => {
+          const resolved = resolveStateSourceImport(file, specifier);
+          return (
+            resolved !== null &&
+            resolved !== stateRootBarrel &&
+            stateProductionFiles.includes(resolved) &&
+            importsBunSqlite(resolved, visiting)
+          );
+        });
+
+      visiting.delete(file);
+      sqliteBackedFileCache.set(file, importsSqlite);
+      return importsSqlite;
+    };
+
+    const sqliteBackedFiles = new Set(
+      stateProductionFiles.filter((file) => importsBunSqlite(file)),
+    );
+    const violations = [packageRoot, appSourceRoot].flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter(isEffectTestLaneFile)
+        .flatMap((file) => {
+          return readStaticSourceImports(file)
+            .flatMap((specifier) => {
+              if (specifier === "bun:sqlite") return [{ specifier, resolved: "bun:sqlite" }];
+              const resolved = resolveStateSourceImport(file, specifier);
+              return resolved !== null && sqliteBackedFiles.has(resolved)
+                ? [{ specifier, resolved: display(resolved) }]
+                : [];
+            })
+            .map(({ specifier, resolved }) => `${display(file)} -> ${specifier} -> ${resolved}`);
+        }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/pi-adapter keeps Effect runner tests in the Effect test lane", () => {
+    const violations = listTypeScriptFiles(join(packageRoot, "pi-adapter", "src"))
+      .filter(isTestFile)
+      .flatMap((file) => {
+        const imports = readImports(file);
+        const source = readSource(file);
+        const isEffectLane = isEffectTestLaneFile(file);
+
+        return [
+          ...(isEffectLane && imports.includes("bun:test") ? [`${display(file)} -> bun:test`] : []),
+          ...(imports.includes("./effect.test-support")
+            ? [`${display(file)} -> ./effect.test-support`]
+            : []),
+          ...Array.from(
+            source.matchAll(/\b(?:runTestEffect|runScopedTestEffect)\b/g),
+            (match) => `${display(file)} -> ${match[0]}`,
+          ),
+        ];
+      });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/sandbox keeps Effect runner tests in the Effect test lane", () => {
+    const violations = listTypeScriptFiles(join(packageRoot, "sandbox", "src"))
+      .filter(isTestFile)
+      .flatMap((file) => {
+        const imports = readImports(file);
+        const source = readSource(file);
+        const isEffectLane = isEffectTestLaneFile(file);
+
+        return [
+          ...(isEffectLane && imports.includes("bun:test") ? [`${display(file)} -> bun:test`] : []),
+          ...(imports.includes("./effect.test-support")
+            ? [`${display(file)} -> ./effect.test-support`]
+            : []),
+          ...Array.from(
+            source.matchAll(/\b(?:runTestEffect|runScopedTestEffect)\b/g),
+            (match) => `${display(file)} -> ${match[0]}`,
+          ),
+        ];
+      });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/core keeps Effect runner tests in the Effect test lane", () => {
+    const coreTestSupportFile = join(packageRoot, "core", "src", "effect.test-support.ts");
+    const violations = [
+      ...(existsSync(coreTestSupportFile) ? [`${display(coreTestSupportFile)} exists`] : []),
+      ...listTypeScriptFiles(join(packageRoot, "core", "src"))
+        .filter(isTestFile)
+        .flatMap((file) => {
+          const imports = readImports(file);
+          const source = readSource(file);
+          const isEffectLane = isEffectTestLaneFile(file);
+
+          return [
+            ...(isEffectLane && imports.includes("bun:test")
+              ? [`${display(file)} -> bun:test`]
+              : []),
+            ...(imports.includes("./effect.test-support")
+              ? [`${display(file)} -> ./effect.test-support`]
+              : []),
+            ...Array.from(
+              source.matchAll(/\b(?:runTestEffect|runScopedTestEffect|runTestEffectSync)\b/g),
+              (match) => `${display(file)} -> ${match[0]}`,
+            ),
+          ];
+        }),
+    ];
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/extensions keeps Effect runner tests in the Effect test lane", () => {
+    const extensionsTestSupportFile = join(
+      packageRoot,
+      "extensions",
+      "src",
+      "effect.test-support.ts",
+    );
+    const violations = [
+      ...(existsSync(extensionsTestSupportFile)
+        ? [`${display(extensionsTestSupportFile)} exists`]
+        : []),
+      ...listTypeScriptFiles(join(packageRoot, "extensions", "src"))
+        .filter(isTestFile)
+        .flatMap((file) => {
+          const imports = readImports(file);
+          const source = readSource(file);
+          const isEffectLane = isEffectTestLaneFile(file);
+
+          return [
+            ...(isEffectLane && imports.includes("bun:test")
+              ? [`${display(file)} -> bun:test`]
+              : []),
+            ...(imports.includes("./effect.test-support")
+              ? [`${display(file)} -> ./effect.test-support`]
+              : []),
+            ...Array.from(
+              source.matchAll(/\b(?:runTestEffect|runScopedTestEffect|runTestEffectSync)\b/g),
+              (match) => `${display(file)} -> ${match[0]}`,
+            ),
+          ];
+        }),
+    ];
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/runtime keeps Effect runner tests in the Effect test lane", () => {
+    const runtimeTestSupportFile = join(packageRoot, "runtime", "src", "effect.test-support.ts");
+    const violations = [
+      ...(existsSync(runtimeTestSupportFile) ? [`${display(runtimeTestSupportFile)} exists`] : []),
+      ...listTypeScriptFiles(join(packageRoot, "runtime", "src"))
+        .filter(isTestFile)
+        .flatMap((file) => {
+          const imports = readImports(file);
+          const source = readSource(file);
+          const isEffectLane = isEffectTestLaneFile(file);
+
+          return [
+            ...(isEffectLane && imports.includes("bun:test")
+              ? [`${display(file)} -> bun:test`]
+              : []),
+            ...(imports.includes("./effect.test-support")
+              ? [`${display(file)} -> ./effect.test-support`]
+              : []),
+            ...Array.from(
+              source.matchAll(/\b(?:runTestEffect|runScopedTestEffect|runTestEffectSync)\b/g),
+              (match) => `${display(file)} -> ${match[0]}`,
+            ),
+          ];
+        }),
+    ];
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/state keeps SQLite-backed Effect-returning tests in the Bun unit lane", () => {
+    const stateSourceRoot = join(packageRoot, "state", "src");
+    const stateProductionFiles = listTypeScriptFiles(stateSourceRoot).filter(
+      (file) => !isTestFile(file),
+    );
+    const stateRootBarrel = join(stateSourceRoot, "index.ts");
+    const sqliteBackedStateRoots = new Set([
+      join(stateSourceRoot, "app-log-store.ts"),
+      join(stateSourceRoot, "structured-session-state.ts"),
+    ]);
+    const sqliteBackedFileCache = new Map<string, boolean>();
+
+    const importsBunSqlite = (file: string, visiting = new Set<string>()): boolean => {
+      if (sqliteBackedStateRoots.has(file)) return true;
+      const cached = sqliteBackedFileCache.get(file);
+      if (cached !== undefined) return cached;
+      if (visiting.has(file)) return false;
+      visiting.add(file);
+
+      const imports = readStaticSourceImports(file);
+      const importsSqlite =
+        imports.includes("bun:sqlite") ||
+        imports.some((specifier) => {
+          const resolved = resolveStateSourceImport(file, specifier);
+          return (
+            resolved !== null &&
+            resolved !== stateRootBarrel &&
+            stateProductionFiles.includes(resolved) &&
+            importsBunSqlite(resolved, visiting)
+          );
+        });
+
+      visiting.delete(file);
+      sqliteBackedFileCache.set(file, importsSqlite);
+      return importsSqlite;
+    };
+
+    const importsSqliteBackedState = (file: string): boolean => {
+      const imports = readStaticSourceImports(file);
+      return (
+        imports.includes("bun:sqlite") ||
+        imports.some((specifier) => {
+          const resolved = resolveStateSourceImport(file, specifier);
+          return (
+            resolved !== null &&
+            resolved !== stateRootBarrel &&
+            stateProductionFiles.includes(resolved) &&
+            importsBunSqlite(resolved)
+          );
+        })
+      );
+    };
+
+    const violations = listTypeScriptFiles(stateSourceRoot)
+      .filter(isTestFile)
+      .flatMap((file) => {
+        const imports = readImports(file);
+        const isEffectLane = isEffectTestLaneFile(file);
+        const importsManualRunner = imports.includes("./effect.test-support");
+        const allowedFacadeAndBootstrapHarnessFiles = new Set([
+          join(packageRoot, "state", "src", "state-facade.test.ts"),
+        ]);
+        const source = readSource(file);
+        const usesServiceLayerTestApi =
+          imports.includes("effect/Layer") ||
+          imports.includes("effect/testing") ||
+          /\bEffect\.provide\s*\(/.test(source) ||
+          /\bLayer\.(?:succeed|effect|merge|mergeAll|provide|provideMerge)\b/.test(source);
+
+        return [
+          ...(isEffectLane && imports.includes("bun:test") ? [`${display(file)} -> bun:test`] : []),
+          ...(isEffectLane && imports.includes("./effect.test-support")
+            ? [`${display(file)} -> ./effect.test-support`]
+            : []),
+          ...(importsManualRunner && !importsSqliteBackedState(file)
+            ? [`${display(file)} -> ./effect.test-support without SQLite-backed state import`]
+            : []),
+          ...(!isEffectLane &&
+          usesServiceLayerTestApi &&
+          !importsSqliteBackedState(file) &&
+          !allowedFacadeAndBootstrapHarnessFiles.has(file)
+            ? [`${display(file)} -> Bun-lane Effect service/layer test without SQLite backing`]
+            : []),
+        ];
+      });
 
     expect(violations).toEqual([]);
   });
@@ -4344,57 +5732,75 @@ describe("package boundaries", () => {
     });
   });
 
+  it("Effect test lane-looking files use the exact .effect.test.ts suffix", () => {
+    const invalidEffectTestNames = [packageRoot, appSourceRoot]
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => isTestFile(file))
+      .map(display)
+      .filter((file) => /(?:\.effect\.|_effect\.)/.test(file))
+      .filter((file) => !file.endsWith(".effect.test.ts"))
+      .toSorted();
+
+    expect(invalidEffectTestNames).toEqual([]);
+  });
+
   it("Effect Schema compiler calls are hoisted in package production source", () => {
-    const compilerPattern =
-      /\bSchema\.(?:is|decode[A-Za-z]*|decodeUnknown[A-Za-z]*|encode[A-Za-z]*|encodeUnknown[A-Za-z]*)\s*\([^)]*\)\s*\(/;
-    const violations = sourceRoots.flatMap((root) =>
+    const schemaGateRoots = [...sourceRoots, appSourceRoot];
+    const violations = schemaGateRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
-        .filter((file) => compilerPattern.test(readSource(file)))
+        .filter((file) => readEffectSchemaCompilerConstructionReads(file).length > 0)
         .map(display),
     );
 
     expect(violations).toEqual([]);
   });
 
-  it("Effect Schema.asserts direct assertions stay out of package production source", () => {
-    const directAssertPattern = /\bSchema\.asserts\s*\(/;
-    const violations = sourceRoots.flatMap((root) =>
+  it("Effect Schema compiler calls do not bypass hoisting through import aliases", () => {
+    const schemaGateRoots = [...sourceRoots, appSourceRoot];
+    const violations = schemaGateRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
         .flatMap((file) => {
-          const source = readSource(file);
-          return [
-            ...(directAssertPattern.test(source) ? [`${display(file)} -> Schema.asserts`] : []),
-            ...readValueImportBindings(file, "effect/Schema")
-              .filter((binding) => binding.kind === "named" && binding.importedName === "asserts")
-              .map(
-                (binding) => `${display(file)} -> effect/Schema asserts as ${binding.localName}`,
-              ),
-          ];
+          return readEffectSchemaCompilerConstructionReads(file)
+            .filter((read) => !read.label.startsWith("Schema."))
+            .map((read) => `${display(file)} -> ${read.label}`);
         }),
     );
 
     expect(violations).toEqual([]);
   });
 
+  it("Effect Schema.asserts direct assertions stay out of package production source", () => {
+    const schemaGateRoots = [...sourceRoots, appSourceRoot];
+    const violations = schemaGateRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readEffectSchemaAssertReads(file).map((read) => `${display(file)} -> ${read}`),
+        ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("Effect Schema compiler construction stays outside package production function bodies", () => {
-    const compilerPattern =
-      /\b(?:Schema\.(?:is|decodeEffect|decodeUnknownEffect|decodeExit|decodeUnknownExit|decodeOption|decodeUnknownOption|decodePromise|decodeUnknownPromise|decodeSync|decodeUnknownSync|encodeEffect|encodeUnknownEffect|encodeExit|encodeUnknownExit|encodeOption|encodeUnknownOption|encodePromise|encodeUnknownPromise|encodeSync|encodeUnknownSync|decodeUnknownResult|decodeResult|encodeUnknownResult|encodeResult)|(?:decodeUnknownResult|decodeResult|encodeUnknownResult|encodeResult))\s*\(/g;
     const nearbyFunctionStartPattern =
       /\b(?:function\s+[A-Za-z_$][\w$]*\s*\(|(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?\([^)]*\)\s*=>)/;
-    const violations = sourceRoots.flatMap((root) =>
+    const schemaGateRoots = [...sourceRoots, appSourceRoot];
+    const violations = schemaGateRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
         .flatMap((file) => {
           const source = readSource(file);
-          return Array.from(source.matchAll(compilerPattern), (match) => {
-            const index = match.index ?? 0;
-            const nearbyPrefix = source.slice(Math.max(0, index - 500), index);
-            if (!nearbyFunctionStartPattern.test(nearbyPrefix)) return null;
-            const line = source.slice(0, index).split("\n").length;
-            return `${display(file)}:${line} -> ${match[0]}`;
-          }).filter((entry): entry is string => entry !== null);
+          return readEffectSchemaCompilerConstructionReads(file)
+            .map((read) => {
+              const nearbyPrefix = source.slice(Math.max(0, read.index - 500), read.index);
+              if (!nearbyFunctionStartPattern.test(nearbyPrefix)) return null;
+              const line = source.slice(0, read.index).split("\n").length;
+              return `${display(file)}:${line} -> ${read.label}`;
+            })
+            .filter((entry): entry is string => entry !== null);
         }),
     );
 
@@ -4404,7 +5810,8 @@ describe("package boundaries", () => {
   it("Effect execution-plan APIs stay unadopted in product packages", () => {
     const memberUsePattern = /\b(?:Effect|Stream)\.withExecutionPlan\s*\(/;
     const forbiddenNamedImports = new Set(["ExecutionPlan", "withExecutionPlan"]);
-    const violations = sourceRoots.flatMap((root) =>
+    const scannedRoots = [...sourceRoots, appSourceRoot, sharedSourceRoot];
+    const violations = scannedRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
         .flatMap((file) => {
@@ -4450,7 +5857,8 @@ describe("package boundaries", () => {
   });
 
   it("extracted package production code avoids eager Effect helper variants", () => {
-    const eagerHelperPattern = /\b(?:mapEager|catchEager|fnUntracedEager)\b/;
+    const eagerHelperPattern =
+      /\b(?:mapEager|mapErrorEager|mapBothEager|flatMapEager|catchEager|fnUntracedEager|matchEager|matchEffectEager)\b/;
     const violations = sourceRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
@@ -4461,24 +5869,215 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("Effect config env providers use explicit host env snapshots in package code", () => {
-    const zeroArgumentFromEnvPattern = /\bConfigProvider\.fromEnv\s*\(\s*\)/;
+  it("extracted package production code does not own Effect env provider reads", () => {
     const violations = sourceRoots.flatMap((root) =>
       listTypeScriptFiles(root)
         .filter((file) => !isTestFile(file))
-        .filter((file) => zeroArgumentFromEnvPattern.test(readSource(file)))
-        .map(display),
+        .flatMap((file) =>
+          readConfigProviderFromEnvReads(file).map(
+            (read) => `${display(file)} -> ${read.displayName}`,
+          ),
+        ),
     );
 
     expect(violations).toEqual([]);
   });
 
-  it("unsafe sync boundary decoders stay limited to core definitions, reexports, and tests", () => {
+  it("Effect config env provider reads stay in exact app host owners", () => {
+    const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readConfigProviderFromEnvReads(file).map(
+          (read) => `${display(file)} -> ${read.displayName}`,
+        ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(["src/bun/index.ts -> ConfigProvider.fromEnv"]);
+  });
+
+  it("Effect config env providers use explicit host env snapshots", () => {
+    const roots = [...sourceRoots, join(projectRoot, "src", "bun")];
+    const violations = roots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readConfigProviderFromEnvReads(file)
+            .filter((read) => read.zeroArgument)
+            .map((read) => `${display(file)} -> ${read.displayName}()`),
+        ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("packages, desktop, renderer, and shared contracts do not read ambient host env directly", () => {
+    const roots = [...sourceRoots, mainviewSourceRoot, sharedSourceRoot];
+    const violations = roots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readAmbientHostEnvReads(file).map((read) => `${display(file)} -> ${read}`),
+        ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("extracted package production code reads host time and random ids only through explicit host zones", () => {
+    const forbiddenCallNames = new Set([
+      "Date.now",
+      "DateTime.nowUnsafe",
+      "clock.currentTimeMillisUnsafe",
+      "clock.currentTimeNanosUnsafe",
+      "setTimeout",
+      "setInterval",
+      "Math.random",
+      "crypto.randomUUID",
+      "crypto.getRandomValues",
+      "crypto.subtle.digest",
+      "globalThis.crypto.randomUUID",
+      "globalThis.crypto.getRandomValues",
+      "globalThis.crypto.subtle.digest",
+      "Bun.CryptoHasher",
+      "Bun.hash",
+      "Bun.hash.adler32",
+      "Bun.hash.cityHash32",
+      "Bun.hash.cityHash64",
+      "Bun.hash.crc32",
+      "Bun.hash.murmur32v2",
+      "Bun.hash.murmur32v3",
+      "Bun.hash.rapidhash",
+      "Bun.hash.wyhash",
+      "Bun.hash.xxHash32",
+      "Bun.hash.xxHash64",
+      "fetch",
+      "globalThis.fetch",
+    ]);
+    const forbiddenConstructorNames = new Set(["Promise", "Bun.CryptoHasher"]);
+    const forbiddenHostCryptoImports = new Set(["crypto", "node:crypto"]);
+    const forbiddenHostCryptoAliasReads = new Set([
+      "crypto",
+      "crypto.getRandomValues",
+      "crypto.randomUUID",
+      "crypto.subtle",
+      "crypto.subtle.digest",
+      "globalThis.crypto",
+      "globalThis.crypto.getRandomValues",
+      "globalThis.crypto.randomUUID",
+      "globalThis.crypto.subtle",
+      "globalThis.crypto.subtle.digest",
+      "Bun",
+      "Bun.CryptoHasher",
+      "Bun.hash",
+    ]);
+    const forbiddenHostCryptoDestructureReads = new Map<string, Set<string>>([
+      ["crypto", new Set(["getRandomValues", "randomUUID", "subtle"])],
+      ["crypto.subtle", new Set(["digest"])],
+      ["globalThis.crypto", new Set(["getRandomValues", "randomUUID", "subtle"])],
+      ["globalThis.crypto.subtle", new Set(["digest"])],
+      ["Bun", new Set(["CryptoHasher", "hash"])],
+    ]);
+    const allowedViolations = new Map<string, string[]>([
+      ["packages/runtime/src/index.ts", ["new Promise"]],
+    ]);
+    const violations = sourceRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isVendoredSourcePath(file))
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) => {
+          const source = readSource(file);
+          const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+          const fileViolations: string[] = readImports(file)
+            .filter(
+              (specifier) =>
+                forbiddenHostCryptoImports.has(specifier) || specifier.startsWith("node:crypto/"),
+            )
+            .map((specifier) => `${display(file)} -> ${specifier} import`);
+          const visit = (node: ts.Node): void => {
+            if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
+              const name = expressionPath(node.initializer);
+              if (
+                name &&
+                (forbiddenCallNames.has(name) || forbiddenHostCryptoAliasReads.has(name))
+              ) {
+                fileViolations.push(`${display(file)} -> ${name} alias`);
+              }
+            }
+            if (
+              ts.isVariableDeclaration(node) &&
+              node.initializer &&
+              ts.isObjectBindingPattern(node.name)
+            ) {
+              const name = expressionPath(node.initializer);
+              const forbiddenMembers = name
+                ? forbiddenHostCryptoDestructureReads.get(name)
+                : undefined;
+              if (forbiddenMembers) {
+                for (const element of node.name.elements) {
+                  if (element.dotDotDotToken) {
+                    fileViolations.push(`${display(file)} -> ${name} destructuring`);
+                    continue;
+                  }
+                  const property = element.propertyName ?? element.name;
+                  if (ts.isIdentifier(property) && forbiddenMembers.has(property.text)) {
+                    fileViolations.push(
+                      `${display(file)} -> ${name}.${property.text} destructuring`,
+                    );
+                  }
+                }
+              }
+            }
+            if (ts.isCallExpression(node)) {
+              const name = expressionPath(node.expression);
+              if (name && forbiddenCallNames.has(name)) {
+                fileViolations.push(`${display(file)} -> ${name}`);
+              }
+            }
+            if (ts.isNewExpression(node)) {
+              const name = expressionPath(node.expression);
+              if (name && forbiddenConstructorNames.has(name)) {
+                fileViolations.push(`${display(file)} -> new ${name}`);
+              }
+              if (name === "Date" && node.arguments?.length === 0) {
+                fileViolations.push(`${display(file)} -> new Date()`);
+              }
+            }
+            ts.forEachChild(node, visit);
+          };
+          visit(sourceFile);
+          const allowed = allowedViolations.get(display(file)) ?? [];
+          return fileViolations.filter((violation) => {
+            const name = violation.slice(violation.indexOf(" -> ") + 4);
+            const index = allowed.indexOf(name);
+            if (index === -1) return true;
+            allowed.splice(index, 1);
+            return false;
+          });
+        }),
+    );
+
+    expect({ unusedAllowedViolations: Array.from(allowedViolations), violations }).toEqual({
+      unusedAllowedViolations: [["packages/runtime/src/index.ts", []]],
+      violations: [],
+    });
+  });
+
+  it("unsafe sync boundary decoders stay limited to core definitions, reexports, trusted bootstrap, and tests", () => {
     const allowedProductionFiles = new Set([
+      "packages/core/src/extension-contracts.ts",
+      "packages/core/src/generated-package-contracts.ts",
+      "packages/core/src/native-tool-contracts.ts",
       "packages/core/src/pi-adapter-contracts.ts",
+      "packages/core/src/prompt-execution-context.ts",
       "packages/core/src/runtime-contracts.ts",
       "packages/core/src/runtime-effect-requests.ts",
+      "packages/core/src/runtime-invalidation-contracts.ts",
+      "packages/core/src/runtime-source-edit-contracts.ts",
+      "packages/core/src/runtime-source-invalidation.ts",
+      "packages/core/src/runtime-submit.ts",
       "packages/core/src/workflow-task-agent-bridge-contracts.ts",
+      "src/bun/session-catalog.ts",
     ]);
     const unsafeDecoderPattern = /\bunsafeDecode[A-Za-z0-9_]*ForTestsAndBootstrap\b/;
     const roots = [...sourceRoots, appSourceRoot, join(projectRoot, "generated")].filter((root) =>
@@ -4491,6 +6090,23 @@ describe("package boundaries", () => {
         .filter((file) => unsafeDecoderPattern.test(readSource(file)))
         .map(display),
     );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("exported core sync boundary decoders use unsafe test-and-bootstrap naming", () => {
+    const syncDecoderDeclarationPattern =
+      /export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*Schema\.decodeUnknownSync\s*\(/g;
+    const violations = listTypeScriptFiles(join(packageRoot, "core", "src"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(syncDecoderDeclarationPattern), (match) => {
+          const name = match[1]!;
+          return /^unsafeDecode[A-Za-z0-9_]+SyncForTestsAndBootstrap$/.test(name)
+            ? []
+            : [`${display(file)} exports ${name}`];
+        }).flat(),
+      );
 
     expect(violations).toEqual([]);
   });
@@ -4516,7 +6132,13 @@ describe("package boundaries", () => {
       "negative tests",
       "following names are not",
     ];
-    const violations = listMarkdownFiles(packageArchitectureSpecRoot).flatMap((file) => {
+    const checkedFiles = [
+      ...listMarkdownFiles(packageArchitectureSpecRoot),
+      join(projectRoot, "docs", "prd.md"),
+      join(projectRoot, "docs", "progress.md"),
+      join(projectRoot, "docs", "features.ts"),
+    ];
+    const violations = checkedFiles.flatMap((file) => {
       const lines = readSource(file).split("\n");
       let inRejectedPackageInventory = false;
       let pendingRejectedPackageInventory = false;
@@ -4584,7 +6206,8 @@ describe("package boundaries", () => {
       },
       {
         pattern: /\bok\?:\s*boolean\b|\bdetails\.ok\b/,
-        reason: "Command result envelopes use details.status, not legacy ok booleans",
+        reason:
+          "Command result envelopes use details.status; root-level ok booleans are not part of the public contract",
       },
       {
         pattern: /\breadModels\.invalidate\b/,
@@ -4628,6 +6251,12 @@ describe("package boundaries", () => {
         reason: "Extension readiness failures use dependency-not-ready",
       },
       {
+        pattern:
+          /\bRunExtensionDependencyAction(?:Input|Result)?Schema\b|\bRunExtensionDependencyAction(?:Input|Result)\b|\bwaiting_for_approval\b/,
+        reason:
+          "Dependency install/update has no public runtime facade without a specified runtime-owned lifecycle",
+      },
+      {
         pattern: /const\s+session\s*=\s*await\s+pi\.sessions\.create|pi\.sessions\.create\(/,
         reason:
           "createPiAdapterFacade must not be documented as a public product session-control facade",
@@ -4638,17 +6267,21 @@ describe("package boundaries", () => {
       },
       {
         pattern: /\bcreateExtensionsFacade\b/,
-        reason:
-          "Extensions currently exposes no non-Effect facade; future facades need specs and boundary tests",
+        reason: "Extensions exposes no non-Effect facade without specs and boundary tests",
       },
       {
         pattern: /\bcreateSandboxDiagnosticsFacade\b/,
-        reason:
-          "Sandbox currently exposes no non-Effect diagnostics facade; future facades need specs and boundary tests",
+        reason: "Sandbox exposes no non-Effect diagnostics facade without specs and boundary tests",
       },
       {
         pattern: /\bartifact\.operation\b/,
-        reason: "Signed svvyx transports currently support runtime_effect.request only",
+        reason: "Signed svvyx transports support runtime_effect.request only",
+      },
+      {
+        pattern:
+          /state-owned artifact-store file materialization|State owns artifact file-store implementation|file-store persistence behind that port|artifact state mutations and file writes|artifact file and metadata mutations|Runtime\/state ports own source\/log\/diagnostic artifact persistence|retained large stdout\/stderr streams are product-state artifacts|refreshes `bytes` and `sha256` from disk|stats and hashes the artifact file|Artifact temporary staging directories|Artifact durable root metadata/,
+        reason:
+          "Artifact byte materialization/deletion/recovery is runtime-owned; @svvy/state owns durable artifact metadata and lifecycle facts only",
       },
       {
         pattern:
@@ -4686,6 +6319,84 @@ describe("package boundaries", () => {
         reason:
           "SubscriptionRef is adopted only for named latest-value snapshots and must not be grouped with unadopted product frameworks",
       },
+      {
+        pattern:
+          /\bRawHostHttpClientLayer\b|\bAppHttpClientLayer\b|\bcreateNetworkPolicyHttpClientLayer\b/,
+        reason:
+          "The product architecture excludes an Effect HTTP client layer unless a spec adds a named adoption record",
+      },
+      {
+        pattern: /\bmodel(Id)?: "gpt-5\.4"\b/,
+        reason:
+          "Task-agent examples must use pi-normalized provider/model metadata placeholders instead of hard-coded model ids",
+      },
+      {
+        pattern: /from\s+["@']@effect\/vitest["@'][^;]*(?:\beffect\b)/,
+        reason:
+          "@effect/vitest tests access it.effect through the installed it helper, not a named effect import",
+      },
+      {
+        pattern: /until the installed implementation|fixed or reverified/,
+        reason:
+          "Effect package specs must describe the current adopted contract, not version-workaround staging language",
+      },
+      {
+        pattern:
+          /docs\/references\/effect-smol\/migration\/(?:v3-to-v4|services|runtime|forking|generators|layer-memoization|scope|error-handling|cause|fiberref|schema)\.md/,
+        reason:
+          "Effect migration reference files are orientation material, not product-spec implementation references",
+      },
+      {
+        pattern: /RunTaskAgentInput\["promptSource"\]/,
+        reason:
+          "Task-agent bridge source examples must use generated source DTO inputs, not decoded core runtime payload types",
+      },
+      {
+        pattern:
+          /\brunTaskAgent\b[^.\n]*(?:is|as|becomes|remains|exports?|exposes?)[^.\n]*(?:public bootstrap export|facade group|general public facade)|(?:public bootstrap export|facade group|general public facade)[^.\n]*(?:for|named|called)\s+`?runTaskAgent`?/,
+        reason:
+          "runTaskAgent is a narrow runtime-owned Smithers task-agent bridge path, not a public bootstrap export or facade group",
+      },
+      {
+        pattern:
+          /desktop subscribes to runtime streams|renderer subscribes directly to runtime events|\b(?:exposes?|consumes?|subscribes? to)\s+bare runtime streams\b/,
+        reason:
+          "Desktop consumes app/bootstrap-prepared renderer-safe notifications and read-model refetches, not raw runtime streams",
+      },
+      {
+        pattern:
+          /\b(?:treats?|uses?|exposes?|models?)\s+generated packages as runtime facades\b|\b(?:exposes?|provides?|injects?)\s+(?:execute_typescript runtime facades|global svvy client|broad injected api helpers)\b/,
+        reason:
+          "Generated packages are read-only authoring outputs; execute_typescript exposes only actor-local builtin extension facades",
+      },
+      {
+        pattern:
+          /\b(?:creates?|owns?|constructs?|maintains|uses)\s+(?:a\s+)?(?:workspace|separate)\s+ManagedRuntime\b|\b(?:creates?|owns?|constructs?|maintains|uses)\s+per-request layer graphs?\b/,
+        reason: "svvy uses one app-owned ManagedRuntime with keyed runtime-owned workspace scopes",
+      },
+      {
+        pattern:
+          /state-owned implementations\/layers for[^.\n]*(?:ProviderAuthPort|SecretStorePort)|layerProviderAuthPort|layerSecretStorePort|\|\s*`secretStore`\s*\|\s*`SecretStorePort`\s*\|\s*`state\.spec\.md`/,
+        reason:
+          "ProviderAuthPort and SecretStorePort are host/live core ports; @svvy/state owns durable provider status, secret readiness, and UI-intent commands",
+      },
+      {
+        pattern:
+          /Adopted stream constructors[^.]*NodeStream\.fromReadable|Adopted stream constructors[^.]*BunStream\.fromReadableStream/,
+        reason: "Node/Bun stream adapters are outside the adopted stream constructor manifest",
+      },
+      {
+        pattern:
+          /\b(?:TODO|until|for now|temporary|temporarily)[^.\n]*(?:inline that schema or reject|either inline that schema or reject)/,
+        reason:
+          "JSON Schema $defs handling rejects unsupported bridges until a named tested inliner is adopted",
+      },
+      {
+        pattern:
+          /via `SchemaGetter\.transform|via `SchemaGetter\.transformOptional|SchemaGetter.*rather than the v3|SchemaTransformation` patterns from/,
+        reason:
+          "SchemaGetter and SchemaTransformation require an Effect manifest row and focused tests before production use",
+      },
     ];
     const violations = listMarkdownFiles(packageArchitectureSpecRoot).flatMap((file) => {
       const source = readSource(file);
@@ -4695,6 +6406,636 @@ describe("package boundaries", () => {
     });
 
     expect(violations).toEqual([]);
+  });
+
+  it("Effect spec treats t3code package-level runtimes as app-edge examples only", () => {
+    const source = readSource(join(packageArchitectureSpecRoot, "effect-v4.spec.md"));
+
+    expect(source).toContain(
+      "t3code modules that create package-level `ManagedRuntime` values are app-edge examples only",
+    );
+    expect(source).toMatch(
+      /svvy\s+does not copy that topology into public `@svvy\/\*` package roots, reusable package modules, renderer\s+bridges, generated packages, or tests/,
+    );
+  });
+
+  it("package specs keep pi session reference ownership state-backed and adapter-validated", () => {
+    const coreSource = readSource(join(packageArchitectureSpecRoot, "core.spec.md"));
+    const piAdapterSource = readSource(join(packageArchitectureSpecRoot, "pi-adapter.spec.md"));
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const stateSource = readSource(join(packageArchitectureSpecRoot, "state.spec.md"));
+
+    expect(coreSource).toContain("`PiSessionReferencePort`, and the other core-owned state ports");
+    expect(coreSource).toContain(
+      "app/bootstrap provides host/live\nports such as `SecretStorePort`, `ProviderAuthPort`, and `PiRuntimePathsPort`",
+    );
+    expect(piAdapterSource).toContain(
+      "Runtime\nsurface lifecycle methods call `PiAdapter.sessions.open(...)` and map `PiAdapterError`; they do not\n" +
+        "duplicate persisted-reference validation",
+    );
+    expect(runtimeSource).toContain(
+      "pi session reference lookup and validation happen inside `@svvy/pi-adapter`",
+    );
+    expect(stateSource).toContain("`pi_session_reference`, keyed by `surface_pi_session_id`");
+    expect(stateSource).toContain("reference fingerprint");
+  });
+
+  it("package specs assign artifact bytes to runtime and artifact metadata to state", () => {
+    const packageSource = readSource(
+      join(packageArchitectureSpecRoot, "package-architecture.spec.md"),
+    );
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const stateSource = readSource(join(packageArchitectureSpecRoot, "state.spec.md"));
+    const extensionSource = readSource(join(packageArchitectureSpecRoot, "extensions.spec.md"));
+
+    expect(packageSource).toContain(
+      "`@svvy/runtime` materializes, deletes, and recovers artifact bytes",
+    );
+    expect(runtimeSource).toContain("| Artifact file materialization lane");
+    expect(runtimeSource).toContain(
+      "RuntimeArtifactStatePort` records committed artifact metadata only",
+    );
+    expect(stateSource).toContain("Artifact durable metadata");
+    expect(stateSource).toMatch(/file-store\s+helpers do not/);
+    expect(extensionSource).toContain(
+      "extensions must not receive a raw file-store port, artifact state port",
+    );
+  });
+
+  it("state spec defines two-store secret write ordering and recovery", () => {
+    const source = readSource(join(packageArchitectureSpecRoot, "state.spec.md"));
+
+    expect(source).toContain("Provider credentials and extension secrets use a two-store protocol");
+    expect(source).toContain(
+      "Commit the SQLite reference/status row in one state transaction after the secure-store write\n" +
+        "   succeeds",
+    );
+    expect(source).toContain("record or schedule secret\n   orphan cleanup");
+    expect(source).toContain(
+      "write the new secret first, commit the new SQLite reference/revision second",
+    );
+    expect(source).toContain("Secret writes are idempotent by command id / client submission key");
+  });
+
+  it("Effect package architecture progress opening does not mark local placeholders as complete", () => {
+    const source = readSource(join(projectRoot, "docs", "progress.md"));
+    const sectionStart = source.indexOf("## 0A. Effect Package Architecture");
+    const statePackageStart = source.indexOf("  - [ ] `@svvy/state` exposes", sectionStart);
+
+    expect(sectionStart).toBeGreaterThanOrEqual(0);
+    expect(statePackageStart).toBeGreaterThan(sectionStart);
+
+    const opening = source.slice(sectionStart, statePackageStart);
+    expect(opening).not.toMatch(/\[x\][\s\S]*?Commit\(s\):\s*pending/);
+    expect(opening).not.toContain("pending local changes");
+  });
+
+  it("Effect package architecture package-boundary progress does not mark local placeholders as complete", () => {
+    const source = readSource(join(projectRoot, "docs", "progress.md"));
+    const sectionStart = source.indexOf("  - [ ] `@svvy/state` exposes");
+    const sectionEnd = source.indexOf(
+      "- [ ] Define core-owned runtime submission contracts",
+      sectionStart,
+    );
+
+    expect(sectionStart).toBeGreaterThanOrEqual(0);
+    expect(sectionEnd).toBeGreaterThan(sectionStart);
+
+    const packageBoundaryProgress = source.slice(sectionStart, sectionEnd);
+    expect(packageBoundaryProgress).not.toMatch(/\[x\][\s\S]*?Commit\(s\):\s*pending/);
+    expect(packageBoundaryProgress).not.toContain("pending local changes");
+  });
+
+  it("Effect package architecture progress does not contain checked pending placeholders", () => {
+    const source = readSource(join(projectRoot, "docs", "progress.md"));
+    const sectionStart = source.indexOf("## 0A. Effect Package Architecture");
+    const sectionEnd = source.indexOf("## 0. Source Invalidation", sectionStart);
+
+    expect(sectionStart).toBeGreaterThanOrEqual(0);
+    expect(sectionEnd).toBeGreaterThan(sectionStart);
+
+    const effectPackageArchitectureProgress = source.slice(sectionStart, sectionEnd);
+    expect(effectPackageArchitectureProgress).not.toMatch(/\[x\][\s\S]*?Commit\(s\):\s*pending/);
+    expect(effectPackageArchitectureProgress).not.toContain("pending local changes");
+  });
+
+  it("progress tracker does not mark pending local placeholders as complete", () => {
+    const source = readSource(join(projectRoot, "docs", "progress.md"));
+    const bodyStart = source.indexOf("## Current Baseline");
+
+    expect(bodyStart).toBeGreaterThanOrEqual(0);
+
+    const body = source.slice(bodyStart);
+    expect(body).not.toMatch(/\[x\][\s\S]*?Commit\(s\):[^\n]*pending/);
+    expect(body).not.toContain("pending local changes");
+    expect(body).not.toContain("Commit(s): pending");
+  });
+
+  it("completed progress tracker items name landing commit hashes", () => {
+    const source = readSource(join(projectRoot, "docs", "progress.md"));
+    const itemBlocks = source
+      .split(/\n(?=- \[[ x]\] )/g)
+      .filter((block) => block.startsWith("- [x]"));
+    const commitHashPattern = /\b[0-9a-f]{7,40}\b/i;
+    const placeholderPattern = /Commit\(s\):[^\n]*(?:pending|todo|tbd|hash|commit)\b/i;
+    const violations = itemBlocks
+      .filter(
+        (block) =>
+          !block.includes("Commit(s):") ||
+          !commitHashPattern.test(block) ||
+          placeholderPattern.test(block),
+      )
+      .map((block) => block.split("\n")[0]);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("runtime spec names concrete runtime-owned source invalidation services", () => {
+    const source = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const requiredServiceNames = [
+      "RuntimeQueueWakeService",
+      "RuntimeRequestInputWaitService",
+      "RuntimeApprovalWaitService",
+      "RuntimeSurfaceQueueDispatcherService",
+      "RuntimePromptDefaultsService",
+      "RuntimePromptExecutionService",
+      "RuntimeSurfaceRuntimeService",
+      "RuntimeSourceInvalidationService",
+      "RuntimeSourceInvalidationScanPort",
+      "RuntimeGeneratedPackageRefreshService",
+    ];
+
+    for (const serviceName of requiredServiceNames) {
+      expect(source).toContain(serviceName);
+    }
+
+    expect(source).toMatch(/Any in-memory Effect\s+`Queue` is only a process-local wake hint/);
+    expect(source).toContain("Approval state is DB/product-state-backed");
+    expect(source).toContain(
+      "reads file-backed prompt/instruction assets only through `@svvy/extensions`",
+    );
+    expect(source).toContain("type RuntimeSurfaceRuntimeService = {");
+    expect(source).toContain("runPiTurn(input: RunPiTurnInput)");
+    expect(source).toContain("type RuntimePromptExecutionInput = {");
+    expect(source).toContain("claimedMessage: RuntimeSurfaceMessageRecord;");
+    expect(source).toContain("piTurnInput: RunPiTurnInput;");
+    expect(source).toContain("type RuntimePromptExecutionResult = {");
+    expect(source).toContain("The result is a receipt only.");
+    expect(source).toContain("The dependency order is strict.");
+    expect(source).toContain("App/bootstrap provides");
+    expect(source).toContain(
+      "primitive filesystem/path/crypto, packaged-root, and watcher-handle capabilities only",
+    );
+    expect(source).toContain("semantic source invalidation service");
+    expect(source).toContain("generated-package refresh service");
+    expect(source).toContain("workspace-link repair host-port primitives");
+    expect(source).toContain(
+      "RuntimeGeneratedPackageRefreshService` owns app-global generated-package refresh execution",
+    );
+    expect(source).toContain("Generated-package workspace-link repair is a package-private lane");
+    expect(source).toContain("RuntimeExecutionPlanExecutor");
+    expect(source).toContain("Accepted-tool code must use the real runtime event bus");
+    expect(source).toContain("it must not install a\nno-op event bus");
+    expect(source).toContain("The only successful model-facing\noperation output is `toolResult`.");
+  });
+
+  it("workflow library specs keep generated-package build output separate from workspace-link repair", () => {
+    const specSources = [
+      join(productSpecRoot, "workflow-library.spec.md"),
+      join(packageArchitectureSpecRoot, "generated-packages.spec.md"),
+      join(packageArchitectureSpecRoot, "runtime.spec.md"),
+    ].map((file) => [display(file), readSource(file)] as const);
+
+    const forbiddenPhrases = [
+      "immutable workspace-link plans, and generated manifest evidence",
+      "GeneratedPackageBuildPlanResult contains workspace-link repair plans",
+      "linkGeneratedWorkflowsPackageIntoWorkspaces",
+      "ensureWorkflowsPackageLinks",
+      "workflowLinkedWorkspaceCount",
+      "linkedWorkspaces",
+    ];
+
+    const violations = specSources.flatMap(([file, source]) =>
+      forbiddenPhrases
+        .filter((phrase) => source.includes(phrase))
+        .map((phrase) => `${file} -> ${phrase}`),
+    );
+
+    expect(violations).toEqual([]);
+
+    const workflowLibrarySpec = readSource(join(productSpecRoot, "workflow-library.spec.md"));
+    expect(workflowLibrarySpec).toContain("this build result contains no workspace-link plans");
+    expect(workflowLibrarySpec).toContain(
+      "planWorkspaceLink(...)` results and applying those plans through runtime-owned link repair",
+    );
+  });
+
+  it("runtime and core specs define the narrow prompt-control and prompt-context public seams", () => {
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const coreSource = readSource(join(packageArchitectureSpecRoot, "core.spec.md"));
+    const effectSource = readSource(join(packageArchitectureSpecRoot, "effect-v4.spec.md"));
+    const packageArchitectureSource = readSource(
+      join(packageArchitectureSpecRoot, "package-architecture.spec.md"),
+    );
+
+    expect(runtimeSource).toContain(
+      "`RuntimeLayerPromptControlHostPort` is exported only from `@svvy/runtime/bootstrap`",
+    );
+    expect(runtimeSource).toContain("RuntimeLayerPromptControlHostPortService");
+    expect(runtimeSource).toContain("cancelActivePrompt(input: {");
+    expect(runtimeSource).toContain("}): Effect.Effect<void, RuntimeContractError>;");
+    expect(runtimeSource).toContain("| RuntimeLayerPromptControlHostPort");
+    expect(runtimeSource).toContain(
+      "App/bootstrap provides `RuntimeLayerSurfaceQueueWakePort` as a primitive wake adapter",
+    );
+    expect(runtimeSource).toContain(
+      "`message-submitted` is emitted only after a committed prompt-bearing surface queue row",
+    );
+    expect(runtimeSource).toContain("type RuntimeSurfaceQueueWakeReason =");
+    expect(runtimeSource).toContain('| "message-submitted"');
+    expect(runtimeSource).toContain('| "request-input-answer-queued"');
+    expect(runtimeSource).toContain('| "queue-steered"');
+    expect(runtimeSource).toContain('| "runtime-queue-inserted"');
+    expect(runtimeSource).toContain("type RuntimeLayerSurfaceQueueWakePortService = {");
+    expect(runtimeSource).toContain("wakeSurfaceQueue(input: {");
+    expect(runtimeSource).toContain("target: PromptTarget;");
+    expect(runtimeSource).toContain("reason: RuntimeSurfaceQueueWakeReason;");
+    expect(runtimeSource).toContain("}): Effect.Effect<void, RuntimeContractError>;");
+    expect(runtimeSource).toContain(
+      "No other public bootstrap method may wake, drain, claim, materialize, inspect, or reorder surface",
+    );
+    expect(runtimeSource).toContain(
+      "It exposes package-private `acceptWakeHint(...)` and\n  `drain(...)` effects.",
+    );
+    expect(runtimeSource).toContain(
+      "through `acceptWakeHint(...)` and `drain(...)`; wake scheduling remains owned by",
+    );
+    expect(runtimeSource).not.toContain(
+      "`drainSurfaceQueue(...)` and `drainNextQueuedSurfaceMessage(...)`",
+    );
+    expect(runtimeSource).toContain(
+      "The only public\npackage surface for the runtime-owned constructor and live handle type is the narrow\n`@svvy/runtime/prompt-execution-context` subpath.",
+    );
+    expect(runtimeSource).toContain("type PromptExecutionContext = {\n  workspaceSessionId:");
+    expect(runtimeSource).not.toContain(
+      "type PromptExecutionContext = {\n  workspaceId: WorkspaceId;",
+    );
+    expect(runtimeSource).not.toContain(
+      "The only allowed surface queue wake host shape is a primitive command",
+    );
+
+    expect(coreSource).toContain(
+      "The only allowed public runtime surface for the narrow\nconstructor/live-handle API is `@svvy/runtime/prompt-execution-context`",
+    );
+    expect(coreSource).not.toContain("or any public runtime subpath");
+
+    expect(effectSource).toContain(
+      "The runtime tags in this list are allowed on the public `@svvy/runtime/bootstrap` subpath only as",
+    );
+    expect(effectSource).toContain(
+      "`RuntimeLayerSurfaceQueueWakePort` is a public bootstrap composition tag",
+    );
+
+    expect(packageArchitectureSource).toContain("createRuntimePromptControlHostLayer");
+    expect(packageArchitectureSource).toContain("RuntimeLayerPromptControlHostPort");
+    expect(packageArchitectureSource).toContain("RuntimePromptControlHostLayer");
+    expect(packageArchitectureSource).toContain(
+      "resolves any renderer-local placement such as `panelId` through authoritative state-backed",
+    );
+    expect(packageArchitectureSource).toContain(
+      "Desktop does not expose or own runtime\n  event subscription calls.",
+    );
+  });
+
+  it("runtime bootstrap public subpath exports stay explicitly capped", () => {
+    const bootstrapSymbols = expectedPublicSubpathSymbols.get("@svvy/runtime/bootstrap") ?? [];
+    const actualBootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
+    ];
+    const specApproved = [...runtimeBootstrapSpecApprovedSymbols].toSorted();
+    const runtimeSpecSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+
+    expect(bootstrapSymbols.toSorted()).toEqual(specApproved);
+    expect(actualBootstrapSymbols.toSorted()).toEqual(specApproved);
+    expect(specApproved).toContain("RuntimeLayerPromptControlHostPort");
+    expect(specApproved).toContain("RuntimeLayerSurfaceQueueWakePort");
+    expect(specApproved).toContain("RuntimeGeneratedPackageWorkspaceLinkFileHost");
+    expect(specApproved).toContain("RuntimeSourceInvalidationHost");
+    expect(specApproved).toContain("RuntimeSourceWatchInput");
+    expect(bootstrapSymbols).not.toContain("runAcceptedLoadExtensionToolCallAtRuntimeBoundary");
+    expect(bootstrapSymbols).not.toContain("runAcceptedRequestUserInputToolCallAtRuntimeBoundary");
+    expect(bootstrapSymbols).not.toContain("createSurfaceQueueDispatcher");
+    expect(bootstrapSymbols).not.toContain("createRuntimeSurfaceQueueDispatcher");
+    expect(bootstrapSymbols).not.toContain("SurfaceQueueDispatcher");
+    expect(bootstrapSymbols).not.toContain("RuntimeSurfaceQueueDispatcherService");
+    expect(bootstrapSymbols).not.toContain("wakeRuntimeSurfaceQueue");
+    expect(bootstrapSymbols).not.toContain("createSourceInvalidationCoordinator");
+    expect(bootstrapSymbols).not.toContain("reactToRuntimeSourceInvalidationEvent");
+    expect(bootstrapSymbols).not.toContain("runTaskAgent");
+    expect(bootstrapSymbols).not.toContain("WorkflowTaskAgentBridge");
+    expect(actualBootstrapSymbols).not.toContain("RuntimeGeneratedContextRefreshService");
+    expect(actualBootstrapSymbols).not.toContain("RuntimeGeneratedPackageRefreshService");
+    expect(actualBootstrapSymbols).not.toContain("RuntimeSourceInvalidationService");
+    expect(actualBootstrapSymbols).not.toContain("createSurfaceQueueDispatcher");
+    expect(actualBootstrapSymbols).not.toContain("createRuntimeSurfaceQueueDispatcher");
+    expect(actualBootstrapSymbols).not.toContain("SurfaceQueueDispatcher");
+    expect(actualBootstrapSymbols).not.toContain("RuntimeSurfaceQueueDispatcherService");
+    expect(actualBootstrapSymbols).not.toContain("wakeRuntimeSurfaceQueue");
+    expect(runtimeSpecSource).toContain(
+      "App/bootstrap provides `RuntimeLayerSurfaceQueueWakePort` as a primitive wake adapter",
+    );
+    expect(runtimeSpecSource.replace(/\s+/g, " ")).toContain(
+      "accepted-tool operation helpers, source coordinators, queue dispatchers, generated-package repair executors, event-bus internals, wait registries, runtime scope services, `RuntimeWorkspaceScopeService`, or `layerRuntimeWorkspaceScopeService`",
+    );
+  });
+
+  it("workflow task-agent bridge server stays app-bootstrap local and command-scoped", () => {
+    const actualImports = listTypeScriptFiles(appSourceRoot)
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter((specifier) => specifier.includes("task-agent-bridge-server"))
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(actualImports).toEqual([
+      "src/bun/session-catalog.ts -> ./smithers-runtime/task-agent-bridge-server",
+    ]);
+
+    const serverSource = readSource(
+      join(projectRoot, "src", "bun", "smithers-runtime", "task-agent-bridge-server.ts"),
+    );
+    expect(serverSource).toContain('url.pathname !== "/runTaskAgent"');
+    expect(serverSource).toContain("authorization");
+    expect(serverSource).not.toMatch(/export\s+(?:class|const|function)\s+WorkflowTaskAgentBridge/);
+  });
+
+  it("workflow task-agent bridge env vars stay on generated client and command injection edges", () => {
+    const allowedProduction = [
+      "packages/extensions/src/generated-workflows-package.ts",
+      "src/bun/smithers-runtime/task-agent-bridge-server.ts",
+      "src/bun/smithers-runtime/workflow-library.ts",
+      "src/bun/svvy-direct-tools.ts",
+    ].toSorted();
+
+    const actual = [appSourceRoot, ...sourceRoots, join(projectRoot, "generated")]
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => !isTestFile(file))
+      .filter((file) => /\bSVVY_WORKFLOW_AGENT_[A-Z0-9_]+\b/.test(readSource(file)))
+      .map(display)
+      .toSorted();
+
+    expect(actual).toEqual(allowedProduction);
+  });
+
+  it("runtime accepted native-tool execution service stays package-private", () => {
+    const forbidden = new Set([
+      "RuntimeAcceptedNativeToolExecution",
+      "RuntimeAcceptedNativeToolExecutionService",
+      "layerRuntimeAcceptedNativeToolExecution",
+    ]);
+    const runtimeRootSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "index.ts"))),
+    ];
+    const runtimeBootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
+    ];
+    const consumerRoots = [
+      join(projectRoot, "src", "bun"),
+      join(packageRoot, "desktop", "src"),
+      join(packageRoot, "state", "src"),
+      join(packageRoot, "extensions", "src"),
+      join(packageRoot, "pi-adapter", "src"),
+      join(packageRoot, "sandbox", "src"),
+    ];
+    const consumerViolations = consumerRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          [
+            ...readNamedImportNames(file, "@svvy/runtime"),
+            ...readNamedImportNames(file, "@svvy/runtime/bootstrap"),
+          ]
+            .filter((name) => forbidden.has(name))
+            .map((name) => `${display(file)} imports ${name}`),
+        ),
+    );
+
+    expect(runtimeRootSymbols.filter((symbol) => forbidden.has(symbol))).toEqual([]);
+    expect(runtimeBootstrapSymbols.filter((symbol) => forbidden.has(symbol))).toEqual([]);
+    expect(consumerViolations).toEqual([]);
+    const acceptedToolAdapterSymbols = [
+      ...new Set(
+        readPublicExportedNames(
+          join(packageRoot, "runtime", "src", "accepted-native-tool-execution.ts"),
+        ),
+      ),
+    ];
+    expect(acceptedToolAdapterSymbols.filter((symbol) => forbidden.has(symbol))).toEqual([]);
+
+    const runtimeRootSource = readSource(join(packageRoot, "runtime", "src", "index.ts"));
+    const serviceSource = readSource(
+      join(packageRoot, "runtime", "src", "accepted-native-tool-execution-service.ts"),
+    );
+    expect(runtimeRootSource).not.toMatch(
+      /export\s+const\s+layer:\s+Layer\.Layer<[\s\S]*RuntimeAcceptedNativeToolExecution[\s\S]*RuntimeLayerRequirements/,
+    );
+    expect(serviceSource).toContain("acquireDirectToolLaunch(");
+    expect(serviceSource).toContain(
+      '"@svvy/runtime/acceptedNativeToolExecution.acquireDirectToolLaunch"',
+    );
+    expect(serviceSource).toContain("buildRuntimeDirectToolLaunchFacts(input)");
+    expect(serviceSource).toContain(
+      "Effect.provideService(RuntimeLaunchPolicyService, launchPolicy)",
+    );
+    expect(serviceSource).toContain('from "./runtime-direct-tool-launch-policy"');
+
+    const directServiceImportConsumers = [
+      appSourceRoot,
+      ...sourceRoots.filter((root) => root !== join(packageRoot, "runtime", "src")),
+    ]
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier.includes("accepted-native-tool-execution-service"))
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+    expect(directServiceImportConsumers).toEqual([]);
+  });
+
+  it("accepted native-tool bootstrap helper symbols stay out of the runtime bootstrap surface", () => {
+    const acceptedHelperSymbols = [
+      "runAcceptedLoadExtensionToolCallAtRuntimeBoundary",
+      "runAcceptedRequestUserInputToolCallAtRuntimeBoundary",
+      "runAcceptedThreadStartToolCallAtRuntimeBoundary",
+    ];
+    const bootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
+    ];
+
+    expect(
+      acceptedHelperSymbols.filter((symbol) => bootstrapSymbols.includes(symbol)).toSorted(),
+    ).toEqual([]);
+  });
+
+  it("pi callback runner usage stays isolated to pi-adapter turn, native-tools, and session bridges", () => {
+    const matches = implementationPackageRoots
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => !file.endsWith("package-boundaries.test.ts"))
+      .flatMap((file) =>
+        [...readSource(file).matchAll(/\b(?:runToolEffect|RunPiToolEffect)\b/g)].map(() =>
+          display(file),
+        ),
+      );
+
+    expect([...new Set(matches)].toSorted()).toEqual([
+      "packages/pi-adapter/src/native-tools.ts",
+      "packages/pi-adapter/src/pi-adapter.ts",
+      "packages/pi-adapter/src/session.ts",
+    ]);
+  });
+
+  it("runtime generic adapter failures do not masquerade as unsupported operations", () => {
+    const files = [
+      join(packageRoot, "runtime", "src", "runtime-layer.ts"),
+      join(packageRoot, "runtime", "src", "runtime-generated-context-refresh-service.ts"),
+      join(projectRoot, "src", "bun", "runtime-service-adapter.ts"),
+    ];
+    const violations = files.flatMap((file) => {
+      const source = readSource(file);
+      const helperBodies = Array.from(
+        source.matchAll(
+          /function\s+(?:runtimeAdapterError|runtimeGeneratedContextRefreshHostError)\b[\s\S]*?return new RuntimeContractError\(\{([\s\S]*?)\}\);/g,
+        ),
+        (match) => match[1] ?? "",
+      );
+      return helperBodies
+        .filter((body) => body.includes('reason: "unsupported-operation"'))
+        .map(() => display(file));
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("Effect runtime spec exposes state command notifications through runtime, not app callbacks", () => {
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const appSource = readSource(join(packageArchitectureSpecRoot, "package-architecture.spec.md"));
+
+    expect(runtimeSource).toContain("| Runtime");
+    expect(runtimeSource).toContain("| RuntimeStartupReadiness");
+    expect(runtimeSource).toContain("| RuntimeShutdownPreparation");
+    expect(runtimeSource).toContain("| StateCommandPostCommitNotificationPort");
+    expect(runtimeSource).toContain(
+      "It is not a `@svvy/runtime` package-root value export, not a facade group, and not an\n" +
+        "app/bootstrap callback surface.",
+    );
+    expect(runtimeSource).toContain(
+      "App/bootstrap only wires\n" +
+        "the layers and facades; it does not collect, transform, publish, or retry descriptors.",
+    );
+    expect(runtimeSource).not.toContain("collected by app-owned command/runtime boundary adapters");
+    expect(appSource).toContain("layerAppLogWritePort");
+    expect(appSource).toContain("AppLogWriteLayer");
+    expect(appSource).not.toContain("createHostChildProcessSpawnerLayer");
+    expect(appSource).toContain("createRuntimeSourceInvalidationHost");
+    expect(appSource).toContain("SourceInvalidationHost.watch");
+    expect(appSource).toContain("const HostPlatformBaseLayer = layerRuntimeBunPlatform;");
+    expect(appSource).not.toContain("FileWatchBackendLayer");
+    expect(appSource).toContain("type SvvyProgrammaticApp = {");
+  });
+
+  it("Effect source worker timing and keys are fully specified", () => {
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+    const sourceInvalidation = readSource(join(productSpecRoot, "source-invalidation.spec.md"));
+    const sourceCoordinator = readSource(
+      join(packageRoot, "runtime", "src", "source-invalidation-coordinator.ts"),
+    );
+    const workspaceRuntimeRegistry = readSource(
+      join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"),
+    );
+
+    expect(runtimeSource).toContain(
+      "sourceMaxCoalescingLatencyMs: PositiveDurationMs; // default 2000",
+    );
+    expect(runtimeSource).toContain(
+      "force one scan by `sourceMaxCoalescingLatencyMs` under continuous hints",
+    );
+    expect(runtimeSource).toContain("app-source:{domain}");
+    expect(runtimeSource).toContain("workspace-source:{workspaceId}:{domain}");
+    expect(runtimeSource).toContain("generated-package:{packageName}");
+    expect(runtimeSource).toContain("workspace-link:{workspaceId}:{packageName}");
+    expect(runtimeSource).toContain("command-output:{commandId}");
+    expect(runtimeSource).toContain(
+      "App-global generated-package graph builds are serialized per canonical package graph",
+    );
+    expect(runtimeSource).not.toContain("generatedPackageGlobalLinkRepairConcurrency");
+    expect(sourceInvalidation).toContain("RuntimeLayerConfig.sourceMaxCoalescingLatencyMs");
+    expect(sourceInvalidation).toContain("sourceRetryInitialDelayMs");
+    expect(sourceInvalidation).toContain("sourceRetryMaxAttempts");
+    expect(sourceCoordinator).toContain("retryInitialDelayMs?: number");
+    expect(sourceCoordinator).toContain("retryMaxDelayMs?: number");
+    expect(sourceCoordinator).toContain("retryMaxAttempts?: number");
+    expect(sourceCoordinator).toContain("Effect.retry({");
+    expect(sourceCoordinator).toContain("Schedule.exponential(retryInitialDelayMs)");
+    expect(sourceCoordinator).toContain("Duration.min(delay, Duration.millis(retryMaxDelayMs))");
+    expect(
+      workspaceRuntimeRegistry.match(
+        /retryInitialDelayMs: this\.options\.runtimeLayerConfig\.sourceRetryInitialDelayMs/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workspaceRuntimeRegistry.match(
+        /retryMaxDelayMs: this\.options\.runtimeLayerConfig\.sourceRetryMaxDelayMs/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workspaceRuntimeRegistry.match(
+        /retryMaxAttempts: this\.options\.runtimeLayerConfig\.sourceRetryMaxAttempts/g,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("native tool concurrency and secret ownership contracts stay explicit", () => {
+    const coreSource = readSource(join(packageArchitectureSpecRoot, "core.spec.md"));
+    const extensionsSource = readSource(join(packageArchitectureSpecRoot, "extensions.spec.md"));
+    const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
+
+    expect(coreSource).toContain("type NativeToolConcurrencyContract =");
+    expect(coreSource).toContain('Omitted concurrency means\n`{ mode: "serial" }`.');
+    expect(coreSource).toContain('"provider-auth-failed"');
+    expect(coreSource).toContain("export class ProviderAuthPortError");
+    expect(coreSource).toContain("export class SecretStorePortError");
+    expect(extensionsSource).toContain(
+      "`@svvy/extensions` never resolves raw extension secret\nvalues.",
+    );
+    expect(extensionsSource).toContain(
+      "`surface` is not a valid field\non extension invocation targets.",
+    );
+    expect(extensionsSource).toContain("It is not returned by\n`@svvy/extensions`");
+    expect(runtimeSource).toContain("Runtime does not directly require `SecretStorePort`");
+    expect(runtimeSource).toContain('StateContractError.reason === "not-found"');
+    expect(runtimeSource).toContain("`CommandOutputEventPayload`");
+    expect(runtimeSource).toContain("It does not carry raw bytes");
+  });
+
+  it("source invalidation spec keeps Workflows source refresh separate from actor staleness", () => {
+    const source = readSource(join(productSpecRoot, "source-invalidation.spec.md"));
+
+    expect(source).toContain(
+      "Ordinary Workflows prompt/component/workflow source changes\n" +
+        "update Workflows library, generated-package, diagnostics, and workspace-link read models only",
+    );
+    expect(source).toContain(
+      "existing workflow task-agent attempt surfaces only when their bound workflow-agent metadata fingerprint changes",
+    );
+    expect(source).toContain(
+      "none, unless a separate state-backed actor generated-context binding fact changes",
+    );
   });
 
   it("desktop spec injects runtime commands and renderer-safe state through the bridge", () => {
@@ -4813,11 +7154,11 @@ describe("package boundaries", () => {
     expect(missing).toEqual([]);
   });
 
-  it("runtime source-edit specs do not promote workflow lifecycle placeholders", () => {
+  it("runtime source-edit specs expose only implemented source edit facade methods", () => {
     const source = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
-    const sourceEditApiStart = source.indexOf("type RuntimeSourceEditsApiEffect = {");
+    const sourceEditApiStart = source.indexOf("type RuntimeSourceEditsService = {");
     const sourceEditApiEnd = source.indexOf("};", sourceEditApiStart);
-    const sourceEditPromiseStart = source.indexOf("type RuntimeSourceEditsApiPromise = {");
+    const sourceEditPromiseStart = source.indexOf("type RuntimeSourceEditsFacade = {");
     const sourceEditPromiseEnd = source.indexOf("};", sourceEditPromiseStart);
 
     expect(sourceEditApiStart).toBeGreaterThanOrEqual(0);
@@ -4829,30 +7170,39 @@ describe("package boundaries", () => {
       source.slice(sourceEditApiStart, sourceEditApiEnd),
       source.slice(sourceEditPromiseStart, sourceEditPromiseEnd),
     ].join("\n");
-    const forbiddenPromotedMethods = [
-      /createWorkflowAgent/,
-      /duplicateWorkflowAgent/,
-      /deleteWorkflowAgent/,
-      /createWorkflowPrompt/,
-      /deleteWorkflowPrompt/,
-      /createWorkflowComponent/,
-      /deleteWorkflowComponent/,
-      /createWorkflow\(/,
-      /deleteWorkflow\(/,
-      /WorkflowAgentSourceLifecycleResult/,
-      /WorkflowPromptSourceLifecycleResult/,
-      /WorkflowComponentSourceLifecycleResult/,
-      /WorkflowWorkflowSourceLifecycleResult/,
+    const rejectedCurrentMethods = [
+      "createWorkflowAgent(",
+      "duplicateWorkflowAgent(",
+      "deleteWorkflowAgent(",
+      "createWorkflowPrompt(",
+      "deleteWorkflowPrompt(",
+      "createWorkflowComponent(",
+      "deleteWorkflowComponent(",
+      "createWorkflow(",
+      "deleteWorkflow(",
+      "CreateWorkflowAgentSourceInput",
+      "DuplicateWorkflowAgentSourceInput",
+      "DeleteWorkflowAgentSourceInput",
+      "CreateWorkflowPromptSourceInput",
+      "DeleteWorkflowPromptSourceInput",
+      "CreateWorkflowComponentSourceInput",
+      "DeleteWorkflowComponentSourceInput",
+      "CreateWorkflowSourceInput",
+      "DeleteWorkflowSourceInput",
+      "WorkflowAgentSourceLifecycleResult",
+      "WorkflowPromptSourceLifecycleResult",
+      "WorkflowComponentSourceLifecycleResult",
+      "WorkflowWorkflowSourceLifecycleResult",
     ];
-    const violations = forbiddenPromotedMethods
-      .filter((pattern) => pattern.test(sourceEditContracts))
-      .map((pattern) => pattern.source);
+    const violations = rejectedCurrentMethods.filter((method) =>
+      sourceEditContracts.includes(method),
+    );
 
     expect(violations).toEqual([]);
     expect(sourceEditContracts).toContain("OpenExtensionSourceEditInput");
     expect(sourceEditContracts).toContain("SaveExtensionSourceEditInput");
-    expect(source).toContain("not promoted runtime APIs in this spec revision");
-    expect(source).toContain("exact `@svvy/core` schemas and result types");
+    expect(source).toContain("are not public runtime");
+    expect(source).toContain("No public runtime `sourceEdits.rename*` or");
   });
 
   it("extracted package source avoids stale Workflows source edit kind names", () => {
@@ -4897,7 +7247,10 @@ describe("package boundaries", () => {
   });
 
   it("app code imports extracted packages through public workspace package names", () => {
-    const violations = listTypeScriptFiles(appSourceRoot).flatMap((file) =>
+    const trackedProductionPrivateCompositionImports = new Set([
+      "src/bun/session-catalog.ts -> ../../packages/runtime/src/surface-queue-dispatcher",
+    ]);
+    const packageBoundaryImportViolations = (file: string) =>
       readImports(file)
         .filter(
           (specifier) =>
@@ -4910,20 +7263,71 @@ describe("package boundaries", () => {
             specifier.startsWith("@svvy/core/") ||
             specifier.startsWith("@svvy/extensions/") ||
             (specifier.startsWith("@svvy/pi-adapter/") &&
-              specifier !== "@svvy/pi-adapter/internal/session" &&
               !allowedPublicSubpathImports.has(specifier)) ||
             (specifier.startsWith("@svvy/runtime/") &&
               !allowedPublicSubpathImports.has(specifier)) ||
-            specifier.startsWith("@svvy/sandbox/") ||
+            (specifier.startsWith("@svvy/sandbox/") &&
+              !allowedPublicSubpathImports.has(specifier)) ||
             (specifier.startsWith("@svvy/state/") && !allowedPublicSubpathImports.has(specifier)),
         )
-        .map((specifier) => `${display(file)} -> ${specifier}`),
-    );
+        .map((specifier) => `${display(file)} -> ${specifier}`);
+    const violations = listTypeScriptFiles(appSourceRoot)
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        packageBoundaryImportViolations(file).filter(
+          (violation) => !trackedProductionPrivateCompositionImports.has(violation),
+        ),
+      );
 
     expect(violations).toEqual([]);
   });
 
-  it("Bun production code keeps direct @svvy/state store access on the refactor ledger", () => {
+  it("production public package subpath imports stay in the approved consumer matrix", () => {
+    const approvedProductionPublicSubpathImports = [
+      "src/bun/execute-typescript-tool.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/extension-tools.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/index.ts -> @svvy/runtime/bootstrap",
+      "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
+      "src/bun/request-user-input-tool.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/runtime-service-adapter.ts -> @svvy/runtime/accepted-native-tool-execution",
+      "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
+      "src/bun/runtime-state-tools.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/session-catalog.ts -> @svvy/pi-adapter/messages",
+      "src/bun/session-catalog.ts -> @svvy/pi-adapter/session",
+      "src/bun/session-catalog.ts -> @svvy/runtime/bootstrap",
+      "src/bun/session-catalog.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/session-catalog.ts -> @svvy/state/session-navigation",
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-projections",
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
+      "src/bun/source-watch-inputs.ts -> @svvy/runtime/bootstrap",
+      "src/bun/svvy-direct-tools.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/svvy-direct-tools.ts -> @svvy/sandbox/diagnostics",
+      "src/bun/thread-orchestration-tools.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/thread-report-tool.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/thread-start-tool.ts -> @svvy/runtime/prompt-execution-context",
+      "src/bun/workspace-runtime-registry.ts -> @svvy/runtime/bootstrap",
+      "src/bun/workspace-runtime-registry.ts -> @svvy/runtime/source-invalidation-coordinator-adapter",
+      "src/bun/workspace-runtime-registry.ts -> @svvy/state/generated-package-maintenance",
+      "src/shared/session-navigation.ts -> @svvy/state/session-navigation",
+    ];
+    const svvyPublicSubpathPattern =
+      /^@svvy\/(?:core|desktop|extensions|pi-adapter|runtime|sandbox|state)\//;
+    const productionRoots = [appSourceRoot, ...sourceRoots, join(projectRoot, "generated")];
+    const actual = productionRoots
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readImports(file)
+          .filter((specifier) => svvyPublicSubpathPattern.test(specifier))
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(approvedProductionPublicSubpathImports);
+  });
+
+  it("Bun production code has only the named session-catalog direct @svvy/state store exception", () => {
     const expectedDirectStateStoreImports = [
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
     ];
@@ -4931,7 +7335,7 @@ describe("package boundaries", () => {
       .filter((file) => !isTestFile(file))
       .flatMap((file) =>
         readStaticSourceImports(file)
-          .filter((specifier) => specifier.startsWith("@svvy/state/"))
+          .filter((specifier) => specifier === "@svvy/state/structured-session-state")
           .map((specifier) => `${display(file)} -> ${specifier}`),
       )
       .toSorted();
@@ -4939,10 +7343,74 @@ describe("package boundaries", () => {
     expect(actualDirectStateStoreImports).toEqual(expectedDirectStateStoreImports);
   });
 
-  it("Bun production code keeps pi-adapter internal imports on the refactor ledger", () => {
-    const expectedInternalPiAdapterImports = [
-      "src/bun/session-catalog.ts -> @svvy/pi-adapter/internal/session",
+  it("Bun production code imports structured-session adapters only at the catalog bootstrap edge", () => {
+    const actualStructuredSessionAdapterImports = listTypeScriptFiles(
+      join(projectRoot, "src", "bun"),
+    )
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter((specifier) => specifier === "@svvy/state/structured-session-adapters")
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(actualStructuredSessionAdapterImports).toEqual([
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
+    ]);
+  });
+
+  it("session-catalog structured-session adapter bootstrap imports stay explicitly capped", () => {
+    const expectedStoreAdapterFactories = [
+      "extensionStatePortFromStore",
+      "runtimeActorExtensionBindingStatePortFromStore",
+      "runtimeApprovalStatePortFromStore",
+      "runtimeArtifactStatePortFromStore",
+      "runtimeCommandStatePortFromStore",
+      "runtimeEpisodeStatePortFromStore",
+      "runtimeExtensionContextImpactStateFacadeFromStore",
+      "runtimeGeneratedPackageStatePortFromStore",
+      "runtimeQueueStatePortFromStore",
+      "runtimeReadModelStatePortFromStore",
+      "runtimeRecoveryStatePortFromStore",
+      "runtimeRequestStatePortFromStore",
+      "runtimeSessionWaitStatePortFromStore",
+      "runtimeSourceStatePortFromStore",
+      "runtimeSurfaceLifecycleStatePortFromStore",
+      "runtimeThreadStatePortFromStore",
+      "runtimeTurnStatePortFromStore",
+      "runtimeWorkspaceStatePortFromStore",
+      "structuredSessionStateFromStore",
     ];
+    const source = readSource(sessionCatalogModule);
+    const actualStoreAdapterFactories = [
+      ...source.matchAll(/\b([a-zA-Z][A-Za-z0-9]+FromStore)\s*\(/g),
+    ]
+      .map((match) => match[1])
+      .toSorted();
+
+    expect(actualStoreAdapterFactories).toEqual(expectedStoreAdapterFactories);
+  });
+
+  it("Bun production code imports generated-package maintenance only at the runtime registry edge", () => {
+    const actualGeneratedPackageMaintenanceImports = listTypeScriptFiles(
+      join(projectRoot, "src", "bun"),
+    )
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter((specifier) => specifier === "@svvy/state/generated-package-maintenance")
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(actualGeneratedPackageMaintenanceImports).toEqual([
+      "src/bun/workspace-runtime-registry.ts -> @svvy/state/generated-package-maintenance",
+    ]);
+  });
+
+  it("Bun production code does not import pi-adapter internal subpaths", () => {
+    const expectedInternalPiAdapterImports: string[] = [];
     const actualInternalPiAdapterImports = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
       .flatMap((file) =>
@@ -4976,8 +7444,8 @@ describe("package boundaries", () => {
     expect(actualFacadeFactoryUses).toEqual(["src/bun/session-catalog.ts"]);
   });
 
-  it("migrated native tool modules stay pi-free", () => {
-    const violations = migratedNativeToolModules.flatMap((file) =>
+  it("package-owned native tool modules stay pi-free", () => {
+    const violations = packageOwnedNativeToolModules.flatMap((file) =>
       readImports(file)
         .filter((specifier) => specifier.startsWith("@mariozechner/"))
         .map((specifier) => `${display(file)} -> ${specifier}`),
@@ -4992,6 +7460,7 @@ describe("package boundaries", () => {
     const violations = listTypeScriptFiles(appSourceRoot).flatMap((file) =>
       readImports(file)
         .filter((specifier) => specifier.includes("prompt-execution-context"))
+        .filter((specifier) => specifier !== "@svvy/runtime/prompt-execution-context")
         .map((specifier) => `${display(file)} -> ${specifier}`),
     );
 
@@ -5037,9 +7506,10 @@ describe("package boundaries", () => {
     expect(end).toBeGreaterThan(start);
 
     const loadToolSource = source.slice(start, end);
-    expect(loadToolSource).toContain("runAcceptedLoadExtensionToolCallAtRuntimeBoundary(");
-    expect(loadToolSource).toContain("commandStatePort:");
-    expect(loadToolSource).toContain("actorExtensionBindingStatePort:");
+    expect(loadToolSource).toContain("options.runAcceptedLoadExtension(");
+    expect(loadToolSource).not.toContain("runAcceptedLoadExtensionToolCallAtRuntimeBoundary(");
+    expect(loadToolSource).not.toContain("commandStatePort:");
+    expect(loadToolSource).not.toContain("actorExtensionBindingStatePort:");
     expect(loadToolSource).not.toContain("loadExtensionHandler.invoke");
     expect(loadToolSource).not.toContain("applyRuntimeEffectRequests(");
     expect(loadToolSource).not.toContain("buildSystemPrompt(");
@@ -5049,20 +7519,32 @@ describe("package boundaries", () => {
 
   it("request_user_input app wrapper delegates handler invocation and effect application to @svvy/runtime", () => {
     const source = readSource(join(projectRoot, "src", "bun", "request-user-input-tool.ts"));
-    const start = source.indexOf("async function runNonblockingRequestUserInputHandler");
+    const start = source.indexOf("async function runAcceptedRequestUserInputHandler");
     const end = source.indexOf("export function createRequestUserInputTool");
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
 
-    const nonblockingSource = source.slice(start, end);
-    expect(nonblockingSource).toContain("runAcceptedRequestUserInputToolCallAtRuntimeBoundary(");
-    expect(nonblockingSource).toContain("commandStatePort:");
-    expect(nonblockingSource).not.toContain("invokeRequestUserInputHandlerAtRuntimeBoundary");
-    expect(nonblockingSource).not.toContain("applyRuntimeEffectRequestsAtRuntimeBoundary");
-    expect(nonblockingSource).not.toContain("requestUserInputHandler.invoke");
-    expect(nonblockingSource).not.toContain("applyRuntimeEffectRequests(");
-    expect(nonblockingSource).not.toContain("recordRequestUserInputProgress(");
-    expect(nonblockingSource).not.toContain(".finishCommand(");
+    const acceptedRunnerSource = source.slice(start, end);
+    const wrapperStart = source.indexOf("export function createRequestUserInputTool");
+    const wrapperEnd = source.indexOf("async function missingAcceptedRequestUserInputRunner");
+    expect(wrapperStart).toBeGreaterThanOrEqual(0);
+    expect(wrapperEnd).toBeGreaterThan(wrapperStart);
+    const wrapperSource = source.slice(wrapperStart, wrapperEnd);
+
+    expect(acceptedRunnerSource).toContain("input.runAcceptedRequestUserInput(");
+    expect(acceptedRunnerSource).toContain("mode: input.settings.mode");
+    expect(acceptedRunnerSource).not.toContain(
+      "runAcceptedRequestUserInputToolCallAtRuntimeBoundary(",
+    );
+    expect(acceptedRunnerSource).not.toContain("commandStatePort:");
+    expect(acceptedRunnerSource).not.toContain("requestStatePort:");
+    expect(acceptedRunnerSource).not.toContain("invokeRequestUserInputHandlerAtRuntimeBoundary");
+    expect(acceptedRunnerSource).not.toContain("applyRuntimeEffectRequestsAtRuntimeBoundary");
+    expect(acceptedRunnerSource).not.toContain("requestUserInputHandler.invoke");
+    expect(acceptedRunnerSource).not.toContain("applyRuntimeEffectRequests(");
+    expect(wrapperSource).toContain("runAcceptedRequestUserInputHandler(");
+    expect(wrapperSource).not.toContain("requestState.createRequestInput(");
+    expect(wrapperSource).not.toContain("recordRequestUserInputProgress(");
   });
 
   it("only @svvy/runtime applies RuntimeEffectRequest values", () => {
@@ -5081,7 +7563,7 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("app-local runtime effect request algebras stay on the svvyx transport retirement ledger", () => {
+  it("app-local runtime effect request algebras stay limited to the named svvyx transport exception set", () => {
     const localRuntimeEffectPatterns = [
       {
         pattern: /\btype\s+SvvyxSubprocessRuntimeEffectRequest\b/g,
@@ -5123,6 +7605,9 @@ describe("package boundaries", () => {
       /Context\.Service/,
       /ManagedRuntime/,
       /\bLayer\b/,
+      /\bStateCommands\b/,
+      /\bSecretStorePort\b/,
+      /\bRedacted\b/,
       /\beffect\/Metric\b/,
       /\beffect\/Logger\b/,
       /\beffect\/Tracer\b/,
@@ -5142,6 +7627,182 @@ describe("package boundaries", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  it("generated @svvyx/workflows output stays an authoring package with only narrow bridge imports", () => {
+    const files = renderGeneratedWorkflowsPackageFiles(
+      [
+        {
+          exportName: "reviewerAgent",
+          kind: "agent",
+          sourcePath: "/workflows/agents/reviewer.agent.json" as AbsolutePath,
+          relativeGeneratedPath: "agents/reviewer.ts",
+          sourceText: JSON.stringify({
+            id: "reviewer",
+            label: "Reviewer",
+            provider: "openai",
+            model: "gpt-5",
+            reasoning: { effort: "medium" },
+            instructions: "Review the current change.",
+            overrides: { artifacts: "loaded" },
+          }),
+        },
+        {
+          exportName: "reviewPrompt",
+          kind: "prompt",
+          sourcePath: "/workflows/prompts/review.mdx" as AbsolutePath,
+          relativeGeneratedPath: "prompts/reviewPrompt.ts",
+          sourceText: "Review the patch and return findings.",
+        },
+        {
+          exportName: "reviewWorkflow",
+          kind: "workflow",
+          sourcePath: "/workflows/workflows/review.tsx" as AbsolutePath,
+          relativeGeneratedPath: "workflows/reviewWorkflow.tsx",
+          sourceText:
+            'import { Task } from "smithers-orchestrator";\n' +
+            'import { Extensions } from "@svvyx/extensions";\n' +
+            "export const reviewWorkflow = Task;\n",
+        },
+      ],
+      {
+        createdAt: "2026-06-28T00:00:00.000Z" as IsoDateTimeString,
+        coreTypeContractPackageDependencySpecifier: "file:../core-type-contract",
+        extensionsBuildId: "@svvyx/extensions:test" as GeneratedPackageBuildId,
+      },
+    );
+    const forbiddenPatterns = [
+      /from ["']@svvy\/runtime(?:\/|["'])/,
+      /from ["']@svvy\/state(?:\/|["'])/,
+      /from ["']@svvy\/sandbox(?:\/|["'])/,
+      /from ["']@svvy\/pi-adapter(?:\/|["'])/,
+      /from ["']@svvy\/desktop(?:\/|["'])/,
+      /from ["']@svvy\/extensions(?:\/|["'])/,
+      /from ["']@svvyx\/workflows(?:\/|["'])/,
+      /from ["']effect(?:\/|["'])/,
+      /from ["']@effect\//,
+      /\bContext\.Service\b/,
+      /\bManagedRuntime\b/,
+      /\bLayer\b/,
+      /\bStateCommands\b/,
+      /\bSecretStorePort\b/,
+      /\bRedacted\b/,
+      /\beffect\/Metric\b/,
+      /\beffect\/Logger\b/,
+      /\beffect\/Tracer\b/,
+      /\beffect\/unstable\/observability\b/,
+      /@effect\/opentelemetry/,
+      /\bStateStore\b/,
+      /\bStateCommands\b/,
+      /\bSecretStorePort\b/,
+      /\bRedacted\b/,
+      /\bRuntimeEffectRequest\b/,
+      /\bExtensionExecutionPlan\b/,
+      /\bWorkflowTaskAgentBridge\b/,
+      /\bAuthenticatedRunTaskAgentInput\b/,
+      /\bRunTaskAgentInput\b/,
+    ];
+    const violations = files.flatMap((file) =>
+      forbiddenPatterns
+        .filter((pattern) => pattern.test(file.contents))
+        .map((pattern) => `${file.relativePath} -> ${pattern}`),
+    );
+    const valueCoreImports = files.flatMap((file) =>
+      Array.from(
+        file.contents.matchAll(/^\s*import\s+(?!type\b)[\s\S]*?\s+from\s+["']@svvy\/core["']/gm),
+        () => file.relativePath,
+      ),
+    );
+    const allowedCoreTypeImports = new Set([
+      "RunTaskAgentError",
+      "RunTaskAgentPromptSource",
+      "RunTaskAgentResult",
+      "RunTaskAgentSourceInput",
+    ]);
+    const coreTypeImportViolations = files.flatMap((file) =>
+      Array.from(
+        file.contents.matchAll(/^\s*import\s+type\s+\{([^}]+)\}\s+from\s+["']@svvy\/core["']/gm),
+        (match) =>
+          match[1]
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .filter((name) => !allowedCoreTypeImports.has(name))
+            .map((name) => `${file.relativePath} -> ${name}`),
+      ).flat(),
+    );
+    const allowedGeneratedWorkflowEnvVars = new Set([
+      "SVVY_WORKFLOW_AGENT_BRIDGE_URL",
+      "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN",
+      "SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID",
+      "SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID",
+      "SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS",
+      "SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES",
+    ]);
+    const generatedEnvVarViolations = files.flatMap((file) =>
+      Array.from(file.contents.matchAll(/\bSVVY_[A-Z0-9_]+\b/g), ([name]) => name)
+        .filter((name) => !allowedGeneratedWorkflowEnvVars.has(name))
+        .map((name) => `${file.relativePath} -> ${name}`),
+    );
+    const agentsIndex =
+      files.find((file) => file.relativePath === "agents/index.ts")?.contents ?? "";
+    const generatedWorkflowEnvVars = new Set(
+      Array.from(agentsIndex.matchAll(/\bSVVY_[A-Z0-9_]+\b/g), ([name]) => name),
+    );
+    const packageJson = JSON.parse(
+      files.find((file) => file.relativePath === "package.json")?.contents ?? "{}",
+    ) as { devDependencies?: Record<string, string> };
+    const manifest = JSON.parse(
+      files.find((file) => file.relativePath === ".svvy-generated-package.json")?.contents ?? "{}",
+    ) as {
+      dependencies?: Array<{
+        specifier?: string;
+        importKind?: string;
+        dependencyClass?: string;
+        resolutionAuthority?: string;
+        manifestDependency?: string;
+      }>;
+    };
+    const coreDependencyEvidence =
+      manifest.dependencies?.filter((dependency) => dependency.specifier === "@svvy/core") ?? [];
+
+    expect({
+      violations,
+      valueCoreImports,
+      coreTypeImportViolations,
+      generatedEnvVarViolations,
+      coreDevDependencies: packageJson.devDependencies,
+      coreDependencyEvidence,
+      runtimeCoreDependencyEvidence: coreDependencyEvidence.filter(
+        (dependency) => dependency.importKind === "runtime",
+      ),
+      hasDefineTaskAgent: /\bexport function defineTaskAgent\b/.test(agentsIndex),
+      hasBridgeCaller: /\basync function callTaskAgentBridge\b/.test(agentsIndex),
+      hasRunTaskAgentOperation: /\boperation:\s*["']runTaskAgent["']/.test(agentsIndex),
+      hasBearerBridgeAuth: /authorization["']?:\s*`Bearer \$\{bridgeToken\}`/.test(agentsIndex),
+      generatedWorkflowEnvVars: [...generatedWorkflowEnvVars].toSorted(),
+    }).toEqual({
+      violations: [],
+      valueCoreImports: [],
+      coreTypeImportViolations: [],
+      generatedEnvVarViolations: [],
+      coreDevDependencies: { "@svvy/core": "file:../core-type-contract" },
+      coreDependencyEvidence: [
+        {
+          specifier: "@svvy/core",
+          importKind: "type-only",
+          dependencyClass: "app-owned-type-contract",
+          resolutionAuthority: "app-owned-type-contract",
+          manifestDependency: "dev-type-dependency",
+        },
+      ],
+      runtimeCoreDependencyEvidence: [],
+      hasDefineTaskAgent: true,
+      hasBridgeCaller: true,
+      hasRunTaskAgentOperation: true,
+      hasBearerBridgeAuth: true,
+      generatedWorkflowEnvVars: [...allowedGeneratedWorkflowEnvVars].toSorted(),
+    });
   });
 
   it("execute_typescript declarations do not expose generated packages as runtime facades", () => {
@@ -5169,6 +7830,9 @@ describe("package boundaries", () => {
       /\bLogger\./,
       /\bTracer\./,
       /\bStateStore\b/,
+      /\bStateCommands\b/,
+      /\bSecretStorePort\b/,
+      /\bRedacted\b/,
       /\bRuntimeEffectRequest\b/,
       /\bExtensionExecutionPlan\b/,
       /\bSandbox\b/,
@@ -5209,6 +7873,9 @@ describe("package boundaries", () => {
       /\bMetric\./,
       /\bLogger\./,
       /\bTracer\./,
+      /\bStateCommands\b/,
+      /\bSecretStorePort\b/,
+      /\bRedacted\b/,
     ];
     const violations = listTypeScriptFiles(join(projectRoot, "generated"))
       .filter((file) => file.endsWith(".generated.ts"))
@@ -5221,43 +7888,117 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("only approved secret intake schemas expose secretValue", () => {
+    const approvedSecretValueOccurrences = [
+      "packages/state/src/state-command-schemas.ts -> SetExtensionSecretValueCommandInputSchema",
+      "packages/state/src/state-command-schemas.ts -> UpsertProviderCredentialCommandInputSchema",
+    ];
+    const secretValueOccurrences = sourceRoots
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) => {
+        const source = readSource(file);
+        const schemaBlocks = Array.from(
+          source.matchAll(
+            /export\s+const\s+([A-Za-z_$][\w$]*Schema)\s*=\s*Schema\.Struct\s*\(\s*\{[\s\S]*?\n\}\s*\);/g,
+          ),
+        );
+        return Array.from(source.matchAll(/\bsecretValue\b/g), (match) => {
+          const schemaName =
+            schemaBlocks.find(
+              (schemaMatch) =>
+                schemaMatch.index !== undefined &&
+                match.index !== undefined &&
+                schemaMatch.index <= match.index &&
+                match.index < schemaMatch.index + schemaMatch[0].length,
+            )?.[1] ?? "<non-schema>";
+          return `${display(file)} -> ${schemaName}`;
+        });
+      })
+      .toSorted();
+
+    expect(secretValueOccurrences).toEqual(approvedSecretValueOccurrences);
+  });
+
   it("runtime facade keeps generated package refresh behind sourceInvalidation", () => {
     const runtimeSource = readSource(join(packageRoot, "runtime", "src", "index.ts"));
     expect(runtimeSource).toContain("refreshGeneratedPackages(");
     expect(runtimeSource).toContain("RuntimeSourceInvalidationService");
     expect(runtimeSource).toContain("RuntimeSourceInvalidationFacade");
-    expect(runtimeSource).toContain("decodeRefreshGeneratedPackagesRequestEffect");
-    expect(runtimeSource).toContain("decodeGeneratedPackagesRefreshResultEffect");
+    expect(runtimeSource).toContain("decodeUnknownRefreshGeneratedPackagesRequestEffect");
+    expect(runtimeSource).toContain("decodeUnknownGeneratedPackagesRefreshResultEffect");
+    expect(runtimeSource).not.toContain('decodedInput.scope === "workspace-link-repair"');
+    expect(runtimeSource).not.toContain("runtime-internal recovery work");
     expect(runtimeSource).not.toContain("productStateChanged");
-    expect(runtimeSource).not.toContain("decodeStateInvalidationDescriptorEffect");
+    expect(runtimeSource).not.toContain("decodeUnknownStateInvalidationDescriptorEffect");
+    const generatedPackageContractsSource = readSource(
+      join(packageRoot, "core", "src", "generated-package-contracts.ts"),
+    );
+    expect(generatedPackageContractsSource).toContain(
+      "RefreshGeneratedPackagesRequestSchema = AppGlobalRefreshGeneratedPackagesRequestSchema",
+    );
+    expect(generatedPackageContractsSource).toContain(
+      "InternalRefreshGeneratedPackagesRequestSchema",
+    );
 
     const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    const runtimeSourceInvalidationServiceSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-source-invalidation-service.ts"),
+    );
+    const runtimeGeneratedPackageRefreshServiceSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-generated-package-refresh-service.ts"),
+    );
     expect(runtimeLayerSource).toContain("sourceInvalidation.refreshGeneratedPackages");
+    expect(runtimeLayerSource).toContain("RuntimeGeneratedPackageRefreshHostPort");
+    expect(runtimeLayerSource).toContain("RuntimeSourceInvalidationService");
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain(
+      "refreshRuntimeGeneratedPackages(input",
+    );
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain(
+      "RuntimeGeneratedPackageRefreshHostPort",
+    );
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain("Extensions");
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain("extensions.generatedPackages");
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain(".refresh(buildInput)");
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain(".planWorkspaceLink(linkInput)");
+    expect(runtimeSourceInvalidationServiceSource).toContain(
+      "RuntimeGeneratedPackageRefreshService",
+    );
     const adapterSource = readSource(runtimeServiceAdapterModule);
     expect(adapterSource).toContain(
-      "RuntimeLayerSourceInvalidationPort.of(port.sourceInvalidation)",
+      "Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, port.generatedPackageRefreshHost)",
     );
+    expect(adapterSource).not.toContain("RuntimeGeneratedPackageRefreshHostPort.of");
+    expect(adapterSource).toContain("internal: {");
+    expect(adapterSource).toContain("runtime.sourceInvalidation.refreshGeneratedPackages(input)");
     expect(adapterSource).not.toContain(
-      "RuntimeLayerSourceInvalidationPort.of(port.sourceInvalidation ?? {})",
+      "facade.sourceInvalidation.refreshGeneratedPackages(input)",
     );
+    expect(adapterSource).not.toContain("port.sourceInvalidation.refreshGeneratedPackages");
     expect(adapterSource).not.toContain("productStateChanged");
     expect(adapterSource).not.toContain("buildWorkflowsGeneratedPackage(");
     expect(adapterSource).not.toContain("refreshGeneratedExtensionsPackage(");
   });
 
-  it("runtime source edit facade is backed by a required layer port", () => {
+  it("runtime source edit facade is backed by Extensions.sources and RuntimeSourceStatePort", () => {
     const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    const extensionsServiceSource = readSource(
+      join(packageRoot, "extensions", "src", "extensions-service.ts"),
+    );
     const adapterSource = readSource(runtimeServiceAdapterModule);
     const registrySource = readSource(
       join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"),
     );
 
-    expect(runtimeLayerSource).toContain(
-      "open(input: OpenExtensionSourceEditInput): Promise<SourceEditSession>;",
-    );
-    expect(runtimeLayerSource).toContain(
-      "save(input: SaveExtensionSourceEditInput): Promise<SourceEditSaveResult>;",
-    );
+    expect(runtimeLayerSource).toContain("input.extensions.sources.openEditSession");
+    expect(runtimeLayerSource).toContain("input.extensions.sources.saveEditSession");
+    expect(runtimeLayerSource).toContain("RuntimeSourceStatePort");
+    expect(runtimeLayerSource).toContain(".readSourceVersion({");
+    expect(runtimeLayerSource).toContain(".recordSourceSave({");
+    expect(runtimeLayerSource).not.toContain("RuntimeLayerSourceEditsPort");
+    expect(extensionsServiceSource).toContain("sources: {");
+    expect(extensionsServiceSource).toContain("openEditSession");
+    expect(extensionsServiceSource).toContain("saveEditSession");
     expect(runtimeLayerSource).not.toContain("open?(input: OpenExtensionSourceEditInput)");
     expect(runtimeLayerSource).not.toContain("save?(input: SaveExtensionSourceEditInput)");
     expect(runtimeLayerSource).not.toContain(
@@ -5266,21 +8007,24 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).not.toContain(
       'unsupportedRuntimeMethod("runtime.sourceEdits.save")',
     );
-    expect(adapterSource).toContain("RuntimeLayerSourceEditsPort.of(port.sourceEdits)");
-    expect(adapterSource).not.toContain("RuntimeLayerSourceEditsPort.of(port.sourceEdits ?? {})");
-    expect(registrySource).toContain("sourceEdits: {");
-    expect(registrySource).toContain("open: (input) => this.openExtensionSourceEdit(");
-    expect(registrySource).toContain("save: (input) => this.saveExtensionSourceEdit(");
+    expect(adapterSource).not.toContain("RuntimeLayerSourceEditsPort");
+    expect(adapterSource).not.toContain("port.sourceEdits");
+    expect(registrySource).not.toContain("sourceEdits: {");
+    expect(registrySource).not.toContain("openExtensionSourceEdit");
+    expect(registrySource).not.toContain("saveExtensionSourceEdit");
   });
 
   it("generated package refresh status exposes structured dependency evidence", () => {
     const source = readSource(join(packageRoot, "core", "src", "generated-package-contracts.ts"));
 
     expect(source).toContain("GeneratedPackageDependencyEvidenceSchema");
-    expect(source).toContain(
-      'resolution: Schema.Literals(["app-owned-package", "package-manager"])',
-    );
-    expect(source).toContain('resolution: Schema.Literal("generated-package-link")');
+    expect(source).toContain('specifier: Schema.Literal("@svvy/core")');
+    expect(source).toContain('importKind: Schema.Literal("type-only")');
+    expect(source).toContain('dependencyClass: Schema.Literal("app-owned-type-contract")');
+    expect(source).toContain('resolutionAuthority: Schema.Literal("app-owned-type-contract")');
+    expect(source).toContain('manifestDependency: Schema.Literal("dev-type-dependency")');
+    expect(source).toContain('resolutionAuthority: Schema.Literal("generated-package-link")');
+    expect(source).toContain('manifestDependency: Schema.Literal("none-generated-package-link")');
     expect(source).not.toMatch(
       /dependencies:\s*Schema\.optional\(\s*Schema\.Array\(\s*Schema\.Struct\(\{\s*name:\s*Schema\.String,\s*version:\s*Schema\.String/s,
     );
@@ -5291,6 +8035,29 @@ describe("package boundaries", () => {
     expect(source).toContain("renderGeneratedExtensionsPackageFiles");
     expect(source).not.toContain("export const Extensions = {");
     expect(source).not.toContain("export type ExtensionReference");
+  });
+
+  it("production generated-package writer renderers are not imported outside the named app adapter", () => {
+    const writerNames = new Set([
+      "renderGeneratedExtensionsPackageFiles",
+      "renderGeneratedWorkflowsPackageFiles",
+    ]);
+    const actual = [appSourceRoot, ...sourceRoots]
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readNamedImportNames(file, "@svvy/extensions")
+              .filter((name) => writerNames.has(name))
+              .map((name) => `${display(file)} -> ${name}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/generated-extensions-package.ts -> renderGeneratedExtensionsPackageFiles",
+    ]);
   });
 
   it("workspace generated package link repair is applied by runtime against an app file host", () => {
@@ -5305,13 +8072,43 @@ describe("package boundaries", () => {
     expect(runtimeSource).toContain("applyGeneratedPackageWorkspaceLinkRepairPlan(");
     expect(runtimeSource).toContain("host.workspaceLinkFileHost");
     expect(registrySource).toContain("workspaceLinkFileHost:");
-    expect(adapterSource).toContain("workspaceLinkFileHost: input.host.workspaceLinkFileHost");
+    expect(adapterSource).toContain("RuntimeGeneratedPackageRefreshHostPortService");
+    expect(adapterSource).not.toContain(
+      "createRuntimeGeneratedPackageRefreshHostAtRuntimeBoundary",
+    );
+    expect(registrySource).not.toContain(
+      "createRuntimeGeneratedPackageRefreshHostAtRuntimeBoundary",
+    );
+    const runtimeGeneratedPackageRefreshServiceSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-generated-package-refresh-service.ts"),
+    );
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain("extensions.generatedPackages");
+    expect(runtimeGeneratedPackageRefreshServiceSource).toContain(".planWorkspaceLink(linkInput)");
     expect(registrySource).not.toContain("applyGeneratedPackageWorkspaceLinkRepairPlan(");
     expect(registrySource).not.toContain("applyWorkspaceLinkRepairPlan");
     expect(adapterSource).not.toContain("applyWorkspaceLinkRepairPlan");
     expect(registrySource).not.toContain("ensureWorkflowsPackageLink(");
     expect(registrySource).not.toContain("ensureExtensionsPackageLink(");
     expect(registrySource).not.toContain("ensureWorkflowsPackageLinks(");
+  });
+
+  it("production app code does not use direct generated package link helpers", () => {
+    const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) => {
+        const source = readSource(file);
+        const usesLegacyLinkHelper =
+          /\bensure(?:WorkflowsPackageLinks|WorkflowsPackageLink|ExtensionsPackageLink)\s*\(/.test(
+            source,
+          ) ||
+          /import\s*\{[^}]*\bensure(?:WorkflowsPackageLinks|WorkflowsPackageLink|ExtensionsPackageLink)\b[^}]*\}\s*from\s*["']\.\/smithers-runtime\/workflow-library["']/.test(
+            source,
+          );
+        if (!usesLegacyLinkHelper) return [];
+        return [display(file)];
+      });
+
+    expect(violations).toEqual([]);
   });
 
   it("app command trackers do not duplicate native tool metadata", () => {
@@ -5325,7 +8122,7 @@ describe("package boundaries", () => {
 
   it("app prompt handlers use the runtime facade instead of catalog prompt operations directly", () => {
     const catalogRuntimeOperationPattern =
-      /\b(?:runtime\.)?catalog\.(?:resolvePromptDefaultsForTarget|sendPrompt|cancelPrompt|steerQueuedSurfaceMessage)\b/;
+      /\b(?:runtime\.)?catalog\.(?:resolvePromptDefaultsForTarget|sendPrompt|cancelPrompt|deleteQueuedSurfaceMessage|steerQueuedSurfaceMessage)\b/;
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => file !== runtimeServiceAdapterModule)
       .filter((file) => !isTestFile(file))
@@ -5333,6 +8130,72 @@ describe("package boundaries", () => {
       .map(display);
 
     expect(violations).toEqual([]);
+  });
+
+  it("runtime prompt post-commit lanes use runtime queue wake service over primitive surface queue wake ports", () => {
+    const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    expect(runtimeLayerSource).toContain("RuntimeQueueWakeService");
+    expect(runtimeLayerSource).toContain("wakeSurface({");
+    expect(runtimeLayerSource).toContain('reason: "message-submitted"');
+    expect(runtimeLayerSource).toContain('reason: "queue-steered"');
+    expect(runtimeLayerSource).not.toContain("wakeSurfaceQueue({");
+    expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
+    expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageQueued");
+    expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageSteered");
+
+    const requestInputWaitServiceSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-request-input-wait-service.ts"),
+    );
+    expect(requestInputWaitServiceSource).toContain("RuntimeQueueWakeService");
+    expect(requestInputWaitServiceSource).toContain('reason: "request-input-answer-queued"');
+
+    const adapterSource = readSource(runtimeServiceAdapterModule);
+    const runtimeStructuralPortTags = [
+      "RuntimeLayerPromptControlHostPort",
+      "RuntimePromptDefaultsStatePort",
+      "RuntimeLayerSurfaceQueueWakePort",
+      "RuntimeLayerProviderAuthPort",
+      "RuntimeLayerModelResolverPort",
+      "AppLogWritePort",
+      "RuntimeLayerCommandStdinPort",
+      "RuntimeLayerCommandControlPort",
+      "RuntimeGeneratedContextRefreshHostPort",
+      "RuntimeGeneratedPackageRefreshHostPort",
+      "RuntimeSourceInvalidationScanPort",
+    ];
+    for (const tag of runtimeStructuralPortTags) {
+      expect(adapterSource).toMatch(new RegExp(`Layer\\.succeed\\(\\s*${tag},`));
+      expect(adapterSource).not.toContain(`${tag}.of`);
+    }
+    expect(runtimeLayerSource).toMatch(
+      /ensureUsableProviderAuth\(\s*provider:\s*string,\s*\):\s*Effect\.Effect<string \| undefined, RuntimeContractError>/,
+    );
+    expect(runtimeLayerSource).toContain(
+      "const apiKey = yield* input.providerAuth.ensureUsableProviderAuth(resolved.provider);",
+    );
+    expect(runtimeLayerSource).not.toContain(
+      "try: () => input.providerAuth.ensureUsableProviderAuth(resolved.provider)",
+    );
+    expect(adapterSource).toContain("wakeRuntimeSurfaceQueue");
+    expect(adapterSource).not.toContain("afterRuntimeSurfaceMessageQueued");
+    expect(adapterSource).not.toContain("afterRuntimeSurfaceMessageSteered");
+  });
+
+  it("runtime request-input queued answer wake targets come from committed answer context without rereading request input", () => {
+    const source = readSource(
+      join(packageRoot, "runtime", "src", "runtime-request-input-wait-service.ts"),
+    );
+
+    const afterAnswerStart = source.indexOf("afterAnswerCommitted:");
+    const afterTimerStart = source.indexOf("afterTimerPausedCommitted:", afterAnswerStart);
+    expect(afterAnswerStart).toBeGreaterThanOrEqual(0);
+    expect(afterTimerStart).toBeGreaterThan(afterAnswerStart);
+
+    const afterAnswerSource = source.slice(afterAnswerStart, afterTimerStart);
+    expect(afterAnswerSource).toContain('reason: "request-input-answer-queued"');
+    expect(afterAnswerSource).toContain("wakeSurface({");
+    expect(afterAnswerSource).not.toContain(".getRequestInput(");
+    expect(afterAnswerSource).not.toContain("requestInputTarget(");
   });
 
   it("app request-input and runtime approval answers bridge through the runtime facade", () => {
@@ -5343,14 +8206,16 @@ describe("package boundaries", () => {
     expect(answerStart).toBeGreaterThanOrEqual(0);
     expect(approvalStart).toBeGreaterThan(answerStart);
     const answerSource = source.slice(answerStart, approvalStart);
-    expect(answerSource).toContain("runtime.runtimeFacade.requestInput.answer(");
+    expect(answerSource).toContain("getWorkspaceRuntimeOperations(input)");
+    expect(answerSource).toContain("runtimeOperations.requestInput.answer(");
     expect(answerSource).not.toContain("runtime.catalog.answerRequestUserInput(");
     expect(answerSource).not.toContain("runtime.catalog.afterRequestInputAnswered(");
 
     const pauseStart = source.indexOf("setRequestUserInputTimerPaused: async");
     expect(pauseStart).toBeGreaterThan(approvalStart);
     const approvalSource = source.slice(approvalStart, pauseStart);
-    expect(approvalSource).toContain("runtime.runtimeFacade.approvals.answer(");
+    expect(approvalSource).toContain("getWorkspaceRuntimeOperations(input)");
+    expect(approvalSource).toContain("runtimeOperations.approvals.answer(");
     expect(approvalSource).not.toContain("runtime.catalog.answerRuntimeApprovalRequest(");
 
     const nextBridgeMethodStart = source.indexOf(
@@ -5360,7 +8225,8 @@ describe("package boundaries", () => {
     expect(pauseStart).toBeGreaterThanOrEqual(0);
     expect(nextBridgeMethodStart).toBeGreaterThan(pauseStart);
     const pauseSource = source.slice(pauseStart, nextBridgeMethodStart);
-    expect(pauseSource).toContain("runtime.runtimeFacade.requestInput.setTimerPaused(");
+    expect(pauseSource).toContain("getWorkspaceRuntimeOperations(input)");
+    expect(pauseSource).toContain("runtimeOperations.requestInput.setTimerPaused(");
     expect(pauseSource).not.toContain("runtime.catalog.setRequestUserInputTimerPaused(");
     expect(pauseSource).not.toContain("runtime.catalog.afterRequestInputTimerPaused(");
 
@@ -5369,15 +8235,20 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).toContain("setRuntimeRequestInputTimerPaused(input)");
     expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
     const adapterSource = readSource(runtimeServiceAdapterModule);
-    expect(adapterSource).toContain("RuntimeLayerPromptHostPort.of");
-    expect(adapterSource).toContain("RuntimeLayerRequestInputPostCommitPort.of");
-    expect(adapterSource).toContain("RuntimeLayerApprovalPostCommitPort.of");
+    expect(adapterSource).not.toContain("RuntimeLayerRequestInputPostCommitPort.of");
+    expect(adapterSource).not.toContain("RuntimeLayerApprovalPostCommitPort.of");
+    expect(adapterSource).not.toContain("Layer.succeed(RuntimeApprovalWaitService");
+    expect(adapterSource).not.toContain("getRuntimeApprovalWaitService");
     expect(adapterSource).toContain("Layer.succeed(RuntimeQueueStatePort");
     expect(adapterSource).toContain("Layer.succeed(RuntimeRequestStatePort");
     expect(adapterSource).toContain("Layer.succeed(RuntimeApprovalStatePort");
     expect(adapterSource).toContain("Layer.succeed(RuntimeCommandStatePort");
     expect(adapterSource).toContain("Layer.succeed(RuntimeSessionWaitStatePort");
-    expect(adapterSource).toContain("RuntimeEventBus");
+    expect(adapterSource).not.toContain("RuntimeEventBus");
+    expect(adapterSource).not.toContain("makeRuntimeEventBus");
+    expect(adapterSource).not.toContain("RuntimeLayerEventsPort");
+    expect(adapterSource).not.toContain("RuntimeEventBusHandle");
+    expect(adapterSource).not.toContain("createRuntimeEventBusHandle");
   });
 
   it("app pi prompt materialization stays at explicit catalog and pi-adapter edges", () => {
@@ -5404,6 +8275,118 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("production code creates the app-owned ManagedRuntime only at the runtime service adapter", () => {
+    const productionRoots = [
+      ...implementationPackageRoots,
+      ...edgePackageRoots,
+      join(projectRoot, "src", "bun"),
+      mainviewSourceRoot,
+      sharedSourceRoot,
+    ];
+    const productionFiles = productionRoots
+      .flatMap((root) => listTypeScriptFiles(root))
+      .filter((file) => !isTestFile(file));
+    const managedRuntimeMakeViolations = productionFiles
+      .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => /\bManagedRuntime\.make\b/.test(readSource(file)))
+      .map(display)
+      .toSorted();
+    const managedRuntimeValueImportViolations = productionFiles
+      .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) =>
+        /\bimport\s+(?!type\b)[^;]*["']effect\/ManagedRuntime["']/.test(readSource(file)),
+      )
+      .map(display)
+      .toSorted();
+    const runtimeRootSource = readSource(join(packageRoot, "runtime", "src", "index.ts"));
+
+    expect(managedRuntimeMakeViolations).toEqual([]);
+    expect(managedRuntimeValueImportViolations).toEqual([]);
+    expect(runtimeRootSource).toMatch(
+      /\bimport\s+type\s+\*\s+as\s+ManagedRuntime\s+from\s+["']effect\/ManagedRuntime["'];/,
+    );
+    expect(runtimeRootSource).not.toMatch(
+      /\bimport\s+(?!type\b)[^;]*["']effect\/ManagedRuntime["']/,
+    );
+  });
+
+  it("workspace runtime registry does not construct or run Effect runtimes directly", () => {
+    const source = readSource(join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"));
+
+    expect(source).not.toMatch(/\bManagedRuntime\.make\b/);
+    expect(source).not.toMatch(/\bcreateRuntimeFacade\b/);
+    expect(source).not.toMatch(/\bRuntime\.layer\b/);
+    expect(source).not.toMatch(/\bLayer\.provide\b/);
+    expect(source).not.toMatch(/\bEffect\.runPromise\b/);
+    expect(source).not.toMatch(
+      /\bexport\s+(?:interface|type)\s+\w+[^=;{]*(?:ManagedRuntime|RuntimeFacade|Context)\b/,
+    );
+  });
+
+  it("workspace runtime registry applies committed source-domain events through @svvy/runtime", () => {
+    const source = readSource(join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"));
+    const adapterSource = readSource(runtimeServiceAdapterModule);
+    const runtimeServiceSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-source-invalidation-service.ts"),
+    );
+    const runtimeReactionSource = readSource(
+      join(packageRoot, "runtime", "src", "source-invalidation-reactions.ts"),
+    );
+
+    expect(source).toContain("facade.sourceInvalidation.applyCommittedScanEvent(input)");
+    expect(adapterSource).not.toContain("source-invalidation-reactions");
+    expect(adapterSource).not.toContain("reactToRuntimeSourceInvalidationEvent");
+    expect(runtimeServiceSource).toContain("applyCommittedScanEvent");
+    expect(runtimeServiceSource).toContain("reactToRuntimeSourceInvalidationEvent");
+    expect(runtimeReactionSource).toContain("generatedPackagesForRuntimeSourceInvalidation");
+    expect(runtimeReactionSource).toContain("generatedContextReasonForRuntimeSourceInvalidation");
+    expect(source).not.toContain("this.runtimes.values().next().value");
+    expect(source).not.toContain(
+      "App-global generated-package refresh requires an acquired workspace scope",
+    );
+    expect(source).not.toContain("generatedPackagesForRuntimeSourceInvalidation");
+    expect(source).not.toContain("generatedContextReasonForRuntimeSourceInvalidation");
+  });
+
+  it("workspace runtime operation routing does not expose runtime facades on workspace records", () => {
+    const registrySource = readSource(
+      join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"),
+    );
+    const routingSource = readSource(join(projectRoot, "src", "bun", "workspace-rpc-routing.ts"));
+    const expectedLedger = [
+      "WorkspaceRuntimeRegistry exposes named runtime operation lookup",
+      "workspace RPC routing asks registry for runtime operations",
+    ];
+    const actualLedger = [
+      /\bgetRuntimeOperations\(workspaceId:\s*string\):\s*WorkspaceRuntimeOperations\b/.test(
+        registrySource,
+      )
+        ? "WorkspaceRuntimeRegistry exposes named runtime operation lookup"
+        : null,
+      /\bgetWorkspaceRuntimeOperationsForRequest\b/.test(routingSource) &&
+      /\bregistry\.getRuntimeOperations\(input\.workspaceId\)/.test(routingSource)
+        ? "workspace RPC routing asks registry for runtime operations"
+        : null,
+    ].filter((entry): entry is string => entry !== null);
+    const unexpectedRuntimeFacadeUsers = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) => {
+        const source = readSource(file);
+        const path = display(file);
+        const usesRuntimeFacade = /\bruntimeFacade\b/.test(source);
+        if (!usesRuntimeFacade) return [];
+        return path === "src/bun/workspace-runtime-registry.ts" ? [] : [path];
+      })
+      .toSorted();
+
+    expect(actualLedger).toEqual(expectedLedger);
+    expect(registrySource).not.toMatch(
+      /export\s+type\s+WorkspaceRuntime\s*=\s*\{[^}]*runtimeFacade/s,
+    );
+    expect(routingSource).not.toContain(".runtimeFacade");
+    expect(unexpectedRuntimeFacadeUsers).toEqual([]);
+  });
+
   it("runtime service adapter waits for Effect runtime readiness before exposing the facade", () => {
     const source = readSource(runtimeServiceAdapterModule);
     const adapterStart = source.indexOf("export async function createCatalogBackedRuntime(");
@@ -5423,6 +8406,8 @@ describe("package boundaries", () => {
       "const facade = createRuntimeFacade(managedRuntime);",
       startupReadinessAwait,
     );
+    const facadeInvocation = source.indexOf("createRuntimeFacade(managedRuntime)", facadeCreation);
+    const facadeCallIndexes = readRuntimeFacadeCallIndexes(runtimeServiceAdapterModule);
     const shutdownPreparation = source.indexOf(
       'await prepareRuntimeShutdown(managedRuntime, { reason: "app-shutdown" });',
       facadeCreation,
@@ -5436,6 +8421,9 @@ describe("package boundaries", () => {
     expect(contextAwait).toBeGreaterThan(managedRuntimeStart);
     expect(startupReadinessAwait).toBeGreaterThan(contextAwait);
     expect(facadeCreation).toBeGreaterThan(startupReadinessAwait);
+    expect(facadeInvocation).toBeGreaterThanOrEqual(facadeCreation);
+    expect(facadeCallIndexes).toEqual([facadeInvocation]);
+    expect(facadeCallIndexes.every((index) => index > startupReadinessAwait)).toBe(true);
     expect(shutdownPreparation).toBeGreaterThan(facadeCreation);
     expect(
       Array.from(source.matchAll(/\bManagedRuntime\.make\b/g), (match) => match.index),
@@ -5463,6 +8451,21 @@ describe("package boundaries", () => {
     expect(source).not.toMatch(
       /\bManagedRuntime\.(?:make|runPromise|runPromiseExit|runSync|runSyncExit|runFork|runCallback)\b/,
     );
+  });
+
+  it("@svvy/core does not export runtime Promise facade group aliases", () => {
+    const exportedCoreSymbols = new Set(
+      readPublicExportedNames(join(packageRoot, "core", "src", "index.ts")),
+    );
+    const forbiddenSymbols = [
+      "RuntimeCommandsApiPromise",
+      "RuntimeSurfacesApiPromise",
+      "RuntimeWorkspacesApiPromise",
+    ];
+
+    expect(forbiddenSymbols.filter((symbol) => exportedCoreSymbols.has(symbol))).toEqual([]);
+    const runtimeContracts = readSource(join(packageRoot, "core", "src", "runtime-contracts.ts"));
+    expect(runtimeContracts).not.toMatch(/\binterface\s+Runtime\w+ApiPromise\b/);
   });
 
   it("app and desktop consumers do not import runtime root facade and service type aliases", () => {
@@ -5503,38 +8506,98 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("app code imports core-owned prompt execution context contracts from @svvy/core", () => {
-    const forbiddenBootstrapPromptContextTypes = new Set([
-      "PromptExecutionContext",
-      "PromptExecutionEpisodeKind",
-      "PromptExecutionExternalInstructionSource",
+  it("Bun app edge prompt and queue ownership stays frozen to the current bridge exceptions", () => {
+    const appFiles = listTypeScriptFiles(join(projectRoot, "src", "bun")).filter(
+      (file) => !isTestFile(file),
+    );
+    const ownershipPatterns = [
+      {
+        pattern: /\bruntimeOperations\.messages\.submit\s*\(/g,
+        name: "runtimeOperations.messages.submit",
+      },
+      {
+        pattern: /\bruntimeOperations\.messages\.abort\s*\(/g,
+        name: "runtimeOperations.messages.abort",
+      },
+      {
+        pattern: /\bruntimeOperations\.queues\.steer\s*\(/g,
+        name: "runtimeOperations.queues.steer",
+      },
+      {
+        pattern: /\bruntime\.catalog\.editCommittedUserMessage\s*\(/g,
+        name: "runtime.catalog.editCommittedUserMessage",
+      },
+      {
+        pattern: /\bruntime\.catalog\.editQueuedSurfaceMessage\s*\(/g,
+        name: "runtime.catalog.editQueuedSurfaceMessage",
+      },
+      {
+        pattern: /\bruntime\.catalog\.reorderQueuedSurfaceMessage\s*\(/g,
+        name: "runtime.catalog.reorderQueuedSurfaceMessage",
+      },
+    ];
+
+    const actual = appFiles
+      .flatMap((file) => {
+        const source = readSource(file);
+        return ownershipPatterns.flatMap(({ pattern, name }) =>
+          [...source.matchAll(pattern)].map(() => `${display(file)} -> ${name}`),
+        );
+      })
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/index.ts -> runtime.catalog.editCommittedUserMessage",
+      "src/bun/index.ts -> runtime.catalog.editQueuedSurfaceMessage",
+      "src/bun/index.ts -> runtime.catalog.reorderQueuedSurfaceMessage",
+      "src/bun/index.ts -> runtimeOperations.messages.abort",
+      "src/bun/index.ts -> runtimeOperations.messages.abort",
+      "src/bun/index.ts -> runtimeOperations.messages.submit",
+      "src/bun/index.ts -> runtimeOperations.queues.steer",
+    ]);
+  });
+
+  it("app code imports runtime-owned prompt execution construction from the runtime prompt subpath", () => {
+    const runtimeOwnedPromptContextSymbols = new Set([
       "PromptExecutionRuntimeHandle",
-      "PromptExecutionSurfaceKind",
       "createPromptExecutionContext",
     ]);
-    const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+    const appFiles = listTypeScriptFiles(join(projectRoot, "src", "bun"));
+    const coreViolations = appFiles
+      .flatMap((file) =>
+        readNamedImportNames(file, "@svvy/core")
+          .filter((name) => runtimeOwnedPromptContextSymbols.has(name))
+          .map((name) => `${display(file)} imports runtime-owned ${name} from @svvy/core`),
+      )
+      .toSorted();
+    const bootstrapViolations = appFiles
       .flatMap((file) =>
         readNamedImportNames(file, "@svvy/runtime/bootstrap")
-          .filter((name) => forbiddenBootstrapPromptContextTypes.has(name))
-          .map((name) => `${display(file)} -> ${name}`),
+          .filter((name) => runtimeOwnedPromptContextSymbols.has(name))
+          .map((name) => `${display(file)} imports runtime-owned ${name} from bootstrap`),
+      )
+      .toSorted();
+    const promptExecutionImports = appFiles
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readImports(file)
+          .filter((specifier) => specifier === "@svvy/runtime/prompt-execution-context")
+          .map((specifier) => `${display(file)} -> ${specifier}`),
       )
       .toSorted();
 
-    expect(violations).toEqual([]);
+    expect(coreViolations).toEqual([]);
+    expect(bootstrapViolations).toEqual([]);
+    expect(promptExecutionImports).not.toEqual([]);
   });
 
-  it("runtime bootstrap does not re-export core-owned prompt execution context contracts", () => {
+  it("runtime bootstrap does not re-export prompt execution context construction or live handles", () => {
     const runtimeBootstrapSymbols = [
       ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
     ];
     const forbiddenBootstrapSymbols = runtimeBootstrapSymbols.filter(
       (symbol) =>
-        symbol === "PromptExecutionContext" ||
-        symbol === "PromptExecutionEpisodeKind" ||
-        symbol === "PromptExecutionExternalInstructionSource" ||
-        symbol === "PromptExecutionRuntimeHandle" ||
-        symbol === "PromptExecutionSurfaceKind" ||
-        symbol === "createPromptExecutionContext",
+        symbol === "PromptExecutionRuntimeHandle" || symbol === "createPromptExecutionContext",
     );
 
     expect(forbiddenBootstrapSymbols).toEqual([]);
@@ -5593,14 +8656,48 @@ describe("package boundaries", () => {
     const source = readSource(join(packageRoot, "runtime", "src", "index.ts"));
 
     expect(source).toContain("export namespace Runtime");
-    expect(source).toMatch(
-      /export const layer:\s*Layer\.Layer<Runtime,\s*RuntimeLayerError,\s*RuntimeLayerRequirements>\s*=\s*Layer\.effect\(Runtime,\s*makeRuntimeService\(\)\);/,
+    expect(source).toContain("const runtimeInternalServicesLayer = Layer.mergeAll(");
+    expect(source).toContain(
+      "const runtimeLaunchPolicyLayer = layerRuntimeLaunchPolicyService.pipe(Layer.provide(sandboxLayer));",
     );
+    expect(source).toContain("runtimeSurfaceEventPublisherLayer");
+    expect(source).toContain("layerRuntimePromptDefaultsService");
+    expect(source).not.toContain("RuntimePostCommitNotificationLayer");
+    expect(source).toContain("export const layer: Layer.Layer<");
+    expect(source).toContain("| RuntimeStartupReadiness");
+    expect(source).toContain("| RuntimeShutdownPreparation");
+    expect(source).toContain("| StateCommandPostCommitNotificationPort");
+    expect(source).not.toContain("RuntimeLayerRequirements");
+    expect(source).toContain("| RuntimeLayerConfigService");
+    expect(source).toContain("| RuntimeLayerPromptControlHostPort");
+    expect(source).toContain("| RuntimeWorkspaceStatePort");
+    expect(source).toContain("| SandboxPolicySource");
+    expect(source).toContain("| SandboxHelperCandidatesPort");
+    expect(source).toContain("| HostProcessReferencePort");
+    expect(source).toContain("Layer.effect(Runtime, makeRuntimeService())");
+    expect(source).toContain(").pipe(Layer.provide(runtimeInternalServicesLayer));");
+    expect(source).not.toContain("Layer.provide(layerRuntimeEventBus)");
+    expect(source).not.toContain("Layer.provide(runtimeLaunchPolicyLayer)");
     expect(source).toContain("export const layer = Runtime.layer;");
     expect(source).not.toMatch(/\bexport\s+const\s+layerRuntime\b/);
     expect(source).not.toMatch(/\bexport\s+const\s+layer\s*=\s*\(\s*service\b/);
     expect(source).not.toMatch(/\bLayer\.succeed\(\s*Runtime\s*,\s*service\s*\)/);
     expect(source).not.toMatch(/\bRuntime\.layer\s*\(/);
+
+    const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    expect(runtimeLayerSource).toContain("export type RuntimeLayerRequirements =");
+    const runtimeLayerRequirements = runtimeLayerSource.match(
+      /export type RuntimeLayerRequirements =[\s\S]*?;\n/,
+    )?.[0];
+    expect(runtimeLayerRequirements).toBeDefined();
+    expect(runtimeLayerRequirements).not.toContain("RuntimeRequestInputWaitService");
+    expect(runtimeLayerSource).toContain("| RuntimeLayerConfigService");
+    expect(runtimeLayerSource).toContain("| SandboxPolicySource");
+    expect(runtimeLayerSource).toContain("| SandboxHelperCandidatesPort");
+    expect(runtimeLayerSource).toContain("| HostProcessReferencePort");
+    expect(runtimeLayerSource).not.toMatch(
+      /Effect\.provide\(\s*layerRuntime(?:SourceInvalidation|GeneratedContextRefresh|GeneratedPackageRefresh|QueueWake|PromptDefaults|SurfaceEventPublisher)/,
+    );
   });
 
   it("renderer, desktop edge, and headless tests do not create or run Effect runtimes", () => {
@@ -5634,6 +8731,7 @@ describe("package boundaries", () => {
         const importViolations = readImports(file)
           .filter(
             (specifier) =>
+              specifier === "effect/Effect" ||
               specifier === "effect/Runtime" ||
               specifier === "effect/ManagedRuntime" ||
               specifier === "effect/Layer",
@@ -5653,6 +8751,7 @@ describe("package boundaries", () => {
       join(packageRoot, "desktop", "src"),
     ];
     const forbidden = new Set([
+      "effect",
       "effect/Context",
       "effect/Layer",
       "effect/ManagedRuntime",
@@ -5671,9 +8770,53 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("renderer and desktop edge modules do not import extensions package code or runtime operation contracts", () => {
+    const roots = [
+      join(projectRoot, "src", "mainview"),
+      sharedSourceRoot,
+      join(packageRoot, "desktop", "src"),
+    ];
+    const forbiddenContractNamePattern =
+      /\b(?:RuntimeEffectRequest|ExtensionRuntimeOperation|ExtensionExecutionPlan)\b/g;
+    const violations = roots.flatMap((root) =>
+      listTypeScriptFiles(root).flatMap((file) => {
+        const source = readSource(file);
+        const importViolations = readImports(file)
+          .filter(
+            (specifier) =>
+              specifier === "@svvy/extensions" || specifier.startsWith("@svvy/extensions/"),
+          )
+          .map((specifier) => `${display(file)} -> ${specifier}`);
+        const contractNameViolations = [...source.matchAll(forbiddenContractNamePattern)].map(
+          (match) => `${display(file)} -> ${match[0]}`,
+        );
+        return [...importViolations, ...contractNameViolations];
+      }),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("renderer and shared browser contracts do not import state implementation subpaths", () => {
+    const roots = [join(projectRoot, "src", "mainview"), sharedSourceRoot].filter((root) =>
+      existsSync(root),
+    );
+    const allowedRendererStateSubpaths = new Set(["@svvy/state/session-navigation"]);
+    const violations = roots.flatMap((root) =>
+      listTypeScriptFiles(root).flatMap((file) =>
+        readImports(file)
+          .filter((specifier) => specifier.startsWith("@svvy/state/"))
+          .filter((specifier) => !allowedRendererStateSubpaths.has(specifier))
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("extracted packages call caller-owned ManagedRuntime runners only from facade factories", () => {
     const runnerPattern =
-      /\b([A-Za-z_$][\w$]*)\s*\.\s*(run(?:Promise|PromiseExit|Sync|SyncExit|Fork|Callback))\b/g;
+      /\b([A-Za-z_$][\w$]*)\s*\.\s*(run(?:Promise|PromiseExit|Sync|SyncExit|Fork|Callback)(?:With)?)\b/g;
     const actual = sourceRoots
       .flatMap((root) =>
         listTypeScriptFiles(root)
@@ -5687,11 +8830,277 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseExitWith",
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseExitWith",
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
+      "packages/runtime/src/accepted-native-tool-execution.ts -> managedRuntime.runPromise",
       "packages/runtime/src/index.ts -> managedRuntime.runPromiseExit",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
-      "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
+      "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromiseExit",
+      "packages/runtime/src/source-invalidation-coordinator-adapter.ts -> Effect.runPromise",
       "packages/state/src/state-facade.ts -> managedRuntime.runPromiseExit",
     ]);
+  });
+
+  it("production ManagedRuntime instance member reads match the adopted instance policy", () => {
+    const actual = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+    ]
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readManagedRuntimeInstanceMemberReads(file).map(
+          ({ receiver, member }) => `${display(file)} -> ${receiver}.${member}`,
+        ),
+      )
+      .toSorted();
+
+    const policyEntries = adoptedEffectInstanceMemberPolicies
+      .filter(
+        (entry) =>
+          entry.module === "effect/ManagedRuntime" &&
+          entry.receiver === "ManagedRuntime.ManagedRuntime",
+      )
+      .flatMap((entry) =>
+        entry.allowedSourceGlobs.flatMap((sourceGlob) =>
+          entry.members.map((member) => `${sourceGlob} -> managedRuntime.${member}`),
+        ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "packages/runtime/src/accepted-native-tool-execution.ts -> managedRuntime.runPromise",
+      "packages/runtime/src/index.ts -> managedRuntime.runPromiseExit",
+      "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
+      "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromiseExit",
+      "packages/state/src/state-facade.ts -> managedRuntime.runPromiseExit",
+      "src/bun/runtime-service-adapter.ts -> managedRuntime.context",
+      "src/bun/runtime-service-adapter.ts -> managedRuntime.dispose",
+      "src/bun/runtime-service-adapter.ts -> managedRuntime.runPromise",
+    ]);
+    expect(policyEntries).toEqual(actual);
+  });
+
+  it("injected Effect service instance member scanner covers named imports and aliases", () => {
+    const actual = readInjectedEffectServiceInstanceMemberReadsFromSource(
+      "scanner-fixture.ts",
+      `
+        import { FileSystem as FS } from "effect/FileSystem";
+        import type { Path as PathService } from "effect/Path";
+        import { make as makeSemaphore } from "effect/Semaphore";
+
+        export const program = Effect.gen(function* () {
+          const fs = yield* FS;
+          yield* fs.writeFileString("/tmp/out.txt", "ok");
+          const semaphore = yield* makeSemaphore(1);
+          yield* semaphore.withPermit(Effect.void);
+        });
+
+        export function readPath(pathService: PathService) {
+          return pathService.basename("/tmp/out.txt");
+        }
+      `,
+    ).map(({ module, receiver, member }) => `${module} ${receiver}.${member}`);
+
+    expect(actual).toEqual([
+      "effect/FileSystem FileSystem.FileSystem.writeFileString",
+      "effect/Semaphore Semaphore.Semaphore.withPermit",
+      "effect/Path Path.Path.basename",
+    ]);
+  });
+
+  it("manual Effect runtime scanner covers aliases without regex blind spots", () => {
+    const fixture = join(projectRoot, "scanner-fixture.ts");
+    const source = `
+      import { Effect as RootEffect } from "effect";
+      import * as FX from "effect/Effect";
+      import { runSync as runEffectSync } from "effect/Effect";
+      import * as MR from "effect/ManagedRuntime";
+      import { make as makeManagedRuntime } from "effect/ManagedRuntime";
+      import * as EffectLayer from "effect/Layer";
+      import { launch as launchLayer } from "effect/Layer";
+
+      const EffectAlias = RootEffect;
+      const DynamicEffect = await import("effect/Effect");
+      const DynamicManagedRuntime = await import("effect/ManagedRuntime");
+      const DynamicLayer = await import("effect/Layer");
+      const { runPromise: promiseRunner } = FX;
+      const runtimeFromNamespace = MR["make"](layer);
+      const runtimeFromNamed = makeManagedRuntime(layer);
+      const { make: makeRuntimeAlias } = MR;
+      const runtimeFromAlias = makeRuntimeAlias(layer);
+      const { launch: launchLayerAlias } = EffectLayer;
+
+      EffectAlias["runSync"](program);
+      promiseRunner(program);
+      runEffectSync(program);
+      DynamicEffect.runPromise(program);
+      DynamicManagedRuntime.make(layer);
+      DynamicLayer.launch(layer);
+      launchLayer(layer);
+      launchLayerAlias(layer);
+      runMain(program);
+    `;
+    const sourceFile = ts.createSourceFile(fixture, source, ts.ScriptTarget.Latest, true);
+    const bindings = readValueImportBindingsFromSourceFile(sourceFile, "effect/Effect").map(
+      (binding) =>
+        binding.kind === "namespace"
+          ? `${binding.kind}:${binding.localName}`
+          : `${binding.kind}:${binding.importedName}:${binding.localName}`,
+    );
+
+    const actual = readManualEffectRuntimeReadsFromSource(fixture, source);
+
+    expect(bindings).toEqual(["namespace:FX", "named:runSync:runEffectSync"]);
+    expect(actual).toEqual([
+      "Effect.runPromise",
+      "ManagedRuntime.make",
+      "ManagedRuntime.make",
+      "ManagedRuntime.make",
+      "Layer.launch",
+      "Effect.runSync",
+      "Effect.runSync",
+      "Effect.runPromise",
+      "ManagedRuntime.make",
+      "Layer.launch",
+      "Layer.launch",
+      "runMain",
+    ]);
+  });
+
+  it("module specifier scanner covers static, runtime, export, and Svelte script imports", () => {
+    const source = `
+      import defaultExport from "static-default";
+      import type { TypeOnly } from "static-type";
+      export { value } from "static-export";
+      const dynamicModule = import("runtime-import");
+      const requiredModule = require("runtime-require");
+      // import "commented-out";
+      const text = "require('string-only')";
+    `;
+    const svelteSource = `
+      <h1>require("markup-only")</h1>
+      <script lang="ts">
+        import Component from "svelte-static";
+        const lazy = import("svelte-runtime");
+      </script>
+    `;
+
+    expect(
+      readModuleSpecifiersFromSource("scanner-fixture.ts", source, new Set(["static"])),
+    ).toEqual(["static-default", "static-type", "static-export"]);
+    expect(
+      readModuleSpecifiersFromSource("scanner-fixture.ts", source, new Set(["runtime"])),
+    ).toEqual(["runtime-import", "runtime-require"]);
+    expect(
+      readModuleSpecifiersFromSource(
+        "scanner-fixture.svelte",
+        svelteSource,
+        new Set(["static", "runtime"]),
+      ),
+    ).toEqual(["svelte-static", "svelte-runtime"]);
+  });
+
+  it("Effect Schema scanner covers compiler and asserts aliases without regex blind spots", () => {
+    const source = `
+      import * as S from "effect/Schema";
+      import { decodeUnknownEffect as decodeNamed, asserts as assertNamed } from "effect/Schema";
+
+      const SchemaAlias = S;
+      const decodeAlias = SchemaAlias["decodeUnknownSync"];
+      const { decodeEffect: decodeFromBinding, asserts: assertFromBinding } = S;
+
+      // Schema.decodeUnknownEffect(MySchema)(value);
+      const compiled = S.decodeUnknownEffect(MySchema);
+      decodeAlias(MySchema)(value);
+      decodeFromBinding(MySchema)(value);
+      decodeNamed(MySchema)(value);
+      SchemaAlias["asserts"](MySchema)(value);
+      assertFromBinding(MySchema)(value);
+      assertNamed(MySchema)(value);
+    `;
+
+    expect(
+      readEffectSchemaCompilerConstructionReadsFromSource("scanner-fixture.ts", source),
+    ).toEqual([
+      {
+        index: source.indexOf("decodeAlias(MySchema)"),
+        label: "effect/Schema decodeUnknownSync namespace alias",
+      },
+      {
+        index: source.indexOf("decodeFromBinding(MySchema)"),
+        label: "effect/Schema decodeEffect namespace alias",
+      },
+      {
+        index: source.indexOf("decodeNamed(MySchema)"),
+        label: "effect/Schema decodeUnknownEffect named import",
+      },
+    ]);
+    expect(readEffectSchemaAssertReadsFromSource("scanner-fixture.ts", source)).toEqual([
+      "effect/Schema asserts namespace alias",
+      "effect/Schema asserts",
+      "effect/Schema asserts",
+    ]);
+  });
+
+  it("ManagedRuntime instance member scanner covers aliases and string-literal reads", () => {
+    const actual = readManagedRuntimeInstanceMemberReadsFromSource(
+      "scanner-fixture.ts",
+      `
+        import * as MR from "effect/ManagedRuntime";
+        import { make as makeManagedRuntime } from "effect/ManagedRuntime";
+
+        const runtimeA = MR.make(layer);
+        const runtimeB = makeManagedRuntime(layer);
+        const runtimeC = runtimeA;
+        runtimeA.context();
+        runtimeB["runPromise"](program);
+        runtimeC.dispose();
+        managedRuntime["runPromiseExit"](program);
+      `,
+    ).map(({ receiver, member }) => `${receiver}.${member}`);
+
+    expect(actual).toEqual([
+      "runtimeA.context",
+      "runtimeB.runPromise",
+      "runtimeC.dispose",
+      "managedRuntime.runPromiseExit",
+    ]);
+  });
+
+  it("production injected Effect service instance member reads match the adopted instance policy", () => {
+    const actual = [
+      ...sourceRoots.flatMap((root) => listTypeScriptFiles(root)),
+      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
+    ]
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readInjectedEffectServiceInstanceMemberReads(file).map(
+          ({ module, receiver, member }) => `${display(file)} -> ${module} ${receiver}.${member}`,
+        ),
+      );
+
+    const uniqueActual = [...new Set(actual)].toSorted();
+    const policyEntries = adoptedEffectInstanceMemberPolicies
+      .filter(
+        (entry) =>
+          !(
+            entry.module === "effect/ManagedRuntime" &&
+            entry.receiver === "ManagedRuntime.ManagedRuntime"
+          ),
+      )
+      .flatMap((entry) =>
+        entry.allowedSourceGlobs.flatMap((sourceGlob) =>
+          entry.members.map(
+            (member) => `${sourceGlob} -> ${entry.module} ${entry.receiver}.${member}`,
+          ),
+        ),
+      )
+      .toSorted();
+
+    expect(uniqueActual).toEqual(policyEntries);
   });
 
   it("@svvy/sandbox production source does not spawn child processes", () => {
@@ -5733,66 +9142,390 @@ describe("package boundaries", () => {
     expect(actual).toEqual([]);
   });
 
-  it("@svvy/state root keeps legacy store leaks explicit while the package facade lands", () => {
-    const expectedLegacyStoreLeakExports = [
-      "extensionStatePortFromStore",
-      "providerAuthStatusStatePortFromStore",
-      "runtimeActorExtensionBindingStatePortFromStore",
-      "runtimeArtifactStatePortFromStore",
-      "runtimeApprovalStatePortFromStore",
-      "runtimeCommandStatePortFromStore",
-      "runtimeComposerDraftStatePortFromStore",
-      "runtimeEpisodeStatePortFromStore",
-      "runtimeExtensionContextImpactStateFacadeFromStore",
-      "runtimeExtensionContextImpactStatePortFromStore",
-      "runtimeExtensionStatePortFromStore",
-      "runtimeGeneratedPackageStatePortFromStore",
-      "runtimeQueueStatePortFromStore",
-      "runtimeReadModelStatePortFromStore",
-      "runtimeRecoveryStatePortFromStore",
-      "runtimeRequestStatePortFromStore",
-      "runtimeSessionWaitStatePortFromStore",
-      "runtimeSourceStatePortFromStore",
-      "runtimeSurfaceLifecycleStatePortFromStore",
-      "runtimeThreadStatePortFromStore",
-      "runtimeTurnStatePortFromStore",
-      "runtimeWorkspaceStatePortFromStore",
-    ];
+  it("@svvy/state root does not re-export structured session selector APIs", () => {
+    const selectorSymbols = readPublicExportedNames(
+      join(packageRoot, "state", "src", "structured-session-selectors.ts"),
+    );
+    const actual = readPublicExportedNames(join(packageRoot, "state", "src", "index.ts"))
+      .filter((symbol) => selectorSymbols.includes(symbol))
+      .toSorted();
+
+    expect(actual).toEqual([]);
+  });
+
+  it("@svvy/state root does not expose structured-session adapters", () => {
     const leakPatterns = [
       /(?:^|[A-Z])Store(?:$|[A-Z])/,
       /FromStore$/,
+      /FromStructuredSessionState$/,
       /StateService$/,
       /^layer.*State$/,
       /^create.*Store$/,
       /^StructuredSessionState$/,
+      /^StructuredSessionStatePorts$/,
       /^structuredSessionStateFromStore$/,
+      /^structuredSessionStatePortsLayer$/,
+      /^layerStructuredSessionStatePorts$/,
+      /^make.*StatePort$/,
+      /^makeSandboxPolicySource$/,
+      /^sandboxPolicySourceFromSettings$/,
     ];
     const actual = readPublicExportedNames(join(packageRoot, "state", "src", "index.ts"))
       .filter((symbol) => leakPatterns.some((pattern) => pattern.test(symbol)))
       .toSorted();
 
-    expect(actual).toEqual(expectedLegacyStoreLeakExports.toSorted());
+    expect(actual).toEqual([]);
   });
 
-  it("@svvy/sandbox root keeps helper and launch-builder leaks explicit while runtime launch moves to Sandbox", () => {
-    const actual = readPublicExportedNames(join(packageRoot, "sandbox", "src", "index.ts"))
-      .filter((symbol) => expectedLegacySandboxRootExportSymbols.includes(symbol))
+  it("@svvy/state structured-session adapters do not expose aggregate state-port bundles", () => {
+    const actual = readPublicExportedNames(
+      join(packageRoot, "state", "src", "structured-session-adapters.ts"),
+    )
+      .filter((symbol) =>
+        [
+          /^StructuredSessionStatePorts$/,
+          /^structuredSessionStatePortsLayer$/,
+          /^layerStructuredSessionStatePorts$/,
+        ].some((pattern) => pattern.test(symbol)),
+      )
       .toSorted();
 
-    expect(actual).toEqual(expectedLegacySandboxRootExportSymbols.toSorted());
+    expect(actual).toEqual([]);
   });
 
-  it("Bun production code keeps legacy @svvy/sandbox root launch imports on the refactor ledger", () => {
+  it("@svvy/state sandbox policy layer is a zero-argument structured-session projection", () => {
+    const source = readSource(join(packageRoot, "state", "src", "sandbox-policy-source.ts"));
+
+    expect(source).toContain("yield* StructuredSessionState");
+    expect(source).toContain(
+      "Layer.effect(\n  SandboxPolicySource,\n  makeSandboxPolicySource(),\n)",
+    );
+    expect(source).not.toMatch(/export\s+type\s+SandboxPolicySourceSettings/);
+    expect(source).not.toMatch(/export\s+function\s+sandboxPolicySourceFromSettings/);
+    expect(source).not.toMatch(/export\s+const\s+makeSandboxPolicySource/);
+    expect(source).not.toMatch(/layerSandboxPolicySource\s*=\s*\([^)]/);
+  });
+
+  it("@svvy/state root uses explicit named re-exports only", () => {
+    const source = readSource(join(packageRoot, "state", "src", "index.ts"));
+    expect(source.match(/^export\s+\*\s+from\s+["']/gm) ?? []).toEqual([]);
+  });
+
+  it("@svvy/sandbox root exposes only the explicit public export ledger", () => {
+    const source = readSource(join(packageRoot, "sandbox", "src", "index.ts"));
+    const actual = readPublicExportedNames(join(packageRoot, "sandbox", "src", "index.ts"));
+    const expected = expectedPublicSymbols.get("@svvy/sandbox") ?? [];
+
+    expect(source.match(/^export\s+\*\s+from\s+["']/gm) ?? []).toEqual([]);
+    expect(actual.toSorted()).toEqual(expected.toSorted());
+  });
+
+  it("Bun production code has only approved sandbox diagnostics and path-access imports", () => {
     const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
       .flatMap((file) =>
         readStaticSourceImports(file)
-          .filter((specifier) => specifier === "@svvy/sandbox")
+          .filter(
+            (specifier) => specifier === "@svvy/sandbox" || specifier.startsWith("@svvy/sandbox/"),
+          )
           .map((specifier) => `${display(file)} -> ${specifier}`),
       )
       .toSorted();
 
-    expect(actual).toEqual(expectedLegacySandboxAppImports);
+    expect(actual).toEqual(expectedSandboxAppImports);
+  });
+
+  it("@svvy/sandbox has no caller-owned launch-policy compatibility module", () => {
+    const sandboxSourceFiles = listTypeScriptFiles(join(packageRoot, "sandbox", "src"));
+    const actual = sandboxSourceFiles
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter(
+            (specifier) =>
+              specifier === "./launch-policy" || specifier === "@svvy/sandbox/launch-policy",
+          )
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(existsSync(join(packageRoot, "sandbox", "src", "launch-policy.ts"))).toBe(false);
+    expect(actual).toEqual([]);
+  });
+
+  it("Bun production code imports runtime bootstrap only at named app-bootstrap edges", () => {
+    const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter((specifier) => specifier === "@svvy/runtime/bootstrap")
+          .map((specifier) => `${display(file)} -> ${specifier}`),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/index.ts -> @svvy/runtime/bootstrap",
+      "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
+      "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
+      "src/bun/session-catalog.ts -> @svvy/runtime/bootstrap",
+      "src/bun/source-watch-inputs.ts -> @svvy/runtime/bootstrap",
+      "src/bun/workspace-runtime-registry.ts -> @svvy/runtime/bootstrap",
+    ]);
+  });
+
+  it("desktop and renderer code do not import runtime bootstrap directly", () => {
+    const roots = [join(packageRoot, "desktop", "src"), mainviewSourceRoot, sharedSourceRoot];
+    const actual = roots
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier === "@svvy/runtime/bootstrap")
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([]);
+  });
+
+  it("sandbox launch internals are not imported by app or package production code", () => {
+    const roots = [
+      appSourceRoot,
+      ...sourceRoots.filter((root) => root !== join(packageRoot, "sandbox", "src")),
+    ];
+    const actual = roots
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier === "@svvy/sandbox/launch-internals")
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([]);
+  });
+
+  it("sandbox app-edge launch policy is not a production import surface", () => {
+    const roots = [
+      appSourceRoot,
+      ...sourceRoots.filter((root) => root !== join(packageRoot, "sandbox", "src")),
+    ];
+    const actual = roots
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier === "@svvy/sandbox/app-edge-launch-policy")
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([]);
+  });
+
+  it("sandbox launch-policy acquisition is centralized in the package-private runtime adapter", () => {
+    const runtimeSourceRoot = join(packageRoot, "runtime", "src");
+    const forbidden = new Set([
+      "RuntimeLaunchPolicyService",
+      "RuntimeLaunchPolicyServiceService",
+      "layerRuntimeLaunchPolicyService",
+    ]);
+    const actual = [appSourceRoot, ...sourceRoots]
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) => {
+            const source = readFileSync(file, "utf8");
+            return source.includes(".buildLaunchPolicy(") ? [display(file)] : [];
+          }),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(["packages/runtime/src/runtime-launch-policy-service.ts"]);
+
+    const adapterSource = readFileSync(
+      join(runtimeSourceRoot, "runtime-launch-policy-service.ts"),
+      "utf8",
+    );
+    expect(adapterSource).toContain("sandbox.buildLaunchPolicy(input)");
+    expect(adapterSource).toContain("new RuntimeContractError");
+    expect(adapterSource).toContain(
+      'cause.reason === "helper-unavailable" ? "target-not-ready" : "state-conflict"',
+    );
+    expect(adapterSource).not.toContain("throw cause");
+    expect(adapterSource).toMatch(
+      /build:\s*Effect\.fn\(\s*["']@svvy\/runtime\/launchPolicy\.build["']\s*\)\s*\(\s*function\*\s*\(\s*input\s*\)/,
+    );
+
+    const runtimeRootSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "index.ts"))),
+    ];
+    const runtimeBootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
+    ];
+    const consumerRoots = [
+      join(projectRoot, "src", "bun"),
+      join(packageRoot, "desktop", "src"),
+      join(packageRoot, "state", "src"),
+      join(packageRoot, "extensions", "src"),
+      join(packageRoot, "pi-adapter", "src"),
+      join(packageRoot, "sandbox", "src"),
+    ];
+    const consumerViolations = consumerRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          [
+            ...readNamedImportNames(file, "@svvy/runtime"),
+            ...readNamedImportNames(file, "@svvy/runtime/bootstrap"),
+          ]
+            .filter((name) => forbidden.has(name))
+            .map((name) => `${display(file)} imports ${name}`),
+        ),
+    );
+
+    expect(runtimeRootSymbols.filter((symbol) => forbidden.has(symbol))).toEqual([]);
+    expect(runtimeBootstrapSymbols.filter((symbol) => forbidden.has(symbol))).toEqual([]);
+    expect(consumerViolations).toEqual([]);
+
+    const privateLaunchModuleImportViolations = [
+      appSourceRoot,
+      ...sourceRoots.filter((root) => root !== runtimeSourceRoot),
+    ].flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) =>
+          readStaticSourceImports(file)
+            .filter(
+              (specifier) =>
+                specifier.includes("runtime-launch-policy-service") ||
+                specifier.includes("runtime-direct-tool-launch-policy"),
+            )
+            .map((specifier) => `${display(file)} -> ${specifier}`),
+        ),
+    );
+    expect(privateLaunchModuleImportViolations).toEqual([]);
+  });
+
+  it("runtime direct-tool launch mapper stays package-private and pins launch-kind mapping", () => {
+    const runtimeSourceRoot = join(packageRoot, "runtime", "src");
+    const mapperPath = join(runtimeSourceRoot, "runtime-direct-tool-launch-policy.ts");
+    const mapperSource = readSource(mapperPath);
+    const forbiddenPublicSymbols = new Set([
+      "RuntimeDirectToolLaunchToolName",
+      "RuntimeDirectToolLaunchPolicyInput",
+      "buildRuntimeDirectToolLaunchFacts",
+    ]);
+    const runtimeRootSymbols = [
+      ...new Set(readPublicExportedNames(join(runtimeSourceRoot, "index.ts"))),
+    ];
+    const runtimeBootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(runtimeSourceRoot, "bootstrap.ts"))),
+    ];
+    const mapperImportConsumers = listTypeScriptFiles(runtimeSourceRoot)
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readStaticSourceImports(file)
+          .filter((specifier) => specifier === "./runtime-direct-tool-launch-policy")
+          .map(() => display(file)),
+      )
+      .toSorted();
+
+    expect(mapperSource).toMatch(
+      /Effect\.fn\(\s*["']@svvy\/runtime\/directToolLaunchPolicy\.build["']\s*,?\s*\)/,
+    );
+    expect(mapperSource).toContain('Omit<BuildLaunchPolicyInput, "launchKind">');
+    expect(mapperSource).toContain("readonly toolName: RuntimeDirectToolLaunchToolName");
+    expect(mapperSource).toContain("RuntimeLaunchPolicyService");
+    expect(mapperSource).not.toContain("@svvy/sandbox");
+    expect(mapperSource).toContain("launchKind: launchKindByToolName[toolName]");
+    expect(mapperSource).toContain('exec_command: "direct_shell"');
+    expect(mapperSource).toContain('apply_patch: "direct_apply_patch"');
+    expect(mapperSource).toContain('execute_typescript: "execute_typescript_runtime"');
+    expect(mapperSource).toContain(
+      "satisfies Record<RuntimeDirectToolLaunchToolName, SandboxLaunchKind>",
+    );
+    expect(runtimeRootSymbols.filter((symbol) => forbiddenPublicSymbols.has(symbol))).toEqual([]);
+    expect(runtimeBootstrapSymbols.filter((symbol) => forbiddenPublicSymbols.has(symbol))).toEqual(
+      [],
+    );
+    expect(mapperImportConsumers).toEqual([
+      "packages/runtime/src/accepted-native-tool-execution-service.ts",
+    ]);
+  });
+
+  it("restricted state structured-session subpaths are consumed only by session-catalog production bootstrap", () => {
+    const restrictedSubpaths = new Set([
+      "@svvy/state/structured-session-state",
+      "@svvy/state/structured-session-adapters",
+      "@svvy/state/structured-session-projections",
+    ]);
+    const roots = [
+      appSourceRoot,
+      ...sourceRoots.filter((root) => root !== join(packageRoot, "state", "src")),
+    ];
+    const actual = roots
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => restrictedSubpaths.has(specifier))
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-projections",
+      "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
+    ]);
+  });
+
+  it("pi managed session bridge is consumed only by session-catalog production bootstrap", () => {
+    const actual = [appSourceRoot, ...sourceRoots]
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier === "@svvy/pi-adapter/session")
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(["src/bun/session-catalog.ts -> @svvy/pi-adapter/session"]);
+  });
+
+  it("pi message conversion bridge is consumed only by session-catalog production bootstrap", () => {
+    const actual = [appSourceRoot, ...sourceRoots]
+      .filter((root) => existsSync(root))
+      .flatMap((root) =>
+        listTypeScriptFiles(root)
+          .filter((file) => !isTestFile(file))
+          .flatMap((file) =>
+            readStaticSourceImports(file)
+              .filter((specifier) => specifier === "@svvy/pi-adapter/messages")
+              .map((specifier) => `${display(file)} -> ${specifier}`),
+          ),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(["src/bun/session-catalog.ts -> @svvy/pi-adapter/messages"]);
   });
 
   it("non-state extracted packages do not import @svvy/state implementation subpaths", () => {
@@ -5808,15 +9541,40 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("@svvy/state root does not export standalone app-log facade or logger APIs", () => {
+    const forbiddenNames = new Set([
+      "AppLogAppendInput",
+      "AppLogAppender",
+      "AppLogDetails",
+      "AppLogFacade",
+      "AppLogger",
+      "AppLoggerEvent",
+      "CreateAppLogFacadeOptions",
+      "CreateAppLoggerOptions",
+      "appendAppLoggerEvent",
+      "createAppLogFacade",
+      "createAppLogger",
+      "redactAppLogValue",
+    ]);
+    const actual = readPublicExportedNames(join(packageRoot, "state", "src", "index.ts"))
+      .filter((symbol) => forbiddenNames.has(symbol))
+      .toSorted();
+
+    expect(actual).toEqual([]);
+  });
+
   it("Bun production code does not import app-log logger or redaction helpers from @svvy/state root", () => {
     const forbiddenNames = new Set([
       "AppLogAppendInput",
       "AppLogAppender",
       "AppLogDetails",
+      "AppLogFacade",
       "AppLogger",
       "AppLoggerEvent",
+      "CreateAppLogFacadeOptions",
       "CreateAppLoggerOptions",
       "appendAppLoggerEvent",
+      "createAppLogFacade",
       "createAppLogger",
       "redactAppLogValue",
     ]);
@@ -5856,93 +9614,115 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("runtime-service-adapter remains the only Bun module allowed to expose runRuntimeEffect", () => {
+  it("Bun production code does not export generic Effect runners", () => {
     const runRuntimeEffectDeclarationPattern =
-      /\b(?:export\s+)?(?:async\s+)?function\s+runRuntimeEffect\b|\b(?:export\s+)?const\s+runRuntimeEffect\b/;
+      /\b(?:export\s+)?(?:async\s+)?function\s+runRuntimeEffect\b|\b(?:export\s+)?const\s+runRuntimeEffect\b/g;
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
-      .filter((file) => file !== runtimeServiceAdapterModule)
       .filter((file) => !isTestFile(file))
-      .filter((file) => runRuntimeEffectDeclarationPattern.test(readSource(file)))
-      .map(display);
+      .flatMap((file) =>
+        Array.from(readSource(file).matchAll(runRuntimeEffectDeclarationPattern), (match) =>
+          match[0].startsWith("export") ? display(file) : null,
+        ).filter((entry): entry is string => entry !== null),
+      )
+      .toSorted();
 
     expect(violations).toEqual([]);
   });
 
-  it("app-side manual Effect runtime execution stays on an explicit retirement ledger", () => {
-    const manualRuntimePatterns = [
-      { pattern: /\bEffect\.runPromise\b/g, name: "Effect.runPromise" },
-      { pattern: /\bEffect\.runPromiseWith\b/g, name: "Effect.runPromiseWith" },
-      { pattern: /\bEffect\.runPromiseExit\b/g, name: "Effect.runPromiseExit" },
-      { pattern: /\bEffect\.runPromiseExitWith\b/g, name: "Effect.runPromiseExitWith" },
-      { pattern: /\bEffect\.runSync\b/g, name: "Effect.runSync" },
-      { pattern: /\bEffect\.runSyncWith\b/g, name: "Effect.runSyncWith" },
-      { pattern: /\bEffect\.runSyncExit\b/g, name: "Effect.runSyncExit" },
-      { pattern: /\bEffect\.runSyncExitWith\b/g, name: "Effect.runSyncExitWith" },
-      { pattern: /\bEffect\.runFork\b/g, name: "Effect.runFork" },
-      { pattern: /\bEffect\.runForkWith\b/g, name: "Effect.runForkWith" },
-      { pattern: /\bEffect\.runCallback\b/g, name: "Effect.runCallback" },
-      { pattern: /\bEffect\.runCallbackWith\b/g, name: "Effect.runCallbackWith" },
-      { pattern: /\bManagedRuntime\.make\b/g, name: "ManagedRuntime.make" },
-    ];
-    const allowedManualRuntimeReads = new Map<string, string[]>([
+  it("app-side manual Effect runtime execution stays limited to the named bootstrap exception set", () => {
+    const steadyStateBootstrapRuntimeReads = new Map<string, string[]>([
+      ["src/bun/index.ts", ["Effect.runSync"]],
       ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise", "ManagedRuntime.make"]],
+    ]);
+    const sessionCatalogRunnerExceptionReads = new Map<string, string[]>([
       ["src/bun/session-catalog.ts", ["Effect.runSync"]],
+    ]);
+    const allowedManualRuntimeReads = new Map<string, string[]>([
+      ...steadyStateBootstrapRuntimeReads,
+      ...sessionCatalogRunnerExceptionReads,
     ]);
     const actualManualRuntimeReads = new Map<string, string[]>();
 
     for (const file of listTypeScriptFiles(join(projectRoot, "src", "bun")).filter(
       (candidate) => !isTestFile(candidate),
     )) {
-      const source = readSource(file);
-      const directReads = manualRuntimePatterns.flatMap(({ pattern, name }) =>
-        [...source.matchAll(pattern)].map(() => name),
-      );
-      const effectAliasReads = readValueImportBindings(file, "effect/Effect").flatMap((binding) =>
-        manualRuntimePatterns.flatMap(({ name }) => {
-          if (!name.startsWith("Effect.")) return [];
-          const runner = name.slice("Effect.".length);
-          if (binding.kind === "namespace") {
-            if (binding.localName === "Effect") return [];
-            return Array.from(
-              source.matchAll(new RegExp(`\\b${binding.localName}\\.${runner}\\b`, "g")),
-              () => name,
-            );
-          }
-          return binding.importedName === runner
-            ? Array.from(
-                source.matchAll(new RegExp(`\\b${binding.localName}\\s*\\(`, "g")),
-                () => name,
-              )
-            : [];
-        }),
-      );
-      const managedRuntimeAliasReads = readValueImportBindings(
-        file,
-        "effect/ManagedRuntime",
-      ).flatMap((binding) => {
-        if (binding.kind === "namespace") {
-          if (binding.localName === "ManagedRuntime") return [];
-          return Array.from(
-            source.matchAll(new RegExp(`\\b${binding.localName}\\.make\\b`, "g")),
-            () => "ManagedRuntime.make",
-          );
-        }
-        return binding.importedName === "make"
-          ? Array.from(
-              source.matchAll(new RegExp(`\\b${binding.localName}\\s*\\(`, "g")),
-              () => "ManagedRuntime.make",
-            )
-          : [];
-      });
-      const found = [...directReads, ...effectAliasReads, ...managedRuntimeAliasReads];
+      const found = readManualEffectRuntimeReads(file);
       if (found.length > 0) {
         actualManualRuntimeReads.set(display(file), found.toSorted());
       }
     }
 
-    expect([...actualManualRuntimeReads.entries()].toSorted()).toEqual(
-      [...allowedManualRuntimeReads.entries()].toSorted(),
-    );
+    const sessionCatalogManualRunners = actualManualRuntimeReads.get("src/bun/session-catalog.ts");
+
+    expect({
+      actualManualRuntimeReads: [...actualManualRuntimeReads.entries()].toSorted(),
+      sessionCatalogManualRunners,
+      sessionCatalogRunPromiseReads: sessionCatalogManualRunners?.filter((name) =>
+        name.startsWith("Effect.runPromise"),
+      ),
+      sessionCatalogRunnerExceptionReads: [
+        ...sessionCatalogRunnerExceptionReads.entries(),
+      ].toSorted(),
+    }).toEqual({
+      actualManualRuntimeReads: [...allowedManualRuntimeReads.entries()].toSorted(),
+      sessionCatalogManualRunners: ["Effect.runSync"],
+      sessionCatalogRunPromiseReads: [],
+      sessionCatalogRunnerExceptionReads: [["src/bun/session-catalog.ts", ["Effect.runSync"]]],
+    });
+  });
+
+  it("app-side ManagedRuntime construction stays in the named bootstrap owner", () => {
+    const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readManualEffectRuntimeReads(file)
+          .filter((name) => name === "ManagedRuntime.make")
+          .map((name) => `${display(file)} -> ${name}`),
+      )
+      .toSorted();
+
+    expect(actual).toEqual(["src/bun/runtime-service-adapter.ts -> ManagedRuntime.make"]);
+  });
+
+  it("app-side Bun tests that manually run Effect stay in the named harness ledger", () => {
+    const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => file.endsWith(".test.ts"))
+      .flatMap((file) =>
+        readManualEffectRuntimeReads(file).map((name) => `${display(file)} -> ${name}`),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/execute-typescript-tool.test.ts -> Effect.runSync",
+      "src/bun/extension-tools.test.ts -> Effect.runSync",
+      "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
+      "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
+      "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
+      "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
+      "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
+      "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
+      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
+      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
+      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
+      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
+      "src/bun/request-user-input-tool.test.ts -> Effect.runSync",
+      "src/bun/runtime-state-tools.test.ts -> Effect.runSync",
+      "src/bun/session-catalog.test.ts -> Effect.runPromise",
+      "src/bun/session-catalog.test.ts -> Effect.runSync",
+      "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",
+      "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",
+      "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",
+      "src/bun/svvy-direct-tools.test.ts -> Effect.runPromise",
+      "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
+      "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
+      "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
+      "src/bun/thread-orchestration-tools.test.ts -> Effect.runSync",
+      "src/bun/thread-report-tool.test.ts -> Effect.runSync",
+      "src/bun/thread-start-tool.test.ts -> Effect.runSync",
+      "src/bun/tool-execution-command-tracker.test.ts -> Effect.runSync",
+      "src/bun/tool-execution-command-tracker.test.ts -> Effect.runSync",
+      "src/bun/workspace-recovery-coordinator.test.ts -> Effect.runSync",
+    ]);
   });
 
   it("shared app contracts do not import Bun backend modules", () => {
@@ -5969,10 +9749,12 @@ describe("package boundaries", () => {
       "@svvy/sandbox",
       "@svvy/pi-adapter",
     ];
+    const allowedSharedPackageSubpaths = new Set(["@svvy/state/session-navigation"]);
     const violations = listTypeScriptFiles(sharedSourceRoot).flatMap((file) =>
       isTestFile(file)
         ? []
         : readImports(file)
+            .filter((specifier) => !allowedSharedPackageSubpaths.has(specifier))
             .filter(
               (specifier) =>
                 forbiddenPackages.some(
@@ -6086,8 +9868,11 @@ describe("package boundaries", () => {
         dependency !== "@effect/vitest" &&
         dependency !== "@effect/platform-bun",
     );
-    const packageViolations = Array.from(expectedPackageDependencies.keys()).flatMap(
-      (packageName) => {
+    const packageViolations = Array.from(expectedPackageDependencies.entries()).flatMap(
+      ([packageName, dependencies]) => {
+        if (!dependencies.includes("effect")) {
+          return [];
+        }
         const manifest = readPackageManifest(packageName);
         const packageEffectVersion = manifest.dependencies?.effect;
         return packageEffectVersion === rootEffectVersion
@@ -6201,6 +9986,75 @@ describe("package boundaries", () => {
               `${display(file)} -> ${importedPackage} not declared by ${packageName}`,
           ),
       );
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("@svvy/runtime production source does not use direct host transport APIs", () => {
+    const forbiddenImportSpecifiers =
+      /^(?:node:(?:http|https|http2|net|tls|dgram)|(?:http|https|http2|net|tls|dgram)|bun|undici|axios|got|ky|ofetch|@effect\/platform\/(?:HttpClient|HttpClientRequest|HttpClientResponse|HttpServer)|@effect\/platform-bun\/BunHttp(?:Client|Server)|@effect\/platform-node\/NodeHttp(?:Client|Server))$/;
+    const forbiddenSourceReads = [
+      { pattern: /\bfetch\s*\(/, name: "global fetch" },
+      { pattern: /\bnew\s+WebSocket\s*\(/, name: "WebSocket" },
+      { pattern: /\bnew\s+EventSource\s*\(/, name: "EventSource" },
+      { pattern: /\bnew\s+XMLHttpRequest\s*\(/, name: "XMLHttpRequest" },
+      { pattern: /\bBun\s*\.\s*(?:serve|connect|udpSocket)\s*\(/, name: "Bun transport" },
+    ];
+
+    const violations = listTypeScriptFiles(join(packageRoot, "runtime", "src"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) => {
+        const source = readSource(file);
+        return [
+          ...readImports(file)
+            .filter((specifier) => forbiddenImportSpecifiers.test(specifier))
+            .map((specifier) => `${display(file)} -> ${specifier}`),
+          ...forbiddenSourceReads
+            .filter(({ pattern }) => pattern.test(source))
+            .map(({ name }) => `${display(file)} -> ${name}`),
+        ];
+      });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("extension handlers do not perform runtime, state, subprocess, or file side effects directly", () => {
+    const handlerFiles = listTypeScriptFiles(join(packageRoot, "extensions", "src"))
+      .filter((file) => basename(file).includes("handler"))
+      .filter((file) => !isTestFile(file));
+    const forbiddenImports = [
+      "@svvy/state",
+      "@svvy/runtime",
+      "@svvy/sandbox",
+      "@svvy/pi-adapter",
+      "node:fs",
+      "node:fs/promises",
+      "node:child_process",
+      "bun:sqlite",
+    ];
+    const forbiddenSourcePatterns = [
+      /\bBun\.(?:spawn|spawnSync|write|file)\b/,
+      /\bprocess\.(?:env|cwd|chdir|exit)\b/,
+      /\b(?:writeFile|readFile|mkdir|rm|unlink|rename)\s*\(/,
+      /\b(?:spawn|exec|execFile|fork)\s*\(/,
+      /\b(?:publish|notify|emitRuntime|commit|transaction)\w*\s*\(/,
+      /\bapplyRuntimeEffectRequests?\s*\(/,
+    ];
+
+    const violations = handlerFiles.flatMap((file) => {
+      const source = readSource(file);
+      const importViolations = readImports(file)
+        .filter((specifier) =>
+          forbiddenImports.some(
+            (forbidden) => specifier === forbidden || specifier.startsWith(`${forbidden}/`),
+          ),
+        )
+        .map((specifier) => `${display(file)} imports ${specifier}`);
+      const callViolations = forbiddenSourcePatterns.flatMap((pattern) =>
+        source.match(pattern) ? [`${display(file)} uses ${pattern}`] : [],
+      );
+      return [...importViolations, ...callViolations];
     });
 
     expect(violations).toEqual([]);
@@ -6338,7 +10192,35 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("production code does not dynamically import Effect modules", () => {
+    const effectDynamicImportPattern =
+      /\b(?:import|require)\s*\(\s*["'](?:effect|effect\/[^"']+|@effect\/[^"']+)["']\s*\)/;
+    const checkedRoots = [
+      ...sourceRoots,
+      join(projectRoot, "src", "bun"),
+      mainviewSourceRoot,
+      sharedSourceRoot,
+    ];
+    const violations = checkedRoots.flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .filter((file) => effectDynamicImportPattern.test(readSource(file)))
+        .map(display),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("public package root exported symbols stay explicit", () => {
+    const forbiddenTaskAgentBridgeSymbols = new Set([
+      "runTaskAgent",
+      "WorkflowTaskAgentBridge",
+      "RunTaskAgentBridgeServer",
+      "createRunTaskAgentBridgeServer",
+      "handleRunTaskAgentRequest",
+      "RUN_TASK_AGENT_BRIDGE_ENV",
+      "runTaskAgentBridgeEnvProvider",
+    ]);
     const violations = Array.from(expectedPublicSymbols).flatMap(
       ([packageName, expectedSymbols]) => {
         const packageDirectory = packageName.replace("@svvy/", "");
@@ -6357,6 +10239,157 @@ describe("package boundaries", () => {
     );
 
     expect(violations).toEqual([]);
+
+    const taskAgentBridgeViolations = ["@svvy/runtime", "@svvy/desktop", "@svvy/extensions"]
+      .flatMap((packageName) => {
+        const packageDirectory = packageName.replace("@svvy/", "");
+        return [
+          ...new Set(
+            readPublicExportedNames(join(packageRoot, packageDirectory, "src", "index.ts")),
+          ),
+        ]
+          .filter((symbol) => forbiddenTaskAgentBridgeSymbols.has(symbol))
+          .map((symbol) => `${packageName} -> ${symbol}`);
+      })
+      .toSorted();
+
+    expect(taskAgentBridgeViolations).toEqual([]);
+  });
+
+  it("public package roots and subpaths do not expose default exports", () => {
+    const rootViolations = Array.from(expectedPublicSymbols.keys()).flatMap((packageName) => {
+      const packageDirectory = packageName.replace("@svvy/", "");
+      const rootPath = join(packageRoot, packageDirectory, "src", "index.ts");
+      return hasPublicDefaultExport(rootPath) ? [`${packageName} -> default`] : [];
+    });
+
+    const subpathViolations = Array.from(expectedPublicSubpathSymbols.keys()).flatMap(
+      (specifier) => {
+        const packageName = [...expectedPublicExports.keys()].find((candidate) =>
+          specifier.startsWith(`${candidate}/`),
+        );
+        if (!packageName) return [];
+        const exportName = `.${specifier.slice(packageName.length)}`;
+        const target = expectedPublicExports.get(packageName)?.[exportName];
+        if (!target) return [];
+        const packageDirectory = packageName.replace("@svvy/", "");
+        const targetPath = join(packageRoot, packageDirectory, target.slice(2));
+        return hasPublicDefaultExport(targetPath) ? [`${specifier} -> default`] : [];
+      },
+    );
+
+    expect([...rootViolations, ...subpathViolations].toSorted()).toEqual([]);
+  });
+
+  it("@svvy/core public symbol index is the root export authority", () => {
+    const source = readSource(
+      join(packageArchitectureSpecRoot, "core-public-symbol-index.generated.md"),
+    );
+    const rootManifest = readRootPackageManifest();
+    const requiredHeaderColumns = [
+      "Symbol",
+      "Source module",
+      "Owner domain",
+      "Public status",
+      "Contract kind",
+      "Schema symbol",
+      "Encoded type",
+      "Decoded type",
+      "Boundary helpers",
+      "Parse options",
+      "Required tests",
+    ];
+    const indexedSymbols = readCorePublicSymbolIndexNames();
+    const duplicateSymbols = indexedSymbols.filter(
+      (symbol, index) => indexedSymbols.indexOf(symbol) !== index,
+    );
+    const indexRows = readCorePublicSymbolIndexRows();
+    const nonPublicRows = source
+      .split("\n")
+      .filter((line) => line.startsWith("| `"))
+      .filter((line) => !line.includes("| public root export |"));
+    const actualCoreSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "core", "src", "index.ts"))),
+    ].toSorted();
+    const actualCoreSymbolSet = new Set(actualCoreSymbols);
+    const sourceModuleByIndexedSymbol = new Map(
+      indexRows.map((row) => [row.symbol, row.sourceModule] as const),
+    );
+    const contractKindByIndexedSymbol = new Map(
+      indexRows.map((row) => [row.symbol, row.contractKind] as const),
+    );
+    const missingSchemaSymbols = indexRows
+      .flatMap((row) => {
+        const schemaReferences = [
+          row.schemaSymbol === "n/a" ? null : row.schemaSymbol,
+          row.encodedType.match(/^typeof\s+([A-Za-z_$][\w$]*)\.Encoded\b/)?.[1] ?? null,
+        ].filter((schema): schema is string => schema !== null);
+        return [...new Set(schemaReferences)].map((schema) =>
+          actualCoreSymbolSet.has(schema) ? null : `${row.symbol} -> ${schema}`,
+        );
+      })
+      .filter((entry): entry is string => entry !== null);
+
+    expect(rootManifest.scripts?.["generate:core-index"]).toBe(
+      "bun scripts/generate-core-public-symbol-index.ts",
+    );
+    expect(existsSync(join(projectRoot, "scripts", "generate-core-public-symbol-index.ts"))).toBe(
+      true,
+    );
+    expect(
+      source
+        .split("\n")[6]
+        ?.split("|")
+        .map((column) => column.trim()),
+    ).toEqual(["", ...requiredHeaderColumns, ""]);
+    expect(indexedSymbols.length).toBeGreaterThan(0);
+    expect(duplicateSymbols).toEqual([]);
+    expect(nonPublicRows).toEqual([]);
+    expect(indexedSymbols).toEqual(actualCoreSymbols);
+    expect(missingSchemaSymbols).toEqual([]);
+    expect(sourceModuleByIndexedSymbol.get("RuntimeEffectRequest")).toBe("runtime-effect-requests");
+    expect(sourceModuleByIndexedSymbol.get("ExtensionExecutionPlan")).toBe("extension-contracts");
+    expect(sourceModuleByIndexedSymbol.get("ExtensionRuntimeOperation")).toBe(
+      "extension-contracts",
+    );
+    expect(contractKindByIndexedSymbol.get("SandboxPolicySource")).toBe("service-port-contract");
+    expect(contractKindByIndexedSymbol.get("SandboxPolicySourceService")).toBe(
+      "service-port-contract",
+    );
+    expect(sourceModuleByIndexedSymbol.get("ExtensionRuntimeOperationSchema")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("ExtensionHandlerResult")).toBe("extension-contracts");
+    expect(sourceModuleByIndexedSymbol.get("decodeUnknownExtensionRuntimeOperationEffect")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("decodeUnknownExtensionRuntimeOperationExit")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("encodeExtensionRuntimeOperationEffect")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("encodeExtensionRuntimeOperationExit")).toBe(
+      "extension-contracts",
+    );
+    expect(
+      sourceModuleByIndexedSymbol.get(
+        "unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap",
+      ),
+    ).toBe("extension-contracts");
+    expect(sourceModuleByIndexedSymbol.get("encodeExtensionHandlerResultEffect")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("encodeExtensionHandlerResultExit")).toBe(
+      "extension-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("SourceInvalidationHint")).toBe(
+      "runtime-source-invalidation",
+    );
+    expect(sourceModuleByIndexedSymbol.get("RunTaskAgentInput")).toBe(
+      "workflow-task-agent-bridge-contracts",
+    );
+    expect(sourceModuleByIndexedSymbol.get("RuntimeContractError")).toBe("runtime-submit");
   });
 
   it("public package subpath exported symbols stay explicit", () => {
@@ -6369,6 +10402,11 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect([...expectedPublicSubpathSymbols.keys()].toSorted()).toEqual(expectedSubpathSpecifiers);
+    expect(
+      expectedSubpathSpecifiers.filter((specifier) =>
+        /(?:bridge|task-agent|workflow-task-agent|runTaskAgent)/i.test(specifier),
+      ),
+    ).toEqual([]);
 
     const violations = expectedSubpathSpecifiers.flatMap((specifier) => {
       const packageName = [...expectedPublicExports.keys()].find((candidate) =>
@@ -6401,6 +10439,8 @@ describe("package boundaries", () => {
     const runtimePublicSymbols = [
       ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "index.ts"))),
     ];
+    expect(runtimePublicSymbols.toSorted()).toEqual(["Runtime", "createRuntimeFacade", "layer"]);
+
     const forbidden = runtimePublicSymbols.filter(
       (symbol) =>
         symbol === "applyRuntimeEffectRequest" ||
@@ -6418,7 +10458,7 @@ describe("package boundaries", () => {
     expect(forbidden).toEqual([]);
   });
 
-  it("runtime event bus internals stay off the root API and confined to the Bun bootstrap adapter", () => {
+  it("runtime event bus internals stay off public APIs and Bun bootstrap code", () => {
     const runtimeManifest = readPackageManifest("@svvy/runtime");
     const runtimeExports = Object.keys(
       runtimeManifest.exports as Record<string, string>,
@@ -6426,16 +10466,28 @@ describe("package boundaries", () => {
     const runtimePublicSymbols = [
       ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "index.ts"))),
     ];
+    const runtimeBootstrapSymbols = [
+      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
+    ];
+    const forbiddenRuntimeEventBusSymbols = new Set([
+      "RuntimeEventBus",
+      "RuntimeEventBusOptions",
+      "RuntimeEventBusService",
+      "RuntimeEventDraft",
+      "RuntimeEventSubscriptionEffect",
+      "RuntimeLayerEventsPort",
+      "RuntimeLayerEventsPortService",
+      "layerRuntimeEventBus",
+      "makeRuntimeEventBus",
+    ]);
     const forbiddenRootSymbols = runtimePublicSymbols.filter(
       (symbol) =>
-        symbol === "RuntimeEventBus" ||
-        symbol === "RuntimeEventBusOptions" ||
-        symbol === "RuntimeEventBusService" ||
-        symbol === "RuntimeEventDraft" ||
+        forbiddenRuntimeEventBusSymbols.has(symbol) ||
         symbol === "PromptExecutionRuntimeHandle" ||
-        symbol === "createPromptExecutionContext" ||
-        symbol === "layerRuntimeEventBus" ||
-        symbol === "makeRuntimeEventBus",
+        symbol === "createPromptExecutionContext",
+    );
+    const forbiddenBootstrapSymbols = runtimeBootstrapSymbols.filter((symbol) =>
+      forbiddenRuntimeEventBusSymbols.has(symbol),
     );
     const appImports = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
@@ -6449,10 +10501,31 @@ describe("package boundaries", () => {
           .map((specifier) => `${display(file)} -> ${specifier}`),
       )
       .toSorted();
+    const appRuntimeBootstrapEventImports = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readNamedImportNames(file, "@svvy/runtime/bootstrap")
+          .filter((name) => forbiddenRuntimeEventBusSymbols.has(name))
+          .map((name) => `${display(file)} -> ${name}`),
+      )
+      .toSorted();
+    const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    const runtimeSpecSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
 
-    expect(runtimeExports).toEqual([".", "./bootstrap"]);
+    expect(runtimeExports).toEqual([
+      ".",
+      "./accepted-native-tool-execution",
+      "./bootstrap",
+      "./prompt-execution-context",
+      "./source-invalidation-coordinator-adapter",
+    ]);
     expect(forbiddenRootSymbols).toEqual([]);
+    expect(forbiddenBootstrapSymbols).toEqual([]);
     expect(appImports).toEqual([]);
+    expect(appRuntimeBootstrapEventImports).toEqual([]);
+    expect(runtimeLayerSource).not.toContain("RuntimeLayerEventsPort");
+    expect(runtimeLayerSource).not.toContain("runtimeEventBusFromPort");
+    expect(runtimeSpecSource).not.toContain("App runtime event bus");
   });
 
   it("package source roots are covered by boundary tests", () => {

@@ -68,8 +68,9 @@ package-ownership source. Current behavior is defined by `docs/prd.md`, `docs/fe
   - the app should support multiple tabs, with windows only as a future unadopted candidate
   - each tab can open a workspace, including opening the same workspace in multiple tabs
   - open workspace tabs are visual selectors; duplicate tabs for the same canonical cwd share the
-    same `@svvy/runtime` workspace runtime and durable layout slots keyed by `(workspaceId,
-    layoutId)`; each tab stores only its selected active layout id
+    same acquired runtime-owned workspace scope under the single app-owned `ManagedRuntime`, plus
+    durable layout slots keyed by `(workspaceId, layoutId)`; each tab stores only its selected active
+    layout id
   - this should make it convenient to move between several repos while also supporting multiple focused layouts over one repo
   - include useful keyboard shortcuts for tab navigation, tab creation, tab closing, and moving tabs between positions or windows if windows land
 

@@ -1,12 +1,31 @@
 import * as Config from "effect/Config";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import type * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import {
+  PositiveDurationMsSchema,
+  RecoveryWorkId,
+  RuntimeApprovalStatePort,
+  RuntimeCommandStatePort,
+  RuntimeSessionWaitStatePort,
+  strictBoundaryParseOptions,
+  type IsoDateTimeString,
+} from "@svvy/core";
+import {
+  RuntimeRequestInputWaitService,
+  type RuntimeRequestInputWaitServiceService,
+} from "./runtime-request-input-wait-service";
+import { RuntimeEventBus } from "./runtime-event-bus";
+import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
+import { cancelAllRuntimeApprovalRequests } from "./runtime-approval-cancellation";
 
 const PositiveSafeIntegerSchema = Schema.Number.check(
   Schema.isFinite(),
@@ -22,15 +41,47 @@ const NonNegativeSafeIntegerSchema = Schema.Number.check(
   Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
 );
 
-const PositiveDurationMsSchema = PositiveSafeIntegerSchema;
+const taggedErrorBoundaryEncodeOptions = {
+  errors: "all",
+} as const;
+
+const makeStrictBoundaryTaggedErrorEncodeExit = <
+  S extends Schema.Codec<Readonly<{ _tag: string }>, unknown, never, never>,
+>(
+  schema: S,
+) => {
+  const encode = Schema.encodeExit(schema, taggedErrorBoundaryEncodeOptions);
+  const validateEncoded = Schema.decodeUnknownExit(schema, strictBoundaryParseOptions);
+  return (error: S["Type"]) => {
+    const encoded = encode(error);
+    if (Exit.isFailure(encoded)) {
+      return encoded;
+    }
+
+    const validated = validateEncoded(encoded.value);
+    return Exit.isFailure(validated) ? validated : Exit.succeed(encoded.value);
+  };
+};
+
+const makeStrictBoundaryTaggedErrorEncodeEffect = <
+  S extends Schema.Codec<Readonly<{ _tag: string }>, unknown, never, never>,
+>(
+  schema: S,
+) => {
+  const encode = Schema.encodeEffect(schema, taggedErrorBoundaryEncodeOptions);
+  const validateEncoded = Schema.decodeUnknownEffect(schema, strictBoundaryParseOptions);
+  return (error: S["Type"]) =>
+    Effect.flatMap(encode(error), (encoded) => Effect.as(validateEncoded(encoded), encoded));
+};
 
 const ByteCountSchema = PositiveSafeIntegerSchema;
 
-export const defaultRuntimeLayerConfig = {
+const defaultRuntimeLayerConfigInput = {
   queueWakeupCapacity: 1024,
   eventReplayCapacity: 100,
   eventSubscriberBufferCapacity: 256,
   sourceHintQueueCapacity: 1024,
+  runtimeStartupWorkspaceAdmissionCapacity: 64,
   workspaceRuntimeIdleTtlMs: 600_000,
   surfaceRuntimeIdleTtlMs: 600_000,
   workflowTaskAttemptRuntimeIdleTtlMs: 600_000,
@@ -42,8 +93,10 @@ export const defaultRuntimeLayerConfig = {
   queueRetryMaxDelayMs: 10_000,
   queueRetryMaxAttempts: 3,
   queueClaimLeaseMs: 30_000,
+  queueClaimLeaseRefreshIntervalMs: 10_000,
   requestInputAnswerDeliveryLeaseMs: 30_000,
   sourceDebounceMs: 250,
+  sourceMaxCoalescingLatencyMs: 2_000,
   appSourceReconcileIntervalMs: 60_000,
   workspaceSourceReconcileIntervalMs: 60_000,
   sourceRetryInitialDelayMs: 500,
@@ -54,9 +107,7 @@ export const defaultRuntimeLayerConfig = {
   recoveryRetryMaxAttempts: 5,
   recoveryScanIntervalMs: 10_000,
   recoveryClaimLeaseMs: 60_000,
-  generatedPackageBuildConcurrency: 1,
   generatedPackageWorkspaceLinkRepairConcurrency: 2,
-  generatedPackageGlobalLinkRepairConcurrency: 1,
   generatedPackageBuildTimeoutMs: 120_000,
   generatedPackageLinkRepairTimeoutMs: 30_000,
   titleJobScanIntervalMs: 5_000,
@@ -69,6 +120,9 @@ export const defaultRuntimeLayerConfig = {
   commandOutputArtifactThresholdBytes: 1_048_576,
   commandGracefulShutdownMs: 5_000,
   commandForceKillGraceMs: 2_000,
+  workflowTaskAgentBridgeRequestTimeoutMs: 300_000,
+  workflowTaskAgentBridgeMaxRequestBytes: 1_048_576,
+  workflowTaskAgentBridgeMaxResponseBytes: 1_048_576,
   runtimeShutdownDrainTimeoutMs: 5_000,
 } as const;
 
@@ -77,6 +131,7 @@ const RuntimeLayerConfigFields = {
   eventReplayCapacity: PositiveSafeIntegerSchema,
   eventSubscriberBufferCapacity: PositiveSafeIntegerSchema,
   sourceHintQueueCapacity: PositiveSafeIntegerSchema,
+  runtimeStartupWorkspaceAdmissionCapacity: PositiveSafeIntegerSchema,
   workspaceRuntimeIdleTtlMs: PositiveDurationMsSchema,
   surfaceRuntimeIdleTtlMs: PositiveDurationMsSchema,
   workflowTaskAttemptRuntimeIdleTtlMs: PositiveDurationMsSchema,
@@ -88,8 +143,10 @@ const RuntimeLayerConfigFields = {
   queueRetryMaxDelayMs: PositiveDurationMsSchema,
   queueRetryMaxAttempts: NonNegativeSafeIntegerSchema,
   queueClaimLeaseMs: PositiveDurationMsSchema,
+  queueClaimLeaseRefreshIntervalMs: PositiveDurationMsSchema,
   requestInputAnswerDeliveryLeaseMs: PositiveDurationMsSchema,
   sourceDebounceMs: PositiveDurationMsSchema,
+  sourceMaxCoalescingLatencyMs: PositiveDurationMsSchema,
   appSourceReconcileIntervalMs: PositiveDurationMsSchema,
   workspaceSourceReconcileIntervalMs: PositiveDurationMsSchema,
   sourceRetryInitialDelayMs: PositiveDurationMsSchema,
@@ -100,9 +157,7 @@ const RuntimeLayerConfigFields = {
   recoveryRetryMaxAttempts: NonNegativeSafeIntegerSchema,
   recoveryScanIntervalMs: PositiveDurationMsSchema,
   recoveryClaimLeaseMs: PositiveDurationMsSchema,
-  generatedPackageBuildConcurrency: PositiveSafeIntegerSchema,
   generatedPackageWorkspaceLinkRepairConcurrency: PositiveSafeIntegerSchema,
-  generatedPackageGlobalLinkRepairConcurrency: PositiveSafeIntegerSchema,
   generatedPackageBuildTimeoutMs: PositiveDurationMsSchema,
   generatedPackageLinkRepairTimeoutMs: PositiveDurationMsSchema,
   titleJobScanIntervalMs: PositiveDurationMsSchema,
@@ -115,6 +170,9 @@ const RuntimeLayerConfigFields = {
   commandOutputArtifactThresholdBytes: ByteCountSchema,
   commandGracefulShutdownMs: PositiveDurationMsSchema,
   commandForceKillGraceMs: PositiveDurationMsSchema,
+  workflowTaskAgentBridgeRequestTimeoutMs: PositiveDurationMsSchema,
+  workflowTaskAgentBridgeMaxRequestBytes: ByteCountSchema,
+  workflowTaskAgentBridgeMaxResponseBytes: ByteCountSchema,
   runtimeShutdownDrainTimeoutMs: PositiveDurationMsSchema,
 } as const;
 
@@ -135,6 +193,12 @@ export const RuntimeLayerConfigSchema = Schema.Struct(RuntimeLayerConfigFields).
   Schema.check(RuntimeLayerConfigInvariant),
 );
 export type RuntimeLayerConfig = typeof RuntimeLayerConfigSchema.Type;
+const decodeUnknownRuntimeLayerConfigSync = Schema.decodeUnknownSync(RuntimeLayerConfigSchema);
+const decodeUnknownRuntimeLayerConfigEffect = Schema.decodeUnknownEffect(RuntimeLayerConfigSchema);
+
+export const defaultRuntimeLayerConfig = decodeUnknownRuntimeLayerConfigSync(
+  defaultRuntimeLayerConfigInput,
+);
 
 export const RuntimeLayerConfigInputSchema = Schema.Struct(
   Object.fromEntries(
@@ -174,6 +238,7 @@ export const RuntimeLayerConfigFromEnv: Config.Config<RuntimeLayerConfig> = Conf
   eventReplayCapacity: configInt("eventReplayCapacity"),
   eventSubscriberBufferCapacity: configInt("eventSubscriberBufferCapacity"),
   sourceHintQueueCapacity: configInt("sourceHintQueueCapacity"),
+  runtimeStartupWorkspaceAdmissionCapacity: configInt("runtimeStartupWorkspaceAdmissionCapacity"),
   workspaceRuntimeIdleTtlMs: configInt("workspaceRuntimeIdleTtlMs"),
   surfaceRuntimeIdleTtlMs: configInt("surfaceRuntimeIdleTtlMs"),
   workflowTaskAttemptRuntimeIdleTtlMs: configInt("workflowTaskAttemptRuntimeIdleTtlMs"),
@@ -185,8 +250,10 @@ export const RuntimeLayerConfigFromEnv: Config.Config<RuntimeLayerConfig> = Conf
   queueRetryMaxDelayMs: configInt("queueRetryMaxDelayMs"),
   queueRetryMaxAttempts: configInt("queueRetryMaxAttempts"),
   queueClaimLeaseMs: configInt("queueClaimLeaseMs"),
+  queueClaimLeaseRefreshIntervalMs: configInt("queueClaimLeaseRefreshIntervalMs"),
   requestInputAnswerDeliveryLeaseMs: configInt("requestInputAnswerDeliveryLeaseMs"),
   sourceDebounceMs: configInt("sourceDebounceMs"),
+  sourceMaxCoalescingLatencyMs: configInt("sourceMaxCoalescingLatencyMs"),
   appSourceReconcileIntervalMs: configInt("appSourceReconcileIntervalMs"),
   workspaceSourceReconcileIntervalMs: configInt("workspaceSourceReconcileIntervalMs"),
   sourceRetryInitialDelayMs: configInt("sourceRetryInitialDelayMs"),
@@ -197,12 +264,8 @@ export const RuntimeLayerConfigFromEnv: Config.Config<RuntimeLayerConfig> = Conf
   recoveryRetryMaxAttempts: configInt("recoveryRetryMaxAttempts"),
   recoveryScanIntervalMs: configInt("recoveryScanIntervalMs"),
   recoveryClaimLeaseMs: configInt("recoveryClaimLeaseMs"),
-  generatedPackageBuildConcurrency: configInt("generatedPackageBuildConcurrency"),
   generatedPackageWorkspaceLinkRepairConcurrency: configInt(
     "generatedPackageWorkspaceLinkRepairConcurrency",
-  ),
-  generatedPackageGlobalLinkRepairConcurrency: configInt(
-    "generatedPackageGlobalLinkRepairConcurrency",
   ),
   generatedPackageBuildTimeoutMs: configInt("generatedPackageBuildTimeoutMs"),
   generatedPackageLinkRepairTimeoutMs: configInt("generatedPackageLinkRepairTimeoutMs"),
@@ -216,6 +279,9 @@ export const RuntimeLayerConfigFromEnv: Config.Config<RuntimeLayerConfig> = Conf
   commandOutputArtifactThresholdBytes: configInt("commandOutputArtifactThresholdBytes"),
   commandGracefulShutdownMs: configInt("commandGracefulShutdownMs"),
   commandForceKillGraceMs: configInt("commandForceKillGraceMs"),
+  workflowTaskAgentBridgeRequestTimeoutMs: configInt("workflowTaskAgentBridgeRequestTimeoutMs"),
+  workflowTaskAgentBridgeMaxRequestBytes: configInt("workflowTaskAgentBridgeMaxRequestBytes"),
+  workflowTaskAgentBridgeMaxResponseBytes: configInt("workflowTaskAgentBridgeMaxResponseBytes"),
   runtimeShutdownDrainTimeoutMs: configInt("runtimeShutdownDrainTimeoutMs"),
 }).pipe(Config.mapOrFail(validateRuntimeLayerConfigFromConfig));
 
@@ -228,6 +294,67 @@ export class RuntimeLayerError extends Schema.TaggedErrorClass<RuntimeLayerError
     cause: Schema.optionalKey(Schema.Defect({ excludeCause: true })),
   },
 ) {}
+
+export const RuntimeLayerErrorSchema = RuntimeLayerError;
+export const decodeUnknownRuntimeLayerErrorEffect = Schema.decodeUnknownEffect(
+  RuntimeLayerErrorSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRuntimeLayerErrorExit = Schema.decodeUnknownExit(
+  RuntimeLayerErrorSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeRuntimeLayerErrorEffect =
+  makeStrictBoundaryTaggedErrorEncodeEffect(RuntimeLayerErrorSchema);
+export const encodeRuntimeLayerErrorExit =
+  makeStrictBoundaryTaggedErrorEncodeExit(RuntimeLayerErrorSchema);
+
+export const RuntimeStartupPhase = Schema.Literals([
+  "layer-acquisition",
+  "app-source-reconcile",
+  "generated-package-reconcile",
+  "recovery-startup-scan",
+  "event-bus",
+]);
+export type RuntimeStartupPhase = typeof RuntimeStartupPhase.Type;
+
+export type RuntimeStartupDegradedPhase = {
+  readonly phase: RuntimeStartupPhase;
+  readonly diagnosticEventId?: string;
+  readonly recoveryWorkId?: RecoveryWorkId;
+  readonly disabledApiGroups: readonly string[];
+  readonly staleReadModels: readonly string[];
+  readonly message: string;
+};
+
+export type RuntimeStartupReadinessReceipt = {
+  readonly status: "ready" | "degraded-ready";
+  readonly readyAt: IsoDateTimeString;
+  readonly completedPhases: readonly RuntimeStartupPhase[];
+  readonly degradedPhases: readonly RuntimeStartupDegradedPhase[];
+};
+
+export class RuntimeStartupError extends Schema.TaggedErrorClass<RuntimeStartupError>()(
+  "RuntimeStartupError",
+  {
+    operation: Schema.String,
+    phase: RuntimeStartupPhase,
+    reason: Schema.Literals([
+      "config-invalid",
+      "layer-acquisition-failed",
+      "readiness-timeout",
+      "required-startup-check-failed",
+      "runtime-shutdown",
+      "runtime-disposed",
+    ]),
+    message: Schema.String,
+    diagnosticEventId: Schema.optionalKey(Schema.String),
+    recoveryWorkId: Schema.optionalKey(RecoveryWorkId),
+    cause: Schema.optionalKey(Schema.Defect({ excludeCause: true })),
+  },
+) {}
+
+export const RuntimeStartupErrorSchema = RuntimeStartupError;
 
 export type RuntimePrepareShutdownReason = "app-shutdown" | "runtime-restart" | "startup-failure";
 
@@ -253,7 +380,7 @@ export type RuntimePrepareShutdownResult = {
 export class RuntimeStartupReadiness extends Context.Service<
   RuntimeStartupReadiness,
   {
-    readonly awaitReady: Effect.Effect<void, RuntimeLayerError>;
+    readonly awaitReady: Effect.Effect<RuntimeStartupReadinessReceipt, RuntimeStartupError>;
   }
 >()("@svvy/runtime/RuntimeStartupReadiness") {}
 
@@ -266,10 +393,77 @@ export class RuntimeShutdownPreparation extends Context.Service<
   }
 >()("@svvy/runtime/RuntimeShutdownPreparation") {}
 
+export const layerRuntimeStartupReadiness = Layer.effect(
+  RuntimeStartupReadiness,
+  Effect.gen(function* () {
+    const runtimeConfig = yield* RuntimeLayerConfigService;
+    const requestInputWaitService = yield* RuntimeRequestInputWaitService;
+    return RuntimeStartupReadiness.of({
+      awaitReady: makeRuntimeStartupReadinessEffect(runtimeConfig, requestInputWaitService).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(runtimeConfig.runtimeStartupReadinessTimeoutMs),
+          orElse: () =>
+            Effect.fail(
+              new RuntimeStartupError({
+                operation: "runtime.startup.awaitReadiness",
+                phase: "layer-acquisition",
+                reason: "readiness-timeout",
+                message: `Runtime startup readiness did not complete within ${runtimeConfig.runtimeStartupReadinessTimeoutMs}ms.`,
+              }),
+            ),
+        }),
+      ),
+    });
+  }),
+);
+
+export const layerRuntimeShutdownPreparation = Layer.effect(
+  RuntimeShutdownPreparation,
+  Effect.gen(function* () {
+    yield* RuntimeLayerConfigService;
+    const approvalState = yield* RuntimeApprovalStatePort;
+    const commandState = yield* RuntimeCommandStatePort;
+    const sessionWaitState = yield* RuntimeSessionWaitStatePort;
+    const eventBus = yield* RuntimeEventBus;
+    const approvalWaitService = yield* RuntimeApprovalWaitService;
+    return RuntimeShutdownPreparation.of({
+      prepareShutdown: (input) =>
+        cancelAllRuntimeApprovalRequests({
+          reason: `Runtime shutdown: ${input.reason}.`,
+        }).pipe(
+          Effect.provideService(RuntimeApprovalStatePort, approvalState),
+          Effect.provideService(RuntimeCommandStatePort, commandState),
+          Effect.provideService(RuntimeSessionWaitStatePort, sessionWaitState),
+          Effect.provideService(RuntimeEventBus, eventBus),
+          Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+          Effect.mapError(
+            (cause) =>
+              new RuntimeLayerError({
+                operation: "runtime.shutdown.prepare",
+                reason: "shutdown-failed",
+                message: "Runtime shutdown preparation failed while cancelling open approvals.",
+                cause,
+              }),
+          ),
+          Effect.as({
+            status: "drained" as const,
+            interruptedTurns: 0,
+            interruptedCommands: 0,
+            releasedQueueClaims: 0,
+            recoveryRowsScheduled: 0,
+          }),
+        ),
+    });
+  }),
+);
+
 export function awaitRuntimeStartupReadiness(
   managedRuntime: ManagedRuntime.ManagedRuntime<RuntimeStartupReadiness, unknown>,
-): Promise<void> {
-  return managedRuntime.runPromise(awaitRuntimeStartupReadinessEffect);
+): Promise<RuntimeStartupReadinessReceipt> {
+  return managedRuntime.runPromiseExit(awaitRuntimeStartupReadinessEffect).then((exit) => {
+    if (Exit.isSuccess(exit)) return exit.value;
+    throw runtimeStartupErrorFromCause("runtime.startup.awaitReadiness", exit.cause);
+  });
 }
 
 export function prepareRuntimeShutdown(
@@ -284,8 +478,83 @@ export function prepareRuntimeShutdown(
 
 const awaitRuntimeStartupReadinessEffect = Effect.gen(function* () {
   const readiness = yield* RuntimeStartupReadiness;
-  yield* readiness.awaitReady;
+  return yield* readiness.awaitReady;
 });
+
+function makeRuntimeStartupReadinessEffect(
+  _runtimeConfig: RuntimeLayerConfig,
+  requestInputWaitService: RuntimeRequestInputWaitServiceService,
+): Effect.Effect<RuntimeStartupReadinessReceipt, RuntimeStartupError> {
+  return Effect.gen(function* () {
+    yield* requestInputWaitService.restoreOpenBlockingRequests().pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeStartupError({
+            operation: "runtime.startup.awaitReadiness",
+            phase: "recovery-startup-scan",
+            reason: "required-startup-check-failed",
+            message: "Runtime startup could not restore open blocking request-input waits.",
+            cause,
+          }),
+      ),
+    );
+    const now = yield* DateTime.now;
+    return {
+      status: "ready",
+      readyAt: DateTime.formatIso(now),
+      completedPhases: ["layer-acquisition", "recovery-startup-scan", "event-bus"],
+      degradedPhases: [],
+    };
+  });
+}
+
+function runtimeStartupErrorFromCause(
+  operation: string,
+  cause: Cause.Cause<unknown>,
+): RuntimeStartupError {
+  const failure = cause.reasons.find(Cause.isFailReason);
+  if (failure?.error instanceof RuntimeStartupError) {
+    return failure.error;
+  }
+
+  const defect = cause.reasons.find(Cause.isDieReason);
+  if (defect) {
+    return new RuntimeStartupError({
+      operation,
+      phase: "layer-acquisition",
+      reason: "layer-acquisition-failed",
+      message: defectMessage(defect.defect),
+      cause: defect.defect,
+    });
+  }
+
+  if (Cause.hasInterruptsOnly(cause) || cause.reasons.some(Cause.isInterruptReason)) {
+    return new RuntimeStartupError({
+      operation,
+      phase: "layer-acquisition",
+      reason: "runtime-shutdown",
+      message: "Runtime startup readiness was interrupted.",
+    });
+  }
+
+  return new RuntimeStartupError({
+    operation,
+    phase: "layer-acquisition",
+    reason: "layer-acquisition-failed",
+    message: defectMessage(Cause.squash(cause)),
+    cause: Cause.squash(cause),
+  });
+}
+
+function defectMessage(defect: unknown): string {
+  if (defect instanceof Error && defect.message.trim().length > 0) {
+    return defect.message;
+  }
+  if (typeof defect === "string" && defect.trim().length > 0) {
+    return defect;
+  }
+  return "Runtime startup readiness failed.";
+}
 
 const prepareRuntimeShutdownEffect = Effect.fn("@svvy/runtime/bootstrap.prepareRuntimeShutdown")(
   function* (request: RuntimePrepareShutdownRequest) {
@@ -307,20 +576,18 @@ function toEnvKey(key: string): string {
 }
 
 function validateRuntimeLayerConfigFromConfig(
-  config: RuntimeLayerConfig,
+  config: RuntimeLayerConfigShape,
 ): Effect.Effect<RuntimeLayerConfig, Config.ConfigError> {
-  const issue = runtimeLayerConfigIssue(config);
-  return issue === null
-    ? Effect.succeed(config)
-    : Effect.fail(
+  return decodeUnknownRuntimeLayerConfigEffect(config).pipe(
+    Effect.mapError(
+      (error) =>
         new Config.ConfigError(
           new Schema.SchemaError(
-            new SchemaIssue.InvalidValue(Option.some(config), {
-              message: issue,
-            }),
+            new SchemaIssue.InvalidValue(Option.some(config), { message: error.message }),
           ),
         ),
-      );
+    ),
+  );
 }
 
 function runtimeLayerConfigIssue(config: RuntimeLayerConfigShape): string | null {
@@ -329,6 +596,9 @@ function runtimeLayerConfigIssue(config: RuntimeLayerConfigShape): string | null
   }
   if (config.queueRetryInitialDelayMs > config.queueRetryMaxDelayMs) {
     return "queueRetryInitialDelayMs must be less than or equal to queueRetryMaxDelayMs";
+  }
+  if (config.sourceDebounceMs > config.sourceMaxCoalescingLatencyMs) {
+    return "sourceDebounceMs must be less than or equal to sourceMaxCoalescingLatencyMs";
   }
   if (config.sourceRetryInitialDelayMs > config.sourceRetryMaxDelayMs) {
     return "sourceRetryInitialDelayMs must be less than or equal to sourceRetryMaxDelayMs";

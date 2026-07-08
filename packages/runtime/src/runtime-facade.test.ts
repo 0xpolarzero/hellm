@@ -12,8 +12,8 @@ import type {
   AnswerRequestInputInput,
   CommandId,
   CreateOrchestratorSurfaceInput,
-  ExtensionId,
   GeneratedPackagesRefreshResult,
+  InternalRefreshGeneratedPackagesRequest,
   OpenExtensionSourceEditInput,
   OpenSurfaceInput,
   QueueItemId,
@@ -24,6 +24,9 @@ import type {
   RequestInputQuestionId,
   RequestInputRequestId,
   RuntimeApprovalId,
+  RuntimeClientCorrelationId,
+  RuntimeClientRequestId,
+  RuntimeClientSubmissionSource,
   RuntimeEvent,
   RuntimeEventGenerationId,
   RuntimeEventSequence,
@@ -35,6 +38,7 @@ import type {
   SourceInvalidationHint,
   SourceReconcileRequest,
   SourceReconcileResult,
+  ApplyCommittedSourceInvalidationEventInput,
   SubmitMessageInput,
   SubmitMessageResult,
   SurfacePiSessionId,
@@ -47,6 +51,7 @@ import { RuntimeContractError, RuntimeEventRebaselineRequired } from "@svvy/core
 import { Runtime, createRuntimeFacade } from "./index";
 
 type RuntimeService = Runtime["Service"];
+type AbortSignalListener = Parameters<AbortSignal["addEventListener"]>[1];
 
 const submitInput = {
   target: {
@@ -58,7 +63,6 @@ const submitInput = {
   delivery: "enqueue-and-run",
 } satisfies SubmitMessageInput;
 
-const dependencyCommandId = "cmd_dependency_01" as CommandId;
 const testEventGenerationId = "runtime-events-generation-test" as RuntimeEventGenerationId;
 const runtimeEventSequence = (value: number) => value as RuntimeEventSequence;
 
@@ -153,7 +157,6 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       setTimerPaused: () => Effect.die("unused"),
     },
     commands: {
-      runExtensionDependencyAction: () => Effect.die("unused"),
       writeStdin: () => Effect.die("unused"),
       cancel: () => Effect.die("unused"),
       ...commands,
@@ -168,6 +171,7 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
     sourceInvalidation: {
       hint: () => Effect.die("unused"),
       reconcile: () => Effect.die("unused"),
+      applyCommittedScanEvent: () => Effect.die("unused"),
       refreshGeneratedContext: () => Effect.die("unused"),
       refreshGeneratedPackages: () => Effect.die("unused"),
     },
@@ -184,6 +188,10 @@ async function collectEvents(iterable: AsyncIterable<RuntimeEvent>): Promise<Run
 }
 
 describe("@svvy/runtime facade", () => {
+  const sourceHintObservedAt = "2026-06-19T08:00:00.000Z" as NonNullable<
+    SourceInvalidationHint["observedAt"]
+  >;
+
   it("exposes only resolved runtime API groups without placeholder objects", async () => {
     const managedRuntime = createTestManagedRuntime(
       runtimeService({
@@ -193,8 +201,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -219,6 +225,7 @@ describe("@svvy/runtime facade", () => {
       expect("handlerThreads" in facade).toBe(false);
       expect("recovery" in facade).toBe(false);
       expect("workflowTaskAgentBridge" in facade).toBe(false);
+      expect(Reflect.has(facade.commands, "runExtensionDependencyAction")).toBeFalse();
       expect(Reflect.has(facade.sourceInvalidation, "productStateChanged")).toBeFalse();
     } finally {
       await facade.close();
@@ -257,6 +264,7 @@ describe("@svvy/runtime facade", () => {
       target: submitInput.target,
     } satisfies OpenSurfaceInput;
     const closeSurfaceInput = {
+      workspaceId,
       target: submitInput.target,
       closeReason: "test",
     } satisfies CloseSurfaceInput;
@@ -264,7 +272,7 @@ describe("@svvy/runtime facade", () => {
       approvalId: "approval_01" as RuntimeApprovalId,
       decision: "approved",
       reason: "User approved.",
-      clientSubmission: { source: "test" },
+      clientSubmission: { source: "test" as RuntimeClientSubmissionSource },
     } satisfies AnswerRuntimeApprovalInput;
     const workspaceResult = {
       workspaceId,
@@ -299,7 +307,7 @@ describe("@svvy/runtime facade", () => {
     } as const;
     const approvalResult = {
       approvalId: approvalInput.approvalId,
-      commandId: dependencyCommandId,
+      commandId: "cmd_approval_01" as CommandId,
       status: "approved",
     } as const;
     const acquired: AcquireWorkspaceInput[] = [];
@@ -356,8 +364,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         approvals: {
@@ -419,8 +425,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -445,8 +449,8 @@ describe("@svvy/runtime facade", () => {
       answer: { kind: "option", optionId: "ruio_facade_01" as RequestInputOptionId },
       delivery: "enqueue-and-run",
       clientSubmission: {
-        correlationId: "facade-answer-01",
-        source: "test",
+        correlationId: "facade-answer-01" as RuntimeClientCorrelationId,
+        source: "test" as RuntimeClientSubmissionSource,
       },
     } satisfies AnswerRequestInputInput;
     const answered: AnswerRequestInputInput[] = [];
@@ -475,8 +479,6 @@ describe("@svvy/runtime facade", () => {
           setTimerPaused: () => Effect.die("Unexpected requestInput.setTimerPaused call."),
         },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -499,8 +501,8 @@ describe("@svvy/runtime facade", () => {
       requestId: "rui_facade_01" as RequestInputRequestId,
       paused: true,
       clientSubmission: {
-        correlationId: "facade-timer-01",
-        source: "test",
+        correlationId: "facade-timer-01" as RuntimeClientCorrelationId,
+        source: "test" as RuntimeClientSubmissionSource,
       },
     } satisfies SetRequestInputTimerPausedInput;
     const paused: SetRequestInputTimerPausedInput[] = [];
@@ -521,8 +523,6 @@ describe("@svvy/runtime facade", () => {
             }),
         },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -553,8 +553,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -607,8 +605,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -633,6 +629,107 @@ describe("@svvy/runtime facade", () => {
     }
   });
 
+  it("removes cancel-wait-only abort listeners after runtime completion", async () => {
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {
+          submit: () => Effect.succeed(submitResult(submitInput)),
+          abort: () => Effect.void,
+        },
+        queues: { steer: () => Effect.void },
+        commands: {
+          cancel: () => Effect.succeed(cancelledCommandResult),
+        },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+    const controller = new AbortController();
+    const addedListeners: AbortSignalListener[] = [];
+    const removedListeners: AbortSignalListener[] = [];
+    const addEventListener = controller.signal.addEventListener.bind(controller.signal);
+    const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((type, listener, options) => {
+      if (type === "abort" && listener) {
+        addedListeners.push(listener);
+      }
+      addEventListener(type, listener, options);
+    }) as AbortSignal["addEventListener"];
+    controller.signal.removeEventListener = ((type, listener, options) => {
+      if (type === "abort" && listener) {
+        removedListeners.push(listener);
+      }
+      removeEventListener(type, listener, options);
+    }) as AbortSignal["removeEventListener"];
+
+    try {
+      await expect(
+        facade.messages.submit(submitInput, { signal: controller.signal }),
+      ).resolves.toEqual(submitResult(submitInput));
+      expect(addedListeners).toHaveLength(1);
+      expect(removedListeners).toEqual(addedListeners);
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("rejects active facade waiters on close without interrupting cancel-wait-only runtime work", async () => {
+    let resolveSubmission: ((value: SubmitMessageResult) => void) | undefined;
+    let resolveCompleted: (() => void) | undefined;
+    const submissionGate = new Promise<SubmitMessageResult>((resolve) => {
+      resolveSubmission = resolve;
+    });
+    const runtimeCompleted = new Promise<void>((resolve) => {
+      resolveCompleted = resolve;
+    });
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {
+          submit: () =>
+            Effect.gen(function* () {
+              const result = yield* Effect.promise(() => submissionGate);
+              yield* Effect.sync(() => resolveCompleted?.());
+              return result;
+            }),
+          abort: () => Effect.void,
+        },
+        queues: { steer: () => Effect.void },
+        commands: {
+          cancel: () => Effect.succeed(cancelledCommandResult),
+        },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+    const controller = new AbortController();
+    const removedListeners: AbortSignalListener[] = [];
+    const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.removeEventListener = ((type, listener, options) => {
+      if (type === "abort" && listener) {
+        removedListeners.push(listener);
+      }
+      removeEventListener(type, listener, options);
+    }) as AbortSignal["removeEventListener"];
+
+    try {
+      const submission = facade.messages.submit(submitInput, { signal: controller.signal });
+      await facade.close();
+
+      await expect(submission).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "disposed",
+      });
+      expect(removedListeners).toHaveLength(1);
+
+      resolveSubmission?.(submitResult(submitInput));
+      await expect(runtimeCompleted).resolves.toBeUndefined();
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
   it("rejects request-runtime-cancel on non-cancellation facade methods", async () => {
     let submitted = 0;
     const managedRuntime = createTestManagedRuntime(
@@ -647,8 +744,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -686,8 +781,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -710,52 +803,7 @@ describe("@svvy/runtime facade", () => {
     }
   });
 
-  it("forwards user-clicked extension dependency commands through the command API", async () => {
-    const managedRuntime = createTestManagedRuntime(
-      runtimeService({
-        messages: {
-          submit: () => Effect.die("unused"),
-          abort: () => Effect.void,
-        },
-        queues: { steer: () => Effect.void },
-        commands: {
-          runExtensionDependencyAction: (input) =>
-            Effect.succeed({
-              commandId: `cmd_${input.extensionId}_${input.requirementId}` as CommandId,
-              status: "queued" as const,
-            }),
-          cancel: () => Effect.succeed(cancelledCommandResult),
-        },
-        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
-      }),
-    );
-    const facade = createRuntimeFacade(managedRuntime);
-
-    try {
-      await expect(
-        facade.commands.runExtensionDependencyAction({
-          scope: {
-            kind: "app-global",
-            originWorkspaceId: "workspace_01" as WorkspaceId,
-          },
-          extensionId: "web" as ExtensionId,
-          requirementId: "tinyfish",
-          action: "install",
-          targetVersion: "0.1.6",
-          clientSubmission: { source: "desktop" },
-        }),
-      ).resolves.toEqual({
-        commandId: "cmd_web_tinyfish" as CommandId,
-        status: "queued",
-      });
-    } finally {
-      await facade.close();
-      await managedRuntime.dispose();
-    }
-  });
-
   it("rejects invalid command facade requests before command services run", async () => {
-    let commandActions = 0;
     let stdinWrites = 0;
     let cancellations = 0;
     const managedRuntime = createTestManagedRuntime(
@@ -766,16 +814,11 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.sync(() => {
-              commandActions += 1;
-              return { commandId: dependencyCommandId, status: "running" as const };
-            }),
           writeStdin: () =>
             Effect.sync(() => {
               stdinWrites += 1;
               return {
-                commandId: dependencyCommandId,
+                commandId: "cmd_stdin_01" as CommandId,
                 status: "accepted" as const,
                 acceptedBytes: 0,
               };
@@ -792,17 +835,6 @@ describe("@svvy/runtime facade", () => {
     const facade = createRuntimeFacade(managedRuntime);
 
     try {
-      await expect(
-        facade.commands.runExtensionDependencyAction({
-          extensionId: "web" as ExtensionId,
-          requirementId: "tinyfish",
-          action: "install",
-          panelId: "extensions-pane-row",
-        } as unknown as Parameters<typeof facade.commands.runExtensionDependencyAction>[0]),
-      ).rejects.toMatchObject({
-        type: "runtime-facade-error",
-        reason: "typed-failure",
-      });
       await expect(
         facade.commands.writeStdin({
           commandId: "cmd_stdin_01" as CommandId,
@@ -821,7 +853,6 @@ describe("@svvy/runtime facade", () => {
         type: "runtime-facade-error",
         reason: "typed-failure",
       });
-      expect(commandActions).toBe(0);
       expect(stdinWrites).toBe(0);
       expect(cancellations).toBe(0);
     } finally {
@@ -840,8 +871,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           writeStdin: (input) =>
             Effect.sync(() => {
               written.push(input);
@@ -856,7 +885,10 @@ describe("@svvy/runtime facade", () => {
     const stdinInput = {
       commandId: "cmd_stdin_01" as CommandId,
       text: "exit\n",
-      clientSubmission: { source: "desktop", clientRequestId: "stdin-button" },
+      clientSubmission: {
+        source: "desktop" as RuntimeClientSubmissionSource,
+        clientRequestId: "stdin-button" as RuntimeClientRequestId,
+      },
     } satisfies WriteCommandStdinInput;
 
     try {
@@ -882,8 +914,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: (input) =>
             Effect.sync(() => {
               cancelled.push(input.commandId);
@@ -900,7 +930,10 @@ describe("@svvy/runtime facade", () => {
         facade.commands.cancel({
           commandId: "cmd_cancel_01" as CommandId,
           reason: "User clicked cancel.",
-          clientSubmission: { source: "desktop", clientRequestId: "cancel-button" },
+          clientSubmission: {
+            source: "desktop" as RuntimeClientSubmissionSource,
+            clientRequestId: "cancel-button" as RuntimeClientRequestId,
+          },
         }),
       ).resolves.toEqual({
         commandId: "cmd_cancel_01" as CommandId,
@@ -941,8 +974,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         sourceEdits: {
@@ -997,8 +1028,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         sourceEdits: {
@@ -1043,8 +1072,9 @@ describe("@svvy/runtime facade", () => {
   it("forwards source invalidation requests through the source invalidation API", async () => {
     const fileHints: SourceInvalidationHint[] = [];
     const reconciliations: SourceReconcileRequest[] = [];
+    const committedScanEvents: ApplyCommittedSourceInvalidationEventInput[] = [];
     const contextRefreshes: RefreshGeneratedContextRequest[] = [];
-    const packageRefreshes: RefreshGeneratedPackagesRequest[] = [];
+    const packageRefreshes: InternalRefreshGeneratedPackagesRequest[] = [];
     const reconcileResult = {
       changedReadModelCount: 0,
       generatedPackageRefreshes: [],
@@ -1064,8 +1094,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         sourceInvalidation: {
@@ -1076,6 +1104,11 @@ describe("@svvy/runtime facade", () => {
           reconcile: (input) =>
             Effect.sync(() => {
               reconciliations.push(input);
+              return reconcileResult;
+            }),
+          applyCommittedScanEvent: (input) =>
+            Effect.sync(() => {
+              committedScanEvents.push(input);
               return reconcileResult;
             }),
           refreshGeneratedContext: (input) =>
@@ -1117,13 +1150,14 @@ describe("@svvy/runtime facade", () => {
       });
       expect(fileHints).toEqual([]);
       expect(reconciliations).toEqual([]);
+      expect(committedScanEvents).toEqual([]);
 
       await expect(
         facade.sourceInvalidation.hint({
           scope: { kind: "app-global" },
           domain: "extensions",
           path: changedPath,
-          observedAt: "2026-06-19T08:00:00.000Z",
+          observedAt: sourceHintObservedAt,
         }),
       ).resolves.toBeUndefined();
       await expect(
@@ -1133,6 +1167,38 @@ describe("@svvy/runtime facade", () => {
           reason: "watcher-debounce",
         }),
       ).resolves.toEqual(reconcileResult);
+      await expect(
+        facade.sourceInvalidation.applyCommittedScanEvent({
+          scope: { kind: "app-global" },
+          event: {
+            domains: ["extensions"],
+            reason: "watcher-debounce",
+            sourceFingerprints: {
+              extensions: "extensions_fingerprint",
+              workflows: "workflows_fingerprint",
+              external_instructions: "external_instructions_fingerprint",
+              host_snippets: "host_snippets_fingerprint",
+            },
+            afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+          },
+        }),
+      ).resolves.toEqual(reconcileResult);
+      await expect(
+        facade.sourceInvalidation.applyCommittedScanEvent({
+          scope: { kind: "workspace", workspaceId: "workspace_01" as WorkspaceId },
+          event: {
+            domains: ["extensions"],
+            reason: "watcher-debounce",
+            sourceFingerprints: {
+              extensions: "extensions_fingerprint",
+            },
+            afterCommit: [],
+          },
+        } as unknown as ApplyCommittedSourceInvalidationEventInput),
+      ).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "typed-failure",
+      });
       await expect(
         facade.sourceInvalidation.refreshGeneratedContext({
           scope: "workspace",
@@ -1147,13 +1213,24 @@ describe("@svvy/runtime facade", () => {
           reason: "source-changed",
         }),
       ).resolves.toEqual(packageRefreshResult);
+      await expect(
+        facade.sourceInvalidation.refreshGeneratedPackages({
+          scope: "workspace-link-repair",
+          workspaceId: "workspace_01" as WorkspaceId,
+          packages: ["@svvyx/workflows"],
+          reason: "startup-recovery",
+        } as unknown as RefreshGeneratedPackagesRequest),
+      ).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "typed-failure",
+      });
 
       expect(fileHints).toEqual([
         {
           scope: { kind: "app-global" },
           domain: "extensions",
           path: changedPath,
-          observedAt: "2026-06-19T08:00:00.000Z",
+          observedAt: sourceHintObservedAt,
         },
       ]);
       expect(reconciliations).toEqual([
@@ -1163,8 +1240,29 @@ describe("@svvy/runtime facade", () => {
           reason: "watcher-debounce",
         },
       ]);
+      expect(committedScanEvents).toEqual([
+        {
+          scope: { kind: "app-global" },
+          event: {
+            domains: ["extensions"],
+            reason: "watcher-debounce",
+            sourceFingerprints: {
+              extensions: "extensions_fingerprint",
+              workflows: "workflows_fingerprint",
+              external_instructions: "external_instructions_fingerprint",
+              host_snippets: "host_snippets_fingerprint",
+            },
+            afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+          },
+        },
+      ]);
       expect(contextRefreshes).toHaveLength(1);
       expect(packageRefreshes).toHaveLength(1);
+      expect(packageRefreshes[0]).toEqual({
+        scope: "app-global",
+        packages: ["@svvyx/extensions"],
+        reason: "source-changed",
+      });
     } finally {
       await facade.close();
       await managedRuntime.dispose();
@@ -1190,8 +1288,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: (input) =>
@@ -1226,8 +1322,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () =>
@@ -1271,8 +1365,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () =>
@@ -1315,8 +1407,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () =>
@@ -1365,8 +1455,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () =>
@@ -1410,8 +1498,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => {
@@ -1469,8 +1555,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -1507,8 +1591,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -1537,8 +1619,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -1570,8 +1650,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
@@ -1609,8 +1687,6 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         commands: {
-          runExtensionDependencyAction: () =>
-            Effect.succeed({ commandId: dependencyCommandId, status: "running" as const }),
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         events: () => Effect.fail(error),

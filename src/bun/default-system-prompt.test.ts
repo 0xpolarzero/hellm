@@ -632,7 +632,13 @@ describe("default system prompt", () => {
       "Use official `bunx smithers-orchestrator ...` commands through Shell",
     );
     expect(HANDLER_SYSTEM_PROMPT).toContain(
-      "Import reusable svvy workflow material from `@svvyx/workflows`",
+      "In workspace `.smithers` TypeScript/TSX source, import reusable generated values from `@svvyx/workflows`",
+    );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Do not import `@svvyx/workflows` from persistent app-global Workflows source under `~/.config/svvy/workflows/**`",
+    );
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain(
+      'Example: write reusable app-global workflow agent parameters only when the user wants reusable agents\n```ts\nimport { Agents } from "@svvyx/workflows";',
     );
     expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows models list --json");
     expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows save");
@@ -646,6 +652,12 @@ describe("default system prompt", () => {
     });
     expect(smithersOnlyPrompt).toContain(SMITHERS_CORE_INSTRUCTIONS.trim());
     expect(smithersOnlyPrompt).toContain(SMITHERS_SVVY_BOUNDARY_APPENDIX);
+    expect(smithersOnlyPrompt).toContain("Do not use `workflow.*`");
+    expect(smithersOnlyPrompt).toContain("`svvyx smithers`");
+    expect(smithersOnlyPrompt).toContain("package-level runtime");
+    expect(smithersOnlyPrompt).toContain("per-request Effect layer graphs");
+    expect(smithersOnlyPrompt).toContain("narrow generated `runTaskAgent` bridge");
+    expect(smithersOnlyPrompt).toContain("app-owned Effect `ManagedRuntime`");
     expect(smithersOnlyPrompt).not.toContain(
       "The handler workflow-authoring TypeScript contract follows",
     );

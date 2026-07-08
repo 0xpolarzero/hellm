@@ -26,7 +26,7 @@ Baseline behavior:
 - discover known Markdown prompt macro files from supported hosts
 - show discovered Snippets as read-only external files
 - allow `svvy`-owned Snippets to be created, edited, renamed, and deleted through Snippets pane
-  controls backed by runtime/state commands
+  controls backed by approved `@svvy/state` command facades
 - allow individual managed or discovered Snippets to be enabled or disabled for composer insertion
 - insert Snippets explicitly from the composer through `@` fuzzy matching
 - expand Snippets through `svvy`, not through pi, Claude, Codex, or another host runtime
@@ -78,12 +78,14 @@ Discovered Snippets are external files:
 
 Managed Snippets are product-owned records persisted by `@svvy/state`:
 
-- the Snippets pane submits typed create intents through runtime/state facades
-- the Snippets pane submits typed edit intents through runtime/state facades
-- the Snippets pane submits typed rename intents through runtime/state facades
-- the Snippets pane submits typed delete intents through runtime/state facades
+- the Snippets pane submits typed create intents through approved state command facades
+- the Snippets pane submits typed edit intents through approved state command facades
+- the Snippets pane submits typed rename intents through approved state command facades
+- the Snippets pane submits typed delete intents through approved state command facades
+- the Snippets pane submits typed enablement intents through approved state command facades
 - `@svvy/state` owns the durable managed Snippet record state
-- `@svvy/runtime` owns discovered Snippet source refresh, expansion, provenance, and invalidation
+- `@svvy/runtime` owns discovered Snippet source refresh, accepted mention expansion before pi
+  submission, provenance, and invalidation
 
 There is no clone or "make editable copy" flow in the baseline. If a user wants an editable version
 of an external Snippet, they can create a separate managed Snippet manually.
@@ -190,7 +192,7 @@ The same argument flow applies when the user types a full Snippet mention and co
 space.
 
 Each Snippet chip has a small expand action. Expanding replaces the chip with the resolved Snippet
-text directly in the composer so the user can edit the generated prompt text before sending.
+text directly in the composer so the user can edit the inserted composer text before sending.
 
 ## Sent Prompt Behavior
 

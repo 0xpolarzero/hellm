@@ -6,7 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./messages": "./src/messages.ts",
-    "./internal/session": "./src/session.ts"
+    "./session": "./src/session.ts"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "0.73.1",

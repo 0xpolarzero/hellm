@@ -1,11 +1,22 @@
 import type { WorkspaceScopedRequest } from "../shared/workspace-contract";
-import type { WorkspaceRuntime, WorkspaceRuntimeRegistry } from "./workspace-runtime-registry";
+import type {
+  WorkspaceRuntime,
+  WorkspaceRuntimeOperations,
+  WorkspaceRuntimeRegistry,
+} from "./workspace-runtime-registry";
 
 export function getWorkspaceRuntimeForRequest(
   registry: Pick<WorkspaceRuntimeRegistry, "getRuntime">,
   input: WorkspaceScopedRequest,
 ): WorkspaceRuntime {
   return registry.getRuntime(input.workspaceId);
+}
+
+export function getWorkspaceRuntimeOperationsForRequest(
+  registry: Pick<WorkspaceRuntimeRegistry, "getRuntimeOperations">,
+  input: WorkspaceScopedRequest,
+): WorkspaceRuntimeOperations {
+  return registry.getRuntimeOperations(input.workspaceId);
 }
 
 export function stripWorkspaceId<T extends WorkspaceScopedRequest>(

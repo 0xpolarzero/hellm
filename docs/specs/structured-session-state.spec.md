@@ -26,17 +26,19 @@ base product.
 - Project live tool use through Codex-like execution-span cards: streamed argument snapshots before
   runtime execution, durable command events after runtime acceptance, and final command facts as the
   authoritative recovery source.
-- Keep terminal command records immutable after `succeeded`, `failed`, or `cancelled` so prompt-end
-  cleanup and late duplicate callbacks cannot overwrite final facts, summaries, errors, or finished
-  timestamps.
+- Keep terminal command records immutable after `succeeded`, `failed`, or `cancelled` so
+  prompt-finalization effects and duplicate terminal-settlement attempts cannot overwrite final
+  facts, summaries, errors, or finished timestamps.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every
   generated facade call as a child command record.
 - Keep native control tools small: thread controls, extension loading/inspection, and
   request-user-input.
 - Treat queued surface work as structured product state addressed through a runtime target and
   persisted against the resolved `surfacePiSessionId`.
-- Store and select workspace-level read models in `@svvy/state`, while `@svvy/runtime` publishes
-  post-commit invalidation notifications independently from live surface stream patches.
+- Store durable facts in `@svvy/state` and project app, workspace, surface, command, queue,
+  request-input, app-log, generated-package, artifact, and thread read models from those facts.
+  `@svvy/runtime` publishes post-commit invalidation notifications independently from live surface
+  stream patches.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from
   storage details or transcripts.
 - Keep transient Dockview focus, drag state, open menus, renderer component trees, warm caches,
@@ -49,7 +51,8 @@ base product.
 `@svvy/state` keeps first-class SQLite-backed records for:
 
 - workspace sessions
-- durable surface records, persisted pi session references, and recoverable live-registry metadata
+- durable surface records, persisted pi session references, and recovery metadata needed to
+  reacquire live runtime scope
 - turns
 - commands
 - thread groups
@@ -111,6 +114,8 @@ Thread records store:
 - `threadGroupId`
 - `workspaceSessionId`
 - `surfacePiSessionId`
+- `parentThreadId`: nullable durable lineage to the handler thread that requested this thread, or
+  `null` when the start has no parent handler thread
 - title
 - objective
 - history mode: `isolated` or `forked`
@@ -128,9 +133,14 @@ Thread records reference the binding fingerprints; they do not duplicate the ext
 Thread state tracks delegated ownership and reporting. It is not a lossy proxy for raw Smithers
 runtime state.
 
+`parentThreadId` is lineage only. It does not make the parent handler the strategic owner of the
+child thread, does not share pi transcript state, and does not grant the child any callable surface
+from the parent. State validates that a non-null parent thread belongs to the same
+`workspaceSessionId` as the requesting turn before committing the child thread.
+
 ## Thread Episodes
 
-Thread episodes are durable semantic reports emitted only through `thread_report`.
+Handler-thread report episodes are durable semantic reports emitted only through `thread_report`.
 
 `thread_report` without `outcome` creates an update episode.
 
@@ -180,7 +190,7 @@ Artifacts are durable session files linked to sessions, threads, and commands.
 Artifact records include:
 
 - artifact id
-- owning session id
+- owning `workspaceSessionId`
 - optional thread id
 - optional command id
 - stored path
@@ -206,10 +216,11 @@ It records generated exports for the Workflows pane:
 - qualified name
 - source path
 - generated path
-- internal UI-only metadata needed for source/generated links and Agents-pane links
+- read-model-only metadata for source/generated links and Agents-pane links
 
-This metadata is internal read-model metadata projected only through UI read models. It is not a
-public agent-facing API and must not appear in generated import examples or public declarations.
+This metadata is read-model-only projection derived from state facts for source/generated links and
+Agents-pane links. It is not runtime input, not a public agent-facing API, and must not appear in
+generated import examples or public declarations.
 
 ## Queues And Waits
 
@@ -249,10 +260,11 @@ Read models derive:
 Read APIs must not repair lifecycle state heuristically from transcript replay, ad hoc refresh
 loops, or renderer polling.
 
-Handler-thread summaries expose objective, objective state, history mode, latest command rollup,
-latest workflow-related command rollup, artifact link, episode summary, and counts separately. The UI
-must not replace the objective with latest report text; objective, current activity, and latest
-report are separate read-model concepts.
+Handler-thread summaries expose objective, objective state, history mode, latest command references,
+workflow-observed command references, artifact links, episode summary, and counts separately.
+Command rollup fields belong to command read models and inspectors. The UI must not replace the
+objective with latest report text; objective, current activity, latest command projection, and
+latest report are separate read-model concepts.
 
 ## State Boundary
 

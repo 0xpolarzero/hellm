@@ -37,6 +37,7 @@ export function buildExecuteTypescriptBasePromptSection(actor: SvvyActorKind): s
     `Use execute_typescript only when a small TypeScript program is genuinely useful for ${compositionUses}.`,
     "When you call execute_typescript, write plain TypeScript against actor-local generated `extensions` runtime facades and `console`.",
     "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
+    "Do not import `@svvyx/workflows` or `@svvyx/extensions` inside execute_typescript; those generated packages are Smithers/Workflows authoring packages, not runtime facades.",
     "Do not use or assume a broad `api` helper, global `svvy`, prompt-only extension runtime facades, Smithers clients, or Workflows runner clients.",
     "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call Shell, Apply Patch, or other direct tools instead.",
   ].join("\n");
@@ -277,6 +278,7 @@ export const SMITHERS_HANDLER_CONTEXT_BODY = [
   "Handler threads use official Smithers CLI commands through Shell against workspace `.smithers/` source. Smithers adds no native tools, no generated TypeScript clients, and no product workflow wrapper tools.",
   "",
   "Use `bunx smithers-orchestrator init`, `bunx smithers-orchestrator workflow run`, `bunx smithers-orchestrator ps`, and `bunx smithers-orchestrator inspect` as ordinary shell commands when Smithers work is the right unit.",
+  "Do not use `workflow.*`, `svvyx smithers`, package-level runtime creation, or per-request Effect layer graphs.",
   "",
   "When the delegated objective has an important update, call `thread_report`. Include `outcome` only when the current handler objective is concluded.",
 ].join("\n");

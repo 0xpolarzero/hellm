@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { StateContractError } from "@svvy/core";
 import {
   AppLogState,
@@ -13,6 +14,7 @@ import {
   type AppLogStore,
 } from "./app-log-store";
 import { runTestEffect } from "./effect.test-support";
+import { testPlatformLayer } from "./platform-test-support";
 
 function clock() {
   let tick = 0;
@@ -55,7 +57,9 @@ describe("app log store", () => {
         const readModel = yield* appLogs.query();
         const summary = yield* appLogs.summary();
         return { entry, readModel, summary };
-      }).pipe(Effect.provide(layerAppLogState({ now: clock() }))),
+      }).pipe(
+        Effect.provide(layerAppLogState({ now: clock() }).pipe(Layer.provide(testPlatformLayer()))),
+      ),
     );
 
     expect(result.entry).toMatchObject({ seq: 1, message: "ready" });
@@ -234,6 +238,18 @@ describe("app log store", () => {
       "three",
     ]);
     secondStore.close();
+  });
+
+  it("applies configured SQLite busy timeout on open", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-app-logs-busy-timeout-"));
+    const databasePath = join(root, "logs.sqlite");
+    const store = createAppLogStore({ databasePath, busyTimeoutMs: 2_345, now: clock() });
+    const timeout = (store as unknown as { db: Database }).db
+      .query("PRAGMA busy_timeout")
+      .get() as { timeout: number };
+
+    expect(timeout.timeout).toBe(2_345);
+    store.close();
   });
 
   it("keeps out-of-contract persisted levels outside the read model", () => {

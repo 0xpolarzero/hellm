@@ -4,14 +4,17 @@ import {
   RuntimeActorExtensionBindingStatePort,
   StateContractError,
   type ExtensionId,
+  type ReadRuntimePromptBindingInput,
   type RuntimeActorExtensionBindingRecord,
   type RuntimeActorExtensionBindingStatePortService,
+  type RuntimePromptBindingRecord,
   type UpdateActorExtensionBindingRequest,
 } from "@svvy/core";
 import { getStructuredThread } from "./structured-session-selectors";
 import {
   StructuredSessionState,
   structuredSessionStateFromStore,
+  type StructuredGeneratedAgentContextBindingRecord,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import { mutationResult, surfaceAndSessionNavigationInvalidations } from "./state-mutation-result";
@@ -20,6 +23,63 @@ export function runtimeActorExtensionBindingStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeActorExtensionBindingStatePortService {
   return {
+    readRuntimePromptBinding: (input) =>
+      Effect.gen(function* () {
+        const snapshot = yield* state.getSessionState(input.target.workspaceSessionId);
+        if (input.target.surface === "orchestrator") {
+          if (snapshot.session.orchestratorPiSessionId !== input.target.surfacePiSessionId) {
+            return yield* Effect.fail(
+              new StateContractError({
+                operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+                reason: "not-found",
+                message: `Orchestrator surface ${input.target.surfacePiSessionId} was not found for session ${input.target.workspaceSessionId}.`,
+              }),
+            );
+          }
+          const fingerprint = snapshot.pi.generatedAgentContextFingerprint;
+          if (!fingerprint) {
+            return yield* Effect.fail(unboundPromptBindingError(input));
+          }
+          const binding = yield* readBindingByFingerprint({
+            state,
+            input,
+            fingerprint,
+          });
+          if (binding.actorKind !== "orchestrator") {
+            return yield* Effect.fail(actorMismatchError(input, binding.actorKind));
+          }
+          return toRuntimePromptBindingRecord(input, binding, {
+            updateExtensionContextBeforeNextTurn:
+              snapshot.pi.updateExtensionContextBeforeNextTurn ?? true,
+          });
+        }
+
+        const thread = getStructuredThread(snapshot, input.target.threadId);
+        if (!thread || thread.surfacePiSessionId !== input.target.surfacePiSessionId) {
+          return yield* Effect.fail(
+            new StateContractError({
+              operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+              reason: "not-found",
+              message: `Handler thread ${input.target.threadId} was not found for surface ${input.target.surfacePiSessionId}.`,
+            }),
+          );
+        }
+        const fingerprint = thread.generatedAgentContextFingerprint;
+        if (!fingerprint) {
+          return yield* Effect.fail(unboundPromptBindingError(input));
+        }
+        const binding = yield* readBindingByFingerprint({
+          state,
+          input,
+          fingerprint,
+        });
+        if (binding.actorKind !== "handler") {
+          return yield* Effect.fail(actorMismatchError(input, binding.actorKind));
+        }
+        return toRuntimePromptBindingRecord(input, binding, {
+          updateExtensionContextBeforeNextTurn: thread.updateExtensionContextBeforeNextTurn,
+        });
+      }),
     updateActorExtensionBinding: (input) =>
       Effect.gen(function* () {
         const snapshot = yield* state.getSessionState(input.target.workspaceSessionId);
@@ -228,6 +288,67 @@ function applyExtensionUsage(input: {
 
 function toExtensionIds(values: readonly string[]): readonly ExtensionId[] {
   return values.map((value) => value as ExtensionId);
+}
+
+function readBindingByFingerprint(input: {
+  state: StructuredSessionState["Service"];
+  input: ReadRuntimePromptBindingInput;
+  fingerprint: string;
+}): Effect.Effect<StructuredGeneratedAgentContextBindingRecord, StateContractError> {
+  return Effect.gen(function* () {
+    const binding = yield* input.state.getGeneratedAgentContextBinding({
+      surfacePiSessionId: input.input.target.surfacePiSessionId,
+      generatedAgentContextFingerprint: input.fingerprint,
+    });
+    if (!binding) {
+      return yield* Effect.fail(
+        new StateContractError({
+          operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+          reason: "not-found",
+          message: `Generated context binding ${input.fingerprint} was not found for surface ${input.input.target.surfacePiSessionId}.`,
+        }),
+      );
+    }
+    return binding;
+  });
+}
+
+function toRuntimePromptBindingRecord(
+  input: ReadRuntimePromptBindingInput,
+  binding: StructuredGeneratedAgentContextBindingRecord,
+  options: { updateExtensionContextBeforeNextTurn: boolean },
+): RuntimePromptBindingRecord {
+  return {
+    target: input.target,
+    generatedAgentContextBindingId: binding.id,
+    generatedAgentContextFingerprint:
+      binding.generatedAgentContextFingerprint as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
+    generatedAgentContextRevision: binding.generatedAgentContextRevision,
+    systemPrompt: binding.systemPrompt,
+    loadedExtensionIds: toExtensionIds(binding.loadedExtensionIds),
+    availableExtensionIds: toExtensionIds(binding.availableExtensionIds),
+    externalSourceHashes: binding.externalSourceHashes,
+    updateExtensionContextBeforeNextTurn: options.updateExtensionContextBeforeNextTurn,
+  };
+}
+
+function unboundPromptBindingError(input: ReadRuntimePromptBindingInput): StateContractError {
+  return new StateContractError({
+    operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+    reason: "not-found",
+    message: `No generated context fingerprint is bound to ${input.target.surface} surface ${input.target.surfacePiSessionId}.`,
+  });
+}
+
+function actorMismatchError(
+  input: ReadRuntimePromptBindingInput,
+  actualActorKind: string,
+): StateContractError {
+  return new StateContractError({
+    operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+    reason: "conflict",
+    message: `Generated context binding for ${input.target.surface} surface ${input.target.surfacePiSessionId} belongs to ${actualActorKind}.`,
+  });
 }
 
 function extensionNotAvailableError(extensionId: ExtensionId): StateContractError {

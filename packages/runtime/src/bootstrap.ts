@@ -2,164 +2,65 @@ export {
   awaitRuntimeStartupReadiness,
   createRuntimeLayerConfigLayer,
   defaultRuntimeLayerConfig,
+  layerRuntimeShutdownPreparation,
+  layerRuntimeStartupReadiness,
   prepareRuntimeShutdown,
   RuntimeLayerConfigFromEnv,
   RuntimeLayerConfigInputSchema,
   RuntimeLayerConfigSchema,
   RuntimeLayerConfigService,
   RuntimeLayerError,
+  RuntimeLayerErrorSchema,
   RuntimeShutdownPreparation,
+  RuntimeStartupError,
+  RuntimeStartupErrorSchema,
+  RuntimeStartupPhase,
   RuntimeStartupReadiness,
+  decodeUnknownRuntimeLayerErrorEffect,
+  decodeUnknownRuntimeLayerErrorExit,
+  encodeRuntimeLayerErrorEffect,
+  encodeRuntimeLayerErrorExit,
 } from "./runtime-layer-config";
 export { layerRuntimeBunPlatform } from "./bun-platform";
 export type { RuntimeBunPlatformServices } from "./bun-platform";
 export type {
   RuntimeLayerConfig,
-  RuntimePrepareShutdownInput,
   RuntimePrepareShutdownReason,
   RuntimePrepareShutdownRequest,
   RuntimePrepareShutdownResult,
+  RuntimeStartupDegradedPhase,
+  RuntimeStartupReadinessReceipt,
 } from "./runtime-layer-config";
 export {
-  RuntimeLayerApprovalPostCommitPort,
-  RuntimeLayerAppLogPort,
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
-  RuntimeLayerDevTelemetryPort,
-  RuntimeLayerEventsPort,
+  RuntimeGeneratedContextRefreshHostPort,
+  RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptHostPort,
+  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerRequestInputPostCommitPort,
-  RuntimeLayerSourceEditsPort,
-  RuntimeLayerSourceInvalidationPort,
+  RuntimeLayerSurfaceQueueWakePort,
+  RuntimeSourceInvalidationScanPort,
 } from "./runtime-layer";
 export type {
-  RuntimeLayerApprovalPostCommitPort as RuntimeLayerApprovalPostCommitPortService,
-  RuntimeLayerAppLogPort as RuntimeLayerAppLogPortService,
-  RuntimeLayerCommandControlPort as RuntimeLayerCommandControlPortService,
-  RuntimeLayerCommandStdinPort as RuntimeLayerCommandStdinPortService,
-  RuntimeLayerDevTelemetryPort as RuntimeLayerDevTelemetryPortService,
-  RuntimeLayerEventsPort as RuntimeLayerEventsPortService,
-  RuntimeLayerModelResolverPort as RuntimeLayerModelResolverPortService,
-  RuntimeLayerPromptHostPort as RuntimeLayerPromptHostPortService,
-  RuntimeLayerProviderAuthPort as RuntimeLayerProviderAuthPortService,
-  RuntimeLayerRequestInputPostCommitPort as RuntimeLayerRequestInputPostCommitPortService,
-  RuntimeLayerRequirements,
-  RuntimeLayerSourceEditsPort as RuntimeLayerSourceEditsPortService,
-  RuntimeLayerSourceInvalidationPort as RuntimeLayerSourceInvalidationPortService,
+  RuntimeLayerCommandControlPortService,
+  RuntimeLayerCommandStdinPortService,
+  RuntimeGeneratedContextRefreshHostPortService,
+  RuntimeGeneratedPackageRefreshHostPortService,
+  RuntimeLayerModelResolverPortService,
+  RuntimeLayerPromptControlHostPortService,
+  RuntimeLayerProviderAuthPortService,
+  RuntimeSourceInvalidationScanPortService,
 } from "./runtime-layer";
-export { runAcceptedRequestUserInputToolCall } from "./request-user-input-operation";
+export type { RuntimeGeneratedPackageWorkspaceLinkFileHost } from "./generated-package-refresh";
 export type {
-  RunAcceptedRequestUserInputToolCallInput,
-  RunAcceptedRequestUserInputToolCallResult,
-} from "./request-user-input-operation";
-export { runAcceptedLoadExtensionToolCall } from "./load-extension-operation";
-export type {
-  RunAcceptedLoadExtensionToolCallInput,
-  RunAcceptedLoadExtensionToolCallResult,
-} from "./load-extension-operation";
-export { RuntimeQueueInsertPostCommitLane } from "./runtime-effect-requests";
-export type {
-  RuntimeQueueInsertPostCommitLaneService,
-  RuntimeQueueInsertPostCommitInput,
-} from "./runtime-effect-requests";
-export {
-  answerRuntimeApproval,
-  RuntimeApprovalAnswerPostCommitHost,
-} from "./runtime-approval-answer";
-export type {
-  RuntimeApprovalAnsweredInput,
-  RuntimeApprovalAnswerPostCommitHostService,
-} from "./runtime-approval-answer";
-export {
-  answerRuntimeRequestInput,
-  RuntimeRequestInputPostCommitLane,
-  setRuntimeRequestInputTimerPaused,
-} from "./request-input-lifecycle";
-export type {
-  RuntimeRequestInputAnswerCommittedInput,
-  RuntimeRequestInputPostCommitLaneService,
-  RuntimeRequestInputTimerPausedCommittedInput,
-} from "./request-input-lifecycle";
-export { makeRuntimeBlockingRequestInputWaitRegistry } from "./request-input-blocking-controller";
-export type {
-  RuntimeBlockingRequestInputEffectState,
-  RuntimeBlockingRequestInputWaitRegistry,
-  RuntimeBlockingRequestInputWaitRegistryOptions,
-} from "./request-input-blocking-controller";
-export {
-  applyGeneratedPackageWorkspaceLinkRepairPlan,
-  generatedContextReasonForRuntimeSourceInvalidation,
-  generatedPackagesForRuntimeSourceInvalidation,
-  refreshRuntimeGeneratedPackages,
-} from "./generated-package-refresh";
-export type {
-  RuntimeGeneratedPackageRefreshHost,
-  RuntimeGeneratedPackageRefreshStatus,
-  RuntimeGeneratedPackageWorkspaceLinkFileHost,
-  RuntimeGeneratedPackageWorkspaceLinkStatus,
-} from "./generated-package-refresh";
-export {
-  materializeRuntimeSubmittedMessageForQueue,
-  RuntimeMessageSubmissionPostCommitLane,
-  submitRuntimeMessage,
-  summarizeRuntimeSubmittedMessageForTelemetry,
-} from "./runtime-message-submission";
-export type {
-  RuntimeMaterializedSubmittedMessage,
-  RuntimeMessageSubmissionInput,
-  RuntimeMessageSubmissionPostCommitLaneService,
-  RuntimeSubmittedMessagePostCommitInput,
-} from "./runtime-message-submission";
-export {
-  abortRuntimeQueuedMessage,
-  RuntimeQueuedMessageAbortPostCommitHost,
-} from "./runtime-message-abort";
-export type {
-  RuntimeQueuedMessageAbortedInput,
-  RuntimeQueuedMessageAbortInput,
-  RuntimeQueuedMessageAbortPostCommitHostService,
-} from "./runtime-message-abort";
-export {
-  RuntimeQueueSteeringPostCommitLane,
-  steerRuntimeQueuedMessage,
-} from "./runtime-queue-steering";
-export type {
-  RuntimeQueuedMessageSteeredInput,
-  RuntimeQueueSteeringPostCommitLaneService,
-} from "./runtime-queue-steering";
-export {
-  buildAppGlobalSourceWatchInputs,
-  RuntimeSourceInvalidationCoordinator,
-  buildWorkspaceSourceWatchInputs,
-  createSourceInvalidationCoordinator,
-  layerRuntimeSourceInvalidationCoordinator,
-  makeRuntimeSourceInvalidationCoordinator,
+  SourceInvalidationDirectoryEntry as RuntimeSourceInvalidationDirectoryEntry,
+  SourceInvalidationDomain as RuntimeSourceInvalidationDomain,
+  SourceInvalidationEvent as RuntimeSourceInvalidationEvent,
+  SourceInvalidationHost as RuntimeSourceInvalidationHost,
+  SourceWatchInput as RuntimeSourceWatchInput,
 } from "./source-invalidation-coordinator";
-export { createSurfaceQueueDispatcher } from "./surface-queue-dispatcher";
 export type {
-  SurfaceQueueDispatcher,
-  SurfaceQueueDispatchHost,
-  SurfaceQueueMaterializedMessage,
-  SurfaceQueueStartedPrompt,
-} from "./surface-queue-dispatcher";
-export type {
-  ExternalInstructionRootInput,
-  ExternalInstructionsWatchSettings,
-  RuntimeSourceInvalidationCoordinatorService,
-  SourceInvalidationCoordinator,
-  SourceInvalidationCoordinatorOptions,
-  SourceInvalidationDirectoryEntry,
-  SourceInvalidationDomain,
-  SourceInvalidationEvent,
-  SourceInvalidationHost,
-  SourceWatcher,
-  SourceWatchInput,
-} from "./source-invalidation-coordinator";
-export { makeRuntimeEventBus, RuntimeEventBus } from "./runtime-event-bus";
-export type {
-  RuntimeEventBusOptions,
-  RuntimeEventDraft,
-  RuntimeEventSubscriptionEffect,
-} from "./runtime-event-bus";
+  RuntimeLayerSurfaceQueueWakePortService,
+  RuntimeSurfaceQueueWakeReason,
+} from "./runtime-surface-queue-wake-port";

@@ -8,7 +8,8 @@ import {
   type RuntimeOwnerId,
   type WorkspaceId,
 } from "@svvy/core";
-import { layerRuntimeWorkspaceStatePort, runtimeWorkspaceStatePortFromStore } from "./index";
+import { layerRuntimeWorkspaceStatePort } from "./index";
+import { runtimeWorkspaceStatePortFromStore } from "./structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   layerStructuredSessionState,

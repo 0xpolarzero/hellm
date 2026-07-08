@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type { AppLoggerEvent } from "./app-logger";
 import { createStartThreadTool } from "./thread-start-tool";
-import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -190,7 +193,7 @@ describe("thread_start tool", () => {
       },
     ]);
     expect(observedLoadedByCommandId as unknown).toBe(command?.id);
-    expect(result.details).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       threadGroupId: createdThread?.threadGroupId,
       threads: [
         {
@@ -258,7 +261,7 @@ describe("thread_start tool", () => {
 
     const snapshot = store.getSessionState("session-thread-start-tool");
     const command = snapshot.commands.find((entry) => entry.toolName === "thread_start");
-    expect(result.details).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       ok: false,
       commandId: command?.id,
       error: "handler backend unavailable",
@@ -322,7 +325,7 @@ describe("thread_start tool", () => {
 
     const snapshot = store.getSessionState("session-thread-start-tool");
     const command = snapshot.commands.find((entry) => entry.toolName === "thread_start");
-    const resultDetails = result.details as {
+    const resultDetails = result.details!.commandFacts as {
       threadGroupId: string;
       threads: Array<Record<string, unknown>>;
     };

@@ -130,14 +130,13 @@ current non-archived handler threads in that group. The handler rejects empty ta
 `activate: true` reactivates concluded handler objectives in the same delegated context. Active
 targets keep their current objective.
 
-The handler validates input and returns one pre-commit model-facing acknowledgement plus ordered
-`ExtensionRuntimeOperation` items such as
-`{ kind: "runtime_effect", request: { type: "queue.insert", ... } }` and
-`{ kind: "runtime_effect", request: { type: "episode.record", ... } }`. `@svvy/runtime` applies the
-queue mutation, allocates durable ids, constructs the terminal command facts from committed state,
-and publishes the typed notification after commit.
+The handler validates input and returns an accepted-intent model-facing acknowledgement plus one
+ordered `ExtensionRuntimeOperation` wrapping the core-owned follow-up delivery runtime effect.
+`@svvy/runtime` applies the effect, performs any required queue/episode state transitions through
+core-owned state ports, allocates durable ids, constructs terminal command facts from committed
+state, and publishes typed notifications after commit.
 
-Output shape:
+Runtime-applied result/facts:
 
 ```ts
 type ThreadFollowupResult = {
@@ -164,7 +163,7 @@ type ThreadRequestReportInput = {
 };
 ```
 
-Output shape:
+Runtime-applied result/facts:
 
 ```ts
 type ThreadRequestReportResult = {
@@ -175,11 +174,11 @@ type ThreadRequestReportResult = {
 };
 ```
 
-The tool returns one pre-commit model-facing acknowledgement plus one ordered
-`ExtensionRuntimeOperation` item wrapping the handler-surface queue-delivery `RuntimeEffectRequest`.
-`@svvy/runtime` applies the queue mutation, allocates durable ids, constructs the model-facing
-result from the applied effect result, and publishes the typed notification after commit. The handler
-responds with `thread_report`.
+The extension handler returns an accepted-intent model-facing acknowledgement plus one ordered
+`ExtensionRuntimeOperation` item wrapping the report-request runtime effect. `@svvy/runtime` applies
+the queue/episode mutations, allocates durable ids, constructs the id-bearing model-facing result
+from the applied effect result, and publishes typed notifications after commit. The handler responds
+with `thread_report`.
 
 ## Shared Read-Model Types
 
@@ -296,8 +295,8 @@ Example:
 
 ## `thread_current`
 
-`thread_current` returns the current handler identity, objective context, extension availability, and
-pending report requests. It is handler-thread-only.
+`thread_current` returns the current handler identity, objective context, and pending report
+requests. It is handler-thread-only.
 
 Input shape:
 
@@ -316,8 +315,6 @@ type ThreadPendingReportRequest = {
 
 type ThreadCurrentResult = ThreadCompactRow & {
   pendingReportRequests: readonly ThreadPendingReportRequest[];
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
 };
 ```
 
@@ -325,10 +322,8 @@ Rules:
 
 - Calling `thread_current` outside a handler thread fails and records a failed command.
 - `pendingReportRequests` is derived from queued `report_request` rows for the current thread.
-- `loadedExtensionIds` and `availableExtensionIds` are the current actor binding projection for that
-  handler thread.
 - The result does not include episode bodies, transcripts, Smithers internals, command logs,
-  artifacts, or duplicate summary counts.
+  artifacts, extension binding projections, generated-context bodies, or duplicate summary counts.
 
 Example:
 
@@ -361,9 +356,7 @@ Example:
         "request": "Summarize the focused checks.",
         "createdAt": "2026-04-18T10:04:30.000Z"
       }
-    ],
-    "loadedExtensionIds": ["shell", "thread-handling"],
-    "availableExtensionIds": ["web"]
+    ]
   }
 }
 ```
@@ -496,10 +489,11 @@ Example:
 ## `thread_report`
 
 `thread_report` is the handler-owned tool for requesting an intermediate update or conclusion
-episode. The handler returns one pre-commit model-facing acknowledgement plus one ordered
-`{ kind: "runtime_effect", request: { type: "episode.record", ... } }` operation item;
-`@svvy/runtime` records the episode or conclusion through `@svvy/state` in the ordered runtime lane
-and publishes typed notifications after commit.
+episode. The handler returns an accepted report/conclusion intent plus one ordered
+`{ kind: "runtime_effect", request: { type: "episode.record", ... } }` operation item.
+`@svvy/runtime` records the episode or conclusion through `@svvy/state` in the ordered runtime lane,
+fills committed ids from `RuntimeEpisodeStatePort` and any queue commit results, settles the command
+facts/tool result, and publishes typed notifications after commit.
 
 Input shape:
 
@@ -513,7 +507,7 @@ type ThreadReportInput = {
 };
 ```
 
-Output shape:
+Runtime-applied result/facts:
 
 ```ts
 type ThreadReportResult = {
@@ -531,12 +525,14 @@ Rules:
 - with `outcome`, it creates a conclusion episode and marks the current handler objective concluded
 - referenced artifacts and commands must be durable and inspectable
 - ordinary handler replies do not create episodes
-- the handler returns one pre-commit model-facing acknowledgement plus one ordered
+- the handler returns an accepted-intent model-facing acknowledgement plus one ordered
   `ExtensionRuntimeOperation` item wrapping the `episode.record` `RuntimeEffectRequest`
 - `episode.record` carries the intermediate update or conclusion outcome; with `outcome`, runtime
   records the conclusion episode and marks the handler objective concluded in the same transaction
 - `@svvy/runtime` applies the episode effect and publishes the typed queue notification
   the orchestrator reconciles
+- the extension does not synthesize `episodeId` or `notificationQueuedItemId`; runtime fills those
+  from committed state results
 
 ## Public API Boundary
 

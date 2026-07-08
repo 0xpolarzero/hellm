@@ -14,13 +14,13 @@ import type {
 } from "@svvy/core";
 import type { ActorExtensionBinding } from "./extensions-service";
 
-export type NativeToolDefinition<TParams = unknown, TResult = unknown> = NativeToolDeclaration & {
+export type NativeToolDefinition<TParams = unknown> = NativeToolDeclaration & {
   execute: (
     toolCallId: string,
     params: TParams,
     signal?: AbortSignal,
-    onUpdate?: NativeToolUpdateHandler<TResult>,
-  ) => Promise<NativeToolResult<TResult>>;
+    onUpdate?: NativeToolUpdateHandler,
+  ) => Promise<NativeToolResult>;
 };
 
 export type ResolvedExtensionInvocationEnv = {

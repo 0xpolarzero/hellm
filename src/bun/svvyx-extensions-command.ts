@@ -24,7 +24,10 @@ import {
   type ExtensionDependencyApprovalRequest,
   type ExtensionDependencyApprovalIdentity,
 } from "./extension-dependency-approval-store";
-import type { ExtensionEnvSecretKey, ExtensionEnvSecretStore } from "./extension-env-secret-store";
+import type {
+  SnapshotSecretStateStoreKey,
+  ExtensionEnvSecretStore,
+} from "./extension-env-secret-store";
 import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import { refreshGeneratedExtensionsPackage } from "./generated-extensions-package";
 import type {
@@ -211,6 +214,15 @@ export type SvvyxExtensionsDependencyInstaller = (input: {
   trustedDependencies: readonly ExtensionDependencyApprovalIdentity[];
 }) => SvvyxExtensionsDependencyInstallResult | Promise<SvvyxExtensionsDependencyInstallResult>;
 
+export type ExtensionDependencyCommittedApprovalState = {
+  isApproved(identity: ExtensionDependencyApprovalIdentity): boolean;
+  recordApprovedRequest?(input: {
+    approvedAt: string;
+    identities: readonly ExtensionDependencyApprovalIdentity[];
+    requestId: string;
+  }): void;
+};
+
 export type SvvyxExtensionsCommandResult = {
   output: unknown;
   commandFacts: Record<string, unknown>;
@@ -226,6 +238,7 @@ export async function runSvvyxExtensionsCommand(input: {
   cliProbe?: SvvyxExtensionsCliProbe;
   command: string;
   cwd?: string;
+  dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
   dependencyApprovalStore?: ExtensionDependencyApprovalStore;
   dependencyInstaller?: SvvyxExtensionsDependencyInstaller;
   env?: NodeJS.ProcessEnv;
@@ -297,6 +310,7 @@ export async function approveExtensionDependencyRequest(input: {
   buildRoot?: string;
   cliProbe?: SvvyxExtensionsCliProbe;
   cwd?: string;
+  dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
   dependencyApprovalStore?: ExtensionDependencyApprovalStore;
   dependencyInstaller?: SvvyxExtensionsDependencyInstaller;
   env?: NodeJS.ProcessEnv;
@@ -318,6 +332,11 @@ export async function approveExtensionDependencyRequest(input: {
     .listBlockedOperations(input.requestId)
     .filter((operation) => operation.status === "pending");
   const request = dependencyApprovalStore.approveRequest(input.requestId);
+  input.dependencyApprovalState?.recordApprovedRequest?.({
+    approvedAt: request.completedAt ?? request.updatedAt,
+    identities: request.identities,
+    requestId: request.requestId,
+  });
   const root = resolve(input.extensionsRoot ?? defaultExtensionsRoot());
   const resumed: Array<{
     operationId: string;
@@ -587,6 +606,7 @@ export async function readBuiltinExtensionsInventory(
     agentSettingsStore?: AgentSettingsStore;
     cliProbe?: SvvyxExtensionsCliProbe;
     cwd?: string;
+    dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
     dependencyApprovalStore?: ExtensionDependencyApprovalStore;
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
@@ -619,12 +639,15 @@ export async function readBuiltinExtensionsInventory(
       input.envSecretStore,
     );
     const dependencyApprovalStore = resolveExtensionDependencyApprovalStore(input);
+    const dependencyApprovalState = resolveExtensionDependencyApprovalState(input);
     const packageProject = extensionPackageProjectPath(input.extensionsRoot);
     const dependencies = resolveDependencyRequirements(extension.dependencies ?? [], {
+      dependencyApprovalState,
       dependencyApprovalStore,
       packageProject,
     });
     const trustedDependencies = resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+      dependencyApprovalState,
       dependencyApprovalStore,
       packageProject,
     });
@@ -1324,22 +1347,22 @@ export function readExtensionChangeCards(
 export function assertExtensionEnvSecretTarget(input: {
   extensionId: string;
   extensionsRoot?: string;
-  name: string;
+  envName: string;
 }): void {
   const extension = requireExtension(input.extensionId, input.extensionsRoot);
   const declaration = (extension.envDeclarations ?? []).find(
-    (candidate) => candidate.name === input.name,
+    (candidate) => candidate.name === input.envName,
   );
   if (!declaration) {
     throw extensionsCommandError(
       "extension_env_not_declared",
-      `${input.extensionId} does not declare extension env ${input.name}.`,
+      `${input.extensionId} does not declare extension env ${input.envName}.`,
     );
   }
   if (!declaration.secret) {
     throw extensionsCommandError(
       "extension_env_not_secret",
-      `${input.extensionId} ${input.name} is not managed as a secret.`,
+      `${input.extensionId} ${input.envName} is not managed as a secret.`,
     );
   }
 }
@@ -1347,22 +1370,22 @@ export function assertExtensionEnvSecretTarget(input: {
 export function assertExtensionEnvOverrideTarget(input: {
   extensionId: string;
   extensionsRoot?: string;
-  name: string;
+  envName: string;
 }): void {
   const extension = requireExtension(input.extensionId, input.extensionsRoot);
   const declaration = (extension.envDeclarations ?? []).find(
-    (candidate) => candidate.name === input.name,
+    (candidate) => candidate.name === input.envName,
   );
   if (!declaration) {
     throw extensionsCommandError(
       "extension_env_not_declared",
-      `${input.extensionId} does not declare extension env ${input.name}.`,
+      `${input.extensionId} does not declare extension env ${input.envName}.`,
     );
   }
   if (declaration.secret) {
     throw extensionsCommandError(
       "extension_env_is_secret",
-      `${input.extensionId} ${input.name} is managed as a secret.`,
+      `${input.extensionId} ${input.envName} is managed as a secret.`,
     );
   }
 }
@@ -2404,6 +2427,7 @@ async function runInspectCommand(
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
     cwd?: string;
+    dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
     dependencyApprovalStore?: ExtensionDependencyApprovalStore;
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
@@ -2431,12 +2455,15 @@ async function runInspectCommand(
     options.envSecretStore,
   );
   const dependencyApprovalStore = resolveExtensionDependencyApprovalStore(options);
+  const dependencyApprovalState = resolveExtensionDependencyApprovalState(options);
   const packageProject = extensionPackageProjectPath(options.extensionsRoot);
   const dependencies = resolveDependencyRequirements(extension.dependencies ?? [], {
+    dependencyApprovalState,
     dependencyApprovalStore,
     packageProject,
   });
   const trustedDependencies = resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+    dependencyApprovalState,
     dependencyApprovalStore,
     packageProject,
   });
@@ -2607,6 +2634,7 @@ async function runBuildCommand(
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
     cwd?: string;
+    dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
     dependencyApprovalStore?: ExtensionDependencyApprovalStore;
     dependencyInstaller?: SvvyxExtensionsDependencyInstaller;
     env?: NodeJS.ProcessEnv;
@@ -2682,12 +2710,13 @@ async function runBuildCommand(
   }
 
   const dependencyApprovalStore = resolveExtensionDependencyApprovalStore(options);
+  const dependencyApprovalState = resolveExtensionDependencyApprovalState(options);
   const dependencyIdentities = [
     ...(extension.dependencies ?? []).map(extensionDependencyIdentityFromDeclaration),
     ...(extension.trustedDependencies ?? []).map(extensionDependencyIdentityFromDeclaration),
   ];
   const unapprovedDependencyIdentities = dependencyIdentities.filter(
-    (identity) => !dependencyApprovalStore.hasApproved(identity),
+    (identity) => !dependencyApprovalState.isApproved(identity),
   );
   dependencyApprovalStore.obsoletePendingRequestsForExtension({
     extensionId: extension.id,
@@ -2699,11 +2728,13 @@ async function runBuildCommand(
   });
   const packageProject = extensionPackageProjectPath(options.extensionsRoot);
   const dependencies = resolveDependencyRequirements(extension.dependencies ?? [], {
+    dependencyApprovalState,
     dependencyApprovalRequest,
     dependencyApprovalStore,
     packageProject,
   });
   const trustedDependencies = resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+    dependencyApprovalState,
     dependencyApprovalRequest,
     dependencyApprovalStore,
     packageProject,
@@ -2753,7 +2784,7 @@ async function runBuildCommand(
       buildRoot: options.buildRoot,
       currentDependencies: installIdentities,
       currentTrustedDependencies: trustedInstallIdentities,
-      dependencyApprovalStore,
+      dependencyApprovalState,
       extensionsRoot: options.extensionsRoot,
     });
     const installResult = await installer({
@@ -2774,10 +2805,12 @@ async function runBuildCommand(
           cliRequirements,
           env: envRequirements,
           dependencies: resolveDependencyRequirements(extension.dependencies ?? [], {
+            dependencyApprovalState,
             dependencyApprovalStore,
             packageProject,
           }),
           trustedDependencies: resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+            dependencyApprovalState,
             dependencyApprovalStore,
             packageProject,
           }),
@@ -2795,10 +2828,12 @@ async function runBuildCommand(
     }
     const missingArtifacts = [
       ...resolveDependencyRequirements(extension.dependencies ?? [], {
+        dependencyApprovalState,
         dependencyApprovalStore,
         packageProject,
       }),
       ...resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+        dependencyApprovalState,
         dependencyApprovalStore,
         packageProject,
       }),
@@ -2822,10 +2857,12 @@ async function runBuildCommand(
           cliRequirements,
           env: envRequirements,
           dependencies: resolveDependencyRequirements(extension.dependencies ?? [], {
+            dependencyApprovalState,
             dependencyApprovalStore,
             packageProject,
           }),
           trustedDependencies: resolveDependencyRequirements(extension.trustedDependencies ?? [], {
+            dependencyApprovalState,
             dependencyApprovalStore,
             packageProject,
           }),
@@ -2843,12 +2880,14 @@ async function runBuildCommand(
     }
   }
   const installedDependencies = resolveDependencyRequirements(extension.dependencies ?? [], {
+    dependencyApprovalState,
     dependencyApprovalStore,
     packageProject,
   });
   const installedTrustedDependencies = resolveDependencyRequirements(
     extension.trustedDependencies ?? [],
     {
+      dependencyApprovalState,
       dependencyApprovalStore,
       packageProject,
     },
@@ -2942,6 +2981,7 @@ async function runBuildCommand(
   let generatedExtensionsPackagePath = "";
   promoteExtensionBuild(stagingPath, currentPath, () => {
     generatedExtensionsPackagePath = refreshGeneratedExtensionsPackage({
+      dependencyApprovalState,
       extensionsRoot: options.extensionsRoot,
     }).generatedPackagePath;
     writeSvvyxCommandSchema({
@@ -3720,8 +3760,9 @@ function preserveSnapshotSecretState(
         continue;
       }
       const key = {
+        kind: "extension-env" as const,
         extensionId: extension.id,
-        name: declaration.name,
+        envName: declaration.name,
       };
       if (!envSecretStore.has(key)) {
         continue;
@@ -3781,8 +3822,9 @@ function restoreSnapshotSecretState(
     }
     envSecretStore.set(
       {
+        kind: "extension-env",
         extensionId: record.extensionId,
-        name: record.name,
+        envName: record.name,
       },
       record.value,
     );
@@ -3851,10 +3893,10 @@ function snapshotSecretSourceExtensions(root: string): ResolvedExtensionRecord[]
   ];
 }
 
-function snapshotSecretStateKey(snapshotId: string): ExtensionEnvSecretKey {
+function snapshotSecretStateKey(snapshotId: string): SnapshotSecretStateStoreKey {
   return {
-    extensionId: "__snapshot__",
-    name: `${snapshotId}:extension-env`,
+    kind: "snapshot-secret-state",
+    snapshotId,
   };
 }
 
@@ -4139,8 +4181,9 @@ function envDeclarationConfigured(
   return (
     declaration.secret &&
     envSecretStore?.has({
+      kind: "extension-env",
       extensionId,
-      name: declaration.name,
+      envName: declaration.name,
     }) === true
   );
 }
@@ -4152,6 +4195,7 @@ function extensionEnvValues(store?: AgentSettingsStore): ExtensionEnvValues {
 function resolveDependencyRequirements(
   dependencies: readonly ExtensionDependencyDeclaration[],
   options: {
+    dependencyApprovalState: ExtensionDependencyCommittedApprovalState;
     dependencyApprovalRequest?: ExtensionDependencyApprovalRequest | null;
     dependencyApprovalStore: ExtensionDependencyApprovalStore;
     packageProject: string;
@@ -4159,7 +4203,7 @@ function resolveDependencyRequirements(
 ): DependencyRequirementStatus[] {
   return dependencies.map((dependency) => {
     const identity = extensionDependencyIdentityFromDeclaration(dependency);
-    const approved = options.dependencyApprovalStore.hasApproved(identity);
+    const approved = options.dependencyApprovalState.isApproved(identity);
     const pendingRequest =
       options.dependencyApprovalRequest ??
       options.dependencyApprovalStore.findPendingRequestForIdentity(identity);
@@ -4213,11 +4257,21 @@ function resolveExtensionDependencyApprovalStore(options: {
   );
 }
 
+const noCommittedDependencyApprovals: ExtensionDependencyCommittedApprovalState = {
+  isApproved: () => false,
+};
+
+function resolveExtensionDependencyApprovalState(options: {
+  dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
+}): ExtensionDependencyCommittedApprovalState {
+  return options.dependencyApprovalState ?? noCommittedDependencyApprovals;
+}
+
 function approvedPackageInstallPlan(input: {
   buildRoot?: string;
   currentDependencies: readonly ExtensionDependencyApprovalIdentity[];
   currentTrustedDependencies: readonly ExtensionDependencyApprovalIdentity[];
-  dependencyApprovalStore: ExtensionDependencyApprovalStore;
+  dependencyApprovalState: ExtensionDependencyCommittedApprovalState;
   extensionsRoot?: string;
 }): {
   dependencies: ExtensionDependencyApprovalIdentity[];
@@ -4262,7 +4316,7 @@ function approvedPackageInstallPlan(input: {
         continue;
       }
       const identity = extensionDependencyIdentityFromDeclaration({ kind, name, version });
-      if (!input.dependencyApprovalStore.hasApproved(identity)) {
+      if (!input.dependencyApprovalState.isApproved(identity)) {
         continue;
       }
       const key = extensionDependencyIdentityKeyForPackagePlan(identity);
@@ -5892,10 +5946,9 @@ function builtinSvvyxSourceDefault(extension: ResolvedExtensionRecord): string |
       "    exportName: z.string(),",
       "    kind: workflowKind,",
       "    diagnostics: z.array(diagnostic),",
-      "    linkedWorkspaces: z.array(z.string()),",
       "  }),",
       "  run() {",
-      "    return { ok: true, sourcePath: '', generatedPackagePath: '', exportName: '', kind: 'agent' as const, diagnostics: [], linkedWorkspaces: [] };",
+      "    return { ok: true, sourcePath: '', generatedPackagePath: '', exportName: '', kind: 'agent' as const, diagnostics: [] };",
       "  },",
       "});",
       "",
@@ -5905,11 +5958,10 @@ function builtinSvvyxSourceDefault(extension: ResolvedExtensionRecord): string |
       "    ok: z.boolean(),",
       "    generatedPackagePath: z.string(),",
       "    diagnostics: z.array(diagnostic),",
-      "    linkedWorkspaces: z.array(z.string()),",
       "    items: z.array(item),",
       "  }),",
       "  run() {",
-      "    return { ok: true, generatedPackagePath: '', diagnostics: [], linkedWorkspaces: [], items: [] };",
+      "    return { ok: true, generatedPackagePath: '', diagnostics: [], items: [] };",
       "  },",
       "});",
       "",

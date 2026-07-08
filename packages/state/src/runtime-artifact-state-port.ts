@@ -3,7 +3,7 @@ import * as Layer from "effect/Layer";
 import {
   RuntimeArtifactStatePort,
   StateContractError,
-  type RuntimeArtifactRecord,
+  type ArtifactMetadataRecord,
   type RuntimeArtifactStatePortService,
 } from "@svvy/core";
 import {
@@ -17,17 +17,12 @@ import {
 import {
   StructuredSessionState,
   structuredSessionStateFromStore,
-  type StructuredArtifactRecord,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 
-function mapRuntimeArtifactRecord(record: StructuredArtifactRecord): RuntimeArtifactRecord {
-  return record as RuntimeArtifactRecord;
-}
-
 function runtimeArtifactInvalidations(
   workspaceId: string,
-  record: RuntimeArtifactRecord,
+  record: ArtifactMetadataRecord,
 ): ReturnType<typeof dedupeInvalidations> {
   return dedupeInvalidations([
     sessionNavigationInvalidation(workspaceId),
@@ -45,31 +40,40 @@ export function runtimeArtifactStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeArtifactStatePortService {
   return {
-    createArtifact: (input) =>
-      state.createArtifact(input).pipe(
-        Effect.map(mapRuntimeArtifactRecord),
+    recordArtifactMetadata: (input) =>
+      state.recordArtifactMetadata(input).pipe(
         Effect.map((record) =>
           mutationResult(record, runtimeArtifactInvalidations(state.workspaceId, record)),
         ),
-        Effect.mapError((error) => mapArtifactStateError("runtime-artifact.create", error)),
+        Effect.mapError((error) =>
+          mapArtifactStateError("runtime-artifact.record-metadata", error),
+        ),
       ),
     inspectArtifact: (input) =>
-      state.inspectArtifact(input).pipe(
-        Effect.map(mapRuntimeArtifactRecord),
-        Effect.mapError((error) => mapArtifactStateError("runtime-artifact.inspect", error)),
-      ),
+      state
+        .inspectArtifactMetadata({
+          ...(input.workspaceSessionId !== undefined
+            ? { workspaceSessionId: input.workspaceSessionId }
+            : {}),
+          artifactId: input.artifactId,
+        })
+        .pipe(Effect.mapError((error) => mapArtifactStateError("runtime-artifact.inspect", error))),
     listArtifacts: (input) =>
-      state.listArtifacts(input).pipe(
-        Effect.map((records) => records.map(mapRuntimeArtifactRecord)),
-        Effect.mapError((error) => mapArtifactStateError("runtime-artifact.list", error)),
-      ),
-    deleteArtifact: (input) =>
-      state.deleteArtifact(input).pipe(
-        Effect.map(mapRuntimeArtifactRecord),
+      state
+        .listArtifactMetadata({
+          workspaceSessionId: input.workspaceSessionId,
+          ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(Effect.mapError((error) => mapArtifactStateError("runtime-artifact.list", error))),
+    markArtifactMetadataDeleted: (input) =>
+      state.markArtifactMetadataDeleted(input).pipe(
         Effect.map((record) =>
           mutationResult(record, runtimeArtifactInvalidations(state.workspaceId, record)),
         ),
-        Effect.mapError((error) => mapArtifactStateError("runtime-artifact.delete", error)),
+        Effect.mapError((error) =>
+          mapArtifactStateError("runtime-artifact.mark-metadata-deleted", error),
+        ),
       ),
   };
 }

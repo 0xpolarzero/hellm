@@ -19,19 +19,26 @@ export const GeneratedPackageBuildInputSchema = Schema.Struct({
 });
 export type GeneratedPackageBuildInput = typeof GeneratedPackageBuildInputSchema.Type;
 
-export const RefreshGeneratedPackagesRequestSchema = Schema.Union([
-  Schema.Struct({
-    scope: Schema.Literal("app-global"),
-    packages: Schema.Array(GeneratedPackageNameSchema),
-    reason: Schema.Literals([
-      "source-changed",
-      "explicit-build",
-      "snapshot-restore",
-      "startup-recovery",
-    ]),
-    sourceCommandId: Schema.optionalKey(CommandId),
-    recoveryWorkId: Schema.optionalKey(RecoveryWorkId),
-  }),
+export const AppGlobalRefreshGeneratedPackagesRequestSchema = Schema.Struct({
+  scope: Schema.Literal("app-global"),
+  packages: Schema.Array(GeneratedPackageNameSchema),
+  reason: Schema.Literals([
+    "source-changed",
+    "explicit-build",
+    "snapshot-restore",
+    "startup-recovery",
+  ]),
+  sourceCommandId: Schema.optionalKey(CommandId),
+  recoveryWorkId: Schema.optionalKey(RecoveryWorkId),
+});
+export type AppGlobalRefreshGeneratedPackagesRequest =
+  typeof AppGlobalRefreshGeneratedPackagesRequestSchema.Type;
+
+export const RefreshGeneratedPackagesRequestSchema = AppGlobalRefreshGeneratedPackagesRequestSchema;
+export type RefreshGeneratedPackagesRequest = typeof RefreshGeneratedPackagesRequestSchema.Type;
+
+export const InternalRefreshGeneratedPackagesRequestSchema = Schema.Union([
+  AppGlobalRefreshGeneratedPackagesRequestSchema,
   Schema.Struct({
     scope: Schema.Literal("workspace-link-repair"),
     workspaceId: WorkspaceId,
@@ -41,7 +48,8 @@ export const RefreshGeneratedPackagesRequestSchema = Schema.Union([
     recoveryWorkId: Schema.optionalKey(RecoveryWorkId),
   }),
 ]);
-export type RefreshGeneratedPackagesRequest = typeof RefreshGeneratedPackagesRequestSchema.Type;
+export type InternalRefreshGeneratedPackagesRequest =
+  typeof InternalRefreshGeneratedPackagesRequestSchema.Type;
 
 export const GeneratedPackageFileEvidenceSchema = Schema.Struct({
   relativePath: Schema.String,
@@ -51,22 +59,48 @@ export type GeneratedPackageFileEvidence = typeof GeneratedPackageFileEvidenceSc
 
 export const GeneratedPackageDependencyEvidenceSchema = Schema.Union([
   Schema.Struct({
-    kind: Schema.Literal("package"),
-    name: Schema.String,
-    version: Schema.String,
-    resolution: Schema.Literals(["app-owned-package", "package-manager"]),
+    specifier: GeneratedPackageNameSchema,
+    importKind: Schema.Literals(["type-only", "runtime"]),
+    dependencyClass: Schema.Literal("generated-package"),
+    resolutionAuthority: Schema.Literal("generated-package-link"),
+    manifestDependency: Schema.Literal("none-generated-package-link"),
+    buildId: GeneratedPackageBuildId,
   }),
   Schema.Struct({
-    kind: Schema.Literal("generated-package"),
-    name: GeneratedPackageNameSchema,
-    buildId: GeneratedPackageBuildId,
-    resolution: Schema.Literal("generated-package-link"),
+    specifier: Schema.String,
+    importKind: Schema.Literals(["type-only", "runtime"]),
+    dependencyClass: Schema.Literal("workspace-authoring-external"),
+    resolutionAuthority: Schema.Literals([
+      "workspace-smithers-package",
+      "external-ambient-declaration",
+    ]),
+    manifestDependency: Schema.Literals([
+      "dependency",
+      "dev-type-dependency",
+      "peer-workspace-expectation",
+      "ambient-declaration",
+    ]),
+    version: Schema.String,
+  }),
+  Schema.Struct({
+    specifier: Schema.Literal("@svvy/core"),
+    importKind: Schema.Literal("type-only"),
+    dependencyClass: Schema.Literal("app-owned-type-contract"),
+    resolutionAuthority: Schema.Literal("app-owned-type-contract"),
+    manifestDependency: Schema.Literal("dev-type-dependency"),
+  }),
+  Schema.Struct({
+    specifier: Schema.String,
+    importKind: Schema.Literals(["type-only", "runtime"]),
+    dependencyClass: Schema.Literal("forbidden"),
+    resolutionAuthority: Schema.Literal("forbidden"),
+    manifestDependency: Schema.Literal("none-forbidden"),
   }),
 ]);
 export type GeneratedPackageDependencyEvidence =
   typeof GeneratedPackageDependencyEvidenceSchema.Type;
 
-export const GeneratedPackageRefreshStatusSchema = Schema.Struct({
+export const GeneratedPackageBuildStatusSchema = Schema.Struct({
   packageName: GeneratedPackageNameSchema,
   action: Schema.Literals(["written", "unchanged", "failed"]),
   buildId: Schema.optionalKey(GeneratedPackageBuildId),
@@ -76,6 +110,12 @@ export const GeneratedPackageRefreshStatusSchema = Schema.Struct({
   generatedFiles: Schema.optionalKey(Schema.Array(GeneratedPackageFileEvidenceSchema)),
   dependencies: Schema.optionalKey(Schema.Array(GeneratedPackageDependencyEvidenceSchema)),
   diagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type GeneratedPackageBuildStatus = typeof GeneratedPackageBuildStatusSchema.Type;
+
+export const GeneratedPackageRefreshStatusSchema = Schema.Struct({
+  ...GeneratedPackageBuildStatusSchema.fields,
+  refreshScope: Schema.Literal("app-global-build"),
 });
 export type GeneratedPackageRefreshStatus = typeof GeneratedPackageRefreshStatusSchema.Type;
 
@@ -87,6 +127,7 @@ export const GeneratedPackageWorkspaceLinkStatusSchema = Schema.Struct({
     "unchanged",
     "blocked-non-symlink",
     "missing-smithers-root",
+    "repair-needed",
     "failed",
   ]),
   linkPath: Schema.optionalKey(AbsolutePath),
@@ -115,58 +156,84 @@ export type GeneratedPackageWorkspaceLinkRepairPlan =
   typeof GeneratedPackageWorkspaceLinkRepairPlanSchema.Type;
 
 export const GeneratedPackageBuildPlanResultSchema = Schema.Struct({
-  packages: Schema.Array(GeneratedPackageRefreshStatusSchema),
+  packages: Schema.Array(GeneratedPackageBuildStatusSchema),
 });
 export type GeneratedPackageBuildPlanResult = typeof GeneratedPackageBuildPlanResultSchema.Type;
 
-export const decodeRefreshGeneratedPackagesRequest = Schema.decodeUnknownSync(
+export const unsafeDecodeRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RefreshGeneratedPackagesRequestSchema, strictBoundaryParseOptions);
+export const decodeUnknownRefreshGeneratedPackagesRequestExit = Schema.decodeUnknownExit(
   RefreshGeneratedPackagesRequestSchema,
   strictBoundaryParseOptions,
 );
-export const decodeRefreshGeneratedPackagesRequestExit = Schema.decodeUnknownExit(
-  RefreshGeneratedPackagesRequestSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeRefreshGeneratedPackagesRequestEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRefreshGeneratedPackagesRequestEffect = Schema.decodeUnknownEffect(
   RefreshGeneratedPackagesRequestSchema,
   strictBoundaryParseOptions,
 );
 
-export const decodeGeneratedPackageBuildInput = Schema.decodeUnknownSync(
+export const unsafeDecodeInternalRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(
+    InternalRefreshGeneratedPackagesRequestSchema,
+    strictBoundaryParseOptions,
+  );
+export const decodeUnknownInternalRefreshGeneratedPackagesRequestExit = Schema.decodeUnknownExit(
+  InternalRefreshGeneratedPackagesRequestSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownInternalRefreshGeneratedPackagesRequestEffect =
+  Schema.decodeUnknownEffect(
+    InternalRefreshGeneratedPackagesRequestSchema,
+    strictBoundaryParseOptions,
+  );
+
+export const unsafeDecodeAppGlobalRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(
+    AppGlobalRefreshGeneratedPackagesRequestSchema,
+    strictBoundaryParseOptions,
+  );
+export const decodeUnknownAppGlobalRefreshGeneratedPackagesRequestExit = Schema.decodeUnknownExit(
+  AppGlobalRefreshGeneratedPackagesRequestSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownAppGlobalRefreshGeneratedPackagesRequestEffect =
+  Schema.decodeUnknownEffect(
+    AppGlobalRefreshGeneratedPackagesRequestSchema,
+    strictBoundaryParseOptions,
+  );
+
+export const unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(GeneratedPackageBuildInputSchema, strictBoundaryParseOptions);
+export const decodeUnknownGeneratedPackageBuildInputExit = Schema.decodeUnknownExit(
   GeneratedPackageBuildInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeGeneratedPackageBuildInputExit = Schema.decodeUnknownExit(
-  GeneratedPackageBuildInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeGeneratedPackageBuildInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownGeneratedPackageBuildInputEffect = Schema.decodeUnknownEffect(
   GeneratedPackageBuildInputSchema,
   strictBoundaryParseOptions,
 );
 
-export const decodeGeneratedPackageWorkspaceLinkRepairInput = Schema.decodeUnknownSync(
+export const unsafeDecodeGeneratedPackageWorkspaceLinkRepairInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(
+    GeneratedPackageWorkspaceLinkRepairInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const decodeUnknownGeneratedPackageWorkspaceLinkRepairInputExit = Schema.decodeUnknownExit(
   GeneratedPackageWorkspaceLinkRepairInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeGeneratedPackageWorkspaceLinkRepairInputExit = Schema.decodeUnknownExit(
-  GeneratedPackageWorkspaceLinkRepairInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeGeneratedPackageWorkspaceLinkRepairInputEffect = Schema.decodeUnknownEffect(
-  GeneratedPackageWorkspaceLinkRepairInputSchema,
-  strictBoundaryParseOptions,
-);
+export const decodeUnknownGeneratedPackageWorkspaceLinkRepairInputEffect =
+  Schema.decodeUnknownEffect(
+    GeneratedPackageWorkspaceLinkRepairInputSchema,
+    strictBoundaryParseOptions,
+  );
 
-export const decodeGeneratedPackageBuildPlanResult = Schema.decodeUnknownSync(
+export const unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(GeneratedPackageBuildPlanResultSchema, strictBoundaryParseOptions);
+export const decodeUnknownGeneratedPackageBuildPlanResultExit = Schema.decodeUnknownExit(
   GeneratedPackageBuildPlanResultSchema,
   strictBoundaryParseOptions,
 );
-export const decodeGeneratedPackageBuildPlanResultExit = Schema.decodeUnknownExit(
-  GeneratedPackageBuildPlanResultSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeGeneratedPackageBuildPlanResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownGeneratedPackageBuildPlanResultEffect = Schema.decodeUnknownEffect(
   GeneratedPackageBuildPlanResultSchema,
   strictBoundaryParseOptions,
 );

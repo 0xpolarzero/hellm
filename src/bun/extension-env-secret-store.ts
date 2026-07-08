@@ -1,15 +1,23 @@
 import { spawnSync } from "node:child_process";
 
 export type ExtensionEnvSecretKey = {
+  kind: "extension-env";
   extensionId: string;
-  name: string;
+  envName: string;
 };
 
+export type SnapshotSecretStateStoreKey = {
+  kind: "snapshot-secret-state";
+  snapshotId: string;
+};
+
+export type ExtensionEnvSecretStoreKey = ExtensionEnvSecretKey | SnapshotSecretStateStoreKey;
+
 export type ExtensionEnvSecretStore = {
-  get(key: ExtensionEnvSecretKey): string | undefined;
-  has(key: ExtensionEnvSecretKey): boolean;
-  set(key: ExtensionEnvSecretKey, value: string): void;
-  remove(key: ExtensionEnvSecretKey): void;
+  get(key: ExtensionEnvSecretStoreKey): string | undefined;
+  has(key: ExtensionEnvSecretStoreKey): boolean;
+  set(key: ExtensionEnvSecretStoreKey, value: string): void;
+  remove(key: ExtensionEnvSecretStoreKey): void;
 };
 
 const KEYCHAIN_SERVICE = "svvy-extension-env";
@@ -70,8 +78,13 @@ export function createMacOsKeychainExtensionEnvSecretStore(
   };
 }
 
-function keychainAccount(key: ExtensionEnvSecretKey): string {
-  return `${key.extensionId}:${key.name}`;
+function keychainAccount(key: ExtensionEnvSecretStoreKey): string {
+  switch (key.kind) {
+    case "extension-env":
+      return `${key.extensionId}:${key.envName}`;
+    case "snapshot-secret-state":
+      return `__snapshot__:${key.snapshotId}:extension-env`;
+  }
 }
 
 function runSecurity(args: string[], input?: string): SecurityResult {

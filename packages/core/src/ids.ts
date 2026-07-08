@@ -84,6 +84,66 @@ export const NonNegativeSafeIntegerSchema = Schema.Number.check(
 );
 export type NonNegativeSafeInteger = typeof NonNegativeSafeIntegerSchema.Type;
 
+export const PositiveSafeIntegerSchema = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isInt(),
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+);
+export type PositiveSafeInteger = typeof PositiveSafeIntegerSchema.Type;
+
+export const FiniteDurationMsSchema = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+).pipe(Schema.brand("FiniteDurationMs"));
+export type FiniteDurationMs = typeof FiniteDurationMsSchema.Type;
+
+export const PositiveDurationMsSchema = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isInt(),
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+).pipe(Schema.brand("PositiveDurationMs"));
+export type PositiveDurationMs = typeof PositiveDurationMsSchema.Type;
+
+export const ByteCountSchema = PositiveSafeIntegerSchema;
+export type ByteCount = typeof ByteCountSchema.Type;
+
+export const RuntimeAttachmentId = Schema.String.pipe(Schema.brand("RuntimeAttachmentId"));
+export type RuntimeAttachmentId = typeof RuntimeAttachmentId.Type;
+
+export const AttachmentDisplayName = Schema.String.pipe(Schema.brand("AttachmentDisplayName"));
+export type AttachmentDisplayName = typeof AttachmentDisplayName.Type;
+
+export const WorkspaceRelativePath = Schema.String.pipe(Schema.brand("WorkspaceRelativePath"));
+export type WorkspaceRelativePath = typeof WorkspaceRelativePath.Type;
+
+export const MimeType = Schema.String.pipe(Schema.brand("MimeType"));
+export type MimeType = typeof MimeType.Type;
+
+export const Base64String = Schema.String.pipe(Schema.brand("Base64String"));
+export type Base64String = typeof Base64String.Type;
+
+export const RuntimeClientSubmissionId = Schema.String.pipe(
+  Schema.brand("RuntimeClientSubmissionId"),
+);
+export type RuntimeClientSubmissionId = typeof RuntimeClientSubmissionId.Type;
+
+export const RuntimeClientRequestId = Schema.String.pipe(Schema.brand("RuntimeClientRequestId"));
+export type RuntimeClientRequestId = typeof RuntimeClientRequestId.Type;
+
+export const RuntimeClientCorrelationId = Schema.String.pipe(
+  Schema.brand("RuntimeClientCorrelationId"),
+);
+export type RuntimeClientCorrelationId = typeof RuntimeClientCorrelationId.Type;
+
+export const RuntimeClientSubmissionSource = Schema.String.pipe(
+  Schema.brand("RuntimeClientSubmissionSource"),
+);
+export type RuntimeClientSubmissionSource = typeof RuntimeClientSubmissionSource.Type;
+
 export const RuntimeEventSequence = NonNegativeSafeIntegerSchema.pipe(
   Schema.brand("RuntimeEventSequence"),
 );

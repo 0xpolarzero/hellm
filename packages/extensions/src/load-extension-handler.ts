@@ -27,28 +27,54 @@ export type LoadExtensionHandlerInvocation = ExtensionInvocation & {
   };
 };
 
-function promptTargetFromInvocation(input: LoadExtensionHandlerInvocation): PromptTarget {
+function loadExtensionError(
+  reason: ExtensionError["reason"],
+  message: string,
+  cause?: unknown,
+): ExtensionError {
+  return new CoreExtensionError({
+    extensionId: "extension-loading",
+    operation: "extensions.native-tools.load-extension.invoke",
+    reason,
+    message,
+    ...(cause === undefined ? {} : { cause }),
+  });
+}
+
+function promptTargetFromInvocation(
+  input: LoadExtensionHandlerInvocation,
+): Effect.Effect<PromptTarget, ExtensionError> {
   const context = input.context;
   if (context.surfaceKind === "orchestrator") {
-    return {
+    return Effect.succeed({
       workspaceSessionId: context.workspaceSessionId as PromptTarget["workspaceSessionId"],
       surface: "orchestrator",
       surfacePiSessionId: context.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
-    };
+    });
   }
   if (context.surfaceKind === "handler") {
     const threadId = context.rootThreadId ?? context.threadId;
     if (!threadId) {
-      throw new Error("load_extension handler invocations require a handler thread id.");
+      return Effect.fail(
+        loadExtensionError(
+          "invalid-input",
+          "load_extension handler invocations require a handler thread id.",
+        ),
+      );
     }
-    return {
+    return Effect.succeed({
       workspaceSessionId: context.workspaceSessionId as PromptTarget["workspaceSessionId"],
       surface: "handler",
       surfacePiSessionId: context.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
       threadId: threadId as Extract<PromptTarget, { surface: "handler" }>["threadId"],
-    };
+    });
   }
-  throw new Error("load_extension is only available on orchestrator and handler surfaces.");
+  return Effect.fail(
+    loadExtensionError(
+      "invalid-input",
+      "load_extension is only available on orchestrator and handler surfaces.",
+    ),
+  );
 }
 
 function extensionIsReady(record: ExtensionRecord): boolean {
@@ -70,70 +96,72 @@ function extensionRecordForInvocation(
   );
 }
 
-function invalidLoadExtension(cause: unknown): ExtensionError {
-  return new CoreExtensionError({
-    extensionId: "extension-loading",
-    operation: "extensions.native-tools.load-extension.invoke",
-    reason: "invalid-input",
-    message: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  });
-}
-
 export function createLoadExtensionHandler(): ExtensionHandler<LoadExtensionHandlerInvocation> {
   return {
     invoke: (input) =>
-      Effect.try({
-        try: (): ExtensionHandlerResult => {
-          const extensionId = input.arguments.value.extensionId.trim();
-          if (!extensionId) {
-            throw new Error("load_extension requires extensionId.");
-          }
-          const record = extensionRecordForInvocation(input, extensionId);
-          if (!record) {
-            throw new Error(`Unknown extension: ${extensionId}`);
-          }
-          if (!input.actorBinding.availableExtensionIds.includes(extensionId)) {
-            throw new Error(`Extension is not available to load for this actor: ${extensionId}`);
-          }
-          if (!extensionIsReady(record)) {
-            throw new Error(`Extension is not ready to load for this actor: ${extensionId}`);
-          }
-          const summary = `Loaded extension ${extensionId} for the current actor.`;
-          return {
-            result: {
-              content: [{ type: "text", text: `Loaded extension \`${extensionId}\`.` }],
-              details: {
+      Effect.gen(function* () {
+        const extensionId = input.arguments.value.extensionId.trim();
+        if (!extensionId) {
+          return yield* Effect.fail(
+            loadExtensionError("invalid-input", "load_extension requires extensionId."),
+          );
+        }
+        const record = extensionRecordForInvocation(input, extensionId);
+        if (!record) {
+          return yield* Effect.fail(
+            loadExtensionError("not-found", `Unknown extension: ${extensionId}`),
+          );
+        }
+        if (!input.actorBinding.availableExtensionIds.includes(extensionId)) {
+          return yield* Effect.fail(
+            loadExtensionError(
+              "not-loaded",
+              `Extension is not available to load for this actor: ${extensionId}`,
+            ),
+          );
+        }
+        if (!extensionIsReady(record)) {
+          return yield* Effect.fail(
+            loadExtensionError(
+              "dependency-not-ready",
+              `Extension is not ready to load for this actor: ${extensionId}`,
+            ),
+          );
+        }
+        const target = yield* promptTargetFromInvocation(input);
+        const summary = `Loaded extension ${extensionId} for the current actor.`;
+        return {
+          result: {
+            content: [{ type: "text", text: `Loaded extension \`${extensionId}\`.` }],
+            details: {
+              status: "succeeded",
+              summary,
+              commandFacts: {
+                type: "load_extension.finished",
                 status: "succeeded",
-                summary,
-                commandFacts: {
-                  type: "load_extension.finished",
-                  status: "succeeded",
-                  commandId: input.command.commandId,
-                  turnId: input.command.turnId,
-                  extensionId,
+                commandId: input.command.commandId,
+                turnId: input.command.turnId,
+                extensionId,
+                usage: "loaded",
+              },
+            },
+          },
+          operations: [
+            {
+              kind: "runtime_effect",
+              request: {
+                type: "actor_extension_binding.update",
+                input: {
+                  target,
+                  extensionId: extensionId as ExtensionId,
                   usage: "loaded",
+                  reason: "load_extension",
+                  sourceCommandId: input.command.commandId,
                 },
               },
             },
-            operations: [
-              {
-                kind: "runtime_effect",
-                request: {
-                  type: "actor_extension_binding.update",
-                  input: {
-                    target: promptTargetFromInvocation(input),
-                    extensionId: extensionId as ExtensionId,
-                    usage: "loaded",
-                    reason: "load_extension",
-                    sourceCommandId: input.command.commandId,
-                  },
-                },
-              },
-            ],
-          };
-        },
-        catch: invalidLoadExtension,
+          ],
+        } satisfies ExtensionHandlerResult;
       }),
   };
 }

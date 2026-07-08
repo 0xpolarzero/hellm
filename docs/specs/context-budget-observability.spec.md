@@ -46,13 +46,15 @@ Workflow task-agent panes show the task attempt's context budget in the task-age
 
 Interactive orchestrator and handler-thread panes derive the meter from `@svvy/state` surface read
 models built from usage/model facts committed by `@svvy/runtime` after `@svvy/pi-adapter`
-normalization.
-Panes render fields such as
-`latestPromptInputTokens`, `activeModelMaxContextTokens`, and the derived percentage from that read
-model; they do not inspect live pi messages directly.
+normalization. Panes fetch those fields through the bootstrap-injected state read facade after
+app/bootstrap-prepared read-model invalidation or rebaseline notifications. They render fields such
+as `latestPromptInputTokens`, `activeModelMaxContextTokens`, and the derived percentage from that
+read model; they do not derive the meter from raw runtime events, live pi objects, renderer cache, or
+transient stream patches.
 
-Workflow task-agent attempts persist context-budget source values on the task-attempt metadata row
-from runtime-owned bridge/command facts: prompt input tokens, latest observed usage, model id,
-provider id, model-window metadata, and observed-at timestamps. The UI derives task-agent context
-budget read models from that state row. It must not replay a pi session, parse transcript prose,
-copy renderer meter state into the attempt, or store a separate preview-only budget record.
+`@svvy/state` persists context-budget source values on the task-attempt metadata row from facts
+committed by `@svvy/runtime` through core-owned state ports after bridge/command observation: prompt
+input tokens, latest observed usage, model id, provider id, model-window metadata, and observed-at
+timestamps. The UI derives task-agent context budget read models from that state row. It must not
+replay a pi session, parse transcript prose, copy renderer meter state into the attempt, or store a
+separate preview-only budget record.

@@ -30,10 +30,10 @@ contracts.
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `loaded` |
-| Handler thread | `loaded` |
+| Actor kind          | State    |
+| ------------------- | -------- |
+| Orchestrator        | `loaded` |
+| Handler thread      | `loaded` |
 | Workflow task agent | `loaded` |
 
 Artifacts is a `svvyx` extension because the current product surface requires both a stable CLI
@@ -100,8 +100,9 @@ svvyx artifacts create --name <filename-with-extension> --immutable --json
 svvyx artifacts create --path <file> [--name <filename-with-extension>] --immutable --json
 ```
 
-Immutable artifacts are stored under the session's `immutable/` artifact directory. Ordinary shell
-commands and `apply_patch` may read immutable artifacts but must not write them.
+Immutable artifacts are stored under the owning durable workspace session's `immutable/` artifact
+directory. Ordinary shell commands and `apply_patch` may read immutable artifacts but must not write
+them.
 
 Use these commands with `--json`:
 
@@ -123,9 +124,10 @@ returned artifact path directly when you need to inspect content.
 `open` records or emits a declarative artifact-open intent for desktop consumers. It does not return
 artifact metadata and does not synchronously report pane state.
 
-`delete` is an explicit artifact lifecycle command. It tombstones the artifact record and removes the
-artifact file when present. Do not use delete to hide failed work or remove evidence unless the user
-asked for deletion or the task explicitly requires cleaning up an artifact.
+`delete` is an explicit artifact lifecycle command. Runtime executes the file deletion and commits
+the artifact lifecycle/status transition through state. Do not use delete to hide failed work or
+remove evidence unless the user asked for deletion or the task explicitly requires cleaning up an
+artifact.
 
 When writing TypeScript inside `execute_typescript`, prefer the generated facade:
 
@@ -192,36 +194,39 @@ Do not use artifacts for:
 - directories
 
 For a new artifact file, the agent calls `svvyx artifacts create --name <filename-with-extension>
---json`. The command creates an empty mutable artifact directly in the active session artifact
-directory. The returned `path` is the artifact file and may be edited by ordinary file-editing tools
-while it remains mutable.
+--json`. The command creates an empty mutable artifact directly in the owning durable workspace
+session's artifact storage directory. The returned `path` is the artifact file and may be edited by ordinary
+file-editing tools while it remains mutable.
 
 For an existing source file, the agent calls `svvyx artifacts create --path <file> [--name
-<filename-with-extension>] --json`. The command copies that single source file into the active
-session artifact directory and records app-owned product state. The original source path is not the
-artifact. If `--immutable` is present, the artifact is created under the session `immutable/`
-directory and ordinary command execution must not mutate it afterward.
+<filename-with-extension>] --json`. Runtime copies that single source file into the owning durable
+workspace session's artifact storage directory through runtime-owned file-effect execution, then
+commits artifact metadata through core-owned state ports implemented by `@svvy/state`. The original
+source path is not the artifact. If `--immutable` is present, the artifact is created under that
+workspace session's `immutable/` directory and ordinary command execution must not mutate it
+afterward.
 
 Artifacts command and facade handlers return `ExtensionHandlerResult` values containing one
 model-facing result plus ordered `ExtensionRuntimeOperation` items wrapping closed artifact/command
 `RuntimeEffectRequest` values or immutable artifact `ExtensionExecutionPlan` values. `@svvy/runtime`
-applies those wrapped requests/plans through artifact storage and `@svvy/state` ports, owns command
-envelope/lifecycle facts, and publishes notifications only after commit. Handler prose below
-describes the required product outcomes; it must not be read as permission for extension handlers to
-write structured state, delete product records, or bypass
-runtime-owned artifact file-effect routing directly.
+owns artifact byte materialization, deletion, recovery, command envelope/lifecycle facts, and the
+metadata commit through core-owned state ports implemented by `@svvy/state`. Runtime publishes
+notifications only after commit. Handler prose below describes the required product outcomes; it
+must not be read as permission for extension handlers to write structured state, delete product
+records, or bypass runtime-owned artifact file-effect routing directly.
 
-Shell `svvyx artifacts ...` invocations may run through an app-owned subprocess for CLI parsing and
-sandboxed command-family execution, but that subprocess must not open SQLite, construct state ports,
-run Effect programs, create artifact records, write artifact metadata, open artifact panes, or emit
-artifact operation transport intents. The subprocess returns parsed command output and parse/build
-evidence only; the parent runtime records durable command facts. Artifact metadata, validation,
-file effects, model-facing command results, and state updates use the normal extension-handler
-result path: ordered `ExtensionRuntimeOperation` items and artifact `ExtensionExecutionPlan` values
-are applied by `@svvy/runtime` through artifact storage, runtime command lifecycle, and
-`@svvy/state` ports. Generated `execute_typescript` facade calls such as
-`extensions.artifacts.run(...)` execute as runtime-owned child commands under the already accepted
-`execute_typescript` parent command.
+Shell `svvyx artifacts ...` invocations run inside the normal runtime-owned command lane. Any helper
+subprocess used for CLI parsing receives only the trusted invocation context needed to parse and
+validate the command; it must not open SQLite, construct state ports, create artifact records, write
+artifact metadata, open artifact panes, or emit artifact operation requests. Runtime owns
+sandbox launch facts, subprocess lifetime, durable command facts, and committed artifact outcomes.
+Artifact command metadata, validation, and model-facing command results use the normal
+extension-handler result path. Runtime applies ordered `ExtensionRuntimeOperation` items and
+artifact `ExtensionExecutionPlan` values through runtime-owned artifact file-effect services,
+runtime command lifecycle, and core-owned state ports implemented by `@svvy/state` for committed
+metadata/lifecycle facts. Generated
+`execute_typescript` facade calls such as `extensions.artifacts.run(...)` execute as runtime-owned
+child commands under the already accepted `execute_typescript` parent command.
 
 ## Storage
 
@@ -239,13 +244,15 @@ The resolved artifact directory is product configuration, not an agent-supplied 
 Stored file layout:
 
 ```text
-<artifactDir>/<sessionId>/<name>
-<artifactDir>/<sessionId>/immutable/<name>
+<artifactDir>/<workspaceSessionId>/<name>
+<artifactDir>/<workspaceSessionId>/immutable/<name>
 ```
 
 Rules:
 
-- `sessionId` is the current structured session id resolved by the runtime boundary.
+- `workspaceSessionId` is the durable top-level workspace session container id resolved by the
+  runtime boundary. Surface pi session ids, thread ids, handler thread ids, and workflow task
+  attempt ids are metadata on the artifact record; they do not choose the stored directory.
 - `artifactId` is generated by `svvy`.
 - `name` is the exact stored filename. It is supplied by `--name`, or, for `create --path` without
   `--name`, derived from the source file basename.
@@ -256,22 +263,24 @@ Rules:
   control characters, or platform path separators after normalization.
 - `immutable` is a reserved storage directory name, not an agent-provided path component.
 - the stored path must remain inside the resolved artifact directory after path normalization.
-- non-immutable artifacts are stored directly under `<artifactDir>/<sessionId>/`.
-- immutable artifacts are stored under `<artifactDir>/<sessionId>/immutable/`.
+- non-immutable artifacts are stored directly under `<artifactDir>/<workspaceSessionId>/`.
+- immutable artifacts are stored under `<artifactDir>/<workspaceSessionId>/immutable/`.
 - source files supplied through `--path` are copied, not moved.
-- directories are rejected in v1.
+- directories are rejected.
 - symlink sources are resolved before copying; the copied bytes come from the resolved file target.
 - the artifact record stores the artifact path in the configured artifact directory, not the original
   source path.
-- active artifact names must be unique within the same `(sessionId, immutable)` storage scope.
+- active artifact names must be unique within the same `(workspaceSessionId, immutable)` storage
+  scope.
   Creating an artifact whose target artifact path already belongs to an active artifact or already
   exists on disk returns `ARTIFACT_EXISTS`.
 - deleted artifact names may be reused only after the prior artifact file is absent and no active
   artifact record owns the target path.
-- ordinary command sandboxes receive write access only to the active session artifact directory for
-  the current session. They do not receive write access to any other session's artifact directory.
-- the active session's `immutable/` child directory is a read-only subpath under that writable
-  session artifact root. Ordinary shell commands, `apply_patch`, and arbitrary TypeScript side
+- ordinary command sandboxes receive write access only to the mutable artifact directory for the
+  owning durable `workspaceSessionId`. They do not receive write access to any other workspace
+  session's artifact directory.
+- the owning workspace session's `immutable/` child directory is a read-only subpath under that
+  writable artifact root. Ordinary shell commands, `apply_patch`, and arbitrary TypeScript side
   effects may read immutable artifacts but must not write, rename, replace, or delete files under
   `immutable/`.
 - `svvyx artifacts create --immutable` and `svvyx artifacts delete` are app-owned product mutations.
@@ -289,29 +298,30 @@ Artifact creation is a product-state mutation.
 Artifacts command and facade handlers return `ExtensionHandlerResult` values containing one
 model-facing result plus ordered `ExtensionRuntimeOperation` items wrapping closed artifact/command
 `RuntimeEffectRequest` values or immutable artifact `ExtensionExecutionPlan` values. `@svvy/runtime`
-applies those wrapped requests/plans through artifact storage and `@svvy/state` command ports, but
-SQL transactions remain short SQL-critical sections. Copying, hashing, statting, and deleting files
-must not run while a SQLite transaction is open.
-Implementations stage or resolve file effects outside the SQL transaction, then commit artifact
-metadata, lifecycle, linkage, and command facts in short state transactions with cleanup/recovery for
-partial file effects. State returns after-commit invalidation descriptors from the committed
-transaction; runtime publishes the corresponding read-model notifications after commit.
+applies those wrapped requests/plans through runtime-owned artifact file-effect services and
+core-owned state ports implemented by `@svvy/state`, but SQL transactions remain short SQL-critical
+sections. Runtime copying, hashing, statting, and deleting files must not run while a SQLite
+transaction is open. Runtime stages or resolves file effects outside the SQL transaction, then
+commits artifact metadata, lifecycle, linkage, and command facts in short state transactions with
+runtime-owned cleanup/recovery for partial file effects. State returns after-commit invalidation
+descriptors from the committed transaction; runtime publishes the corresponding read-model
+notifications after commit.
 
 `svvyx artifacts create` must automatically link the artifact to the current runtime context:
 
-- `sessionId`: always set from the current session
+- `workspaceSessionId`: always set from the current durable workspace session
 - `threadId`: set when the current surface belongs to a handler thread
 - `sourceCommandId`: set to the command record for the `svvyx artifacts create` invocation or to
   the extension-facade child command when invoked from `execute_typescript`
 
-The agent must not provide ownership fields such as `sessionId`, `threadId`, or `sourceCommandId` to
-`create`. Those are runtime-derived facts.
+The agent must not provide ownership fields such as `workspaceSessionId`, `threadId`, or
+`sourceCommandId` to `create`. Those are runtime-derived facts.
 
-`list --thread-id` is the only explicit ownership filter in v1. It is for inspecting a known thread's
+`list --thread-id` is the only explicit ownership filter. It is for inspecting a known thread's
 artifacts. Command-scoped listing remains an internal selector/debug concern and is not part of the
-agent-facing v1 API.
+agent-facing API.
 
-Artifact id commands resolve only inside the current workspace runtime and current session. `inspect`,
+Artifact id commands resolve only inside the current acquired workspace runtime scope and current session. `inspect`,
 `open`, and `delete` return `ARTIFACT_NOT_FOUND` when the id is unknown, belongs to another
 workspace, or belongs to another session.
 
@@ -337,22 +347,22 @@ type ArtifactRef = {
 
 Field rules:
 
-| Field | Rule |
-| --- | --- |
-| `id` | Stable app-generated artifact id. |
-| `path` | Absolute path to the artifact file in the resolved artifact directory. |
-| `name` | Exact stored filename, including extension. This is not a title or display-only label. |
+| Field       | Rule                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `id`        | Stable app-generated artifact id.                                                                                       |
+| `path`      | Absolute path to the artifact file in the resolved artifact directory.                                                  |
+| `name`      | Exact stored filename, including extension. This is not a title or display-only label.                                  |
 | `immutable` | `true` when the artifact lives under the session `immutable/` directory and is read-only to ordinary command execution. |
-| `mimeType` | Stored MIME type used for projection and preview selection. |
-| `bytes` | Current byte size of the artifact file at the time the command returns. |
-| `sha256` | Lowercase hex SHA-256 digest of the artifact file bytes at the time the command returns. |
-| `createdAt` | ISO-8601 timestamp for artifact creation. |
+| `mimeType`  | Stored MIME type used for projection and preview selection.                                                             |
+| `bytes`     | Committed byte-size fact observed by runtime during materialization or runtime-owned artifact inspection/recovery.      |
+| `sha256`    | Committed lowercase hex SHA-256 fact observed by runtime during materialization or runtime-owned artifact inspection.   |
+| `createdAt` | ISO-8601 timestamp for artifact creation.                                                                               |
 
 `ArtifactRef` intentionally omits summaries, content previews, original source paths, owner ids,
 UI pane ids, and URLs. The command sandbox grants read access to returned artifact paths for visible
-artifacts in the current session. Mutable artifact paths in the active session artifact directory may
-also be edited through ordinary file-editing tools; immutable artifact paths may not. Product
-owner/linkage facts remain in structured state.
+artifacts in the current session. Mutable artifact paths in the owning workspace session artifact
+directory may also be edited through ordinary file-editing tools; immutable artifact paths may not.
+Product owner/linkage facts remain in structured state.
 
 ### Error Output
 
@@ -438,13 +448,13 @@ Success:
 
 Parameters:
 
-| Parameter | Required | Meaning |
-| --- | --- | --- |
-| `--name <filename>` | required when `--path` is omitted; optional when `--path` is present | Exact stored artifact filename. Must be a basename with an extension. |
-| `--path <file>` | no | Optional source file to copy into the artifact store. Must resolve to a readable regular file when present. |
-| `--immutable` | no | Store the artifact under the session `immutable/` directory and make it read-only to ordinary command execution. |
-| `--mime-type <mime>` | no | MIME type override. Defaults to product MIME inference. |
-| `--json` | yes for agents | Emits the specified JSON result. |
+| Parameter            | Required                                                             | Meaning                                                                                                          |
+| -------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--name <filename>`  | required when `--path` is omitted; optional when `--path` is present | Exact stored artifact filename. Must be a basename with an extension.                                            |
+| `--path <file>`      | no                                                                   | Optional source file to copy into the artifact store. Must resolve to a readable regular file when present.      |
+| `--immutable`        | no                                                                   | Store the artifact under the session `immutable/` directory and make it read-only to ordinary command execution. |
+| `--mime-type <mime>` | no                                                                   | MIME type override. Defaults to product MIME inference.                                                          |
+| `--json`             | yes for agents                                                       | Emits the specified JSON result.                                                                                 |
 
 Behavior:
 
@@ -453,7 +463,8 @@ Behavior:
   separators, contains NUL or control characters, or normalizes outside a single basename
 - treats `--name` as the exact stored filename; the command must not add, remove, infer, or rewrite an
   extension
-- when `--path` is omitted, creates a new empty artifact file at the target artifact path
+- when `--path` is omitted, returns an artifact creation plan for runtime to create a new empty
+  artifact file at the target artifact path
 - when `--path` is present, validates that it exists and resolves to a regular readable file
 - when `--path` is present, accepts any regular file readable by the current command sandbox and
   operating-system permissions
@@ -469,12 +480,14 @@ Behavior:
   such as `charset=utf-8` are accepted but not preserved in `ArtifactRef.mimeType`
 - does not reject unknown-but-valid MIME types
 - infers MIME type from the stored filename and artifact bytes when `--mime-type` is omitted
-- creates non-immutable artifacts directly under `<artifactDir>/<sessionId>/`
-- creates immutable artifacts under `<artifactDir>/<sessionId>/immutable/`
-- copies the source file into the artifact store when `--path` is present
-- computes `bytes` and `sha256` from the artifact file after creation or copy
+- plans non-immutable artifacts directly under `<artifactDir>/<workspaceSessionId>/`
+- plans immutable artifacts under `<artifactDir>/<workspaceSessionId>/immutable/`
+- returns an artifact creation plan for runtime to copy the source file into the artifact store when
+  `--path` is present
+- runtime computes `bytes` and `sha256` from the artifact file after creation or copy
 - returns an artifact creation plan for runtime execution
-- runtime commits artifact metadata/linkage and terminal command facts through `@svvy/state`
+- runtime commits artifact metadata/linkage and terminal command facts through core-owned state
+  ports implemented by `@svvy/state`
 - after commit, runtime publishes the artifact-created notification
 
 The command does not accept inline content. To create a text, JSON, HTML, image, or log artifact from
@@ -509,10 +522,15 @@ Success:
 
 Behavior:
 
-- resolves the artifact record from product state
+- the extension handler validates the request and returns an artifact-inspection runtime operation;
+  it does not read artifact state, hash files, or write metadata
+- runtime resolves the artifact through `RuntimeArtifactStatePort` and runtime-owned artifact
+  services
 - rejects deleted artifacts with `ARTIFACT_DELETED`
-- stats and hashes the artifact file
-- returns `ARTIFACT_FILE_MISSING` if the product record exists but the file is missing
+- runtime verifies file presence and, when needed, records refreshed byte/digest facts or recovery
+  evidence through the artifact metadata path
+- returns `ARTIFACT_FILE_MISSING` if committed metadata exists but runtime cannot find the backing
+  file for this inspection
 - does not print file contents
 - does not open UI
 
@@ -547,28 +565,31 @@ Success:
 
 Parameters:
 
-| Parameter | Required | Meaning |
-| --- | --- | --- |
-| `--thread-id <thread_id>` | no | List artifacts for a specific handler thread. |
-| `--limit <n>` | no | Maximum returned artifacts. Defaults to `20`; minimum `1`; maximum `100`. |
-| `--json` | yes for agents | Emits the specified JSON result. |
+| Parameter                 | Required       | Meaning                                                                   |
+| ------------------------- | -------------- | ------------------------------------------------------------------------- |
+| `--thread-id <thread_id>` | no             | List artifacts for a specific handler thread.                             |
+| `--limit <n>`             | no             | Maximum returned artifacts. Defaults to `20`; minimum `1`; maximum `100`. |
+| `--json`                  | yes for agents | Emits the specified JSON result.                                          |
 
 Behavior:
 
-- without `--thread-id`, lists non-deleted artifacts for the current thread when inside a handler
-  thread, otherwise lists non-deleted artifacts for the current orchestrator session
-- with `--thread-id`, lists non-deleted artifacts linked directly to that thread plus artifacts whose
-  `workflowRunId` belongs to that thread
+- the extension handler validates `--thread-id` and `--limit`, then returns an artifact-list runtime
+  operation; it does not query artifact indexes directly
+- runtime applies the operation against state-owned artifact selectors/read models scoped to the
+  current acquired workspace/session/thread
+- without `--thread-id`, the state selector returns non-deleted artifacts for the current thread
+  when inside a handler thread, otherwise non-deleted artifacts for the current orchestrator session
+- with `--thread-id`, the state selector returns non-deleted artifacts linked directly to that
+  thread plus artifacts whose `workflowRunId` belongs to that thread
 - returns `INVALID_ARGUMENT` when `--limit` is not an integer from `1` through `100`
-- sorts by `createdAt` descending
-- applies `limit` after filtering and sorting
-- refreshes `bytes` and `sha256` from disk for each returned artifact
-- omits active artifact records whose files are missing; inspectors and product selectors may
-  still surface missing-file rows from retained metadata, but the agent-facing `list` result contains
-  only currently readable artifact files
+- state-owned selectors sort by `createdAt` descending and apply `limit` after filtering and sorting
+- returns the committed artifact metadata facts; it does not perform per-row disk hashing as list
+  pagination
+- omits active artifact records whose files are already marked missing or failed by runtime recovery;
+  inspectors and product selectors may still surface those retained metadata rows
 - omits deleted artifacts
 
-`list` does not expose `--command-id` in v1. Command-level ownership remains available to product
+`list` does not expose `--command-id`. Command-level ownership remains available to product
 selectors and inspectors, but it is not part of the normal agent API.
 
 ### `open`
@@ -589,9 +610,13 @@ Success:
 
 Behavior:
 
-- resolves the artifact record from product state
+- the extension handler validates the artifact id and returns an artifact-open runtime operation; it
+  does not open UI, read files, or mutate artifact metadata
+- runtime resolves the artifact record from state
 - rejects deleted artifacts with `ARTIFACT_DELETED`
-- opens a missing-file inspector row when the product record exists but the artifact file is missing
+- when metadata exists but the file is missing, runtime commits an open-intent/command fact that
+  includes missing-file status; desktop may render or focus a missing-file artifact inspector after
+  refetching the artifact read model
 - returns an immutable artifact-open intent/fact keyed by artifact id, workspace, and session
   context
 - `@svvy/runtime` commits the command outcome and publishes the after-commit notification for
@@ -623,8 +648,9 @@ Behavior:
 - rejects artifacts outside the current workspace and current structured session scope with
   `ARTIFACT_NOT_FOUND`
 - returns an artifact deletion plan for runtime execution
-- runtime tombstones through `@svvy/state` and removes the artifact file from the artifact store
-  when it exists through the runtime-owned file-effect lane
+- runtime marks lifecycle/status through core-owned state ports implemented by `@svvy/state`, removes
+  the artifact file from the artifact store when it exists through the runtime-owned file-effect
+  lane, and records recovery when deletion cannot finish immediately
 - when the artifact is immutable, performs only the exact tombstone and file removal operation for
   the resolved current-session artifact path; it must not grant writable access to any other file in
   the session `immutable/` directory
@@ -804,13 +830,11 @@ Projection rules:
 
 Command projection:
 
-- `svvyx artifacts create` shows the target name, immutable flag, source path and copy progress when
-  `--path` is present, and final artifact id
-- `svvyx artifacts inspect` and `list` settle from final structured JSON output
-- `svvyx artifacts open` shows the target artifact id and final open result
-- `svvyx artifacts delete` shows the target artifact id and final deleted result
-- the renderer must still show raw command output detail because `svvyx` remains an `exec_command`
-  command-family projection
+Artifacts command spans are ordinary `svvyx` command-family projections settled from command facts
+and durable artifact links. Specialized artifact previews live only in artifact inspector read
+models/UI, not transcript command cards. Each Artifacts command emits durable command facts and
+artifact ids needed by the shared command projection and inspector; renderer raw output detail
+remains available because `svvyx` runs through `exec_command`.
 
 ## Redaction And Policy
 
@@ -818,16 +842,18 @@ Shell invocations of `svvyx artifacts ...` are ordinary `exec_command` input for
 sandbox, output caps, command records, and projection. Product mutations from that shell path are
 represented through the normal extension-handler result path: ordered `ExtensionRuntimeOperation`
 items and artifact `ExtensionExecutionPlan` values applied by `@svvy/runtime` through artifact
-storage and `@svvy/state` ports. Injected `extensions.artifacts.run(...)` calls are child commands
+storage and core-owned state ports implemented by `@svvy/state`. Injected
+`extensions.artifacts.run(...)` calls are child commands
 under an already-approved
 `execute_typescript` parent; they share contracts, readiness checks, redaction, and command facts,
-but do not enter Shell approval, shell command parsing, or the Shell signed subprocess-result
+but do not enter Shell approval, shell command parsing, or ordinary `svvyx` CLI stdout/stderr
 transport.
 
 Rules:
 
-- Explicit `create --path` copies exact source bytes into the artifact store. It does not transform or
-  redact artifact file content, and `sha256` is computed over the artifact bytes after copy.
+- Explicit `create --path` copies exact source bytes into the artifact store through runtime-owned
+  materialization. It does not transform or redact artifact file content, and runtime commits
+  `sha256` over the materialized artifact bytes after copy.
 - Explicit `create --name` without `--path` creates an empty artifact file. Its initial `sha256` is
   the SHA-256 digest of the empty file and changes only when ordinary artifact editing changes the
   artifact content.
@@ -835,13 +861,13 @@ Rules:
   results, and metadata pass through the same extension redaction layer as other `svvyx` extension
   invocations.
 - Runtime-created artifacts that capture command output, extension output, logs, or generated
-  diagnostics must be redacted before file-backed artifact persistence. If a runtime cannot safely
-  redact a payload, it must persist a redacted placeholder artifact or fail the artifact creation
-  path rather than writing unredacted sensitive content.
+  diagnostics must be redacted before runtime-owned file-backed materialization and state metadata
+  commit. If runtime cannot safely redact a payload, it must persist a redacted placeholder artifact
+  or fail the artifact creation path rather than writing unredacted sensitive content.
 - MIME inference and file hashing must read only the source file selected by `--path`, when present,
   and the artifact file.
 - `create` must not read sibling files, crawl directories, package directories, or infer artifact
-  names from unrelated filesystem state in v1.
+  names from unrelated filesystem state.
 - `delete` may remove only the artifact file for the resolved artifact id.
 - ordinary writes to mutable artifact files are normal command or `apply_patch` file edits. They are
   not `svvyx artifacts` command mutations, and they must still be projected and recorded as ordinary

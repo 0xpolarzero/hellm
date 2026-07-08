@@ -13,22 +13,18 @@ import type { AgentSettingsStore } from "./agent-settings-store";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import {
-  buildExecuteTypescriptLaunchPolicy,
-  buildSandboxHelperArgs,
-  resolveSandboxHelperPath,
-  sandboxLaunchFacts,
-  type FileSystemSandboxPolicy,
-  type SandboxLaunchPolicy,
-} from "@svvy/sandbox";
+import { nativeToolParameters } from "./native-tool-parameters";
 import {
   createMacOsKeychainExtensionEnvSecretStore,
   type ExtensionEnvSecretStore,
 } from "./extension-env-secret-store";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type {
+  AbsolutePath,
+  BuildLaunchPolicyInput,
   CommandId,
   CommandFactsPayload,
+  EnvironmentFact,
   JsonValue,
   PromptExecutionSurfaceKind,
   RuntimeArtifactStatePortService,
@@ -36,11 +32,16 @@ import type {
   RuntimeCommandStatePortService,
   RuntimeCommandStatus,
   RuntimeCommandVisibility,
+  SandboxLaunchFacts,
   RuntimeThreadStatePortService,
   RuntimeTurnStatePortService,
   SurfacePiSessionId,
   StateContractError,
   ThreadId,
+  ToolItemId,
+  TurnId,
+  WorkspaceId,
+  WorkflowRunId,
   WorkflowTaskAttemptId,
   WorkspaceSessionId,
 } from "@svvy/core";
@@ -52,6 +53,11 @@ import {
   type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
+import {
+  artifactRootForSession,
+  inferArtifactKind,
+  materializeRuntimeArtifact,
+} from "./runtime-artifact-materializer";
 import {
   formatSvvyxWorkflowsError,
   runSvvyxWorkflowsCommand,
@@ -101,9 +107,9 @@ export const executeTypescriptParamsSchema = Type.Object(
 export type ExecuteTypescriptParams = Static<typeof executeTypescriptParamsSchema>;
 
 const EXECUTE_TYPESCRIPT_DESCRIPTION = [
-  "Run a bounded TypeScript program against actor-local generated extension runtime facades.",
+  "Run a bounded TypeScript program against actor-local execute_typescript facade declarations emitted by @svvy/extensions.",
   "Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, or transforming structured extension results.",
-  "Inside the snippet, use generated extension runtime facades and console; do not assume a global svvy client, broad api helper, Node.js built-ins, or node:* imports.",
+  "Inside the snippet, use generated extension facades and console; do not import @svvyx/workflows, @svvyx/extensions, Node.js built-ins, or node:* modules, and do not assume a global svvy client or broad api helper.",
   "The runtime persists the submitted snippet before execution and typechecks before running.",
 ].join(" ");
 
@@ -163,19 +169,23 @@ export type ExecuteTypescriptRuntimeProcessSpawner = (input: {
   command: readonly string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
-  networkAccess: boolean;
 }) => ChildProcessWithoutNullStreams;
+
+export type ExecuteTypescriptLaunchHandle = {
+  facts: SandboxLaunchFacts;
+  close(): Promise<void>;
+};
 
 type ExecuteTypescriptToolOptions = {
   cwd: string;
+  workspaceId: string;
   runtime: PromptExecutionRuntimeHandle;
   artifactState: RuntimeArtifactStatePortService;
   commandState: RuntimeCommandStatePortService;
   threadState: RuntimeThreadStatePortService;
   turnState: RuntimeTurnStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
@@ -186,7 +196,6 @@ type ExecuteTypescriptToolOptions = {
   workflowsGeneratedPackagePath?: string;
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
-  workflowsWorkspaceCwds?: () => readonly string[];
   agentSettingsStore?: AgentSettingsStore;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
@@ -196,8 +205,9 @@ type ExecuteTypescriptToolOptions = {
   onAppLog?: (event: AppLoggerEvent) => void;
   approvalBoundary?: ExecuteTypescriptApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
-  managedSandbox?: boolean | (() => boolean);
-  networkAccess?: boolean | (() => boolean);
+  acquireExecuteTypescriptLaunch(
+    input: Omit<BuildLaunchPolicyInput, "launchKind">,
+  ): Promise<ExecuteTypescriptLaunchHandle>;
   runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
 };
 
@@ -272,12 +282,12 @@ type ExecuteTypescriptCommandFacts = CommandFactsPayload;
 
 export function createExecuteTypescriptTool(
   options: ExecuteTypescriptToolOptions,
-): NativeToolDefinition<ExecuteTypescriptParams, ExecuteTypescriptResult> {
+): NativeToolDefinition<ExecuteTypescriptParams> {
   return {
     label: "Code Mode",
     name: EXECUTE_TYPESCRIPT_TOOL_NAME,
     description: EXECUTE_TYPESCRIPT_DESCRIPTION,
-    parameters: executeTypescriptParamsSchema,
+    parameters: nativeToolParameters(executeTypescriptParamsSchema),
     execute: async (_toolCallId, params, signal) => {
       const runtime = options.runtime.current;
       if (!runtime) {
@@ -310,6 +320,7 @@ export function createExecuteTypescriptTool(
         artifactState: options.artifactState,
         commandState: options.commandState,
         runState: options.runState,
+        readArtifactRootForSession: options.readArtifactRootForSession,
         signal,
         typescriptCode: params.typescriptCode,
         context: {
@@ -330,7 +341,6 @@ export function createExecuteTypescriptTool(
         workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
         workflowsModelCatalog: options.workflowsModelCatalog,
         workflowsSourceRoot: options.workflowsSourceRoot,
-        workflowsWorkspaceCwds: options.workflowsWorkspaceCwds,
         agentSettingsStore: options.agentSettingsStore,
         env: options.env,
         extensionsBuildRoot: options.extensionsBuildRoot,
@@ -340,8 +350,8 @@ export function createExecuteTypescriptTool(
         onAppLog: options.onAppLog,
         approvalBoundary: options.approvalBoundary,
         approvalMode: options.approvalMode,
-        managedSandbox: options.managedSandbox,
-        networkAccess: options.networkAccess,
+        workspaceId: options.workspaceId,
+        acquireExecuteTypescriptLaunch: options.acquireExecuteTypescriptLaunch,
         runtimeProcessSpawner: options.runtimeProcessSpawner,
         toolCallId: _toolCallId,
       });
@@ -353,7 +363,7 @@ export function createExecuteTypescriptTool(
             text: JSON.stringify(result),
           },
         ],
-        details: result,
+        details: { commandFacts: result as unknown as CommandFactsPayload },
       };
     },
   };
@@ -361,9 +371,11 @@ export function createExecuteTypescriptTool(
 
 export async function runExecuteTypescript(input: {
   cwd: string;
+  workspaceId: string;
   artifactState: RuntimeArtifactStatePortService;
   commandState: RuntimeCommandStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
@@ -377,7 +389,6 @@ export async function runExecuteTypescript(input: {
   workflowsGeneratedPackagePath?: string;
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
-  workflowsWorkspaceCwds?: () => readonly string[];
   agentSettingsStore?: AgentSettingsStore;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
@@ -387,8 +398,9 @@ export async function runExecuteTypescript(input: {
   onAppLog?: (event: AppLoggerEvent) => void;
   approvalBoundary?: ExecuteTypescriptApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
-  managedSandbox?: boolean | (() => boolean);
-  networkAccess?: boolean | (() => boolean);
+  acquireExecuteTypescriptLaunch(
+    input: Omit<BuildLaunchPolicyInput, "launchKind">,
+  ): Promise<ExecuteTypescriptLaunchHandle>;
   runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
   toolCallId: string;
 }): Promise<ExecuteTypescriptResult> {
@@ -412,16 +424,12 @@ export async function runExecuteTypescript(input: {
   ).value;
   input.runState(input.commandState.startCommand({ commandId: parentCommand.id }));
   const artifactNamePrefix = `${parentCommand.id}-`;
-  const snippetArtifact = input.runState(
-    input.artifactState.createArtifact({
-      workflowTaskAttemptId:
-        (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ?? null,
-      sourceCommandId: parentCommand.id as CommandId,
-      kind: "text",
-      name: `${artifactNamePrefix}${SOURCE_FILE}`,
-      content: input.typescriptCode,
-    }),
-  ).value;
+  const snippetArtifact = materializeExecuteTypescriptArtifact(input, {
+    parentCommandId: parentCommand.id as CommandId,
+    name: `${artifactNamePrefix}${SOURCE_FILE}`,
+    content: input.typescriptCode,
+    mimeType: "text/typescript",
+  });
   input.onAppLog?.({
     level: "info",
     source: "execute_typescript",
@@ -433,7 +441,7 @@ export async function runExecuteTypescript(input: {
       workflowRunId: input.context.workflowRunId ?? undefined,
       workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
       commandId: parentCommand.id,
-      artifactId: snippetArtifact.id,
+      artifactId: snippetArtifact.artifactId,
       actor: input.context.actor,
     },
   });
@@ -444,12 +452,16 @@ export async function runExecuteTypescript(input: {
       ? { approved: true as const }
       : await input.approvalBoundary({
           approvalMode,
-          commandId: parentCommand.id,
+          commandId: parentCommand.id as CommandId,
           context: input.context,
           cwd: input.cwd,
-          snippetArtifactId: snippetArtifact.id,
-          toolCallId: input.toolCallId,
+          sessionId: input.context.sessionId as WorkspaceSessionId,
+          snippetArtifactId: snippetArtifact.artifactId,
+          surfacePiSessionId: input.context.surfacePiSessionId as SurfacePiSessionId,
+          threadId: (input.context.threadId ?? null) as ThreadId | null,
+          toolCallId: input.toolCallId as ToolItemId,
           toolName: EXECUTE_TYPESCRIPT_TOOL_NAME,
+          turnId: input.context.turnId as TurnId,
           typescriptCode: input.typescriptCode,
         });
   if (approval?.approved === false) {
@@ -461,7 +473,7 @@ export async function runExecuteTypescript(input: {
         summary: reason,
         facts: {
           approval: "denied",
-          snippetArtifactId: snippetArtifact.id,
+          snippetArtifactId: snippetArtifact.artifactId,
         },
         error: reason,
       }),
@@ -477,7 +489,7 @@ export async function runExecuteTypescript(input: {
         workflowRunId: input.context.workflowRunId ?? undefined,
         workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
         commandId: parentCommand.id,
-        artifactId: snippetArtifact.id,
+        artifactId: snippetArtifact.artifactId,
         approval: "denied",
       },
     });
@@ -495,16 +507,12 @@ export async function runExecuteTypescript(input: {
     extensionsRoot: input.extensionsRoot,
   });
   if (preflight.errors.length > 0) {
-    const diagnosticsArtifact = input.runState(
-      input.artifactState.createArtifact({
-        workflowTaskAttemptId:
-          (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ?? null,
-        sourceCommandId: parentCommand.id as CommandId,
-        kind: "json",
-        name: `${artifactNamePrefix}${DIAGNOSTICS_FILE}`,
-        content: JSON.stringify(preflight.errors, null, 2),
-      }),
-    ).value;
+    const diagnosticsArtifact = materializeExecuteTypescriptArtifact(input, {
+      parentCommandId: parentCommand.id as CommandId,
+      name: `${artifactNamePrefix}${DIAGNOSTICS_FILE}`,
+      content: JSON.stringify(preflight.errors, null, 2),
+      mimeType: "application/json",
+    });
     recordExecuteTypescriptDiagnostics({
       commandState: input.commandState,
       runState: input.runState,
@@ -521,8 +529,8 @@ export async function runExecuteTypescript(input: {
         summary: errorMessage,
         facts: {
           diagnosticsCount: preflight.errors.length,
-          snippetArtifactId: snippetArtifact.id,
-          diagnosticsArtifactId: diagnosticsArtifact.id,
+          snippetArtifactId: snippetArtifact.artifactId,
+          diagnosticsArtifactId: diagnosticsArtifact.artifactId,
         },
         error: errorMessage,
       }),
@@ -538,7 +546,7 @@ export async function runExecuteTypescript(input: {
         workflowRunId: input.context.workflowRunId ?? undefined,
         workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
         commandId: parentCommand.id,
-        artifactId: diagnosticsArtifact.id,
+        artifactId: diagnosticsArtifact.artifactId,
         diagnosticsCount: preflight.errors.length,
         stage: preflight.stage,
       },
@@ -557,18 +565,13 @@ export async function runExecuteTypescript(input: {
   const logs: string[] = [];
   const childCommandFacts: Array<{ status: RuntimeCommandStatus }> = [];
   const incurClientModule = createIncurClientModule();
-  const runtimeSandbox = buildExecuteTypescriptLaunchPolicy({
-    approvalMode,
-    cwd: input.cwd,
-    managedSandbox: resolveExecuteTypescriptManagedSandbox(input),
-    networkAccess: resolveExecuteTypescriptNetworkAccess(input),
-    tmpdir: process.env.TMPDIR ?? null,
-  });
+  let launchFacts: SandboxLaunchFacts | null = null;
   const extensions = createExecuteTypescriptExtensions({
     cwd: input.cwd,
     artifactState: input.artifactState,
     commandState: input.commandState,
     runState: input.runState,
+    readArtifactRootForSession: input.readArtifactRootForSession,
     context: input.context,
     parentCommand,
     childCommandFacts,
@@ -579,7 +582,6 @@ export async function runExecuteTypescript(input: {
     extensionsRoot: input.extensionsRoot,
     workflowsModelCatalog: input.workflowsModelCatalog,
     workflowsSourceRoot: input.workflowsSourceRoot,
-    workflowsWorkspaceCwds: input.workflowsWorkspaceCwds,
     agentSettingsStore: input.agentSettingsStore,
     env: input.env,
     extensionsBuildRoot: input.extensionsBuildRoot,
@@ -605,30 +607,35 @@ export async function runExecuteTypescript(input: {
       incurClientModule,
       extensions,
       runtimeProcessSpawner: input.runtimeProcessSpawner,
+      acquireExecuteTypescriptLaunch: input.acquireExecuteTypescriptLaunch,
+      onLaunchFacts: (facts) => {
+        launchFacts = facts;
+      },
+      launchInput: {
+        scope: { kind: "workspace", workspaceId: input.workspaceId as WorkspaceId },
+        surfacePiSessionId: input.context.surfacePiSessionId as SurfacePiSessionId,
+        commandId: parentCommand.id as CommandId,
+        cwd: input.cwd as AbsolutePath,
+        envFacts: executeTypescriptRuntimeEnvFacts(process.env),
+      },
       runtimeExtensionIds: Object.keys(extensions),
       runtimeModulePaths: {
         [INCUR_MODULE]: resolveExecuteTypescriptRuntimeModule(INCUR_MODULE),
       },
-      runtimeSandbox,
     });
     const redactedResultValue = redactExecuteTypescriptValue(resultValue);
     const logsArtifact =
       logs.length > 0
-        ? input.runState(
-            input.artifactState.createArtifact({
-              workflowTaskAttemptId:
-                (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ??
-                null,
-              sourceCommandId: parentCommand.id as CommandId,
-              kind: "log",
-              name: `${artifactNamePrefix}${LOGS_FILE}`,
-              content: logs.join("\n"),
-            }),
-          ).value
+        ? materializeExecuteTypescriptArtifact(input, {
+            parentCommandId: parentCommand.id as CommandId,
+            name: `${artifactNamePrefix}${LOGS_FILE}`,
+            content: logs.join("\n"),
+            mimeType: "text/plain",
+          })
         : null;
     const parentRollup = buildExecuteTypescriptParentRollup({
-      snippetArtifactId: snippetArtifact.id,
-      logsArtifactId: logsArtifact?.id,
+      snippetArtifactId: snippetArtifact.artifactId,
+      logsArtifactId: logsArtifact?.artifactId,
       childCommandFacts,
     });
     input.runState(
@@ -638,7 +645,7 @@ export async function runExecuteTypescript(input: {
         summary: parentRollup.summary ?? summarizeResult(redactedResultValue),
         facts: {
           ...parentRollup.facts,
-          ...executeTypescriptSandboxFacts(runtimeSandbox),
+          ...executeTypescriptSandboxFacts(launchFacts),
         } as CommandFactsPayload,
       }),
     );
@@ -653,7 +660,7 @@ export async function runExecuteTypescript(input: {
         workflowRunId: input.context.workflowRunId ?? undefined,
         workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
         commandId: parentCommand.id,
-        artifactId: logsArtifact?.id ?? snippetArtifact.id,
+        artifactId: logsArtifact?.artifactId ?? snippetArtifact.artifactId,
         childCommandCount: childCommandFacts.length,
         logsCount: logs.length,
       },
@@ -668,24 +675,19 @@ export async function runExecuteTypescript(input: {
   } catch (error) {
     const logsArtifact =
       logs.length > 0
-        ? input.runState(
-            input.artifactState.createArtifact({
-              workflowTaskAttemptId:
-                (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ??
-                null,
-              sourceCommandId: parentCommand.id as CommandId,
-              kind: "log",
-              name: `${artifactNamePrefix}${LOGS_FILE}`,
-              content: logs.join("\n"),
-            }),
-          ).value
+        ? materializeExecuteTypescriptArtifact(input, {
+            parentCommandId: parentCommand.id as CommandId,
+            name: `${artifactNamePrefix}${LOGS_FILE}`,
+            content: logs.join("\n"),
+            mimeType: "text/plain",
+          })
         : null;
     const message = redactExecuteTypescriptString(
       error instanceof Error ? error.message : "execute_typescript failed at runtime.",
     );
     const parentRollup = buildExecuteTypescriptParentRollup({
-      snippetArtifactId: snippetArtifact.id,
-      logsArtifactId: logsArtifact?.id,
+      snippetArtifactId: snippetArtifact.artifactId,
+      logsArtifactId: logsArtifact?.artifactId,
       childCommandFacts,
     });
     input.runState(
@@ -695,7 +697,7 @@ export async function runExecuteTypescript(input: {
         summary: message,
         facts: {
           ...parentRollup.facts,
-          ...executeTypescriptSandboxFacts(runtimeSandbox),
+          ...executeTypescriptSandboxFacts(launchFacts),
         } as CommandFactsPayload,
         error: message,
       }),
@@ -712,7 +714,7 @@ export async function runExecuteTypescript(input: {
         workflowRunId: input.context.workflowRunId ?? undefined,
         workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? undefined,
         commandId: parentCommand.id,
-        artifactId: logsArtifact?.id ?? snippetArtifact.id,
+        artifactId: logsArtifact?.artifactId ?? snippetArtifact.artifactId,
         childCommandCount: childCommandFacts.length,
         logsCount: logs.length,
       },
@@ -740,26 +742,36 @@ function resolveExecuteTypescriptApprovalMode(input: {
   return input.approvalMode ?? "auto-review";
 }
 
-function resolveExecuteTypescriptManagedSandbox(input: {
-  managedSandbox?: boolean | (() => boolean);
-}): boolean {
-  if (typeof input.managedSandbox === "function") {
-    return input.managedSandbox() !== false;
+const executeTypescriptSandboxFacts = (
+  input: SandboxLaunchFacts | null,
+): Record<string, unknown> => {
+  if (!input) {
+    return {};
   }
-  return input.managedSandbox !== false;
-}
+  return {
+    sandboxMode: input.policySnapshot.sandboxMode,
+    networkPolicy: input.policySnapshot.networkPolicy,
+    policySnapshotId: input.policySnapshot.snapshotId,
+    policyFingerprint: input.policySnapshot.fingerprint,
+    policyResolvedAt: input.policySnapshot.resolvedAt,
+    policyScope: input.policySnapshot.scope,
+    launchKind: input.policySnapshot.launchKind,
+    commandFamily: "execute_typescript",
+    ...(input.policySnapshot.profileDigest
+      ? { profileDigest: input.policySnapshot.profileDigest }
+      : {}),
+    envKeys: input.spawn.envFacts.map((fact) => fact.key).toSorted(),
+  };
+};
 
-function resolveExecuteTypescriptNetworkAccess(input: {
-  networkAccess?: boolean | (() => boolean);
-}): boolean {
-  if (typeof input.networkAccess === "function") {
-    return input.networkAccess() !== false;
-  }
-  return input.networkAccess !== false;
+function executeTypescriptRuntimeEnvFacts(source: NodeJS.ProcessEnv): EnvironmentFact[] {
+  return EXECUTE_TYPESCRIPT_RUNTIME_ENV_ALLOWLIST.filter((key) => source[key] !== undefined).map(
+    (key) => ({
+      key,
+      redactionLabel: "execute_typescript_runtime_env",
+    }),
+  );
 }
-
-const executeTypescriptSandboxFacts = (input: SandboxLaunchPolicy): Record<string, unknown> =>
-  sandboxLaunchFacts(input);
 
 function compileAndTypecheck(
   typescriptCode: string,
@@ -1163,15 +1175,16 @@ async function runCompiledSnippetInRuntimeProcess(
     runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
     runtimeExtensionIds: readonly string[];
     runtimeModulePaths: Record<string, string | undefined>;
-    runtimeSandbox: {
-      fileSystemPolicy: FileSystemSandboxPolicy;
-      managedSandbox: boolean;
-      networkAccess: boolean;
-    };
+    launchInput: Omit<BuildLaunchPolicyInput, "launchKind" | "command">;
+    acquireExecuteTypescriptLaunch(
+      input: Omit<BuildLaunchPolicyInput, "launchKind">,
+    ): Promise<ExecuteTypescriptLaunchHandle>;
+    onLaunchFacts?: (facts: SandboxLaunchFacts) => void;
   },
 ): Promise<unknown> {
   const runtimeDir = mkdtempSync(join(tmpdir(), "svvy-execute-typescript-runtime-"));
   const runtimePath = join(runtimeDir, "runtime.js");
+  let launchHandle: ExecuteTypescriptLaunchHandle | null = null;
   writeFileSync(
     runtimePath,
     buildExecuteTypescriptRuntimeProcessSource({
@@ -1180,14 +1193,16 @@ async function runCompiledSnippetInRuntimeProcess(
       runtimeModulePaths: runtime.runtimeModulePaths,
     }),
   );
+  const launchCommand = [process.execPath, runtimePath];
+  launchHandle = await runtime.acquireExecuteTypescriptLaunch({
+    ...runtime.launchInput,
+    command: launchCommand,
+  });
+  runtime.onLaunchFacts?.(launchHandle.facts);
   const child = spawnExecuteTypescriptRuntimeProcess({
-    cwd: runtime.cwd,
     env: buildExecuteTypescriptRuntimeEnv(process.env),
-    fileSystemPolicy: runtime.runtimeSandbox.fileSystemPolicy,
-    managedSandbox: runtime.runtimeSandbox.managedSandbox,
-    networkAccess: runtime.runtimeSandbox.networkAccess,
+    launchFacts: launchHandle.facts,
     runtimeProcessSpawner: runtime.runtimeProcessSpawner,
-    runtimePath,
   });
   const sendResponse = (message: ExecuteTypescriptHostToRuntimeMessage) => {
     if (!child.stdin.writable) {
@@ -1274,6 +1289,7 @@ async function runCompiledSnippetInRuntimeProcess(
     return resultValue;
   } finally {
     runtime.signal?.removeEventListener("abort", abortHandler);
+    await launchHandle?.close();
     rmSync(runtimeDir, { force: true, recursive: true });
   }
 }
@@ -1364,42 +1380,20 @@ async function handleExecuteTypescriptExtensionRunMessage(
 }
 
 function spawnExecuteTypescriptRuntimeProcess(input: {
-  cwd: string;
   env?: NodeJS.ProcessEnv;
-  fileSystemPolicy: FileSystemSandboxPolicy;
-  managedSandbox: boolean;
-  networkAccess: boolean;
+  launchFacts: SandboxLaunchFacts;
   runtimeProcessSpawner?: ExecuteTypescriptRuntimeProcessSpawner;
-  runtimePath: string;
 }): ChildProcessWithoutNullStreams {
   const env = input.env ?? {};
-  const command = [process.execPath, input.runtimePath];
+  const command = [input.launchFacts.spawn.executable, ...input.launchFacts.spawn.args];
   if (input.runtimeProcessSpawner) {
     return input.runtimeProcessSpawner({
       command,
-      cwd: input.cwd,
+      cwd: input.launchFacts.spawn.cwd,
       env,
-      fileSystemPolicy: input.fileSystemPolicy,
-      managedSandbox: input.managedSandbox,
-      networkAccess: input.networkAccess,
     });
   }
-  const child = input.managedSandbox
-    ? spawn(
-        resolveSandboxHelperPath({
-          configuredPath: process.env.SVVY_SANDBOX_HELPER_PATH,
-          executablePath: process.execPath,
-        }),
-        buildSandboxHelperArgs({
-          command,
-          cwd: input.cwd,
-          fileSystemPolicy: input.fileSystemPolicy,
-          networkAccess: input.networkAccess,
-        }),
-        { cwd: input.cwd, env },
-      )
-    : spawn(command[0]!, command.slice(1), { cwd: input.cwd, env });
-  return child;
+  return spawn(command[0]!, command.slice(1), { cwd: input.launchFacts.spawn.cwd, env });
 }
 
 function buildExecuteTypescriptRuntimeEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -1571,11 +1565,49 @@ function createIncurClientModule(): IncurClientModuleRuntime {
   });
 }
 
+function materializeExecuteTypescriptArtifact(
+  input: {
+    cwd: string;
+    artifactState: RuntimeArtifactStatePortService;
+    runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+    readArtifactRootForSession?: (sessionId: string) => string | null;
+    context: ExecuteTypescriptContext;
+  },
+  artifact: {
+    parentCommandId: CommandId;
+    name: string;
+    content: string;
+    mimeType: string;
+  },
+) {
+  return materializeRuntimeArtifact({
+    artifactRoot: artifactRootForSession({
+      cwd: input.cwd,
+      sessionId: input.context.sessionId,
+      readArtifactRootForSession: input.readArtifactRootForSession,
+    }),
+    artifactState: input.artifactState,
+    runState: input.runState,
+    workspaceSessionId: input.context.sessionId as WorkspaceSessionId,
+    threadId: input.context.threadId as ThreadId | null,
+    workflowRunId: input.context.workflowRunId as WorkflowRunId | null,
+    workflowTaskAttemptId:
+      (input.context.workflowTaskAttemptId as WorkflowTaskAttemptId | null | undefined) ?? null,
+    sourceCommandId: artifact.parentCommandId,
+    kind: inferArtifactKind(artifact.name),
+    name: artifact.name,
+    content: artifact.content,
+    mimeType: artifact.mimeType,
+    immutable: false,
+  });
+}
+
 function createExecuteTypescriptExtensions(input: {
   cwd: string;
   artifactState: RuntimeArtifactStatePortService;
   commandState: RuntimeCommandStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   context: ExecuteTypescriptContext;
   parentCommand: Pick<RuntimeCommandRecord, "id">;
   childCommandFacts: Array<{ status: RuntimeCommandStatus }>;
@@ -1590,7 +1622,6 @@ function createExecuteTypescriptExtensions(input: {
   workflowsGeneratedPackagePath?: string;
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
-  workflowsWorkspaceCwds?: () => readonly string[];
   agentSettingsStore?: AgentSettingsStore;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
@@ -1645,6 +1676,7 @@ function createExecuteTypescriptExtensions(input: {
             runtime: artifactsRuntimeContext(input.context),
             artifactState: input.artifactState,
             runState: input.runState,
+            readArtifactRootForSession: input.readArtifactRootForSession,
             sourceCommand: { id: childCommand.id as CommandId },
             openArtifact: input.openArtifact,
             onAppLog: input.onAppLog,
@@ -1761,7 +1793,6 @@ function createExecuteTypescriptExtensions(input: {
             generatedPackagePath: input.workflowsGeneratedPackagePath,
             readModelCatalog: input.workflowsModelCatalog,
             sourceRoot: input.workflowsSourceRoot,
-            workspaceCwds: input.workflowsWorkspaceCwds?.(),
           });
           if (result.commandFacts.workflowBuildOk === true) {
             input.onAppLog?.({
@@ -1902,7 +1933,6 @@ function pickExecuteTypescriptWorkflowLogFacts(
     "workflowBuildOk",
     "workflowDiagnosticCount",
     "workflowExportCount",
-    "workflowLinkedWorkspaceCount",
     "workflowSavedExportName",
     "workflowSavedKind",
     "workflowSourcePath",

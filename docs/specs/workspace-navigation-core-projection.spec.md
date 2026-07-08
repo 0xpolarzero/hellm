@@ -7,8 +7,8 @@
 
 ## Scope
 
-This spec defines workspace navigation, session rows, handler-thread rows, artifact links, and
-read-only Workflows pane placement.
+This spec defines workspace navigation, session rows, handler-thread rows, artifact links,
+read-only Workflows pane placement, and Snippets pane placement/read-model projection.
 
 ## Sidebar Groups
 
@@ -19,7 +19,10 @@ The session sidebar contains:
 - Archived sessions
 
 Each group is collapsible, independently scrollable, vertically resizable, and persists collapsed
-state and size per workspace. Archived is collapsed by default.
+state and size per workspace. Collapsed and size preferences are durable workspace read-model state
+owned by `@svvy/state`; the renderer may keep temporary drag state, but durable saves go through the
+state command facade and restored values come from the state read facade. Archived is collapsed by
+default.
 
 Session row context menu actions:
 
@@ -57,8 +60,8 @@ The pane surfaces generated `@svvyx/workflows` exports:
 - `Prompts`
 - `Workflows`
 
-Each row links to generated code and source code. Agent rows also link to the Agents pane for human
-customization.
+Rows may link to generated-package evidence and to owning source records when a source path exists.
+Agent rows also link to the Agents pane for human customization.
 
 The Workflows pane is read-only generated-package visibility. It is not a source editor or workflow
 runner.
@@ -77,6 +80,10 @@ render from `@svvy/state` surface read models keyed by `surfacePiSessionId`; pi 
 canonical conversation transcript substrate. Prompt-lock indicators derive from durable active turn
 facts, queue-claim facts, and pi-session reference facts. The locks themselves are process-local
 `@svvy/runtime` state reconstructed when runtime acquires the workspace.
+
+Renderer code does not consume runtime events as durable snapshots. App/bootstrap maps runtime events
+to `DesktopRendererNotification` invalidations, rebaseline notices, and bounded stream patches;
+desktop panes refetch state-backed DTOs through injected state read facades.
 
 Workspace shell restore restores persisted layout, panel metadata, focused panel, Workflows pane open
 state, and panel-to-surface bindings. It does not persist renderer component snapshots.

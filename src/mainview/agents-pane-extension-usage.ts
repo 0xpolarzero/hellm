@@ -1,11 +1,7 @@
-import type { ExtensionCategory, ExtensionUsageState } from "@svvy/extensions";
-import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "@svvy/extensions";
-import {
-  DEFAULT_AGENT_SETTINGS_STATE,
-  type ExtensionDefaultsSettings,
-} from "../shared/agent-settings";
+import type { ExtensionCategory, ExtensionUsageState } from "@svvy/core";
 import type {
   AgentContextPreviewRequest,
+  ExtensionsInventoryReadModel,
   ExtensionInventoryItemReadModel,
   ExtensionUsageReadiness,
 } from "../shared/workspace-contract";
@@ -30,32 +26,27 @@ type ExtensionUsageInventoryInput = {
   usage: Record<string, ExtensionUsageState>;
   profileId: string;
   extensionInventoryItems: ExtensionInventoryItemReadModel[];
-  extensionDefaults?: ExtensionDefaultsSettings;
+  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
   networkAccess: boolean;
 };
 
 export function baselineExtensionState(input: {
   actor: AgentContextActor;
   extensionId: string;
-  extensionDefaults?: ExtensionDefaultsSettings | null;
-  networkAccess: boolean;
+  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
 }): ExtensionUsageState {
-  const baseline = resolveActorExtensionState({
-    actor: input.actor,
-    defaultExtensionOrder: input.extensionDefaults?.order,
-    defaultExtensionUsage: input.extensionDefaults?.usage,
-    networkAccess: input.networkAccess,
-  });
-  if (baseline.loadedExtensionIds.includes(input.extensionId)) return "loaded";
-  if (baseline.availableExtensionIds.includes(input.extensionId)) return "available";
-  return "unavailable";
+  return (
+    input.inventoryDefaults?.usage[input.extensionId]?.find(
+      (candidate) => candidate.actorKind === input.actor,
+    )?.state ?? "unavailable"
+  );
 }
 
 export function resolvedExtensionState(input: {
   actor: AgentContextActor;
   extension: Pick<ExtensionInventoryItemReadModel, "category" | "id">;
   explicitUsage: Record<string, ExtensionUsageState>;
-  extensionDefaults?: ExtensionDefaultsSettings | null;
+  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
   inventoryUsage: ExtensionUsageReadiness | null;
   networkAccess: boolean;
 }): ExtensionUsageState {
@@ -66,21 +57,11 @@ export function resolvedExtensionState(input: {
     return baselineExtensionState({
       actor: input.actor,
       extensionId: input.extension.id,
-      extensionDefaults: input.extensionDefaults,
-      networkAccess: input.networkAccess,
+      inventoryDefaults: input.inventoryDefaults,
     });
   }
 
-  const resolved = resolveActorExtensionState({
-    actor: input.actor,
-    defaultExtensionOrder: input.extensionDefaults?.order,
-    defaultExtensionUsage: input.extensionDefaults?.usage,
-    profileExtensionUsage: input.explicitUsage,
-    networkAccess: input.networkAccess,
-  });
-  if (resolved.loadedExtensionIds.includes(input.extension.id)) return "loaded";
-  if (resolved.availableExtensionIds.includes(input.extension.id)) return "available";
-  return "unavailable";
+  return input.explicitUsage[input.extension.id] ?? "unavailable";
 }
 
 export function canSelectExtensionUsageState(input: {
@@ -103,7 +84,7 @@ export function extensionStateAllowed(input: {
   extension: ExtensionInventoryItemReadModel;
   state: ExtensionUsageState;
   configurable: boolean;
-  extensionDefaults?: ExtensionDefaultsSettings | null;
+  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
   networkAccess: boolean;
 }): boolean {
   if (!input.configurable) return false;
@@ -116,84 +97,59 @@ export function extensionUsageItems(
   const inventoryById = new Map(
     input.extensionInventoryItems.map((extension) => [extension.id, extension]),
   );
-  const fallbackBuiltinItems: ExtensionInventoryItemReadModel[] = BUILTIN_EXTENSIONS.map(
-    (extension) => ({
-      id: extension.id,
-      category: extension.category,
-      interface: extension.interface,
-      title: extension.title,
-      description: extension.description,
-      customized: false,
-      minimalInstruction: minimalInstructionPlaceholder(extension.minimalLoadingHint),
-      loadedInstructionContributors: [],
-      typescriptApiEnabled: extension.typescriptApiEnabled,
-      tooling: {
-        typescriptApiStatus: extension.typescriptApiEnabled ? "not_emitted" : "disabled",
-      },
-      usage: [],
-      requirements: {
-        cliRequirements: [],
-        env: [],
-      },
-      state: {
-        ready: true,
-        issues: [],
-      },
-    }),
-  );
-  const inventory =
-    input.extensionInventoryItems.length > 0 ? input.extensionInventoryItems : fallbackBuiltinItems;
+  const inventory = input.extensionInventoryItems;
   const orderById = new Map(inventory.map((extension, index) => [extension.id, index]));
   const extensionIds = new Set([
     ...inventory.map((extension) => extension.id),
     ...Object.keys(input.usage),
   ]);
-  const extensionDefaults =
-    input.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults;
-  const defaultOrder = input.actor === "handler" ? [] : extensionDefaults.order;
+  const defaultOrder = input.actor === "handler" ? [] : (input.inventoryDefaults?.order ?? []);
   const defaultOrderById = new Map(defaultOrder.map((id, index) => [id, index]));
 
   return [...extensionIds]
     .flatMap((extensionId): ExtensionUsageControlItem[] => {
-      const extension = inventoryById.get(extensionId) ??
-        fallbackBuiltinItems.find((candidate) => candidate.id === extensionId) ?? {
-          id: extensionId,
-          category: "user" as const,
-          interface: "instructions" as const,
-          title: extensionId,
-          description: "Custom extension usage override.",
-          customized: false,
-          minimalInstruction: minimalInstructionPlaceholder(""),
-          loadedInstructionContributors: [],
-          typescriptApiEnabled: false,
-          tooling: {
-            typescriptApiStatus: "disabled",
-          },
-          usage: [],
-          requirements: {
-            cliRequirements: [],
-            env: [],
-          },
-          state: {
-            ready: true,
-            issues: [],
-          },
-        };
+      const extension = inventoryById.get(extensionId) ?? {
+        id: extensionId,
+        category: "user" as const,
+        interface: "instructions" as const,
+        title: extensionId,
+        description: "Custom extension usage override.",
+        customized: false,
+        minimalInstruction: minimalInstructionPlaceholder(""),
+        loadedInstructionContributors: [],
+        typescriptApiEnabled: false,
+        tooling: {
+          typescriptApiStatus: "disabled",
+        },
+        usage: [],
+        requirements: {
+          cliRequirements: [],
+          env: [],
+        },
+        state: {
+          ready: true,
+          issues: [],
+        },
+      };
       const usage =
         extension.usage.find(
           (candidate) =>
             candidate.actorKind === input.actor && candidate.agentProfile === input.profileId,
         ) ?? null;
       const hasStoredUsage = input.usage[extension.id] !== undefined;
+      const hasInventoryDefault =
+        input.inventoryDefaults?.usage[extension.id]?.some(
+          (candidate) => candidate.actorKind === input.actor,
+        ) ?? false;
       const productBaseline = baselineExtensionState({
         actor: input.actor,
         extensionId: extension.id,
-        extensionDefaults: null,
-        networkAccess: input.networkAccess,
+        inventoryDefaults: input.inventoryDefaults,
       });
       if (
         extension.category !== "user" &&
         !hasStoredUsage &&
+        !hasInventoryDefault &&
         extension.id !== "extension-loading" &&
         !usage &&
         productBaseline === "unavailable"
@@ -203,6 +159,7 @@ export function extensionUsageItems(
       if (
         extension.category !== "user" &&
         !hasStoredUsage &&
+        !hasInventoryDefault &&
         extension.id !== "extension-loading" &&
         usage?.state === "unavailable" &&
         productBaseline === "unavailable"
@@ -213,7 +170,7 @@ export function extensionUsageItems(
         actor: input.actor,
         extension,
         explicitUsage: input.usage,
-        extensionDefaults,
+        inventoryDefaults: input.inventoryDefaults,
         inventoryUsage: usage,
         networkAccess: input.networkAccess,
       });
@@ -223,7 +180,7 @@ export function extensionUsageItems(
         actor: input.actor,
         extension,
         explicitUsage: defaultUsage,
-        extensionDefaults: input.extensionDefaults,
+        inventoryDefaults: input.inventoryDefaults,
         inventoryUsage: usage,
         networkAccess: input.networkAccess,
       });
@@ -248,7 +205,7 @@ export function extensionUsageItems(
               extension,
               state: "loaded",
               configurable,
-              extensionDefaults,
+              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
             available: extensionStateAllowed({
@@ -256,7 +213,7 @@ export function extensionUsageItems(
               extension,
               state: "available",
               configurable,
-              extensionDefaults,
+              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
             unavailable: extensionStateAllowed({
@@ -264,7 +221,7 @@ export function extensionUsageItems(
               extension,
               state: "unavailable",
               configurable,
-              extensionDefaults,
+              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
           },

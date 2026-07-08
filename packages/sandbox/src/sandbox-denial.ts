@@ -1,4 +1,4 @@
-export type SandboxDenialInput = {
+export type SandboxDenialDiagnosticsInput = {
   exitCode: number | null;
   managedSandbox: boolean;
   stderr: string;
@@ -10,7 +10,7 @@ export type SandboxDenialFacts = {
   sandboxEngine: "macos-seatbelt";
 };
 
-export function sandboxDenialFacts(input: SandboxDenialInput): SandboxDenialFacts | {} {
+export function sandboxDenialFacts(input: SandboxDenialDiagnosticsInput): SandboxDenialFacts | {} {
   if (!isSandboxDenialOutput(input)) {
     return {};
   }
@@ -20,7 +20,7 @@ export function sandboxDenialFacts(input: SandboxDenialInput): SandboxDenialFact
   };
 }
 
-export function isSandboxDenialOutput(input: SandboxDenialInput): boolean {
+export function isSandboxDenialOutput(input: SandboxDenialDiagnosticsInput): boolean {
   if (!input.managedSandbox || input.exitCode === 0 || input.exitCode === 127) {
     return false;
   }

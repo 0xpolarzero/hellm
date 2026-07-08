@@ -9,6 +9,7 @@ import type {
 import { createAppLogStore } from "./app-log-store";
 
 export interface AppLogAppendInput {
+  createdAt?: string;
   level: AppLogLevel;
   source: AppLogSource;
   message: string;
@@ -37,13 +38,13 @@ export interface AppLogFacade extends AppLogAppender {
 
 export interface CreateAppLogFacadeOptions {
   databasePath?: string;
-  now?: () => string;
+  now: () => string;
   memoryLimit?: number;
   persistedLimit?: number;
   retentionDays?: number;
 }
 
-export function createAppLogFacade(options: CreateAppLogFacadeOptions = {}): AppLogFacade {
+export function createAppLogFacade(options: CreateAppLogFacadeOptions): AppLogFacade {
   const store = createAppLogStore(options);
   return {
     append: (entry) => store.append(entry),

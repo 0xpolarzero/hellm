@@ -32,8 +32,7 @@
     ExtensionsInventoryReadModel,
     WorkspaceCommandOutputEvent,
   } from "../shared/workspace-contract";
-  import { BUILTIN_EXTENSIONS } from "@svvy/extensions";
-  import type { ExtensionInterfaceKind } from "@svvy/extensions";
+  import type { ExtensionInterfaceKind } from "@svvy/core";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -134,49 +133,14 @@
   ];
 
   function inventoryRows(): ExtensionInventoryItemReadModel[] {
-    const rows = extensionsInventory
-      ? extensionsInventory.extensions
-      : BUILTIN_EXTENSIONS.map((extension) => ({
-      id: extension.id,
-      category: extension.category,
-      interface: extension.interface,
-      title: extension.title,
-      description: extension.description,
-      customized: false,
-      minimalInstruction: {
-        name: "minimal.md",
-        path: "",
-        content: extension.minimalLoadingHint,
-        sourceVersion: "",
-        bypassed: false,
-        editable: extension.interface !== "native_tool",
-        tokenCount: {
-          tokens: 0,
-          accuracy: "estimated",
-        },
-      },
-      loadedInstructionContributors: [],
-      typescriptApiEnabled: extension.typescriptApiEnabled,
-      tooling: {
-        typescriptApiStatus: extension.typescriptApiEnabled ? "not_emitted" : "disabled",
-      },
-      usage: [],
-      requirements: {
-        cliRequirements: [],
-        env: [],
-      },
-      state: {
-        ready: true,
-        issues: [],
-      },
-    }));
+    const rows = extensionsInventory?.extensions ?? [];
     return orderedInventoryRows(rows).filter(
       (extension) => extensionFilter === "all" || extension.interface === extensionFilter,
     );
   }
 
   function orderedInventoryRows(rows: ExtensionInventoryItemReadModel[]) {
-    const order = extensionsInventory?.defaults?.order ?? BUILTIN_EXTENSIONS.map((extension) => extension.id);
+    const order = extensionsInventory?.defaults?.order ?? [];
     const orderById = new Map(order.map((id, index) => [id, index]));
     return reorderQueuedMessageItems(
       rows.toSorted((left, right) => {
@@ -974,12 +938,8 @@
     }
   }
 
-  function declaredCliRequirementBinaries(extensionId: string): string[] {
-    return (
-      BUILTIN_EXTENSIONS.find((extension) => extension.id === extensionId)?.cliRequirements?.map(
-        (requirement) => requirement.binary,
-      ) ?? []
-    );
+  function declaredCliRequirementBinaries(extension: ExtensionInventoryItemReadModel): string[] {
+    return extension.requirements.cliRequirements.map((requirement) => requirement.binary);
   }
 
   function envRequirementTone(
@@ -1007,14 +967,14 @@
     if (requirement.secret) {
       extensionsInventory = await runtime.setExtensionEnvSecret({
         extensionId,
-        name: requirement.name,
+        envName: requirement.name,
         value,
       });
       return;
     }
     extensionsInventory = await runtime.setExtensionEnvOverride({
       extensionId,
-      name: requirement.name,
+      envName: requirement.name,
       value,
     });
   }
@@ -1026,13 +986,13 @@
     if (requirement.secret) {
       extensionsInventory = await runtime.removeExtensionEnvSecret({
         extensionId,
-        name: requirement.name,
+        envName: requirement.name,
       });
       return;
     }
     extensionsInventory = await runtime.removeExtensionEnvOverride({
       extensionId,
-      name: requirement.name,
+      envName: requirement.name,
     });
   }
 
@@ -1706,7 +1666,7 @@
     {#each inventoryRows() as extension (extension.id)}
       {@const cliRequirements = inventoryCliRequirements(extension.id)}
       {@const envRequirements = inventoryEnvRequirements(extension.id)}
-      {@const declaredCliBinaries = declaredCliRequirementBinaries(extension.id)}
+      {@const declaredCliBinaries = declaredCliRequirementBinaries(extension)}
       {@const expanded = expandedExtensionIds.has(extension.id)}
       <div
         use:registerExtensionRow={extension.id}

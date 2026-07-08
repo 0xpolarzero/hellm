@@ -1,9 +1,13 @@
 /**
  * Source of truth for the `execute_typescript` prompt contract.
  *
- * Code mode receives actor-specific generated `extensions` runtime facades for loaded
- * TypeScript-enabled `svvyx` extensions. Shell, Apply Patch, and other direct
- * tools remain the canonical agent interface for repository work.
+ * Code mode receives actor-scoped generated `extensions` declarations for loaded
+ * TypeScript-enabled app-owned `svvyx` extensions. Shell, Apply Patch, and other
+ * direct tools remain the canonical agent interface for repository work.
+ *
+ * Do not import generated Workflows or Extensions packages here. They are
+ * Smithers/Workflows authoring imports only; runtime callable extension APIs are
+ * exposed only through the injected actor-scoped `extensions` object below.
  */
 
 /**

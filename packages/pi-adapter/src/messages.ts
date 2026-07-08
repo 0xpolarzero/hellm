@@ -6,32 +6,32 @@ import {
   type SentSnippetProvenance,
 } from "@svvy/core";
 
-export interface SvvyPiUserMessageMetadata {
+interface SvvyPiUserMessageMetadata {
   snippetProvenance?: SentSnippetProvenance[];
 }
 
-export interface SvvyPiTextContent {
+interface SvvyPiTextContent {
   readonly type: "text";
   readonly text: string;
   readonly textSignature?: string;
 }
 
-export interface SvvyPiImageContent {
+interface SvvyPiImageContent {
   readonly type: "image";
   readonly data: string;
   readonly mimeType: string;
 }
 
-export type SvvyPiUserMessageContent = string | Array<SvvyPiTextContent | SvvyPiImageContent>;
+type SvvyPiUserMessageContent = string | Array<SvvyPiTextContent | SvvyPiImageContent>;
 
-export interface SvvyPiUserMessage {
+interface SvvyPiUserMessage {
   readonly role: "user";
   readonly timestamp: number;
   readonly content: SvvyPiUserMessageContent;
   svvyMetadata?: SvvyPiUserMessageMetadata;
 }
 
-export type RuntimeSubmittedMessagePiOptions = {
+type RuntimeSubmittedMessagePiOptions = {
   timestamp: number;
 };
 

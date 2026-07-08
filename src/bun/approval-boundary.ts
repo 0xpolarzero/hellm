@@ -1,19 +1,31 @@
 import type { ApprovalMode } from "../shared/agent-settings";
+import type {
+  CommandId,
+  SurfacePiSessionId,
+  ThreadId,
+  ToolItemId,
+  TurnId,
+  WorkspaceSessionId,
+} from "@svvy/core";
 
 export type RuntimeApprovalBoundaryToolName = "apply_patch" | "exec_command" | "execute_typescript";
 
 export type RuntimeApprovalBoundaryInput = {
   approvalMode: Exclude<ApprovalMode, "full-access">;
-  command?: string;
-  commandFamily?: string;
-  commandId?: string;
-  context?: unknown;
+  command?: string | null;
+  commandFamily?: string | null;
+  commandId?: CommandId | null;
+  context?: Record<string, unknown>;
   cwd: string;
-  patch?: string;
-  snippetArtifactId?: string;
-  toolCallId: string;
+  patch?: string | null;
+  sessionId?: WorkspaceSessionId;
+  snippetArtifactId?: string | null;
+  surfacePiSessionId?: SurfacePiSessionId;
+  threadId?: ThreadId | null;
+  toolCallId: ToolItemId;
   toolName: RuntimeApprovalBoundaryToolName;
-  typescriptCode?: string;
+  turnId?: TurnId | null;
+  typescriptCode?: string | null;
 };
 
 export type RuntimeApprovalBoundary = (

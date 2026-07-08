@@ -15,5 +15,5 @@ Product UI behavior is defined by:
 - [../progress.md](../progress.md)
 - owning specs under [../specs](../specs)
 
-Files in `docs/ui/` are visual and verification notes only until behavior is promoted into those
-authoritative documents.
+Files in `docs/ui/` are non-authoritative visual/reference and verification aids. Product behavior
+is defined by the authoritative documents listed above.

@@ -498,7 +498,7 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain("resetProfileExtensionSelection");
     expect(agentsPaneSource).toContain("resetProfileExtensionOrder");
     expect(agentsPaneSource).toContain("buildExtensionUsageItems");
-    expect(extensionUsageHelperSource).toContain("resolveActorExtensionState");
+    expect(extensionUsageHelperSource).toContain("inventoryDefaults?.usage");
     expect(extensionUsageHelperSource).toContain('extension.id !== "extension-loading"');
     expect(agentProfileFormSource).toContain("ExtensionUsageControl");
     expect(workflowAgentFormSource).toContain("ExtensionUsageControl");
@@ -767,11 +767,11 @@ describe("default workspace renderer shell", () => {
     expect(directToolsSource).toContain("workflowBuildOk");
     expect(directToolsSource).toContain("svvyx-workflows-build");
     expect(directToolsSource).toContain("svvyx-workflows-save");
-    expect(directToolsSource).toContain("workflowsWorkspaceCwds");
     expect(workspaceRegistrySource).toContain("recordWorkflowsGeneratedPackageLog");
     expect(workspaceRegistrySource).toContain("for (const runtime of this.runtimes.values())");
-    expect(workspaceRegistrySource).toContain("setOpenWorkspaceCwdsReader");
-    expect(workspaceRegistrySource).toContain("this.listOpenWorkspaces().map");
+    expect(workspaceRegistrySource).toContain("createGeneratedPackageRefreshBoundaryHost(catalog");
+    expect(workspaceRegistrySource).toContain("generatedPackageLinkPath");
+    expect(workspaceRegistrySource).toContain("workspaceLinkFileHost");
     expect(workflowsPaneSource).not.toContain("svvyx workflows run");
     expect(workflowsPaneSource).not.toContain("delete");
     expect(workflowsPaneSource).not.toContain("save");
@@ -892,6 +892,18 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain("removeExtensionEnvSecret");
     expect(contractSource).toContain("setExtensionEnvOverride");
     expect(contractSource).toContain("removeExtensionEnvOverride");
+    for (const requestName of [
+      "SetExtensionEnvSecretRequest",
+      "RemoveExtensionEnvSecretRequest",
+      "SetExtensionEnvOverrideRequest",
+      "RemoveExtensionEnvOverrideRequest",
+    ]) {
+      const start = contractSource.indexOf(`export interface ${requestName}`);
+      const end = contractSource.indexOf("\n}", start);
+      const block = contractSource.slice(start, end);
+      expect(block).toContain("envName: string;");
+      expect(block).not.toContain("name: string;");
+    }
     expect(contractSource).toContain("SetExtensionTypescriptApiRequest");
     expect(contractSource).toContain("setExtensionTypescriptApi");
     expect(runtimeSource).toContain("getExtensionsInventory");
@@ -975,6 +987,8 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvOverride");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvOverride");
+    expect(extensionsPaneSource).toContain("envName: requirement.name");
+    expect(extensionsPaneSource).not.toContain("name: requirement.name");
     expect(extensionsPaneSource).toContain("pendingRequestUserInputSetting");
     expect(extensionsPaneSource).toContain("request-input-timeout-controls");
     expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "mode"');

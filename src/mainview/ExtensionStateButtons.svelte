@@ -2,7 +2,7 @@
   import BanIcon from "@lucide/svelte/icons/ban";
   import CheckCircleIcon from "@lucide/svelte/icons/check-circle";
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
-  import type { ExtensionUsageState } from "@svvy/extensions";
+  import type { ExtensionUsageState } from "@svvy/core";
   import Tooltip from "./ui/Tooltip.svelte";
 
   type Props = {

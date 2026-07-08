@@ -82,51 +82,47 @@ export type SourceEditSaveResult =
       readonly current: SourceEditSession;
     };
 
-export const decodeOpenExtensionSourceEditInput = Schema.decodeUnknownSync(
+export const unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(OpenExtensionSourceEditInputSchema, strictBoundaryParseOptions);
+export const decodeUnknownOpenExtensionSourceEditInputExit = Schema.decodeUnknownExit(
   OpenExtensionSourceEditInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeOpenExtensionSourceEditInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownOpenExtensionSourceEditInputEffect = Schema.decodeUnknownEffect(
   OpenExtensionSourceEditInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeOpenExtensionSourceEditInputEffect = Schema.decodeUnknownEffect(
-  OpenExtensionSourceEditInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeSourceEditSession = Schema.decodeUnknownSync(
+export const unsafeDecodeSourceEditSessionSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SourceEditSessionSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSourceEditSessionExit = Schema.decodeUnknownExit(
+export const decodeUnknownSourceEditSessionExit = Schema.decodeUnknownExit(
   SourceEditSessionSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSourceEditSessionEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSourceEditSessionEffect = Schema.decodeUnknownEffect(
   SourceEditSessionSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSaveExtensionSourceEditInput = Schema.decodeUnknownSync(
+export const unsafeDecodeSaveExtensionSourceEditInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(SaveExtensionSourceEditInputSchema, strictBoundaryParseOptions);
+export const decodeUnknownSaveExtensionSourceEditInputExit = Schema.decodeUnknownExit(
   SaveExtensionSourceEditInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSaveExtensionSourceEditInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownSaveExtensionSourceEditInputEffect = Schema.decodeUnknownEffect(
   SaveExtensionSourceEditInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSaveExtensionSourceEditInputEffect = Schema.decodeUnknownEffect(
-  SaveExtensionSourceEditInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeSourceEditSaveResult = Schema.decodeUnknownSync(
+export const unsafeDecodeSourceEditSaveResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SourceEditSaveResultSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSourceEditSaveResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownSourceEditSaveResultExit = Schema.decodeUnknownExit(
   SourceEditSaveResultSchema,
   strictBoundaryParseOptions,
 );
-export const decodeSourceEditSaveResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSourceEditSaveResultEffect = Schema.decodeUnknownEffect(
   SourceEditSaveResultSchema,
   strictBoundaryParseOptions,
 );

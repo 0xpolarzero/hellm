@@ -281,7 +281,7 @@ function validateReplayWindow(
         retainedFromSequence: (retained[0]?.sequence ?? latestSequence + 1) as RuntimeEventSequence,
         currentHighWaterSequence: latestSequence as RuntimeEventSequence,
         eventGenerationId,
-        affectedReadModels: [],
+        affectedReadModels: affectedReadModelsForRebaseline(input),
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         message: "Requested event generation no longer matches the runtime event bus.",
       }),
@@ -299,13 +299,21 @@ function validateReplayWindow(
         retainedFromSequence: retainedFromSequence as RuntimeEventSequence,
         currentHighWaterSequence: latestSequence as RuntimeEventSequence,
         eventGenerationId,
-        affectedReadModels: [],
+        affectedReadModels: affectedReadModelsForRebaseline(input),
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         message: "Requested event sequence is outside the retained replay window.",
       }),
     );
   }
   return Effect.void;
+}
+
+function affectedReadModelsForRebaseline(
+  _input: RuntimeEventsInput,
+): readonly StateInvalidationDescriptor[] {
+  // An event replay failure cannot prove the exact missed read-model ids.
+  // Empty means full rebaseline for the subscription scope.
+  return [];
 }
 
 function nextReplaySequence(input: RuntimeEventsInput, latestSequence: number): number {

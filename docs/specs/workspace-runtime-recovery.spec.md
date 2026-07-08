@@ -99,11 +99,13 @@ recovery work kind.
 `generated_package_refresh` is app-scoped recovery work for app-global generated `@svvyx/*` package
 builds. It belongs to the app-global generated-package coordinator, stores app scope with no
 workspace id, is deduped by an app-scope idempotency key, and never runs once per workspace.
-`workspace_generated_package_link_repair` is workspace-scoped recovery work that applies already
-committed generated-package output into one workspace link set. Unopened workspaces receive
-workspace-link repair rows/facts; app-global package builds do not depend on workspace acquisition.
-Workspace recovery coordinators never run generated-package builds; they only wait for committed
-generated-package facts and schedule `workspace_generated_package_link_repair`.
+`workspace_generated_package_link_repair` is workspace-scoped recovery work where runtime asks
+`@svvy/extensions` for an immutable workspace-link plan for the targeted workspace/package pair,
+then applies that plan after the relevant generated-package facts have been committed. Unopened
+workspaces receive workspace-link repair rows/facts; app-global package builds do not depend on
+workspace acquisition. Workspace recovery coordinators never run generated-package builds; they
+only wait for committed generated-package facts and schedule
+`workspace_generated_package_link_repair`.
 
 Queued surface work such as `thread_report_notification`, `report_request`, and
 `request_user_input_answer` remains typed queue state. Recovery schedules `queue_delivery` work for
@@ -122,8 +124,8 @@ On workspace runtime scope acquisition:
 2. load state-owned session, queue, app-log, generated fact, and surface records
 3. hydrate process-local live surface registry shells
 4. restore queue state and reconstruct process-local prompt locks from durable active work
-5. schedule workspace generated package link repair for `.smithers/node_modules` after app-global
-   generated package facts are current
+5. schedule workspace generated package link repair for `.smithers/node_modules/@svvyx/*` after
+   app-global generated package facts are current
 6. resume recoverable runtime recovery rows through transactional claims
 7. record recovery app-log facts through state ports after committed recovery transitions
 
@@ -150,20 +152,23 @@ refresh work when:
   `.agent.json` records, marked the Workflows build stale
 
 Runtime applies the refresh request by invoking the `@svvy/extensions` generated-package service
-through the app-composed Effect service graph, then records generated-package facts through
-`@svvy/state` after generated output commits. The workspace coordinator directly owns only workspace
-link repair after app-global generated-package facts are current. It may wait on or observe those
-app-global facts, but it does
-not schedule, dedupe, or recover app-global generated-package builds. Build failures become
-structured diagnostics and app logs. The coordinator must not edit generated files by hand.
+through the app-composed Effect service graph. `@svvy/extensions` writes the generated package files
+and returns build evidence; runtime then commits generated-package facts through core-owned state
+ports implemented by `@svvy/state`. The workspace recovery coordinator owns scheduling and applying
+runtime-owned workspace-link repair only after app-global generated-package facts are current; it
+asks `@svvy/extensions` for the immutable plan and commits link facts through core-owned state ports.
+It may wait on or observe app-global facts, but it does not schedule, dedupe, or recover app-global
+generated-package builds. Build failures become structured diagnostics and app logs. The coordinator
+must not edit generated files by hand.
 
 The workspace recovery coordinator schedules workspace-scoped
 `workspace_generated_package_link_repair` when an acquired workspace has missing or stale
 `.smithers/node_modules/@svvyx/workflows` or
-`.smithers/node_modules/@svvyx/extensions` links. Link repair runs only after the app-global
-generated package refresh commits. Runtime coordinates the repair and records workspace-link facts
-through `@svvy/state`; `@svvy/extensions` owns generated package content and package-safe link
-plans.
+`.smithers/node_modules/@svvyx/extensions` links. Link repair runs only after runtime has committed
+the relevant app-global generated-package facts through core-owned state ports implemented by
+`@svvy/state`. Runtime asks `@svvy/extensions` for the immutable workspace-link plan, applies it,
+and commits workspace-link facts through those state ports; `@svvy/extensions` owns generated
+package content and package-safe link plans.
 
 ## Non-Goals
 

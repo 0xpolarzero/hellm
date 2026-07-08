@@ -3,12 +3,12 @@ import * as Effect from "effect/Effect";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import {
   runtimeCommandStatePortFromStore,
   runtimeReadModelStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import {
   createThreadCurrentTool,
   createThreadEpisodesTool,
@@ -67,7 +67,7 @@ describe("thread state tools", () => {
     };
     const result = await tool.execute("tool-call-2", {});
 
-    expect(result.details! as unknown).toEqual({
+    expect(result.details!.commandFacts as unknown).toEqual({
       threadId: thread.id,
       threadGroupId: thread.threadGroupId,
       workspaceSessionId: thread.sessionId,
@@ -82,8 +82,6 @@ describe("thread state tools", () => {
         resumeWhen: "Signal arrives.",
       },
       pendingReportRequests: [],
-      loadedExtensionIds: ["shell"],
-      availableExtensionIds: ["web"],
       latestEpisode: {
         id: expect.any(String),
         title: "Prior report",
@@ -111,7 +109,7 @@ describe("thread state tools", () => {
 
     const result = await tool.execute("tool-call-1", { status: ["waiting"], limit: 5 });
 
-    expect(result.details!.threads as unknown).toEqual([
+    expect(result.details!.commandFacts!.threads as unknown).toEqual([
       {
         threadId: thread.id,
         threadGroupId: thread.threadGroupId,
@@ -134,9 +132,9 @@ describe("thread state tools", () => {
         },
       },
     ]);
-    expect(JSON.stringify(result.details!)).not.toContain("message");
-    expect(JSON.stringify(result.details!)).not.toContain("workflow summary");
-    expect(JSON.stringify(result.details!)).not.toContain("commandCount");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("message");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("workflow summary");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("commandCount");
     expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
       expect.objectContaining({
         toolName: "thread_list",
@@ -164,10 +162,14 @@ describe("thread state tools", () => {
 
     const result = await tool.execute("tool-call-1", {});
 
-    expect(result.details!.episodes as unknown).toEqual([
+    expect(result.details!.commandFacts!.episodes as unknown).toEqual([
       {
         id: episode.id,
+        sessionId: episode.sessionId,
         threadId: episode.threadId,
+        threadGroupId: thread.threadGroupId,
+        sourceCommandId: episode.sourceCommandId,
+        kind: episode.kind,
         title: "Prior report",
         summary: "Earlier thread result.",
         body: "Full durable report body.",
@@ -250,16 +252,16 @@ describe("thread state tools", () => {
 
     const result = await tool.execute("tool-call-group", {});
 
-    expect(result.details!.threadGroupId as string).toBe(thread.threadGroupId);
-    expect(result.details!.currentThreadId as string).toBe(thread.id);
-    expect(result.details!.threads as unknown).toEqual([
+    expect(result.details!.commandFacts!.threadGroupId as string).toBe(thread.threadGroupId);
+    expect(result.details!.commandFacts!.currentThreadId as string).toBe(thread.id);
+    expect(result.details!.commandFacts!.threads as unknown).toEqual([
       expect.objectContaining({
         threadId: thread.id,
         threadGroupId: thread.threadGroupId,
         objectiveState: "active",
       }),
     ]);
-    expect(JSON.stringify(result.details!)).not.toContain("Full durable report body");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("Full durable report body");
     expect(store.getSessionState(thread.sessionId).commands).toContainEqual(
       expect.objectContaining({
         toolName: "thread_group",

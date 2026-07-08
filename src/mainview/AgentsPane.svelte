@@ -3,7 +3,6 @@
   import { onDestroy, onMount } from "svelte";
   import { flip } from "svelte/animate";
   import {
-    DEFAULT_AGENT_SETTINGS_STATE,
     DEFAULT_WORKFLOW_AGENT_SETTINGS,
     type AgentProfileId,
     type AgentProfileSettings,
@@ -17,7 +16,7 @@
     AgentModelChoice,
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
-  import type { ExtensionUsageState } from "@svvy/extensions";
+  import type { ExtensionUsageState } from "@svvy/core";
   import type { FileBackedSaveMode } from "../shared/file-backed-edit";
   import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";
@@ -800,7 +799,7 @@
     return buildExtensionUsageItems({
       ...input,
       extensionInventoryItems,
-      extensionDefaults: settings?.extensionDefaults ?? DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults,
+      inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
       networkAccess: settings?.appPreferences.networkAccess ?? true,
     });
   }

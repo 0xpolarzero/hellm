@@ -70,7 +70,7 @@ Builtin loaded-extension facades are the preferred surface because they provide:
 
 - typed inputs and outputs
 - extension-scoped documentation
-- command facts and child action capture at app-owned boundaries
+- command facts and child action capture at runtime-owned extension-facade boundaries
 - extension env injection only for the invoked extension command
 - redaction before output is persisted or shown to the model
 
@@ -88,17 +88,17 @@ through `@svvy/runtime` and `@svvy/extensions`, calls the extension handler, and
 `ExtensionRuntimeOperation` items back to `@svvy/runtime`. Runtime applies closed
 `RuntimeEffectRequest` values and immutable `ExtensionExecutionPlan` values in its owned lanes,
 records child command facts, enforces redaction and failure semantics, and commits state through
-runtime-facing `@svvy/state` ports. User TypeScript never receives those internal operation values.
-User `svvyx` extensions do not contribute `execute_typescript` facade objects or declaration
-entries.
+core-owned runtime-facing state ports implemented by `@svvy/state`. User TypeScript never receives
+those internal operation values. User `svvyx` extensions do not contribute `execute_typescript`
+facade objects or declaration entries.
 
 Arbitrary TypeScript side effects that do not go through TypeScript facades are opaque. `svvy`
 records the submitted source, lifecycle, console output, return value, thrown error, and any observed
-workspace changes after the fact. It records exact facts only for app-owned boundaries and must not
-claim exact reads, writes, network requests, child process behavior, or Codex-style sandbox approval
-facts for arbitrary host-side TypeScript. The runtime must not claim that facade child-command
-checks can retroactively make arbitrary host-side TypeScript safe; approval is decided before the
-snippet runs.
+workspace changes after the fact. It records exact facts only for runtime-owned native-tool and
+extension-facade boundaries and must not claim exact reads, writes, network requests, child process
+behavior, or Codex-style sandbox approval facts for arbitrary host-side TypeScript. The runtime must
+not claim that facade child-command checks can retroactively make arbitrary host-side TypeScript
+safe; approval is decided before the snippet runs.
 
 ## Input
 
@@ -108,7 +108,10 @@ type ExecuteTypescriptInput = {
 };
 ```
 
-The submitted TypeScript source is stored as an artifact for the attempt before execution.
+`@svvy/runtime` materializes the submitted TypeScript source as a command-linked artifact before
+execution, computes byte size and digest, and commits metadata through core-owned artifact state
+ports implemented by `@svvy/state`. The extension and generated facade layer do not write artifact
+bytes or metadata directly.
 
 ## Generated Declarations
 
@@ -133,7 +136,7 @@ available-but-not-loaded extensions, or fail-closed runnable user facade example
 Each extension facade is an Incur-compatible per-extension command facade:
 
 ```ts
-extensions["<extensionId>"].run(extensionCommandId, input)
+extensions["<extensionId>"].run(extensionCommandId, input);
 ```
 
 Dot access such as `extensions.artifacts.run(...)` is valid shorthand only for extension ids that
@@ -147,12 +150,16 @@ Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `ou
 The declaration generator must include command map types for each loaded callable TypeScript facade.
 The exact emitted names are implementation details, but they must be scoped to the available
 generated declaration block and must be usable with `Run` helper types from `incur/client`.
+`execute_typescript` snippets must not import generated `@svvyx/workflows` or
+`@svvyx/extensions` packages. Those packages are Smithers/Workflows authoring imports only.
+Runtime callable extension APIs are exposed only through the injected actor-scoped `extensions`
+object.
 
 `incur/client` is an app-provided import available to snippets for public Incur client types and
 errors:
 
 ```ts
-import { Client, Resources, Run } from "incur/client";
+import { Client, Run } from "incur/client";
 ```
 
 Agents should import `Client` from `incur/client` when they need to handle `Client.ClientError`.
@@ -229,7 +236,9 @@ is the only extension-command abstraction available inside snippets.
   current build paths, or generated extension internals. Generated `@svvyx/*` packages are for
   Smithers workflow source and Workflows source-library authoring, not the `execute_typescript`
   runtime surface.
-- Console logs are bounded and recorded as command output or artifacts according to size.
+- Console logs are bounded and recorded as command output after redaction. Runtime owns large
+  log/diagnostic artifact byte materialization and metadata commits; generated facades and extension
+  handlers may return bounded output/facts, but do not materialize artifacts directly.
 - Secret redaction runs before logs, outputs, artifacts, command facts, or transcript text are
   persisted.
 - Extension secrets are never injected into the broad TypeScript execution environment.
@@ -261,8 +270,10 @@ The parent record includes:
 
 Extension facade handlers may return `ExtensionHandlerResult` values with ordered
 `ExtensionRuntimeOperation` items wrapping closed `RuntimeEffectRequest` values for child command
-records. `@svvy/runtime` applies those requests through `@svvy/state` because `svvy` owns that
-boundary. Arbitrary TypeScript host effects do not create authoritative child records.
+records. `@svvy/runtime` applies those requests in runtime-owned lanes through the relevant
+core-owned runtime-facing state ports implemented by `@svvy/state`; it never imports `@svvy/state`
+implementation APIs directly for runtime-owned child record policy. Arbitrary TypeScript host
+effects do not create authoritative child records.
 
 ## Visibility
 
@@ -356,8 +367,8 @@ execute_typescript({
   typescriptCode: `
     const values = [1, 2, 3, 4];
     return { sum: values.reduce((total, value) => total + value, 0) };
-  `
-})
+  `,
+});
 ```
 
 The snippet may use ordinary TypeScript and the generated declarations supplied with the tool. The
@@ -368,8 +379,8 @@ Use `console.log`, `console.info`, `console.warn`, or `console.error` for concis
 not use logs as the main result when returning structured data is clearer.
 
 Arbitrary TypeScript side effects that do not go through TypeScript facades are opaque to product
-state. Use loaded extension facades for app-owned operations that need command facts, redaction,
-env injection, artifacts, or other product-state capture.
+state. Use loaded extension facades for runtime-owned product operations that need command facts,
+redaction, env injection, artifacts, or other product-state capture.
 ````
 
 ### `020-incur-typescript-facades.mdx`
@@ -387,7 +398,7 @@ ordinary repository inspection.
 The public Incur client types and errors live in `incur/client`:
 
 ```ts
-import { Client, Resources, Run } from "incur/client";
+import { Client, Run } from "incur/client";
 ```
 
 `incur/client` is available inside `execute_typescript` snippets. Import `Client` when you need to
@@ -418,8 +429,11 @@ execution and child-command recording; trusted app bootstrap injects extension e
 
 ## Command Maps And Command IDs
 
-Each generated extension facade declaration is typed from that extension's Incur command map. Command IDs are
-full Incur command paths such as `"create"`, `"inspect"`, `"list"`, or `"models list"`.
+Each generated extension facade declaration is typed from the same generated builtin Incur command
+manifest that backs `svvyx <extension-id> ...` dispatch and Extension Managing command-schema
+display. Hand-written facade command maps, duplicated command ids, or separate TypeScript
+declaration strings are not valid sources of truth. Command IDs are full Incur command paths such as
+`"create"`, `"inspect"`, `"list"`, or `"models list"`.
 
 The actual command maps are generated only for the builtin facades available to this actor.
 
@@ -603,8 +617,9 @@ Do not use a structural `IncurClientError` alias. Import `Client` from `incur/cl
 
 ## Streaming
 
-Streaming extension-facade commands are outside the current `execute_typescript` contract. Runtime
-fails closed for streaming user extension commands.
+Streaming extension-facade commands are outside the `execute_typescript` contract. Runtime fails
+closed for any generated facade command whose command contract is streaming, including builtin
+facades.
 
 ## Discovery Resources
 

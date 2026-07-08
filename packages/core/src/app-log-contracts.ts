@@ -247,6 +247,22 @@ export const AppLogRelatedLinkSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("workflow-task-attempt"), id: WorkflowTaskAttemptId }),
 ]);
 export type AppLogRelatedLink = typeof AppLogRelatedLinkSchema.Type;
+export const decodeUnknownAppLogRelatedLinkExit = Schema.decodeUnknownExit(
+  AppLogRelatedLinkSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownAppLogRelatedLinkEffect = Schema.decodeUnknownEffect(
+  AppLogRelatedLinkSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppLogRelatedLinkExit = Schema.encodeExit(
+  AppLogRelatedLinkSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppLogRelatedLinkEffect = Schema.encodeEffect(
+  AppLogRelatedLinkSchema,
+  strictBoundaryParseOptions,
+);
 
 export const AppendAppLogInputSchema = Schema.Struct({
   workspaceId: Schema.optionalKey(WorkspaceId),
@@ -260,6 +276,22 @@ export const AppendAppLogInputSchema = Schema.Struct({
   idempotencyKey: Schema.optionalKey(Schema.String),
 });
 export type AppendAppLogInput = typeof AppendAppLogInputSchema.Type;
+export const decodeUnknownAppendAppLogInputExit = Schema.decodeUnknownExit(
+  AppendAppLogInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownAppendAppLogInputEffect = Schema.decodeUnknownEffect(
+  AppendAppLogInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppendAppLogInputExit = Schema.encodeExit(
+  AppendAppLogInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppendAppLogInputEffect = Schema.encodeEffect(
+  AppendAppLogInputSchema,
+  strictBoundaryParseOptions,
+);
 
 export const AppLogWriteResultValueSchema = Schema.Struct({
   appLogEntryId: AppLogEntryId,
@@ -268,6 +300,22 @@ export type AppLogWriteResultValue = typeof AppLogWriteResultValueSchema.Type;
 
 export const AppLogWriteResultSchema = StateMutationResultSchema(AppLogWriteResultValueSchema);
 export type AppLogWriteResult = StateMutationResult<AppLogWriteResultValue>;
+export const decodeUnknownAppLogWriteResultExit = Schema.decodeUnknownExit(
+  AppLogWriteResultSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownAppLogWriteResultEffect = Schema.decodeUnknownEffect(
+  AppLogWriteResultSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppLogWriteResultExit = Schema.encodeExit(
+  AppLogWriteResultSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeAppLogWriteResultEffect = Schema.encodeEffect(
+  AppLogWriteResultSchema,
+  strictBoundaryParseOptions,
+);
 
 export interface AppLogWritePortService {
   append(input: AppendAppLogInput): Effect.Effect<AppLogWriteResult, StateContractError>;

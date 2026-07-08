@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { serializeComposerAttachmentTextSignature, type RuntimeSubmittedMessage } from "@svvy/core";
+import {
+  serializeComposerAttachmentTextSignature,
+  type AbsolutePath,
+  type AttachmentDisplayName,
+  type Base64String,
+  type MimeType,
+  type RuntimeAttachmentId,
+  type RuntimeSubmittedMessage,
+  type WorkspaceRelativePath,
+} from "@svvy/core";
 import {
   buildPiUserMessageFromRuntimeSubmittedMessage,
   runtimeSubmittedMessagePromptText,
@@ -11,22 +20,22 @@ describe("pi submitted message adapter", () => {
       text: "Inspect this runtime submission.",
       attachments: [
         {
-          id: "attachment_file_01",
+          id: "attachment_file_01" as RuntimeAttachmentId,
           kind: "file",
-          name: "app.ts",
-          path: "/repo/src/app.ts",
-          workspaceRelativePath: "src/app.ts",
-          mimeType: "text/typescript",
+          name: "app.ts" as AttachmentDisplayName,
+          path: "/repo/src/app.ts" as AbsolutePath,
+          workspaceRelativePath: "src/app.ts" as WorkspaceRelativePath,
+          mimeType: "text/typescript" as MimeType,
           sizeBytes: 1234,
         },
         {
-          id: "attachment_image_01",
+          id: "attachment_image_01" as RuntimeAttachmentId,
           kind: "image",
-          name: "screenshot.png",
-          path: "/repo/screenshots/screenshot.png",
-          workspaceRelativePath: "screenshots/screenshot.png",
-          dataBase64: "ZmFrZS1pbWFnZQ==",
-          mimeType: "image/png",
+          name: "screenshot.png" as AttachmentDisplayName,
+          path: "/repo/screenshots/screenshot.png" as AbsolutePath,
+          workspaceRelativePath: "screenshots/screenshot.png" as WorkspaceRelativePath,
+          dataBase64: "ZmFrZS1pbWFnZQ==" as Base64String,
+          mimeType: "image/png" as MimeType,
           sizeBytes: 4321,
         },
       ],
@@ -101,9 +110,9 @@ describe("pi submitted message adapter", () => {
         attachments: [
           {
             kind: "file",
-            name: "app.ts",
-            path: "/repo/src/app.ts",
-            workspaceRelativePath: "src/app.ts",
+            name: "app.ts" as AttachmentDisplayName,
+            path: "/repo/src/app.ts" as AbsolutePath,
+            workspaceRelativePath: "src/app.ts" as WorkspaceRelativePath,
           },
         ],
       }),

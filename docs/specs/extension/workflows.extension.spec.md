@@ -31,6 +31,12 @@ and command-surface contract.
 }
 ```
 
+`typescriptApiEnabled` means an actor-local injected `execute_typescript` declaration may expose
+`extensions.workflows.run(...)` for the `svvyx workflows ...` source-library command family when the
+actor both loads Workflows and has `execute_typescript` available. It does not expose generated
+`@svvyx/workflows` or `@svvyx/extensions` imports, Smithers runtime-control APIs, bridge internals,
+or any broad `svvy` runtime facade.
+
 Default usage:
 
 | Actor kind          | State         |
@@ -47,8 +53,9 @@ loads Workflows into a workflow task agent, it exposes only source-library comma
 valid for that actor. The `runTaskAgent` bridge is not a callable capability inside workflow
 task-agent prompts; it is command-scoped child-process plumbing used by
 `Agents.defineTaskAgent(...)` from Smithers workflow source. Workflows must not expose Smithers
-runtime-control APIs, handler-thread controls, generated `@svvyx/*` package imports, or broad
-`execute_typescript` runtime facades to workflow task agents.
+runtime-control APIs, handler-thread controls, hand-written generated `@svvyx/workflows` or
+`@svvyx/extensions` import guidance/examples, bridge details, or broad `execute_typescript` runtime
+facades to workflow task-agent prompts.
 
 ## Command Family
 
@@ -73,8 +80,9 @@ Rejected command names:
 - `svvyx workflows prompts ...`
 - `svvyx workflows run ...`
 
-Running, resuming, approving, inspecting, or debugging Smithers workflows is Smithers CLI behavior
-through the Shell extension, not Workflows extension behavior.
+Running, resuming, approving, inspecting, or debugging Smithers workflows is official
+`bunx smithers-orchestrator ...` command behavior through the Shell extension, never bare `smithers`
+or `bunx smithers`, and not Workflows extension behavior.
 
 All command results are schema-backed and contain only machine-usable facts:
 
@@ -129,18 +137,25 @@ type WorkflowsModelsListResult = {
 };
 ```
 
-`save` and `build` handlers return an `ExtensionHandlerResult` with a model-facing command result and
-one ordered `operations` item wrapping a closed `generated_packages.refresh` `RuntimeEffectRequest`.
-Runtime applies the request in its generated-package refresh lane by invoking the `@svvy/extensions`
-generated-package service, which writes generated package files and returns build evidence only.
-Runtime records generated-package build/failure facts through core-owned state ports implemented by
-`@svvy/state`. After those generated-package facts commit, runtime schedules workspace-link repair
-for affected acquired workspace runtimes; each repair asks `@svvy/extensions` for an immutable
-workspace/package link plan, applies that plan, and records committed workspace-link facts through
-state ports. Model-facing command results must not include runtime effect payloads, title, summary,
-recommendation, preview content, generated file snippets, runtime scheduler ids, recovery ids, or
-applied workspace link status. Those are read from state read models and generated-package facts
-after runtime applies the effect.
+`save` and `build` both return an `ExtensionHandlerResult` with one model-facing command result plus
+ordered operations, but their runtime effects differ:
+
+- `save` validates the source, target, and overwrite intent, then returns a closed runtime operation
+  for a Workflows source-library write followed by generated-package refresh.
+- `build` returns one ordered `operations` item wrapping a closed `generated_packages.refresh`
+  `RuntimeEffectRequest`.
+
+Runtime applies Workflows source writes in its accepted-operation lane through `@svvy/extensions`,
+then applies generated-package refresh in its generated-package refresh lane by invoking the
+`@svvy/extensions` generated-package service, which writes generated package files and returns build
+evidence only. Runtime records generated-package build/failure facts through core-owned state ports
+implemented by `@svvy/state`. After those generated-package facts commit, runtime schedules
+workspace-link repair for affected acquired workspace runtimes; each repair asks `@svvy/extensions`
+for an immutable workspace/package link plan, applies that plan, and records committed
+workspace-link facts through state ports. Model-facing command results must not include runtime
+effect payloads, title, summary, recommendation, preview content, generated file snippets, runtime
+scheduler ids, recovery ids, or applied workspace link status. Those are read from state read models
+and generated-package facts after runtime applies the effect.
 
 ## `list`
 
@@ -174,8 +189,8 @@ modifying or relying on a reusable export's detailed behavior.
 
 ## `save`
 
-`save` copies or extracts a reusable source item from a workspace path into the app-global Workflows
-source library under `~/.config/svvy/workflows/`.
+`save` requests that runtime copy or extract a reusable source item from a workspace path into the
+app-global Workflows source library under `~/.config/svvy/workflows/`.
 
 Required:
 
@@ -192,11 +207,12 @@ Optional:
 If saving would overwrite an existing source item and `--overwrite` is absent, the command fails
 with `target_exists` and performs no partial write.
 
-After a successful write, `save` returns an `ExtensionHandlerResult` with one model-facing command
-result and one ordered `operations` item wrapping a closed `generated_packages.refresh`
-`RuntimeEffectRequest`. The command result reports the accepted source-library write only; the saved
-export becomes available only after runtime applies the wrapped request and the generated-package
-refresh succeeds.
+The `save` handler validates source, target, kind, export, and overwrite intent, then returns an
+`ExtensionHandlerResult` with one model-facing accepted-intent result and ordered operations for the
+runtime-owned source-library write and generated-package refresh. Runtime performs the write through
+`@svvy/extensions`, then refreshes generated packages. The final source-library write result and
+generated-package facts are runtime-applied facts; the saved export becomes available only after the
+runtime-applied write and generated-package refresh succeed.
 
 Agent saving rules:
 
@@ -213,8 +229,9 @@ agent definitions fail with diagnostics.
 
 `build` is the repair and refresh command for the Workflows source library.
 
-It requests a full generated-package refresh. Runtime applies the internally returned
-`generated_packages.refresh` request at the ordered refresh boundary, where it calls the
+The Workflows extension handler returns one ordered `ExtensionRuntimeOperation` wrapping
+`generated_packages.refresh`. `@svvy/runtime` applies that request at the ordered refresh boundary,
+where it calls the
 `@svvy/extensions` generated-package service to:
 
 1. validate Extension source and ensure current `@svvyx/extensions` output
@@ -224,11 +241,13 @@ It requests a full generated-package refresh. Runtime applies the internally ret
 5. generate `@svvyx/workflows`
 6. return generated-package build evidence
 
-After generated output commits and generated-package facts are recorded through `@svvy/state`,
-`@svvy/runtime` schedules workspace-link repair for acquired workspace runtimes that need
-`.smithers/node_modules/@svvyx/*` links. For each workspace/package pair, runtime asks
-`@svvy/extensions` for a package-safe link plan, applies that plan, coordinates recovery, and records
-committed link facts through `@svvy/state`.
+After `@svvy/extensions` writes generated package files and returns build evidence,
+`@svvy/runtime` records generated-package facts through `RuntimeGeneratedPackageStatePort`,
+implemented by `@svvy/state`. It then schedules workspace-link repair for acquired workspace
+runtimes that need `.smithers/node_modules/@svvyx/*` links. For each workspace/package pair, runtime
+asks `@svvy/extensions` for a package-safe immutable link plan, applies that plan, coordinates
+recovery, and records committed workspace-link facts through the relevant core-owned runtime-facing
+state ports only after the repair worker applies or classifies the link plan.
 
 The command returns structured diagnostics and fails closed. It must not silently generate a partial
 package that drops invalid source items.
@@ -270,8 +289,8 @@ It must not expose a separate workflow runner, Smithers API, Smithers execution 
 broad global `svvy` helper.
 
 That facade is an injected runtime object provided to `execute_typescript`. It is not an
-`@svvyx/workflows` or `@svvyx/extensions` import, and generated `@svvyx/*` packages are forbidden in
-`execute_typescript` snippets.
+`@svvyx/workflows` or `@svvyx/extensions` import, and generated `@svvyx/workflows` and
+`@svvyx/extensions` packages are forbidden in `execute_typescript` snippets.
 
 ## Agent Instructions
 
@@ -314,7 +333,7 @@ const reviewer = Agents.defineTaskAgent({
   id: "reviewerAgent",
   label: "Reviewer",
   provider: "openai",
-  model: "gpt-5.4",
+  model: "<model-id-from-pi-metadata>",
   reasoning: { effort: "medium" },
   instructions: "Review the diff.",
 });
@@ -333,18 +352,14 @@ export default (
 - generated output and workspace `.smithers/node_modules/@svvyx/workflows` /
   `.smithers/node_modules/@svvyx/extensions` links are read-only package-resolution plumbing
 - Smithers execution uses official Smithers CLI commands through Shell, not Workflows commands
-- task-agent execution uses the narrow authenticated `runTaskAgent` bridge available in
-  handler-thread command-scoped environments; that bridge accepts task-agent parameters, required
-  Smithers task-attempt identity `{ runId, nodeId, iteration, attempt }`, optional observed
-  Smithers context `{ run, node, rootDir }`, exactly one prompt source as either a prompt string or a
-  non-empty user/assistant message list, `workspaceSessionId`, and `sourceCommandId`, and returns
-  `{ text, usage?, output? }`
+- Smithers task-agent execution is handled only by generated `@svvyx/workflows` task-agent helpers.
+  Agents should use `Agents.defineTaskAgent(...)` in Smithers workflow source and must not call,
+  construct, inspect, or document the underlying runtime bridge or any workflow/runtime-control API.
 - workflow task-agent overrides import `{ Extensions }` from `@svvyx/extensions` and use
   `Extensions.<id>.id` for identifier-safe ids or `Extensions["<id>"].id` for ids with punctuation;
   bare extension references and generated camel aliases are invalid
-- the task-agent bridge supports concurrent calls, binds each call to one workflow-task-attempt
-  surface, exposes no arbitrary app RPC/shell/settings/orchestrator controls, and does not
-  duplicate Smithers workflow/run state
+- Smithers task-agent execution is handled by `Agents.defineTaskAgent(...)`; agents do not interact
+  with bridge internals
 
 These orchestrator and handler-thread instructions cover only app-global source-library commands,
 generated imports, read-only generated output, and task-agent import usage. They may include the
@@ -369,6 +384,7 @@ Workflows package facts. It is not an extension command and does not scan genera
 read internal build metadata directly.
 
 The extension command output and Workflows pane agree because both derive from generated-package
-facts produced by `@svvy/extensions`, committed through `@svvy/state`, and announced by
-`@svvy/runtime` as typed after-commit notifications. Consumers refetch state read models.
+build evidence produced by `@svvy/extensions` and durable generated-package facts committed by
+`@svvy/runtime` through `RuntimeGeneratedPackageStatePort`. Runtime announces the committed changes
+as typed after-commit notifications. Consumers refetch state read models.
 Source/export links are state read-model fields, not an agent-facing generated package API.

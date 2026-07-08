@@ -77,6 +77,10 @@ describe("RuntimeApprovalStatePort", () => {
             cwd: workspace.cwd,
             command: "bun test",
             commandFamily: "bun",
+            context: {
+              reason: "sandbox_denial_escalation",
+              sandboxDenied: true,
+            },
           });
           const request = requestResult.value;
           const listed = yield* port.listOpenApprovalRequests({ surfacePiSessionId });
@@ -97,6 +101,10 @@ describe("RuntimeApprovalStatePort", () => {
             toolName: "exec_command",
             approvalMode: "user",
             command: "bun test",
+            context: {
+              reason: "sandbox_denial_escalation",
+              sandboxDenied: true,
+            },
             status: "pending",
           });
           expect(listed.map((entry) => entry.requestId)).toEqual([request.requestId]);

@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
+  type NativeToolResult,
+  NativeToolResultSchema,
   PiAdapterError,
-  type JsonValue,
+  strictBoundaryParseOptions,
   type PiRuntimeEvent,
   type PiSessionRef,
   type SurfacePiSessionId,
@@ -9,7 +12,10 @@ import {
   type TurnId,
 } from "@svvy/core";
 
-type PiRuntimeToolResult = Extract<PiRuntimeEvent, { type: "pi.tool_execution.updated" }>["result"];
+const decodeNativeToolResultSync = Schema.decodeUnknownSync(
+  NativeToolResultSchema,
+  strictBoundaryParseOptions,
+);
 
 export type NormalizePiAgentEventInput = {
   readonly session: PiSessionRef;
@@ -22,91 +28,94 @@ export function normalizePiAgentEventToRuntimeEvents(
   input: NormalizePiAgentEventInput,
 ): Effect.Effect<readonly PiRuntimeEvent[], PiAdapterError> {
   return Effect.try({
-    try: () => {
-      const event = readObject(input.event);
-      if (!event) {
-        throw eventDecodeError("unknown", "Pi agent event is not an object.");
-      }
-
-      const type = readString(event.type);
-      switch (type) {
-        case "agent_start":
-        case "turn_start":
-        case "message_start":
-          return [];
-
-        case "message_end":
-          return normalizeMessageEnd(input, event);
-
-        case "message_update":
-          return adaptAssistantMessageEvent(input, event.assistantMessageEvent);
-
-        case "tool_execution_start":
-          return [
-            {
-              ...eventBase(input),
-              type: "pi.tool_execution.started",
-              toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
-              toolName: readRequiredString(event.toolName, type),
-            },
-          ];
-
-        case "tool_execution_update": {
-          const result = readNativeToolResult(event.partialResult, type);
-          return [
-            {
-              ...eventBase(input),
-              type: "pi.tool_execution.updated",
-              toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
-              toolName: readRequiredString(event.toolName, type),
-              result,
-            },
-          ];
-        }
-
-        case "tool_execution_end": {
-          const status = readToolExecutionStatus(event, type);
-          const result =
-            event.result === undefined || (status === "failed" && !isNativeToolResult(event.result))
-              ? undefined
-              : readNativeToolResult(event.result, type);
-          const error =
-            event.error === undefined ? undefined : readRequiredString(event.error, type);
-          return [
-            {
-              ...eventBase(input),
-              type: "pi.tool_execution.finished",
-              toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
-              toolName: readRequiredString(event.toolName, type),
-              status,
-              ...(result ? { result } : {}),
-              ...(error ? { error } : {}),
-            },
-          ];
-        }
-
-        case "agent_end":
-        case "turn_end": {
-          const stopReason = readTurnStopReason(event);
-          return [
-            {
-              ...eventBase(input),
-              type: "pi.turn.finished",
-              status: readTurnStatus(event, type),
-              ...(stopReason ? { stopReason } : {}),
-            },
-          ];
-        }
-
-        default:
-          throw eventDecodeError(type ?? "unknown", "Unknown pi agent event type.");
-      }
-    },
+    try: () => normalizePiAgentEventToRuntimeEventsSync(input),
     catch: (error) =>
       error instanceof PiAdapterError
         ? error
         : eventDecodeError("unknown", error instanceof Error ? error.message : String(error)),
   });
+}
+
+export function normalizePiAgentEventToRuntimeEventsSync(
+  input: NormalizePiAgentEventInput,
+): readonly PiRuntimeEvent[] {
+  const event = readObject(input.event);
+  if (!event) {
+    throw eventDecodeError("unknown", "Pi agent event is not an object.");
+  }
+
+  const type = readString(event.type);
+  switch (type) {
+    case "agent_start":
+    case "turn_start":
+    case "message_start":
+      return [];
+
+    case "message_end":
+      return normalizeMessageEnd(input, event);
+
+    case "message_update":
+      return adaptAssistantMessageEvent(input, event.assistantMessageEvent);
+
+    case "tool_execution_start":
+      return [
+        {
+          ...eventBase(input),
+          type: "pi.tool_execution.started",
+          toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
+          toolName: readRequiredString(event.toolName, type),
+        },
+      ];
+
+    case "tool_execution_update": {
+      const result = readNativeToolResult(event.partialResult, type);
+      return [
+        {
+          ...eventBase(input),
+          type: "pi.tool_execution.updated",
+          toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
+          toolName: readRequiredString(event.toolName, type),
+          result,
+        },
+      ];
+    }
+
+    case "tool_execution_end": {
+      const status = readToolExecutionStatus(event, type);
+      const result =
+        event.result === undefined || (status === "failed" && !isNativeToolResult(event.result))
+          ? undefined
+          : readNativeToolResult(event.result, type);
+      const error = event.error === undefined ? undefined : readRequiredString(event.error, type);
+      return [
+        {
+          ...eventBase(input),
+          type: "pi.tool_execution.finished",
+          toolCallId: readRequiredString(event.toolCallId, type) as ToolCallId,
+          toolName: readRequiredString(event.toolName, type),
+          status,
+          ...(result ? { result } : {}),
+          ...(error ? { error } : {}),
+        },
+      ];
+    }
+
+    case "agent_end":
+    case "turn_end": {
+      const stopReason = readTurnStopReason(event);
+      return [
+        {
+          ...eventBase(input),
+          type: "pi.turn.finished",
+          status: readTurnStatus(event, type),
+          ...(stopReason ? { stopReason } : {}),
+        },
+      ];
+    }
+
+    default:
+      throw eventDecodeError(type ?? "unknown", "Unknown pi agent event type.");
+  }
 }
 
 function adaptAssistantMessageEvent(
@@ -265,22 +274,27 @@ function readToolCall(
   };
 }
 
-function readNativeToolResult(value: unknown, eventType: string): PiRuntimeToolResult {
-  const object = readObject(value);
-  if (!isNativeToolResult(object)) {
+function readNativeToolResult(value: unknown, eventType: string): NativeToolResult {
+  if (!readObject(value)) {
     throw eventDecodeError(eventType, "Tool execution result is not a native tool result.");
   }
-  return {
-    content: object.content as PiRuntimeToolResult["content"],
-    details: toJsonValue(object.details),
-  };
+  try {
+    return decodeNativeToolResultSync(value);
+  } catch {
+    throw eventDecodeError(eventType, "Tool execution result is not a native tool result.");
+  }
 }
 
-function isNativeToolResult(value: unknown): value is Record<string, unknown> & {
-  content: PiRuntimeToolResult["content"];
-} {
-  const object = readObject(value);
-  return !!object && Array.isArray(object.content);
+function isNativeToolResult(value: unknown): boolean {
+  if (!readObject(value)) {
+    return false;
+  }
+  try {
+    decodeNativeToolResultSync(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readToolExecutionStatus(
@@ -386,17 +400,6 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function toJsonValue(value: unknown): JsonValue {
-  if (value === undefined) {
-    return null;
-  }
-  try {
-    return JSON.parse(JSON.stringify(value)) as JsonValue;
-  } catch {
-    return null;
-  }
 }
 
 function eventDecodeError(eventType: string, message: string): PiAdapterError {

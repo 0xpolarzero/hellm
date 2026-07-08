@@ -4,71 +4,75 @@ import * as Schema from "effect/Schema";
 
 import {
   RUNTIME_TURN_DECISIONS,
+  RuntimeApprovalRequestSchema,
   RuntimeEventsInputSchema,
   RuntimeTurnDecisionSchema,
-  decodeAcquireDefaultWorkspaceInput as decodeAcquireDefaultWorkspaceInputRaw,
-  decodeAcquireWorkspaceInput as decodeAcquireWorkspaceInputRaw,
-  decodeAcquireWorkspaceResult as decodeAcquireWorkspaceResultRaw,
-  decodeAuthenticatedRunTaskAgentInput as decodeAuthenticatedRunTaskAgentInputRaw,
-  decodeAbortPromptInput as decodeAbortPromptInputRaw,
-  decodeAnswerRuntimeApprovalInput as decodeAnswerRuntimeApprovalInputRaw,
-  decodeAnswerRuntimeApprovalResult as decodeAnswerRuntimeApprovalResultRaw,
-  decodeAnswerRequestInputInput as decodeAnswerRequestInputInputRaw,
-  decodeAnswerRequestInputResult as decodeAnswerRequestInputResultRaw,
-  decodeCancelCommandInput as decodeCancelCommandInputRaw,
-  decodeCloseSurfaceInput as decodeCloseSurfaceInputRaw,
-  decodeCloseSurfaceResult as decodeCloseSurfaceResultRaw,
-  decodeCommandResultEnvelope as decodeCommandResultEnvelopeRaw,
-  decodeCreateOrchestratorSurfaceInput as decodeCreateOrchestratorSurfaceInputRaw,
-  decodeCreateSurfaceResult as decodeCreateSurfaceResultRaw,
-  decodeCommandResultEnvelopeExit,
-  decodeCreateRequestInputRequest as decodeCreateRequestInputRequestRaw,
-  decodeExtensionExecutionPlan as decodeExtensionExecutionPlanRaw,
-  decodeExtensionExecutionPlanExit,
-  decodeExtensionHandlerResult as decodeExtensionHandlerResultRaw,
-  decodeGeneratedPackagesRefreshResult as decodeGeneratedPackagesRefreshResultRaw,
-  decodeRefreshGeneratedContextRequest as decodeRefreshGeneratedContextRequestRaw,
-  decodeRequestUserInputAnswerDeliveryPayload as decodeRequestUserInputAnswerDeliveryPayloadRaw,
-  decodeRequestUserInputAnswerQueuePayload as decodeRequestUserInputAnswerQueuePayloadRaw,
-  decodeRunExtensionDependencyActionInput as decodeRunExtensionDependencyActionInputRaw,
-  decodeRunExtensionDependencyActionResult as decodeRunExtensionDependencyActionResultRaw,
+  unsafeDecodeAcquireDefaultWorkspaceInputSyncForTestsAndBootstrap as decodeAcquireDefaultWorkspaceInputRaw,
+  unsafeDecodeAcquireWorkspaceInputSyncForTestsAndBootstrap as decodeAcquireWorkspaceInputRaw,
+  unsafeDecodeAcquireWorkspaceResultSyncForTestsAndBootstrap as decodeAcquireWorkspaceResultRaw,
+  unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap as decodeAuthenticatedRunTaskAgentInputRaw,
+  unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap as decodeAbortPromptInputRaw,
+  unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap as decodeAnswerRuntimeApprovalInputRaw,
+  unsafeDecodeAnswerRuntimeApprovalResultSyncForTestsAndBootstrap as decodeAnswerRuntimeApprovalResultRaw,
+  unsafeDecodeAnswerRequestInputInputSyncForTestsAndBootstrap as decodeAnswerRequestInputInputRaw,
+  unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap as decodeAnswerRequestInputResultRaw,
+  unsafeDecodeCancelCommandInputSyncForTestsAndBootstrap as decodeCancelCommandInputRaw,
+  unsafeDecodeCloseSurfaceInputSyncForTestsAndBootstrap as decodeCloseSurfaceInputRaw,
+  unsafeDecodeCloseSurfaceResultSyncForTestsAndBootstrap as decodeCloseSurfaceResultRaw,
+  unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap as decodeCommandResultEnvelopeRaw,
+  unsafeDecodeCreateOrchestratorSurfaceInputSyncForTestsAndBootstrap as decodeCreateOrchestratorSurfaceInputRaw,
+  unsafeDecodeCreateSurfaceResultSyncForTestsAndBootstrap as decodeCreateSurfaceResultRaw,
+  decodeUnknownCommandResultEnvelopeExit,
+  unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap as decodeCreateRequestInputRequestRaw,
+  unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap as decodeExtensionExecutionPlanRaw,
+  decodeUnknownExtensionExecutionPlanExit,
+  decodeUnknownExtensionRuntimeOperationExit,
+  encodeExtensionRuntimeOperationExit,
+  encodeExtensionHandlerResultExit,
+  unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap as decodeExtensionHandlerResultRaw,
+  unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap as decodeExtensionRuntimeOperationRaw,
+  unsafeDecodeGeneratedPackagesRefreshResultSyncForTestsAndBootstrap as decodeGeneratedPackagesRefreshResultRaw,
+  unsafeDecodeRefreshGeneratedContextRequestSyncForTestsAndBootstrap as decodeRefreshGeneratedContextRequestRaw,
+  unsafeDecodeRequestUserInputAnswerDeliveryPayloadSyncForTestsAndBootstrap as decodeRequestUserInputAnswerDeliveryPayloadRaw,
+  unsafeDecodeRequestUserInputAnswerQueuePayloadSyncForTestsAndBootstrap as decodeRequestUserInputAnswerQueuePayloadRaw,
   unsafeDecodeRuntimeEffectRequestSyncForTestsAndBootstrap as decodeRuntimeEffectRequestRaw,
-  decodeRuntimeEvent as decodeRuntimeEventRaw,
-  decodeRuntimeEventError as decodeRuntimeEventErrorRaw,
-  decodeRuntimeEventExit,
-  decodeRuntimeEventsInput as decodeRuntimeEventsInputRaw,
+  unsafeDecodeRuntimeEventSyncForTestsAndBootstrap as decodeRuntimeEventRaw,
+  unsafeDecodeRuntimeEventErrorSyncForTestsAndBootstrap as decodeRuntimeEventErrorRaw,
+  decodeUnknownRuntimeEventExit,
+  unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap as decodeRuntimeEventsInputRaw,
   decodeUnknownRuntimeFacadeErrorContractExit,
   decodeUnknownStateFacadeErrorContractExit,
   unsafeDecodeRuntimeFacadeErrorContractSyncForTestsAndBootstrap,
   unsafeDecodeStateFacadeErrorContractSyncForTestsAndBootstrap,
-  decodeRuntimeSubmittedMessage as decodeRuntimeSubmittedMessageRaw,
-  decodeRuntimeSubmittedMessageExit,
-  decodeOpenSurfaceInput as decodeOpenSurfaceInputRaw,
-  decodeOpenSurfaceResult as decodeOpenSurfaceResultRaw,
-  decodeReleaseWorkspaceInput as decodeReleaseWorkspaceInputRaw,
-  decodeReleaseWorkspaceResult as decodeReleaseWorkspaceResultRaw,
-  decodeSetRequestInputTimerPausedInput as decodeSetRequestInputTimerPausedInputRaw,
-  decodeSourceInvalidationHint as decodeSourceInvalidationHintRaw,
-  decodeSourceReconcileRequest as decodeSourceReconcileRequestRaw,
-  decodeSourceReconcileResult as decodeSourceReconcileResultRaw,
-  decodeStateInvalidationDescriptor as decodeStateInvalidationDescriptorRaw,
-  decodeSteerQueuedMessageInput as decodeSteerQueuedMessageInputRaw,
-  decodeSubmitMessageInput as decodeSubmitMessageInputRaw,
-  decodeSubmitMessageInputExit,
-  decodeSubmitMessageResult as decodeSubmitMessageResultRaw,
+  unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap as decodeRuntimeSubmittedMessageRaw,
+  decodeUnknownRuntimeSubmittedMessageExit,
+  unsafeDecodeOpenSurfaceInputSyncForTestsAndBootstrap as decodeOpenSurfaceInputRaw,
+  unsafeDecodeOpenSurfaceResultSyncForTestsAndBootstrap as decodeOpenSurfaceResultRaw,
+  unsafeDecodeReleaseWorkspaceInputSyncForTestsAndBootstrap as decodeReleaseWorkspaceInputRaw,
+  unsafeDecodeReleaseWorkspaceResultSyncForTestsAndBootstrap as decodeReleaseWorkspaceResultRaw,
+  unsafeDecodeSetRequestInputTimerPausedInputSyncForTestsAndBootstrap as decodeSetRequestInputTimerPausedInputRaw,
+  unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap as decodeSourceInvalidationHintRaw,
+  unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap as decodeApplyCommittedSourceInvalidationEventInputRaw,
+  unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap as decodeSourceReconcileRequestRaw,
+  unsafeDecodeSourceReconcileResultSyncForTestsAndBootstrap as decodeSourceReconcileResultRaw,
+  unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap as decodeStateInvalidationDescriptorRaw,
+  unsafeDecodeSteerQueuedMessageInputSyncForTestsAndBootstrap as decodeSteerQueuedMessageInputRaw,
+  unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap as decodeSubmitMessageInputRaw,
+  decodeUnknownSubmitMessageInputExit,
+  unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap as decodeSubmitMessageResultRaw,
   decodeUnknownSvvyxRuntimeEffectTransportIntentExit,
-  decodeWriteCommandStdinInput as decodeWriteCommandStdinInputRaw,
-  decodeWriteCommandStdinResult as decodeWriteCommandStdinResultRaw,
+  unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap as decodeWriteCommandStdinInputRaw,
+  unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap as decodeWriteCommandStdinResultRaw,
   unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap as decodeRunTaskAgentInputRaw,
   unsafeDecodeRunTaskAgentSourceInputSyncForTestsAndBootstrap as decodeRunTaskAgentSourceInputRaw,
   unsafeDecodeRunTaskAgentResultSyncForTestsAndBootstrap as decodeRunTaskAgentResultRaw,
   unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap as decodeRunTaskAgentErrorRaw,
 } from "./runtime-contracts";
 import {
-  decodeGeneratedPackageBuildInput as decodeGeneratedPackageBuildInputRaw,
-  decodeGeneratedPackageBuildPlanResult as decodeGeneratedPackageBuildPlanResultRaw,
-  decodeGeneratedPackageWorkspaceLinkRepairInput as decodeGeneratedPackageWorkspaceLinkRepairInputRaw,
-  decodeRefreshGeneratedPackagesRequest as decodeRefreshGeneratedPackagesRequestRaw,
+  unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap as decodeGeneratedPackageBuildInputRaw,
+  unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap as decodeGeneratedPackageBuildPlanResultRaw,
+  unsafeDecodeGeneratedPackageWorkspaceLinkRepairInputSyncForTestsAndBootstrap as decodeGeneratedPackageWorkspaceLinkRepairInputRaw,
+  unsafeDecodeRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap as decodeRefreshGeneratedPackagesRequestRaw,
 } from "./generated-package-contracts";
 import { RuntimeEventRebaselineRequired } from "./errors";
 import type {
@@ -80,79 +84,111 @@ import type {
   WorkspaceId,
 } from "./ids";
 import {
-  decodeNativeToolResult as decodeNativeToolResultRaw,
-  decodeNativeToolResultExit,
+  unsafeDecodeNativeToolResultSyncForTestsAndBootstrap as decodeNativeToolResultRaw,
+  decodeUnknownNativeToolResultExit,
 } from "./native-tool-contracts";
 
-const decodeSubmitMessageInput = (input: unknown) => decodeSubmitMessageInputRaw(input);
-const decodeRuntimeEvent = (input: unknown) => decodeRuntimeEventRaw(input);
-const decodeRuntimeEventError = (input: unknown) => decodeRuntimeEventErrorRaw(input);
+const unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSubmitMessageInputRaw(input);
+const unsafeDecodeRuntimeEventSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeRuntimeEventRaw(input);
+const unsafeDecodeRuntimeEventErrorSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeRuntimeEventErrorRaw(input);
 const decodeRuntimeFacadeErrorContract = (input: unknown) =>
   unsafeDecodeRuntimeFacadeErrorContractSyncForTestsAndBootstrap(input);
 const decodeStateFacadeErrorContract = (input: unknown) =>
   unsafeDecodeStateFacadeErrorContractSyncForTestsAndBootstrap(input);
-const decodeRuntimeSubmittedMessage = (input: unknown) => decodeRuntimeSubmittedMessageRaw(input);
+const unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeRuntimeSubmittedMessageRaw(input);
 const unsafeDecodeRuntimeEffectRequestSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRuntimeEffectRequestRaw(input);
-const decodeAbortPromptInput = (input: unknown) => decodeAbortPromptInputRaw(input);
-const decodeSteerQueuedMessageInput = (input: unknown) => decodeSteerQueuedMessageInputRaw(input);
-const decodeRuntimeEventsInput = (input: unknown) => decodeRuntimeEventsInputRaw(input);
-const decodeSubmitMessageResult = (input: unknown) => decodeSubmitMessageResultRaw(input);
-const decodeAcquireWorkspaceInput = (input: unknown) => decodeAcquireWorkspaceInputRaw(input);
-const decodeAcquireDefaultWorkspaceInput = (input: unknown) =>
+const unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeAbortPromptInputRaw(input);
+const unsafeDecodeSteerQueuedMessageInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSteerQueuedMessageInputRaw(input);
+const unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeRuntimeEventsInputRaw(input);
+const unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSubmitMessageResultRaw(input);
+const unsafeDecodeAcquireWorkspaceInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeAcquireWorkspaceInputRaw(input);
+const unsafeDecodeAcquireDefaultWorkspaceInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeAcquireDefaultWorkspaceInputRaw(input);
-const decodeAcquireWorkspaceResult = (input: unknown) => decodeAcquireWorkspaceResultRaw(input);
-const decodeReleaseWorkspaceInput = (input: unknown) => decodeReleaseWorkspaceInputRaw(input);
-const decodeReleaseWorkspaceResult = (input: unknown) => decodeReleaseWorkspaceResultRaw(input);
-const decodeCreateOrchestratorSurfaceInput = (input: unknown) =>
+const unsafeDecodeAcquireWorkspaceResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeAcquireWorkspaceResultRaw(input);
+const unsafeDecodeReleaseWorkspaceInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeReleaseWorkspaceInputRaw(input);
+const unsafeDecodeReleaseWorkspaceResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeReleaseWorkspaceResultRaw(input);
+const unsafeDecodeCreateOrchestratorSurfaceInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeCreateOrchestratorSurfaceInputRaw(input);
-const decodeCreateSurfaceResult = (input: unknown) => decodeCreateSurfaceResultRaw(input);
-const decodeOpenSurfaceInput = (input: unknown) => decodeOpenSurfaceInputRaw(input);
-const decodeOpenSurfaceResult = (input: unknown) => decodeOpenSurfaceResultRaw(input);
-const decodeCloseSurfaceInput = (input: unknown) => decodeCloseSurfaceInputRaw(input);
-const decodeCloseSurfaceResult = (input: unknown) => decodeCloseSurfaceResultRaw(input);
-const decodeCancelCommandInput = (input: unknown) => decodeCancelCommandInputRaw(input);
-const decodeWriteCommandStdinInput = (input: unknown) => decodeWriteCommandStdinInputRaw(input);
-const decodeWriteCommandStdinResult = (input: unknown) => decodeWriteCommandStdinResultRaw(input);
-const decodeStateInvalidationDescriptor = (input: unknown) =>
+const unsafeDecodeCreateSurfaceResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeCreateSurfaceResultRaw(input);
+const unsafeDecodeOpenSurfaceInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeOpenSurfaceInputRaw(input);
+const unsafeDecodeOpenSurfaceResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeOpenSurfaceResultRaw(input);
+const unsafeDecodeCloseSurfaceInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeCloseSurfaceInputRaw(input);
+const unsafeDecodeCloseSurfaceResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeCloseSurfaceResultRaw(input);
+const unsafeDecodeCancelCommandInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeCancelCommandInputRaw(input);
+const unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeWriteCommandStdinInputRaw(input);
+const unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeWriteCommandStdinResultRaw(input);
+const unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap = (input: unknown) =>
   decodeStateInvalidationDescriptorRaw(input);
-const decodeRunExtensionDependencyActionInput = (input: unknown) =>
-  decodeRunExtensionDependencyActionInputRaw(input);
-const decodeRunExtensionDependencyActionResult = (input: unknown) =>
-  decodeRunExtensionDependencyActionResultRaw(input);
-const decodeCommandResultEnvelope = (input: unknown) => decodeCommandResultEnvelopeRaw(input);
-const decodeNativeToolResult = (input: unknown) => decodeNativeToolResultRaw(input);
-const decodeExtensionExecutionPlan = (input: unknown) => decodeExtensionExecutionPlanRaw(input);
-const decodeExtensionHandlerResult = (input: unknown) => decodeExtensionHandlerResultRaw(input);
-const decodeCreateRequestInputRequest = (input: unknown) =>
+const unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeCommandResultEnvelopeRaw(input);
+const unsafeDecodeNativeToolResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeNativeToolResultRaw(input);
+const unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeExtensionExecutionPlanRaw(input);
+const unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeExtensionRuntimeOperationRaw(input);
+const unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeExtensionHandlerResultRaw(input);
+const unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap = (input: unknown) =>
   decodeCreateRequestInputRequestRaw(input);
-const decodeRequestUserInputAnswerQueuePayload = (input: unknown) =>
+const unsafeDecodeRequestUserInputAnswerQueuePayloadSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRequestUserInputAnswerQueuePayloadRaw(input);
-const decodeRequestUserInputAnswerDeliveryPayload = (input: unknown) =>
-  decodeRequestUserInputAnswerDeliveryPayloadRaw(input);
-const decodeAnswerRequestInputInput = (input: unknown) => decodeAnswerRequestInputInputRaw(input);
-const decodeAnswerRequestInputResult = (input: unknown) => decodeAnswerRequestInputResultRaw(input);
-const decodeSetRequestInputTimerPausedInput = (input: unknown) =>
+const unsafeDecodeRequestUserInputAnswerDeliveryPayloadSyncForTestsAndBootstrap = (
+  input: unknown,
+) => decodeRequestUserInputAnswerDeliveryPayloadRaw(input);
+const unsafeDecodeAnswerRequestInputInputSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeAnswerRequestInputInputRaw(input);
+const unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeAnswerRequestInputResultRaw(input);
+const unsafeDecodeSetRequestInputTimerPausedInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeSetRequestInputTimerPausedInputRaw(input);
-const decodeAnswerRuntimeApprovalInput = (input: unknown) =>
+const unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeAnswerRuntimeApprovalInputRaw(input);
-const decodeAnswerRuntimeApprovalResult = (input: unknown) =>
+const unsafeDecodeAnswerRuntimeApprovalResultSyncForTestsAndBootstrap = (input: unknown) =>
   decodeAnswerRuntimeApprovalResultRaw(input);
-const decodeSourceInvalidationHint = (input: unknown) => decodeSourceInvalidationHintRaw(input);
-const decodeSourceReconcileRequest = (input: unknown) => decodeSourceReconcileRequestRaw(input);
-const decodeSourceReconcileResult = (input: unknown) => decodeSourceReconcileResultRaw(input);
-const decodeRefreshGeneratedContextRequest = (input: unknown) =>
+const unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSourceInvalidationHintRaw(input);
+const unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap = (
+  input: unknown,
+) => decodeApplyCommittedSourceInvalidationEventInputRaw(input);
+const unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSourceReconcileRequestRaw(input);
+const unsafeDecodeSourceReconcileResultSyncForTestsAndBootstrap = (input: unknown) =>
+  decodeSourceReconcileResultRaw(input);
+const unsafeDecodeRefreshGeneratedContextRequestSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRefreshGeneratedContextRequestRaw(input);
-const decodeRefreshGeneratedPackagesRequest = (input: unknown) =>
+const unsafeDecodeRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRefreshGeneratedPackagesRequestRaw(input);
-const decodeGeneratedPackageBuildInput = (input: unknown) =>
+const unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeGeneratedPackageBuildInputRaw(input);
-const decodeGeneratedPackagesRefreshResult = (input: unknown) =>
+const unsafeDecodeGeneratedPackagesRefreshResultSyncForTestsAndBootstrap = (input: unknown) =>
   decodeGeneratedPackagesRefreshResultRaw(input);
-const decodeGeneratedPackageBuildPlanResult = (input: unknown) =>
+const unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap = (input: unknown) =>
   decodeGeneratedPackageBuildPlanResultRaw(input);
-const decodeGeneratedPackageWorkspaceLinkRepairInput = (input: unknown) =>
-  decodeGeneratedPackageWorkspaceLinkRepairInputRaw(input);
+const unsafeDecodeGeneratedPackageWorkspaceLinkRepairInputSyncForTestsAndBootstrap = (
+  input: unknown,
+) => decodeGeneratedPackageWorkspaceLinkRepairInputRaw(input);
 const unsafeDecodeRunTaskAgentResultSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRunTaskAgentResultRaw(input);
 const unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap = (input: unknown) =>
@@ -161,7 +197,7 @@ const unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap = (input: unknown) =
   decodeRunTaskAgentInputRaw(input);
 const unsafeDecodeRunTaskAgentSourceInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeRunTaskAgentSourceInputRaw(input);
-const decodeAuthenticatedRunTaskAgentInput = (input: unknown) =>
+const unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap = (input: unknown) =>
   decodeAuthenticatedRunTaskAgentInputRaw(input);
 
 const handlerTarget = {
@@ -246,7 +282,7 @@ describe("@svvy/core runtime contracts", () => {
     const owner = { ownerId: "owner_headless_01", kind: "headless" } as const;
 
     expect(
-      decodeAcquireWorkspaceInput({
+      unsafeDecodeAcquireWorkspaceInputSyncForTestsAndBootstrap({
         cwd: "/repo/svvy",
         owner,
         openReason: "headless",
@@ -258,7 +294,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeAcquireDefaultWorkspaceInput({
+      unsafeDecodeAcquireDefaultWorkspaceInputSyncForTestsAndBootstrap({
         owner,
         openReason: "startup",
       }) as unknown,
@@ -268,7 +304,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeAcquireWorkspaceResult({
+      unsafeDecodeAcquireWorkspaceResultSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         cwd: "/repo/svvy",
         kind: "user",
@@ -288,7 +324,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeReleaseWorkspaceInput({
+      unsafeDecodeReleaseWorkspaceInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         owner,
         releaseReason: "headless-complete",
@@ -300,7 +336,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeReleaseWorkspaceResult({
+      unsafeDecodeReleaseWorkspaceResultSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         released: true,
         remainingOwners: 0,
@@ -316,7 +352,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes runtime surface lifecycle contracts without renderer panel identity", () => {
     expect(
-      decodeCreateOrchestratorSurfaceInput({
+      unsafeDecodeCreateOrchestratorSurfaceInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         title: "Package refactor",
         profileId: "profile_orchestrator",
@@ -330,7 +366,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeCreateSurfaceResult({
+      unsafeDecodeCreateSurfaceResultSyncForTestsAndBootstrap({
         workspaceSessionId: orchestratorTarget.workspaceSessionId,
         surfacePiSessionId: orchestratorTarget.surfacePiSessionId,
         target: orchestratorTarget,
@@ -346,7 +382,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeOpenSurfaceInput({
+      unsafeDecodeOpenSurfaceInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         target: orchestratorTarget,
       }) as unknown,
@@ -356,7 +392,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeOpenSurfaceResult({
+      unsafeDecodeOpenSurfaceResultSyncForTestsAndBootstrap({
         workspaceSessionId: handlerTarget.workspaceSessionId,
         surfacePiSessionId: handlerTarget.surfacePiSessionId,
         target: handlerTarget,
@@ -370,17 +406,19 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeCloseSurfaceInput({
+      unsafeDecodeCloseSurfaceInputSyncForTestsAndBootstrap({
+        workspaceId: "workspace_01",
         target: handlerTarget,
         closeReason: "pane-closed",
       }) as unknown,
     ).toEqual({
+      workspaceId: "workspace_01",
       target: handlerTarget,
       closeReason: "pane-closed",
     });
 
     expect(
-      decodeCloseSurfaceResult({
+      unsafeDecodeCloseSurfaceResultSyncForTestsAndBootstrap({
         target: handlerTarget,
         lifecycle: "idle",
       }) as unknown,
@@ -392,7 +430,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes an orchestrator prompt submission without renderer panel identity", () => {
     expect(
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: {
           workspaceSessionId: "wsess_01",
           surface: "orchestrator",
@@ -426,7 +464,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects prompt submissions with explicit undefined delivery", () => {
     expect(() =>
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: orchestratorTarget,
         message: {
           text: "Refactor the transcript projection and report risks.",
@@ -438,7 +476,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes request-input answer and timer metadata without renderer panel identity", () => {
     expect(
-      decodeAnswerRequestInputInput({
+      unsafeDecodeAnswerRequestInputInputSyncForTestsAndBootstrap({
         surfacePiSessionId: "pi_orch_01",
         requestId: "rui_01",
         questionId: "ruiq_01",
@@ -461,7 +499,7 @@ describe("@svvy/core runtime contracts", () => {
       },
     });
     expect(
-      decodeSetRequestInputTimerPausedInput({
+      unsafeDecodeSetRequestInputTimerPausedInputSyncForTestsAndBootstrap({
         surfacePiSessionId: "pi_orch_01",
         requestId: "rui_01",
         paused: true,
@@ -480,7 +518,7 @@ describe("@svvy/core runtime contracts", () => {
       },
     });
     expect(
-      decodeAnswerRequestInputResult({
+      unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap({
         requestId: "rui_01",
         questionId: "ruiq_01",
         status: "recorded",
@@ -499,7 +537,7 @@ describe("@svvy/core runtime contracts", () => {
       },
     });
     expect(
-      decodeAnswerRequestInputResult({
+      unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap({
         requestId: "rui_01",
         questionId: "ruiq_01",
         status: "duplicate",
@@ -518,13 +556,13 @@ describe("@svvy/core runtime contracts", () => {
       },
     });
     expect(() =>
-      decodeAnswerRequestInputResult({
+      unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap({
         queuedItemId: "queue_01",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeAnswerRequestInputInput({
+      unsafeDecodeAnswerRequestInputInputSyncForTestsAndBootstrap({
         surfacePiSessionId: "pi_orch_01",
         requestId: "rui_01",
         questionId: "ruiq_01",
@@ -538,7 +576,7 @@ describe("@svvy/core runtime contracts", () => {
       }),
     ).toThrow();
     expect(() =>
-      decodeSetRequestInputTimerPausedInput({
+      unsafeDecodeSetRequestInputTimerPausedInputSyncForTestsAndBootstrap({
         surfacePiSessionId: "pi_orch_01",
         requestId: "rui_01",
         paused: false,
@@ -552,7 +590,7 @@ describe("@svvy/core runtime contracts", () => {
   });
 
   it("exposes Exit decoders for non-Effect bridge edges", () => {
-    const success = decodeSubmitMessageInputExit({
+    const success = decodeUnknownSubmitMessageInputExit({
       target: orchestratorTarget,
       message: { text: "Run a focused check." },
       delivery: "queue-only",
@@ -562,7 +600,7 @@ describe("@svvy/core runtime contracts", () => {
       expect(success.value.delivery).toBe("queue-only");
     }
 
-    expect(Exit.isFailure(decodeRuntimeEventExit({ type: "queue.changed" }))).toBe(true);
+    expect(Exit.isFailure(decodeUnknownRuntimeEventExit({ type: "queue.changed" }))).toBe(true);
     expect(
       Exit.isSuccess(
         decodeUnknownRuntimeFacadeErrorContractExit({
@@ -571,13 +609,15 @@ describe("@svvy/core runtime contracts", () => {
         }),
       ),
     ).toBe(true);
-    expect(Exit.isSuccess(decodeCommandResultEnvelopeExit({ status: "succeeded" }))).toBe(true);
-    expect(Exit.isFailure(decodeNativeToolResultExit({ type: "tool_result" }))).toBe(true);
+    expect(Exit.isSuccess(decodeUnknownCommandResultEnvelopeExit({ status: "succeeded" }))).toBe(
+      true,
+    );
+    expect(Exit.isFailure(decodeUnknownNativeToolResultExit({ type: "tool_result" }))).toBe(true);
   });
 
   it("rejects obsolete active-turn steer delivery on runtime submissions", () => {
     expect(() =>
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: orchestratorTarget,
         message: {
           text: "Use this as a steering message.",
@@ -589,7 +629,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects renderer-local fields on the runtime submission contract", () => {
     expect(() =>
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: {
           workspaceSessionId: "wsess_01",
           surface: "orchestrator",
@@ -647,7 +687,7 @@ describe("@svvy/core runtime contracts", () => {
     };
 
     expect(
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: {
           workspaceSessionId: "wsess_01",
           surface: "orchestrator",
@@ -665,7 +705,7 @@ describe("@svvy/core runtime contracts", () => {
         snippetProvenance: [{ mentionId: "mention_1", snippetId: "snippet_1" }],
       },
     });
-    expect(decodeRuntimeSubmittedMessage(message)).toMatchObject({
+    expect(unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap(message)).toMatchObject({
       attachments: [
         { kind: "file", workspaceRelativePath: "src/runtime.ts" },
         { kind: "folder", workspaceRelativePath: "src" },
@@ -673,12 +713,12 @@ describe("@svvy/core runtime contracts", () => {
       ],
       snippetProvenance: [{ mentionId: "mention_1", snippetId: "snippet_1" }],
     });
-    expect(Exit.isSuccess(decodeRuntimeSubmittedMessageExit(message))).toBe(true);
+    expect(Exit.isSuccess(decodeUnknownRuntimeSubmittedMessageExit(message))).toBe(true);
   });
 
   it("rejects transcript arrays and system prompts on submitted messages", () => {
     expect(() =>
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: {
           workspaceSessionId: "wsess_01",
           surface: "orchestrator",
@@ -693,19 +733,19 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects pi-native message fields on standalone runtime submitted messages", () => {
     expect(() =>
-      decodeRuntimeSubmittedMessage({
+      unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap({
         role: "user",
         timestamp: 1,
         content: [{ type: "text", text: "hello" }],
         text: "hello",
       }),
     ).toThrow();
-    expect(Exit.isFailure(decodeRuntimeSubmittedMessageExit({ role: "user" }))).toBe(true);
+    expect(Exit.isFailure(decodeUnknownRuntimeSubmittedMessageExit({ role: "user" }))).toBe(true);
   });
 
   it("rejects the old public thread surface name", () => {
     expect(() =>
-      decodeSubmitMessageInput({
+      unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap({
         target: {
           workspaceSessionId: "wsess_01",
           surface: "thread",
@@ -719,7 +759,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes compact runtime notification events", () => {
     expect(
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "queue.changed",
         eventGenerationId: "runtime-events-generation-01",
         sequence: 7,
@@ -741,7 +781,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects runtime notification events without sequence cursors", () => {
     expect(() =>
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "queue.changed",
         workspaceId: "workspace_01",
         target: workflowTaskTarget,
@@ -753,7 +793,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes typed stream patches and read-model invalidations", () => {
     expect(
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "surface.stream",
         workspaceId: "workspace_01",
         target: orchestratorTarget,
@@ -785,10 +825,84 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeRuntimeEvent({
-        type: "workspace_read_model.changed",
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "surface.stream",
+        workspaceId: "workspace_01",
+        target: orchestratorTarget,
         eventGenerationId: "runtime-events-generation-01",
         sequence: 43,
+        streamGenerationId: "surface-stream-generation-01",
+        streamSequence: 10,
+        patch: {
+          type: "stream_reset",
+          reason: "rebaseline_required",
+          latestStreamSequence: 9,
+        },
+      }) as unknown,
+    ).toMatchObject({
+      type: "surface.stream",
+      patch: {
+        type: "stream_reset",
+        latestStreamSequence: 9,
+      },
+    });
+
+    expect(
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "command.changed",
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 44,
+        workspaceId: "workspace_01",
+        workspaceSessionId: "wsess_01",
+        commandId: "cmd_01",
+        change: { kind: "artifact_linked" },
+      }) as unknown,
+    ).toMatchObject({
+      type: "command.changed",
+      change: { kind: "artifact_linked" },
+    });
+
+    expect(() =>
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "surface.stream",
+        workspaceId: "workspace_01",
+        target: orchestratorTarget,
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 45,
+        streamGenerationId: "surface-stream-generation-01",
+        streamSequence: 11,
+        patch: {
+          type: "assistant_text_delta",
+          messageId: "msg_01",
+          contentIndex: -1,
+          delta: "Invalid negative content index.",
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "surface.stream",
+        workspaceId: "workspace_01",
+        target: orchestratorTarget,
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 46,
+        streamGenerationId: "surface-stream-generation-01",
+        streamSequence: 12,
+        patch: {
+          type: "user_message_committed",
+          messageId: "msg_02",
+          text: "Invalid date.",
+          submittedAt: "not-a-date",
+        },
+      }),
+    ).toThrow();
+
+    expect(
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "workspace_read_model.changed",
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 47,
         workspaceId: "workspace_01",
         invalidation: {
           model: "commandInspector",
@@ -798,7 +912,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toEqual({
       type: "workspace_read_model.changed",
       eventGenerationId: "runtime-events-generation-01",
-      sequence: 43,
+      sequence: 47,
       workspaceId: "workspace_01",
       invalidation: {
         model: "commandInspector",
@@ -809,7 +923,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes reusable state invalidation descriptors without duplicating read models", () => {
     expect(
-      decodeStateInvalidationDescriptor({
+      unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
         scope: "workspace",
         workspaceId: "workspace_01",
         invalidation: {
@@ -827,7 +941,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeStateInvalidationDescriptor({
+      unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
         scope: "app",
         invalidation: {
           model: "extensions",
@@ -842,8 +956,22 @@ describe("@svvy/core runtime contracts", () => {
       },
     });
 
+    expect(
+      unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
+        scope: "app",
+        invalidation: {
+          model: "appLogs",
+        },
+      }) as unknown,
+    ).toEqual({
+      scope: "app",
+      invalidation: {
+        model: "appLogs",
+      },
+    });
+
     expect(() =>
-      decodeStateInvalidationDescriptor({
+      unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
         scope: "workspace",
         workspaceId: "workspace_01",
         invalidation: { model: "surface", ids: ["pi_handler_01"] },
@@ -854,7 +982,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes runtime source invalidation requests without source previews", () => {
     expect(
-      decodeSourceInvalidationHint({
+      unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap({
         scope: { kind: "app-global" },
         domain: "extensions",
         path: "/tmp/svvy/extensions/web/index.ts",
@@ -868,7 +996,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeSourceReconcileRequest({
+      unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap({
         scope: { kind: "workspace", workspaceId: "workspace_01" },
         domains: ["external_instructions", "host_snippets"],
         reason: "watcher-debounce",
@@ -880,7 +1008,37 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeSourceReconcileResult({
+      unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap({
+        scope: { kind: "app-global" },
+        event: {
+          domains: ["extensions"],
+          reason: "watcher-debounce",
+          sourceFingerprints: {
+            extensions: "extensions_fingerprint",
+            workflows: "workflows_fingerprint",
+            external_instructions: "external_instructions_fingerprint",
+            host_snippets: "host_snippets_fingerprint",
+          },
+          afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+        },
+      }) as unknown,
+    ).toEqual({
+      scope: { kind: "app-global" },
+      event: {
+        domains: ["extensions"],
+        reason: "watcher-debounce",
+        sourceFingerprints: {
+          extensions: "extensions_fingerprint",
+          workflows: "workflows_fingerprint",
+          external_instructions: "external_instructions_fingerprint",
+          host_snippets: "host_snippets_fingerprint",
+        },
+        afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+      },
+    });
+
+    expect(
+      unsafeDecodeSourceReconcileResultSyncForTestsAndBootstrap({
         changedReadModelCount: 1,
         generatedPackageRefreshes: [],
         recoveryWorkIds: [],
@@ -892,28 +1050,51 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeSourceInvalidationHint({
+      unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap({
+        scope: { kind: "workspace", workspaceId: "workspace_01" },
+        event: {
+          domains: ["extensions"],
+          reason: "watcher-debounce",
+          sourceFingerprints: { extensions: "extensions_fingerprint" },
+          afterCommit: [],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap({
+        scope: { kind: "app-global" },
+        event: {
+          domains: ["extensions"],
+          reason: "watcher-debounce",
+          sourceFingerprints: { extensions: "extensions_fingerprint" },
+          afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+          previewText: "renderer-only preview",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap({
         scope: { kind: "app-global" },
         domain: "external_instructions",
         path: "/tmp/repo/AGENTS.md",
       }),
     ).toThrow();
     expect(() =>
-      decodeSourceInvalidationHint({
+      unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap({
         scope: { kind: "workspace", workspaceId: "workspace_01" },
         domain: "extensions",
         path: "/tmp/svvy/extensions/web/index.ts",
       }),
     ).toThrow();
     expect(() =>
-      decodeSourceReconcileRequest({
+      unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap({
         scope: { kind: "app-global" },
         domains: ["extensions", "host_snippets"],
         reason: "manual",
       }),
     ).toThrow();
     expect(() =>
-      decodeSourceReconcileRequest({
+      unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap({
         scope: { kind: "workspace", workspaceId: "workspace_01" },
         domains: ["workflows"],
         reason: "manual",
@@ -921,7 +1102,16 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSourceInvalidationHint({
+      unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap({
+        scope: { kind: "app-global" },
+        domain: "extensions",
+        path: "/tmp/svvy/extensions/web/index.ts",
+        observedAt: "not-an-iso-date",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap({
         scope: { kind: "app-global" },
         domain: "extensions",
         path: "/tmp/svvy/extensions/web/index.ts",
@@ -932,7 +1122,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes explicit generated refresh requests through reusable core contracts", () => {
     expect(
-      decodeRefreshGeneratedContextRequest({
+      unsafeDecodeRefreshGeneratedContextRequestSyncForTestsAndBootstrap({
         scope: "workspace",
         workspaceId: "workspace_01",
         reason: "extension-source-changed",
@@ -944,7 +1134,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeRefreshGeneratedPackagesRequest({
+      unsafeDecodeRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap({
         scope: "app-global",
         packages: ["@svvyx/extensions", "@svvyx/workflows"],
         reason: "source-changed",
@@ -959,33 +1149,26 @@ describe("@svvy/core runtime contracts", () => {
       recoveryWorkId: "recovery_generated_refresh_01",
     });
 
-    expect(
-      decodeRefreshGeneratedPackagesRequest({
+    expect(() =>
+      unsafeDecodeRefreshGeneratedPackagesRequestSyncForTestsAndBootstrap({
         scope: "workspace-link-repair",
         workspaceId: "workspace_generated_link_repair_01",
         packages: ["@svvyx/extensions"],
         reason: "startup-recovery",
         sourceCommandId: "cmd_generated_link_01",
         recoveryWorkId: "recovery_generated_link_01",
-      }) as unknown,
-    ).toEqual({
-      scope: "workspace-link-repair",
-      workspaceId: "workspace_generated_link_repair_01",
-      packages: ["@svvyx/extensions"],
-      reason: "startup-recovery",
-      sourceCommandId: "cmd_generated_link_01",
-      recoveryWorkId: "recovery_generated_link_01",
-    });
+      }),
+    ).toThrow();
 
     expect(
-      decodeGeneratedPackageBuildInput({
+      unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap({
         packages: ["@svvyx/extensions"],
       }) as unknown,
     ).toEqual({
       packages: ["@svvyx/extensions"],
     });
     expect(() =>
-      decodeGeneratedPackageBuildInput({
+      unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap({
         packages: ["@svvyx/extensions"],
         scope: "app-global",
         reason: "source-changed",
@@ -993,9 +1176,14 @@ describe("@svvy/core runtime contracts", () => {
         recoveryWorkId: "recovery_generated_refresh_01",
       }),
     ).toThrow();
+    expect(() =>
+      unsafeDecodeGeneratedPackageBuildInputSyncForTestsAndBootstrap({
+        packages: ["@svvyx/unknown"],
+      }),
+    ).toThrow();
 
     expect(
-      decodeGeneratedPackagesRefreshResult({
+      unsafeDecodeGeneratedPackagesRefreshResultSyncForTestsAndBootstrap({
         scope: "app-global",
         packages: [
           {
@@ -1021,7 +1209,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeGeneratedPackageBuildPlanResult({
+      unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap({
         packages: [
           {
             packageName: "@svvyx/extensions",
@@ -1053,14 +1241,14 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeGeneratedPackageBuildPlanResult({
+      unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap({
         packages: [],
         workspaceLinkRepairPlans: [],
       }),
     ).toThrow();
 
     expect(
-      decodeGeneratedPackageWorkspaceLinkRepairInput({
+      unsafeDecodeGeneratedPackageWorkspaceLinkRepairInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01" as WorkspaceId,
         packageName: "@svvyx/extensions",
       }),
@@ -1070,18 +1258,24 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeRefreshGeneratedContextRequest({
+      unsafeDecodeRefreshGeneratedContextRequestSyncForTestsAndBootstrap({
         scope: "target",
         target: workflowTaskTarget,
         reason: "load-extension",
         generatedPromptPreview: "not a contract field",
       }),
     ).toThrow();
+    expect(() =>
+      unsafeDecodeGeneratedPackageWorkspaceLinkRepairInputSyncForTestsAndBootstrap({
+        workspaceId: "workspace_01" as WorkspaceId,
+        packageName: "@svvyx/unknown",
+      }),
+    ).toThrow();
   });
 
   it("rejects surface stream events without target-local stream sequence cursors", () => {
     expect(() =>
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "surface.stream",
         workspaceId: "workspace_01",
         target: orchestratorTarget,
@@ -1098,7 +1292,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes runtime event subscription inputs with app-event replay opt-in", () => {
     expect(
-      decodeRuntimeEventsInput({
+      unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         afterSequence: 120,
         includeAppEvents: true,
@@ -1120,7 +1314,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects renderer-only fields on runtime event subscriptions", () => {
     expect(() =>
-      decodeRuntimeEventsInput({
+      unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap({
         workspaceId: "workspace_01",
         afterSequence: 120,
         dockviewPanelId: "primary-transcript",
@@ -1129,7 +1323,7 @@ describe("@svvy/core runtime contracts", () => {
   });
 
   it("decodes runtime event rebaseline errors with exact generation and read-model bounds", () => {
-    const error = decodeRuntimeEventError({
+    const error = unsafeDecodeRuntimeEventErrorSyncForTestsAndBootstrap({
       _tag: "RuntimeEventRebaselineRequired",
       reason: "stale-cursor",
       requestedAfterSequence: 12,
@@ -1261,6 +1455,19 @@ describe("@svvy/core runtime contracts", () => {
           committedAt: "2026-06-21T12:34:56.789Z",
           stateRevision: 42,
         },
+        notificationError: {
+          type: "state-command-post-commit-notification-error",
+          operation: "stateCommands.appPreferences.update",
+          reason: "publication-failed",
+          receipt: {
+            clientRequestId: "settings-save-01",
+            outcome: "applied",
+            committedAt: "2026-06-21T12:34:56.789Z",
+            stateRevision: 42,
+          },
+          message: "Notification bus unavailable.",
+          affectedReadModels: [{ scope: "app", invalidation: { model: "settings" } }],
+        },
         message: "Committed state, but notification publication failed.",
         diagnosticAppLogEntryId: "app-log-entry-01",
       }) as unknown,
@@ -1272,6 +1479,19 @@ describe("@svvy/core runtime contracts", () => {
         outcome: "applied",
         committedAt: "2026-06-21T12:34:56.789Z" as IsoDateTimeString,
         stateRevision: 42,
+      },
+      notificationError: {
+        type: "state-command-post-commit-notification-error",
+        operation: "stateCommands.appPreferences.update",
+        reason: "publication-failed",
+        receipt: {
+          clientRequestId: "settings-save-01",
+          outcome: "applied",
+          committedAt: "2026-06-21T12:34:56.789Z" as IsoDateTimeString,
+          stateRevision: 42,
+        },
+        message: "Notification bus unavailable.",
+        affectedReadModels: [{ scope: "app", invalidation: { model: "settings" } }],
       },
       message: "Committed state, but notification publication failed.",
       diagnosticAppLogEntryId: "app-log-entry-01" as AppLogEntryId,
@@ -1298,7 +1518,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes cancelled turn notifications", () => {
     expect(
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "turn.changed",
         eventGenerationId: "runtime-events-generation-01",
         sequence: 44,
@@ -1320,7 +1540,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes app-scoped and workspace-scoped recovery events without duplicated identity", () => {
     expect(
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "runtime.recovery",
         eventGenerationId: "runtime-events-generation-01",
         sequence: 50,
@@ -1340,7 +1560,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "runtime.recovery",
         eventGenerationId: "runtime-events-generation-01",
         sequence: 51,
@@ -1358,7 +1578,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeRuntimeEvent({
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
         type: "runtime.recovery",
         eventGenerationId: "runtime-events-generation-01",
         sequence: 52,
@@ -1370,51 +1590,9 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
   });
 
-  it("decodes runtime dependency-action command requests and results", () => {
-    expect(
-      decodeRunExtensionDependencyActionInput({
-        scope: {
-          kind: "app-global",
-          originWorkspaceId: "workspace_01",
-        },
-        extensionId: "web",
-        requirementId: "tinyfish",
-        action: "install",
-        targetVersion: "0.1.6",
-        clientSubmission: {
-          source: "desktop",
-          correlationId: "extension-requirement-row",
-        },
-      }) as unknown,
-    ).toEqual({
-      scope: {
-        kind: "app-global",
-        originWorkspaceId: "workspace_01",
-      },
-      extensionId: "web",
-      requirementId: "tinyfish",
-      action: "install",
-      targetVersion: "0.1.6",
-      clientSubmission: {
-        source: "desktop",
-        correlationId: "extension-requirement-row",
-      },
-    });
-
-    expect(
-      decodeRunExtensionDependencyActionResult({
-        commandId: "cmd_dependency_01",
-        status: "queued",
-      }) as unknown,
-    ).toEqual({
-      commandId: "cmd_dependency_01",
-      status: "queued",
-    });
-  });
-
   it("decodes runtime command cancellation requests without duplicating workspace state", () => {
     expect(
-      decodeCancelCommandInput({
+      unsafeDecodeCancelCommandInputSyncForTestsAndBootstrap({
         commandId: "cmd_cancel_01",
         reason: "User clicked cancel.",
         clientSubmission: {
@@ -1434,7 +1612,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes runtime approval answers without command previews or workspace snapshots", () => {
     expect(
-      decodeAnswerRuntimeApprovalInput({
+      unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap({
         approvalId: "approval_01",
         decision: "approved",
         reason: "Allowed by the user.",
@@ -1454,7 +1632,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeAnswerRuntimeApprovalResult({
+      unsafeDecodeAnswerRuntimeApprovalResultSyncForTestsAndBootstrap({
         approvalId: "approval_01",
         commandId: "cmd_approval_01",
         status: "approved",
@@ -1466,14 +1644,14 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeAnswerRuntimeApprovalInput({
+      unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap({
         approvalId: "approval_01",
         approved: true,
       }),
     ).toThrow();
 
     expect(() =>
-      decodeAnswerRuntimeApprovalResult({
+      unsafeDecodeAnswerRuntimeApprovalResultSyncForTestsAndBootstrap({
         approvalId: "approval_01",
         commandId: "cmd_approval_01",
         status: "approved",
@@ -1485,7 +1663,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes write-stdin command requests and results without shell command payloads", () => {
     expect(
-      decodeWriteCommandStdinInput({
+      unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         text: "y\n",
         clientSubmission: {
@@ -1503,7 +1681,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "accepted",
         acceptedBytes: 2,
@@ -1516,7 +1694,7 @@ describe("@svvy/core runtime contracts", () => {
 
     for (const status of ["stdin_closed", "not_running", "already_terminal"] as const) {
       expect(
-        decodeWriteCommandStdinResult({
+        unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
           commandId: "cmd_interactive_01",
           status,
         }) as unknown,
@@ -1527,27 +1705,27 @@ describe("@svvy/core runtime contracts", () => {
     }
 
     expect(() =>
-      decodeWriteCommandStdinInput({
+      unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         input: "y\n",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "accepted",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "stdin_closed",
         acceptedBytes: 0,
@@ -1555,7 +1733,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "accepted",
         acceptedBytes: 1.5,
@@ -1563,7 +1741,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "accepted",
         acceptedBytes: -1,
@@ -1571,7 +1749,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeWriteCommandStdinResult({
+      unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap({
         commandId: "cmd_interactive_01",
         status: "accepted",
         acceptedBytes: 2,
@@ -1582,7 +1760,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes prompt abort, queue steer, and submit result bridge contracts", () => {
     expect(
-      decodeAbortPromptInput({
+      unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         mode: "queued",
         queuedMessageId: "queue_abort_01",
@@ -1596,7 +1774,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeAbortPromptInput({
+      unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         mode: "active-turn",
         turnId: "turn_abort_01",
@@ -1610,7 +1788,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeAbortPromptInput({
+      unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         mode: "all-for-surface",
         reason: "User clicked stop.",
@@ -1622,7 +1800,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeSteerQueuedMessageInput({
+      unsafeDecodeSteerQueuedMessageInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         queuedMessageId: "queue_steer_01",
       }) as unknown,
@@ -1632,7 +1810,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeSubmitMessageResult({
+      unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap({
         queuedMessageId: "queue_result_01",
         target: orchestratorTarget,
         status: "queued",
@@ -1656,7 +1834,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeSubmitMessageResult({
+      unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap({
         queuedMessageId: "queue_result_01",
         target: orchestratorTarget,
         status: "queued",
@@ -1672,7 +1850,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects renderer-only fields on prompt abort, queue steer, and submit result contracts", () => {
     expect(() =>
-      decodeAbortPromptInput({
+      unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         mode: "queued",
         queuedMessageId: "queue_abort_01",
@@ -1682,7 +1860,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeAbortPromptInput({
+      unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         queuedMessageId: "queue_abort_01",
         reason: "User clicked stop.",
@@ -1690,7 +1868,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSteerQueuedMessageInput({
+      unsafeDecodeSteerQueuedMessageInputSyncForTestsAndBootstrap({
         target: handlerTarget,
         queuedMessageId: "queue_steer_01",
         delivery: "steer",
@@ -1698,7 +1876,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSubmitMessageResult({
+      unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap({
         queuedMessageId: "queue_result_01",
         target: orchestratorTarget,
         status: "queued",
@@ -1707,7 +1885,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSubmitMessageResult({
+      unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap({
         queuedMessageId: "queue_result_01",
         turnId: null,
         target: orchestratorTarget,
@@ -1716,23 +1894,11 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeSubmitMessageResult({
+      unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap({
         queuedMessageId: "queue_result_02",
         turnId: "turn_result_02",
         target: orchestratorTarget,
         status: "running",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects renderer-only fields on dependency-action command requests", () => {
-    expect(() =>
-      decodeRunExtensionDependencyActionInput({
-        extensionId: "web",
-        requirementId: "tinyfish",
-        action: "install",
-        targetVersion: "0.1.6",
-        panelId: "extensions-pane-row",
       }),
     ).toThrow();
   });
@@ -2110,7 +2276,7 @@ describe("@svvy/core runtime contracts", () => {
                         id: "reviewer",
                         label: "Reviewer",
                         provider: "openai",
-                        model: "gpt-5.4",
+                        model: "provider-model-fixture",
                         reasoning: { effort: "high" },
                         instructions: "Review the focused implementation.",
                       },
@@ -2238,7 +2404,7 @@ describe("@svvy/core runtime contracts", () => {
               id: "reviewer",
               label: "Reviewer",
               provider: "openai",
-              model: "gpt-5.4",
+              model: "provider-model-fixture",
               reasoning: { effort: "high" },
               instructions: "Review the focused implementation.",
             },
@@ -2267,7 +2433,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewer",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "high" },
         instructions: "Review the focused implementation.",
       },
@@ -2350,7 +2516,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes request-input answer queue and agent delivery payloads without duplicated state", () => {
     expect(
-      decodeRequestUserInputAnswerQueuePayload({
+      unsafeDecodeRequestUserInputAnswerQueuePayloadSyncForTestsAndBootstrap({
         kind: "request_user_input_answer",
         requestId: "rui_01",
         questionId: "ruiq_01",
@@ -2366,7 +2532,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeRequestUserInputAnswerDeliveryPayload({
+      unsafeDecodeRequestUserInputAnswerDeliveryPayloadSyncForTestsAndBootstrap({
         type: "request_user_input.answer",
         title: "CI scope",
         question: "Should CI run only unit checks or the full suite?",
@@ -2398,7 +2564,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects internal ids and metadata on request-input answer delivery payloads", () => {
     expect(() =>
-      decodeRequestUserInputAnswerDeliveryPayload({
+      unsafeDecodeRequestUserInputAnswerDeliveryPayloadSyncForTestsAndBootstrap({
         type: "request_user_input.answer",
         title: "CI scope",
         question: "Should CI run only unit checks or the full suite?",
@@ -2437,7 +2603,7 @@ describe("@svvy/core runtime contracts", () => {
               id: "reviewer",
               label: "Reviewer",
               provider: "openai",
-              model: "gpt-5.4",
+              model: "provider-model-fixture",
               reasoning: { effort: "high" },
               instructions: "Review the focused implementation.",
             },
@@ -2520,7 +2686,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes direct request-input creation requests with structural question variants", () => {
     expect(
-      decodeCreateRequestInputRequest({
+      unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
         mode: "blocking",
@@ -2586,7 +2752,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects request-input creation requests with explicit undefined timeout", () => {
     expect(() =>
-      decodeCreateRequestInputRequest({
+      unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
         mode: "blocking",
@@ -2606,6 +2772,39 @@ describe("@svvy/core runtime contracts", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  it("rejects request-input creation timeout durations that are not positive finite milliseconds", () => {
+    const baseInput = {
+      target: handlerTarget,
+      sourceCommandId: "cmd_request_01",
+      mode: "blocking",
+      questions: [
+        {
+          title: "Verification scope",
+          question: "Which verification should run before handoff?",
+          options: [
+            {
+              label: "Focused tests",
+              description: "Run the package contract tests only.",
+              recommended: true,
+            },
+          ],
+        },
+      ],
+    } as const;
+
+    for (const durationMs of [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      expect(() =>
+        unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
+          ...baseInput,
+          timeout: {
+            enabled: true,
+            durationMs,
+          },
+        }),
+      ).toThrow();
+    }
   });
 
   it("rejects request-input creation questions with caller-provided generated ids", () => {
@@ -2708,7 +2907,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects request-input choice options with explicit false recommendation flags", () => {
     expect(() =>
-      decodeCreateRequestInputRequest({
+      unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
         mode: "nonblocking",
@@ -2832,7 +3031,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects command result envelope fields that are not part of the stable contract", () => {
     expect(() =>
-      decodeCommandResultEnvelope({
+      unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap({
         stdout: "created artifact_01",
         summary: "Created the evidence artifact.",
         commandFacts: {
@@ -2846,7 +3045,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeCommandResultEnvelope({
+      unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap({
         stderr: "full stderr belongs in command output events",
       }),
     ).toThrow();
@@ -2854,7 +3053,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects invalid command fact envelopes", () => {
     expect(() =>
-      decodeCommandResultEnvelope({
+      unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap({
         status: "succeeded",
         commandFacts: "artifact.created",
       }),
@@ -2863,7 +3062,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("decodes native tool results with optional command details", () => {
     expect(
-      decodeNativeToolResult({
+      unsafeDecodeNativeToolResultSyncForTestsAndBootstrap({
         content: [{ type: "text", text: "Created artifact_01" }],
       }),
     ).toEqual({
@@ -2871,7 +3070,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(
-      decodeNativeToolResult({
+      unsafeDecodeNativeToolResultSyncForTestsAndBootstrap({
         content: [{ type: "text", text: "Created artifact_01" }],
         details: {
           status: "succeeded",
@@ -2895,7 +3094,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeNativeToolResult({
+      unsafeDecodeNativeToolResultSyncForTestsAndBootstrap({
         content: [{ type: "text", text: "Created artifact_01" }],
         details: {
           status: "succeeded",
@@ -2905,7 +3104,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeNativeToolResult({
+      unsafeDecodeNativeToolResultSyncForTestsAndBootstrap({
         content: [{ type: "text", text: "Created artifact_01" }],
         details: {
           status: "succeeded",
@@ -2935,7 +3134,7 @@ describe("@svvy/core runtime contracts", () => {
     } as const;
 
     expect(
-      decodeExtensionHandlerResult({
+      unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap({
         result: {
           content: [{ type: "text", text: "Queued handler follow-up." }],
           details: {
@@ -2974,6 +3173,42 @@ describe("@svvy/core runtime contracts", () => {
       ],
     });
 
+    const runtimeEffectOperation = {
+      kind: "runtime_effect",
+      request: queueInsertRequest,
+    } as const;
+    const executionPlanOperation = {
+      kind: "execution_plan",
+      plan: childProcessExecutionPlan,
+    } as const;
+
+    const decodedRuntimeEffectOperation =
+      unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap(runtimeEffectOperation);
+    const decodedExecutionPlanOperation =
+      unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap(executionPlanOperation);
+    const decodedHandlerResult = unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap({
+      result: {
+        content: [{ type: "text", text: "Queued handler follow-up." }],
+        details: {
+          status: "succeeded",
+          summary: "Queued a handler follow-up.",
+        },
+      },
+      operations: [runtimeEffectOperation, executionPlanOperation],
+    });
+
+    expect(decodedRuntimeEffectOperation as unknown).toEqual(runtimeEffectOperation);
+    expect(Exit.isSuccess(decodeUnknownExtensionRuntimeOperationExit(executionPlanOperation))).toBe(
+      true,
+    );
+    expect(Exit.isSuccess(encodeExtensionRuntimeOperationExit(decodedRuntimeEffectOperation))).toBe(
+      true,
+    );
+    expect(Exit.isSuccess(encodeExtensionRuntimeOperationExit(decodedExecutionPlanOperation))).toBe(
+      true,
+    );
+    expect(Exit.isSuccess(encodeExtensionHandlerResultExit(decodedHandlerResult))).toBe(true);
+
     for (const [field, value] of [
       [
         "runtimeEffects",
@@ -3004,7 +3239,7 @@ describe("@svvy/core runtime contracts", () => {
       ["workspaceLinkWrites", []],
     ] as const) {
       expect(() =>
-        decodeExtensionHandlerResult({
+        unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap({
           result: {
             details: { status: "succeeded" },
           },
@@ -3019,7 +3254,7 @@ describe("@svvy/core runtime contracts", () => {
       [{ kind: "unknown", request: queueInsertRequest }],
     ]) {
       expect(() =>
-        decodeExtensionHandlerResult({
+        unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap({
           result: {
             details: { status: "succeeded" },
           },
@@ -3030,18 +3265,22 @@ describe("@svvy/core runtime contracts", () => {
   });
 
   it("decodes immutable extension execution plans for runtime-owned work", () => {
-    expect(decodeExtensionExecutionPlan(childProcessExecutionPlan) as unknown).toEqual(
-      childProcessExecutionPlan,
-    );
-    expect(decodeExtensionExecutionPlan(applyPatchExecutionPlan) as unknown).toEqual(
-      applyPatchExecutionPlan,
-    );
+    expect(
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap(
+        childProcessExecutionPlan,
+      ) as unknown,
+    ).toEqual(childProcessExecutionPlan);
+    expect(
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap(
+        applyPatchExecutionPlan,
+      ) as unknown,
+    ).toEqual(applyPatchExecutionPlan);
 
-    const success = decodeExtensionExecutionPlanExit(childProcessExecutionPlan);
+    const success = decodeUnknownExtensionExecutionPlanExit(childProcessExecutionPlan);
     expect(Exit.isSuccess(success)).toBe(true);
     expect(
       Exit.isFailure(
-        decodeExtensionExecutionPlanExit({
+        decodeUnknownExtensionExecutionPlanExit({
           type: "extension_dependency.action",
           planId: "plan_dependency_01",
         }),
@@ -3051,28 +3290,28 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects execution plans that contain runtime-owned handles or raw secrets", () => {
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         commandId: "cmd_01",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         processHandle: 123,
       }),
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         callback: "run-after-launch",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         command: {
           ...childProcessExecutionPlan.command,
@@ -3082,14 +3321,14 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         sandbox: "use-command-snapshot",
       }),
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...applyPatchExecutionPlan,
         output: {
           facts: "apply_patch.finished",
@@ -3098,7 +3337,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         env: {
           ...extensionExecutionEnvPlan,
@@ -3110,7 +3349,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         env: {
           GITHUB_TOKEN: "raw-token",
@@ -3121,7 +3360,7 @@ describe("@svvy/core runtime contracts", () => {
 
   it("rejects execution plans with empty command or patch payloads", () => {
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         command: {
           ...childProcessExecutionPlan.command,
@@ -3131,7 +3370,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...childProcessExecutionPlan,
         command: {
           ...childProcessExecutionPlan.command,
@@ -3141,7 +3380,7 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
 
     expect(() =>
-      decodeExtensionExecutionPlan({
+      unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap({
         ...applyPatchExecutionPlan,
         patch: "",
       }),
@@ -3158,7 +3397,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
         overrides: { shell: "available" },
@@ -3189,7 +3428,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
         overrides: { shell: "available" },
@@ -3220,7 +3459,7 @@ describe("@svvy/core runtime contracts", () => {
           id: "reviewerAgent",
           label: "Reviewer",
           provider: "openai",
-          model: "gpt-5.4",
+          model: "provider-model-fixture",
           reasoning: { effort: "medium" },
           instructions: "Review carefully.",
         },
@@ -3251,7 +3490,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
       },
@@ -3279,7 +3518,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
       },
@@ -3310,7 +3549,7 @@ describe("@svvy/core runtime contracts", () => {
           id: "reviewerAgent",
           label: "Reviewer",
           provider: "openai",
-          model: "gpt-5.4",
+          model: "provider-model-fixture",
           reasoning: { effort: "medium" },
           instructions: "Review carefully.",
         },
@@ -3337,7 +3576,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
       },
@@ -3354,7 +3593,7 @@ describe("@svvy/core runtime contracts", () => {
     } as const;
 
     expect(
-      decodeAuthenticatedRunTaskAgentInput({
+      unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap({
         auth: {
           kind: "bearer",
           token: "bridge-token-1",
@@ -3372,7 +3611,7 @@ describe("@svvy/core runtime contracts", () => {
     });
 
     expect(() =>
-      decodeAuthenticatedRunTaskAgentInput({
+      unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap({
         auth: {
           kind: "bearer",
           token: "",
@@ -3404,7 +3643,7 @@ describe("@svvy/core runtime contracts", () => {
           id: "reviewerAgent",
           label: "Reviewer",
           provider: "openai",
-          model: "gpt-5.4",
+          model: "provider-model-fixture",
           reasoning: { effort: "medium" },
           instructions: "Review carefully.",
         },
@@ -3425,7 +3664,7 @@ describe("@svvy/core runtime contracts", () => {
           id: "reviewerAgent",
           label: "Reviewer",
           provider: "openai",
-          model: "gpt-5.4",
+          model: "provider-model-fixture",
           reasoning: { effort: "medium" },
           instructions: "Review carefully.",
         },
@@ -3452,7 +3691,7 @@ describe("@svvy/core runtime contracts", () => {
         id: "reviewerAgent",
         label: "Reviewer",
         provider: "openai",
-        model: "gpt-5.4",
+        model: "provider-model-fixture",
         reasoning: { effort: "medium" },
         instructions: "Review carefully.",
       },
@@ -3549,11 +3788,34 @@ describe("@svvy/core runtime contracts", () => {
       taskAttemptId: "workflow-task-attempt-1",
     });
 
+    expect(
+      unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap({
+        error: "payload_too_large",
+        message: "Bridge request body exceeded the configured byte limit.",
+        retryable: false,
+        requestId: "bridge-request-oversized",
+      }),
+    ).toEqual({
+      error: "payload_too_large",
+      message: "Bridge request body exceeded the configured byte limit.",
+      retryable: false,
+      requestId: "bridge-request-oversized",
+    });
+
     expect(() =>
       unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap({
         error: "not_found",
         message: "Unsupported.",
         retryable: false,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      unsafeDecodeRunTaskAgentErrorSyncForTestsAndBootstrap({
+        error: "task_attempt_failed",
+        message: "Task failed.",
+        retryable: true,
+        workspaceSessionId: 123,
       }),
     ).toThrow();
   });

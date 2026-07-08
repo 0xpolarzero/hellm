@@ -47,8 +47,7 @@ capability boundary. The extension binding still matters, but it matters for gen
 - loaded extensions contribute full instructions
 - loaded `svvyx` extensions contribute command guidance
 - builtin `svvyx` extensions with TypeScript API enabled contribute generated TypeScript facades
-- user `svvyx` generated TypeScript facades are hidden until sandboxed facade execution
-  exists
+- user `svvyx` extensions do not contribute generated TypeScript facades
 - available extensions contribute minimal loading guidance only
 - unavailable extensions contribute nothing
 
@@ -63,7 +62,11 @@ dispatcher runs inside the accepted Shell command and runtime may attach command
 is no separate model-facing tool, Shell shortcut, approval bypass, sandbox bypass, or command-family
 dispatch path outside ordinary Shell execution.
 
-`svvyx` must still enforce normal runtime safety for the command it dispatches:
+`svvyx` runs inside the accepted Shell command lane. The dispatcher validates extension and build
+readiness before invoking an extension CLI, but it does not own command lifecycle, approval,
+sandboxing, state mutation, or runtime event publication. Runtime owns command tracking, approval
+records, command facts, sandbox launch-policy acquisition, and applied operations. Sandbox owns
+policy constraints for the admitted launch. Dispatcher checks are:
 
 - the extension id must resolve to a known extension record with a current successful `svvyx` build
 - the current build must be structurally valid
@@ -91,7 +94,7 @@ The runtime design relies on these observed Incur facts:
 
 Because of that last point, `svvy` extension invocation supports injected extension env only through
 Incur env declarations and `c.env`. Direct `process.env.<NAME>` reads are unsupported for app-managed
-extension env values in v1.
+extension env values.
 
 ## Extension Build Contract
 
@@ -106,7 +109,7 @@ validation must also reject normal self-serving entrypoints, such as obvious top
 calls, because self-serving modules can execute commands during build import instead of through
 `svvy`'s dispatcher/env wrapper. This is an authoring-contract validation, not a hostile-code
 sandbox.
-Editable extension code is still trusted in v1.
+Editable extension code is trusted.
 
 A successful build writes temporary output under:
 
@@ -137,8 +140,8 @@ Current build files must not contain raw env values, secret previews, secret has
 storage paths, generated aggregate cache keys, build ids, build timestamps, or user-facing restore
 state.
 
-Failed, blocked, or cancelled builds must not replace `current/`. The previously current extension
-build remains the dispatch target until a new build is promoted successfully.
+Failed, blocked, or cancelled builds must not replace `current/`. The current extension build remains
+the dispatch target until another build is promoted successfully.
 
 ## `svvyx` Dispatcher
 
@@ -157,9 +160,15 @@ exec_command("svvyx linear issues.list --json")
   -> import the built default Incur CLI
   -> construct an env source for extension id "linear"
   -> call cli.serve(["issues.list", "--json"], { env, stdout, exit })
-  -> emit structured dispatcher output or handler results
-  -> @svvy/runtime records Shell command facts and applies returned ExtensionRuntimeOperation items
+  -> emit structured CLI stdout/stderr for the Shell command
+  -> @svvy/runtime records Shell command facts
+  -> for app-owned product mutations, @svvy/runtime invokes the resolved @svvy/extensions handler
+  -> @svvy/runtime applies returned ExtensionRuntimeOperation items through runtime-owned lanes
 ```
+
+Handler invocation and `ExtensionHandlerResult.operations` are part of the accepted runtime command
+lane. They are not inferred from subprocess stdout and are not a child-to-parent runtime-control
+protocol.
 
 `svvyx` parses only the leading extension id before handing the remaining arguments to the extension
 CLI. Extension command names and flags are owned by the Incur CLI. For example:
@@ -175,7 +184,7 @@ dispatches to extension `linear` with extension argv:
 ```
 
 The dispatcher must not rewrite extension command names, translate extension flags, infer command
-schemas from prose, or provide command-specific fallback behavior.
+schemas from prose, or provide command-specific alternate behavior.
 
 Top-level `svvyx --help` should explain dispatcher usage and should not be the product's available
 extension inventory. Actor-visible extension discovery remains `list_extensions`, loaded extension
@@ -202,8 +211,8 @@ extension's invocation env.
 
 Extension commands must declare env through Incur schemas and read injected values through `c.env`.
 Direct `process.env` reads are unsupported for app-managed extension env values because Incur's
-explicit env source does not mutate `process.env`. `svvy` must not add a child-process fallback only
-to support direct `process.env` reads in extension code.
+explicit env source does not mutate `process.env`. `svvy` must not spawn a child process solely to
+support direct `process.env` reads in extension code.
 
 If a required env value is missing, the dispatcher returns a structured extension-runtime error and
 does not call the extension CLI. Missing-secret errors must direct the user to configure values in
@@ -227,7 +236,7 @@ extensions.artifacts.run("inspect", { options: { id: "art_123" } })
   -> generated facade for loaded builtin extension "artifacts"
   -> provide extensionEnv("artifacts") as the explicit Incur env source
   -> call the @svvy/extensions handler through @svvy/runtime under the already-approved execute_typescript parent command
-  -> @svvy/runtime applies any handler-returned ExtensionRuntimeOperation items through @svvy/state
+  -> @svvy/runtime applies any handler-returned ExtensionRuntimeOperation items through runtime-owned lanes and core-owned state ports
   -> return the typed facade command result to submitted TypeScript
 ```
 
@@ -239,19 +248,22 @@ parent-process Shell dispatcher.
 Builtin generated facade calls must apply the same readiness checks, env injection rules,
 redaction, command fact recording, and failure semantics as `svvyx` shell dispatch. Agent-facing
 TypeScript sees only emitted builtin Incur-compatible command facades under
-`extensions.<extension-id>`, not user extension facades or a broad generic all-extension facade.
+`extensions.<identifierSafeId>` or `extensions["<extensionId>"]`, not user extension facades or a
+broad generic all-extension facade.
 
 Agent-authored snippets must not construct generic Incur transports, import extension current-build
-files, or use local Incur actions. The exposed `extensions.<extension-id>` object must remove local
-Incur client actions such as local Skills or MCP setup actions. The only cross-extension abstraction
-is the `extensions` wrapper.
+files, or use local Incur actions. The exposed `extensions.<identifierSafeId>` /
+`extensions["<extensionId>"]` object must remove local Incur client actions such as local Skills or
+MCP setup actions. The only cross-extension abstraction is the `extensions` wrapper.
 
-Generated facade declarations must preserve Incur command semantics:
+Generated facade declarations expose only non-streaming Incur command semantics:
 
 - command ids are the extension's Incur command paths
 - inputs use Incur `args`, `options`, and output controls
 - non-streaming results use the Incur `Run.Result` envelope
-- streaming commands use Incur stream response semantics
+- command manifests may record streaming markers as non-callable diagnostic evidence, but runtime
+  fails closed for any generated facade command whose contract is streaming until a dedicated
+  streaming facade contract exists
 - command failures throw `Client.ClientError` from `incur/client`
 - snippets may import public types and errors from `incur/client`
 
@@ -265,110 +277,52 @@ The model-visible operation remains `exec_command` for shell use and `execute_ty
 composition.
 
 Every shell `svvyx ...` invocation runs inside a concrete `svvy` runtime context. Before the stable
-`svvyx` executable dispatches to the extension CLI, it must receive the current session, surface,
-thread, parent command, and actor binding facts from trusted product state rather than from shell
-arguments or prompt text. Generated `execute_typescript` facades use the same trusted context source
-when they create child command records, but they are not a second shell dispatcher. Extensions that
-create product records, such as Artifacts, must derive ownership and linkage from this dispatcher
-context rather than accepting agent-supplied owner ids.
+`svvyx` executable dispatches to the extension CLI, runtime/app-owned command-lane code injects the
+current session, surface, thread, parent command, and actor binding facts from trusted product state
+through controlled environment variables, stdin, or a scoped temporary context file. Those facts do
+not come from shell arguments, prompt text, or agent-authored files. The child process cannot call
+runtime, state, desktop, or generic app facades. Generated `execute_typescript` facades use the same
+trusted context source when they create child command records, but they are not a second shell
+dispatcher. Extensions that create product records, such as Artifacts, must derive ownership and
+linkage from this dispatcher context rather than accepting agent-supplied owner ids.
 
-When a trusted builtin shell-dispatched `svvyx` subprocess needs runtime-owned work, it emits a
-signed subprocess result with closed transport intents. The parent runtime validates the signed
-result, decodes only enumerated intent kinds, applies those intents through runtime-owned
-services and `@svvy/state` ports, and derives command facts, app logs, notifications, affected
-surfaces, and read-model invalidation from committed parent-applied results. The child subprocess
-may parse CLI input, perform bounded file/package work, produce structured stdout/stderr, report
-command facts, and emit closed transport intents, but it must not create its own `ManagedRuntime`,
-call `Effect.run*`, open SQLite for product mutations, construct state ports for product mutations,
-publish runtime/read-model events, request generic app actions, or choose session/thread/source
-command ownership. Parent-owned transport replay is enabled only for trusted builtin namespaces
-named by the dispatcher; arbitrary user `svvyx <extension-id>` commands do not get transport replay.
+When a shell-dispatched `svvyx ...` invocation needs runtime-owned work, the accepted command is
+handled by the parent `@svvy/runtime` command lane. The subprocess may parse CLI input, perform
+bounded package-local work allowed by its sandbox, produce structured stdout/stderr, and return the
+model-facing command result, but it is not a runtime-effect transport. Runtime-owned product changes
+come only from `ExtensionHandlerResult.operations`: ordered `ExtensionRuntimeOperation` values
+wrapping closed `RuntimeEffectRequest` values or immutable `ExtensionExecutionPlan` values.
+`@svvy/runtime` applies those operations through runtime-owned services and core-owned state ports
+implemented by `@svvy/state`, then derives command facts, app logs, notifications, affected
+surfaces, and read-model invalidation from committed results.
 
-The signed result is a child-to-parent transport for already-closed requests, not a second state API
-and not a public runtime package subpath. The parent creates a per-invocation secret, passes a result
-path and the secret to the child through app-owned env vars, then validates the HMAC signature before
-replay. Agents must not be able to set or override any `SVVY_SVVYX_SUBPROCESS_*` env var from the
-shell command. The child context may
-include non-secret runtime facts such as cwd, extension roots, env override snapshots, workflow
-model choices, current session/surface/thread ids, and source command id. Generated package roots
-are included only in trusted generated-package invocations where `@svvy/extensions` writes generated
-package output or returns package-safe link plans and `@svvy/runtime` applies refresh or
-workspace-link repair; ordinary agent-authored `svvyx <extension-id>` child context does not expose
-them. The child context must not include a database path, raw SQLite handle, state service,
-workspace state object, or state-owned mutation capability.
+The child context may include non-secret runtime facts such as cwd, extension roots, env override
+snapshots, workflow model choices, current session/surface/thread ids, and source command id.
+Generated package roots are included only in trusted generated-package invocations where
+`@svvy/extensions` writes generated package output or returns package-safe link plans and
+`@svvy/runtime` applies refresh or workspace-link repair. Ordinary agent-authored
+`svvyx <extension-id>` child context does not expose generated package roots. The child context must
+not include a database path, raw SQLite handle, state service, workspace state object, state-owned
+mutation capability, runtime facade, generic app-action channel, queue handle, or event publisher.
 
-Signed result payload shape:
-
-```ts
-type SignedSvvyxSubprocessResult = {
-  envelopeVersion: 1;
-  invocationId: ExtensionInvocationId;
-  commandId: CommandId;
-  extensionId: ExtensionId;
-  createdAt: IsoDateTimeString;
-  payload: SvvyxSubprocessResult;
-  signature: {
-    algorithm: "hmac-sha256";
-    keyId: string;
-    digest: string;
-  };
-};
-
-type SvvyxSubprocessResult = {
-  status: "succeeded" | "failed";
-  output?: Json;
-  commandFacts?: Record<string, Json>;
-  intents?: SvvyxSubprocessIntent[];
-  progressEvents?: SvvyxSubprocessProgressEvent[];
-  diagnostics?: string[];
-};
-
-type SvvyxSubprocessProgressEvent = {
-  family: "artifacts" | "extensions" | "workflows" | "runtime";
-  phase: "started" | "succeeded" | "failed";
-  facts?: Record<string, Json>;
-};
-```
-
-The HMAC digest covers the JSON object containing `envelopeVersion`, `invocationId`, `commandId`,
-`extensionId`, `createdAt`, and `payload`, excluding `signature`. The parent rejects envelopes with
-missing source command identity, mismatched key id, mismatched digest, unknown intent kinds, or
-payloads that fail the core `SignedSvvyxSubprocessResult` schema.
-
-Parent replay of `progressEvents` always uses the parent-known runtime session id and source command
-id. The child supplies only `family`, `phase`, and optional JSON facts. For a successful command, the
-parent records progress with the final parent-applied command facts when intents changed the facts
-after child execution. The recorded event source is `svvyx-cli-subprocess`.
-
-Supported closed transport intents:
-
-```ts
-type SvvyxSubprocessIntent = {
-  id: string;
-  kind: "runtime_effect.request";
-  request: SvvyxRuntimeEffectTransportRequest;
-};
-```
-
-For `runtime_effect.request`, the parent decodes one closed
-`SvvyxRuntimeEffectTransportRequest`. This signed subprocess transport is not the general
-`RuntimeEffectRequest` algebra and remains limited to context-impact fact operations that trusted
-app-owned subprocesses need after a command has completed. `svvyx workflows save` and
-`svvyx workflows build` use the separate parent-side extension-handler path: they return an
-`ExtensionRuntimeOperation` wrapping `generated_packages.refresh`, and runtime applies it in the
-generated-package refresh lane. The child-side signed transport result must not contain
+There is no signed child-to-parent runtime-effect replay channel. `svvyx` subprocess output may
+contain command-family stdout/stderr, diagnostics, and parse/build evidence, but it must not contain
 affected-surface arrays, state facade calls, artifact operations, generated-package refreshes, queue
-inserts, handler/thread/runtime-control requests, Smithers workflow-control requests, or direct
-snapshot context-impact updates. Runtime derives affected surfaces, stale generated-context facts,
-generated-package/link facts, and command facts only from committed state.
+inserts, handler/thread/runtime-control requests, Smithers workflow-control requests,
+`RuntimeEffectRequest` payloads, or direct snapshot context-impact updates. Runtime derives affected
+surfaces, stale generated-context facts, generated-package/link facts, artifact facts, and command
+facts only from runtime-applied operations and committed state.
 
 Artifact work has no signed transport intent. Artifact metadata, validation, model-facing command
 descriptions, file effects, and state updates use the normal extension-handler result path:
 `ExtensionRuntimeOperation` values are applied by `@svvy/runtime` through the appropriate runtime
 ports and command lifecycle.
 
-When `exec_command` runs a command whose argv begins with `svvyx`, `svvy` should parse the command
-well enough to attach best-effort structured facts:
+When `exec_command` runs a command whose argv begins with `svvyx`, `@svvy/runtime` owns the
+command-family parser and fact projection. Runtime parses the command into structured command facts
+whenever the argv matches the trusted `svvyx` command grammar. The raw command record remains
+authoritative for the process invocation, output, and exit status; structured facts add
+command-family indexing and readiness diagnostics:
 
 - dispatcher: `svvyx`
 - extension id
@@ -413,9 +367,8 @@ Generated agent context remains actor-specific.
 
 Loaded `svvyx` extensions contribute command guidance based on their current successful build.
 Builtin `svvyx` extensions may also contribute emitted generated TypeScript declarations. User
-`svvyx` generated TypeScript declarations remain hidden until sandboxed facade execution
-exists. Available extensions contribute only minimal load guidance. Unavailable extensions
-contribute nothing.
+`svvyx` extensions do not contribute generated TypeScript declarations. Available extensions
+contribute only minimal load guidance. Unavailable extensions contribute nothing.
 
 The stable shell dispatcher does not change that rule. The fact that `svvyx <extension-id> ...` may
 technically dispatch a built extension from a shell does not justify including that extension's full
@@ -452,7 +405,7 @@ Build-time self-serve rejection can combine static and dynamic checks:
   `cli.serve(...)`
 
 These checks are product-contract validation. They are not a sandbox for hostile extension code.
-Editable Incur-backed extension code is trusted in v1. Secret-bearing extension invocation is bounded
+Editable Incur-backed extension code is trusted. Secret-bearing extension invocation is bounded
 by declared env inputs, app-managed injection, redaction, the normal command approval boundary, and
 the normal sandbox policy. Egress proxying or a separate process sandbox is outside the current
 contract unless a dedicated spec defines it.

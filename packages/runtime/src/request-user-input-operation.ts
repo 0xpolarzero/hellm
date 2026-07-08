@@ -2,13 +2,15 @@ import * as Effect from "effect/Effect";
 import {
   RuntimeCommandStatePort,
   RuntimeContractError,
-  decodeCommandResultEnvelopeEffect,
-  type CommandResultEnvelope,
+  decodeUnknownCommandResultEnvelopeEffect,
   type CommandId,
   type NativeToolResult,
   type PromptExecutionContext,
   type PromptTarget,
+  type PositiveDurationMs,
   type RequestInputRequestId,
+  RuntimeRequestStatePort,
+  type RuntimeCommandRecord,
   type ToolCallId,
   type ToolItemId,
   type TurnId,
@@ -22,6 +24,7 @@ import {
   type RequestUserInputResult,
 } from "@svvy/extensions";
 import { applyRequestInputCreateRuntimeEffectRequest } from "./runtime-effect-requests";
+import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 
 export type RuntimeRequestUserInputCommandContext = {
   commandId: CommandId;
@@ -44,10 +47,18 @@ export type RunAcceptedRequestUserInputToolCallInput = {
   context: PromptExecutionContext;
   actorBinding: ActorExtensionBinding;
   command: RuntimeRequestUserInputCommandContext;
+  commandRecord: RuntimeCommandRecord;
+  requestInput: {
+    mode: "nonblocking" | "blocking";
+    blockingTimeout: {
+      enabled: boolean;
+      durationMs: PositiveDurationMs;
+    };
+  };
 };
 
 export type RunAcceptedRequestUserInputToolCallResult = {
-  toolResult: NativeToolResult<CommandResultEnvelope>;
+  toolResult: NativeToolResult;
   result: RequestUserInputResult;
 };
 
@@ -88,6 +99,22 @@ function defaultedRequestInputSummary(questionCount: number): string {
     : `Defaulted answers for ${questionCount} questions.`;
 }
 
+function answeredByForResult(
+  result: RequestUserInputResult,
+): "user" | "default" | "timeout_default" | "mixed" {
+  const values = new Set(result.answers.map((answer) => answer.answeredBy));
+  if (values.size === 1) {
+    return result.answers[0]?.answeredBy ?? "default";
+  }
+  return "mixed";
+}
+
+function answeredRequestInputSummary(result: RequestUserInputResult): string {
+  return result.answers.length === 1
+    ? `Answered ${result.answers[0]!.title}.`
+    : `Answered ${result.answers.length} clarification questions.`;
+}
+
 export const runAcceptedRequestUserInputToolCall = Effect.fn(
   "@svvy/runtime/request-user-input.runAccepted",
 )(function* (input: RunAcceptedRequestUserInputToolCallInput) {
@@ -112,6 +139,18 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
         }),
       );
     }
+    const request =
+      operation.request.type === "request_input.create"
+        ? {
+            ...operation.request,
+            input: {
+              ...operation.request.input,
+              mode: input.requestInput.mode,
+              timeout:
+                input.requestInput.mode === "blocking" ? input.requestInput.blockingTimeout : null,
+            },
+          }
+        : operation.request;
     appliedEffects.push(
       yield* applyRequestInputCreateRuntimeEffectRequest(
         {
@@ -119,7 +158,7 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
           turnId: input.command.turnId,
           toolItemId: input.toolItemId,
         },
-        operation.request,
+        request,
       ),
     );
   }
@@ -136,7 +175,82 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
     );
   }
 
-  const details = yield* decodeCommandResultEnvelopeEffect(handlerResult.result.details).pipe(
+  const questionCount = requestInputEffect.request.questionCount;
+  const commandState = yield* RuntimeCommandStatePort;
+  yield* commandState
+    .recordCommandEvent({
+      sessionId: input.command.target.workspaceSessionId,
+      commandId: input.command.commandId,
+      kind: "command.progress",
+      data: {
+        source: "request_user_input",
+        phase: "created",
+        message: `Created ${questionCount} user-input ${
+          questionCount === 1 ? "question" : "questions"
+        }.`,
+        facts: {
+          requestId: requestInputEffect.request.requestId as RequestInputRequestId,
+          variant: input.requestInput.mode,
+          questionCount,
+        },
+      },
+    })
+    .pipe(
+      Effect.mapError((cause) =>
+        runtimeError({
+          reason: "stale-state",
+          message: "Failed to record request_user_input command progress.",
+          cause,
+        }),
+      ),
+    );
+
+  if (input.requestInput.mode === "blocking") {
+    const requestState = yield* RuntimeRequestStatePort;
+    const requestDetails = yield* requestState
+      .getRequestInput({
+        requestId: requestInputEffect.request.requestId as RequestInputRequestId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runtimeError({
+            reason: "stale-state",
+            message: "Failed to load blocking request_user_input details.",
+            cause,
+          }),
+        ),
+      );
+    const waitService = yield* RuntimeRequestInputWaitService;
+    const result = yield* waitService.waitForBlockingRequest({
+      request: requestDetails,
+      command: input.commandRecord,
+    });
+    const commandFacts = {
+      questionCount: result.answers.length,
+      answeredBy: answeredByForResult(result),
+      result,
+    };
+    return {
+      toolResult: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+        details: {
+          status: "succeeded",
+          summary: answeredRequestInputSummary(result),
+          commandFacts,
+        },
+      },
+      result,
+    } satisfies RunAcceptedRequestUserInputToolCallResult;
+  }
+
+  const details = yield* decodeUnknownCommandResultEnvelopeEffect(
+    handlerResult.result.details,
+  ).pipe(
     Effect.mapError((cause) =>
       runtimeError({
         reason: "invalid-input",
@@ -160,47 +274,19 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
     ),
   );
 
-  const questionCount =
+  const resultQuestionCount =
     typeof facts?.questionCount === "number" ? facts.questionCount : result.answers.length;
   const commandFacts = {
-    questionCount,
+    questionCount: resultQuestionCount,
     answeredBy: "default" as const,
     result,
   };
 
-  const commandState = yield* RuntimeCommandStatePort;
-  yield* commandState
-    .recordCommandEvent({
-      sessionId: input.command.target.workspaceSessionId,
-      commandId: input.command.commandId,
-      kind: "command.progress",
-      data: {
-        source: "request_user_input",
-        phase: "created",
-        message: `Created ${questionCount} user-input ${
-          questionCount === 1 ? "question" : "questions"
-        }.`,
-        facts: {
-          requestId: requestInputEffect.request.requestId as RequestInputRequestId,
-          variant: "nonblocking",
-          questionCount,
-        },
-      },
-    })
-    .pipe(
-      Effect.mapError((cause) =>
-        runtimeError({
-          reason: "stale-state",
-          message: "Failed to record request_user_input command progress.",
-          cause,
-        }),
-      ),
-    );
   yield* commandState
     .finishCommand({
       commandId: input.command.commandId,
       status: "succeeded",
-      summary: details.summary ?? defaultedRequestInputSummary(questionCount),
+      summary: details.summary ?? defaultedRequestInputSummary(resultQuestionCount),
       facts: commandFacts,
     })
     .pipe(

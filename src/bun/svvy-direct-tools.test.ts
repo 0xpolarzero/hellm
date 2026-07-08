@@ -14,15 +14,15 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import * as Effect from "effect/Effect";
-import { createPromptExecutionContext } from "@svvy/core";
+import { createPromptExecutionContext } from "@svvy/runtime/prompt-execution-context";
 import type { AppLoggerEvent } from "./app-logger";
 import {
   runtimeArtifactStatePortFromStore,
   runtimeCommandStatePortFromStore,
   runtimeExtensionContextImpactStateFacadeFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
-import { buildStructuredSessionView } from "@svvy/state/structured-session-selectors";
+} from "@svvy/state/structured-session-adapters";
+import { buildStructuredSessionView } from "@svvy/state/structured-session-projections";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -32,7 +32,17 @@ import { createToolExecutionCommandTracker } from "./tool-execution-command-trac
 import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import { DEFAULT_ORCHESTRATOR_PROFILE_ID } from "../shared/agent-settings";
-import type { AgentProfileId, CommandId } from "@svvy/core";
+import type {
+  AbsolutePath,
+  AgentProfileId,
+  CommandId,
+  IsoDateTimeString,
+  NativeToolResult,
+  SandboxLaunchFacts,
+  SandboxLaunchKind,
+  SurfacePiSessionId,
+  WorkspaceId,
+} from "@svvy/core";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 
 const tempDirs: string[] = [];
@@ -45,16 +55,14 @@ const testSandboxHelperPath = join(
   "native",
   "svvy-sandbox-helper",
 );
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 function createSvvyDirectToolsForTest(
   options: Omit<
     Parameters<typeof createSvvyDirectTools>[0],
-    | "artifactState"
-    | "commandState"
-    | "databasePath"
-    | "extensionsRoot"
-    | "readWorkspaceForSession"
-    | "runState"
+    "artifactState" | "commandState" | "databasePath" | "extensionsRoot" | "runState"
   > & {
     extensionsRoot?: string;
     store?: StructuredSessionStateStore;
@@ -74,8 +82,9 @@ function createSvvyDirectToolsForTest(
           extensionContextImpactState:
             directOptions.extensionContextImpactState ??
             runtimeExtensionContextImpactStateFacadeFromStore(store),
-          readWorkspaceForSession: (sessionId: string) =>
-            store.getSessionState(sessionId).workspace,
+          readArtifactRootForSession: (sessionId: string) =>
+            directOptions.readArtifactRootForSession?.(sessionId) ??
+            store.getSessionState(sessionId).workspace.artifactDir,
           runState: Effect.runSync,
         }
       : {}),
@@ -112,6 +121,135 @@ function createImmediateRuntimeStateWriteLane(): RuntimeStateWriteLane {
     },
   };
 }
+
+function testLaunchFacts(input: {
+  cwd: string;
+  launchKind: SandboxLaunchKind;
+  commandId: string;
+  command: readonly string[];
+  filesystemPolicy?: SandboxLaunchFacts["policySnapshot"]["filesystemPolicy"];
+  mode?: SandboxLaunchFacts["mode"];
+  networkPolicy?: SandboxLaunchFacts["policySnapshot"]["networkPolicy"];
+  sessionId?: string;
+  workspaceId?: string;
+}): SandboxLaunchFacts {
+  const mode = input.mode ?? "omitted_full_access";
+  const workspaceId = input.workspaceId ?? "workspace-runtime-launch";
+  const sessionId = input.sessionId ?? "session-runtime-launch";
+  return {
+    mode,
+    spawn: {
+      executable: input.command[0] as AbsolutePath,
+      args: input.command.slice(1),
+      cwd: input.cwd as AbsolutePath,
+      envFacts: [],
+    },
+    ...(mode === "managed"
+      ? {
+          helperArgs: [],
+          helperPath: testSandboxHelperPath as AbsolutePath,
+        }
+      : {}),
+    policySnapshot: {
+      snapshotId: `snapshot-${input.commandId}`,
+      fingerprint: `fingerprint-${input.commandId}`,
+      resolvedAt: "2026-06-10T10:00:00.000Z" as IsoDateTimeString,
+      scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+      surfacePiSessionId: sessionId as SurfacePiSessionId,
+      commandId: input.commandId as CommandId,
+      launchKind: input.launchKind,
+      cwd: input.cwd as AbsolutePath,
+      sandboxMode: mode,
+      networkPolicy: input.networkPolicy ?? "allow",
+      filesystemPolicy: input.filesystemPolicy ?? { defaultAccess: "read", entries: [] },
+    },
+  } as unknown as SandboxLaunchFacts;
+}
+
+function createRuntimeLaunchDirectToolsForTest(input: {
+  command: readonly string[];
+  cwd: string;
+  launchFacts?: (commandId: string) => SandboxLaunchFacts;
+  launchKind: SandboxLaunchKind;
+  options?: Partial<Parameters<typeof createSvvyDirectToolsForTest>[0]>;
+  toolCallId: string;
+  toolName: "apply_patch" | "exec_command";
+  workspaceId?: string;
+}): {
+  commandId: CommandId;
+  closed: () => boolean;
+  tools: ReturnType<typeof createSvvyDirectToolsForTest>;
+} {
+  const workspaceId = input.workspaceId ?? `workspace-${input.toolCallId}`;
+  const store = createStructuredSessionStateStore({
+    digest: testDigest,
+    workspace: {
+      id: workspaceId,
+      label: "svvy",
+      cwd: input.cwd,
+      artifactDir: join(input.cwd, "artifacts"),
+    },
+    databasePath: join(input.cwd, "structured.sqlite"),
+  });
+  openStores.push(store);
+  const turn = store.startTurn({
+    sessionId: `session-${input.toolCallId}`,
+    surfacePiSessionId: `session-${input.toolCallId}`,
+    requestSummary: `Run ${input.toolName}`,
+  });
+  const runtime = {
+    current: createPromptExecutionContext({
+      workspaceSessionId: `session-${input.toolCallId}`,
+      turnId: turn.id,
+      surfacePiSessionId: `session-${input.toolCallId}`,
+      generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+      generatedAgentContextRevision: "generated_context_revision_test",
+    }),
+  };
+  const command = store.createCommand({
+    turnId: turn.id,
+    toolName: input.toolName,
+    executor: "orchestrator",
+    visibility: "summary",
+    title: `Run ${input.toolName}`,
+    summary: `Run ${input.toolName}.`,
+    arguments: {},
+    facts: { toolCallId: input.toolCallId },
+  });
+  store.startCommand(command.id);
+  let closed = false;
+  return {
+    commandId: command.id as CommandId,
+    closed: () => closed,
+    tools: createSvvyDirectToolsForTest({
+      cwd: input.cwd,
+      store,
+      runtime,
+      workspaceId,
+      ...input.options,
+      acquireDirectToolLaunch: async (launchInput) => {
+        expect(launchInput.toolName).toBe(input.toolName);
+        expect(launchInput.commandId).toBe(command.id as CommandId);
+        return {
+          facts:
+            input.launchFacts?.(command.id) ??
+            testLaunchFacts({
+              command: input.command,
+              commandId: command.id,
+              cwd: input.cwd,
+              launchKind: input.launchKind,
+              sessionId: runtime.current.surfacePiSessionId,
+              workspaceId,
+            }),
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    }),
+  };
+}
+
 const openStores: ReturnType<typeof createStructuredSessionStateStore>[] = [];
 
 describe("svvy direct tools", () => {
@@ -203,6 +341,7 @@ describe("svvy direct tools", () => {
   it("records live exec_command stdout and stderr chunks as durable command events", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -286,6 +425,7 @@ describe("svvy direct tools", () => {
   it("retains large exec_command stdout and stderr as command-linked artifacts", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -614,6 +754,7 @@ describe("svvy direct tools", () => {
   it("injects command-scoped workflow task-agent bridge env for handler shell commands", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: { id: cwd, label: "Bridge", cwd, artifactDir: join(cwd, "artifacts") },
       databasePath: join(cwd, "state.sqlite"),
     });
@@ -681,6 +822,8 @@ describe("svvy direct tools", () => {
           SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
           SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: bridgeRuntime?.workspaceSessionId ?? "",
           SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: sourceCommandId ?? "",
+          SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS: "12345",
+          SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES: "67890",
         }),
       }).codingTools,
       "exec_command",
@@ -694,6 +837,8 @@ describe("svvy direct tools", () => {
           'printf "token=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN"',
           'printf "workspace=%s\\n" "$SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID"',
           'printf "source=%s\\n" "$SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID"',
+          'printf "timeout=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS"',
+          'printf "maxBytes=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES"',
         ].join("; "),
       },
       new AbortController().signal,
@@ -705,11 +850,14 @@ describe("svvy direct tools", () => {
     expect(readText(result)).not.toContain("bridge-token");
     expect(readText(result)).toContain("workspace=session-smithers-bridge");
     expect(readText(result)).toContain(`source=${command.id}`);
+    expect(readText(result)).toContain("timeout=12345");
+    expect(readText(result)).toContain("maxBytes=67890");
   });
 
   it("does not inject workflow task-agent bridge env for orchestrator shell commands", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: { id: cwd, label: "Bridge", cwd, artifactDir: join(cwd, "artifacts") },
       databasePath: join(cwd, "state.sqlite"),
     });
@@ -750,30 +898,47 @@ describe("svvy direct tools", () => {
       facts: { toolCallId: "tool-orchestrator-no-bridge" },
     });
     store.startCommand(command.id);
+    let bridgeProviderCalls = 0;
     const execTool = findTool(
       createSvvyDirectToolsForTest({
         cwd,
         runtime,
         store,
-        runTaskAgentBridge: () => ({
-          SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
-          SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
-          SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: "session-orchestrator-no-bridge",
-          SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: command.id,
-        }),
+        runTaskAgentBridge: () => {
+          bridgeProviderCalls += 1;
+          return {
+            SVVY_WORKFLOW_AGENT_BRIDGE_URL: "http://127.0.0.1:9999/runTaskAgent",
+            SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: "bridge-token",
+            SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: "session-orchestrator-no-bridge",
+            SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: command.id,
+            SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS: "12345",
+            SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES: "67890",
+          };
+        },
       }).codingTools,
       "exec_command",
     );
 
     const result = await execTool.execute(
       "tool-orchestrator-no-bridge",
-      { cmd: 'printf "url=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_URL"' },
+      {
+        cmd: [
+          'printf "url=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_URL"',
+          'printf "timeout=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS"',
+          'printf "maxBytes=%s\\n" "$SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES"',
+        ].join("; "),
+      },
       new AbortController().signal,
       () => {},
     );
 
     expect(readText(result)).toContain("url=");
     expect(readText(result)).not.toContain("runTaskAgent");
+    expect(readText(result)).toContain("timeout=");
+    expect(readText(result)).toContain("maxBytes=");
+    expect(readText(result)).not.toContain("12345");
+    expect(readText(result)).not.toContain("67890");
+    expect(bridgeProviderCalls).toBe(0);
   });
 
   it("cleans up temporary svvyx shim directories after subprocess completion", async () => {
@@ -1002,6 +1167,7 @@ describe("svvy direct tools", () => {
       "export const ReviewPrompt = ``;\n",
     );
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -1088,6 +1254,7 @@ describe("svvy direct tools", () => {
   it("persists long-running exec_command continuation output and final facts", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -1197,6 +1364,7 @@ describe("svvy direct tools", () => {
   it("retains large long-running exec_command continuation output", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -1307,6 +1475,7 @@ describe("svvy direct tools", () => {
   it("does not mark unsandboxed long-running output as sandbox-denied", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -1425,32 +1594,100 @@ describe("svvy direct tools", () => {
     expect(output).toContain("exit code: 0");
   });
 
-  it("routes managed shell commands through the sandbox helper without fallback", async () => {
+  it("requires runtime launch facts for managed shell commands", async () => {
     const cwd = createTempDir();
     const execTool = findTool(
       createSvvyDirectToolsForTest({ cwd, managedSandbox: true, networkAccess: false }).codingTools,
       "exec_command",
     );
 
+    await expect(
+      execTool.execute(
+        "tool-shell-managed-sandbox",
+        { cmd: "echo sandbox-managed-ok" },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).rejects.toThrow("Runtime launch acquisition for exec_command is required.");
+  });
+
+  it("runs shell commands from runtime-acquired launch facts when provided", async () => {
+    const cwd = createTempDir();
+    const store = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: "workspace-runtime-launch",
+        label: "svvy",
+        cwd,
+        artifactDir: join(cwd, "artifacts"),
+      },
+      databasePath: join(cwd, "structured.sqlite"),
+    });
+    openStores.push(store);
+    const turn = store.startTurn({
+      sessionId: "session-runtime-launch",
+      surfacePiSessionId: "session-runtime-launch",
+      requestSummary: "Run command",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: "session-runtime-launch",
+        turnId: turn.id,
+        surfacePiSessionId: "session-runtime-launch",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
+      }),
+    };
+    const command = store.createCommand({
+      turnId: turn.id,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Run exec_command",
+      summary: "Run a command.",
+      arguments: { cmd: "echo ignored" },
+      facts: { toolCallId: "tool-runtime-launch-shell" },
+    });
+    store.startCommand(command.id);
+    let closed = false;
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        workspaceId: "workspace-runtime-launch",
+        runtime,
+        store,
+        acquireDirectToolLaunch: async (input) => {
+          expect(input.toolName).toBe("exec_command");
+          expect(input.commandId).toBe(command.id as CommandId);
+          return {
+            facts: testLaunchFacts({
+              cwd,
+              launchKind: "direct_shell",
+              commandId: command.id,
+              command: [process.execPath, "-e", "process.stdout.write('runtime-launch-shell')"],
+            }),
+            async close() {
+              closed = true;
+            },
+          };
+        },
+      }).codingTools,
+      "exec_command",
+    );
+
     const result = await execTool.execute(
-      "tool-shell-managed-sandbox",
-      { cmd: "echo sandbox-managed-ok" },
+      "tool-runtime-launch-shell",
+      { cmd: "echo ignored" },
       new AbortController().signal,
       () => {},
     );
-    const output = readText(result);
 
-    if (output.includes("sandbox_apply")) {
-      expect(output).not.toContain("sandbox-managed-ok");
-      expect(result.details?.sandboxDenied).toBe(true);
-      expect(result.details?.sandboxEngine).toBe("macos-seatbelt");
-    } else {
-      expect(output).toContain("sandbox-managed-ok");
-      expect(output).toContain("exit code: 0");
-    }
+    expect(readText(result)).toContain("runtime-launch-shell");
+    expect(readText(result)).not.toContain("ignored");
+    expect(closed).toBe(true);
   });
 
-  it("allows default loopback networking and denies it when the sandbox can run", async () => {
+  it("allows loopback networking on the direct test seam without runtime launch facts", async () => {
     const server = startLoopbackTextServer();
     if (!server) {
       expect(server).toBeNull();
@@ -1472,29 +1709,19 @@ describe("svvy direct tools", () => {
       expect(readText(allowed)).toContain("network-ok");
       expect(readText(allowed)).toContain("exit code: 0");
 
-      if (!existsSync("/usr/bin/sandbox-exec")) {
-        expect(existsSync("/usr/bin/sandbox-exec")).toBe(false);
-        return;
-      }
-
-      const blockedExecTool = findTool(
+      const directTestSeamTool = findTool(
         createSvvyDirectToolsForTest({ cwd, managedSandbox: true, networkAccess: false })
           .codingTools,
         "exec_command",
       );
-      const blocked = await blockedExecTool.execute(
-        "tool-shell-loopback-network-disabled",
-        {
-          cmd: `bun -e "try { console.log(await (await fetch('${server.url}')).text()); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(37); }"`,
-          timeout: 5,
-        },
+      const directTestSeamResult = await directTestSeamTool.execute(
+        "tool-shell-loopback-network-direct-seam",
+        { cmd: `bun -e "console.log(await (await fetch('${server.url}')).text())"` },
         new AbortController().signal,
         () => {},
       );
-      const output = readText(blocked);
-      expect(output).not.toContain("network-ok");
-      expect(output).not.toContain("exit code: 0");
-      expect(output.includes("exit code:") || output.includes("terminated by signal:")).toBe(true);
+      expect(readText(directTestSeamResult)).toContain("network-ok");
+      expect(readText(directTestSeamResult)).toContain("exit code: 0");
     } finally {
       server.stop();
     }
@@ -1661,7 +1888,6 @@ describe("svvy direct tools", () => {
           workflowBuildOk: true,
           workflowDiagnosticCount: 0,
           workflowExportCount: 1,
-          workflowLinkedWorkspaceCount: 0,
         },
       },
     ]);
@@ -1675,7 +1901,6 @@ describe("svvy direct tools", () => {
           workflowBuildOk: true,
           workflowDiagnosticCount: 0,
           workflowExportCount: 1,
-          workflowLinkedWorkspaceCount: 0,
         }),
       }),
     );
@@ -1809,7 +2034,6 @@ describe("svvy direct tools", () => {
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
         workflowsSourceRoot: sourceRoot,
-        workflowsWorkspaceCwds: () => [cwd, otherWorkspace],
         onWorkflowsGeneratedPackageChanged: (event) => {
           events.push(event);
         },
@@ -1833,11 +2057,8 @@ describe("svvy direct tools", () => {
       exportName: "ReviewPrompt",
       sourcePath: join(sourceRoot, "prompts", "ReviewPrompt.mdx"),
       generatedPackagePath: packageRoot,
-      linkedWorkspaces: [cwd, otherWorkspace],
     });
-    expect(saved.details?.commandFacts).toMatchObject({
-      workflowLinkedWorkspaceCount: 2,
-    });
+    expect(saved.details?.commandFacts).not.toHaveProperty("workflowLinkedWorkspaceCount");
     expect(events).toEqual([
       {
         reason: "svvyx-workflows-save",
@@ -1847,14 +2068,13 @@ describe("svvy direct tools", () => {
           workflowSourcePath: join(sourceRoot, "prompts", "ReviewPrompt.mdx"),
           workflowBuildOk: true,
           workflowExportCount: 1,
-          workflowLinkedWorkspaceCount: 2,
         },
       },
     ]);
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(true);
+    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(false);
     expect(
       existsSync(join(otherWorkspace, ".smithers", "node_modules", "@svvyx", "workflows")),
-    ).toBe(true);
+    ).toBe(false);
     expect(readFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "utf8")).toBe(
       "# Review\n",
     );
@@ -1942,7 +2162,6 @@ describe("svvy direct tools", () => {
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
         workflowsSourceRoot: sourceRoot,
-        workflowsWorkspaceCwds: () => [cwd],
         onWorkflowsGeneratedPackageChanged: (event) => {
           events.push(event);
         },
@@ -1990,7 +2209,7 @@ describe("svvy direct tools", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("rolls back source and generated packages when save linking fails", async () => {
+  it("saves source and generated packages independently from workspace link repair", async () => {
     const cwd = createTempDir();
     const badWorkspace = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
@@ -1998,7 +2217,6 @@ describe("svvy direct tools", () => {
     const extensionsPackageRoot = join(cwd, "generated", "extensions-package");
     const reviewPromptPath = join(cwd, ".smithers", "prompts", "review-prompt.mdx");
     const secondPromptPath = join(cwd, ".smithers", "prompts", "second-prompt.mdx");
-    let workspaceCwds = [cwd];
     mkdirSync(join(cwd, ".smithers", "prompts"), { recursive: true });
     writeFileSync(reviewPromptPath, "# Review\n");
     writeFileSync(secondPromptPath, "# Second\n");
@@ -2009,7 +2227,6 @@ describe("svvy direct tools", () => {
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
         workflowsSourceRoot: sourceRoot,
-        workflowsWorkspaceCwds: () => workspaceCwds,
       }).codingTools,
       "exec_command",
     );
@@ -2023,28 +2240,26 @@ describe("svvy direct tools", () => {
       () => {},
     );
 
-    writeFileSync(join(extensionsPackageRoot, "preserved-marker.txt"), "preserved\n");
     mkdirSync(join(badWorkspace, ".smithers", "node_modules", "@svvyx", "extensions"), {
       recursive: true,
     });
-    workspaceCwds = [cwd, badWorkspace];
-    await expect(
-      execTool.execute(
-        "tool-workflows-save-link-failure",
-        {
-          cmd: "svvyx workflows save --from .smithers/prompts/second-prompt.mdx --kind prompt --as SecondPrompt --json",
-        },
-        new AbortController().signal,
-        () => {},
-      ),
-    ).rejects.toThrow("link_failed");
-
-    expect(existsSync(join(sourceRoot, "prompts", "SecondPrompt.mdx"))).toBe(false);
-    expect(existsSync(join(packageRoot, "prompts", "SecondPrompt.ts"))).toBe(false);
-    expect(existsSync(join(packageRoot, "prompts", "ReviewPrompt.ts"))).toBe(true);
-    expect(readFileSync(join(extensionsPackageRoot, "preserved-marker.txt"), "utf8")).toBe(
-      "preserved\n",
+    const saved = await execTool.execute(
+      "tool-workflows-save-link-independent",
+      {
+        cmd: "svvyx workflows save --from .smithers/prompts/second-prompt.mdx --kind prompt --as SecondPrompt --json",
+      },
+      new AbortController().signal,
+      () => {},
     );
+
+    expect(JSON.parse(readText(saved))).toMatchObject({
+      ok: true,
+      exportName: "SecondPrompt",
+      kind: "prompt",
+    });
+    expect(existsSync(join(sourceRoot, "prompts", "SecondPrompt.mdx"))).toBe(true);
+    expect(existsSync(join(packageRoot, "prompts", "SecondPrompt.ts"))).toBe(true);
+    expect(existsSync(join(packageRoot, "prompts", "ReviewPrompt.ts"))).toBe(true);
     const listed = await execTool.execute(
       "tool-workflows-list-after-link-failure",
       { cmd: "svvyx workflows list --json" },
@@ -2055,7 +2270,7 @@ describe("svvy direct tools", () => {
       JSON.parse(readText(listed)).items.map(
         (item: { qualifiedName: string }) => item.qualifiedName,
       ),
-    ).toEqual(["Prompts.ReviewPrompt"]);
+    ).toEqual(["Prompts.ReviewPrompt", "Prompts.SecondPrompt"]);
   });
 
   it("checks Workflows save sources against the workspace root when workdir is nested", async () => {
@@ -2090,9 +2305,8 @@ describe("svvy direct tools", () => {
       kind: "prompt",
       exportName: "NestedPrompt",
       sourcePath: join(sourceRoot, "prompts", "NestedPrompt.mdx"),
-      linkedWorkspaces: [cwd],
     });
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(true);
+    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(false);
   });
 
   it("saves selected component and workflow exports and rejects unsafe non-agent extraction", async () => {
@@ -2478,7 +2692,7 @@ describe("svvy direct tools", () => {
     });
   });
 
-  it("runs apply_patch file effects through the managed sandbox helper", async () => {
+  it("requires runtime launch facts for managed apply_patch commands", async () => {
     const cwd = createTempDir();
     writeFileSync(join(cwd, "managed.txt"), "before\n");
     const patchTool = findTool(
@@ -2495,29 +2709,148 @@ describe("svvy direct tools", () => {
       "",
     ].join("\n");
 
-    try {
-      const result = await patchTool.execute(
+    await expect(
+      patchTool.execute(
         "tool-patch-managed-sandbox",
         { patch },
         new AbortController().signal,
         () => {},
-      );
-      expect(readText(result)).toContain("managed.txt");
-      expect(readFileSync(join(cwd, "managed.txt"), "utf8")).toBe("after\n");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      expect(message).toContain("sandbox_apply");
-      expect(readFileSync(join(cwd, "managed.txt"), "utf8")).toBe("before\n");
-    }
+      ),
+    ).rejects.toThrow("Runtime launch acquisition for apply_patch is required.");
+    expect(readFileSync(join(cwd, "managed.txt"), "utf8")).toBe("before\n");
   });
 
-  it("labels managed apply_patch sandbox denials in command facts", async () => {
+  it("runs apply_patch from runtime-acquired launch facts when provided", async () => {
     const cwd = createTempDir();
-    writeFileSync(join(cwd, "managed-denied.txt"), "before\n");
+    writeFileSync(join(cwd, "runtime-patch.txt"), "before\n");
+    const store = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: "workspace-runtime-patch",
+        label: "svvy",
+        cwd,
+        artifactDir: join(cwd, "artifacts"),
+      },
+      databasePath: join(cwd, "structured.sqlite"),
+    });
+    openStores.push(store);
+    const turn = store.startTurn({
+      sessionId: "session-runtime-patch",
+      surfacePiSessionId: "session-runtime-patch",
+      requestSummary: "Apply patch",
+    });
+    const runtime = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: "session-runtime-patch",
+        turnId: turn.id,
+        surfacePiSessionId: "session-runtime-patch",
+        generatedAgentContextFingerprint: "generated_context_fingerprint_test",
+        generatedAgentContextRevision: "generated_context_revision_test",
+      }),
+    };
+    const command = store.createCommand({
+      turnId: turn.id,
+      toolName: "apply_patch",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Run apply_patch",
+      summary: "Apply patch.",
+      arguments: { patch: "ignored by test" },
+      facts: { toolCallId: "tool-runtime-launch-patch" },
+    });
+    store.startCommand(command.id);
+    let closed = false;
     const patchTool = findTool(
-      createSvvyDirectToolsForTest({ cwd, managedSandbox: true }).codingTools,
+      createSvvyDirectToolsForTest({
+        cwd,
+        workspaceId: "workspace-runtime-patch",
+        runtime,
+        store,
+        acquireDirectToolLaunch: async (input) => {
+          expect(input.toolName).toBe("apply_patch");
+          expect(input.commandId).toBe(command.id as CommandId);
+          return {
+            facts: testLaunchFacts({
+              cwd,
+              launchKind: "direct_apply_patch",
+              commandId: command.id,
+              command: ["patch", "-p0", "--forward"],
+            }),
+            async close() {
+              closed = true;
+            },
+          };
+        },
+      }).codingTools,
       "apply_patch",
     );
+
+    const result = await patchTool.execute(
+      "tool-runtime-launch-patch",
+      {
+        patch: [
+          "--- runtime-patch.txt",
+          "+++ runtime-patch.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "",
+        ].join("\n"),
+      },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(result)).toContain("runtime-patch.txt");
+    expect(readFileSync(join(cwd, "runtime-patch.txt"), "utf8")).toBe("after\n");
+    expect(closed).toBe(true);
+  });
+
+  it("retries managed apply_patch sandbox denials only after approval", async () => {
+    const cwd = createTempDir();
+    writeFileSync(join(cwd, "managed-denied.txt"), "before\n");
+    const approvalRequests: unknown[] = [];
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: [
+        "/bin/sh",
+        "-c",
+        "printf 'Sandbox: deny(1) file-write-data managed-denied.txt\\nOperation not permitted\\n' >&2; exit 1",
+      ],
+      cwd,
+      launchKind: "direct_apply_patch",
+      options: {
+        approvalBoundary: (request) => {
+          approvalRequests.push(request);
+          return { approved: true };
+        },
+      },
+      toolCallId: "tool-patch-managed-sandbox-denial",
+      toolName: "apply_patch",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: [
+            "/bin/sh",
+            "-c",
+            "printf 'Sandbox: deny(1) file-write-data managed-denied.txt\\nOperation not permitted\\n' >&2; exit 1",
+          ],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: cwd as AbsolutePath,
+                recursive: true,
+                source: "workspace",
+              },
+            ],
+          },
+          launchKind: "direct_apply_patch",
+          mode: "managed",
+        }),
+    });
+    const patchTool = findTool(harness.tools.codingTools, "apply_patch");
     const patch = [
       "--- managed-denied.txt",
       "+++ managed-denied.txt",
@@ -2527,23 +2860,30 @@ describe("svvy direct tools", () => {
       "",
     ].join("\n");
 
-    try {
-      await patchTool.execute(
-        "tool-patch-managed-sandbox-denial",
-        { patch },
-        new AbortController().signal,
-        () => {},
-      );
-    } catch (error) {
-      const payload = JSON.parse((error as Error).message);
-      if (payload.error.message.includes("sandbox_apply")) {
-        expect(payload.commandFacts.sandboxDenied).toBe(true);
-        expect(payload.commandFacts.sandboxEngine).toBe("macos-seatbelt");
-      }
-      return;
-    }
-
+    await patchTool.execute(
+      "tool-patch-managed-sandbox-denial",
+      { patch },
+      new AbortController().signal,
+      () => {},
+    );
     expect(readFileSync(join(cwd, "managed-denied.txt"), "utf8")).toBe("after\n");
+    expect(approvalRequests).toEqual([
+      expect.objectContaining({
+        patch,
+        toolCallId: "tool-patch-managed-sandbox-denial",
+        toolName: "apply_patch",
+      }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          reason: "sandbox_denial_escalation",
+          sandboxDenied: true,
+        }),
+        patch,
+        toolCallId: "tool-patch-managed-sandbox-denial",
+        toolName: "apply_patch",
+      }),
+    ]);
+    expect(harness.closed()).toBe(true);
   });
 
   it("reports failed apply_patch attempts with structured patch facts", async () => {
@@ -2998,7 +3338,33 @@ if (readFileSync(target, "utf8") !== "before\n") {
     tempDirs.push(outsideRoot);
     const outsideFile = join(outsideRoot, "outside.txt");
     writeFileSync(outsideFile, "before\n");
-    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: ["patch", "-p0", "--forward"],
+      cwd,
+      launchKind: "direct_apply_patch",
+      toolCallId: "tool-patch-outside-managed-roots",
+      toolName: "apply_patch",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: ["patch", "-p0", "--forward"],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: cwd as AbsolutePath,
+                recursive: true,
+                source: "workspace",
+              },
+            ],
+          },
+          launchKind: "direct_apply_patch",
+          mode: "managed",
+        }),
+    });
+    const patchTool = findTool(harness.tools.codingTools, "apply_patch");
 
     await expect(
       patchTool.execute(
@@ -3019,6 +3385,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ).rejects.toThrow("Managed filesystem policy allows writes");
 
     expect(readFileSync(outsideFile, "utf8")).toBe("before\n");
+    expect(harness.closed()).toBe(true);
   });
 
   it("lets full-access bypass managed filesystem apply_patch write roots", async () => {
@@ -3055,7 +3422,33 @@ if (readFileSync(target, "utf8") !== "before\n") {
     const gitConfig = join(cwd, ".git", "config");
     mkdirSync(dirname(gitConfig), { recursive: true });
     writeFileSync(gitConfig, "before\n");
-    const patchTool = findTool(createSvvyDirectToolsForTest({ cwd }).codingTools, "apply_patch");
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: ["patch", "-p0", "--forward"],
+      cwd,
+      launchKind: "direct_apply_patch",
+      toolCallId: "tool-patch-protected-workspace-metadata",
+      toolName: "apply_patch",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: ["patch", "-p0", "--forward"],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: cwd as AbsolutePath,
+                recursive: true,
+                source: "workspace",
+              },
+            ],
+          },
+          launchKind: "direct_apply_patch",
+          mode: "managed",
+        }),
+    });
+    const patchTool = findTool(harness.tools.codingTools, "apply_patch");
 
     await expect(
       patchTool.execute(
@@ -3076,6 +3469,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ).rejects.toThrow("Managed filesystem policy allows writes");
 
     expect(readFileSync(gitConfig, "utf8")).toBe("before\n");
+    expect(harness.closed()).toBe(true);
   });
 
   it("allows apply_patch writes to app-owned editable Extension source roots", async () => {
@@ -3084,10 +3478,34 @@ if (readFileSync(target, "utf8") !== "before\n") {
     const manifestPath = join(extensionsRoot, "sources", "user", "notes", "manifest.json");
     mkdirSync(dirname(manifestPath), { recursive: true });
     writeFileSync(manifestPath, '{"schemaVersion":1}\n');
-    const patchTool = findTool(
-      createSvvyDirectToolsForTest({ cwd, extensionsRoot }).codingTools,
-      "apply_patch",
-    );
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: ["patch", "-p0", "--forward"],
+      cwd,
+      launchKind: "direct_apply_patch",
+      options: { extensionsRoot },
+      toolCallId: "tool-patch-extension-source-managed-root",
+      toolName: "apply_patch",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: ["patch", "-p0", "--forward"],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: join(extensionsRoot, "sources") as AbsolutePath,
+                recursive: true,
+                source: "extension-source",
+              },
+            ],
+          },
+          launchKind: "direct_apply_patch",
+          mode: "managed",
+        }),
+    });
+    const patchTool = findTool(harness.tools.codingTools, "apply_patch");
 
     await patchTool.execute(
       "tool-patch-extension-source-managed-root",
@@ -3106,6 +3524,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
     );
 
     expect(readFileSync(manifestPath, "utf8")).toBe('{"schemaVersion":1,"title":"Notes"}\n');
+    expect(harness.closed()).toBe(true);
   });
 
   it("blocks exec_command at the approval boundary before running shell commands", async () => {
@@ -3149,6 +3568,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
   it("registers long-running exec_command stdin by durable command id", async () => {
     const cwd = createTempDir();
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -3269,65 +3689,105 @@ if (readFileSync(target, "utf8") !== "before\n") {
   it("does not retry outside the sandbox for synthetic sandbox-looking command output", async () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
+    const commandText = "printf 'sandbox: Operation not permitted\\n' >&2; exit 1";
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: ["/bin/sh", "-lc", commandText],
+      cwd,
+      launchKind: "direct_shell",
+      options: {
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: true };
         },
         approvalMode: "user",
-        cwd,
-        managedSandbox: true,
-      }).codingTools,
-      "exec_command",
-    );
+      },
+      toolCallId: "tool-synthetic-sandbox-output",
+      toolName: "exec_command",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: ["/bin/sh", "-lc", commandText],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: cwd as AbsolutePath,
+                recursive: true,
+                source: "workspace",
+              },
+            ],
+          },
+          launchKind: "direct_shell",
+          mode: "managed",
+        }),
+    });
+    const execTool = findTool(harness.tools.codingTools, "exec_command");
 
     const result = await execTool.execute(
       "tool-synthetic-sandbox-output",
-      { cmd: "printf 'sandbox: Operation not permitted\\n' >&2; exit 1" },
+      { cmd: commandText },
       new AbortController().signal,
       () => {},
     );
 
-    if (readText(result).includes("sandbox_apply")) {
-      expect(result.details?.sandboxDenied).toBe(true);
-    } else {
-      expect(result.details?.exitCode).toBe(1);
-      expect(result.details?.sandboxDenied).toBeUndefined();
-    }
+    expect(execFacts(result)?.exitCode).toBe(1);
+    expect(execFacts(result)?.sandboxDenied).toBeUndefined();
     expect(approvalRequests).toHaveLength(1);
+    expect(harness.closed()).toBe(true);
   });
 
   it("does not escalate shell command-not-found failures as sandbox denials", async () => {
     const cwd = createTempDir();
     const approvalRequests: unknown[] = [];
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
+    const commandText = "definitely-not-a-svvy-command";
+    const harness = createRuntimeLaunchDirectToolsForTest({
+      command: ["/bin/sh", "-lc", commandText],
+      cwd,
+      launchKind: "direct_shell",
+      options: {
         approvalBoundary: (input) => {
           approvalRequests.push(input);
           return { approved: true };
         },
         approvalMode: "user",
-        cwd,
-        managedSandbox: true,
-      }).codingTools,
-      "exec_command",
-    );
+      },
+      toolCallId: "tool-not-found-no-escalation",
+      toolName: "exec_command",
+      launchFacts: (commandId) =>
+        testLaunchFacts({
+          command: ["/bin/sh", "-lc", commandText],
+          commandId,
+          cwd,
+          filesystemPolicy: {
+            defaultAccess: "read",
+            entries: [
+              {
+                access: "write",
+                path: cwd as AbsolutePath,
+                recursive: true,
+                source: "workspace",
+              },
+            ],
+          },
+          launchKind: "direct_shell",
+          mode: "managed",
+        }),
+    });
+    const execTool = findTool(harness.tools.codingTools, "exec_command");
 
     const result = await execTool.execute(
       "tool-not-found-no-escalation",
-      { cmd: "definitely-not-a-svvy-command" },
+      { cmd: commandText },
       new AbortController().signal,
       () => {},
     );
 
-    if (readText(result).includes("sandbox_apply")) {
-      expect(result.details?.sandboxDenied).toBe(true);
-    } else {
-      expect(result.details?.exitCode).toBe(127);
-      expect(result.details?.sandboxDenied).toBeUndefined();
-    }
+    expect(execFacts(result)?.exitCode).toBe(127);
+    expect(execFacts(result)?.sandboxDenied).toBeUndefined();
     expect(approvalRequests).toHaveLength(1);
+    expect(harness.closed()).toBe(true);
   });
 
   it("blocks svvyx CLI commands at the same ordinary exec_command approval boundary", async () => {
@@ -3401,6 +3861,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
       workflowsSourceRoot: join(cwd, "workflows"),
     });
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: cwd,
         label: "svvy",
@@ -4022,6 +4483,40 @@ if (readFileSync(target, "utf8") !== "before\n") {
     expect(readFileSync(otherSessionArtifactPath, "utf8")).toBe("other\n");
   });
 
+  it("protects artifact edits using the runtime artifact-root seam", async () => {
+    const calls: string[] = [];
+    const harness = createArtifactsHarness({
+      readArtifactRootForSession: (sessionId) => {
+        calls.push(sessionId);
+        return harness.artifactDir;
+      },
+    });
+    const immutableSourcePath = join(harness.cwd, "locked-source.log");
+    writeFileSync(immutableSourcePath, "locked\n");
+    const mutable = await harness.run("svvyx artifacts create --name draft.md --json");
+    const immutable = await harness.run(
+      `svvyx artifacts create --path ${immutableSourcePath} --name locked.log --immutable --json`,
+    );
+    const otherSessionDir = join(harness.artifactDir, "session-other");
+    const otherSessionArtifactPath = join(otherSessionDir, "other.md");
+    mkdirSync(otherSessionDir, { recursive: true });
+    writeFileSync(otherSessionArtifactPath, "other\n");
+
+    expect(mutable.output.path).toBe(join(harness.artifactDir, "session-artifacts", "draft.md"));
+
+    const mutableEdit = await harness.execRaw(`printf 'draft\\n' > ${mutable.output.path}`);
+    expect(readText(mutableEdit)).toContain("exit code: 0");
+    expect(readFileSync(mutable.output.path, "utf8")).toBe("draft\n");
+
+    await expect(harness.execRaw(`printf hacked > ${immutable.output.path}`)).rejects.toThrow(
+      "immutable or non-active-session Artifacts",
+    );
+    await expect(harness.execRaw(`printf hacked > ${otherSessionArtifactPath}`)).rejects.toThrow(
+      "immutable or non-active-session Artifacts",
+    );
+    expect(calls).toContain("session-artifacts");
+  });
+
   it("inspects, lists, and deletes artifacts as current-session product state", async () => {
     const harness = createArtifactsHarness();
     const created = await harness.run("svvyx artifacts create --name report.md --json");
@@ -4237,6 +4732,7 @@ function createActiveExecHarness(input: {
   toolCallId: string;
 }) {
   const store = createStructuredSessionStateStore({
+    digest: testDigest,
     workspace: {
       id: input.cwd,
       label: "svvy",
@@ -4300,6 +4796,8 @@ function createArtifactsHarness(
   harnessOptions: {
     workspaceId?: string;
     workspaceLabel?: string;
+    workspaceArtifactDir?: string;
+    readArtifactRootForSession?: (sessionId: string) => string | null;
     onAppLog?: (event: AppLoggerEvent) => void;
     openArtifact?: (request: {
       sessionId: string;
@@ -4311,11 +4809,12 @@ function createArtifactsHarness(
   tempDirs.push(cwd);
   const artifactDir = join(cwd, "artifact-store");
   const store = createStructuredSessionStateStore({
+    digest: testDigest,
     workspace: {
       id: harnessOptions.workspaceId ?? cwd,
       label: harnessOptions.workspaceLabel ?? "svvy",
       cwd,
-      artifactDir,
+      artifactDir: harnessOptions.workspaceArtifactDir ?? artifactDir,
     },
     databasePath: join(cwd, "structured.sqlite"),
   });
@@ -4350,6 +4849,7 @@ function createArtifactsHarness(
     cwd,
     runtime,
     store,
+    readArtifactRootForSession: harnessOptions.readArtifactRootForSession,
     openArtifact: harnessOptions.openArtifact,
     onAppLog: harnessOptions.onAppLog,
     extensionsRoot,
@@ -4420,7 +4920,7 @@ function createArtifactsHarness(
           status: "succeeded",
           facts: commandFacts,
         });
-        const text = result.content.find(
+        const text = (result.content ?? []).find(
           (block): block is { type: "text"; text: string } => block.type === "text",
         )?.text;
         if (!text) {
@@ -4490,17 +4990,25 @@ type AgentToolHarness = {
     input: unknown,
     signal: AbortSignal,
     onUpdate: () => void,
-  ) => Promise<{
-    content: Array<{ type: string; text?: string }>;
-    details?: Record<string, unknown>;
-  }>;
+  ) => Promise<NativeToolResult>;
 };
 
-function readText(result: { content: Array<{ type: string; text?: string }> }): string {
-  return result.content
-    .filter((block) => block.type === "text")
+function readText(result: Pick<NativeToolResult, "content">): string {
+  return (result.content ?? [])
+    .filter(
+      (block): block is { readonly type: "text"; readonly text: string } => block.type === "text",
+    )
     .map((block) => block.text ?? "")
     .join("\n");
+}
+
+/**
+ * Unwrap exec_command command facts. The exec_command tool keeps its facts
+ * (sandboxDenied, exitCode, sandboxEngine, etc.) on `details` as a JSON record
+ * that widens to `CommandResultEnvelope`; tests read the typed-ish fields here.
+ */
+function execFacts(result: Pick<NativeToolResult, "details">): Record<string, unknown> | undefined {
+  return result.details as unknown as Record<string, unknown> | undefined;
 }
 
 function sleep(ms: number): Promise<void> {

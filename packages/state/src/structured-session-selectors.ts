@@ -11,7 +11,7 @@ import type {
   StructuredWaitState,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
-import { readContextBudgetFromMeta, type ContextBudget } from "@svvy/core";
+import { readContextBudgetFromMeta, type ContextBudget, type RuntimeEpisodeKind } from "@svvy/core";
 
 export interface StructuredCommandRollupChild {
   commandId: string;
@@ -1719,8 +1719,6 @@ export interface StructuredThreadPendingReportRequest {
 
 export interface StructuredThreadCurrentReadModel extends StructuredThreadCompactRow {
   pendingReportRequests: StructuredThreadPendingReportRequest[];
-  loadedExtensionIds: string[];
-  availableExtensionIds: string[];
 }
 
 export interface StructuredThreadListReadModel {
@@ -1730,7 +1728,11 @@ export interface StructuredThreadListReadModel {
 export interface StructuredThreadEpisodesReadModel {
   episodes: Array<{
     id: string;
+    sessionId: string;
     threadId: string;
+    threadGroupId: string;
+    sourceCommandId: string | null;
+    kind: RuntimeEpisodeKind;
     title: string;
     summary: string;
     body: string;
@@ -1751,9 +1753,7 @@ export interface BuildStructuredThreadListReadModelInput {
 }
 
 export interface BuildStructuredThreadEpisodesReadModelInput {
-  threadId?: string | null;
-  threadGroupId?: string | null;
-  defaultThreadId?: string | null;
+  target: { kind: "thread"; threadId: string } | { kind: "thread-group"; threadGroupId: string };
   limit?: number;
 }
 
@@ -1797,10 +1797,6 @@ export function buildStructuredThreadCurrentReadModel(
   return {
     ...buildStructuredThreadCompactRow(session, thread),
     pendingReportRequests: buildStructuredThreadPendingReportRequests(session, thread.id),
-    loadedExtensionIds:
-      thread.loadedExtensionIds.slice() as StructuredThreadCurrentReadModel["loadedExtensionIds"],
-    availableExtensionIds:
-      thread.availableExtensionIds.slice() as StructuredThreadCurrentReadModel["availableExtensionIds"],
   };
 }
 
@@ -1826,35 +1822,59 @@ export function buildStructuredThreadListReadModel(
 
 export function buildStructuredThreadEpisodesReadModel(
   session: StructuredSessionSnapshot,
-  input: BuildStructuredThreadEpisodesReadModelInput = {},
+  input: BuildStructuredThreadEpisodesReadModelInput,
 ): StructuredThreadEpisodesReadModel {
-  const threadId = input.threadId ?? input.defaultThreadId ?? null;
-  const threadGroupId = input.threadGroupId ?? null;
   const limit = clampStructuredThreadReadModelLimit(input.limit, 10, 50);
   return {
     episodes: session.episodes
-      .filter((episode) => {
-        if (threadId) {
-          return episode.threadId === threadId;
-        }
-        if (!threadGroupId) {
-          return true;
+      .flatMap((episode) => {
+        if (!isRuntimeEpisodeKind(episode.kind)) {
+          return [];
         }
         const thread = getStructuredThread(session, episode.threadId);
-        return thread?.threadGroupId === threadGroupId;
+        if (!thread) {
+          return [];
+        }
+        if (input.target.kind === "thread") {
+          if (episode.threadId !== input.target.threadId) {
+            return [];
+          }
+        } else if (thread.threadGroupId !== input.target.threadGroupId) {
+          return [];
+        }
+
+        return [
+          {
+            id: episode.id as StructuredThreadEpisodesReadModel["episodes"][number]["id"],
+            sessionId:
+              episode.sessionId as StructuredThreadEpisodesReadModel["episodes"][number]["sessionId"],
+            threadId:
+              episode.threadId as StructuredThreadEpisodesReadModel["episodes"][number]["threadId"],
+            threadGroupId:
+              thread.threadGroupId as StructuredThreadEpisodesReadModel["episodes"][number]["threadGroupId"],
+            sourceCommandId:
+              episode.sourceCommandId as StructuredThreadEpisodesReadModel["episodes"][number]["sourceCommandId"],
+            kind: episode.kind,
+            title: episode.title,
+            summary: episode.summary,
+            body: episode.body,
+            createdAt: episode.createdAt,
+          },
+        ];
       })
       .toSorted((left, right) => compareTimestampDesc(left.createdAt, right.createdAt))
-      .slice(0, limit)
-      .map((episode) => ({
-        id: episode.id as StructuredThreadEpisodesReadModel["episodes"][number]["id"],
-        threadId:
-          episode.threadId as StructuredThreadEpisodesReadModel["episodes"][number]["threadId"],
-        title: episode.title,
-        summary: episode.summary,
-        body: episode.body,
-        createdAt: episode.createdAt,
-      })),
+      .slice(0, limit),
   };
+}
+
+function isRuntimeEpisodeKind(kind: StructuredEpisodeRecord["kind"]): kind is RuntimeEpisodeKind {
+  return (
+    kind === "change" ||
+    kind === "clarification" ||
+    kind === "report" ||
+    kind === "handoff" ||
+    kind === "conclusion"
+  );
 }
 
 export function buildStructuredThreadGroupReadModel(

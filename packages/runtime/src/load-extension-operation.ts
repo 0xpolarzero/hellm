@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect";
 import {
-  decodeCommandResultEnvelopeEffect,
+  decodeUnknownCommandResultEnvelopeEffect,
   RuntimeCommandStatePort,
   RuntimeContractError,
   type CommandId,
-  type CommandResultEnvelope,
   type NativeToolContent,
   type NativeToolResult,
   type PromptExecutionContext,
@@ -49,7 +48,7 @@ export type RunAcceptedLoadExtensionToolCallInput = {
 };
 
 export type RunAcceptedLoadExtensionToolCallResult = {
-  toolResult: NativeToolResult<CommandResultEnvelope>;
+  toolResult: NativeToolResult;
   appliedEffects: readonly AppliedRuntimeEffectRequest[];
 };
 
@@ -84,7 +83,10 @@ function buildHandlerInvocation(
   };
 }
 
-function normalizeNativeToolContent(content: readonly unknown[]): NativeToolContent[] {
+function normalizeNativeToolContent(content: readonly unknown[] | undefined): NativeToolContent[] {
+  if (!content) {
+    return [];
+  }
   return content.map((item) => {
     if (
       item &&
@@ -162,7 +164,9 @@ export const runAcceptedLoadExtensionToolCall = Effect.fn(
     );
   }
 
-  const details = yield* decodeCommandResultEnvelopeEffect(handlerResult.result.details).pipe(
+  const details = yield* decodeUnknownCommandResultEnvelopeEffect(
+    handlerResult.result.details,
+  ).pipe(
     Effect.mapError((cause) =>
       runtimeError({
         reason: "invalid-input",

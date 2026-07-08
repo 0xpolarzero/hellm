@@ -11,7 +11,10 @@ describe("extension env secret store", () => {
       },
     });
 
-    store.set({ extensionId: "linear", name: "LINEAR_TOKEN" }, "secret-token-value");
+    store.set(
+      { kind: "extension-env", extensionId: "linear", envName: "LINEAR_TOKEN" },
+      "secret-token-value",
+    );
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args).toEqual([

@@ -1,25 +1,49 @@
 import * as Schema from "effect/Schema";
 
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
-import { RuntimeClientSubmissionSchema, type RuntimeClientSubmission } from "./runtime-contracts";
+import {
+  RuntimeClientSubmissionInputSchema,
+  type RuntimeClientSubmissionInput,
+} from "./runtime-contracts";
+import { NonNegativeSafeIntegerSchema } from "./ids";
 
 export { RuntimeContractError } from "./errors";
+export { RuntimeClientSubmissionInputSchema };
+export type { RuntimeClientSubmissionInput };
 
-export const RuntimeClientSubmissionMetadataSchema = RuntimeClientSubmissionSchema;
+/**
+ * Boundary decoders for the wire `RuntimeClientSubmissionInput` and internal
+ * `RuntimeClientSubmission` shapes live with their schemas in `runtime-contracts.ts`.
+ * Re-export them here so the `@svvy/core` public surface and the submit contract module
+ * expose one canonical set of boundary decoders without duplication.
+ */
+export {
+  decodeUnknownRuntimeClientSubmissionEffect,
+  decodeUnknownRuntimeClientSubmissionExit,
+  decodeUnknownRuntimeClientSubmissionInputEffect,
+  decodeUnknownRuntimeClientSubmissionInputExit,
+  unsafeDecodeRuntimeClientSubmissionInputSyncForTestsAndBootstrap,
+  unsafeDecodeRuntimeClientSubmissionSyncForTestsAndBootstrap,
+} from "./runtime-contracts";
 
-export type RuntimeClientSubmissionMetadata = RuntimeClientSubmission;
+export interface RuntimeClientSubmissionMetadata {
+  readonly submissionId?: string;
+  readonly correlationId?: string;
+  readonly clientRequestId?: string;
+  readonly source?: string;
+  readonly submittedAt?: string;
+  readonly sequence?: number;
+}
 
-export const decodeRuntimeClientSubmissionMetadata = Schema.decodeUnknownSync(
+export const RuntimeClientSubmissionMetadataSchema = RuntimeClientSubmissionInputSchema;
+
+export const unsafeDecodeRuntimeClientSubmissionMetadataSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RuntimeClientSubmissionMetadataSchema, strictBoundaryParseOptions);
+export const decodeUnknownRuntimeClientSubmissionMetadataExit = Schema.decodeUnknownExit(
   RuntimeClientSubmissionMetadataSchema,
   strictBoundaryParseOptions,
 );
-
-export const decodeRuntimeClientSubmissionMetadataExit = Schema.decodeUnknownExit(
-  RuntimeClientSubmissionMetadataSchema,
-  strictBoundaryParseOptions,
-);
-
-export const decodeRuntimeClientSubmissionMetadataEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRuntimeClientSubmissionMetadataEffect = Schema.decodeUnknownEffect(
   RuntimeClientSubmissionMetadataSchema,
   strictBoundaryParseOptions,
 );
@@ -40,6 +64,12 @@ export interface RuntimePromptTelemetrySummary {
   readonly textBlockCount: number;
   readonly imageCount: number;
 }
+export const RuntimePromptTelemetrySummarySchema = Schema.Struct({
+  messageCount: NonNegativeSafeIntegerSchema,
+  userMessageCount: NonNegativeSafeIntegerSchema,
+  textBlockCount: NonNegativeSafeIntegerSchema,
+  imageCount: NonNegativeSafeIntegerSchema,
+});
 
 function telemetryString(value: unknown, maxLength = 256): string | undefined {
   if (typeof value !== "string") {

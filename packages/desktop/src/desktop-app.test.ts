@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { createDesktopApp, type CreateDesktopAppInput, type DesktopWindowId } from "./index";
+import {
+  createDesktopApp,
+  type CreateDesktopAppInput,
+  type DesktopRendererNotification,
+  type DesktopWindowId,
+} from "./index";
 
 function createInput(events: string[] = []): CreateDesktopAppInput {
   const runtime = {
@@ -8,7 +13,6 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
     messages: {},
     queues: {},
     requestInput: {},
-    commands: {},
     approvals: {},
     sourceEdits: {},
     sourceInvalidation: {},
@@ -19,12 +23,17 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       refetchInvalidation: async () => [],
       rebaseline: async () => ({}),
     },
-    close: () => {},
-  };
+  } as unknown as CreateDesktopAppInput["state"];
   const commands = {
-    runtime: runtime.commands,
-    state: {},
-  };
+    runtime: {},
+    state: {
+      appLogs: {
+        markRead: async () => ({}),
+        markVisibleRangeRead: async () => ({}),
+        clearWorkspaceUnread: async () => ({}),
+      },
+    },
+  } as unknown as CreateDesktopAppInput["commands"];
 
   return {
     runtime,
@@ -140,5 +149,26 @@ describe("@svvy/desktop createDesktopApp", () => {
       "menu:dispose",
       "bridge:dispose",
     ]);
+  });
+
+  it("accepts bounded surface stream patch notifications through the renderer bridge", async () => {
+    const events: string[] = [];
+    const input = createInput(events);
+    const notification = {
+      kind: "surface-stream-patch",
+      sequence: 1,
+      workspaceId: "workspace_01",
+      surfacePiSessionId: "surface_pi_session_01",
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "message_01",
+        contentIndex: 0,
+        delta: "hello",
+      },
+    } as DesktopRendererNotification;
+
+    await input.host.bridge.sendToRenderer(notification);
+
+    expect(events).toEqual(["renderer:surface-stream-patch"]);
   });
 });

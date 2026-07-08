@@ -1,7 +1,11 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
+  boundarySchemaErrorDetails,
+  decodeUnknownExtensionExecutionPlanEffect,
+  decodeUnknownRuntimeEffectRequestEffect,
   RuntimeActorExtensionBindingStatePort,
   RuntimeContractError,
   RuntimeEpisodeStatePort,
@@ -18,8 +22,10 @@ import {
   type RuntimeActorExtensionBindingRecord,
   type RequestInputQuestionRequest,
   type ExtensionRuntimeOperation,
+  type ExtensionExecutionPlan,
   type RuntimeEffectRequest,
   type RuntimeRequestInputRecord,
+  type PromptExecutionContext,
   type StartRuntimeHandlerThreadsInput,
   type StartRuntimeHandlerThreadsResult,
   type SurfacePiSessionId,
@@ -27,14 +33,16 @@ import {
   type ThreadId,
   type ToolItemId,
   type TurnId,
+  type CommandId,
 } from "@svvy/core";
-import { Extensions } from "@svvy/extensions";
+import { Extensions, type CommandInvocationContext } from "@svvy/extensions";
 import { RuntimeEventBus } from "./runtime-event-bus";
 
 export type StartedHandlerThread = {
   readonly threadId: ThreadId;
   readonly threadGroupId: ThreadGroupId;
   readonly surfacePiSessionId: SurfacePiSessionId;
+  readonly parentThreadId: ThreadId | null;
   readonly objective: string;
   readonly objectiveState: "active";
   readonly queuedMessageId: QueueItemId;
@@ -49,6 +57,9 @@ export type RuntimeEffectRequestApplicationContext = {
   target: PromptTarget;
   turnId: TurnId;
   toolItemId: ToolItemId;
+  commandId?: CommandId;
+  commandContext?: CommandInvocationContext;
+  promptExecutionContext?: PromptExecutionContext;
   sourceInvalidation?: {
     refreshGeneratedContext(
       input: Extract<RuntimeEffectRequest, { type: "generated_context.refresh" }>["input"],
@@ -58,6 +69,44 @@ export type RuntimeEffectRequestApplicationContext = {
     ): Effect.Effect<GeneratedPackagesRefreshResult, RuntimeContractError>;
   };
 };
+
+export type RuntimeExecutionPlanReceipt = {
+  readonly commandId: CommandId;
+};
+
+export interface RuntimeExecutionPlanExecutorService {
+  execute(input: {
+    readonly commandId: CommandId;
+    readonly target: PromptTarget;
+    readonly plan: ExtensionExecutionPlan;
+    readonly invocationContext: CommandInvocationContext;
+    readonly promptExecutionContext: PromptExecutionContext;
+  }): Effect.Effect<RuntimeExecutionPlanReceipt, RuntimeContractError>;
+}
+
+export class RuntimeExecutionPlanExecutor extends Context.Service<
+  RuntimeExecutionPlanExecutor,
+  RuntimeExecutionPlanExecutorService
+>()("@svvy/runtime/RuntimeExecutionPlanExecutor") {}
+
+export const layerRuntimeExecutionPlanExecutor = Layer.succeed(
+  RuntimeExecutionPlanExecutor,
+  RuntimeExecutionPlanExecutor.of({
+    execute: (input) =>
+      Effect.fail(
+        new RuntimeContractError({
+          operation: "runtime.executionPlan.execute",
+          reason: "unsupported-operation",
+          message: `Runtime execution plan ${input.plan.type} has no composed execution lane.`,
+          cause: {
+            commandId: input.commandId,
+            planId: input.plan.planId,
+            planType: input.plan.type,
+          },
+        }),
+      ),
+  }),
+);
 
 export type RuntimeQueueInsertPostCommitInput = {
   readonly target: InsertQueueItemRequest["target"];
@@ -122,6 +171,11 @@ export type AppliedRuntimeEffectRequest =
   | {
       type: "generated_context.refresh";
       input: Extract<RuntimeEffectRequest, { type: "generated_context.refresh" }>["input"];
+    }
+  | {
+      type: "execution_plan";
+      plan: ExtensionExecutionPlan;
+      receipt: RuntimeExecutionPlanReceipt;
     };
 
 function promptTargetsEqual(left: PromptTarget, right: PromptTarget): boolean {
@@ -227,9 +281,10 @@ function mapStartedHandlerThreadsResult(
       threadId: thread.threadId,
       threadGroupId: thread.threadGroupId,
       surfacePiSessionId: thread.surfacePiSessionId,
+      parentThreadId: thread.parentThreadId,
       objective: thread.objective,
       objectiveState: thread.objectiveState,
-      queuedMessageId: thread.queuedMessage.id as QueueItemId,
+      queuedMessageId: thread.queuedMessageId,
     })),
   };
 }
@@ -306,9 +361,7 @@ export const applyHandlerThreadStartRuntimeEffectRequest = Effect.fn(
       }),
     );
   }
-  const hostOption = yield* Effect.contextWith((services) =>
-    Effect.succeed(Context.getOption(services, RuntimeHandlerThreadStartPreparationHost)),
-  );
+  const hostOption = yield* Effect.serviceOption(RuntimeHandlerThreadStartPreparationHost);
   if (Option.isNone(hostOption)) {
     return yield* Effect.fail(
       new RuntimeContractError({
@@ -350,8 +403,8 @@ export const applyHandlerThreadStartRuntimeEffectRequest = Effect.fn(
         surfacePiSessionId: thread.surfacePiSessionId,
         threadId: thread.threadId,
       },
-      queuedMessageId: thread.queuedMessage.id as QueueItemId,
-      kind: thread.queuedMessage.kind,
+      queuedMessageId: thread.queuedMessageId,
+      kind: "initial_handler_start",
     });
   }
   const result = mapStartedHandlerThreadsResult(startedResult.value);
@@ -572,8 +625,9 @@ export const applyGeneratedContextRefreshRuntimeEffectRequest = Effect.fn(
 
 export const applyRuntimeEffectRequest = Effect.fn("@svvy/runtime/effects.applyOne")(function* (
   context: RuntimeEffectRequestApplicationContext,
-  request: RuntimeEffectRequest,
+  rawRequest: unknown,
 ) {
+  const request = yield* decodeRuntimeEffectRequestForApply(rawRequest);
   switch (request.type) {
     case "handler_thread.start":
       return yield* applyHandlerThreadStartRuntimeEffectRequest(context, request);
@@ -589,22 +643,21 @@ export const applyRuntimeEffectRequest = Effect.fn("@svvy/runtime/effects.applyO
       return yield* applyGeneratedContextRefreshRuntimeEffectRequest(context, request);
     case "generated_packages.refresh":
       return yield* applyGeneratedPackagesRefreshRuntimeEffectRequest(context, request);
-    default:
-      return yield* Effect.fail(
-        new RuntimeContractError({
-          operation: "runtime.effects.apply",
-          reason: "unsupported-operation",
-          message: `Runtime effect request variant has no application case: ${
-            (request as { type: string }).type
-          }.`,
-        }),
-      );
   }
+  return assertRuntimeEffectRequestExhaustive(request);
 });
+
+function assertRuntimeEffectRequestExhaustive(request: never): never {
+  throw new Error(
+    `Runtime effect request variant was decoded by @svvy/core but has no runtime applier: ${JSON.stringify(
+      request,
+    )}.`,
+  );
+}
 
 export const applyRuntimeEffectRequests = Effect.fn("@svvy/runtime/effects.applyMany")(function* (
   context: RuntimeEffectRequestApplicationContext,
-  requests: readonly RuntimeEffectRequest[],
+  requests: readonly unknown[],
 ) {
   const applied: AppliedRuntimeEffectRequest[] = [];
   for (const request of requests) {
@@ -613,44 +666,93 @@ export const applyRuntimeEffectRequests = Effect.fn("@svvy/runtime/effects.apply
   return applied;
 });
 
-export const applyExtensionRuntimeOperations = Effect.fn("@svvy/runtime/effects.applyOperations")(
-  function* (
-    context: RuntimeEffectRequestApplicationContext,
-    operations: readonly ExtensionRuntimeOperation[],
-  ) {
-    const executionPlan = operations.find((operation) => operation.kind === "execution_plan");
-    if (executionPlan) {
-      return yield* Effect.fail(
-        new RuntimeContractError({
-          operation: "runtime.effects.applyOperations",
-          reason: "unsupported-operation",
-          message:
-            "Extension execution plans require a runtime-owned command executor and cannot be applied by the runtime effect lane.",
-        }),
-      );
-    }
+export const executeExtensionExecutionPlanOperation = Effect.fn(
+  "@svvy/runtime/effects.executionPlan",
+)(function* (context: RuntimeEffectRequestApplicationContext, rawPlan: unknown) {
+  const plan = yield* decodeExtensionExecutionPlanForApply(rawPlan);
+  if (!context.commandId || !context.commandContext || !context.promptExecutionContext) {
+    return yield* Effect.fail(
+      new RuntimeContractError({
+        operation: "runtime.effects.applyOperations",
+        reason: "unsupported-operation",
+        message:
+          "Extension execution plans require the owning command context, prompt execution context, and command id.",
+      }),
+    );
+  }
 
+  const executor = yield* RuntimeExecutionPlanExecutor;
+  const receipt = yield* executor.execute({
+    commandId: context.commandId,
+    target: context.target,
+    plan,
+    invocationContext: context.commandContext,
+    promptExecutionContext: context.promptExecutionContext,
+  });
+
+  return {
+    type: "execution_plan",
+    plan,
+    receipt,
+  } satisfies AppliedRuntimeEffectRequest;
+});
+
+export const applyExtensionRuntimeOperations = Effect.fn("@svvy/runtime/effects.applyOperations")(
+  function* (context: RuntimeEffectRequestApplicationContext, operations: readonly unknown[]) {
     const applied: AppliedRuntimeEffectRequest[] = [];
-    for (const operation of operations) {
+    for (const operation of operations as readonly ExtensionRuntimeOperation[]) {
       switch (operation.kind) {
         case "runtime_effect":
           applied.push(yield* applyRuntimeEffectRequest(context, operation.request));
           break;
         case "execution_plan":
+          applied.push(yield* executeExtensionExecutionPlanOperation(context, operation.plan));
+          break;
+        default: {
           return yield* Effect.fail(
             new RuntimeContractError({
               operation: "runtime.effects.applyOperations",
-              reason: "unsupported-operation",
-              message:
-                "Extension execution plans require a runtime-owned command executor and cannot be applied by the runtime effect lane.",
+              reason: "invalid-input",
+              message: `Extension runtime operation has no application case: ${
+                (operation as { kind?: string }).kind ?? "unknown"
+              }.`,
             }),
           );
-        default: {
-          const _exhaustive: never = operation;
-          return _exhaustive;
         }
       }
     }
     return applied;
   },
 );
+
+const decodeRuntimeEffectRequestForApply = Effect.fn(
+  "@svvy/runtime/effects.decodeRuntimeEffectRequestForApply",
+)(function* (request: unknown) {
+  return yield* decodeUnknownRuntimeEffectRequestEffect(request).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RuntimeContractError({
+          operation: "runtime.effects.applyOperations",
+          reason: "invalid-input",
+          ...boundarySchemaErrorDetails(cause),
+          cause,
+        }),
+    ),
+  );
+});
+
+const decodeExtensionExecutionPlanForApply = Effect.fn(
+  "@svvy/runtime/effects.decodeExtensionExecutionPlanForApply",
+)(function* (plan: unknown) {
+  return yield* decodeUnknownExtensionExecutionPlanEffect(plan).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RuntimeContractError({
+          operation: "runtime.effects.applyOperations",
+          reason: "invalid-input",
+          ...boundarySchemaErrorDetails(cause),
+          cause,
+        }),
+    ),
+  );
+});

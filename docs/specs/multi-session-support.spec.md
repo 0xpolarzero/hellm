@@ -33,6 +33,10 @@ Session rows support:
 - archive/unarchive
 - confirmed delete from the context menu
 
+Session-row actions are renderer-safe intents routed through app/bootstrap-injected state command and
+runtime facades. Renderer code updates rows only after receipts, renderer-safe notifications, or
+`StateReadModels` refetches; it never mutates durable session rows locally.
+
 ## Handler Threads
 
 Handler-thread rows belong under their owning session.

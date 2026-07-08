@@ -1,22 +1,34 @@
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
+import { SourceScopeDomainInvariant } from "./source-scope-domain-invariant";
 import {
+  AbsolutePath,
   AgentProfileId,
   AppLogEntryId,
   ArtifactId,
+  AttachmentDisplayName,
+  Base64String,
+  ByteCountSchema,
   CommandId,
   EpisodeId,
   ExtensionExecutionPlanId,
   ExtensionId,
   MessageId,
+  MimeType,
   NonNegativeSafeIntegerSchema,
+  PositiveDurationMsSchema,
   QueueItemId,
   RecoveryWorkId,
   RequestInputAnswerId,
   RequestInputOptionId,
   RequestInputQuestionId,
   RequestInputRequestId,
+  RuntimeAttachmentId,
+  RuntimeClientCorrelationId,
+  RuntimeClientRequestId,
+  RuntimeClientSubmissionId,
+  RuntimeClientSubmissionSource,
   RuntimeEventGenerationId,
   RuntimeEventSequence,
   RuntimeApprovalId,
@@ -29,14 +41,17 @@ import {
   ToolCallId,
   ToolItemId,
   TurnId,
+  UtcDateTime,
   WorktreeId,
   WorkflowRunId,
   WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspaceRelativePath,
   WorkspaceSessionId,
-  AbsolutePath,
   IsoDateTimeStringSchema,
+  JsonValue,
 } from "./ids";
+
 import { SnippetSourceSchema } from "./composer-contracts";
 import {
   RuntimeContractError,
@@ -45,13 +60,20 @@ import {
   StateContractError,
 } from "./errors";
 import {
+  decodeUnknownStateInvalidationDescriptorEffect,
+  decodeUnknownStateInvalidationDescriptorExit,
   AppReadModelInvalidationSchema,
   StateInvalidationDescriptorSchema,
+  type StateInvalidationDescriptor,
+  unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap,
   WorkspaceReadModelInvalidationSchema,
 } from "./runtime-invalidation-contracts";
 export {
+  decodeUnknownStateInvalidationDescriptorEffect,
+  decodeUnknownStateInvalidationDescriptorExit,
   AppReadModelInvalidationSchema,
   StateInvalidationDescriptorSchema,
+  unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap,
   WorkspaceReadModelInvalidationSchema,
 };
 export type {
@@ -60,17 +82,21 @@ export type {
   WorkspaceReadModelInvalidation,
 } from "./runtime-invalidation-contracts";
 import {
+  type InternalRefreshGeneratedPackagesRequest,
+  InternalRefreshGeneratedPackagesRequestSchema,
   type RefreshGeneratedPackagesRequest,
-  GeneratedPackageRefreshStatusSchema,
+  GeneratedPackageBuildStatusSchema,
   GeneratedPackageWorkspaceLinkStatusSchema,
   RefreshGeneratedPackagesRequestSchema,
 } from "./generated-package-contracts";
+export { InternalRefreshGeneratedPackagesRequestSchema, RefreshGeneratedPackagesRequestSchema };
+export type { InternalRefreshGeneratedPackagesRequest, RefreshGeneratedPackagesRequest };
 import {
   CommandFactsPayloadSchema,
   CommandResultEnvelopeSchema,
-  decodeCommandResultEnvelope,
-  decodeCommandResultEnvelopeEffect,
-  decodeCommandResultEnvelopeExit,
+  unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap,
+  decodeUnknownCommandResultEnvelopeEffect,
+  decodeUnknownCommandResultEnvelopeExit,
   NativeToolResultSchema,
   type CommandFactsPayload,
   type CommandResultEnvelope,
@@ -78,14 +104,80 @@ import {
 export {
   CommandFactsPayloadSchema,
   CommandResultEnvelopeSchema,
-  decodeCommandResultEnvelope,
-  decodeCommandResultEnvelopeEffect,
-  decodeCommandResultEnvelopeExit,
+  unsafeDecodeCommandResultEnvelopeSyncForTestsAndBootstrap,
+  decodeUnknownCommandResultEnvelopeEffect,
+  decodeUnknownCommandResultEnvelopeExit,
 };
 export type { CommandFactsPayload, CommandResultEnvelope };
 
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
-export type CommandEventPayload = typeof CommandFactsPayloadSchema.Type;
+export const CommandArgumentSnapshotEventPayloadSchema = Schema.Struct({
+  source: Schema.optionalKey(Schema.String),
+  arguments: JsonValue,
+  facts: Schema.optionalKey(CommandFactsPayloadSchema),
+});
+export type CommandArgumentSnapshotEventPayload =
+  typeof CommandArgumentSnapshotEventPayloadSchema.Type;
+
+export const CommandOutputEventPayloadSchema = Schema.Struct({
+  stream: Schema.Literals(["stdout", "stderr"]),
+  source: Schema.optionalKey(Schema.String),
+  chunkRef: Schema.optionalKey(ToolItemId),
+  text: Schema.optionalKey(Schema.String),
+  truncated: Schema.optionalKey(Schema.Boolean),
+});
+export type CommandOutputEventPayload = typeof CommandOutputEventPayloadSchema.Type;
+
+export const CommandProgressEventPayloadSchema = Schema.Struct({
+  source: Schema.String,
+  phase: Schema.optionalKey(Schema.String),
+  family: Schema.optionalKey(Schema.String),
+  command: Schema.optionalKey(Schema.String),
+  message: Schema.optionalKey(Schema.String),
+  progress: Schema.optionalKey(Schema.Number),
+  facts: Schema.optionalKey(CommandFactsPayloadSchema),
+});
+export type CommandProgressEventPayload = typeof CommandProgressEventPayloadSchema.Type;
+
+export const CommandPatchSnapshotFileSchema = Schema.Struct({
+  path: Schema.String,
+  changeType: Schema.Literals(["created", "deleted", "modified"]),
+  additions: Schema.Number,
+  deletions: Schema.Number,
+});
+export type CommandPatchSnapshotFile = typeof CommandPatchSnapshotFileSchema.Type;
+
+export const CommandPatchSnapshotEventPayloadSchema = Schema.Struct({
+  source: Schema.optionalKey(Schema.String),
+  files: Schema.Array(CommandPatchSnapshotFileSchema),
+});
+export type CommandPatchSnapshotEventPayload = typeof CommandPatchSnapshotEventPayloadSchema.Type;
+
+export const CommandDiagnosticSchema = Schema.Struct({
+  severity: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+  file: Schema.optionalKey(Schema.String),
+  line: Schema.optionalKey(Schema.Number),
+  column: Schema.optionalKey(Schema.Number),
+  code: Schema.optionalKey(Schema.String),
+});
+export type CommandDiagnostic = typeof CommandDiagnosticSchema.Type;
+
+export const CommandDiagnosticEventPayloadSchema = Schema.Struct({
+  source: Schema.optionalKey(Schema.String),
+  stage: Schema.optionalKey(Schema.String),
+  diagnostics: Schema.Array(CommandDiagnosticSchema),
+});
+export type CommandDiagnosticEventPayload = typeof CommandDiagnosticEventPayloadSchema.Type;
+
+export const CommandEventPayloadSchema = Schema.Union([
+  CommandArgumentSnapshotEventPayloadSchema,
+  CommandDiagnosticEventPayloadSchema,
+  CommandOutputEventPayloadSchema,
+  CommandPatchSnapshotEventPayloadSchema,
+  CommandProgressEventPayloadSchema,
+]);
+export type CommandEventPayload = typeof CommandEventPayloadSchema.Type;
 
 export const ReasoningEffortSchema = Schema.Literals([
   "off",
@@ -166,31 +258,31 @@ export type RuntimeSurfaceTarget = typeof RuntimeSurfaceTargetSchema.Type;
 export const RuntimeSubmittedAttachmentSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("image"),
-    id: Schema.optionalKey(Schema.String),
-    name: Schema.optionalKey(Schema.String),
-    path: Schema.optionalKey(Schema.String),
-    workspaceRelativePath: Schema.optionalKey(Schema.String),
-    dataBase64: Schema.optionalKey(Schema.String),
-    mimeType: Schema.String,
-    sizeBytes: Schema.optionalKey(Schema.Number),
+    id: Schema.optionalKey(RuntimeAttachmentId),
+    name: Schema.optionalKey(AttachmentDisplayName),
+    path: Schema.optionalKey(AbsolutePath),
+    workspaceRelativePath: Schema.optionalKey(WorkspaceRelativePath),
+    dataBase64: Schema.optionalKey(Base64String),
+    mimeType: MimeType,
+    sizeBytes: Schema.optionalKey(ByteCountSchema),
   }),
   Schema.Struct({
     kind: Schema.Literal("file"),
-    id: Schema.optionalKey(Schema.String),
-    name: Schema.optionalKey(Schema.String),
-    path: Schema.String,
-    workspaceRelativePath: Schema.optionalKey(Schema.String),
-    mimeType: Schema.optionalKey(Schema.String),
-    sizeBytes: Schema.optionalKey(Schema.Number),
+    id: Schema.optionalKey(RuntimeAttachmentId),
+    name: Schema.optionalKey(AttachmentDisplayName),
+    path: AbsolutePath,
+    workspaceRelativePath: Schema.optionalKey(WorkspaceRelativePath),
+    mimeType: Schema.optionalKey(MimeType),
+    sizeBytes: Schema.optionalKey(ByteCountSchema),
   }),
   Schema.Struct({
     kind: Schema.Literal("folder"),
-    id: Schema.optionalKey(Schema.String),
-    name: Schema.optionalKey(Schema.String),
-    path: Schema.String,
-    workspaceRelativePath: Schema.optionalKey(Schema.String),
-    mimeType: Schema.optionalKey(Schema.String),
-    sizeBytes: Schema.optionalKey(Schema.Number),
+    id: Schema.optionalKey(RuntimeAttachmentId),
+    name: Schema.optionalKey(AttachmentDisplayName),
+    path: AbsolutePath,
+    workspaceRelativePath: Schema.optionalKey(WorkspaceRelativePath),
+    mimeType: Schema.optionalKey(MimeType),
+    sizeBytes: Schema.optionalKey(ByteCountSchema),
   }),
 ]);
 
@@ -220,18 +312,50 @@ export type RuntimeSubmittedMessage = typeof RuntimeSubmittedMessageSchema.Type;
 export const RuntimeMessageDeliverySchema = Schema.Literals(["enqueue-and-run", "queue-only"]);
 export type RuntimeMessageDelivery = typeof RuntimeMessageDeliverySchema.Type;
 
-export const RuntimeClientSubmissionSchema = Schema.Struct({
-  submissionId: Schema.optionalKey(Schema.String),
-  correlationId: Schema.optionalKey(Schema.String),
-  clientRequestId: Schema.optionalKey(Schema.String),
-  source: Schema.optionalKey(Schema.String),
-  submittedAt: Schema.optionalKey(Schema.String),
-  sequence: Schema.optionalKey(Schema.Number),
+export const RuntimeClientSubmissionInputSchema = Schema.Struct({
+  submissionId: Schema.optionalKey(RuntimeClientSubmissionId),
+  correlationId: Schema.optionalKey(RuntimeClientCorrelationId),
+  clientRequestId: Schema.optionalKey(RuntimeClientRequestId),
+  source: Schema.optionalKey(RuntimeClientSubmissionSource),
+  submittedAt: Schema.optionalKey(IsoDateTimeStringSchema),
+  sequence: Schema.optionalKey(NonNegativeSafeIntegerSchema),
 });
+export type RuntimeClientSubmissionInput = typeof RuntimeClientSubmissionInputSchema.Type;
 
+export const RuntimeClientSubmissionSchema = Schema.Struct({
+  submissionId: Schema.optionalKey(RuntimeClientSubmissionId),
+  correlationId: Schema.optionalKey(RuntimeClientCorrelationId),
+  clientRequestId: Schema.optionalKey(RuntimeClientRequestId),
+  source: Schema.optionalKey(RuntimeClientSubmissionSource),
+  submittedAt: Schema.optionalKey(UtcDateTime),
+  sequence: Schema.optionalKey(NonNegativeSafeIntegerSchema),
+});
 export type RuntimeClientSubmission = typeof RuntimeClientSubmissionSchema.Type;
-export const RuntimeClientSubmissionInputSchema = RuntimeClientSubmissionSchema;
-export type RuntimeClientSubmissionInput = RuntimeClientSubmission;
+export type RuntimeClientSubmissionEncoded = typeof RuntimeClientSubmissionSchema.Encoded;
+
+export const unsafeDecodeRuntimeClientSubmissionInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RuntimeClientSubmissionInputSchema, strictBoundaryParseOptions);
+export const decodeUnknownRuntimeClientSubmissionInputExit = Schema.decodeUnknownExit(
+  RuntimeClientSubmissionInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRuntimeClientSubmissionInputEffect = Schema.decodeUnknownEffect(
+  RuntimeClientSubmissionInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const unsafeDecodeRuntimeClientSubmissionSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
+  RuntimeClientSubmissionSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRuntimeClientSubmissionExit = Schema.decodeUnknownExit(
+  RuntimeClientSubmissionSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRuntimeClientSubmissionEffect = Schema.decodeUnknownEffect(
+  RuntimeClientSubmissionSchema,
+  strictBoundaryParseOptions,
+);
 
 export const StateRevisionSchema = Schema.Number.check(
   Schema.isInt(),
@@ -246,6 +370,24 @@ export const StateCommandReceiptSchema = Schema.Struct({
   stateRevision: StateRevisionSchema,
 });
 export type StateCommandReceipt = typeof StateCommandReceiptSchema.Type;
+
+export interface StateCommandPostCommitNotificationError {
+  readonly type: "state-command-post-commit-notification-error";
+  readonly operation: string;
+  readonly reason: "publication-failed" | "runtime-shutdown" | "runtime-disposed";
+  readonly receipt: StateCommandReceipt;
+  readonly message: string;
+  readonly affectedReadModels?: readonly StateInvalidationDescriptor[];
+}
+
+export const StateCommandPostCommitNotificationErrorSchema = Schema.Struct({
+  type: Schema.Literal("state-command-post-commit-notification-error"),
+  operation: Schema.String,
+  reason: Schema.Literals(["publication-failed", "runtime-shutdown", "runtime-disposed"]),
+  receipt: StateCommandReceiptSchema,
+  message: Schema.String,
+  affectedReadModels: Schema.optionalKey(Schema.Array(StateInvalidationDescriptorSchema)),
+});
 
 export const RuntimeOwnerKindSchema = Schema.Literals([
   "desktop-tab",
@@ -351,7 +493,7 @@ export const CreateOrchestratorSurfaceInputSchema = Schema.Struct({
   workspaceId: WorkspaceId,
   title: Schema.optionalKey(Schema.String),
   profileId: Schema.optionalKey(AgentProfileId),
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 export type CreateOrchestratorSurfaceInput = typeof CreateOrchestratorSurfaceInputSchema.Type;
 
@@ -388,6 +530,7 @@ export const CloseSurfaceReasonSchema = Schema.Literals([
 export type CloseSurfaceReason = typeof CloseSurfaceReasonSchema.Type;
 
 export const CloseSurfaceInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
   target: RuntimeSurfaceTargetSchema,
   closeReason: CloseSurfaceReasonSchema,
 });
@@ -403,7 +546,7 @@ export const SubmitMessageInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   message: RuntimeSubmittedMessageSchema,
   delivery: Schema.optionalKey(RuntimeMessageDeliverySchema),
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export type SubmitMessageInput = typeof SubmitMessageInputSchema.Type;
@@ -457,32 +600,10 @@ export const SteerQueuedMessageInputSchema = Schema.Struct({
 
 export type SteerQueuedMessageInput = typeof SteerQueuedMessageInputSchema.Type;
 
-export const RunExtensionDependencyActionInputSchema = Schema.Struct({
-  scope: Schema.Struct({
-    kind: Schema.Literal("app-global"),
-    originWorkspaceId: Schema.optionalKey(WorkspaceId),
-  }),
-  extensionId: ExtensionId,
-  requirementId: Schema.String,
-  action: Schema.Literals(["install", "update"]),
-  targetVersion: Schema.optionalKey(Schema.String),
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
-});
-
-export type RunExtensionDependencyActionInput = typeof RunExtensionDependencyActionInputSchema.Type;
-
-export const RunExtensionDependencyActionResultSchema = Schema.Struct({
-  commandId: CommandId,
-  status: Schema.Literals(["running", "queued"]),
-});
-
-export type RunExtensionDependencyActionResult =
-  typeof RunExtensionDependencyActionResultSchema.Type;
-
 export const CancelCommandInputSchema = Schema.Struct({
   commandId: CommandId,
   reason: Schema.optionalKey(Schema.String),
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export type CancelCommandInput = typeof CancelCommandInputSchema.Type;
@@ -497,7 +618,7 @@ export type CancelCommandResult = typeof CancelCommandResultSchema.Type;
 export const WriteCommandStdinInputSchema = Schema.Struct({
   commandId: CommandId,
   text: Schema.String,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export type WriteCommandStdinInput = typeof WriteCommandStdinInputSchema.Type;
@@ -535,46 +656,11 @@ export const SourceInvalidationScopeSchema = Schema.Union([
 ]);
 export type SourceInvalidationScope = typeof SourceInvalidationScopeSchema.Type;
 
-const APP_GLOBAL_SOURCE_DOMAINS = [
-  "extensions",
-  "workflows",
-] as const satisfies readonly SourceDomain[];
-const WORKSPACE_SOURCE_DOMAINS = [
-  "external_instructions",
-  "host_snippets",
-] as const satisfies readonly SourceDomain[];
-
-type SourceScopeDomainShape = {
-  readonly scope: SourceInvalidationScope;
-  readonly domain?: SourceDomain | undefined;
-  readonly domains?: ReadonlyArray<SourceDomain> | undefined;
-};
-
-function sourceDomainsForScope(scope: SourceInvalidationScope): readonly SourceDomain[] {
-  return scope.kind === "app-global" ? APP_GLOBAL_SOURCE_DOMAINS : WORKSPACE_SOURCE_DOMAINS;
-}
-
-const SourceScopeDomainInvariant = Schema.makeFilter(
-  (input: SourceScopeDomainShape) => {
-    const allowedDomains = sourceDomainsForScope(input.scope);
-    const domains = input.domain ? [input.domain] : (input.domains ?? []);
-    const invalidDomain = domains.find((domain) => !allowedDomains.includes(domain));
-    if (invalidDomain) {
-      return {
-        path: input.domain ? ["domain"] : ["domains"],
-        issue: `${input.scope.kind} source invalidation cannot target ${invalidDomain}`,
-      };
-    }
-    return true;
-  },
-  { expected: "a valid source invalidation scope/domain pair" },
-);
-
 export const SourceInvalidationHintSchema = Schema.Struct({
   scope: SourceInvalidationScopeSchema,
   domain: SourceDomainSchema,
   path: AbsolutePath,
-  observedAt: Schema.optionalKey(Schema.String),
+  observedAt: Schema.optionalKey(IsoDateTimeStringSchema),
 }).pipe(Schema.check(SourceScopeDomainInvariant));
 export type SourceInvalidationHint = typeof SourceInvalidationHintSchema.Type;
 
@@ -582,6 +668,7 @@ export const SourceReconcileReasonSchema = Schema.Literals([
   "startup",
   "periodic",
   "watcher-debounce",
+  "ignored-path-parent-domain-scan",
   "manual",
   "recovery",
 ]);
@@ -593,6 +680,23 @@ export const SourceReconcileRequestSchema = Schema.Struct({
   reason: SourceReconcileReasonSchema,
 }).pipe(Schema.check(SourceScopeDomainInvariant));
 export type SourceReconcileRequest = typeof SourceReconcileRequestSchema.Type;
+
+const SourceFingerprintRecordSchema = Schema.Record(SourceDomainSchema, Schema.String);
+
+export const CommittedSourceInvalidationEventSchema = Schema.Struct({
+  domains: Schema.Array(SourceDomainSchema),
+  reason: Schema.String.check(Schema.isNonEmpty()),
+  sourceFingerprints: SourceFingerprintRecordSchema,
+  afterCommit: Schema.Array(StateInvalidationDescriptorSchema),
+});
+export type CommittedSourceInvalidationEvent = typeof CommittedSourceInvalidationEventSchema.Type;
+
+export const ApplyCommittedSourceInvalidationEventInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  event: CommittedSourceInvalidationEventSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type ApplyCommittedSourceInvalidationEventInput =
+  typeof ApplyCommittedSourceInvalidationEventInputSchema.Type;
 
 export const RuntimeEventsInputSchema = Schema.Struct({
   workspaceId: Schema.optionalKey(WorkspaceId),
@@ -630,24 +734,24 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
     messageId: MessageId,
     queueItemId: Schema.optionalKey(QueueItemId),
     text: Schema.String,
-    submittedAt: Schema.String,
+    submittedAt: IsoDateTimeStringSchema,
   }),
   Schema.Struct({
     type: Schema.Literal("assistant_message_started"),
     messageId: MessageId,
     turnId: TurnId,
-    createdAt: Schema.String,
+    createdAt: IsoDateTimeStringSchema,
   }),
   Schema.Struct({
     type: Schema.Literal("assistant_text_delta"),
     messageId: MessageId,
-    contentIndex: Schema.Number,
+    contentIndex: NonNegativeSafeIntegerSchema,
     delta: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("assistant_thinking_delta"),
     messageId: MessageId,
-    contentIndex: Schema.Number,
+    contentIndex: NonNegativeSafeIntegerSchema,
     delta: Schema.String,
   }),
   Schema.Struct({
@@ -668,7 +772,7 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
     type: Schema.Literal("assistant_message_finished"),
     messageId: MessageId,
     status: Schema.Literals(["completed", "failed", "cancelled"]),
-    finishedAt: Schema.String,
+    finishedAt: IsoDateTimeStringSchema,
   }),
   Schema.Struct({
     type: Schema.Literal("prompt_status"),
@@ -678,7 +782,7 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("stream_reset"),
     reason: Schema.Literals(["rebaseline_required", "runtime_recovered", "surface_reopened"]),
-    latestStreamSequence: Schema.Number,
+    latestStreamSequence: SurfaceStreamSequence,
   }),
 ]);
 
@@ -729,6 +833,7 @@ export const RuntimeEventSchema = Schema.Union([
         "diagnostic",
         "patch_snapshot",
         "child_command",
+        "artifact_linked",
         "approval",
         "wait",
         "finished",
@@ -863,6 +968,7 @@ export const StateFacadeErrorContractSchema = Schema.Union([
     type: Schema.Literal("state-facade-error"),
     reason: Schema.Literal("post-commit-notification-failed"),
     receipt: StateCommandReceiptSchema,
+    notificationError: StateCommandPostCommitNotificationErrorSchema,
     message: Schema.String,
     diagnosticAppLogEntryId: Schema.optionalKey(AppLogEntryId),
   }),
@@ -1024,6 +1130,7 @@ export const RunTaskAgentErrorCodeSchema = Schema.Literals([
   "unauthorized",
   "forbidden",
   "invalid_request",
+  "payload_too_large",
   "bridge_request_conflict",
   "source_command_not_found",
   "source_command_not_handler_owned",
@@ -1038,9 +1145,9 @@ export const RunTaskAgentErrorSchema = Schema.Struct({
   message: Schema.String,
   retryable: Schema.Boolean,
   requestId: Schema.optionalKey(Schema.String),
-  workspaceSessionId: Schema.optionalKey(WorkspaceSessionId),
-  sourceCommandId: Schema.optionalKey(CommandId),
-  taskAttemptId: Schema.optionalKey(WorkflowTaskAttemptId),
+  workspaceSessionId: Schema.optionalKey(Schema.String),
+  sourceCommandId: Schema.optionalKey(Schema.String),
+  taskAttemptId: Schema.optionalKey(Schema.String),
 });
 
 export type RunTaskAgentError = typeof RunTaskAgentErrorSchema.Type;
@@ -1120,7 +1227,7 @@ export type RequestUserInputAnswerQueuePayload =
 export const UserMessageQueuePayloadSchema = Schema.Struct({
   kind: Schema.Literal("user_message"),
   message: RuntimeSubmittedMessageSchema,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export const InitialHandlerStartQueuePayloadSchema = Schema.Struct({
@@ -1275,7 +1382,7 @@ export const AnswerRequestInputInputSchema = Schema.Struct({
   questionId: RequestInputQuestionId,
   answer: RequestUserInputAnswerSchema,
   delivery: RuntimeMessageDeliverySchema,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export type AnswerRequestInputInput = typeof AnswerRequestInputInputSchema.Type;
@@ -1308,7 +1415,7 @@ export const SetRequestInputTimerPausedInputSchema = Schema.Struct({
   surfacePiSessionId: SurfacePiSessionId,
   requestId: RequestInputRequestId,
   paused: Schema.Boolean,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 
 export type SetRequestInputTimerPausedInput = typeof SetRequestInputTimerPausedInputSchema.Type;
@@ -1404,7 +1511,7 @@ export const CreateRequestInputRequestSchema = Schema.Struct({
       Schema.Null,
       Schema.Struct({
         enabled: Schema.Boolean,
-        durationMs: Schema.Number,
+        durationMs: PositiveDurationMsSchema,
       }),
     ]),
   ),
@@ -1427,9 +1534,6 @@ export const RuntimeApprovalRequestSchema = Schema.Struct({
   ]),
   title: Schema.String,
   reason: Schema.String,
-  commandPreview: Schema.optionalKey(Schema.String),
-  filesystemPreview: Schema.optionalKey(UnknownRecordSchema),
-  expiresAt: Schema.optionalKey(Schema.String),
 });
 
 export type RuntimeApprovalRequest = typeof RuntimeApprovalRequestSchema.Type;
@@ -1441,7 +1545,7 @@ export const AnswerRuntimeApprovalInputSchema = Schema.Struct({
   approvalId: RuntimeApprovalId,
   decision: RuntimeApprovalDecisionSchema,
   reason: Schema.optionalKey(Schema.String),
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 export type AnswerRuntimeApprovalInput = typeof AnswerRuntimeApprovalInputSchema.Type;
 
@@ -1488,7 +1592,7 @@ export type RefreshGeneratedContextRequest = typeof RefreshGeneratedContextReque
 export const GeneratedPackagesRefreshResultSchema = Schema.Union([
   Schema.Struct({
     scope: Schema.Literal("app-global"),
-    packages: Schema.Array(GeneratedPackageRefreshStatusSchema),
+    packages: Schema.Array(GeneratedPackageBuildStatusSchema),
     workspaceLinks: Schema.Array(GeneratedPackageWorkspaceLinkStatusSchema).pipe(
       Schema.check(Schema.isLengthBetween(0, 0)),
     ),
@@ -1496,7 +1600,7 @@ export const GeneratedPackagesRefreshResultSchema = Schema.Union([
   }),
   Schema.Struct({
     scope: Schema.Literal("workspace-link-repair"),
-    packages: Schema.Array(GeneratedPackageRefreshStatusSchema).pipe(
+    packages: Schema.Array(GeneratedPackageBuildStatusSchema).pipe(
       Schema.check(Schema.isLengthBetween(0, 0)),
     ),
     workspaceLinks: Schema.Array(GeneratedPackageWorkspaceLinkStatusSchema),
@@ -1539,7 +1643,7 @@ export const RuntimeEffectRequestSchema = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("generated_packages.refresh"),
-    input: RefreshGeneratedPackagesRequestSchema,
+    input: InternalRefreshGeneratedPackagesRequestSchema,
   }),
 ]);
 
@@ -1668,24 +1772,12 @@ export interface RuntimeWorkspacesApiEffect {
   ): Effect.Effect<ReleaseWorkspaceResult, RuntimeContractError>;
 }
 
-export interface RuntimeWorkspacesApiPromise {
-  acquire(input: AcquireWorkspaceInput): Promise<AcquireWorkspaceResult>;
-  acquireDefault(input: AcquireDefaultWorkspaceInput): Promise<AcquireWorkspaceResult>;
-  release(input: ReleaseWorkspaceInput): Promise<ReleaseWorkspaceResult>;
-}
-
 export interface RuntimeSurfacesApiEffect {
   createOrchestrator(
     input: CreateOrchestratorSurfaceInput,
   ): Effect.Effect<CreateSurfaceResult, RuntimeContractError>;
   open(input: OpenSurfaceInput): Effect.Effect<OpenSurfaceResult, RuntimeContractError>;
   close(input: CloseSurfaceInput): Effect.Effect<CloseSurfaceResult, RuntimeContractError>;
-}
-
-export interface RuntimeSurfacesApiPromise {
-  createOrchestrator(input: CreateOrchestratorSurfaceInput): Promise<CreateSurfaceResult>;
-  open(input: OpenSurfaceInput): Promise<OpenSurfaceResult>;
-  close(input: CloseSurfaceInput): Promise<CloseSurfaceResult>;
 }
 
 export interface RuntimeMessagesApiEffect {
@@ -1698,21 +1790,10 @@ export interface RuntimeQueuesApiEffect {
 }
 
 export interface RuntimeCommandsApiEffect {
-  runExtensionDependencyAction(
-    input: RunExtensionDependencyActionInput,
-  ): Effect.Effect<RunExtensionDependencyActionResult, RuntimeContractError>;
   writeStdin(
     input: WriteCommandStdinInput,
   ): Effect.Effect<WriteCommandStdinResult, RuntimeContractError>;
   cancel(input: CancelCommandInput): Effect.Effect<CancelCommandResult, RuntimeContractError>;
-}
-
-export interface RuntimeCommandsApiPromise {
-  runExtensionDependencyAction(
-    input: RunExtensionDependencyActionInput,
-  ): Promise<RunExtensionDependencyActionResult>;
-  writeStdin(input: WriteCommandStdinInput): Promise<WriteCommandStdinResult>;
-  cancel(input: CancelCommandInput): Promise<CancelCommandResult>;
 }
 
 export interface RuntimeApprovalsApiEffect {
@@ -1735,263 +1816,252 @@ export interface RuntimeSourceInvalidationApiEffect {
   reconcile(
     input: SourceReconcileRequest,
   ): Effect.Effect<SourceReconcileResult, RuntimeContractError>;
+  applyCommittedScanEvent(
+    input: ApplyCommittedSourceInvalidationEventInput,
+  ): Effect.Effect<SourceReconcileResult, RuntimeContractError>;
   refreshGeneratedContext(
     input: RefreshGeneratedContextRequest,
   ): Effect.Effect<void, RuntimeContractError>;
   refreshGeneratedPackages(
-    input: RefreshGeneratedPackagesRequest,
+    input: InternalRefreshGeneratedPackagesRequest,
   ): Effect.Effect<GeneratedPackagesRefreshResult, RuntimeContractError>;
 }
 
-export const decodeRuntimeOwnerRef = Schema.decodeUnknownSync(
+export const unsafeDecodeRuntimeOwnerRefSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RuntimeOwnerRefSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeOwnerRefExit = Schema.decodeUnknownExit(
+export const decodeUnknownRuntimeOwnerRefExit = Schema.decodeUnknownExit(
   RuntimeOwnerRefSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeOwnerRefEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRuntimeOwnerRefEffect = Schema.decodeUnknownEffect(
   RuntimeOwnerRefSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireWorkspaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeAcquireWorkspaceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   AcquireWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireWorkspaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAcquireWorkspaceInputExit = Schema.decodeUnknownExit(
   AcquireWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireWorkspaceInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownAcquireWorkspaceInputEffect = Schema.decodeUnknownEffect(
   AcquireWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireDefaultWorkspaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeAcquireDefaultWorkspaceInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AcquireDefaultWorkspaceInputSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownAcquireDefaultWorkspaceInputExit = Schema.decodeUnknownExit(
   AcquireDefaultWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireDefaultWorkspaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAcquireDefaultWorkspaceInputEffect = Schema.decodeUnknownEffect(
   AcquireDefaultWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireDefaultWorkspaceInputEffect = Schema.decodeUnknownEffect(
-  AcquireDefaultWorkspaceInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeAcquireWorkspaceResult = Schema.decodeUnknownSync(
+export const unsafeDecodeAcquireWorkspaceResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   AcquireWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireWorkspaceResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownAcquireWorkspaceResultExit = Schema.decodeUnknownExit(
   AcquireWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAcquireWorkspaceResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownAcquireWorkspaceResultEffect = Schema.decodeUnknownEffect(
   AcquireWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeReleaseWorkspaceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   ReleaseWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownReleaseWorkspaceInputExit = Schema.decodeUnknownExit(
   ReleaseWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownReleaseWorkspaceInputEffect = Schema.decodeUnknownEffect(
   ReleaseWorkspaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceResult = Schema.decodeUnknownSync(
+export const unsafeDecodeReleaseWorkspaceResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   ReleaseWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownReleaseWorkspaceResultExit = Schema.decodeUnknownExit(
   ReleaseWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeReleaseWorkspaceResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownReleaseWorkspaceResultEffect = Schema.decodeUnknownEffect(
   ReleaseWorkspaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateOrchestratorSurfaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeCreateOrchestratorSurfaceInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(CreateOrchestratorSurfaceInputSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownCreateOrchestratorSurfaceInputExit = Schema.decodeUnknownExit(
   CreateOrchestratorSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateOrchestratorSurfaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownCreateOrchestratorSurfaceInputEffect = Schema.decodeUnknownEffect(
   CreateOrchestratorSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateOrchestratorSurfaceInputEffect = Schema.decodeUnknownEffect(
-  CreateOrchestratorSurfaceInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeCreateSurfaceResult = Schema.decodeUnknownSync(
+export const unsafeDecodeCreateSurfaceResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   CreateSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateSurfaceResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownCreateSurfaceResultExit = Schema.decodeUnknownExit(
   CreateSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateSurfaceResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownCreateSurfaceResultEffect = Schema.decodeUnknownEffect(
   CreateSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeOpenSurfaceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   OpenSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownOpenSurfaceInputExit = Schema.decodeUnknownExit(
   OpenSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownOpenSurfaceInputEffect = Schema.decodeUnknownEffect(
   OpenSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceResult = Schema.decodeUnknownSync(
+export const unsafeDecodeOpenSurfaceResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   OpenSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownOpenSurfaceResultExit = Schema.decodeUnknownExit(
   OpenSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeOpenSurfaceResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownOpenSurfaceResultEffect = Schema.decodeUnknownEffect(
   OpenSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceInput = Schema.decodeUnknownSync(
+export const unsafeDecodeCloseSurfaceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   CloseSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownCloseSurfaceInputExit = Schema.decodeUnknownExit(
   CloseSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownCloseSurfaceInputEffect = Schema.decodeUnknownEffect(
   CloseSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceResult = Schema.decodeUnknownSync(
+export const unsafeDecodeCloseSurfaceResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   CloseSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownCloseSurfaceResultExit = Schema.decodeUnknownExit(
   CloseSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCloseSurfaceResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownCloseSurfaceResultEffect = Schema.decodeUnknownEffect(
   CloseSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageInput = Schema.decodeUnknownSync(
+export const unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SubmitMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeSubmittedMessage = Schema.decodeUnknownSync(
+export const unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RuntimeSubmittedMessageSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeSubmittedMessageExit = Schema.decodeUnknownExit(
+export const decodeUnknownRuntimeSubmittedMessageExit = Schema.decodeUnknownExit(
   RuntimeSubmittedMessageSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeSubmittedMessageEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRuntimeSubmittedMessageEffect = Schema.decodeUnknownEffect(
   RuntimeSubmittedMessageSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownSubmitMessageInputExit = Schema.decodeUnknownExit(
   SubmitMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSubmitMessageInputEffect = Schema.decodeUnknownEffect(
   SubmitMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageResult = Schema.decodeUnknownSync(
+export const unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SubmitMessageResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownSubmitMessageResultExit = Schema.decodeUnknownExit(
   SubmitMessageResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSubmitMessageResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSubmitMessageResultEffect = Schema.decodeUnknownEffect(
   SubmitMessageResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAbortPromptInput = Schema.decodeUnknownSync(
+export const unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   AbortPromptInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAbortPromptInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAbortPromptInputExit = Schema.decodeUnknownExit(
   AbortPromptInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAbortPromptInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownAbortPromptInputEffect = Schema.decodeUnknownEffect(
   AbortPromptInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSteerQueuedMessageInput = Schema.decodeUnknownSync(
+export const unsafeDecodeSteerQueuedMessageInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SteerQueuedMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSteerQueuedMessageInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownSteerQueuedMessageInputExit = Schema.decodeUnknownExit(
   SteerQueuedMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSteerQueuedMessageInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSteerQueuedMessageInputEffect = Schema.decodeUnknownEffect(
   SteerQueuedMessageInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventsInput = Schema.decodeUnknownSync(
+export const unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RuntimeEventsInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventsInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownRuntimeEventsInputExit = Schema.decodeUnknownExit(
   RuntimeEventsInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventsInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRuntimeEventsInputEffect = Schema.decodeUnknownEffect(
   RuntimeEventsInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEvent = Schema.decodeUnknownSync(
+export const unsafeDecodeRuntimeEventSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RuntimeEventSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventExit = Schema.decodeUnknownExit(
+export const decodeUnknownRuntimeEventExit = Schema.decodeUnknownExit(
   RuntimeEventSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRuntimeEventEffect = Schema.decodeUnknownEffect(
   RuntimeEventSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventSubscriptionClose = Schema.decodeUnknownSync(
+export const unsafeDecodeRuntimeEventSubscriptionCloseSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RuntimeEventSubscriptionCloseSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownRuntimeEventSubscriptionCloseExit = Schema.decodeUnknownExit(
   RuntimeEventSubscriptionCloseSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventSubscriptionCloseExit = Schema.decodeUnknownExit(
+export const decodeUnknownRuntimeEventSubscriptionCloseEffect = Schema.decodeUnknownEffect(
   RuntimeEventSubscriptionCloseSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRuntimeEventSubscriptionCloseEffect = Schema.decodeUnknownEffect(
-  RuntimeEventSubscriptionCloseSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRuntimeEventError = Schema.decodeUnknownSync(
-  RuntimeEventErrorSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRuntimeEventErrorExit = Schema.decodeUnknownExit(
-  RuntimeEventErrorSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRuntimeEventErrorEffect = Schema.decodeUnknownEffect(
+export const unsafeDecodeRuntimeEventErrorSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RuntimeEventErrorSchema,
   RuntimeBoundaryParseOptions,
 );
@@ -2031,75 +2101,100 @@ export const encodeStateFacadeErrorContractEffect = Schema.encodeEffect(
   StateFacadeErrorContractSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeStateInvalidationDescriptor = Schema.decodeUnknownSync(
-  StateInvalidationDescriptorSchema,
+export const decodeUnknownStateCommandPostCommitNotificationErrorExit = Schema.decodeUnknownExit(
+  StateCommandPostCommitNotificationErrorSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeStateInvalidationDescriptorExit = Schema.decodeUnknownExit(
-  StateInvalidationDescriptorSchema,
+export const decodeUnknownStateCommandPostCommitNotificationErrorEffect =
+  Schema.decodeUnknownEffect(
+    StateCommandPostCommitNotificationErrorSchema,
+    RuntimeBoundaryParseOptions,
+  );
+export const encodeStateCommandPostCommitNotificationErrorExit = Schema.encodeExit(
+  StateCommandPostCommitNotificationErrorSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeStateInvalidationDescriptorEffect = Schema.decodeUnknownEffect(
-  StateInvalidationDescriptorSchema,
+export const encodeStateCommandPostCommitNotificationErrorEffect = Schema.encodeEffect(
+  StateCommandPostCommitNotificationErrorSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceInvalidationHint = Schema.decodeUnknownSync(
+export const unsafeDecodeSourceInvalidationHintSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SourceInvalidationHintSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceInvalidationHintExit = Schema.decodeUnknownExit(
+export const decodeUnknownSourceInvalidationHintExit = Schema.decodeUnknownExit(
   SourceInvalidationHintSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceInvalidationHintEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSourceInvalidationHintEffect = Schema.decodeUnknownEffect(
   SourceInvalidationHintSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileRequest = Schema.decodeUnknownSync(
+export const unsafeDecodeSourceReconcileRequestSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SourceReconcileRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileRequestExit = Schema.decodeUnknownExit(
+export const decodeUnknownSourceReconcileRequestExit = Schema.decodeUnknownExit(
   SourceReconcileRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileRequestEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSourceReconcileRequestEffect = Schema.decodeUnknownEffect(
   SourceReconcileRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileResult = Schema.decodeUnknownSync(
+export const unsafeDecodeSourceReconcileResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SourceReconcileResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownSourceReconcileResultExit = Schema.decodeUnknownExit(
   SourceReconcileResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSourceReconcileResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownSourceReconcileResultEffect = Schema.decodeUnknownEffect(
   SourceReconcileResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRefreshGeneratedContextRequest = Schema.decodeUnknownSync(
+export const unsafeDecodeCommittedSourceInvalidationEventSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(CommittedSourceInvalidationEventSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownCommittedSourceInvalidationEventExit = Schema.decodeUnknownExit(
+  CommittedSourceInvalidationEventSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownCommittedSourceInvalidationEventEffect = Schema.decodeUnknownEffect(
+  CommittedSourceInvalidationEventSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeApplyCommittedSourceInvalidationEventInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(
+    ApplyCommittedSourceInvalidationEventInputSchema,
+    RuntimeBoundaryParseOptions,
+  );
+export const decodeUnknownApplyCommittedSourceInvalidationEventInputExit = Schema.decodeUnknownExit(
+  ApplyCommittedSourceInvalidationEventInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownApplyCommittedSourceInvalidationEventInputEffect =
+  Schema.decodeUnknownEffect(
+    ApplyCommittedSourceInvalidationEventInputSchema,
+    RuntimeBoundaryParseOptions,
+  );
+export const unsafeDecodeRefreshGeneratedContextRequestSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RefreshGeneratedContextRequestSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownRefreshGeneratedContextRequestExit = Schema.decodeUnknownExit(
   RefreshGeneratedContextRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRefreshGeneratedContextRequestExit = Schema.decodeUnknownExit(
+export const decodeUnknownRefreshGeneratedContextRequestEffect = Schema.decodeUnknownEffect(
   RefreshGeneratedContextRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRefreshGeneratedContextRequestEffect = Schema.decodeUnknownEffect(
-  RefreshGeneratedContextRequestSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeGeneratedPackagesRefreshResult = Schema.decodeUnknownSync(
+export const unsafeDecodeGeneratedPackagesRefreshResultSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(GeneratedPackagesRefreshResultSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownGeneratedPackagesRefreshResultExit = Schema.decodeUnknownExit(
   GeneratedPackagesRefreshResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeGeneratedPackagesRefreshResultExit = Schema.decodeUnknownExit(
-  GeneratedPackagesRefreshResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeGeneratedPackagesRefreshResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownGeneratedPackagesRefreshResultEffect = Schema.decodeUnknownEffect(
   GeneratedPackagesRefreshResultSchema,
   RuntimeBoundaryParseOptions,
 );
@@ -2141,51 +2236,81 @@ export const encodeSvvyxRuntimeEffectTransportIntentEffect = Schema.encodeEffect
   SvvyxRuntimeEffectTransportIntentSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionExecutionPlan = Schema.decodeUnknownSync(
+export const unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   ExtensionExecutionPlanSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionExecutionPlanExit = Schema.decodeUnknownExit(
+export const decodeUnknownExtensionExecutionPlanExit = Schema.decodeUnknownExit(
   ExtensionExecutionPlanSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionExecutionPlanEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownExtensionExecutionPlanEffect = Schema.decodeUnknownEffect(
   ExtensionExecutionPlanSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionHandlerResult = Schema.decodeUnknownSync(
+export const encodeExtensionExecutionPlanExit = Schema.encodeExit(
+  ExtensionExecutionPlanSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeExtensionExecutionPlanEffect = Schema.encodeEffect(
+  ExtensionExecutionPlanSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeExtensionRuntimeOperationSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(ExtensionRuntimeOperationSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownExtensionRuntimeOperationExit = Schema.decodeUnknownExit(
+  ExtensionRuntimeOperationSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownExtensionRuntimeOperationEffect = Schema.decodeUnknownEffect(
+  ExtensionRuntimeOperationSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeExtensionRuntimeOperationExit = Schema.encodeExit(
+  ExtensionRuntimeOperationSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeExtensionRuntimeOperationEffect = Schema.encodeEffect(
+  ExtensionRuntimeOperationSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeExtensionHandlerResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   ExtensionHandlerResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionHandlerResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownExtensionHandlerResultExit = Schema.decodeUnknownExit(
   ExtensionHandlerResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeExtensionHandlerResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownExtensionHandlerResultEffect = Schema.decodeUnknownEffect(
   ExtensionHandlerResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateRequestInputRequest = Schema.decodeUnknownSync(
+export const encodeExtensionHandlerResultExit = Schema.encodeExit(
+  ExtensionHandlerResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeExtensionHandlerResultEffect = Schema.encodeEffect(
+  ExtensionHandlerResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(CreateRequestInputRequestSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownCreateRequestInputRequestExit = Schema.decodeUnknownExit(
   CreateRequestInputRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateRequestInputRequestExit = Schema.decodeUnknownExit(
+export const decodeUnknownCreateRequestInputRequestEffect = Schema.decodeUnknownEffect(
   CreateRequestInputRequestSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCreateRequestInputRequestEffect = Schema.decodeUnknownEffect(
-  CreateRequestInputRequestSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRequestUserInputAnswerQueuePayload = Schema.decodeUnknownSync(
+export const unsafeDecodeRequestUserInputAnswerQueuePayloadSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(RequestUserInputAnswerQueuePayloadSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownRequestUserInputAnswerQueuePayloadExit = Schema.decodeUnknownExit(
   RequestUserInputAnswerQueuePayloadSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRequestUserInputAnswerQueuePayloadExit = Schema.decodeUnknownExit(
-  RequestUserInputAnswerQueuePayloadSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRequestUserInputAnswerQueuePayloadEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRequestUserInputAnswerQueuePayloadEffect = Schema.decodeUnknownEffect(
   RequestUserInputAnswerQueuePayloadSchema,
   RuntimeBoundaryParseOptions,
 );
@@ -2193,87 +2318,78 @@ export const encodeRequestUserInputAnswerQueuePayload = Schema.encodeUnknownSync
   RequestUserInputAnswerQueuePayloadSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputInput = Schema.decodeUnknownSync(
+export const unsafeDecodeAnswerRequestInputInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   AnswerRequestInputInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAnswerRequestInputInputExit = Schema.decodeUnknownExit(
   AnswerRequestInputInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownAnswerRequestInputInputEffect = Schema.decodeUnknownEffect(
   AnswerRequestInputInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputResult = Schema.decodeUnknownSync(
+export const unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AnswerRequestInputResultSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownAnswerRequestInputResultExit = Schema.decodeUnknownExit(
   AnswerRequestInputResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownAnswerRequestInputResultEffect = Schema.decodeUnknownEffect(
   AnswerRequestInputResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRequestInputResultEffect = Schema.decodeUnknownEffect(
-  AnswerRequestInputResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeSetRequestInputTimerPausedInput = Schema.decodeUnknownSync(
+export const unsafeDecodeSetRequestInputTimerPausedInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(SetRequestInputTimerPausedInputSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownSetRequestInputTimerPausedInputExit = Schema.decodeUnknownExit(
   SetRequestInputTimerPausedInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSetRequestInputTimerPausedInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownSetRequestInputTimerPausedInputEffect = Schema.decodeUnknownEffect(
   SetRequestInputTimerPausedInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSetRequestInputTimerPausedInputEffect = Schema.decodeUnknownEffect(
-  SetRequestInputTimerPausedInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeSetRequestInputTimerPausedResult = Schema.decodeUnknownSync(
+export const unsafeDecodeSetRequestInputTimerPausedResultSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(SetRequestInputTimerPausedResultSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownSetRequestInputTimerPausedResultExit = Schema.decodeUnknownExit(
   SetRequestInputTimerPausedResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSetRequestInputTimerPausedResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownSetRequestInputTimerPausedResultEffect = Schema.decodeUnknownEffect(
   SetRequestInputTimerPausedResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeSetRequestInputTimerPausedResultEffect = Schema.decodeUnknownEffect(
-  SetRequestInputTimerPausedResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeAnswerRuntimeApprovalInput = Schema.decodeUnknownSync(
+export const unsafeDecodeAnswerRuntimeApprovalInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AnswerRuntimeApprovalInputSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownAnswerRuntimeApprovalInputExit = Schema.decodeUnknownExit(
   AnswerRuntimeApprovalInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRuntimeApprovalInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAnswerRuntimeApprovalInputEffect = Schema.decodeUnknownEffect(
   AnswerRuntimeApprovalInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRuntimeApprovalInputEffect = Schema.decodeUnknownEffect(
-  AnswerRuntimeApprovalInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeAnswerRuntimeApprovalResult = Schema.decodeUnknownSync(
+export const unsafeDecodeAnswerRuntimeApprovalResultSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AnswerRuntimeApprovalResultSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownAnswerRuntimeApprovalResultExit = Schema.decodeUnknownExit(
   AnswerRuntimeApprovalResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRuntimeApprovalResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownAnswerRuntimeApprovalResultEffect = Schema.decodeUnknownEffect(
   AnswerRuntimeApprovalResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAnswerRuntimeApprovalResultEffect = Schema.decodeUnknownEffect(
-  AnswerRuntimeApprovalResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRequestUserInputAnswerDeliveryPayload = Schema.decodeUnknownSync(
+export const unsafeDecodeRequestUserInputAnswerDeliveryPayloadSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(
+    RequestUserInputAnswerDeliveryPayloadSchema,
+    RuntimeBoundaryParseOptions,
+  );
+export const decodeUnknownRequestUserInputAnswerDeliveryPayloadExit = Schema.decodeUnknownExit(
   RequestUserInputAnswerDeliveryPayloadSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRequestUserInputAnswerDeliveryPayloadExit = Schema.decodeUnknownExit(
-  RequestUserInputAnswerDeliveryPayloadSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRequestUserInputAnswerDeliveryPayloadEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownRequestUserInputAnswerDeliveryPayloadEffect = Schema.decodeUnknownEffect(
   RequestUserInputAnswerDeliveryPayloadSchema,
   RuntimeBoundaryParseOptions,
 );
@@ -2281,80 +2397,66 @@ export const encodeRequestUserInputAnswerDeliveryPayload = Schema.encodeUnknownS
   RequestUserInputAnswerDeliveryPayloadSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeRunExtensionDependencyActionInput = Schema.decodeUnknownSync(
-  RunExtensionDependencyActionInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRunExtensionDependencyActionInputExit = Schema.decodeUnknownExit(
-  RunExtensionDependencyActionInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRunExtensionDependencyActionInputEffect = Schema.decodeUnknownEffect(
-  RunExtensionDependencyActionInputSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRunExtensionDependencyActionResult = Schema.decodeUnknownSync(
-  RunExtensionDependencyActionResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRunExtensionDependencyActionResultExit = Schema.decodeUnknownExit(
-  RunExtensionDependencyActionResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeRunExtensionDependencyActionResultEffect = Schema.decodeUnknownEffect(
-  RunExtensionDependencyActionResultSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeCancelCommandInput = Schema.decodeUnknownSync(
+export const unsafeDecodeCancelCommandInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   CancelCommandInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCancelCommandInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownCancelCommandInputExit = Schema.decodeUnknownExit(
   CancelCommandInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCancelCommandInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownCancelCommandInputEffect = Schema.decodeUnknownEffect(
   CancelCommandInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCancelCommandResult = Schema.decodeUnknownSync(
+export const unsafeDecodeCancelCommandResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   CancelCommandResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCancelCommandResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownCancelCommandResultExit = Schema.decodeUnknownExit(
   CancelCommandResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeCancelCommandResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownCancelCommandResultEffect = Schema.decodeUnknownEffect(
   CancelCommandResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinInput = Schema.decodeUnknownSync(
+export const unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   WriteCommandStdinInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownWriteCommandStdinInputExit = Schema.decodeUnknownExit(
   WriteCommandStdinInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinInputEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownWriteCommandStdinInputEffect = Schema.decodeUnknownEffect(
   WriteCommandStdinInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinResult = Schema.decodeUnknownSync(
+export const unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   WriteCommandStdinResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinResultExit = Schema.decodeUnknownExit(
+export const decodeUnknownWriteCommandStdinResultExit = Schema.decodeUnknownExit(
   WriteCommandStdinResultSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeWriteCommandStdinResultEffect = Schema.decodeUnknownEffect(
+export const decodeUnknownWriteCommandStdinResultEffect = Schema.decodeUnknownEffect(
   WriteCommandStdinResultSchema,
   RuntimeBoundaryParseOptions,
 );
 export const unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   RunTaskAgentInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeTaskAgentParametersSourceSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(TaskAgentParametersSourceSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownTaskAgentParametersSourceExit = Schema.decodeUnknownExit(
+  TaskAgentParametersSourceSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownTaskAgentParametersSourceEffect = Schema.decodeUnknownEffect(
+  TaskAgentParametersSourceSchema,
   RuntimeBoundaryParseOptions,
 );
 export const unsafeDecodeRunTaskAgentSourceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
@@ -2369,6 +2471,14 @@ export const decodeUnknownRunTaskAgentSourceInputEffect = Schema.decodeUnknownEf
   RunTaskAgentSourceInputSchema,
   RuntimeBoundaryParseOptions,
 );
+export const encodeRunTaskAgentSourceInputExit = Schema.encodeExit(
+  RunTaskAgentSourceInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeRunTaskAgentSourceInputEffect = Schema.encodeEffect(
+  RunTaskAgentSourceInputSchema,
+  RuntimeBoundaryParseOptions,
+);
 export const decodeUnknownRunTaskAgentInputExit = Schema.decodeUnknownExit(
   RunTaskAgentInputSchema,
   RuntimeBoundaryParseOptions,
@@ -2377,15 +2487,29 @@ export const decodeUnknownRunTaskAgentInputEffect = Schema.decodeUnknownEffect(
   RunTaskAgentInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAuthenticatedRunTaskAgentInput = Schema.decodeUnknownSync(
+export const encodeRunTaskAgentInputExit = Schema.encodeExit(
+  RunTaskAgentInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeRunTaskAgentInputEffect = Schema.encodeEffect(
+  RunTaskAgentInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AuthenticatedRunTaskAgentInputSchema, RuntimeBoundaryParseOptions);
+export const decodeUnknownAuthenticatedRunTaskAgentInputExit = Schema.decodeUnknownExit(
   AuthenticatedRunTaskAgentInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAuthenticatedRunTaskAgentInputExit = Schema.decodeUnknownExit(
+export const decodeUnknownAuthenticatedRunTaskAgentInputEffect = Schema.decodeUnknownEffect(
   AuthenticatedRunTaskAgentInputSchema,
   RuntimeBoundaryParseOptions,
 );
-export const decodeAuthenticatedRunTaskAgentInputEffect = Schema.decodeUnknownEffect(
+export const encodeAuthenticatedRunTaskAgentInputExit = Schema.encodeExit(
+  AuthenticatedRunTaskAgentInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeAuthenticatedRunTaskAgentInputEffect = Schema.encodeEffect(
   AuthenticatedRunTaskAgentInputSchema,
   RuntimeBoundaryParseOptions,
 );
@@ -2398,6 +2522,14 @@ export const decodeUnknownRunTaskAgentResultExit = Schema.decodeUnknownExit(
   RuntimeBoundaryParseOptions,
 );
 export const decodeUnknownRunTaskAgentResultEffect = Schema.decodeUnknownEffect(
+  RunTaskAgentResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeRunTaskAgentResultExit = Schema.encodeExit(
+  RunTaskAgentResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const encodeRunTaskAgentResultEffect = Schema.encodeEffect(
   RunTaskAgentResultSchema,
   RuntimeBoundaryParseOptions,
 );

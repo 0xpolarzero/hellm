@@ -1,8 +1,22 @@
+import * as Schema from "effect/Schema";
+import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import type { ActorKind } from "./runtime-contracts";
+import { ActorKindSchema } from "./runtime-contracts";
 
-export type PromptExecutionSurfaceKind = "orchestrator" | "handler" | "workflow-task";
+export const PromptExecutionSurfaceKindSchema = Schema.Literals([
+  "orchestrator",
+  "handler",
+  "workflow-task",
+]);
+export type PromptExecutionSurfaceKind = typeof PromptExecutionSurfaceKindSchema.Type;
 
-export type PromptExecutionEpisodeKind = "analysis" | "change" | "workflow" | "clarification";
+export const PromptExecutionEpisodeKindSchema = Schema.Literals([
+  "analysis",
+  "change",
+  "workflow",
+  "clarification",
+]);
+export type PromptExecutionEpisodeKind = typeof PromptExecutionEpisodeKindSchema.Type;
 
 export interface PromptExecutionExternalInstructionSource {
   id: string;
@@ -21,6 +35,24 @@ export interface PromptExecutionExternalInstructionSource {
     error?: string;
   };
 }
+
+export const PromptExecutionExternalInstructionSourceSchema = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(["AGENTS.md", "CLAUDE.md"]),
+  title: Schema.String,
+  path: Schema.String,
+  contentHash: Schema.String,
+  order: Schema.Number,
+  enabled: Schema.Boolean,
+  actors: Schema.Array(ActorKindSchema),
+  sourceGroup: Schema.Literals(["builtin_global_root", "custom_global_root", "workspace_chain"]),
+  rootId: Schema.optionalKey(Schema.String),
+  rootLabel: Schema.optionalKey(Schema.String),
+  readStatus: Schema.Struct({
+    status: Schema.Literals(["readable", "unreadable"]),
+    error: Schema.optionalKey(Schema.String),
+  }),
+});
 
 export interface PromptExecutionContext {
   workspaceSessionId: string;
@@ -44,89 +76,41 @@ export interface PromptExecutionContext {
   queueItemId?: string | null;
 }
 
-export interface PromptExecutionRuntimeHandle {
-  current: PromptExecutionContext | null;
-}
+export const PromptExecutionContextSchema = Schema.Struct({
+  workspaceSessionId: Schema.String,
+  turnId: Schema.String,
+  workflowTaskAttemptId: Schema.NullOr(Schema.String),
+  workflowRunId: Schema.NullOr(Schema.String),
+  surfacePiSessionId: Schema.String,
+  threadId: Schema.NullOr(Schema.String),
+  surfaceKind: PromptExecutionSurfaceKindSchema,
+  defaultEpisodeKind: PromptExecutionEpisodeKindSchema,
+  rootThreadId: Schema.NullOr(Schema.String),
+  rootEpisodeKind: PromptExecutionEpisodeKindSchema,
+  sessionWaitApplied: Schema.Boolean,
+  threadWasTerminalAtStart: Schema.Boolean,
+  loadedExtensionIds: Schema.Array(Schema.String),
+  availableExtensionIds: Schema.Array(Schema.String),
+  externalInstructionSources: Schema.optionalKey(
+    Schema.Array(PromptExecutionExternalInstructionSourceSchema),
+  ),
+  generatedAgentContextFingerprint: Schema.String,
+  generatedAgentContextRevision: Schema.String,
+  suppressPendingWorkflowAttentionDelivery: Schema.optionalKey(Schema.Boolean),
+  queueItemId: Schema.NullOr(Schema.String),
+});
 
-type PromptExecutionExternalInstructionSourceInput = PromptExecutionExternalInstructionSource & {
-  readonly content?: string;
-};
+export const unsafeDecodePromptExecutionContextSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
+  PromptExecutionContextSchema,
+  strictBoundaryParseOptions,
+);
 
-export function createPromptExecutionContext(input: {
-  workspaceSessionId: PromptExecutionContext["workspaceSessionId"];
-  turnId: PromptExecutionContext["turnId"];
-  workflowTaskAttemptId?: string | null;
-  workflowRunId?: string | null;
-  surfacePiSessionId: PromptExecutionContext["surfacePiSessionId"];
-  threadId?: PromptExecutionContext["threadId"];
-  surfaceKind?: PromptExecutionSurfaceKind;
-  defaultEpisodeKind?: PromptExecutionEpisodeKind;
-  rootThreadId?: PromptExecutionContext["rootThreadId"];
-  rootEpisodeKind?: PromptExecutionEpisodeKind;
-  threadWasTerminalAtStart?: boolean;
-  loadedExtensionIds?: PromptExecutionContext["loadedExtensionIds"];
-  availableExtensionIds?: PromptExecutionContext["availableExtensionIds"];
-  externalInstructionSources?: readonly PromptExecutionExternalInstructionSourceInput[];
-  generatedAgentContextFingerprint: PromptExecutionContext["generatedAgentContextFingerprint"];
-  generatedAgentContextRevision: PromptExecutionContext["generatedAgentContextRevision"];
-  suppressPendingWorkflowAttentionDelivery?: boolean;
-  queueItemId?: PromptExecutionContext["queueItemId"];
-}): PromptExecutionContext {
-  const surfaceKind = input.surfaceKind ?? "orchestrator";
-  const threadId = input.threadId ?? input.rootThreadId ?? null;
-  if (surfaceKind === "handler" && !threadId) {
-    throw new Error("Handler prompt execution context requires a thread id.");
-  }
-  if (surfaceKind === "workflow-task" && !input.workflowTaskAttemptId) {
-    throw new Error("Workflow task prompt execution context requires an attempt id.");
-  }
+export const decodeUnknownPromptExecutionContextExit = Schema.decodeUnknownExit(
+  PromptExecutionContextSchema,
+  strictBoundaryParseOptions,
+);
 
-  const defaultEpisodeKind = input.defaultEpisodeKind ?? input.rootEpisodeKind ?? "change";
-
-  return {
-    workspaceSessionId: input.workspaceSessionId,
-    turnId: input.turnId,
-    workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
-    workflowRunId: input.workflowRunId ?? null,
-    surfacePiSessionId: input.surfacePiSessionId,
-    threadId,
-    surfaceKind,
-    defaultEpisodeKind,
-    rootThreadId: input.rootThreadId ?? threadId,
-    rootEpisodeKind: defaultEpisodeKind,
-    sessionWaitApplied: false,
-    threadWasTerminalAtStart: input.threadWasTerminalAtStart ?? false,
-    loadedExtensionIds: [...(input.loadedExtensionIds ?? [])],
-    availableExtensionIds: [...(input.availableExtensionIds ?? [])],
-    externalInstructionSources: (input.externalInstructionSources ?? []).map(
-      toPromptExecutionExternalInstructionSource,
-    ),
-    generatedAgentContextFingerprint: input.generatedAgentContextFingerprint,
-    generatedAgentContextRevision: input.generatedAgentContextRevision,
-    suppressPendingWorkflowAttentionDelivery:
-      input.suppressPendingWorkflowAttentionDelivery ?? false,
-    queueItemId: input.queueItemId ?? null,
-  };
-}
-
-function toPromptExecutionExternalInstructionSource(
-  source: PromptExecutionExternalInstructionSourceInput,
-): PromptExecutionExternalInstructionSource {
-  return {
-    id: source.id,
-    kind: source.kind,
-    title: source.title,
-    path: source.path,
-    contentHash: source.contentHash,
-    order: source.order,
-    enabled: source.enabled,
-    actors: [...source.actors],
-    sourceGroup: source.sourceGroup,
-    ...(source.rootId === undefined ? {} : { rootId: source.rootId }),
-    ...(source.rootLabel === undefined ? {} : { rootLabel: source.rootLabel }),
-    readStatus: {
-      status: source.readStatus.status,
-      ...(source.readStatus.error === undefined ? {} : { error: source.readStatus.error }),
-    },
-  };
-}
+export const decodeUnknownPromptExecutionContextEffect = Schema.decodeUnknownEffect(
+  PromptExecutionContextSchema,
+  strictBoundaryParseOptions,
+);

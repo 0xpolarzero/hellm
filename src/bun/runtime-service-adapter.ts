@@ -1,312 +1,420 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync, watch as nodeWatch } from "node:fs";
-import { homedir } from "node:os";
+import {
+  existsSync,
+  realpathSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  watch as nodeWatch,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Scope from "effect/Scope";
 import {
-  ExtensionError as CoreExtensionError,
   ExtensionStatePort,
+  ExtensionError as CoreExtensionError,
+  AppLogWritePort,
+  RuntimeActorExtensionBindingStatePort,
   RuntimeContractError,
+  RuntimeEpisodeStatePort,
+  StateContractError,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
-  RuntimeActorExtensionBindingStatePort,
-  RuntimeEventStreamError,
   RuntimeGeneratedPackageStatePort,
   RuntimeQueueStatePort,
   RuntimeRequestStatePort,
   RuntimeSessionWaitStatePort,
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
+  RuntimeThreadStatePort,
+  RuntimeTurnStatePort,
   RuntimeWorkspaceStatePort,
+  RuntimePromptDefaultsStatePort,
+  SandboxPolicySource,
+  SandboxPolicyError,
+  type BuildLaunchPolicyInput,
   type AbsolutePath,
   type GeneratedPackagesRefreshResult,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type ExtensionStatePortService,
-  type RefreshGeneratedContextRequest,
-  type RefreshGeneratedPackagesRequest,
-  type RuntimeEvent,
-  type RuntimeEventError,
-  type RuntimeEventSequence,
-  type RuntimeEventsInput,
-  type StateInvalidationDescriptor,
-  type RuntimeCommandStatePortService,
+  type AppLogWritePortService,
+  type InternalRefreshGeneratedPackagesRequest,
   type RuntimeActorExtensionBindingStatePortService,
+  type RuntimeApprovalStatePortService,
+  type RuntimeCommandStatePortService,
+  type RuntimeEpisodeStatePortService,
   type RuntimeGeneratedPackageStatePortService,
-  type RuntimeRequestInputDetailsRecord,
+  type RuntimePromptDefaultsStatePortService,
+  type RuntimeQueueStatePortService,
   type RuntimeRequestStatePortService,
-  type StateMutationResult,
-  type OpenExtensionSourceEditInput,
-  type SaveExtensionSourceEditInput,
-  type SourceEditSaveResult,
-  type SourceEditSession,
-  type SourceInvalidationHint,
-  type SourceReconcileRequest,
-  type SourceReconcileResult,
+  type RuntimeSessionWaitStatePortService,
+  type RuntimeSourceStatePortService,
+  type RuntimeSurfaceLifecycleStatePortService,
+  type RuntimeThreadStatePortService,
+  type RuntimeTurnStatePortService,
+  type RuntimeWorkspaceStatePortService,
+  type SandboxPolicySourceService,
+  type SandboxLaunchFacts,
+  type IsoDateTimeString,
+  type WorkspaceId,
 } from "@svvy/core";
-import type {
-  ExtensionsService,
-  RequestUserInputResult,
-  ExtensionSourceRoots,
-  GeneratedPackageRoots,
-} from "@svvy/extensions";
+import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import {
-  Extensions,
-  layerExtensions,
+  layer as extensionsLayer,
   layerExtensionSourceRootsPort,
   layerGeneratedPackageRootPort,
+  layerPackagedExtensionTemplatesPort,
   layerWorkspaceSourceLinkPort,
 } from "@svvy/extensions";
+import {
+  HostProcessReferencePort,
+  SandboxHelperCandidatesPort,
+  type HostProcessReferencePortService,
+  type HostProcessReferenceSnapshot,
+  type SandboxHelperCandidatesPortService,
+  type SandboxHelperCandidatesSnapshot,
+} from "@svvy/sandbox";
 import { createRuntimeFacade, Runtime } from "@svvy/runtime";
 import {
+  acquireAcceptedDirectToolLaunch,
+  requestAcceptedDirectToolApproval,
+  runAcceptedLoadExtension,
+  runAcceptedRequestUserInput,
+} from "@svvy/runtime/accepted-native-tool-execution";
+import {
   awaitRuntimeStartupReadiness,
-  createSourceInvalidationCoordinator,
   createRuntimeLayerConfigLayer,
-  defaultRuntimeLayerConfig,
-  RuntimeLayerApprovalPostCommitPort,
-  RuntimeLayerAppLogPort,
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
-  RuntimeLayerDevTelemetryPort,
-  RuntimeLayerEventsPort,
+  RuntimeGeneratedContextRefreshHostPort,
+  RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptHostPort,
+  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerRequestInputPostCommitPort,
-  RuntimeLayerSourceEditsPort,
-  RuntimeLayerSourceInvalidationPort,
-  makeRuntimeBlockingRequestInputWaitRegistry,
-  makeRuntimeEventBus,
+  RuntimeLayerSurfaceQueueWakePort,
+  RuntimeSourceInvalidationScanPort,
   prepareRuntimeShutdown,
-  RuntimeEventBus,
-  RuntimeShutdownPreparation,
-  RuntimeStartupReadiness,
   layerRuntimeBunPlatform,
-  refreshRuntimeGeneratedPackages,
-  runAcceptedLoadExtensionToolCall,
-  runAcceptedRequestUserInputToolCall,
-  type RuntimeBlockingRequestInputEffectState,
-  type RuntimeBlockingRequestInputWaitRegistry,
-  type RuntimeEventDraft,
-  type RunAcceptedLoadExtensionToolCallInput,
-  type RunAcceptedLoadExtensionToolCallResult,
-  type RunAcceptedRequestUserInputToolCallInput,
-  type RunAcceptedRequestUserInputToolCallResult,
-  type RuntimeLayerConfig,
   type RuntimeGeneratedPackageWorkspaceLinkFileHost,
+  type RuntimeGeneratedContextRefreshHostPortService,
+  type RuntimeGeneratedPackageRefreshHostPortService,
   type RuntimeLayerCommandControlPortService,
   type RuntimeLayerCommandStdinPortService,
-  type SourceInvalidationCoordinatorOptions,
-  type SourceInvalidationCoordinator,
-  type SourceInvalidationDirectoryEntry,
-  type SourceInvalidationHost,
+  type RuntimeLayerConfig,
+  type RuntimeLayerPromptControlHostPortService,
+  type RuntimeLayerSurfaceQueueWakePortService,
+  type RuntimeSourceInvalidationDirectoryEntry,
+  type RuntimeSourceInvalidationHost,
+  type RuntimeSourceInvalidationScanPortService,
 } from "@svvy/runtime/bootstrap";
 import { type PromptTarget } from "../shared/workspace-contract";
-import type { WorkspaceSessionCatalog } from "./session-catalog";
-import type { AppLogger } from "./app-logger";
+import { WorkspaceSessionCatalog } from "./session-catalog";
+import type { RuntimeApprovalBoundary } from "./approval-boundary";
+import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
+import type { RunAcceptedLoadExtension } from "./extension-tools";
+import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
 
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
-type RuntimeService = Runtime["Service"];
-type RuntimeEventSubscriptionEffect = Effect.Success<ReturnType<RuntimeService["events"]>>;
+
+export type RuntimeRoutingPortHost = {
+  promptControlHost: RuntimeLayerPromptControlHostPortService;
+  promptDefaultsStatePort: RuntimePromptDefaultsStatePortService;
+  surfaceQueueWakePort: RuntimeLayerSurfaceQueueWakePortService;
+};
+
+export type RuntimeServiceAdapterPort = RuntimeRoutingPortHost & {
+  sourceRoots: ExtensionSourceRoots;
+  generatedPackageRoots: GeneratedPackageRoots;
+  extensionStatePort: ExtensionStatePortService;
+  generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
+  sandboxPolicySource: SandboxPolicySourceService;
+  queueStatePort: RuntimeQueueStatePortService;
+  actorExtensionBindingStatePort: RuntimeActorExtensionBindingStatePortService;
+  requestStatePort: RuntimeRequestStatePortService;
+  approvalStatePort: RuntimeApprovalStatePortService;
+  commandStatePort: RuntimeCommandStatePortService;
+  generatedPackageStatePort: RuntimeGeneratedPackageStatePortService;
+  sessionWaitStatePort: RuntimeSessionWaitStatePortService;
+  threadStatePort: RuntimeThreadStatePortService;
+  turnStatePort: RuntimeTurnStatePortService;
+  episodeStatePort: RuntimeEpisodeStatePortService;
+  sourceStatePort: RuntimeSourceStatePortService;
+  surfaceLifecycleStatePort: RuntimeSurfaceLifecycleStatePortService;
+  workspaceStatePort: RuntimeWorkspaceStatePortService;
+  generatedContextRefreshHost: RuntimeGeneratedContextRefreshHostPortService;
+  generatedPackageRefreshHost: RuntimeGeneratedPackageRefreshHostPortService;
+  sourceInvalidationScan: RuntimeSourceInvalidationScanPortService;
+  commandStdin: RuntimeLayerCommandStdinPortService;
+  commandControl: RuntimeLayerCommandControlPortService;
+  appLogWritePort: AppLogWritePortService;
+};
 
 type CatalogBackedRuntimePort = {
+  sourceRoots: ExtensionSourceRoots;
+  generatedPackageRoots: GeneratedPackageRoots;
+  extensionStatePort: ExtensionStatePortService;
+  generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
   catalog: Pick<
     WorkspaceSessionCatalog,
-    | "afterRequestInputAnswered"
-    | "afterRequestInputTimerPaused"
-    | "afterRuntimeQueuedMessageAborted"
-    | "afterRuntimeSurfaceMessageQueued"
-    | "afterRuntimeSurfaceMessageSteered"
     | "cancelActivePrompt"
     | "cancelPrompt"
-    | "deleteQueuedSurfaceMessage"
+    | "getRuntimeActorExtensionBindingStatePort"
     | "getRuntimeGeneratedPackageStatePort"
     | "getRuntimeApprovalStatePort"
     | "getRuntimeCommandStatePort"
     | "getRuntimeRequestStatePort"
     | "getRuntimeSessionWaitStatePort"
+    | "getRuntimeEpisodeStatePort"
     | "getRuntimeSourceStatePort"
     | "getRuntimeSurfaceLifecycleStatePort"
+    | "getRuntimeThreadStatePort"
+    | "getRuntimeTurnStatePort"
     | "getRuntimeWorkspaceStatePort"
-    | "resolveRuntimeApprovalAnswer"
+    | "getSandboxPolicySource"
+    | "wakeRuntimeSurfaceQueue"
     | "resolvePromptDefaultsForTarget"
     | "getRuntimeQueueStatePort"
   >;
-  sourceEdits: {
-    open(input: OpenExtensionSourceEditInput): Promise<SourceEditSession>;
-    save(input: SaveExtensionSourceEditInput): Promise<SourceEditSaveResult>;
-  };
-  sourceInvalidation: {
-    hint(input: SourceInvalidationHint): Promise<void>;
-    reconcile(input: SourceReconcileRequest): Promise<SourceReconcileResult>;
-    refreshGeneratedContext(input: RefreshGeneratedContextRequest): Promise<void>;
-    refreshGeneratedPackages(
-      input: RefreshGeneratedPackagesRequest,
-    ): Promise<GeneratedPackagesRefreshResult>;
-  };
-  events?: (
-    input?: RuntimeEventsInput,
-  ) => Effect.Effect<RuntimeEventSubscriptionEffect, RuntimeEventError>;
-  publishStateInvalidations?: (input: {
-    afterCommit: readonly StateInvalidationDescriptor[];
-  }) => Promise<readonly RuntimeEvent[]>;
+  generatedContextRefreshHost: RuntimeGeneratedContextRefreshHostPortService;
+  generatedPackageRefreshHost: RuntimeGeneratedPackageRefreshHostPortService;
+  generatedPackageStatePort?: RuntimeGeneratedPackageStatePortService;
+  sourceInvalidationScan: RuntimeSourceInvalidationScanPortService;
   commandStdin: RuntimeLayerCommandStdinPortService;
   commandControl: RuntimeLayerCommandControlPortService;
-  appLog: AppLogger;
+  appLogWritePort: AppLogWritePortService;
 };
 
 export type CatalogBackedRuntimeDependencies = {
   ensureUsableProviderAuth(provider: string): Promise<string | undefined>;
   getProviderAuthUnavailableMessage(provider: string): string;
-  recordDevBrowserToolsEvent(name: string, details?: Record<string, unknown>): void;
 };
 
 export type CatalogBackedRuntime = {
   facade: RuntimeFacade;
+  internal: {
+    launchFacts: {
+      acquireDirectToolLaunch(
+        input: Omit<BuildLaunchPolicyInput, "launchKind"> & {
+          toolName: "exec_command" | "apply_patch" | "execute_typescript";
+        },
+      ): Promise<{
+        facts: SandboxLaunchFacts;
+        close(): Promise<void>;
+      }>;
+      acquireExecuteTypescript(input: Omit<BuildLaunchPolicyInput, "launchKind">): Promise<{
+        facts: SandboxLaunchFacts;
+        close(): Promise<void>;
+      }>;
+    };
+    sourceInvalidation: {
+      refreshGeneratedPackages(
+        input: InternalRefreshGeneratedPackagesRequest,
+      ): Promise<GeneratedPackagesRefreshResult>;
+    };
+    acceptedNativeTools: {
+      requestDirectToolApproval: RuntimeApprovalBoundary;
+      runLoadExtension: RunAcceptedLoadExtension;
+      runRequestUserInput: RunAcceptedRequestUserInput;
+    };
+  };
   dispose(): Promise<void>;
 };
 
-export type RuntimeEventBusHandle = {
-  publish(event: RuntimeEventDraft): Promise<RuntimeEvent>;
-  publishStateInvalidations(input: {
-    afterCommit: readonly StateInvalidationDescriptor[];
-  }): Promise<readonly RuntimeEvent[]>;
-  events(
-    input?: RuntimeEventsInput,
-  ): Effect.Effect<RuntimeEventSubscriptionEffect, RuntimeEventError>;
-  close(): Promise<void>;
+export type NativeSandboxHelperMetadata = {
+  schemaVersion: 1;
+  artifact: "svvy-sandbox-helper";
+  platform: "darwin";
+  arch: "arm64" | "x64";
+  digest: {
+    algorithm: "sha256";
+    hex: string;
+  };
 };
 
-export type RuntimeSourceInvalidationCoordinatorHandle = Omit<
-  SourceInvalidationCoordinator,
-  "close" | "refreshWatchedInputs" | "requestScan" | "start"
-> & {
-  close(): Promise<void>;
-  ready(): Promise<void>;
-  refreshWatchedInputs(reason?: string): Promise<void>;
-  requestScan(reason: string): Promise<void>;
+export type PackagedSandboxHostSupportServices = {
+  helperCandidates: SandboxHelperCandidatesPortService;
+  hostProcess: HostProcessReferencePortService;
 };
+
+export type PackagedSandboxHostSupportInput = {
+  executablePath?: string;
+  appSupportRoot?: string;
+  tempRoot?: string;
+  platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  readFileString?: (path: string) => string;
+};
+
+export function createRuntimeBackedWorkspaceSessionCatalog(
+  cwd: string,
+  agentDir?: string,
+  sessionDir?: string,
+  _namerSessionDir?: string,
+  workspaceId?: string,
+  recoveryOptions?: {
+    workflowsExtensionsGeneratedPackagePath?: string;
+    workflowsGeneratedPackagePath?: string;
+    workflowsSourceRoot?: string;
+    acquireExecuteTypescriptLaunch?: (
+      input: Omit<BuildLaunchPolicyInput, "launchKind">,
+    ) => Promise<{
+      facts: SandboxLaunchFacts;
+      close(): Promise<void>;
+    }>;
+    acquireDirectToolLaunch?: (
+      input: Omit<BuildLaunchPolicyInput, "launchKind"> & {
+        toolName: "exec_command" | "apply_patch" | "execute_typescript";
+      },
+    ) => Promise<{
+      facts: SandboxLaunchFacts;
+      close(): Promise<void>;
+    }>;
+    refreshGeneratedPackages?: (
+      input: InternalRefreshGeneratedPackagesRequest,
+    ) => Promise<GeneratedPackagesRefreshResult>;
+    runAcceptedLoadExtension?: RunAcceptedLoadExtension;
+    runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
+    requestDirectToolApproval?: RuntimeApprovalBoundary;
+  },
+  approvalBoundary?: RuntimeApprovalBoundary,
+  managedSandbox?: boolean | (() => boolean),
+  runtimeCommandStdin?: LiveCommandStdinRegistry,
+  runtimeLayerConfig?: RuntimeLayerConfig,
+): WorkspaceSessionCatalog {
+  return new WorkspaceSessionCatalog(
+    cwd,
+    agentDir,
+    sessionDir,
+    workspaceId,
+    recoveryOptions,
+    approvalBoundary,
+    managedSandbox,
+    runtimeCommandStdin,
+    runRuntimeEffect,
+    runtimeLayerConfig,
+  );
+}
+
+export function createPackagedSandboxHostSupportServices(
+  input: PackagedSandboxHostSupportInput = {},
+): PackagedSandboxHostSupportServices {
+  const executablePath = input.executablePath ?? process.execPath;
+  const executableDir = dirname(executablePath);
+  const appBundleRoot = resolve(executableDir, "..", "..") as AbsolutePath;
+  const appSupportRoot = (input.appSupportRoot ??
+    join(homedir(), ".config", "svvy")) as AbsolutePath;
+  const tempRoot = (input.tempRoot ?? tmpdir()) as AbsolutePath;
+  const platform = input.platform ?? process.platform;
+  const arch = input.arch ?? process.arch;
+  const readFileString = input.readFileString ?? ((path: string) => readFileSync(path, "utf8"));
+  const metadataPath = join(executableDir, "svvy-sandbox-helper.metadata.json");
+  const metadata = (() => {
+    try {
+      return parseNativeSandboxHelperMetadata(readFileString(metadataPath));
+    } catch (cause) {
+      throw sandboxHostSupportError("createPackagedSandboxHostSupportServices", cause);
+    }
+  })();
+  const helperSnapshot: SandboxHelperCandidatesSnapshot = {
+    candidates: [
+      {
+        path: join(executableDir, metadata.artifact) as AbsolutePath,
+        platform: metadata.platform,
+        arch: metadata.arch,
+        expectedDigest: metadata.digest.hex,
+      },
+    ],
+    allowedRoots: [executableDir as AbsolutePath],
+  };
+
+  const hostProcess: HostProcessReferencePortService = {
+    getSnapshot: () =>
+      Effect.try({
+        try: (): HostProcessReferenceSnapshot => ({
+          platform: parseSandboxHostPlatform(platform),
+          arch: parseSandboxHostArch(arch),
+          appBundleRoot,
+          appSupportRoot,
+          tempRoot,
+        }),
+        catch: (cause) => sandboxHostSupportError("HostProcessReferencePort.getSnapshot", cause),
+      }),
+  };
+
+  const helperCandidates: SandboxHelperCandidatesPortService = {
+    getSnapshot: () => Effect.succeed(helperSnapshot),
+  };
+
+  return { helperCandidates, hostProcess };
+}
+
+function parseNativeSandboxHelperMetadata(source: string): NativeSandboxHelperMetadata {
+  const parsed = JSON.parse(source) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Native sandbox helper metadata must be an object.");
+  }
+  const metadata = parsed as Partial<NativeSandboxHelperMetadata>;
+  if (metadata.schemaVersion !== 1) {
+    throw new Error("Native sandbox helper metadata schemaVersion must be 1.");
+  }
+  if (metadata.artifact !== "svvy-sandbox-helper") {
+    throw new Error("Native sandbox helper metadata artifact must be svvy-sandbox-helper.");
+  }
+  if (metadata.platform !== "darwin") {
+    throw new Error("Native sandbox helper metadata platform must be darwin.");
+  }
+  if (metadata.arch !== "arm64" && metadata.arch !== "x64") {
+    throw new Error("Native sandbox helper metadata arch must be arm64 or x64.");
+  }
+  if (!metadata.digest || metadata.digest.algorithm !== "sha256") {
+    throw new Error("Native sandbox helper metadata digest algorithm must be sha256.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(metadata.digest.hex)) {
+    throw new Error("Native sandbox helper metadata digest hex must be a SHA-256 hex string.");
+  }
+  return metadata as NativeSandboxHelperMetadata;
+}
+
+function parseSandboxHostPlatform(
+  platform: NodeJS.Platform,
+): HostProcessReferenceSnapshot["platform"] {
+  if (platform === "darwin") {
+    return platform;
+  }
+  throw new Error(`Native sandbox helper is unsupported on platform ${platform}.`);
+}
+
+function parseSandboxHostArch(arch: NodeJS.Architecture): HostProcessReferenceSnapshot["arch"] {
+  if (arch === "arm64" || arch === "x64") {
+    return arch;
+  }
+  throw new Error(`Native sandbox helper is unsupported on architecture ${arch}.`);
+}
+
+function sandboxHostSupportError(operation: string, cause: unknown): SandboxPolicyError {
+  if (cause instanceof SandboxPolicyError) {
+    return cause;
+  }
+  return new SandboxPolicyError({
+    operation,
+    reason: "helper-unavailable",
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+  });
+}
 
 export interface RuntimeGeneratedPackageRefreshBoundaryHost {
-  readonly sourceRoots: ExtensionSourceRoots;
-  readonly generatedPackageRoots: GeneratedPackageRoots;
-  readonly extensionStatePort: ExtensionStatePortService;
-  generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
+  listAcquiredWorkspaceIds(): Effect.Effect<readonly WorkspaceId[], RuntimeContractError>;
+  listRecoverableWorkspaceIds(): Effect.Effect<readonly WorkspaceId[], RuntimeContractError>;
+  materializeCoreTypeContractPackage(): Effect.Effect<void, RuntimeContractError>;
+  now(): Effect.Effect<IsoDateTimeString, RuntimeContractError>;
   readonly workspaceLinkFileHost: RuntimeGeneratedPackageWorkspaceLinkFileHost;
 }
 
-export type RuntimeBlockingRequestInputWaitRegistryHandle = {
-  waitForBlockingRequest(input: {
-    state: RuntimeBlockingRequestInputEffectState;
-    request: RuntimeRequestInputDetailsRecord;
-    command: Parameters<
-      RuntimeBlockingRequestInputWaitRegistry["waitForBlockingRequest"]
-    >[0]["command"];
-  }): Promise<RequestUserInputResult>;
-  setBlockingTimerPaused(
-    state: RuntimeBlockingRequestInputEffectState,
-    requestId: string,
-    paused: boolean,
-  ): Promise<RuntimeRequestInputDetailsRecord>;
-  rescheduleBlockingTimeout(
-    state: RuntimeBlockingRequestInputEffectState,
-    requestId: string,
-  ): Promise<void>;
-  resolveBlockingRequest(
-    state: RuntimeBlockingRequestInputEffectState,
-    requestId: string,
-  ): Promise<RequestUserInputResult | null>;
-  rejectBlockingRequest(
-    state: RuntimeBlockingRequestInputEffectState,
-    requestId: string,
-    error: Error,
-  ): Promise<void>;
-  cancelBlockingRequestsForSurface(
-    state: RuntimeBlockingRequestInputEffectState,
-    surfacePiSessionId: string,
-    reason?: string,
-  ): Promise<void>;
-  restoreOpenBlockingRequests(state: RuntimeBlockingRequestInputEffectState): Promise<void>;
-  close(): Promise<void>;
-};
-
-export function createRuntimeEventBusHandle(
-  runtimeLayerConfig: RuntimeLayerConfig = defaultRuntimeLayerConfig,
-): RuntimeEventBusHandle {
-  const busPromise = runRuntimeEffect(
-    Effect.gen(function* () {
-      const scope = yield* Scope.make("sequential");
-      const bus = yield* makeRuntimeEventBus().pipe(
-        Effect.provide(createRuntimeLayerConfigLayer(runtimeLayerConfig)),
-        Effect.provideService(Scope.Scope, scope),
-      );
-      return { bus, scope };
-    }),
-  );
-
-  const publish = async (event: RuntimeEventDraft): Promise<RuntimeEvent> => {
-    const { bus } = await busPromise;
-    return runRuntimeEffect(bus.publishLive({ event }));
-  };
-
-  const publishStateInvalidations = async (input: {
-    afterCommit: readonly StateInvalidationDescriptor[];
-  }): Promise<readonly RuntimeEvent[]> => {
-    const { bus } = await busPromise;
-    return runRuntimeEffect(bus.publishStateInvalidations(input));
-  };
-
-  const events = (
-    input?: RuntimeEventsInput,
-  ): Effect.Effect<RuntimeEventSubscriptionEffect, RuntimeEventError> =>
-    Effect.promise(() => busPromise.then(({ bus }) => runRuntimeEffect(bus.subscribe(input))));
-
-  return {
-    publish,
-    publishStateInvalidations,
-    events,
-    close: async () => {
-      const { scope } = await busPromise;
-      await runRuntimeEffect(Scope.close(scope, Exit.void));
-    },
-  };
-}
-
-export function createRuntimeSourceInvalidationCoordinatorHandle(
-  options: SourceInvalidationCoordinatorOptions,
-): RuntimeSourceInvalidationCoordinatorHandle {
-  const coordinator = createSourceInvalidationCoordinator(options);
-  const ready = runRuntimeEffect(coordinator.start()).catch(async (error) => {
-    await runRuntimeEffect(coordinator.close());
-    throw error;
-  });
-
-  return {
-    close: async () => {
-      try {
-        await ready;
-      } catch {
-        // The coordinator may fail during startup; close still releases watcher resources.
-      }
-      await runRuntimeEffect(coordinator.close());
-    },
-    ready: () => ready,
-    refreshWatchedInputs: async (reason) => {
-      await ready;
-      await runRuntimeEffect(coordinator.refreshWatchedInputs(reason));
-    },
-    requestScan: async (reason) => {
-      await ready;
-      await runRuntimeEffect(coordinator.requestScan(reason));
-    },
-  };
-}
-
-export function createNodeSourceInvalidationHost(): SourceInvalidationHost {
+export function createNodeSourceInvalidationHost(): RuntimeSourceInvalidationHost {
   return {
     homeDir: homedir(),
     path: {
@@ -332,12 +440,19 @@ export function createNodeSourceInvalidationHost(): SourceInvalidationHost {
       },
       readDirectory: (path) =>
         readdirSync(path, { withFileTypes: true }).map(
-          (entry): SourceInvalidationDirectoryEntry => ({
+          (entry): RuntimeSourceInvalidationDirectoryEntry => ({
             name: entry.name,
             kind: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
           }),
         ),
       readFileString: (path) => readFileSync(path, "utf8"),
+      realPath: (path) => {
+        try {
+          return realpathSync.native(path);
+        } catch {
+          return null;
+        }
+      },
     },
     hashStrings: (parts) => {
       const hash = createHash("sha256");
@@ -357,25 +472,36 @@ export function createNodeSourceInvalidationHost(): SourceInvalidationHost {
   };
 }
 
-export function runRuntimeEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+function runRuntimeEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   return Effect.runPromise(effect);
 }
 
-export function refreshRuntimeGeneratedPackagesAtRuntimeBoundary(input: {
-  request: RefreshGeneratedPackagesRequest;
-  host: RuntimeGeneratedPackageRefreshBoundaryHost;
-  generatedPackageStatePort: RuntimeGeneratedPackageStatePortService;
-}): Promise<GeneratedPackagesRefreshResult> {
-  const generatedPackageLayer = Layer.mergeAll(
-    layerExtensions,
+export async function createCatalogBackedRuntime(
+  port: CatalogBackedRuntimePort,
+  dependencies: CatalogBackedRuntimeDependencies,
+  config: RuntimeLayerConfig,
+): Promise<CatalogBackedRuntime> {
+  return createRuntimeServiceAdapter(catalogBackedRuntimePort(port), dependencies, config);
+}
+
+export async function createRuntimeServiceAdapter(
+  port: RuntimeServiceAdapterPort,
+  dependencies: CatalogBackedRuntimeDependencies,
+  config: RuntimeLayerConfig,
+): Promise<CatalogBackedRuntime> {
+  const sandboxHostSupport = createPackagedSandboxHostSupportServices();
+  const extensionPackageLayer = Layer.mergeAll(
     layerRuntimeBunPlatform,
-    Layer.succeed(ExtensionStatePort, input.host.extensionStatePort),
-    layerExtensionSourceRootsPort(input.host.sourceRoots),
-    layerGeneratedPackageRootPort(input.host.generatedPackageRoots),
+    Layer.succeed(ExtensionStatePort, port.extensionStatePort),
+    layerExtensionSourceRootsPort(port.sourceRoots),
+    layerGeneratedPackageRootPort(port.generatedPackageRoots),
+    layerPackagedExtensionTemplatesPort({
+      builtinExtensionsRoot: port.sourceRoots.extensionsRoot,
+    }),
     layerWorkspaceSourceLinkPort({
       generatedPackageLinkPath: (linkInput) =>
         Effect.tryPromise({
-          try: () => input.host.generatedPackageLinkPath(linkInput),
+          try: () => port.generatedPackageLinkPath(linkInput),
           catch: (cause) =>
             new CoreExtensionError({
               operation: "runtime.generated-packages.workspace-link-path",
@@ -389,359 +515,96 @@ export function refreshRuntimeGeneratedPackagesAtRuntimeBoundary(input: {
         }),
     }),
   );
-
-  return runRuntimeEffect(
-    refreshRuntimeGeneratedPackages(input.request, {
-      buildGeneratedPackages: (buildInput) =>
-        Effect.gen(function* () {
-          const extensions = yield* Extensions;
-          return yield* extensions.generatedPackages.refresh(buildInput);
-        }).pipe(
-          Effect.provide(generatedPackageLayer),
-          Effect.mapError((cause) =>
-            runtimeAdapterError("runtime.sourceInvalidation.refreshGeneratedPackages.build", cause),
-          ),
-        ),
-      planWorkspaceLinkRepair: (linkInput) =>
-        Effect.gen(function* () {
-          const extensions = yield* Extensions;
-          return yield* extensions.generatedPackages.planWorkspaceLink(linkInput);
-        }).pipe(
-          Effect.provide(generatedPackageLayer),
-          Effect.mapError((cause) =>
-            runtimeAdapterError(
-              "runtime.sourceInvalidation.refreshGeneratedPackages.planWorkspaceLink",
-              cause,
-            ),
-          ),
-        ),
-      workspaceLinkFileHost: input.host.workspaceLinkFileHost,
-    }).pipe(
-      Effect.provideService(RuntimeGeneratedPackageStatePort, input.generatedPackageStatePort),
-    ),
-  );
-}
-
-export function runAcceptedRequestUserInputToolCallAtRuntimeBoundary(input: {
-  request: RunAcceptedRequestUserInputToolCallInput;
-  commandStatePort: RuntimeCommandStatePortService;
-  requestStatePort: RuntimeRequestStatePortService;
-  publishStateInvalidations?: CatalogBackedRuntimePort["publishStateInvalidations"];
-}): Promise<RunAcceptedRequestUserInputToolCallResult> {
-  const afterCommit: StateInvalidationDescriptor[] = [];
-  return runRuntimeEffect(
-    runAcceptedRequestUserInputToolCall(input.request).pipe(
-      Effect.provideService(
-        RuntimeCommandStatePort,
-        commandStatePortWithInvalidationCollector(input.commandStatePort, afterCommit),
-      ),
-      Effect.provideService(RuntimeRequestStatePort, input.requestStatePort),
-      Effect.provideService(RuntimeEventBus, runtimeEventBusFromStateInvalidationPublisher(input)),
-    ),
-  ).then(async (result) => {
-    await publishCollectedStateInvalidations(input.publishStateInvalidations, afterCommit);
-    return result;
-  });
-}
-
-export function runAcceptedLoadExtensionToolCallAtRuntimeBoundary(input: {
-  request: RunAcceptedLoadExtensionToolCallInput;
-  commandStatePort: RuntimeCommandStatePortService;
-  actorExtensionBindingStatePort: RuntimeActorExtensionBindingStatePortService;
-  extensionsService: ExtensionsService;
-  publishStateInvalidations?: CatalogBackedRuntimePort["publishStateInvalidations"];
-}): Promise<RunAcceptedLoadExtensionToolCallResult> {
-  const afterCommit: StateInvalidationDescriptor[] = [];
-  return runRuntimeEffect(
-    runAcceptedLoadExtensionToolCall(input.request).pipe(
-      Effect.provideService(
-        RuntimeCommandStatePort,
-        commandStatePortWithInvalidationCollector(input.commandStatePort, afterCommit),
-      ),
-      Effect.provideService(
-        RuntimeActorExtensionBindingStatePort,
-        input.actorExtensionBindingStatePort,
-      ),
-      Effect.provideService(Extensions, input.extensionsService),
-      Effect.provideService(RuntimeEventBus, runtimeEventBusFromStateInvalidationPublisher(input)),
-    ),
-  ).then(async (result) => {
-    await publishCollectedStateInvalidations(input.publishStateInvalidations, afterCommit);
-    return result;
-  });
-}
-
-function runtimeEventBusFromStateInvalidationPublisher(input: {
-  publishStateInvalidations?: CatalogBackedRuntimePort["publishStateInvalidations"];
-}): RuntimeEventBus["Service"] {
-  return RuntimeEventBus.of({
-    publishLive: (eventInput) =>
-      Effect.fail(
-        new RuntimeEventStreamError({
-          operation: "runtime.events.publish",
-          reason: "stream-failed",
-          message: `Runtime live event publication is not available for event ${eventInput.event.type}.`,
-          latestSequence: 0 as RuntimeEventSequence,
-        }),
-      ),
-    publishStateInvalidations: (publishInput) =>
-      Effect.tryPromise({
-        try: async () => {
-          if (!input.publishStateInvalidations) {
-            return [];
-          }
-          return await input.publishStateInvalidations(publishInput);
-        },
-        catch: (cause: unknown) =>
-          new RuntimeEventStreamError({
-            operation: "runtime.events.publishStateInvalidations",
-            reason: "stream-failed",
-            message: cause instanceof Error ? cause.message : String(cause),
-            latestSequence: 0 as RuntimeEventSequence,
-          }),
-      }),
-    subscribe: () =>
-      Effect.fail(
-        new RuntimeEventStreamError({
-          operation: "runtime.events",
-          reason: "stream-failed",
-          message: "Runtime events are not available.",
-          latestSequence: 0 as RuntimeEventSequence,
-        }),
-      ),
-  });
-}
-
-export function createRuntimeBlockingRequestInputWaitRegistryHandle(
-  input: {
-    onRequestUpdated?: () => void | Promise<void>;
-  } = {},
-): RuntimeBlockingRequestInputWaitRegistryHandle {
-  const options = input.onRequestUpdated
-    ? {
-        onRequestUpdated: () =>
-          Effect.tryPromise({
-            try: async () => {
-              await input.onRequestUpdated?.();
-            },
-            catch: (cause: unknown) =>
-              runtimeAdapterError("runtime.requestInput.blocking.onRequestUpdated", cause),
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                console.error("Failed to notify request_user_input timeout update:", error);
-              }),
-            ),
-          ),
-      }
-    : {};
-  const registryPromise = runRuntimeEffect(
-    Effect.gen(function* () {
-      const scope = yield* Scope.make("sequential");
-      const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry(options).pipe(
-        Effect.provideService(Scope.Scope, scope),
-      );
-      return { registry, scope };
-    }),
-  );
-  const runRegistry = async <A>(
-    run: (registry: RuntimeBlockingRequestInputWaitRegistry) => Effect.Effect<A, unknown>,
-  ): Promise<A> => {
-    const { registry } = await registryPromise;
-    return runRuntimeEffect(run(registry));
-  };
-
-  return {
-    waitForBlockingRequest: (request) =>
-      runRegistry((registry) => registry.waitForBlockingRequest(request)),
-    setBlockingTimerPaused: (state, requestId, paused) =>
-      runRegistry((registry) => registry.setBlockingTimerPaused(state, requestId, paused)),
-    rescheduleBlockingTimeout: (state, requestId) =>
-      runRegistry((registry) => registry.rescheduleBlockingTimeout(state, requestId)),
-    resolveBlockingRequest: (state, requestId) =>
-      runRegistry((registry) => registry.resolveBlockingRequest(state, requestId)),
-    rejectBlockingRequest: (state, requestId, error) =>
-      runRegistry((registry) => registry.rejectBlockingRequest(state, requestId, error)),
-    cancelBlockingRequestsForSurface: (state, surfacePiSessionId, reason) =>
-      runRegistry((registry) =>
-        registry.cancelBlockingRequestsForSurface(state, surfacePiSessionId, reason),
-      ),
-    restoreOpenBlockingRequests: (state) =>
-      runRegistry((registry) => registry.restoreOpenBlockingRequests(state)),
-    close: async () => {
-      const { scope } = await registryPromise;
-      await runRuntimeEffect(Scope.close(scope, Exit.void));
-    },
-  };
-}
-
-export async function createCatalogBackedRuntime(
-  port: CatalogBackedRuntimePort,
-  dependencies: CatalogBackedRuntimeDependencies,
-): Promise<CatalogBackedRuntime> {
   const runtimeHostLayer = Layer.mergeAll(
-    Layer.succeed(
-      RuntimeLayerPromptHostPort,
-      RuntimeLayerPromptHostPort.of({
-        resolvePromptDefaultsForTarget: (target) =>
-          port.catalog.resolvePromptDefaultsForTarget(target as PromptTarget),
-        afterRuntimeSurfaceMessageQueued: async (input) => {
-          const result = await port.catalog.afterRuntimeSurfaceMessageQueued({
-            ...input,
-            target: input.target as PromptTarget,
-            messages: [...input.messages],
-            onEvent: input.onEvent as never,
-          });
-          return {
-            dispatched: result.dispatched ?? false,
-            queued: result.queued,
-            queuedMessageId: result.queuedMessageId,
-            target: input.target,
-          };
-        },
-        afterRuntimeQueuedMessageAborted: (input) =>
-          port.catalog.afterRuntimeQueuedMessageAborted({
-            ...input,
-            target: input.target as PromptTarget,
-          }),
-        afterRuntimeSurfaceMessageSteered: (input) =>
-          port.catalog.afterRuntimeSurfaceMessageSteered({
-            ...input,
-            target: input.target as PromptTarget,
-          }),
-        cancelActivePrompt: (input) =>
-          port.catalog.cancelActivePrompt({
-            ...input,
-            target: input.target as PromptTarget,
-          }),
-        cancelPrompt: (target) => port.catalog.cancelPrompt(target as PromptTarget),
-      }),
-    ),
-    Layer.succeed(
-      RuntimeLayerRequestInputPostCommitPort,
-      RuntimeLayerRequestInputPostCommitPort.of({
-        afterRequestInputAnswered: (input) => port.catalog.afterRequestInputAnswered(input),
-        afterRequestInputTimerPaused: (input) => port.catalog.afterRequestInputTimerPaused(input),
-      }),
-    ),
-    Layer.succeed(
-      RuntimeLayerApprovalPostCommitPort,
-      RuntimeLayerApprovalPostCommitPort.of({
-        resolveRuntimeApprovalAnswer: async (input) => {
-          await port.catalog.resolveRuntimeApprovalAnswer(input);
-        },
-      }),
-    ),
-    Layer.succeed(RuntimeQueueStatePort, port.catalog.getRuntimeQueueStatePort()),
-    Layer.succeed(RuntimeRequestStatePort, port.catalog.getRuntimeRequestStatePort()),
-    Layer.succeed(RuntimeApprovalStatePort, port.catalog.getRuntimeApprovalStatePort()),
-    Layer.succeed(RuntimeCommandStatePort, port.catalog.getRuntimeCommandStatePort()),
-    Layer.succeed(RuntimeSessionWaitStatePort, port.catalog.getRuntimeSessionWaitStatePort()),
-    Layer.succeed(RuntimeSourceStatePort, port.catalog.getRuntimeSourceStatePort()),
-    Layer.succeed(
-      RuntimeSurfaceLifecycleStatePort,
-      port.catalog.getRuntimeSurfaceLifecycleStatePort(),
-    ),
-    Layer.succeed(RuntimeWorkspaceStatePort, port.catalog.getRuntimeWorkspaceStatePort()),
-    Layer.succeed(
-      RuntimeLayerProviderAuthPort,
-      RuntimeLayerProviderAuthPort.of({
-        ensureUsableProviderAuth: dependencies.ensureUsableProviderAuth,
-        getProviderAuthUnavailableMessage: dependencies.getProviderAuthUnavailableMessage,
-      }),
-    ),
-    Layer.succeed(
-      RuntimeLayerModelResolverPort,
-      RuntimeLayerModelResolverPort.of({
-        resolveModelId: ({ provider, model }) =>
-          Effect.try({
-            try: () =>
-              getModel(
-                provider as Parameters<typeof getModel>[0],
-                model as Parameters<typeof getModel>[1],
-              ).id,
-            catch: (cause: unknown) => runtimeAdapterError("runtime.model.resolve", cause),
-          }),
-      }),
-    ),
-    Layer.succeed(
-      RuntimeLayerDevTelemetryPort,
-      RuntimeLayerDevTelemetryPort.of({
-        recordDevBrowserToolsEvent: dependencies.recordDevBrowserToolsEvent,
-      }),
-    ),
-    Layer.succeed(RuntimeLayerAppLogPort, RuntimeLayerAppLogPort.of(port.appLog)),
-    Layer.succeed(RuntimeLayerSourceEditsPort, RuntimeLayerSourceEditsPort.of(port.sourceEdits)),
-    Layer.succeed(
-      RuntimeLayerSourceInvalidationPort,
-      RuntimeLayerSourceInvalidationPort.of(port.sourceInvalidation),
-    ),
-    Layer.succeed(
-      RuntimeLayerEventsPort,
-      RuntimeLayerEventsPort.of({
-        events: (input) =>
-          port.events
-            ? port.events(input)
-            : Effect.fail(
-                new RuntimeEventStreamError({
-                  operation: "runtime.events",
-                  reason: "stream-failed",
-                  message: "Runtime events are not available.",
-                  latestSequence: 0 as RuntimeEventSequence,
-                }),
-              ),
-        publishStateInvalidations: (input) =>
-          Effect.tryPromise({
-            try: async () =>
-              port.publishStateInvalidations
-                ? await port.publishStateInvalidations(input)
-                : ([] as const),
-            catch: (cause: unknown) =>
-              new RuntimeEventStreamError({
-                operation: "runtime.events.publishStateInvalidations",
-                reason: "stream-failed",
-                message: cause instanceof Error ? cause.message : String(cause),
-                latestSequence: 0 as RuntimeEventSequence,
-              }),
-          }),
-      }),
-    ),
-    Layer.succeed(RuntimeLayerCommandStdinPort, RuntimeLayerCommandStdinPort.of(port.commandStdin)),
-    Layer.succeed(
-      RuntimeLayerCommandControlPort,
-      RuntimeLayerCommandControlPort.of(port.commandControl),
-    ),
+    extensionsLayer.pipe(Layer.provide(extensionPackageLayer)),
+    layerRuntimeBunPlatform,
+    Layer.succeed(SandboxPolicySource, port.sandboxPolicySource),
+    Layer.succeed(SandboxHelperCandidatesPort, sandboxHostSupport.helperCandidates),
+    Layer.succeed(HostProcessReferencePort, sandboxHostSupport.hostProcess),
+    layerExtensionSourceRootsPort(port.sourceRoots),
+    Layer.succeed(RuntimeLayerPromptControlHostPort, port.promptControlHost),
+    Layer.succeed(RuntimePromptDefaultsStatePort, port.promptDefaultsStatePort),
+    Layer.succeed(RuntimeLayerSurfaceQueueWakePort, port.surfaceQueueWakePort),
+    Layer.succeed(RuntimeQueueStatePort, port.queueStatePort),
+    Layer.succeed(RuntimeActorExtensionBindingStatePort, port.actorExtensionBindingStatePort),
+    Layer.succeed(RuntimeRequestStatePort, port.requestStatePort),
+    Layer.succeed(RuntimeApprovalStatePort, port.approvalStatePort),
+    Layer.succeed(RuntimeCommandStatePort, port.commandStatePort),
+    Layer.succeed(RuntimeGeneratedPackageStatePort, port.generatedPackageStatePort),
+    Layer.succeed(RuntimeSessionWaitStatePort, port.sessionWaitStatePort),
+    Layer.succeed(RuntimeThreadStatePort, port.threadStatePort),
+    Layer.succeed(RuntimeTurnStatePort, port.turnStatePort),
+    Layer.succeed(RuntimeEpisodeStatePort, port.episodeStatePort),
+    Layer.succeed(RuntimeSourceStatePort, port.sourceStatePort),
+    Layer.succeed(RuntimeSurfaceLifecycleStatePort, port.surfaceLifecycleStatePort),
+    Layer.succeed(RuntimeWorkspaceStatePort, port.workspaceStatePort),
+    Layer.succeed(RuntimeLayerProviderAuthPort, {
+      ensureUsableProviderAuth: (provider) =>
+        Effect.tryPromise({
+          try: () => dependencies.ensureUsableProviderAuth(provider),
+          catch: (cause: unknown) =>
+            runtimeAdapterError("runtime.messages.submit.providerAuth", cause),
+        }),
+      getProviderAuthUnavailableMessage: dependencies.getProviderAuthUnavailableMessage,
+    }),
+    Layer.succeed(RuntimeLayerModelResolverPort, {
+      resolveModelId: ({ provider, model }) =>
+        Effect.try({
+          try: () =>
+            getModel(
+              provider as Parameters<typeof getModel>[0],
+              model as Parameters<typeof getModel>[1],
+            ).id,
+          catch: (cause: unknown) => runtimeAdapterError("runtime.model.resolve", cause),
+        }),
+    }),
+    Layer.succeed(AppLogWritePort, port.appLogWritePort),
+    Layer.succeed(RuntimeGeneratedContextRefreshHostPort, port.generatedContextRefreshHost),
+    Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, port.generatedPackageRefreshHost),
+    Layer.succeed(RuntimeSourceInvalidationScanPort, port.sourceInvalidationScan),
+    Layer.succeed(RuntimeLayerCommandStdinPort, port.commandStdin),
+    Layer.succeed(RuntimeLayerCommandControlPort, port.commandControl),
   );
+  const runtimeLayerConfig = createRuntimeLayerConfigLayer(config);
   const managedRuntime = ManagedRuntime.make(
-    Layer.mergeAll(
-      Runtime.layer,
-      createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig),
-      Layer.succeed(
-        RuntimeStartupReadiness,
-        RuntimeStartupReadiness.of({
-          awaitReady: Effect.void,
-        }),
-      ),
-      Layer.succeed(
-        RuntimeShutdownPreparation,
-        RuntimeShutdownPreparation.of({
-          prepareShutdown: () =>
-            Effect.succeed({
-              status: "drained" as const,
-              interruptedTurns: 0,
-              interruptedCommands: 0,
-              releasedQueueClaims: 0,
-              recoveryRowsScheduled: 0,
-            }),
-        }),
-      ),
-    ).pipe(Layer.provide(runtimeHostLayer)),
+    Layer.mergeAll(Runtime.layer.pipe(Layer.provide(runtimeLayerConfig)), runtimeLayerConfig).pipe(
+      Layer.provide(runtimeHostLayer),
+    ),
   );
+  const runManagedRuntimeEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
+    managedRuntime.runPromise(effect as Effect.Effect<A, E, never>);
   await managedRuntime.context();
   await awaitRuntimeStartupReadiness(managedRuntime);
   const facade = createRuntimeFacade(managedRuntime);
+  const acquireDirectToolLaunch = (
+    input: Omit<BuildLaunchPolicyInput, "launchKind"> & {
+      toolName: "exec_command" | "apply_patch" | "execute_typescript";
+    },
+  ) => acquireAcceptedDirectToolLaunch(managedRuntime, input);
   return {
     facade,
+    internal: {
+      launchFacts: {
+        acquireDirectToolLaunch,
+        acquireExecuteTypescript: (input) =>
+          acquireDirectToolLaunch({ ...input, toolName: "execute_typescript" }),
+      },
+      sourceInvalidation: {
+        refreshGeneratedPackages: (input) =>
+          runManagedRuntimeEffect(
+            Effect.gen(function* () {
+              const runtime = yield* Runtime;
+              return yield* runtime.sourceInvalidation.refreshGeneratedPackages(input);
+            }),
+          ),
+      },
+      acceptedNativeTools: {
+        requestDirectToolApproval: (input) =>
+          requestAcceptedDirectToolApproval(managedRuntime, input),
+        runLoadExtension: (input) => runAcceptedLoadExtension(managedRuntime, input),
+        runRequestUserInput: (input) => runAcceptedRequestUserInput(managedRuntime, input),
+      },
+    },
     dispose: async () => {
       try {
         await prepareRuntimeShutdown(managedRuntime, { reason: "app-shutdown" });
@@ -753,53 +616,77 @@ export async function createCatalogBackedRuntime(
   };
 }
 
-function commandStatePortWithInvalidationCollector(
-  statePort: RuntimeCommandStatePortService,
-  afterCommit: StateInvalidationDescriptor[],
-): RuntimeCommandStatePortService {
+function catalogBackedRuntimePort(port: CatalogBackedRuntimePort): RuntimeServiceAdapterPort {
   return {
-    ...statePort,
-    createCommand: (input) =>
-      statePort.createCommand(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
-    createOrReuseStreamingCommand: (input) =>
-      statePort
-        .createOrReuseStreamingCommand(input)
-        .pipe(Effect.map(collectAfterCommit(afterCommit))),
-    updateCommandArguments: (input) =>
-      statePort.updateCommandArguments(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
-    startCommand: (input) =>
-      statePort.startCommand(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
-    finishCommand: (input) =>
-      statePort.finishCommand(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
-    recordCommandEvent: (input) =>
-      statePort.recordCommandEvent(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
-    recordStdinWrite: (input) =>
-      statePort.recordStdinWrite(input).pipe(Effect.map(collectAfterCommit(afterCommit))),
+    sourceRoots: port.sourceRoots,
+    generatedPackageRoots: port.generatedPackageRoots,
+    extensionStatePort: port.extensionStatePort,
+    generatedPackageLinkPath: port.generatedPackageLinkPath,
+    promptControlHost: {
+      cancelActivePrompt: (input) =>
+        Effect.tryPromise({
+          try: () =>
+            port.catalog.cancelActivePrompt({
+              ...input,
+              target: input.target as PromptTarget,
+            }),
+          catch: (cause) => runtimeAdapterError("runtime.messages.abort.active", cause),
+        }),
+      cancelPrompt: (target) =>
+        Effect.tryPromise({
+          try: () => port.catalog.cancelPrompt(target as PromptTarget),
+          catch: (cause) => runtimeAdapterError("runtime.messages.abort", cause),
+        }),
+    },
+    promptDefaultsStatePort: {
+      resolvePromptDefaults: (input) =>
+        Effect.try({
+          try: () => port.catalog.resolvePromptDefaultsForTarget(input.target as PromptTarget),
+          catch: (cause: unknown) =>
+            new StateContractError({
+              operation: "runtime.promptDefaults.resolve",
+              reason: "not-found",
+              message:
+                cause instanceof Error
+                  ? cause.message
+                  : "Runtime prompt defaults could not be resolved.",
+              cause,
+            }),
+        }),
+    },
+    surfaceQueueWakePort: {
+      wakeSurfaceQueue: (input) =>
+        Effect.tryPromise({
+          try: () =>
+            port.catalog.wakeRuntimeSurfaceQueue({
+              target: input.target as PromptTarget,
+              reason: input.reason,
+            }),
+          catch: (cause) => runtimeAdapterError("runtime.queueWake.wakeSurface", cause),
+        }),
+    },
+    sandboxPolicySource: port.catalog.getSandboxPolicySource(),
+    queueStatePort: port.catalog.getRuntimeQueueStatePort(),
+    actorExtensionBindingStatePort: port.catalog.getRuntimeActorExtensionBindingStatePort(),
+    requestStatePort: port.catalog.getRuntimeRequestStatePort(),
+    approvalStatePort: port.catalog.getRuntimeApprovalStatePort(),
+    commandStatePort: port.catalog.getRuntimeCommandStatePort(),
+    generatedPackageStatePort:
+      port.generatedPackageStatePort ?? port.catalog.getRuntimeGeneratedPackageStatePort(),
+    sessionWaitStatePort: port.catalog.getRuntimeSessionWaitStatePort(),
+    threadStatePort: port.catalog.getRuntimeThreadStatePort(),
+    turnStatePort: port.catalog.getRuntimeTurnStatePort(),
+    episodeStatePort: port.catalog.getRuntimeEpisodeStatePort(),
+    sourceStatePort: port.catalog.getRuntimeSourceStatePort(),
+    surfaceLifecycleStatePort: port.catalog.getRuntimeSurfaceLifecycleStatePort(),
+    workspaceStatePort: port.catalog.getRuntimeWorkspaceStatePort(),
+    generatedContextRefreshHost: port.generatedContextRefreshHost,
+    generatedPackageRefreshHost: port.generatedPackageRefreshHost,
+    sourceInvalidationScan: port.sourceInvalidationScan,
+    commandStdin: port.commandStdin,
+    commandControl: port.commandControl,
+    appLogWritePort: port.appLogWritePort,
   };
-}
-
-function collectAfterCommit<T>(afterCommit: StateInvalidationDescriptor[]) {
-  return (result: StateMutationResult<T>): StateMutationResult<T> => {
-    afterCommit.push(...result.afterCommit);
-    return result;
-  };
-}
-
-async function publishCollectedStateInvalidations(
-  publish: CatalogBackedRuntimePort["publishStateInvalidations"] | undefined,
-  afterCommit: readonly StateInvalidationDescriptor[],
-  port?: Pick<CatalogBackedRuntimePort, "appLog">,
-): Promise<void> {
-  if (!publish || afterCommit.length === 0) {
-    return;
-  }
-  try {
-    await publish({ afterCommit });
-  } catch (error) {
-    port?.appLog.warning("app.bridge", "Runtime state invalidation publication failed.", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 function runtimeAdapterError(operation: string, cause: unknown): RuntimeContractError {
@@ -808,7 +695,7 @@ function runtimeAdapterError(operation: string, cause: unknown): RuntimeContract
   }
   return new RuntimeContractError({
     operation,
-    reason: "unsupported-operation",
+    reason: "state-conflict",
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });

@@ -16,8 +16,10 @@ Tool rendering follows Codex-style turn items projected as execution-span cards:
 1. show an execution-span card as soon as the tool name is known
 2. stream large argument snapshots while the model is still producing arguments
 3. hand the accepted call to runtime execution
-4. stream runtime output, progress, waits, or child commands
-5. settle the span from authoritative final command facts
+4. have `@svvy/runtime` publish typed runtime events and surface stream patches for output, progress,
+   waits, or child commands; app/bootstrap sequences those events into renderer-safe invalidations
+   or bounded `surface.stream` patches, and desktop refetches state read models when invalidated
+5. settle the span from authoritative final command facts in state
 
 The transcript card has three semantic levels:
 
@@ -29,8 +31,9 @@ The transcript card has three semantic levels:
   snapshots, output chunks, retained output, child-command facts, and artifacts
 
 Once a command reaches a terminal state (`succeeded`, `failed`, or `cancelled`), its terminal
-summary, facts, error, and finished timestamp are immutable. Prompt cleanup and late duplicate
-callbacks may no-op, but they must not rewrite a completed command into a cancelled command.
+summary, facts, error, and finished timestamp are immutable. Prompt-finalization effects and
+duplicate terminal-settlement attempts may no-op, but they must not rewrite a completed command into
+a cancelled command.
 
 This model applies to:
 
@@ -52,7 +55,8 @@ use durable command facts, command event rows, retained artifacts, and state rea
 
 ## Shell And svvyx Commands
 
-Shell command records and durable command event rows include:
+Shell command records, final command facts, and durable command event/output rows collectively
+include:
 
 - command string
 - working directory
@@ -71,7 +75,8 @@ Running Shell command spans whose command inspector read model reports
 `stdin.mode === "continuable"` and `stdin.canAttemptWrite === true` may render a compact stdin
 composer. Submitting it calls the runtime command stdin facade by durable `commandId`; it must not
 append transcript text, call the model-facing `write_stdin` tool, mutate renderer-only command
-state, or infer success before the runtime result and subsequent `command.changed` refetch.
+state, or infer success before the runtime result and subsequent command read-model
+invalidation/refetch.
 
 `svvyx workflows ...` is a command-family Shell surface unless invoked through an injected
 `execute_typescript` generated TypeScript facade such as `extensions.workflows.run(...)`. Facade
@@ -94,20 +99,12 @@ Generated extension-facade calls inside the snippet are child commands under tha
 children render as nested child spans inside the expanded parent card; trace-only children stay in
 the command inspector and do not create top-level transcript cards.
 
-## Workflows Commands
+## Command-Family Rollups
 
-`svvyx workflows list`, `save`, `build`, and `models list` render as normal command-family work.
-
-Expected display:
-
-- `list`: loading state followed by generated export identity and paths
-- `save`: source path, target kind/export, overwrite mode, save result, and build result
-- `build`: build phases and diagnostics
-- `models list`: provider/model/reasoning choices and auth/configuration status
-
-Workflows semantic rollups are derived from `exec_command` command facts and facade child command
-facts. They are not produced by a workflow runtime renderer, a Smithers wrapper, or generated
-`@svvyx/*` package APIs.
+`svvyx <family> ...` commands render as normal command-family work. Command-family rollups are
+derived from `exec_command` command facts plus extension metadata and child-command facts.
+Family-specific labels and sections come from extension metadata/read-model projection, not bespoke
+runtime/UI renderers, Smithers wrappers, or generated `@svvyx/*` package APIs.
 
 ## Recovery
 
@@ -121,4 +118,5 @@ target, command id, status, duration, compact metrics, useful outcome, streamed 
 bounded output/progress/diagnostic/patch sections, summary child commands, linked artifacts, copy
 actions, and an explicit inspect action when backed by a durable command id. It must not flatten
 command facts into raw output text, render unbounded logs inline, use tool names as filenames, or
-show artifact-open actions unless a real artifact link exists.
+show artifact actions except from durable artifact ids linked in command facts/read models. It never
+infers artifact actions from stdout paths, MIME-looking text, tool names, or preview content.

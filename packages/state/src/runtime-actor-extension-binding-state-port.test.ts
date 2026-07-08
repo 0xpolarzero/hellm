@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
@@ -22,6 +23,226 @@ const workspaceSessionId = "session-runtime-actor-extension-binding" as Workspac
 const orchestratorSurfacePiSessionId = workspaceSessionId as string as SurfacePiSessionId;
 
 describe("RuntimeActorExtensionBindingStatePort", () => {
+  it("reads the orchestrator runtime prompt binding by the session-bound fingerprint", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Runtime actor extension binding",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            generatedAgentContextFingerprint: "fingerprint-orchestrator-bound",
+            updateExtensionContextBeforeNextTurn: false,
+            messageCount: 0,
+            status: "idle",
+            createdAt: "2026-04-18T08:55:00.000Z",
+            updatedAt: "2026-04-18T08:56:00.000Z",
+            loadedExtensionIds: ["base-common"],
+            availableExtensionIds: ["shell"],
+          });
+          const persistedBinding = yield* state.upsertGeneratedAgentContextBinding({
+            surfacePiSessionId: orchestratorSurfacePiSessionId,
+            ownerKind: "session",
+            ownerId: workspaceSessionId,
+            actorKind: "orchestrator",
+            aggregateCacheKey: "orchestrator-cache-key",
+            systemPrompt: "Use the orchestrator generated context.",
+            svvyxGuidance: "hidden svvyx guidance",
+            commandsDts: "hidden commands declarations",
+            nativeToolSchemasJson: "[]",
+            generatedAgentContextFingerprint: "fingerprint-orchestrator-bound",
+            generatedAgentContextRevision: 7,
+            loadedExtensionIds: ["base-common", "shell"],
+            availableExtensionIds: ["smithers"],
+            externalSourceHashes: ["agents-md:sha256-orchestrator"],
+          });
+
+          const port = yield* RuntimeActorExtensionBindingStatePort;
+          const binding = yield* port.readRuntimePromptBinding({
+            target: {
+              workspaceSessionId,
+              surface: "orchestrator",
+              surfacePiSessionId: orchestratorSurfacePiSessionId,
+            },
+          });
+
+          expect(binding.target).toEqual({
+            workspaceSessionId,
+            surface: "orchestrator",
+            surfacePiSessionId: orchestratorSurfacePiSessionId,
+          });
+          expect(binding.generatedAgentContextBindingId).toBe(persistedBinding.id);
+          expect(binding.generatedAgentContextFingerprint as string).toBe(
+            "fingerprint-orchestrator-bound",
+          );
+          expect(binding.generatedAgentContextRevision).toBe(7);
+          expect(binding.systemPrompt).toBe("Use the orchestrator generated context.");
+          expect(binding.loadedExtensionIds as readonly string[]).toEqual(["base-common", "shell"]);
+          expect(binding.availableExtensionIds as readonly string[]).toEqual(["smithers"]);
+          expect(binding.externalSourceHashes).toEqual(["agents-md:sha256-orchestrator"]);
+          expect(binding.updateExtensionContextBeforeNextTurn).toBe(false);
+        }).pipe(
+          Effect.provide(
+            layerRuntimeActorExtensionBindingStatePort.pipe(
+              Layer.provideMerge(
+                layerStructuredSessionState({
+                  workspace,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it("reads the handler runtime prompt binding by the thread-bound fingerprint", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Runtime actor extension binding",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            messageCount: 0,
+            status: "idle",
+            createdAt: "2026-04-18T08:55:00.000Z",
+            updatedAt: "2026-04-18T08:56:00.000Z",
+          });
+          const turn = yield* state.startTurn({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId: orchestratorSurfacePiSessionId,
+            requestSummary: "Start handler.",
+          });
+          const thread = yield* state.createThread({
+            turnId: turn.id,
+            surfacePiSessionId: "surface-handler-runtime-prompt-binding",
+            title: "Handler binding",
+            objective: "Read handler runtime prompt binding.",
+            loadedExtensionIds: ["base-common", "thread-handling"],
+            availableExtensionIds: ["web"],
+            generatedAgentContextFingerprint: "fingerprint-handler-bound",
+          });
+          const persistedBinding = yield* state.upsertGeneratedAgentContextBinding({
+            surfacePiSessionId: thread.surfacePiSessionId,
+            ownerKind: "thread",
+            ownerId: thread.id,
+            actorKind: "handler",
+            aggregateCacheKey: "handler-cache-key",
+            systemPrompt: "Use the handler generated context.",
+            svvyxGuidance: "hidden handler svvyx guidance",
+            commandsDts: "hidden handler commands declarations",
+            nativeToolSchemasJson: "[]",
+            generatedAgentContextFingerprint: "fingerprint-handler-bound",
+            generatedAgentContextRevision: 11,
+            loadedExtensionIds: ["base-common", "thread-handling", "web"],
+            availableExtensionIds: ["smithers"],
+            externalSourceHashes: ["agents-md:sha256-handler"],
+          });
+
+          const port = yield* RuntimeActorExtensionBindingStatePort;
+          const binding = yield* port.readRuntimePromptBinding({
+            target: {
+              workspaceSessionId,
+              surface: "handler",
+              surfacePiSessionId: thread.surfacePiSessionId as SurfacePiSessionId,
+              threadId: thread.id as ThreadId,
+            },
+          });
+
+          expect(binding.target).toEqual({
+            workspaceSessionId,
+            surface: "handler",
+            surfacePiSessionId: thread.surfacePiSessionId as SurfacePiSessionId,
+            threadId: thread.id as ThreadId,
+          });
+          expect(binding.generatedAgentContextBindingId).toBe(persistedBinding.id);
+          expect(binding.generatedAgentContextFingerprint as string).toBe(
+            "fingerprint-handler-bound",
+          );
+          expect(binding.generatedAgentContextRevision).toBe(11);
+          expect(binding.systemPrompt).toBe("Use the handler generated context.");
+          expect(binding.loadedExtensionIds as readonly string[]).toEqual([
+            "base-common",
+            "thread-handling",
+            "web",
+          ]);
+          expect(binding.availableExtensionIds as readonly string[]).toEqual(["smithers"]);
+          expect(binding.externalSourceHashes).toEqual(["agents-md:sha256-handler"]);
+          expect(binding.updateExtensionContextBeforeNextTurn).toBe(true);
+        }).pipe(
+          Effect.provide(
+            layerRuntimeActorExtensionBindingStatePort.pipe(
+              Layer.provideMerge(
+                layerStructuredSessionState({
+                  workspace,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it("rejects prompt binding reads when the target has no bound generated context", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Runtime actor extension binding",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            messageCount: 0,
+            status: "idle",
+            createdAt: "2026-04-18T08:55:00.000Z",
+            updatedAt: "2026-04-18T08:56:00.000Z",
+          });
+
+          const port = yield* RuntimeActorExtensionBindingStatePort;
+          const exit = yield* Effect.exit(
+            port.readRuntimePromptBinding({
+              target: {
+                workspaceSessionId,
+                surface: "orchestrator",
+                surfacePiSessionId: orchestratorSurfacePiSessionId,
+              },
+            }),
+          );
+
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            const failure = exit.cause.reasons.find(Cause.isFailReason)?.error;
+            expect(failure?._tag).toBe("StateContractError");
+            expect(failure?.operation).toBe(
+              "runtime-actor-extension-binding.readRuntimePromptBinding",
+            );
+            expect(failure?.reason).toBe("not-found");
+          }
+        }).pipe(
+          Effect.provide(
+            layerRuntimeActorExtensionBindingStatePort.pipe(
+              Layer.provideMerge(
+                layerStructuredSessionState({
+                  workspace,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("updates orchestrator extension bindings through DB-backed session state", async () => {
     await runTestEffect(
       Effect.scoped(

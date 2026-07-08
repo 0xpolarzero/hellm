@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import {
   AgentProfileId,
   CommandId,
@@ -39,6 +40,16 @@ export const WorkspaceReadModelInvalidationSchema = Schema.Union([
 ]);
 
 export type WorkspaceReadModelInvalidation = typeof WorkspaceReadModelInvalidationSchema.Type;
+export const unsafeDecodeWorkspaceReadModelInvalidationSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(WorkspaceReadModelInvalidationSchema, strictBoundaryParseOptions);
+export const decodeUnknownWorkspaceReadModelInvalidationExit = Schema.decodeUnknownExit(
+  WorkspaceReadModelInvalidationSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownWorkspaceReadModelInvalidationEffect = Schema.decodeUnknownEffect(
+  WorkspaceReadModelInvalidationSchema,
+  strictBoundaryParseOptions,
+);
 
 export const AppReadModelInvalidationSchema = Schema.Union([
   Schema.Struct({
@@ -59,9 +70,20 @@ export const AppReadModelInvalidationSchema = Schema.Union([
     ids: Schema.optionalKey(Schema.Array(ProviderId)),
   }),
   Schema.Struct({ model: Schema.Literal("appPreferences") }),
+  Schema.Struct({ model: Schema.Literal("appLogs") }),
 ]);
 
 export type AppReadModelInvalidation = typeof AppReadModelInvalidationSchema.Type;
+export const unsafeDecodeAppReadModelInvalidationSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(AppReadModelInvalidationSchema, strictBoundaryParseOptions);
+export const decodeUnknownAppReadModelInvalidationExit = Schema.decodeUnknownExit(
+  AppReadModelInvalidationSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownAppReadModelInvalidationEffect = Schema.decodeUnknownEffect(
+  AppReadModelInvalidationSchema,
+  strictBoundaryParseOptions,
+);
 
 export const StateInvalidationDescriptorSchema = Schema.Union([
   Schema.Struct({
@@ -76,3 +98,13 @@ export const StateInvalidationDescriptorSchema = Schema.Union([
 ]);
 
 export type StateInvalidationDescriptor = typeof StateInvalidationDescriptorSchema.Type;
+export const unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(StateInvalidationDescriptorSchema, strictBoundaryParseOptions);
+export const decodeUnknownStateInvalidationDescriptorExit = Schema.decodeUnknownExit(
+  StateInvalidationDescriptorSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownStateInvalidationDescriptorEffect = Schema.decodeUnknownEffect(
+  StateInvalidationDescriptorSchema,
+  strictBoundaryParseOptions,
+);

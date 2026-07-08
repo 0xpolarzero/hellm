@@ -21,14 +21,34 @@ import type {
   WorkspaceSyncMessage,
 } from "../shared/workspace-contract";
 import {
+  DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   DEFAULT_THREAD_HANDLER_PROFILE_ID,
   type AgentProfileSettings,
 } from "../shared/agent-settings";
 import { buildSystemPrompt } from "./default-system-prompt";
-import { createPromptExecutionContext } from "@svvy/core";
-import type { PromptExecutionContext } from "@svvy/core";
+import { createPromptExecutionContext } from "@svvy/runtime/prompt-execution-context";
+import {
+  RuntimeApprovalStatePort,
+  RuntimeCommandStatePort,
+  RuntimeSessionWaitStatePort,
+  type AbsolutePath,
+  type BuildLaunchPolicyInput,
+  type PromptExecutionContext,
+  type RuntimeApprovalId,
+  type SandboxLaunchFacts,
+  type SurfacePiSessionId,
+} from "@svvy/core";
+import { RuntimeEventBus } from "../../packages/runtime/src/runtime-event-bus";
+import { answerRuntimeApproval } from "../../packages/runtime/src/runtime-approval-answer";
+import { cancelRuntimeApprovalRequestsForSurface } from "../../packages/runtime/src/runtime-approval-cancellation";
+import { requestRuntimeDirectToolApproval } from "../../packages/runtime/src/runtime-direct-tool-approval";
+import {
+  createRuntimeApprovalWaitService,
+  RuntimeApprovalWaitService,
+  type RuntimeApprovalWaitServiceService,
+} from "../../packages/runtime/src/runtime-approval-wait-service";
 import {
   getSvvyAgentDir,
   getSvvyDataDir,
@@ -48,11 +68,28 @@ import {
   runtimeEpisodeStatePortFromStore,
   runtimeReadModelStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import { createThreadReportTool } from "./thread-report-tool";
 import type { ExtensionUsageState } from "@svvy/extensions";
+import { setPiTitleCompletionForTests } from "../../packages/pi-adapter/src/pi-adapter";
 
 const tempDirs: string[] = [];
+
+const runCatalogEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromise(effect);
+
+const catalogApprovalWaitServices = new WeakMap<
+  WorkspaceSessionCatalog,
+  RuntimeApprovalWaitServiceService
+>();
+
+const testRuntimeEventBus = RuntimeEventBus.of({
+  publishLive: () =>
+    Effect.die(new Error("Unexpected live runtime event in approval test harness.")),
+  publishStateInvalidations: () => Effect.succeed([]),
+  subscribe: () =>
+    Effect.die(new Error("Unexpected runtime event subscription in approval test harness.")),
+});
 
 const DEFAULTS: SessionDefaults = {
   provider: "openai",
@@ -132,6 +169,37 @@ function createWorkspaceFixture() {
   return { cwd, agentDir, sessionDir, workflowsSourceRoot };
 }
 
+function configureHermeticTitleNamer(agentDir: string): () => void {
+  const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "svvy-test-anthropic-key";
+  writeFileSync(
+    join(agentDir, "agent-settings.json"),
+    `${JSON.stringify(
+      {
+        ...DEFAULT_AGENT_SETTINGS_STATE,
+        agents: {
+          ...DEFAULT_AGENT_SETTINGS_STATE.agents,
+          titleNamer: {
+            ...DEFAULT_AGENT_SETTINGS_STATE.agents.titleNamer,
+            provider: "anthropic",
+            model: "claude-sonnet-4-5",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return () => {
+    if (previousAnthropicApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousAnthropicApiKey;
+    }
+  };
+}
+
 function createWorkspaceSessionCatalog(
   cwd: string,
   agentDir: string,
@@ -142,19 +210,72 @@ function createWorkspaceSessionCatalog(
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
+    acquireExecuteTypescriptLaunch?: (
+      input: Omit<BuildLaunchPolicyInput, "launchKind">,
+    ) => Promise<{
+      facts: SandboxLaunchFacts;
+      close(): Promise<void>;
+    }>;
   } = {
     workflowsSourceRoot: join(agentDir, "..", "workflows"),
   },
 ): WorkspaceSessionCatalog {
-  return new WorkspaceSessionCatalog(
+  const approvalWaitService = createRuntimeApprovalWaitService();
+  let catalog!: WorkspaceSessionCatalog;
+  const runtimeApprovalBoundary: RuntimeApprovalBoundary =
+    approvalBoundary ??
+    ((input) =>
+      runCatalogEffect(
+        requestRuntimeDirectToolApproval(input).pipe(
+          Effect.provideService(RuntimeApprovalStatePort, catalog.getRuntimeApprovalStatePort()),
+          Effect.provideService(RuntimeCommandStatePort, catalog.getRuntimeCommandStatePort()),
+          Effect.provideService(
+            RuntimeSessionWaitStatePort,
+            catalog.getRuntimeSessionWaitStatePort(),
+          ),
+          Effect.provideService(RuntimeEventBus, testRuntimeEventBus),
+          Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+        ),
+      ));
+  catalog = new WorkspaceSessionCatalog(
     cwd,
     agentDir,
     sessionDir,
     undefined,
-    undefined,
     recoveryOptions,
-    approvalBoundary,
+    runtimeApprovalBoundary,
     managedSandbox,
+    undefined,
+    runCatalogEffect,
+  );
+  catalogApprovalWaitServices.set(catalog, approvalWaitService);
+  return catalog;
+}
+
+async function answerRuntimeApprovalThroughRuntime(
+  catalog: WorkspaceSessionCatalog,
+  input: {
+    approved: boolean;
+    reason?: string | null;
+    requestId: string;
+  },
+): Promise<void> {
+  const approvalWaitService = catalogApprovalWaitServices.get(catalog);
+  if (!approvalWaitService) {
+    throw new Error("Catalog approval wait service is not registered for this test catalog.");
+  }
+  await runCatalogEffect(
+    answerRuntimeApproval({
+      approvalId: input.requestId as RuntimeApprovalId,
+      decision: input.approved ? "approved" : "denied",
+      reason: input.reason ?? undefined,
+    }).pipe(
+      Effect.provideService(RuntimeApprovalStatePort, catalog.getRuntimeApprovalStatePort()),
+      Effect.provideService(RuntimeCommandStatePort, catalog.getRuntimeCommandStatePort()),
+      Effect.provideService(RuntimeSessionWaitStatePort, catalog.getRuntimeSessionWaitStatePort()),
+      Effect.provideService(RuntimeEventBus, testRuntimeEventBus),
+      Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+    ),
   );
 }
 
@@ -426,6 +547,24 @@ async function cancelSurfacePrompt(
   catalog: WorkspaceSessionCatalog,
   target: PromptTarget,
 ): Promise<void> {
+  const approvalWaitService = catalogApprovalWaitServices.get(catalog);
+  if (approvalWaitService) {
+    await runCatalogEffect(
+      cancelRuntimeApprovalRequestsForSurface({
+        surfacePiSessionId: target.surfacePiSessionId as SurfacePiSessionId,
+        reason: "Prompt cancelled.",
+      }).pipe(
+        Effect.provideService(RuntimeApprovalStatePort, catalog.getRuntimeApprovalStatePort()),
+        Effect.provideService(RuntimeCommandStatePort, catalog.getRuntimeCommandStatePort()),
+        Effect.provideService(
+          RuntimeSessionWaitStatePort,
+          catalog.getRuntimeSessionWaitStatePort(),
+        ),
+        Effect.provideService(RuntimeEventBus, testRuntimeEventBus),
+        Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+      ),
+    );
+  }
   const cancelPromptFn = (
     catalog as unknown as {
       cancelActivePrompt?: (input: { target: PromptTarget; turnId?: string }) => Promise<void>;
@@ -680,10 +819,12 @@ describe("WorkspaceSessionCatalog", () => {
         }),
       ).resolves.toMatchObject({
         details: {
-          success: false,
-          error: {
-            message: "Denied execute_typescript",
-            stage: "approval",
+          commandFacts: {
+            success: false,
+            error: {
+              message: "Denied execute_typescript",
+              stage: "approval",
+            },
           },
         },
       });
@@ -698,14 +839,15 @@ describe("WorkspaceSessionCatalog", () => {
         },
         {
           approvalMode: "auto-review",
-          context: {
-            sessionId: created.target.workspaceSessionId,
-            surfacePiSessionId: created.target.surfacePiSessionId,
-            actor: "orchestrator",
-          },
+          commandId: expect.any(String),
           cwd,
+          sessionId: created.target.workspaceSessionId,
+          snippetArtifactId: expect.any(String),
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          threadId: null,
           toolCallId: "tool-call-session-ts",
           toolName: "execute_typescript",
+          turnId: turn.id,
           typescriptCode: "console.log('should not run');",
         },
       ]);
@@ -714,7 +856,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("passes app sandbox and network settings into session-created execute_typescript", async () => {
+  it("passes runtime-owned launch facts into session-created execute_typescript", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const settingsStore = createAgentSettingsStore({
       cwd,
@@ -724,17 +866,59 @@ describe("WorkspaceSessionCatalog", () => {
     settingsStore.setAppPreferences({
       ...settingsStore.getState().appPreferences,
       artifactDirectory: join(agentDir, "artifacts"),
-      networkAccess: false,
     });
-    let managedSandboxReads = 0;
+    const launchRequests: Array<Omit<BuildLaunchPolicyInput, "launchKind">> = [];
     const catalog = createWorkspaceSessionCatalog(
       cwd,
       agentDir,
       sessionDir,
       () => ({ approved: true }),
-      () => {
-        managedSandboxReads += 1;
-        return false;
+      false,
+      {
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+        acquireExecuteTypescriptLaunch: async (input) => {
+          launchRequests.push(input);
+          return {
+            facts: {
+              mode: "managed",
+              spawn: {
+                executable: process.execPath as AbsolutePath,
+                args: input.command.slice(1),
+                cwd: input.cwd,
+                envFacts: input.envFacts,
+              },
+              helperPath: join(agentDir, "sandbox-helper") as AbsolutePath,
+              helperArgs: ["--helper"],
+              policySnapshot: {
+                snapshotId: "session-catalog-execute-ts-snapshot",
+                fingerprint: "session-catalog-execute-ts-fingerprint",
+                resolvedAt: "2026-04-18T09:00:00.000Z" as never,
+                scope: input.scope,
+                ...(input.surfacePiSessionId
+                  ? { surfacePiSessionId: input.surfacePiSessionId }
+                  : {}),
+                commandId: input.commandId,
+                launchKind: "execute_typescript_runtime",
+                cwd: input.cwd,
+                sandboxMode: "managed",
+                networkPolicy: "deny",
+                filesystemPolicy: {
+                  defaultAccess: "read",
+                  entries: [
+                    {
+                      access: "write",
+                      path: cwd as AbsolutePath,
+                      recursive: true,
+                      source: "workspace",
+                    },
+                  ],
+                },
+                profileDigest: "session-catalog-execute-ts-profile",
+              },
+            },
+            close: async () => {},
+          };
+        },
       },
     );
 
@@ -764,18 +948,35 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(result).toMatchObject({
         details: {
-          success: true,
-          result: { ok: true },
+          commandFacts: {
+            success: true,
+            result: { ok: true },
+          },
         },
       });
 
-      expect(managedSandboxReads).toBeGreaterThan(0);
+      expect(launchRequests).toHaveLength(1);
+      expect(launchRequests[0]).toMatchObject({
+        scope: {
+          kind: "workspace",
+        },
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        cwd,
+      });
       expect(store.getSessionState(created.target.workspaceSessionId).commands[0]).toMatchObject({
         toolName: "execute_typescript",
         status: "succeeded",
         facts: {
-          managedSandbox: false,
-          networkAccess: false,
+          sandboxMode: "managed",
+          networkPolicy: "deny",
+          policySnapshotId: "session-catalog-execute-ts-snapshot",
+          policyFingerprint: "session-catalog-execute-ts-fingerprint",
+          policyScope: {
+            kind: "workspace",
+          },
+          launchKind: "execute_typescript_runtime",
+          commandFamily: "execute_typescript",
+          profileDigest: "session-catalog-execute-ts-profile",
         },
       });
     } finally {
@@ -849,10 +1050,12 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(result).toMatchObject({
         details: {
-          success: false,
-          error: {
-            stage: "compile",
-            message: "Unsupported execute_typescript import declaration: @svvyx/workflows.",
+          commandFacts: {
+            success: false,
+            error: {
+              stage: "compile",
+              message: "Unsupported execute_typescript import declaration: @svvyx/workflows.",
+            },
           },
         },
       });
@@ -1024,7 +1227,7 @@ describe("WorkspaceSessionCatalog", () => {
         },
       });
 
-      await catalog.answerRuntimeApprovalRequest({
+      await answerRuntimeApprovalThroughRuntime(catalog, {
         requestId: request.requestId,
         approved: true,
       });
@@ -1097,7 +1300,7 @@ describe("WorkspaceSessionCatalog", () => {
           ),
       );
       const request = store.listOpenRuntimeApprovalRequests()[0]!;
-      await catalog.answerRuntimeApprovalRequest({
+      await answerRuntimeApprovalThroughRuntime(catalog, {
         requestId: request.requestId,
         approved: false,
         reason: "User denied command.",
@@ -1763,6 +1966,14 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("starts top-level title generation while the first orchestrator turn is still running", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("Duplicate Prompt Rendering", {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
@@ -1771,7 +1982,10 @@ describe("WorkspaceSessionCatalog", () => {
       const reply = assistantMessage("Still working.");
       const orchestrator = getManagedSurface(catalog, created.target.surfacePiSessionId);
       const orchestratorGate = Promise.withResolvers<void>();
-      const promptSpy = spyOn(orchestrator.session, "prompt").mockImplementation(
+      const promptPrototype = Object.getPrototypeOf(orchestrator.session) as {
+        prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
         async function (this: PromptableSession) {
           await orchestratorGate.promise;
           appendMessagesToSession(this, [prompt, reply]);
@@ -1808,12 +2022,22 @@ describe("WorkspaceSessionCatalog", () => {
 
       await waitFor(() => !orchestrator.activePrompt);
     } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
       await catalog.dispose();
     }
   });
 
   it("marks title generation failed instead of using the first message when the namer returns a generic title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("New Session", {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
@@ -1822,20 +2046,14 @@ describe("WorkspaceSessionCatalog", () => {
       const promptPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
         prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
       };
-      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
-        this: PromptableSession,
-        promptText: string,
-      ) {
-        if (promptText.startsWith("First user message:")) {
-          appendMessagesToSession(this, [userMessage(promptText), assistantMessage("New Session")]);
-          return;
-        }
-
-        appendMessagesToSession(this, [
-          userMessage("investigate dockview streaming duplicates"),
-          assistantMessage("Done."),
-        ]);
-      });
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
+        async function (this: PromptableSession) {
+          appendMessagesToSession(this, [
+            userMessage("investigate dockview streaming duplicates"),
+            assistantMessage("Done."),
+          ]);
+        },
+      );
 
       try {
         await catalog.sendPrompt({
@@ -1860,12 +2078,22 @@ describe("WorkspaceSessionCatalog", () => {
         promptSpy.mockRestore();
       }
     } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
       await catalog.dispose();
     }
   });
 
   it("marks title generation failed instead of using the first message when the namer returns no title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("", {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
@@ -1874,20 +2102,14 @@ describe("WorkspaceSessionCatalog", () => {
       const promptPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
         prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
       };
-      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
-        this: PromptableSession,
-        promptText: string,
-      ) {
-        if (promptText.startsWith("First user message:")) {
-          appendMessagesToSession(this, [userMessage(promptText), assistantMessage("")]);
-          return;
-        }
-
-        appendMessagesToSession(this, [
-          userMessage("fix broken session naming"),
-          assistantMessage("Done."),
-        ]);
-      });
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
+        async function (this: PromptableSession) {
+          appendMessagesToSession(this, [
+            userMessage("fix broken session naming"),
+            assistantMessage("Done."),
+          ]);
+        },
+      );
 
       try {
         await catalog.sendPrompt({
@@ -1907,17 +2129,29 @@ describe("WorkspaceSessionCatalog", () => {
           created.target.workspaceSessionId,
         ).pi;
         expect(titleState.title).toBe("New Session");
-        expect(titleState.titleGenerationError).toContain("generic title");
+        expect(titleState.titleGenerationError).toContain("empty title");
       } finally {
         promptSpy.mockRestore();
       }
     } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
       await catalog.dispose();
     }
   });
 
   it("surfaces namer model errors instead of using the first message as a title", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("", {
+          stopReason: "error",
+          errorMessage: "Provided authentication token is expired.",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
@@ -1928,26 +2162,14 @@ describe("WorkspaceSessionCatalog", () => {
       const promptPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
         prompt(promptText: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
       };
-      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
-        this: PromptableSession,
-        promptText: string,
-      ) {
-        if (promptText.startsWith("First user message:")) {
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
+        async function (this: PromptableSession) {
           appendMessagesToSession(this, [
-            userMessage(promptText),
-            assistantMessage("", {
-              stopReason: "error",
-              errorMessage: "Provided authentication token is expired.",
-            }),
+            userMessage("debug session naming auth failures"),
+            assistantMessage("Done."),
           ]);
-          return;
-        }
-
-        appendMessagesToSession(this, [
-          userMessage("debug session naming auth failures"),
-          assistantMessage("Done."),
-        ]);
-      });
+        },
+      );
 
       try {
         await catalog.sendPrompt({
@@ -1968,7 +2190,7 @@ describe("WorkspaceSessionCatalog", () => {
         ).pi;
         expect(titleState.title).toBe("New Session");
         expect(titleState.titleGenerationError).toBe(
-          "Title namer openai-codex/gpt-5.4-mini failed: Provided authentication token is expired.",
+          "Title namer anthropic/claude-sonnet-4-5 failed: Provided authentication token is expired.",
         );
         expect(titleLogs).toEqual([
           {
@@ -1986,19 +2208,29 @@ describe("WorkspaceSessionCatalog", () => {
             status: "failed",
             sessionId: created.target.workspaceSessionId,
             error:
-              "Title namer openai-codex/gpt-5.4-mini failed: Provided authentication token is expired.",
+              "Title namer anthropic/claude-sonnet-4-5 failed: Provided authentication token is expired.",
           },
         ]);
       } finally {
         promptSpy.mockRestore();
       }
     } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
       await catalog.dispose();
     }
   });
 
   it("uses the namer agent to title handler threads from the delegated objective", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("Workflow setup", {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
@@ -2065,6 +2297,8 @@ describe("WorkspaceSessionCatalog", () => {
         promptSpy.mockRestore();
       }
     } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
       await catalog.dispose();
     }
   });
@@ -4749,9 +4983,9 @@ describe("WorkspaceSessionCatalog", () => {
             .getSessionState(created.target.workspaceSessionId)
             .threads.find((thread) => thread.id === handlerThread.id),
         ).toMatchObject({ status: "completed" });
-        await catalog.deleteQueuedSurfaceMessage({
+        store.cancelSurfaceMessage({ id: queued.id });
+        await catalog.refreshQueuedSurfaceMutation({
           target: created.target,
-          queuedMessageId: queued.id,
         });
         expect(store.getSessionState(created.target.workspaceSessionId).episodes).toEqual([
           expect.objectContaining({
@@ -5834,5 +6068,24 @@ describe("WorkspaceSessionCatalog", () => {
     } finally {
       await catalog.dispose();
     }
+  });
+
+  it("uses the injected runtime layer config for runtime-owned bridge and queue policy", () => {
+    const source = readFileSync(new URL("./session-catalog.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("this.runtimeLayerConfig.workflowTaskAgentBridgeMaxRequestBytes");
+    expect(source).toContain("this.runtimeLayerConfig.workflowTaskAgentBridgeRequestTimeoutMs");
+    expect(source).toContain("this.runtimeLayerConfig.workflowTaskAgentBridgeMaxResponseBytes");
+    expect(source).toContain("this.runtimeLayerConfig.queueClaimLeaseMs");
+    expect(source).not.toContain(
+      "defaultRuntimeLayerConfig.workflowTaskAgentBridgeMaxRequestBytes",
+    );
+    expect(source).not.toContain(
+      "defaultRuntimeLayerConfig.workflowTaskAgentBridgeRequestTimeoutMs",
+    );
+    expect(source).not.toContain(
+      "defaultRuntimeLayerConfig.workflowTaskAgentBridgeMaxResponseBytes",
+    );
+    expect(source).not.toContain("defaultRuntimeLayerConfig.queueClaimLeaseMs");
   });
 });

@@ -675,8 +675,9 @@ function resolveRuntimeEnv(input: {
     }
     if (declaration.secret) {
       const secretValue = input.envSecretStore?.get({
+        kind: "extension-env",
         extensionId: input.extensionId,
-        name: declaration.name,
+        envName: declaration.name,
       });
       if (secretValue !== undefined) {
         env[declaration.name] = secretValue;

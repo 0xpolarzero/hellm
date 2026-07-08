@@ -5,7 +5,7 @@
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
   import type { AgentContextPreviewResponse } from "../shared/workspace-contract";
-  import type { ExtensionUsageState } from "@svvy/extensions";
+  import type { ExtensionUsageState } from "@svvy/core";
   import {
     canSelectExtensionUsageState,
     type AgentContextActor,

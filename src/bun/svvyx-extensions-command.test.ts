@@ -14,8 +14,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createAgentSettingsStore } from "./agent-settings-store";
-import { ExtensionDependencyApprovalStore } from "./extension-dependency-approval-store";
-import { runtimeExtensionContextImpactStateFacadeFromStore } from "@svvy/state";
+import {
+  ExtensionDependencyApprovalStore,
+  extensionDependencyApprovalIdentityKey,
+  type ExtensionDependencyApprovalIdentity,
+  type ExtensionDependencyApprovalRequest,
+} from "./extension-dependency-approval-store";
+import { runtimeExtensionContextImpactStateFacadeFromStore } from "@svvy/state/structured-session-adapters";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import {
@@ -31,6 +36,7 @@ import {
   runSvvyxExtensionsCommand,
   setExtensionUsage,
   writeExtensionInstructionFile,
+  type ExtensionDependencyCommittedApprovalState,
   type CliRequirementStatus,
   type SvvyxExtensionsDependencyInstaller,
 } from "./svvyx-extensions-command";
@@ -40,7 +46,7 @@ import {
   runSvvyxRuntimeCommand,
   runSvvyxRuntimeGeneratedClientCommand,
 } from "./svvyx-runtime-command";
-import type { AgentProfileId } from "@svvy/core";
+import type { AgentProfileId, NativeToolResult } from "@svvy/core";
 import type { ExtensionCliRequirement } from "@svvy/extensions";
 
 const tempDirs: string[] = [];
@@ -55,25 +61,49 @@ function createSvvyDirectToolsForTest(
   });
 }
 
-function readTextBlock(result: { content: Array<{ type: string; text?: string }> }): string {
-  const text = result.content.find(
-    (block): block is { type: "text"; text: string } => block.type === "text",
+function readTextBlock(result: Pick<NativeToolResult, "content">): string {
+  const text = (result.content ?? []).find(
+    (block): block is { readonly type: "text"; readonly text: string } => block.type === "text",
   )?.text;
   expect(text).toBeTruthy();
   return text!;
 }
 
-function parseExecStdoutJson(result: {
-  content: Array<{ type: string; text?: string }>;
-  details?: Record<string, unknown>;
-}): any {
+function parseExecStdoutJson(result: NativeToolResult): any {
+  const details = result.details as unknown as Record<string, unknown> | undefined;
   const output =
-    typeof result.details?.stdout === "string" && result.details.stdout.trim().length > 0
-      ? result.details.stdout
-      : typeof result.details?.stderr === "string" && result.details.stderr.trim().length > 0
-        ? result.details.stderr
+    typeof details?.stdout === "string" && details.stdout.trim().length > 0
+      ? details!.stdout
+      : typeof details?.stderr === "string" && details.stderr.trim().length > 0
+        ? details.stderr
         : readTextBlock(result);
   return JSON.parse(output);
+}
+
+function createCommittedDependencyApprovalState(): ExtensionDependencyCommittedApprovalState {
+  const approvedKeys = new Set<string>();
+  return {
+    isApproved: (identity) => approvedKeys.has(extensionDependencyApprovalIdentityKey(identity)),
+    recordApprovedRequest: ({ identities }) => {
+      for (const identity of identities) {
+        approvedKeys.add(extensionDependencyApprovalIdentityKey(identity));
+      }
+    },
+  };
+}
+
+function approveDependencyRequestForTest(
+  dependencyApprovalStore: ExtensionDependencyApprovalStore,
+  dependencyApprovalState: ExtensionDependencyCommittedApprovalState,
+  requestId: string,
+): ExtensionDependencyApprovalRequest {
+  const request = dependencyApprovalStore.approveRequest(requestId);
+  dependencyApprovalState.recordApprovedRequest?.({
+    approvedAt: request.completedAt ?? request.updatedAt,
+    identities: request.identities as readonly ExtensionDependencyApprovalIdentity[],
+    requestId: request.requestId,
+  });
+  return request;
 }
 
 afterEach(() => {
@@ -1223,6 +1253,7 @@ describe("svvyx extensions command", () => {
       extensionsRoot,
       createRequestId: () => "depapr_linear",
     });
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     await createLinearExtension(extensionsRoot);
     const sourceRoot = join(extensionsRoot, "sources", "user", "linear");
     updateUserManifest(sourceRoot, {
@@ -1232,12 +1263,18 @@ describe("svvyx extensions command", () => {
     });
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build linear --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
-    dependencyApprovalStore.approveRequest("depapr_linear");
+    approveDependencyRequestForTest(
+      dependencyApprovalStore,
+      dependencyApprovalState,
+      "depapr_linear",
+    );
     const failedInstall = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build linear --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller: async (input) => ({
         ok: true,
@@ -1256,6 +1293,7 @@ describe("svvyx extensions command", () => {
     });
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build linear --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller: createInstallingDependencyInstaller([]),
       extensionsRoot,
@@ -4773,6 +4811,7 @@ describe("svvyx extensions command", () => {
 
   it("pauses snapshot-load auto-builds on durable dependency approval requests", async () => {
     const extensionsRoot = createTempDir();
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     let requestNumber = 0;
     const dependencyApprovalStore = new ExtensionDependencyApprovalStore({
       extensionsRoot,
@@ -4796,6 +4835,7 @@ describe("svvyx extensions command", () => {
 
     const loaded = await runSvvyxExtensionsCommand({
       command: `svvyx extensions snapshots load ${snapshotId} --json`,
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
@@ -4854,6 +4894,7 @@ describe("svvyx extensions command", () => {
 
     const repeated = await runSvvyxExtensionsCommand({
       command: `svvyx extensions snapshots load ${snapshotId} --json`,
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
@@ -4863,6 +4904,7 @@ describe("svvyx extensions command", () => {
     const installCalls: Array<Parameters<SvvyxExtensionsDependencyInstaller>[0]> = [];
     const approved = await approveExtensionDependencyRequest({
       requestId: "depapr_snapshot_1",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller: createInstallingDependencyInstaller(installCalls),
       extensionsRoot,
@@ -4979,13 +5021,15 @@ describe("svvyx extensions command", () => {
     expect(savedSnapshotFiles.join("\n")).not.toContain("__snapshot__");
     expect(savedSnapshotFiles.join("\n")).not.toContain(`${snapshotId}:extension-env`);
     envSecretStore.remove({
+      kind: "extension-env",
       extensionId: "linear",
-      name: "LINEAR_TOKEN",
+      envName: "LINEAR_TOKEN",
     });
     expect(
       envSecretStore.has({
+        kind: "extension-env",
         extensionId: "linear",
-        name: "LINEAR_TOKEN",
+        envName: "LINEAR_TOKEN",
       }),
     ).toBe(false);
 
@@ -5013,8 +5057,9 @@ describe("svvyx extensions command", () => {
     });
     expect(
       envSecretStore.get({
+        kind: "extension-env",
         extensionId: "linear",
-        name: "LINEAR_TOKEN",
+        envName: "LINEAR_TOKEN",
       }),
     ).toBe("snapshot-secret-value");
     const serializedLoad = JSON.stringify(loaded.output);
@@ -5054,7 +5099,7 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const saveText = saveResult.content.find(
+    const saveText = (saveResult.content ?? []).find(
       (block): block is { type: "text"; text: string } => block.type === "text",
     )?.text;
     expect(saveText).toBeTruthy();
@@ -5076,8 +5121,8 @@ describe("svvyx extensions command", () => {
     expect(savedSnapshotFiles.join("\n")).not.toContain(`${snapshotId}:extension-env`);
     expect(
       envSecretStore.has({
-        extensionId: "__snapshot__",
-        name: `${snapshotId}:extension-env`,
+        kind: "snapshot-secret-state",
+        snapshotId,
       }),
     ).toBe(false);
 
@@ -5087,7 +5132,7 @@ describe("svvyx extensions command", () => {
       new AbortController().signal,
       () => {},
     );
-    const deleteText = deleteResult.content.find(
+    const deleteText = (deleteResult.content ?? []).find(
       (block): block is { type: "text"; text: string } => block.type === "text",
     )?.text;
     expect(deleteText).toBeTruthy();
@@ -5098,8 +5143,8 @@ describe("svvyx extensions command", () => {
     });
     expect(
       envSecretStore.has({
-        extensionId: "__snapshot__",
-        name: `${snapshotId}:extension-env`,
+        kind: "snapshot-secret-state",
+        snapshotId,
       }),
     ).toBe(false);
     const serializedDelete = JSON.stringify(deleteResult);
@@ -5697,7 +5742,7 @@ describe("svvyx extensions command", () => {
       assertExtensionEnvSecretTarget({
         extensionId: "linear",
         extensionsRoot,
-        name: "LINEAR_TOKEN",
+        envName: "LINEAR_TOKEN",
       }),
     ).not.toThrow();
     expect(
@@ -5707,7 +5752,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvSecretTarget({
               extensionId: "linear",
               extensionsRoot,
-              name: "LINEAR_TEAM",
+              envName: "LINEAR_TEAM",
             }),
           ),
         ),
@@ -5726,7 +5771,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvSecretTarget({
               extensionId: "linear",
               extensionsRoot,
-              name: "LINEAR_UNKNOWN",
+              envName: "LINEAR_UNKNOWN",
             }),
           ),
         ),
@@ -5745,7 +5790,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvSecretTarget({
               extensionId: "missing",
               extensionsRoot,
-              name: "LINEAR_TOKEN",
+              envName: "LINEAR_TOKEN",
             }),
           ),
         ),
@@ -5762,7 +5807,7 @@ describe("svvyx extensions command", () => {
       assertExtensionEnvOverrideTarget({
         extensionId: "linear",
         extensionsRoot,
-        name: "LINEAR_TEAM",
+        envName: "LINEAR_TEAM",
       }),
     ).not.toThrow();
     expect(
@@ -5772,7 +5817,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvOverrideTarget({
               extensionId: "linear",
               extensionsRoot,
-              name: "LINEAR_TOKEN",
+              envName: "LINEAR_TOKEN",
             }),
           ),
         ),
@@ -5791,7 +5836,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvOverrideTarget({
               extensionId: "linear",
               extensionsRoot,
-              name: "LINEAR_UNKNOWN",
+              envName: "LINEAR_UNKNOWN",
             }),
           ),
         ),
@@ -5810,7 +5855,7 @@ describe("svvyx extensions command", () => {
             assertExtensionEnvOverrideTarget({
               extensionId: "missing",
               extensionsRoot,
-              name: "LINEAR_TEAM",
+              envName: "LINEAR_TEAM",
             }),
           ),
         ),
@@ -6160,6 +6205,7 @@ describe("svvyx extensions command", () => {
       extensionsRoot,
       createRequestId: () => `depapr_notes_${++requestNumber}`,
     });
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     const installCalls: Array<Parameters<SvvyxExtensionsDependencyInstaller>[0]> = [];
     const dependencyInstaller = createInstallingDependencyInstaller(installCalls);
     await createNotesExtension(extensionsRoot);
@@ -6175,13 +6221,19 @@ describe("svvyx extensions command", () => {
 
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
-    dependencyApprovalStore.approveRequest("depapr_notes_1");
+    approveDependencyRequestForTest(
+      dependencyApprovalStore,
+      dependencyApprovalState,
+      "depapr_notes_1",
+    );
 
     const build = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller,
       extensionsRoot,
@@ -6230,6 +6282,7 @@ describe("svvyx extensions command", () => {
     });
     const changedTrust = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
@@ -6267,6 +6320,7 @@ describe("svvyx extensions command", () => {
     });
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller,
       extensionsRoot,
@@ -6290,6 +6344,7 @@ describe("svvyx extensions command", () => {
       extensionsRoot,
       createRequestId: () => "depapr_notes_resume",
     });
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     const installCalls: Array<Parameters<SvvyxExtensionsDependencyInstaller>[0]> = [];
     await createNotesExtension(extensionsRoot);
     const sourceRoot = join(extensionsRoot, "sources", "user", "notes");
@@ -6301,6 +6356,7 @@ describe("svvyx extensions command", () => {
 
     const blocked = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
@@ -6312,6 +6368,7 @@ describe("svvyx extensions command", () => {
 
     const approved = await approveExtensionDependencyRequest({
       requestId: "depapr_notes_resume",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller: createInstallingDependencyInstaller(installCalls),
       extensionsRoot,
@@ -6375,6 +6432,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionsRoot,
         createRequestId: () => "depapr_notes_default_install",
       });
+      const dependencyApprovalState = createCommittedDependencyApprovalState();
       await createNotesExtension(extensionsRoot);
       const packageRoot = join(extensionsRoot, "package");
       mkdirSync(packageRoot, { recursive: true });
@@ -6402,12 +6460,18 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
       await runSvvyxExtensionsCommand({
         command: "svvyx extensions build notes --json",
+        dependencyApprovalState,
         dependencyApprovalStore,
         extensionsRoot,
       });
-      dependencyApprovalStore.approveRequest("depapr_notes_default_install");
+      approveDependencyRequestForTest(
+        dependencyApprovalStore,
+        dependencyApprovalState,
+        "depapr_notes_default_install",
+      );
       const build = await runSvvyxExtensionsCommand({
         command: "svvyx extensions build notes --json",
+        dependencyApprovalState,
         dependencyApprovalStore,
         extensionsRoot,
       });
@@ -6440,6 +6504,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       extensionsRoot,
       createRequestId: () => `depapr_shared_${++requestNumber}`,
     });
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     const installCalls: Array<Parameters<SvvyxExtensionsDependencyInstaller>[0]> = [];
     const dependencyInstaller = createInstallingDependencyInstaller(installCalls);
     await createNotesExtensionAtId(extensionsRoot, "notes");
@@ -6457,24 +6522,36 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
-    dependencyApprovalStore.approveRequest("depapr_shared_1");
+    approveDependencyRequestForTest(
+      dependencyApprovalStore,
+      dependencyApprovalState,
+      "depapr_shared_1",
+    );
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller,
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build tasks --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
-    dependencyApprovalStore.approveRequest("depapr_shared_2");
+    approveDependencyRequestForTest(
+      dependencyApprovalStore,
+      dependencyApprovalState,
+      "depapr_shared_2",
+    );
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build tasks --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller,
       extensionsRoot,
@@ -6528,6 +6605,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       extensionsRoot,
       createRequestId: () => "depapr_notes_install_fail",
     });
+    const dependencyApprovalState = createCommittedDependencyApprovalState();
     await createNotesExtension(extensionsRoot);
     const sourceRoot = join(extensionsRoot, "sources", "user", "notes");
     await runSvvyxExtensionsCommand({
@@ -6550,13 +6628,19 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     });
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       extensionsRoot,
     });
-    dependencyApprovalStore.approveRequest("depapr_notes_install_fail");
+    approveDependencyRequestForTest(
+      dependencyApprovalStore,
+      dependencyApprovalState,
+      "depapr_notes_install_fail",
+    );
 
     const failedInstall = await runSvvyxExtensionsCommand({
       command: "svvyx extensions build notes --json",
+      dependencyApprovalState,
       dependencyApprovalStore,
       dependencyInstaller: async (input) => ({
         ok: false,
@@ -7270,6 +7354,8 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   it("marks builtin extensions customized only after their source differs", async () => {
     const extensionsRoot = createTempDir();
     const cwd = createTempDir();
+    const cliProbe = (requirement: ExtensionCliRequirement) =>
+      cliStatus(requirement, { status: "missing" });
     const packagedFullDir = join(cwd, "generated", "instructions", "full");
     mkdirSync(packagedFullDir, { recursive: true });
     writeFileSync(
@@ -7278,6 +7364,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     );
 
     let inventory = await readBuiltinExtensionsInventory({
+      cliProbe,
       cwd,
       extensionsRoot,
       includeUserExtensions: true,
@@ -7289,11 +7376,13 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     await runSvvyxExtensionsCommand({
       command:
         "svvyx extensions instructions configure web --file 010-tinyfish-cli.generated.md --bypassed true --json",
+      cliProbe,
       cwd,
       extensionsRoot,
     });
 
     inventory = await readBuiltinExtensionsInventory({
+      cliProbe,
       cwd,
       extensionsRoot,
       includeUserExtensions: true,
@@ -7304,11 +7393,13 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions instructions add web --name 020-web-notes.md --json",
+      cliProbe,
       cwd,
       extensionsRoot,
     });
 
     inventory = await readBuiltinExtensionsInventory({
+      cliProbe,
       cwd,
       extensionsRoot,
       includeUserExtensions: true,
@@ -7323,6 +7414,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     manifest.description = "Custom Web description.";
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
     inventory = await readBuiltinExtensionsInventory({
+      cliProbe,
       cwd,
       extensionsRoot,
       includeUserExtensions: true,
@@ -7333,10 +7425,12 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     await runSvvyxExtensionsCommand({
       command: "svvyx extensions reset web --scope instructions --json",
+      cliProbe,
       cwd,
       extensionsRoot,
     });
     inventory = await readBuiltinExtensionsInventory({
+      cliProbe,
       cwd,
       extensionsRoot,
       includeUserExtensions: true,
@@ -8255,7 +8349,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
+    const text = (result.content ?? []).find(
       (block): block is { type: "text"; text: string } => block.type === "text",
     )?.text;
 
@@ -8291,7 +8385,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       new AbortController().signal,
       () => {},
     );
-    const text = result.content.find(
+    const text = (result.content ?? []).find(
       (block): block is { type: "text"; text: string } => block.type === "text",
     )?.text;
 
@@ -8417,18 +8511,26 @@ function createTempDir(): string {
   return dir;
 }
 
+type MemoryExtensionSecretStoreKey =
+  | { kind: "extension-env"; extensionId: string; envName: string }
+  | { kind: "snapshot-secret-state"; snapshotId: string };
+
+function memoryExtensionSecretStoreKey(input: MemoryExtensionSecretStoreKey): string {
+  return input.kind === "extension-env"
+    ? `${input.extensionId}:${input.envName}`
+    : `__snapshot__:${input.snapshotId}:extension-env`;
+}
+
 function createMemoryExtensionSecretStore(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
   return {
-    get: ({ extensionId, name }: { extensionId: string; name: string }) =>
-      values.get(`${extensionId}:${name}`),
-    has: ({ extensionId, name }: { extensionId: string; name: string }) =>
-      values.has(`${extensionId}:${name}`),
-    set: ({ extensionId, name }: { extensionId: string; name: string }, value: string) => {
-      values.set(`${extensionId}:${name}`, value);
+    get: (input: MemoryExtensionSecretStoreKey) => values.get(memoryExtensionSecretStoreKey(input)),
+    has: (input: MemoryExtensionSecretStoreKey) => values.has(memoryExtensionSecretStoreKey(input)),
+    set: (input: MemoryExtensionSecretStoreKey, value: string) => {
+      values.set(memoryExtensionSecretStoreKey(input), value);
     },
-    remove: ({ extensionId, name }: { extensionId: string; name: string }) => {
-      values.delete(`${extensionId}:${name}`);
+    remove: (input: MemoryExtensionSecretStoreKey) => {
+      values.delete(memoryExtensionSecretStoreKey(input));
     },
   };
 }

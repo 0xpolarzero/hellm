@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,6 +23,9 @@ const generatedPackageBuildId = (value: string): GeneratedPackageBuildId =>
   value as GeneratedPackageBuildId;
 const recoveryWorkId = (value: string): RecoveryWorkId => value as RecoveryWorkId;
 const workspaceId = (value: string): WorkspaceId => value as WorkspaceId;
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 function createDeterministicClock(start = "2026-04-18T09:00:00.000Z") {
   let cursor = Date.parse(start);
@@ -52,6 +56,7 @@ describe("runtime generated package state port", () => {
     const workspaceCwd = mkdtempSync(join(tmpdir(), "svvy-generated-package-port-"));
     tempDirs.push(workspaceCwd);
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: "workspace_generated_package_test",
         label: "svvy",
@@ -73,6 +78,7 @@ describe("runtime generated package state port", () => {
       status: {
         packageName: "@svvyx/workflows",
         action: "written",
+        refreshScope: "app-global-build",
         buildId: generatedPackageBuildId("generated-package-build-001"),
         manifestPath: absolutePath("/tmp/generated-workflows/package.json"),
         sourceFingerprint: "source-fingerprint-001",
@@ -89,9 +95,11 @@ describe("runtime generated package state port", () => {
         ],
         dependencies: [
           {
-            kind: "package",
-            name: "smithers-orchestrator",
-            resolution: "package-manager",
+            specifier: "smithers-orchestrator",
+            importKind: "type-only",
+            dependencyClass: "workspace-authoring-external",
+            resolutionAuthority: "workspace-smithers-package",
+            manifestDependency: "ambient-declaration",
             version: "0.22.0",
           },
         ],
@@ -109,9 +117,11 @@ describe("runtime generated package state port", () => {
       outputFingerprint: "output-fingerprint-001",
       dependencies: [
         {
-          kind: "package",
-          name: "smithers-orchestrator",
-          resolution: "package-manager",
+          specifier: "smithers-orchestrator",
+          importKind: "type-only",
+          dependencyClass: "workspace-authoring-external",
+          resolutionAuthority: "workspace-smithers-package",
+          manifestDependency: "ambient-declaration",
           version: "0.22.0",
         },
       ],
@@ -132,6 +142,7 @@ describe("runtime generated package state port", () => {
       status: {
         packageName: "@svvyx/extensions",
         action: "written",
+        refreshScope: "app-global-build",
         buildId: generatedPackageBuildId("generated-package-build-ready"),
         manifestPath: absolutePath("/tmp/generated-extensions/package.json"),
         sourceFingerprint: "source-ready",
@@ -151,6 +162,7 @@ describe("runtime generated package state port", () => {
         status: {
           packageName: "@svvyx/extensions",
           action: "failed",
+          refreshScope: "app-global-build",
           diagnostics: ["Extension source failed validation."],
         },
         sourceCommandId: commandId("cmd_failed"),
@@ -263,5 +275,63 @@ describe("runtime generated package state port", () => {
       { scope: "app", invalidation: { model: "workflowsGenerated" } },
     ]);
     expect(store.readLinksNeedingRepair({ packages: ["@svvyx/workflows"] })).toEqual([blocked]);
+  });
+
+  it("marks workspace generated-package links repair-needed and creates idempotent recovery work", async () => {
+    const store = createStore();
+    const port = runtimeGeneratedPackageStatePortFromStore(store);
+    const workspace = workspaceId("workspace_generated_package_test");
+
+    const first = await runTestEffect(
+      port.markWorkspaceLinksRepairNeeded({
+        workspaceId: workspace,
+        packages: ["@svvyx/workflows", "@svvyx/extensions"],
+        reason: "app-global-generated-package-refreshed",
+        requestedAt: "2026-04-18T09:10:00.000Z",
+        maxAttempts: 5,
+        sourceCommandId: commandId("cmd_generated_link_repair_needed"),
+      }),
+    );
+    const duplicate = await runTestEffect(
+      port.markWorkspaceLinksRepairNeeded({
+        workspaceId: workspace,
+        packages: ["@svvyx/extensions", "@svvyx/workflows"],
+        reason: "app-global-generated-package-refreshed",
+        requestedAt: "2026-04-18T09:11:00.000Z",
+        maxAttempts: 5,
+        sourceCommandId: commandId("cmd_generated_link_repair_needed"),
+      }),
+    );
+
+    expect(first.value.links.map((link) => [link.packageName, link.status])).toEqual([
+      ["@svvyx/extensions", "repair-needed"],
+      ["@svvyx/workflows", "repair-needed"],
+    ]);
+    expect(first.value.recoveryWorkIds).toEqual(duplicate.value.recoveryWorkIds);
+    expect(first.afterCommit).toEqual([
+      { scope: "app", invalidation: { model: "extensions" } },
+      { scope: "app", invalidation: { model: "workflowsGenerated" } },
+    ]);
+    expect(store.readLinksNeedingRepair({ workspaceId: workspace })).toEqual([
+      ...duplicate.value.links,
+    ]);
+    expect(store.listRecoveryWork()).toHaveLength(1);
+    expect(store.listRecoveryWork()[0]).toMatchObject({
+      kind: "workspace_generated_package_link_repair",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey:
+        "workspace_generated_package_link_repair:workspace_generated_package_test:@svvyx/extensions,@svvyx/workflows",
+      orderingKey: "workspace:workspace_generated_package_test",
+      payloadJson: {
+        refreshGeneratedPackages: {
+          scope: "workspace-link-repair",
+          workspaceId: "workspace_generated_package_test",
+          packages: ["@svvyx/extensions", "@svvyx/workflows"],
+          reason: "link-repair",
+          sourceCommandId: "cmd_generated_link_repair_needed",
+          scheduledReason: "app-global-generated-package-refreshed",
+        },
+      },
+    });
   });
 });

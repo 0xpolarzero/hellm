@@ -1,16 +1,26 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import type { StateContractError } from "./errors";
+import { SourceScopeDomainInvariant } from "./source-scope-domain-invariant";
+import { ArtifactMetadataRecordSchema, type ArtifactMetadataRecord } from "./artifact-contracts";
 import {
   CommandFactsPayloadSchema,
+  CommandEventPayloadSchema,
   PromptTargetSchema,
   RequestUserInputResolvedAnswerSchema,
   RuntimeExtensionSnapshotContextImpactTransportInputSchema,
   RuntimeExtensionUsageContextImpactTransportInputSchema,
   RuntimeExtensionUsageProfileKeyTransportSchema,
+  AnswerRequestInputResultSchema,
+  RuntimeClientSubmissionInputSchema,
+  StateCommandReceiptSchema,
   RuntimeTurnDecisionSchema,
   UpdateActorExtensionBindingRequestSchema,
+  ExtensionUsageStateSchema,
+  HandlerInheritedHistoryBlockSchema,
+  ThreadHistoryModeSchema,
   type AnswerRequestInputInput,
   type AnswerRequestInputResult,
   type AcquireDefaultWorkspaceInput,
@@ -22,14 +32,28 @@ import {
   type CreateSurfaceResult,
   type OpenSurfaceInput,
   type OpenSurfaceResult,
-  type RecordEpisodeRequest,
+  type PromptTarget,
+  RecordEpisodeRequestSchema,
+  ReasoningEffortSchema,
   type ReleaseWorkspaceInput,
   type ReleaseWorkspaceResult,
+  type RuntimeClientSubmissionInput,
+  type StateCommandReceipt,
+  type StateCommandPostCommitNotificationError,
   type StateInvalidationDescriptor,
   type SetRequestInputTimerPausedInput,
-  type SetRequestInputTimerPausedResult,
+  SourceDomainSchema,
+  SourceInvalidationScopeSchema,
   type UpdateActorExtensionBindingRequest,
 } from "./runtime-contracts";
+export {
+  StateCommandPostCommitNotificationErrorSchema,
+  decodeUnknownStateCommandPostCommitNotificationErrorEffect,
+  decodeUnknownStateCommandPostCommitNotificationErrorExit,
+  encodeStateCommandPostCommitNotificationErrorEffect,
+  encodeStateCommandPostCommitNotificationErrorExit,
+} from "./runtime-contracts";
+export type { StateCommandPostCommitNotificationError } from "./runtime-contracts";
 import { ExtensionSourceKindSchema, SourceDiagnosticSchema } from "./runtime-source-edit-contracts";
 import {
   AbsolutePath,
@@ -37,9 +61,12 @@ import {
   CommandId,
   EpisodeId,
   ExtensionId,
+  GeneratedContextFingerprint,
   GeneratedPackageBuildId,
   IsoDateTimeStringSchema,
   NonNegativeSafeIntegerSchema,
+  FiniteDurationMsSchema,
+  PositiveDurationMsSchema,
   RequestInputRequestId,
   RequestInputAnswerId,
   RequestInputOptionId,
@@ -60,6 +87,7 @@ import {
   WorkspaceSessionId,
   WorkflowRunId,
   WorkflowTaskAttemptId,
+  PositiveSafeIntegerSchema,
   type IsoDateTimeString,
 } from "./ids";
 import {
@@ -73,6 +101,7 @@ import {
   type GeneratedPackageWorkspaceLinkStatus,
 } from "./generated-package-contracts";
 import { StateInvalidationDescriptorSchema } from "./runtime-invalidation-contracts";
+import type { RecordExtensionDependencyApprovalInput } from "./extension-state-ports";
 
 export interface RuntimeWorkspaceStatePortService {
   acquireWorkspace(
@@ -116,7 +145,38 @@ export const RuntimeSurfaceLifecycleStatePort = Context.Service<
   RuntimeSurfaceLifecycleStatePortService
 >("@svvy/core/RuntimeSurfaceLifecycleStatePort");
 
+export const RuntimePromptDefaultsRecordSchema = Schema.Struct({
+  provider: Schema.String,
+  model: Schema.String,
+  reasoningEffort: ReasoningEffortSchema,
+});
+export type RuntimePromptDefaultsRecord = typeof RuntimePromptDefaultsRecordSchema.Type;
+
+export interface ResolveRuntimePromptDefaultsInput {
+  readonly target: PromptTarget;
+}
+export const ResolveRuntimePromptDefaultsInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+});
+
+export interface RuntimePromptDefaultsStatePortService {
+  resolvePromptDefaults(
+    input: ResolveRuntimePromptDefaultsInput,
+  ): Effect.Effect<RuntimePromptDefaultsRecord, StateContractError>;
+}
+
+export interface RuntimePromptDefaultsStatePort {
+  readonly _tag: "RuntimePromptDefaultsStatePort";
+}
+
+export const RuntimePromptDefaultsStatePort = Context.Service<
+  RuntimePromptDefaultsStatePort,
+  RuntimePromptDefaultsStatePortService
+>("@svvy/core/RuntimePromptDefaultsStatePort");
+
 export const RuntimeSourceFactRecordSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  scopeKey: Schema.String,
   sourceKind: ExtensionSourceKindSchema,
   sourceId: Schema.String,
   path: AbsolutePath,
@@ -131,12 +191,14 @@ export const RuntimeSourceFactRecordSchema = Schema.Struct({
 export type RuntimeSourceFactRecord = typeof RuntimeSourceFactRecordSchema.Type;
 
 export const ReadRuntimeSourceVersionInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
   sourceKind: ExtensionSourceKindSchema,
   sourceId: Schema.String,
 });
 export type ReadRuntimeSourceVersionInput = typeof ReadRuntimeSourceVersionInputSchema.Type;
 
 export const RecordRuntimeSourceSaveInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
   sourceKind: ExtensionSourceKindSchema,
   sourceId: Schema.String,
   path: AbsolutePath,
@@ -150,6 +212,7 @@ export const RecordRuntimeSourceSaveInputSchema = Schema.Struct({
 export type RecordRuntimeSourceSaveInput = typeof RecordRuntimeSourceSaveInputSchema.Type;
 
 export const RecordRuntimeSourceDeleteInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
   sourceKind: ExtensionSourceKindSchema,
   sourceId: Schema.String,
   expectedSourceVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -157,6 +220,72 @@ export const RecordRuntimeSourceDeleteInputSchema = Schema.Struct({
   deletedAt: IsoDateTimeStringSchema,
 });
 export type RecordRuntimeSourceDeleteInput = typeof RecordRuntimeSourceDeleteInputSchema.Type;
+
+export const RuntimeSourceScanFactRecordSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  scopeKey: Schema.String,
+  domain: SourceDomainSchema,
+  sourceFingerprint: Schema.String,
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  lastObservedPath: Schema.NullOr(AbsolutePath),
+  lastObservationKind: Schema.Literals(["scan", "deletion", "diagnostic"]),
+  observedAt: IsoDateTimeStringSchema,
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type RuntimeSourceScanFactRecord = typeof RuntimeSourceScanFactRecordSchema.Type;
+
+export const RuntimeSourceRootFingerprintFactRecordSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  scopeKey: Schema.String,
+  domain: SourceDomainSchema,
+  sourceRoot: AbsolutePath,
+  rootFingerprint: Schema.String,
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  observedAt: IsoDateTimeStringSchema,
+  createdAt: IsoDateTimeStringSchema,
+  updatedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type RuntimeSourceRootFingerprintFactRecord =
+  typeof RuntimeSourceRootFingerprintFactRecordSchema.Type;
+
+export const RuntimeSourceRootFingerprintInputSchema = Schema.Struct({
+  sourceRoot: AbsolutePath,
+  rootFingerprint: Schema.String,
+});
+export type RuntimeSourceRootFingerprintInput = typeof RuntimeSourceRootFingerprintInputSchema.Type;
+
+export const RecordRuntimeSourceScanInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  domain: SourceDomainSchema,
+  sourceFingerprint: Schema.String,
+  sourceRoots: Schema.optionalKey(Schema.Array(RuntimeSourceRootFingerprintInputSchema)),
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  scannedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type RecordRuntimeSourceScanInput = typeof RecordRuntimeSourceScanInputSchema.Type;
+
+export const RecordObservedRuntimeSourceDeletionInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  domain: SourceDomainSchema,
+  path: AbsolutePath,
+  sourceFingerprint: Schema.optionalKey(Schema.String),
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  observedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type RecordObservedRuntimeSourceDeletionInput =
+  typeof RecordObservedRuntimeSourceDeletionInputSchema.Type;
+
+export const RecordRuntimeSourceDiagnosticInputSchema = Schema.Struct({
+  scope: SourceInvalidationScopeSchema,
+  domain: SourceDomainSchema,
+  path: Schema.optionalKey(Schema.NullOr(AbsolutePath)),
+  sourceFingerprint: Schema.optionalKey(Schema.String),
+  diagnostic: SourceDiagnosticSchema,
+  observedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(SourceScopeDomainInvariant));
+export type RecordRuntimeSourceDiagnosticInput =
+  typeof RecordRuntimeSourceDiagnosticInputSchema.Type;
 
 export interface RuntimeSourceStatePortService {
   readSourceVersion(
@@ -168,6 +297,15 @@ export interface RuntimeSourceStatePortService {
   recordSourceDelete(
     input: RecordRuntimeSourceDeleteInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+  recordSourceScan(
+    input: RecordRuntimeSourceScanInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+  recordObservedSourceDeletion(
+    input: RecordObservedRuntimeSourceDeletionInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+  recordSourceDiagnostic(
+    input: RecordRuntimeSourceDiagnosticInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
 }
 
 export interface RuntimeSourceStatePort {
@@ -294,7 +432,7 @@ export type GetRuntimeSurfaceMessageInput = typeof GetRuntimeSurfaceMessageInput
 export const ClaimNextRuntimeSurfaceMessageInputSchema = Schema.Struct({
   surfacePiSessionId: Schema.String,
   claimOwnerId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  leaseDurationMs: Schema.optionalKey(Schema.Number),
+  leaseDurationMs: Schema.optionalKey(PositiveDurationMsSchema),
 });
 export type ClaimNextRuntimeSurfaceMessageInput =
   typeof ClaimNextRuntimeSurfaceMessageInputSchema.Type;
@@ -626,7 +764,7 @@ export const RecordRuntimeCommandEventInputSchema = Schema.Struct({
   commandId: Schema.String,
   kind: RuntimeCommandEventKindSchema,
   at: Schema.optionalKey(Schema.String),
-  data: Schema.optionalKey(CommandFactsPayloadSchema),
+  data: Schema.optionalKey(CommandEventPayloadSchema),
 });
 export type RecordRuntimeCommandEventInput = typeof RecordRuntimeCommandEventInputSchema.Type;
 
@@ -729,6 +867,12 @@ export const RuntimeApprovalRecordSchema = Schema.Struct({
   patch: Schema.NullOr(Schema.String),
   snippetArtifactId: Schema.NullOr(Schema.String),
   typescriptCode: Schema.NullOr(Schema.String),
+  context: Schema.NullOr(
+    Schema.Struct({
+      reason: Schema.Literal("sandbox_denial_escalation"),
+      sandboxDenied: Schema.Literal(true),
+    }),
+  ),
   status: RuntimeApprovalStatusSchema,
   decisionReason: Schema.NullOr(Schema.String),
   reviewer: Schema.NullOr(RuntimeApprovalReviewerSchema),
@@ -752,6 +896,14 @@ export const CreateRuntimeApprovalRequestInputSchema = Schema.Struct({
   patch: Schema.optionalKey(Schema.NullOr(Schema.String)),
   snippetArtifactId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   typescriptCode: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  context: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        reason: Schema.Literal("sandbox_denial_escalation"),
+        sandboxDenied: Schema.Literal(true),
+      }),
+    ),
+  ),
 });
 export type CreateRuntimeApprovalRequestInput = typeof CreateRuntimeApprovalRequestInputSchema.Type;
 
@@ -853,72 +1005,60 @@ export const RuntimeSessionWaitStatePort = Context.Service<
 export type RuntimeArtifactKind = "text" | "log" | "json" | "file";
 export const RuntimeArtifactKindSchema = Schema.Literals(["text", "log", "json", "file"]);
 
-export const RuntimeArtifactRecordSchema = Schema.Struct({
-  id: ArtifactId,
-  sessionId: WorkspaceSessionId,
-  threadId: Schema.NullOr(ThreadId),
-  workflowRunId: Schema.NullOr(WorkflowRunId),
-  workflowTaskAttemptId: Schema.NullOr(WorkflowTaskAttemptId),
-  sourceCommandId: Schema.NullOr(CommandId),
-  kind: RuntimeArtifactKindSchema,
-  name: Schema.String,
-  path: Schema.optionalKey(AbsolutePath),
-  mimeType: Schema.String,
-  bytes: Schema.Number,
-  sha256: Schema.String,
-  immutable: Schema.Boolean,
-  createdAt: Schema.String,
-  deletedAt: Schema.NullOr(Schema.String),
-});
-export type RuntimeArtifactRecord = typeof RuntimeArtifactRecordSchema.Type;
+export const RuntimeArtifactMetadataRecordSchema = ArtifactMetadataRecordSchema;
+export type RuntimeArtifactMetadataRecord = ArtifactMetadataRecord;
 
-export const CreateRuntimeArtifactInputSchema = Schema.Struct({
-  sessionId: Schema.optionalKey(Schema.NullOr(WorkspaceSessionId)),
+export const RecordRuntimeArtifactMetadataInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
   threadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   workflowRunId: Schema.optionalKey(Schema.NullOr(WorkflowRunId)),
   workflowTaskAttemptId: Schema.optionalKey(Schema.NullOr(WorkflowTaskAttemptId)),
-  sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
+  sourceCommandId: CommandId,
   kind: RuntimeArtifactKindSchema,
-  name: Schema.optionalKey(Schema.String),
-  path: Schema.optionalKey(AbsolutePath),
-  content: Schema.optionalKey(Schema.String),
-  mimeType: Schema.optionalKey(Schema.String),
-  immutable: Schema.optionalKey(Schema.Boolean),
+  name: Schema.String,
+  storedPath: AbsolutePath,
+  mimeType: Schema.String,
+  byteSize: NonNegativeSafeIntegerSchema,
+  sha256: Schema.String,
+  immutable: Schema.Boolean,
+  materializationStatus: Schema.Literal("ready"),
 });
-export type CreateRuntimeArtifactInput = typeof CreateRuntimeArtifactInputSchema.Type;
+export type RecordRuntimeArtifactMetadataInput =
+  typeof RecordRuntimeArtifactMetadataInputSchema.Type;
 
-export const DeleteRuntimeArtifactInputSchema = Schema.Struct({
-  sessionId: Schema.optionalKey(Schema.NullOr(WorkspaceSessionId)),
+export const MarkRuntimeArtifactMetadataDeletedInputSchema = Schema.Struct({
+  workspaceSessionId: Schema.optionalKey(Schema.NullOr(WorkspaceSessionId)),
   artifactId: ArtifactId,
 });
-export type DeleteRuntimeArtifactInput = typeof DeleteRuntimeArtifactInputSchema.Type;
+export type MarkRuntimeArtifactMetadataDeletedInput =
+  typeof MarkRuntimeArtifactMetadataDeletedInputSchema.Type;
 
 export const InspectRuntimeArtifactInputSchema = Schema.Struct({
-  sessionId: Schema.optionalKey(Schema.NullOr(WorkspaceSessionId)),
+  workspaceSessionId: Schema.optionalKey(Schema.NullOr(WorkspaceSessionId)),
   artifactId: ArtifactId,
 });
 export type InspectRuntimeArtifactInput = typeof InspectRuntimeArtifactInputSchema.Type;
 
 export const ListRuntimeArtifactsInputSchema = Schema.Struct({
-  sessionId: WorkspaceSessionId,
+  workspaceSessionId: WorkspaceSessionId,
   threadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
-  limit: Schema.optionalKey(Schema.Number),
+  limit: Schema.optionalKey(PositiveSafeIntegerSchema),
 });
 export type ListRuntimeArtifactsInput = typeof ListRuntimeArtifactsInputSchema.Type;
 
 export interface RuntimeArtifactStatePortService {
-  createArtifact(
-    input: CreateRuntimeArtifactInput,
-  ): Effect.Effect<StateMutationResult<RuntimeArtifactRecord>, StateContractError>;
+  recordArtifactMetadata(
+    input: RecordRuntimeArtifactMetadataInput,
+  ): Effect.Effect<StateMutationResult<ArtifactMetadataRecord>, StateContractError>;
   inspectArtifact(
     input: InspectRuntimeArtifactInput,
-  ): Effect.Effect<RuntimeArtifactRecord, StateContractError>;
+  ): Effect.Effect<ArtifactMetadataRecord, StateContractError>;
   listArtifacts(
     input: ListRuntimeArtifactsInput,
-  ): Effect.Effect<ReadonlyArray<RuntimeArtifactRecord>, StateContractError>;
-  deleteArtifact(
-    input: DeleteRuntimeArtifactInput,
-  ): Effect.Effect<StateMutationResult<RuntimeArtifactRecord>, StateContractError>;
+  ): Effect.Effect<ReadonlyArray<ArtifactMetadataRecord>, StateContractError>;
+  markArtifactMetadataDeleted(
+    input: MarkRuntimeArtifactMetadataDeletedInput,
+  ): Effect.Effect<StateMutationResult<ArtifactMetadataRecord>, StateContractError>;
 }
 
 export interface RuntimeArtifactStatePort {
@@ -968,7 +1108,7 @@ export type RuntimeRequestInputQuestionInput = typeof RuntimeRequestInputQuestio
 export const RuntimeRequestInputTimeoutInputSchema = Schema.NullOr(
   Schema.Struct({
     enabled: Schema.Boolean,
-    durationMs: Schema.Number,
+    durationMs: PositiveDurationMsSchema,
   }),
 );
 
@@ -1056,10 +1196,10 @@ export type RuntimeRequestInputAnswerRecord = typeof RuntimeRequestInputAnswerRe
 
 export const RuntimeRequestInputTimeoutRecordSchema = Schema.Struct({
   enabled: Schema.Boolean,
-  durationMs: Schema.Number,
+  durationMs: PositiveDurationMsSchema,
   startedAt: Schema.String,
   pausedAt: Schema.NullOr(Schema.String),
-  remainingMsWhenPaused: Schema.NullOr(Schema.Number),
+  remainingMsWhenPaused: Schema.NullOr(FiniteDurationMsSchema),
   expiresAt: Schema.NullOr(Schema.String),
 });
 export type RuntimeRequestInputTimeoutRecord = typeof RuntimeRequestInputTimeoutRecordSchema.Type;
@@ -1119,7 +1259,7 @@ export interface RuntimeRequestStatePortService {
   ): Effect.Effect<ReadonlyArray<RuntimeRequestInputDetailsRecord>, StateContractError>;
   answerRequestInput(
     input: AnswerRequestInputInput,
-  ): Effect.Effect<StateMutationResult<AnswerRequestInputResult>, StateContractError>;
+  ): Effect.Effect<StateMutationResult<RuntimeAnswerRequestInputCommitResult>, StateContractError>;
   defaultOpenRequestInputQuestions(
     input: DefaultOpenRuntimeRequestInputQuestionsInput,
   ): Effect.Effect<StateMutationResult<RuntimeRequestInputDetailsRecord>, StateContractError>;
@@ -1128,7 +1268,7 @@ export interface RuntimeRequestStatePortService {
   ): Effect.Effect<StateMutationResult<RuntimeRequestInputDetailsRecord>, StateContractError>;
   setRequestInputTimerPaused(
     input: SetRequestInputTimerPausedInput,
-  ): Effect.Effect<StateMutationResult<SetRequestInputTimerPausedResult>, StateContractError>;
+  ): Effect.Effect<StateMutationResult<RuntimeRequestInputDetailsRecord>, StateContractError>;
 }
 
 export interface RuntimeRequestStatePort {
@@ -1139,6 +1279,15 @@ export const RuntimeRequestStatePort = Context.Service<
   RuntimeRequestStatePort,
   RuntimeRequestStatePortService
 >("@svvy/core/RuntimeRequestStatePort");
+
+export interface RuntimeAnswerRequestInputCommitResult {
+  readonly answer: AnswerRequestInputResult;
+  readonly target: PromptTarget;
+}
+export const RuntimeAnswerRequestInputCommitResultSchema = Schema.Struct({
+  answer: AnswerRequestInputResultSchema,
+  target: PromptTargetSchema,
+});
 
 export type RuntimeGeneratedPackageFactStatus = "ready" | "failed" | "refresh-needed";
 export const RuntimeGeneratedPackageFactStatusSchema = Schema.Literals([
@@ -1152,11 +1301,89 @@ export interface StateMutationResult<T> {
   afterCommit: readonly StateInvalidationDescriptor[];
 }
 
-export const StateMutationResultSchema = <T>(value: Schema.Decoder<T>) =>
+export const StateMutationResultSchema = <S extends Schema.Top>(value: S) =>
   Schema.Struct({
     value,
     afterCommit: Schema.Array(StateInvalidationDescriptorSchema),
   });
+
+export interface StateCommandPostCommitNotificationInput {
+  readonly operation: string;
+  readonly receipt: StateCommandReceipt;
+  readonly descriptors: readonly StateInvalidationDescriptor[];
+  readonly clientSubmission?: RuntimeClientSubmissionInput;
+}
+
+export const StateCommandPostCommitNotificationInputSchema = Schema.Struct({
+  operation: Schema.String,
+  receipt: StateCommandReceiptSchema,
+  descriptors: Schema.Array(StateInvalidationDescriptorSchema),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export const decodeUnknownStateCommandPostCommitNotificationInputExit = Schema.decodeUnknownExit(
+  StateCommandPostCommitNotificationInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownStateCommandPostCommitNotificationInputEffect =
+  Schema.decodeUnknownEffect(
+    StateCommandPostCommitNotificationInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const encodeStateCommandPostCommitNotificationInputExit = Schema.encodeExit(
+  StateCommandPostCommitNotificationInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeStateCommandPostCommitNotificationInputEffect = Schema.encodeEffect(
+  StateCommandPostCommitNotificationInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export interface StateCommandPostCommitNotificationResult {
+  readonly receipt: StateCommandReceipt;
+  readonly acceptedDescriptorCount: typeof NonNegativeSafeIntegerSchema.Type;
+  readonly rebaselineRequired: boolean;
+}
+
+export const StateCommandPostCommitNotificationResultSchema = Schema.Struct({
+  receipt: StateCommandReceiptSchema,
+  acceptedDescriptorCount: NonNegativeSafeIntegerSchema,
+  rebaselineRequired: Schema.Boolean,
+});
+export const decodeUnknownStateCommandPostCommitNotificationResultExit = Schema.decodeUnknownExit(
+  StateCommandPostCommitNotificationResultSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownStateCommandPostCommitNotificationResultEffect =
+  Schema.decodeUnknownEffect(
+    StateCommandPostCommitNotificationResultSchema,
+    strictBoundaryParseOptions,
+  );
+export const encodeStateCommandPostCommitNotificationResultExit = Schema.encodeExit(
+  StateCommandPostCommitNotificationResultSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeStateCommandPostCommitNotificationResultEffect = Schema.encodeEffect(
+  StateCommandPostCommitNotificationResultSchema,
+  strictBoundaryParseOptions,
+);
+
+export interface StateCommandPostCommitNotificationPortService {
+  notifyCommittedStateCommand(
+    input: StateCommandPostCommitNotificationInput,
+  ): Effect.Effect<
+    StateCommandPostCommitNotificationResult,
+    StateCommandPostCommitNotificationError
+  >;
+}
+
+export interface StateCommandPostCommitNotificationPort {
+  readonly _tag: "StateCommandPostCommitNotificationPort";
+}
+
+export const StateCommandPostCommitNotificationPort = Context.Service<
+  StateCommandPostCommitNotificationPort,
+  StateCommandPostCommitNotificationPortService
+>("@svvy/core/StateCommandPostCommitNotificationPort");
 
 export interface RuntimeGeneratedPackageFactRecord {
   packageName: GeneratedPackageName;
@@ -1228,8 +1455,12 @@ export interface RecordGeneratedPackageBuildInput {
   sourceCommandId?: CommandId | null;
   recoveryWorkId?: RecoveryWorkId | null;
 }
+export const RecordGeneratedPackageBuildStatusSchema = Schema.Struct({
+  ...GeneratedPackageRefreshStatusSchema.fields,
+  action: Schema.Literals(["written", "unchanged"]),
+});
 export const RecordGeneratedPackageBuildInputSchema = Schema.Struct({
-  status: GeneratedPackageRefreshStatusSchema,
+  status: RecordGeneratedPackageBuildStatusSchema,
   sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   recoveryWorkId: Schema.optionalKey(Schema.NullOr(RecoveryWorkId)),
 });
@@ -1239,8 +1470,12 @@ export interface RecordGeneratedPackageFailureInput {
   sourceCommandId?: CommandId | null;
   recoveryWorkId?: RecoveryWorkId | null;
 }
+export const RecordGeneratedPackageFailureStatusSchema = Schema.Struct({
+  ...GeneratedPackageRefreshStatusSchema.fields,
+  action: Schema.Literal("failed"),
+});
 export const RecordGeneratedPackageFailureInputSchema = Schema.Struct({
-  status: GeneratedPackageRefreshStatusSchema,
+  status: RecordGeneratedPackageFailureStatusSchema,
   sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   recoveryWorkId: Schema.optionalKey(Schema.NullOr(RecoveryWorkId)),
 });
@@ -1254,6 +1489,42 @@ export const RecordGeneratedPackageWorkspaceLinkInputSchema = Schema.Struct({
   status: GeneratedPackageWorkspaceLinkStatusSchema,
   sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   recoveryWorkId: Schema.optionalKey(Schema.NullOr(RecoveryWorkId)),
+});
+
+export const MarkWorkspaceGeneratedPackageLinksRepairNeededReasonSchema = Schema.Literals([
+  "app-global-generated-package-refreshed",
+  "startup-recovery",
+  "manifest-reconciled",
+]);
+export type MarkWorkspaceGeneratedPackageLinksRepairNeededReason =
+  typeof MarkWorkspaceGeneratedPackageLinksRepairNeededReasonSchema.Type;
+
+export interface MarkWorkspaceGeneratedPackageLinksRepairNeededInput {
+  workspaceId: WorkspaceId;
+  packages: readonly GeneratedPackageName[];
+  reason: MarkWorkspaceGeneratedPackageLinksRepairNeededReason;
+  sourceCommandId?: CommandId | null;
+  recoveryWorkId?: RecoveryWorkId | null;
+  requestedAt: IsoDateTimeString;
+  maxAttempts: number;
+}
+export const MarkWorkspaceGeneratedPackageLinksRepairNeededInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  packages: Schema.Array(GeneratedPackageNameSchema),
+  reason: MarkWorkspaceGeneratedPackageLinksRepairNeededReasonSchema,
+  sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
+  recoveryWorkId: Schema.optionalKey(Schema.NullOr(RecoveryWorkId)),
+  requestedAt: IsoDateTimeStringSchema,
+  maxAttempts: PositiveSafeIntegerSchema,
+});
+
+export interface MarkWorkspaceGeneratedPackageLinksRepairNeededResult {
+  links: readonly RuntimeGeneratedPackageWorkspaceLinkRecord[];
+  recoveryWorkIds: readonly RecoveryWorkId[];
+}
+export const MarkWorkspaceGeneratedPackageLinksRepairNeededResultSchema = Schema.Struct({
+  links: Schema.Array(RuntimeGeneratedPackageWorkspaceLinkRecordSchema),
+  recoveryWorkIds: Schema.Array(RecoveryWorkId),
 });
 
 export interface ReadGeneratedPackageLinksNeedingRepairInput {
@@ -1342,6 +1613,9 @@ export const RecordExtensionDependencyReadinessInputSchema = Schema.Struct({
 });
 
 export interface RuntimeExtensionStatePortService {
+  recordDependencyApproval(
+    input: RecordExtensionDependencyApprovalInput,
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   recordDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): Effect.Effect<StateMutationResult<ExtensionDependencyReadiness>, StateContractError>;
@@ -1367,6 +1641,12 @@ export interface RuntimeGeneratedPackageStatePortService {
     input: RecordGeneratedPackageWorkspaceLinkInput,
   ): Effect.Effect<
     StateMutationResult<RuntimeGeneratedPackageWorkspaceLinkRecord>,
+    StateContractError
+  >;
+  markWorkspaceLinksRepairNeeded(
+    input: MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  ): Effect.Effect<
+    StateMutationResult<MarkWorkspaceGeneratedPackageLinksRepairNeededResult>,
     StateContractError
   >;
   readLinksNeedingRepair(
@@ -1402,6 +1682,24 @@ export const RuntimeActorExtensionBindingRecordSchema = Schema.Struct({
 export type RuntimeActorExtensionBindingRecord =
   typeof RuntimeActorExtensionBindingRecordSchema.Type;
 
+export const RuntimePromptBindingRecordSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  generatedAgentContextBindingId: Schema.String,
+  generatedAgentContextFingerprint: GeneratedContextFingerprint,
+  generatedAgentContextRevision: NonNegativeSafeIntegerSchema,
+  systemPrompt: Schema.String,
+  loadedExtensionIds: Schema.Array(ExtensionId),
+  availableExtensionIds: Schema.Array(ExtensionId),
+  externalSourceHashes: Schema.Array(Schema.String),
+  updateExtensionContextBeforeNextTurn: Schema.Boolean,
+});
+export type RuntimePromptBindingRecord = typeof RuntimePromptBindingRecordSchema.Type;
+
+export const ReadRuntimePromptBindingInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+});
+export type ReadRuntimePromptBindingInput = typeof ReadRuntimePromptBindingInputSchema.Type;
+
 export const SetRuntimeActorExtensionBindingInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   loadedExtensionIds: Schema.Array(ExtensionId),
@@ -1413,6 +1711,9 @@ export type SetRuntimeActorExtensionBindingInput =
   typeof SetRuntimeActorExtensionBindingInputSchema.Type;
 
 export interface RuntimeActorExtensionBindingStatePortService {
+  readRuntimePromptBinding(
+    input: ReadRuntimePromptBindingInput,
+  ): Effect.Effect<RuntimePromptBindingRecord, StateContractError>;
   updateActorExtensionBinding(
     input: UpdateActorExtensionBindingRequest,
   ): Effect.Effect<StateMutationResult<RuntimeActorExtensionBindingRecord>, StateContractError>;
@@ -1579,9 +1880,44 @@ export const RuntimeRecoveryWorkOwnerScopeSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("title_job"), titleJobId: TitleJobId }),
 ]);
 
+export type RuntimeRecoveryWorkScope =
+  | { kind: "app" }
+  | { kind: "workspace"; workspaceId: WorkspaceId };
+export const RuntimeRecoveryWorkScopeSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("app") }),
+  Schema.Struct({ kind: Schema.Literal("workspace"), workspaceId: WorkspaceId }),
+]);
+
+type RuntimeRecoveryWorkScopedKindShape = {
+  readonly scope: RuntimeRecoveryWorkScope;
+  readonly kind: RuntimeRecoveryWorkKind;
+};
+
+const RuntimeRecoveryWorkScopedKindInvariant = Schema.makeFilter(
+  (input: RuntimeRecoveryWorkScopedKindShape) => {
+    if (input.kind === "generated_package_refresh" && input.scope.kind !== "app") {
+      return {
+        path: ["scope"],
+        issue: "generated_package_refresh recovery work must be app-scoped",
+      };
+    }
+    if (
+      input.kind === "workspace_generated_package_link_repair" &&
+      input.scope.kind !== "workspace"
+    ) {
+      return {
+        path: ["scope"],
+        issue: "workspace_generated_package_link_repair recovery work must be workspace-scoped",
+      };
+    }
+    return true;
+  },
+  { expected: "a valid recovery work kind/scope pair" },
+);
+
 export const RuntimeRecoveryWorkRecordSchema = Schema.Struct({
   id: RecoveryWorkId,
-  workspaceId: WorkspaceId,
+  scope: RuntimeRecoveryWorkScopeSchema,
   kind: RuntimeRecoveryWorkKindSchema,
   status: RuntimeRecoveryWorkStatusSchema,
   ownerScope: RuntimeRecoveryWorkOwnerScopeSchema,
@@ -1601,7 +1937,7 @@ export const RuntimeRecoveryWorkRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String,
   completedAt: Schema.NullOr(Schema.String),
-});
+}).pipe(Schema.check(RuntimeRecoveryWorkScopedKindInvariant));
 export type RuntimeRecoveryWorkRecord = typeof RuntimeRecoveryWorkRecordSchema.Type;
 
 export type RuntimeRecoveryStartupTurnStatus = "running" | "waiting" | "completed" | "failed";
@@ -1686,6 +2022,7 @@ export const RuntimeRecoveryStartupSnapshotSchema = Schema.Struct({
 export type RuntimeRecoveryStartupSnapshot = typeof RuntimeRecoveryStartupSnapshotSchema.Type;
 
 export const EnsureRuntimeRecoveryWorkInputSchema = Schema.Struct({
+  scope: RuntimeRecoveryWorkScopeSchema,
   kind: RuntimeRecoveryWorkKindSchema,
   ownerScope: RuntimeRecoveryWorkOwnerScopeSchema,
   idempotencyKey: Schema.String,
@@ -1695,12 +2032,14 @@ export const EnsureRuntimeRecoveryWorkInputSchema = Schema.Struct({
   availableAt: Schema.String,
   maxAttempts: Schema.Number,
   payloadJson: Schema.optionalKey(JsonValue),
-});
+}).pipe(Schema.check(RuntimeRecoveryWorkScopedKindInvariant));
 export type EnsureRuntimeRecoveryWorkInput = typeof EnsureRuntimeRecoveryWorkInputSchema.Type;
 
 export const ClaimNextRuntimeRecoveryWorkInputSchema = Schema.Struct({
   claimedBy: RuntimeOwnerId,
-  leaseMs: Schema.optionalKey(Schema.Number),
+  scope: Schema.optionalKey(RuntimeRecoveryWorkScopeSchema),
+  kinds: Schema.optionalKey(Schema.Array(RuntimeRecoveryWorkKindSchema)),
+  leaseMs: Schema.optionalKey(PositiveDurationMsSchema),
 });
 export type ClaimNextRuntimeRecoveryWorkInput = typeof ClaimNextRuntimeRecoveryWorkInputSchema.Type;
 
@@ -1757,25 +2096,32 @@ export const RuntimeRecoveryStatePort = Context.Service<
   RuntimeRecoveryStatePortService
 >("@svvy/core/RuntimeRecoveryStatePort");
 
-export type RuntimeHandlerThreadEpisodeRequest = Extract<
-  RecordEpisodeRequest,
-  { scope: "handler-thread" }
->;
+export const RuntimeHandlerThreadEpisodeRequestSchema = RecordEpisodeRequestSchema;
+export type RuntimeHandlerThreadEpisodeRequest =
+  typeof RuntimeHandlerThreadEpisodeRequestSchema.Type;
 
-export type RuntimeEpisodeKind = RuntimeHandlerThreadEpisodeRequest["kind"];
+export const RuntimeEpisodeKindSchema = Schema.Literals([
+  "change",
+  "clarification",
+  "report",
+  "handoff",
+  "conclusion",
+]);
+export type RuntimeEpisodeKind = typeof RuntimeEpisodeKindSchema.Type;
 
-export interface RuntimeEpisodeRecord {
-  id: EpisodeId;
-  sessionId: WorkspaceSessionId;
-  threadId: ThreadId;
-  threadGroupId: ThreadGroupId;
-  sourceCommandId: CommandId | null;
-  kind: RuntimeEpisodeKind;
-  title: string;
-  summary: string;
-  body: string;
-  createdAt: string;
-}
+export const RuntimeEpisodeRecordSchema = Schema.Struct({
+  id: EpisodeId,
+  sessionId: WorkspaceSessionId,
+  threadId: ThreadId,
+  threadGroupId: ThreadGroupId,
+  sourceCommandId: Schema.NullOr(CommandId),
+  kind: RuntimeEpisodeKindSchema,
+  title: Schema.String,
+  summary: Schema.String,
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+export type RuntimeEpisodeRecord = typeof RuntimeEpisodeRecordSchema.Type;
 
 export interface RuntimeEpisodeStatePortService {
   recordHandlerThreadEpisode(
@@ -1792,93 +2138,98 @@ export const RuntimeEpisodeStatePort = Context.Service<
   RuntimeEpisodeStatePortService
 >("@svvy/core/RuntimeEpisodeStatePort");
 
-export type RuntimeThreadStatus =
-  | "running-handler"
-  | "running-workflow"
-  | "waiting"
-  | "idle"
-  | "troubleshooting"
-  | "completed";
+export const RuntimeThreadStatusSchema = Schema.Literals([
+  "running-handler",
+  "running-workflow",
+  "waiting",
+  "idle",
+  "troubleshooting",
+  "completed",
+]);
+export type RuntimeThreadStatus = typeof RuntimeThreadStatusSchema.Type;
 
-export interface RuntimeThreadReadModelWait {
-  kind: "user" | "external";
-  reason: string;
-  resumeWhen: string;
-}
+export const RuntimeThreadReadModelWaitSchema = Schema.Struct({
+  kind: Schema.Literals(["user", "external"]),
+  reason: Schema.String,
+  resumeWhen: Schema.String,
+});
+export type RuntimeThreadReadModelWait = typeof RuntimeThreadReadModelWaitSchema.Type;
 
-export interface EnsureRuntimeHandlerThreadRunnableInput {
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
-  threadId: ThreadId;
-}
+export const EnsureRuntimeHandlerThreadRunnableInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  threadId: ThreadId,
+});
+export type EnsureRuntimeHandlerThreadRunnableInput =
+  typeof EnsureRuntimeHandlerThreadRunnableInputSchema.Type;
 
-export interface RuntimeHandlerThreadGeneratedContextBindingInput {
-  aggregateCacheKey: string;
-  systemPrompt: string;
-  svvyxGuidance: string;
-  commandsDts: string;
-  nativeToolSchemasJson: string;
-  generatedAgentContextFingerprint: string;
-  generatedAgentContextRevision: number;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
-  externalSourceHashes: readonly string[];
-}
+export const RuntimeHandlerThreadGeneratedContextBindingInputSchema = Schema.Struct({
+  aggregateCacheKey: Schema.String,
+  generatedAgentContextFingerprint: Schema.String,
+  generatedAgentContextRevision: Schema.Number,
+  externalSourceHashes: Schema.Array(Schema.String),
+});
+export type RuntimeHandlerThreadGeneratedContextBindingInput =
+  typeof RuntimeHandlerThreadGeneratedContextBindingInputSchema.Type;
 
-export interface RuntimeHandlerThreadInitialQueueInput {
-  idempotencyKey: string;
-  priority?: RuntimeSurfaceQueuePriority;
-  orderingKey?: string | null;
-  nextAttemptAt?: string | null;
-  maxAttempts?: number;
-  messageJson: string;
-  payloadJson: string;
-}
+export const RuntimeHandlerThreadInitialQueueInputSchema = Schema.Struct({
+  idempotencyKey: Schema.String,
+  priority: Schema.optionalKey(RuntimeSurfaceQueuePrioritySchema),
+  orderingKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  nextAttemptAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  maxAttempts: Schema.optionalKey(Schema.Number),
+  inheritedHistory: Schema.optionalKey(HandlerInheritedHistoryBlockSchema),
+  overrides: Schema.optionalKey(Schema.Record(ExtensionId, ExtensionUsageStateSchema)),
+});
+export type RuntimeHandlerThreadInitialQueueInput =
+  typeof RuntimeHandlerThreadInitialQueueInputSchema.Type;
 
-export interface StartRuntimeHandlerThreadInput {
-  surfacePiSessionId: SurfacePiSessionId;
-  title: string;
-  objective: string;
-  historyMode: "isolated" | "forked";
-  worktreeId?: WorktreeId | null;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
-  agentProfileJson?: string | null;
-  generatedAgentContextBinding: RuntimeHandlerThreadGeneratedContextBindingInput;
-  initialQueue: RuntimeHandlerThreadInitialQueueInput;
-}
+export const StartRuntimeHandlerThreadInputSchema = Schema.Struct({
+  parentThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  surfacePiSessionId: SurfacePiSessionId,
+  title: Schema.String,
+  objective: Schema.String,
+  historyMode: ThreadHistoryModeSchema,
+  worktreeId: Schema.optionalKey(Schema.NullOr(WorktreeId)),
+  agentProfileJson: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  generatedAgentContextBinding: RuntimeHandlerThreadGeneratedContextBindingInputSchema,
+  initialQueue: RuntimeHandlerThreadInitialQueueInputSchema,
+});
+export type StartRuntimeHandlerThreadInput = typeof StartRuntimeHandlerThreadInputSchema.Type;
 
-export interface StartRuntimeHandlerThreadsInput {
-  workspaceSessionId: WorkspaceSessionId;
-  orchestratorTurnId: TurnId;
-  sourceCommandId: CommandId;
-  threadGroupId?: ThreadGroupId | null;
-  threads: readonly [StartRuntimeHandlerThreadInput, ...StartRuntimeHandlerThreadInput[]];
-}
+export const StartRuntimeHandlerThreadsInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  orchestratorTurnId: TurnId,
+  sourceCommandId: CommandId,
+  threadGroupId: Schema.optionalKey(Schema.NullOr(ThreadGroupId)),
+  threads: Schema.Array(StartRuntimeHandlerThreadInputSchema).check(Schema.isNonEmpty()),
+});
+export type StartRuntimeHandlerThreadsInput = typeof StartRuntimeHandlerThreadsInputSchema.Type;
 
-export interface StartedRuntimeHandlerThread {
-  threadId: ThreadId;
-  threadGroupId: ThreadGroupId;
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
-  title: string;
-  objective: string;
-  historyMode: "isolated" | "forked";
-  objectiveState: "active";
-  status: "running-handler";
-  wait: null;
-  worktreeId: WorktreeId | null;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
-  generatedAgentContextFingerprint: string;
-  generatedAgentContextBindingId: string;
-  queuedMessage: RuntimeSurfaceMessageRecord;
-}
+export const StartedRuntimeHandlerThreadSchema = Schema.Struct({
+  threadId: ThreadId,
+  threadGroupId: ThreadGroupId,
+  workspaceSessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  parentThreadId: Schema.NullOr(ThreadId),
+  title: Schema.String,
+  objective: Schema.String,
+  historyMode: ThreadHistoryModeSchema,
+  objectiveState: Schema.Literal("active"),
+  status: Schema.Literal("running-handler"),
+  wait: Schema.Null,
+  worktreeId: Schema.NullOr(WorktreeId),
+  generatedAgentContextFingerprint: Schema.String,
+  generatedAgentContextBindingId: Schema.String,
+  queuedMessageId: QueueItemId,
+});
+export type StartedRuntimeHandlerThread = typeof StartedRuntimeHandlerThreadSchema.Type;
 
-export interface StartRuntimeHandlerThreadsResult {
-  threadGroupId: ThreadGroupId;
-  threads: readonly StartedRuntimeHandlerThread[];
-}
+export const StartRuntimeHandlerThreadsResultSchema = Schema.Struct({
+  threadGroupId: ThreadGroupId,
+  threads: Schema.Array(StartedRuntimeHandlerThreadSchema),
+});
+export type StartRuntimeHandlerThreadsResult = typeof StartRuntimeHandlerThreadsResultSchema.Type;
 
 export interface RuntimeThreadStatePortService {
   ensureHandlerThreadRunnable(
@@ -1898,83 +2249,94 @@ export const RuntimeThreadStatePort = Context.Service<
   RuntimeThreadStatePortService
 >("@svvy/core/RuntimeThreadStatePort");
 
-export interface RuntimeThreadReadModelEpisodeSummary {
-  id: EpisodeId;
-  title: string;
-  summary: string;
-  createdAt: string;
-}
+export const RuntimeThreadReadModelEpisodeSummarySchema = Schema.Struct({
+  id: EpisodeId,
+  title: Schema.String,
+  summary: Schema.String,
+  createdAt: Schema.String,
+});
+export type RuntimeThreadReadModelEpisodeSummary =
+  typeof RuntimeThreadReadModelEpisodeSummarySchema.Type;
 
-export interface RuntimeThreadCompactRow {
-  threadId: ThreadId;
-  threadGroupId: ThreadGroupId;
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
-  title: string;
-  objective: string;
-  objectiveState: "active" | "concluded";
-  status: RuntimeThreadStatus;
-  wait: RuntimeThreadReadModelWait | null;
-  latestEpisode: RuntimeThreadReadModelEpisodeSummary | null;
-}
+export const RuntimeThreadCompactRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  threadGroupId: ThreadGroupId,
+  workspaceSessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  title: Schema.String,
+  objective: Schema.String,
+  objectiveState: Schema.Literals(["active", "concluded"]),
+  status: RuntimeThreadStatusSchema,
+  wait: Schema.NullOr(RuntimeThreadReadModelWaitSchema),
+  latestEpisode: Schema.NullOr(RuntimeThreadReadModelEpisodeSummarySchema),
+});
+export type RuntimeThreadCompactRow = typeof RuntimeThreadCompactRowSchema.Type;
 
-export interface RuntimeThreadPendingReportRequest {
-  queuedMessageId: QueueItemId;
-  request: string;
-  createdAt: string;
-}
+export const RuntimeThreadPendingReportRequestSchema = Schema.Struct({
+  queuedMessageId: QueueItemId,
+  request: Schema.String,
+  createdAt: Schema.String,
+});
+export type RuntimeThreadPendingReportRequest = typeof RuntimeThreadPendingReportRequestSchema.Type;
 
-export interface RuntimeThreadCurrentReadModel extends RuntimeThreadCompactRow {
-  pendingReportRequests: RuntimeThreadPendingReportRequest[];
-  loadedExtensionIds: ExtensionId[];
-  availableExtensionIds: ExtensionId[];
-}
+export const RuntimeThreadCurrentReadModelSchema = Schema.Struct({
+  ...RuntimeThreadCompactRowSchema.fields,
+  pendingReportRequests: Schema.Array(RuntimeThreadPendingReportRequestSchema),
+});
+export type RuntimeThreadCurrentReadModel = typeof RuntimeThreadCurrentReadModelSchema.Type;
 
-export interface RuntimeThreadListReadModel {
-  threads: RuntimeThreadCompactRow[];
-}
+export const RuntimeThreadListReadModelSchema = Schema.Struct({
+  threads: Schema.Array(RuntimeThreadCompactRowSchema),
+});
+export type RuntimeThreadListReadModel = typeof RuntimeThreadListReadModelSchema.Type;
 
-export interface RuntimeThreadEpisodesReadModel {
-  episodes: Array<{
-    id: EpisodeId;
-    threadId: ThreadId;
-    title: string;
-    summary: string;
-    body: string;
-    createdAt: string;
-  }>;
-}
+export const RuntimeThreadEpisodesReadModelSchema = Schema.Struct({
+  episodes: Schema.Array(RuntimeEpisodeRecordSchema),
+});
+export type RuntimeThreadEpisodesReadModel = typeof RuntimeThreadEpisodesReadModelSchema.Type;
 
-export interface RuntimeThreadGroupReadModel {
-  threadGroupId: ThreadGroupId;
-  currentThreadId: ThreadId;
-  threads: RuntimeThreadCompactRow[];
-}
+export const RuntimeThreadGroupReadModelSchema = Schema.Struct({
+  threadGroupId: ThreadGroupId,
+  currentThreadId: ThreadId,
+  threads: Schema.Array(RuntimeThreadCompactRowSchema),
+});
+export type RuntimeThreadGroupReadModel = typeof RuntimeThreadGroupReadModelSchema.Type;
 
-export interface GetCurrentRuntimeThreadInput {
-  workspaceSessionId: WorkspaceSessionId;
-  threadId: ThreadId;
-}
+export const GetCurrentRuntimeThreadInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  threadId: ThreadId,
+});
+export type GetCurrentRuntimeThreadInput = typeof GetCurrentRuntimeThreadInputSchema.Type;
 
-export interface ListRuntimeThreadsInput {
-  workspaceSessionId: WorkspaceSessionId;
-  status?: readonly RuntimeThreadStatus[] | null;
-  threadGroupId?: ThreadGroupId | null;
-  limit?: number;
-}
+export const ListRuntimeThreadsInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  status: Schema.optionalKey(Schema.NullOr(Schema.Array(RuntimeThreadStatusSchema))),
+  threadGroupId: Schema.optionalKey(Schema.NullOr(ThreadGroupId)),
+  limit: Schema.optionalKey(Schema.Number),
+});
+export type ListRuntimeThreadsInput = typeof ListRuntimeThreadsInputSchema.Type;
 
-export interface ReadRuntimeThreadEpisodesInput {
-  workspaceSessionId: WorkspaceSessionId;
-  threadId?: ThreadId | null;
-  threadGroupId?: ThreadGroupId | null;
-  defaultThreadId?: ThreadId | null;
-  limit?: number;
-}
+export const ReadRuntimeThreadEpisodesInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  target: Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("thread"),
+      threadId: ThreadId,
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("thread-group"),
+      threadGroupId: ThreadGroupId,
+    }),
+  ]),
+  limit: Schema.optionalKey(Schema.Number),
+});
+export type ReadRuntimeThreadEpisodesInput = typeof ReadRuntimeThreadEpisodesInputSchema.Type;
 
-export interface GetRuntimeThreadGroupInput {
-  workspaceSessionId: WorkspaceSessionId;
-  currentThreadId: ThreadId;
-}
+export const GetRuntimeThreadGroupInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  currentThreadId: ThreadId,
+});
+export type GetRuntimeThreadGroupInput = typeof GetRuntimeThreadGroupInputSchema.Type;
 
 export interface RuntimeReadModelStatePortService {
   getCurrentThread(

@@ -26,9 +26,9 @@ Palette actions route into:
 - Extensions
 - read-only Workflows generated visibility
 - generated agent-context preview panes rendered from state-backed read models refreshed after
-  runtime notifications; runtime/extensions build the underlying generated context below the facade
-  boundary
-- future product actions once those actions have their own specs
+  app/bootstrap-prepared renderer-safe read-model invalidations derived from runtime events;
+  `@svvy/runtime` coordinates refresh, `@svvy/extensions` resolves/builds generated context, and
+  `@svvy/state` stores committed facts through core-owned state ports
 
 Smithers execution remains ordinary Shell work inside an agent surface. The palette does not expose
 Smithers-specific actions as product commands.
@@ -45,7 +45,12 @@ not text editing shortcuts.
 
 ## Command Mode
 
-Command mode discovers product actions such as:
+Command mode renders a renderer-local action index from static desktop chrome actions plus state
+read models, and invokes product mutations only through app/bootstrap-injected runtime and state
+command facades. It must not own queue, prompt, generated-context, Workflows, or runtime lifecycle
+logic.
+
+Actions include:
 
 - New orchestrator
 - open session
@@ -59,8 +64,9 @@ Command mode discovers product actions such as:
 - open Settings
 - Dockview placement actions when panes exist
 - generated agent-context preview panes rendered from state-backed read models refreshed after
-  runtime notifications; runtime/extensions build the underlying generated context below the facade
-  boundary
+  app/bootstrap-prepared renderer-safe read-model invalidations derived from runtime events;
+  `@svvy/runtime` coordinates refresh, `@svvy/extensions` resolves/builds generated context, and
+  `@svvy/state` stores committed facts through core-owned state ports
 
 Unmatched non-empty command-mode text creates a normal New orchestrator session using the text after
 the `>` as the initial prompt.
@@ -76,13 +82,15 @@ generated context.
 Unprefixed `Cmd+P` is reserved for file quick-open.
 
 Until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist, file
-quick-open is a placeholder or no-op. It must not fabricate file surfaces or introduce an ad hoc
-file browsing path.
+quick-open remains a reserved entry point with no alternate file browsing path. It must not
+fabricate file surfaces or introduce an ad hoc file browsing path.
 
 ## Shortcut Registry
 
-The product owns stable shortcut action ids, labels, platform chords, compact and readable display
-strings, scope, input policy, availability, and routing metadata.
+`@svvy/desktop` owns renderer shortcut binding and display. `@svvy/core` owns shared command ids and
+renderer-safe command payload schemas when an action crosses the package/app-bootstrap boundary.
+Availability is derived from state read models, and mutations route through app/bootstrap-injected
+facades.
 
 TanStack Hotkeys is the renderer binding primitive. It is not the source of product command
 semantics.
@@ -98,7 +106,9 @@ Current sidebar shortcut order:
 
 The Workflows command opens the read-only Workflows pane.
 
-It shows the latest successful generated `@svvyx/workflows` package.
+It shows the current state read model for the latest committed successful generated
+`@svvyx/workflows` facts. The pane does not inspect generated package files or trigger build/link
+refresh.
 
 ## Related Specs
 

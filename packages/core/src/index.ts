@@ -13,6 +13,7 @@ export * from "./pi-adapter-contracts";
 export * from "./pi-adapter-ports";
 export * from "./prompt-execution-context";
 export * from "./provider-auth-ports";
+export * from "./runtime-invalidation-contracts";
 export * from "./runtime-contracts";
 export * from "./runtime-effect-requests";
 export * from "./runtime-source-edit-contracts";

@@ -43,43 +43,42 @@ export function runtimeReadModelStatePortFromStructuredSessionState(
         return buildStructuredThreadCurrentReadModel(
           snapshot,
           thread,
-        ) as RuntimeThreadCurrentReadModel;
+        ) as unknown as RuntimeThreadCurrentReadModel;
       }),
     listThreads: (input) =>
       Effect.gen(function* () {
         const snapshot = yield* state.getSessionState(input.workspaceSessionId);
-        return buildStructuredThreadListReadModel(snapshot, input) as RuntimeThreadListReadModel;
+        return buildStructuredThreadListReadModel(
+          snapshot,
+          input,
+        ) as unknown as RuntimeThreadListReadModel;
       }),
     readThreadEpisodes: (input: ReadRuntimeThreadEpisodesInput) =>
       Effect.gen(function* () {
         const snapshot = yield* state.getSessionState(input.workspaceSessionId);
-        if (input.threadId) {
+        if (input.target.kind === "thread") {
           yield* requireStructuredThreadEffect(
             snapshot,
-            input.threadId,
+            input.target.threadId,
             "runtime-read-model.readThreadEpisodes",
           );
         }
-        if (input.defaultThreadId) {
-          yield* requireStructuredThreadEffect(
-            snapshot,
-            input.defaultThreadId,
-            "runtime-read-model.readThreadEpisodes",
-          );
-        }
-        if (input.threadGroupId && !hasStructuredThreadGroup(snapshot, input.threadGroupId)) {
+        if (
+          input.target.kind === "thread-group" &&
+          !hasStructuredThreadGroup(snapshot, input.target.threadGroupId)
+        ) {
           return yield* Effect.fail(
             new StateContractError({
               operation: "runtime-read-model.readThreadEpisodes",
               reason: "not-found",
-              message: `Thread group ${input.threadGroupId} was not found.`,
+              message: `Thread group ${input.target.threadGroupId} was not found.`,
             }),
           );
         }
         return buildStructuredThreadEpisodesReadModel(
           snapshot,
           input,
-        ) as RuntimeThreadEpisodesReadModel;
+        ) as unknown as RuntimeThreadEpisodesReadModel;
       }),
     getThreadGroup: (input: GetRuntimeThreadGroupInput) =>
       Effect.gen(function* () {
@@ -92,7 +91,7 @@ export function runtimeReadModelStatePortFromStructuredSessionState(
         return buildStructuredThreadGroupReadModel(
           snapshot,
           currentThread,
-        ) as RuntimeThreadGroupReadModel;
+        ) as unknown as RuntimeThreadGroupReadModel;
       }),
   };
 }

@@ -1,4 +1,3 @@
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import {
   RuntimeApprovalStatePort,
@@ -12,23 +11,7 @@ import {
   type StateInvalidationDescriptor,
 } from "@svvy/core";
 import { RuntimeEventBus } from "./runtime-event-bus";
-
-export type RuntimeApprovalAnsweredInput = {
-  readonly input: AnswerRuntimeApprovalInput;
-  readonly request: RuntimeApprovalRecord;
-  readonly commandId: CommandId;
-};
-
-export interface RuntimeApprovalAnswerPostCommitHostService {
-  afterApprovalAnswered(
-    input: RuntimeApprovalAnsweredInput,
-  ): Effect.Effect<void, RuntimeContractError>;
-}
-
-export class RuntimeApprovalAnswerPostCommitHost extends Context.Service<
-  RuntimeApprovalAnswerPostCommitHost,
-  RuntimeApprovalAnswerPostCommitHostService
->()("@svvy/runtime/RuntimeApprovalAnswerPostCommitHost") {}
+import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 
 function mapApprovalStateFailure(operation: string, cause: unknown): RuntimeContractError {
   const stateCause = cause as {
@@ -101,7 +84,7 @@ export const answerRuntimeApproval = Effect.fn("@svvy/runtime/approvals.answer")
   const approvalState = yield* RuntimeApprovalStatePort;
   const commandState = yield* RuntimeCommandStatePort;
   const sessionWaitState = yield* RuntimeSessionWaitStatePort;
-  const postCommitHost = yield* RuntimeApprovalAnswerPostCommitHost;
+  const approvalWaitService = yield* RuntimeApprovalWaitService;
 
   const pending = yield* approvalState
     .getApprovalRequest({ requestId: input.approvalId })
@@ -170,7 +153,11 @@ export const answerRuntimeApproval = Effect.fn("@svvy/runtime/approvals.answer")
     );
   yield* publishAfterCommit("runtime.approvals.answer", clearWaitResult.afterCommit);
 
-  yield* postCommitHost.afterApprovalAnswered({ input, request, commandId });
+  yield* approvalWaitService.afterApprovalCommitted({
+    request,
+    approved: input.decision === "approved",
+    reason: input.reason ?? null,
+  });
 
   return {
     approvalId: request.requestId,

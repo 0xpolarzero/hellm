@@ -21,29 +21,32 @@ File-system events are invalidation hints only. They are never treated as author
 
 `@svvy/runtime` owns scoped source invalidation coordinator lifecycles:
 
-- `app-global`: one coordinator per app bootstrap watches
-  `~/.config/svvy/workflows/{agents,prompts,components,workflows}/**`,
-  `~/.config/svvy/extensions/sources/{user,builtin}/**`, and
-  `~/.config/svvy/extensions/package/package.json`; performs app-global generated-package refresh;
-  writes app-scoped source/build facts through core-owned state ports implemented by
-  `@svvy/state`; and fans out workspace-link repair to acquired workspace runtimes. It excludes
+- `app-global`: one coordinator per app bootstrap watches editable Workflows source under
+  `~/.config/svvy/workflows/{agents,prompts,components,workflows}/**`, editable Extensions source
+  under `~/.config/svvy/extensions/sources/{user,builtin}/**`, and the app-owned Extensions package
+  manifest only as dependency/build evidence. The package manifest is not user-editable extension
+  source truth; changes to it trigger readiness/build reconciliation, not source-record mutation.
+  The coordinator performs app-global generated-package refresh; writes app-scoped source/build
+  facts through core-owned state ports implemented by `@svvy/state`; wakes link repair for acquired
+  workspace runtime scopes; and records repair-needed facts plus recovery work for unopened workspaces. It
+  excludes
   generated outputs, build directories, workspace links, trash, snapshots, and other non-source
   evidence.
-- `workspace`: one coordinator per acquired workspace runtime watches workspace external-instruction
+- `workspace`: one coordinator per acquired workspace runtime scope watches workspace external-instruction
   candidates and discovered host snippet sources for that workspace only.
 
-App-global generated-package refresh must not run once per workspace runtime. Workspace runtimes may
+App-global generated-package refresh must not run once per workspace runtime scope. Workspace runtime scopes may
 enqueue link-repair work for their own `.smithers/node_modules/@svvyx/*` links after an app-global
 package build commits.
 
 Workspace-link repair follows committed generated-package facts:
 
-- If a workspace runtime is acquired when an app-global generated package build commits, runtime
-  wakes that workspace runtime's link-repair worker after generated-package facts commit.
+- If a workspace runtime scope is acquired when an app-global generated package build commits, runtime
+  wakes that workspace scope's link-repair worker after generated-package facts commit.
   Workspace-link facts are written by the separate repair worker.
 - If a workspace is not acquired, runtime writes a workspace-link fact requiring repair and, when
   required for scheduling, `workspace_generated_package_link_repair` recovery work through
-  core-owned state ports. The next acquisition of that workspace runtime reads those facts and
+  core-owned state ports. The next acquisition of that workspace runtime scope reads those facts and
   repairs links before exposing Workflows-generated imports as ready for that workspace.
 - If a workspace is released while repair is in progress, the scoped repair fiber is interrupted,
   the current link fact remains non-ready or recovery-pending, and the next workspace acquisition
@@ -59,17 +62,26 @@ Each coordinator:
 - coalesces raw events with a short debounce
 - periodically reconciles source fingerprints as a backstop for missed watcher events
 - fingerprints deterministic source inputs by path and file content
-- commits source fingerprints, diagnostics, generated-package facts, and state facts that drive
-  read-model projection through core-owned state ports
-- receives `StateMutationResult.afterCommit` descriptors from committed runtime-facing state-port
-  transactions
-- treats `StateCommandsFacade` receipts as caller-facing command outputs only; runtime-owned
-  follow-up work is scheduled only from committed after-commit descriptors accepted by the runtime
-  invalidation boundary
+- commits source fingerprints, diagnostics, and state facts that drive read-model projection through
+  core-owned state ports; generated-package facts are committed only by the app-global refresh lane
+  or runtime-owned workspace-link repair lane as applicable
+- records deterministic source scan evidence through `RuntimeSourceStatePort.recordSourceScan(...)`,
+  `recordObservedSourceDeletion(...)`, and `recordSourceDiagnostic(...)`, keyed by
+  `(SourceInvalidationScope, SourceDomain)`. These records store committed fingerprints,
+  diagnostics, observed deletion paths, observation kind, and observation timestamps. They do not
+  store source file contents and are not a substitute for editable source facts keyed by
+  `(sourceKind, sourceId)`.
+- receives committed after-commit descriptors from runtime-facing core-owned state-port transactions
+- treats app/bootstrap or desktop `StateCommandsFacade` receipts as caller-facing command outputs
+  only; runtime-owned coordinators do not consume those receipts for scheduling
+- schedules runtime-owned follow-up work only from committed after-commit descriptors returned by
+  runtime-facing core-owned state ports
 - maps descriptor-backed changes to runtime-owned follow-up work
-- publishes typed read-model invalidation notifications only after transaction commit
-- records app-log facts only through state app-log ports/facades when a product event requires
-  durable observability
+- returns committed after-commit descriptors for typed read-model invalidation; runtime publishes
+  corresponding typed events only after transaction commit
+- records app-log facts only through `AppLogWritePort` or runtime-facing core-owned state ports
+  implemented by `@svvy/state` when a product event requires durable observability; state facades are
+  consumer/app-edge APIs and are not used by runtime coordinators for scheduling or durable writes
 
 Only the app-global runtime coordinator schedules app-global generated-package refresh. Runtime
 applies that refresh by invoking the `@svvy/extensions` generated-package service for validation and
@@ -79,35 +91,47 @@ app-global generated-package builds.
 
 Coordinator schedules are deterministic Effect schedules:
 
-| Schedule                  | Default                                                                                                                                                                                                                         | Scope                        | Rule                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| startup reconcile         | immediate on coordinator acquisition                                                                                                                                                                                            | app-global and workspace     | must complete or record diagnostics/recovery before the coordinator reports ready                                      |
-| watcher debounce          | 250 ms after the latest accepted hint, maximum coalescing latency 2 s                                                                                                                                                           | per coordinator and domain   | coalesces duplicate/editor-save events into one deterministic scan                                                     |
-| periodic reconcile        | every 60 s while the coordinator is acquired                                                                                                                                                                                    | per coordinator              | scans all domains owned by that coordinator as a missed-event backstop                                                 |
-| failed scan retry         | `Schedule.exponential("500 millis").pipe(Schedule.modifyDelay((_, delay) => Effect.succeed(Duration.min(delay, Duration.seconds(10)))), Schedule.bothLeft(Schedule.recurs(5)))`; retries only typed transient IO/build failures | per failed domain scan/build | `recurs(5)` means five follow-up attempts after the initial failed scan; final failure records recovery row/diagnostic |
-| manual/recovery reconcile | immediate, outside watcher debounce                                                                                                                                                                                             | requested scope/domain       | runs through the same fingerprint/build/write/event path as scheduled scans                                            |
+| Schedule                  | Default                                                                                                                                                                                                               | Scope                        | Rule                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
+| startup reconcile         | immediate on coordinator acquisition                                                                                                                                                                                  | app-global and workspace     | must complete or record diagnostics/recovery before the coordinator reports ready             |
+| watcher debounce          | `RuntimeLayerConfig.sourceDebounceMs`, default 250 ms after the latest accepted watcher or public hint; force one scan by `RuntimeLayerConfig.sourceMaxCoalescingLatencyMs`, default 2 s, even under continuous hints | per coordinator and domain   | coalesces duplicate/editor-save events into one deterministic scan                            |
+| periodic reconcile        | `Schedule.spaced(60 seconds)` while the coordinator is acquired; first steady-state run starts 60 s after startup reconcile completes                                                                                 | per coordinator              | scans all domains owned by that coordinator as a missed-event backstop                        |
+| failed scan retry         | `RuntimeLayerConfig.sourceRetryInitialDelayMs`, `sourceRetryMaxDelayMs`, and `sourceRetryMaxAttempts`; defaults expand to exponential 500 ms capped at 10 s with 5 follow-up attempts                                 | per failed domain scan/build | retries only typed transient IO/build failures; final failure records recovery row/diagnostic |
+| manual/recovery reconcile | immediate, outside watcher debounce                                                                                                                                                                                   | requested scope/domain       | runs through the same fingerprint/build/write/event path as scheduled scans                   |
 
-Tests use Effect `TestClock` to advance debounce, periodic reconcile, timeout, and retry schedules.
+Tests use Effect `TestClock` to advance debounce, periodic reconcile, and retry schedules.
 Runtime source invalidation code must not use raw timers or host time for these schedules.
+The debounce/max-coalescing lane is one owner-owned scheduling composition: the latest accepted hint
+resets the debounce deadline, while the max-coalescing deadline is measured from the first pending
+hint in the current burst and must still fire under continuous hints. Tests prove both behaviors
+with `TestClock`. Source invalidation retries are deterministic and do not use jitter unless the
+source spec and runtime layer config add an explicit jitter knob with deterministic tests; transient
+scan retries use capped exponential delays and never hide fixed sleeps inside the retried effect.
+Persisted source deadlines and scan timestamps are UTC instants from `DateTime.now`; elapsed waits,
+debounce, retry, and periodic cadence use `Clock` / `Schedule` and do not compare wall-clock
+instants to measure process duration.
 
 Path hints are canonicalized before they affect work:
 
-- Watcher coordinators store the watched root with each `FileSystem.watch(root)` stream. Raw
+- Watcher coordinators store the watched root with each runtime-owned host watch registration. Raw
   watcher event paths are resolved against that root before canonicalization because platform
-  backends may emit paths relative to the watched directory. A raw `WatchEvent.path` is never
+  backends may emit paths relative to the watched directory. A raw host watcher event path is never
   promoted directly into a public `SourceInvalidationHint`.
 - Runtime resolves the hint path through the platform filesystem/path service, normalizes separators,
   resolves `.` and `..`, and compares the canonical path against the allowed source roots for the
-  hinted scope/domain.
+  hinted scope/domain before applying generated/temp/trash ignore rules to public hints.
 - Symlink targets are resolved for containment checks. A source symlink that points outside the
   allowed root is treated as an invalid source diagnostic, not as permission to watch or fingerprint
   outside the domain.
 - Case handling follows the canonical path service result for the host filesystem; fingerprint keys
   use the canonical path string returned by that service.
 - Temporary editor files, package manager temp files, generated output paths, trash/snapshot paths,
-  and workspace `.smithers/node_modules/@svvyx/*` links are ignored as direct work triggers. If the
-  ignored path is under a watched root and the event might represent an atomic save, runtime
-  schedules the parent domain scan rather than trusting that path.
+  and workspace `.smithers/node_modules/@svvyx/*` links are ignored as direct work triggers only
+  after the path has been proven to live under the configured source root for that scope/domain. If
+  the ignored path is under a watched root and the event might represent an atomic save, runtime
+  schedules the parent domain scan rather than trusting that path. Public `hint(...)` classifies
+  this case as `scan-parent-domain`, and the runtime facade schedules the hinted domain through the
+  coordinator debounce/max-coalescing lane with reason `ignored-path-parent-domain-scan`.
 - A hint outside the allowed roots for its scope/domain is rejected with a typed runtime contract
   error when submitted through the public API. Raw watcher events outside the configured roots are
   ignored because they never become public `SourceInvalidationHint` values.
@@ -135,8 +159,10 @@ work. The state command that commits the write must return specific after-commit
 the affected model, ids, workspace, surface, profile, extension, or snippet scope; runtime publishes
 the corresponding typed notifications only after commit.
 
-Renderer panes do not watch files and do not infer source freshness. They subscribe to
-`@svvy/runtime` notifications and refetch the affected `@svvy/state` read models.
+Renderer panes do not watch files and do not infer source freshness. App/bootstrap subscribes to
+`@svvy/runtime` events, sequences and buffers them with the desktop bridge, and fans out
+renderer-safe notifications. Renderer panes consume those injected notifications and refetch the
+affected `@svvy/state` read models through the app-provided state facades.
 
 Editable file-backed panes additionally use edit-session conflict control. Each editable snapshot
 includes the source version it was loaded from, and each save is a compare-and-swap against the
@@ -176,11 +202,15 @@ workflow-agent parameter records, asks `@svvy/extensions` to validate file-backe
 schedules app-global generated-package refresh through `@svvy/runtime`. Runtime invokes the
 `@svvy/extensions` generated-package service to rebuild `@svvyx/extensions` when required and then
 `@svvyx/workflows`; after generated-package facts commit, runtime schedules workspace-link repair for
-affected acquired workspace runtimes. Runtime recomputes current generated-context fingerprints,
-commits affected read-model/freshness facts through core-owned state ports, receives
-after-commit descriptors, publishes the corresponding typed notifications, and marks affected open
-surfaces stale by bound/current fingerprint mismatch. `@svvy/runtime` refreshes opted-in stale
-surfaces before the next prompt-bearing dispatch.
+affected acquired workspace runtime scopes. Ordinary Workflows prompt/component/workflow source changes
+update Workflows library, generated-package, diagnostics, and workspace-link read models only; they
+do not mark open orchestrator or handler surfaces stale by themselves. Workflow-agent parameter
+source changes update workflow-agent read models and generated `@svvyx/workflows` exports. They
+mark existing workflow task-agent attempt surfaces stale only when their bound generated-context or
+workflow-agent prompt metadata fingerprint differs from the current committed source-observation
+fingerprint for the file-backed `.agent.json` source. The DB row is an index over the file-backed
+source, not the source of truth.
+`@svvy/runtime` refreshes opted-in stale surfaces before the next prompt-bearing dispatch.
 
 ### Extensions Source
 
@@ -193,16 +223,17 @@ Sources:
 ```
 
 Invalidation refreshes extension inventory readiness and rebuilds extension-generated outputs through
-the `@svvy/extensions` build/generated-package services. Explicit `svvyx extensions` and
-`svvyx workflows build` commands enter the same runtime-owned command and generated-package refresh
-lane. Extension command handlers return pre-commit model-facing results plus ordered
+the `@svvy/extensions` generated-package refresh service and extension-owned source/build
+validation exposed by package contracts. Explicit `svvyx extensions` and `svvyx workflows build`
+commands enter the same runtime-owned command and generated-package refresh lane. Extension command
+handlers return pre-commit model-facing results plus ordered
 `ExtensionRuntimeOperation` values wrapping closed declarative refresh requests. They do not emit
 durable command facts directly and do not apply workspace links. Runtime applies accepted refresh
 requests, commits affected generated-context, declaration, read-model, generated-package, and
-freshness facts through core-owned state ports, receives after-commit descriptors, publishes the
-corresponding typed notifications, and marks affected open surfaces stale by bound/current
-fingerprint mismatch. `@svvy/runtime` refreshes opted-in stale surfaces before the next
-prompt-bearing dispatch.
+freshness facts through core-owned state ports from `@svvy/extensions`-built generated-context and
+generated-package evidence, receives after-commit descriptors, publishes the corresponding typed
+notifications, and marks affected open surfaces stale by bound/current fingerprint mismatch.
+`@svvy/runtime` refreshes opted-in stale surfaces before the next prompt-bearing dispatch.
 
 ### External Instructions
 
@@ -265,30 +296,42 @@ Each invalidation batch runs in this order:
 
 1. Re-read source inputs.
 2. Validate source contracts.
-3. Rebuild generated packages only for domains that require generated output.
-4. Keep the last ready generated package active if a rebuild fails.
+3. For domains that require generated output, have runtime schedule/apply the app-global
+   generated-package refresh lane; workspace coordinators schedule/apply only workspace-link repair
+   after committed generated-package facts.
+4. Keep the last ready generated package active if a refresh fails.
 5. Surface diagnostics through app logs and relevant read models.
-6. Publish invalidations for affected read models so renderer read-model caches can refetch from
-   state.
+6. Commit affected facts through core-owned state ports, collect committed after-commit descriptors,
+   and have `@svvy/runtime` publish typed invalidation events only after commit; app/bootstrap
+   derives renderer-safe invalidations and rebaseline notices so renderer caches refetch through
+   injected state facades.
 7. Mark open surfaces stale by generated-context fingerprint mismatch; opted-in surfaces refresh
    automatically before their next prompt-bearing dispatch.
 
 The same ordering applies to explicit generated-package refresh requests such as
 `svvyx workflows build`, startup reconcile, and runtime recovery work. A refresh request must reread
 the relevant file-backed source in the same batch before validating or emitting generated files.
-Previously recorded source fingerprint rows are comparison inputs and previous-ready evidence; they
-are not proof that current filesystem contents have already been observed for the requested build.
+
+Runtime coordinators advance their in-memory source-fingerprint baseline only after the batch has
+committed the scan/build facts and `@svvy/runtime` has accepted the returned
+after-commit descriptors for runtime-owned follow-up scheduling/publication. If
+follow-up scheduling is interrupted before acceptance, the coordinator keeps the new fingerprint
+pending so recovery can retry descriptor handling from durable state. Renderer notification or
+bridge fanout failure does not make committed source facts non-authoritative; consumers recover by
+refetching state-backed read models.
+Recorded source fingerprint rows are comparison inputs and previous-ready evidence; they are not
+proof that current filesystem contents have already been observed for the requested build.
 
 Path-to-work matrix:
 
-| Changed source                                                                       | Source owner                                                                                                             | Refresh work                                                                                                  | Generated package work                                                                                                                                       | Read-model invalidations                                                                    | Surface stale scope                                                                                               |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Workflows `agents/*.agent.json`                                                      | `@svvy/extensions` Workflows source service                                                                              | reread and validate task-agent parameters, extension override references, provider/model/reasoning selections | rebuild `@svvyx/extensions` only if extension reference exports changed, then rebuild `@svvyx/workflows` agent exports                                       | Agents workflow-agent rows, Workflows library, generated package facts, diagnostics         | workflow-task parameter records and any surface whose generated context includes affected workflow-agent metadata |
-| Workflows prompts/components/workflows source                                        | `@svvy/extensions` Workflows source service                                                                              | reread, validate, and update source metadata/diagnostics                                                      | rebuild `@svvyx/workflows`; rebuild `@svvyx/extensions` first only when validation needs newer extension reference exports                                   | Workflows library, generated package facts, diagnostics                                     | surfaces only when generated actor context or workflow-agent prompt metadata fingerprint changes                  |
-| Extension instruction MDX or scripted contributor source                             | `@svvy/extensions` extension source service                                                                              | compile/render contributor, recompute extension prompt and actor generated-context fingerprints               | refresh generated declarations only if callable/facade metadata changed; rebuild `@svvyx/extensions` when generated extension references changed             | Extensions inventory, Agents generated context previews, diagnostics                        | surfaces loading that extension and opted into refresh                                                            |
-| Extension command source, manifest, dependency, env declaration, or package metadata | `@svvy/extensions` extension source/build service                                                                        | rebuild extension outputs/readiness, generated command schema, facade declarations, env/dependency readiness  | rebuild `@svvyx/extensions`; rebuild dependent `@svvyx/workflows` when workflow-agent validation or generated agent exports depend on changed extension refs | Extensions inventory, command/declaration read models, generated package facts, diagnostics | surfaces whose callable declarations or loaded context changed                                                    |
-| External `AGENTS.md` / `CLAUDE.md`                                                   | `@svvy/extensions` external-instruction service                                                                          | rediscover, read/diagnose, fingerprint, and update external instruction records                               | none                                                                                                                                                         | Extensions external-instruction rows, generated context previews, diagnostics               | surfaces in that workspace whose generated context includes that instruction                                      |
-| Discovered read-only host snippet Markdown                                           | external host Markdown file; runtime coordinates scanning and `@svvy/state` persists discovered snippet projection facts | rediscover, read/diagnose, fingerprint, and update discovered snippet records                                 | none                                                                                                                                                         | Snippets pane and composer picker                                                           | none                                                                                                              |
+| Changed source                                                                       | Source owner                                                                                                             | Refresh work                                                                                                  | Generated package work                                                                                                                                       | Read-model invalidations                                                                    | Surface stale scope                                                                                             |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Workflows `agents/*.agent.json`                                                      | `@svvy/extensions` Workflows source service                                                                              | reread and validate task-agent parameters, extension override references, provider/model/reasoning selections | rebuild `@svvyx/extensions` only if extension reference exports changed, then rebuild `@svvyx/workflows` agent exports                                       | Agents workflow-agent rows, Workflows library, generated package facts, diagnostics         | existing workflow task-agent attempt surfaces only when their bound workflow-agent metadata fingerprint changes |
+| Workflows prompts/components/workflows source                                        | `@svvy/extensions` Workflows source service                                                                              | reread, validate, and update source metadata/diagnostics                                                      | rebuild `@svvyx/workflows`; rebuild `@svvyx/extensions` first only when validation needs newer extension reference exports                                   | Workflows library, generated package facts, diagnostics                                     | none, unless a separate state-backed actor generated-context binding fact changes                               |
+| Extension instruction MDX or scripted contributor source                             | `@svvy/extensions` extension source service                                                                              | compile/render contributor, recompute extension prompt and actor generated-context fingerprints               | refresh generated declarations only if callable/facade metadata changed; rebuild `@svvyx/extensions` when generated extension references changed             | Extensions inventory, Agents generated-context read models, diagnostics                     | surfaces loading that extension and opted into refresh                                                          |
+| Extension command source, manifest, dependency, env declaration, or package metadata | `@svvy/extensions` extension source/build service                                                                        | rebuild extension outputs/readiness, generated command schema, facade declarations, env/dependency readiness  | rebuild `@svvyx/extensions`; rebuild dependent `@svvyx/workflows` when workflow-agent validation or generated agent exports depend on changed extension refs | Extensions inventory, command/declaration read models, generated package facts, diagnostics | surfaces whose callable declarations or loaded context changed                                                  |
+| External `AGENTS.md` / `CLAUDE.md`                                                   | `@svvy/extensions` external-instruction service                                                                          | rediscover, read/diagnose, fingerprint, and update external instruction records                               | none                                                                                                                                                         | Extensions external-instruction rows, generated-context read models, diagnostics            | surfaces in that workspace whose generated context includes that instruction                                    |
+| Discovered read-only host snippet Markdown                                           | external host Markdown file; runtime coordinates scanning and `@svvy/state` persists discovered snippet projection facts | rediscover, read/diagnose, fingerprint, and update discovered snippet records                                 | none                                                                                                                                                         | Snippets pane and composer picker                                                           | none                                                                                                            |
 
 `@svvyx/workflows` refreshes pin validation to the committed `@svvyx/extensions` build id when it
 depends on generated extension references. A Workflows build that validated against an older

@@ -43,6 +43,7 @@ export function buildWorkspaceSessionNavigation<Session extends WorkspaceSession
       sizePx: DEFAULT_SESSION_SECTION_SIZES.archived,
     },
   };
+  const archivedCollapsed = sections.archived.collapsed;
 
   return {
     pinnedSessions: sessions
@@ -53,7 +54,7 @@ export function buildWorkspaceSessionNavigation<Session extends WorkspaceSession
       .toSorted((left, right) => descendingTimestamp(left.updatedAt, right.updatedAt)),
     sections,
     archived: {
-      collapsed,
+      collapsed: archivedCollapsed,
       sessions: sessions
         .filter((session) => session.isArchived)
         .toSorted((left, right) => descendingTimestamp(left.archivedAt, right.archivedAt)),

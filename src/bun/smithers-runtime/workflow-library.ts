@@ -1,19 +1,17 @@
 import {
   copyFileSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
-  symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
+import * as Exit from "effect/Exit";
 import ts from "typescript";
 import { BUILTIN_EXTENSIONS, resolveActorExtensionState } from "@svvy/extensions";
 import type { AgentSettingsStore } from "../agent-settings-store";
@@ -21,6 +19,7 @@ import type { ExtensionEnvSecretStore } from "../extension-env-secret-store";
 import {
   resolveExtensionRecord,
   runSvvyxExtensionsCommand,
+  type ExtensionDependencyCommittedApprovalState,
   type SvvyxExtensionsCliProbe,
   validateExtensionBuildInput,
 } from "../svvyx-extensions-command";
@@ -32,6 +31,7 @@ import {
   writeGeneratedExtensionsPackage,
 } from "../generated-extensions-package";
 export { getExtensionsGeneratedPackagePath } from "../generated-extensions-package";
+import { decodeUnknownTaskAgentParametersSourceExit } from "@svvy/core";
 import type { ReasoningEffort } from "../../shared/agent-settings";
 import type {
   WorkspaceWorkflowsGeneratedExport,
@@ -70,7 +70,6 @@ export type WorkflowsBuildDiagnostic = {
 export type WorkflowsBuildResult = {
   ok: boolean;
   generatedPackagePath: string;
-  linkedWorkspaces: string[];
   diagnostics: WorkflowsBuildDiagnostic[];
   items: WorkspaceWorkflowsGeneratedExport[];
 };
@@ -94,7 +93,6 @@ type WorkflowGeneratedManifest = {
 const GENERATED_MANIFEST_FILE = ".svvy-workflows-manifest.json";
 const TASK_AGENT_OVERRIDE_STATES = ["loaded", "available", "unavailable"] as const;
 export const GENERATED_WORKFLOWS_PACKAGE_NAME = "@svvyx/workflows";
-const GENERATED_PACKAGE_SCOPE = "@svvyx";
 
 type TaskAgentExtensionOverrideState = (typeof TASK_AGENT_OVERRIDE_STATES)[number];
 
@@ -110,6 +108,7 @@ export async function buildWorkflowsGeneratedPackage(options: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   envSecretStore?: ExtensionEnvSecretStore;
+  extensionDependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionsRoot?: string;
@@ -117,7 +116,6 @@ export async function buildWorkflowsGeneratedPackage(options: {
   generatedPackagePath?: string;
   modelCatalog?: readonly SvvyxWorkflowsModelChoice[];
   sourceRoot?: string;
-  workspaceCwds?: readonly string[];
 }): Promise<WorkflowsBuildResult> {
   const sourceRoot = options.sourceRoot ?? getWorkflowsSourceRoot();
   const generatedPackagePath = options.generatedPackagePath ?? getWorkflowsGeneratedPackagePath();
@@ -125,19 +123,20 @@ export async function buildWorkflowsGeneratedPackage(options: {
   const diagnostics: WorkflowsBuildDiagnostic[] = [];
   validateUserExtensionSourcesForWorkflowBuild(options.extensionsRoot, diagnostics);
   if (diagnostics.length > 0) {
-    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+    return { ok: false, generatedPackagePath, diagnostics, items: [] };
   }
   await buildUserExtensionsForWorkflowBuild(options, diagnostics);
   if (diagnostics.length > 0) {
-    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+    return { ok: false, generatedPackagePath, diagnostics, items: [] };
   }
   validateUserExtensionsForWorkflowBuild(options.extensionsRoot, diagnostics);
   if (diagnostics.length > 0) {
-    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+    return { ok: false, generatedPackagePath, diagnostics, items: [] };
   }
 
   const sourceItems = readWorkflowSourceItems(sourceRoot, generatedPackagePath, diagnostics);
   const extensionExportIds = generatedExtensionExportIds({
+    dependencyApprovalState: options.extensionDependencyApprovalState,
     extensionsRoot: options.extensionsRoot,
   });
   validateWorkflowSourceItems(
@@ -148,7 +147,7 @@ export async function buildWorkflowsGeneratedPackage(options: {
   );
 
   if (diagnostics.length > 0) {
-    return { ok: false, generatedPackagePath, linkedWorkspaces: [], diagnostics, items: [] };
+    return { ok: false, generatedPackagePath, diagnostics, items: [] };
   }
 
   const backupPath = nextGeneratedPackageBackupPath(generatedPackagePath);
@@ -168,11 +167,6 @@ export async function buildWorkflowsGeneratedPackage(options: {
     }
     writeGeneratedExtensionsPackage(extensionsGeneratedPackagePath, extensionExportIds);
     writeGeneratedPackage(generatedPackagePath, sourceItems);
-    const linkedWorkspaces = linkGeneratedWorkflowsPackageIntoWorkspaces(
-      options.workspaceCwds ?? [],
-      generatedPackagePath,
-      extensionsGeneratedPackagePath,
-    );
     const readModel = await readWorkflowsGeneratedReadModel(generatedPackagePath, { sourceRoot });
     if (hadPreviousPackage) {
       rmSync(backupPath, { force: true, recursive: true });
@@ -183,7 +177,6 @@ export async function buildWorkflowsGeneratedPackage(options: {
     return {
       ok: true,
       generatedPackagePath,
-      linkedWorkspaces,
       diagnostics: [],
       items: readModel.items,
     };
@@ -231,6 +224,7 @@ async function buildUserExtensionsForWorkflowBuild(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     envSecretStore?: ExtensionEnvSecretStore;
+    extensionDependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
     extensionsBuildRoot?: string;
     extensionsCliProbe?: SvvyxExtensionsCliProbe;
     extensionsRoot?: string;
@@ -258,6 +252,7 @@ async function buildUserExtensionsForWorkflowBuild(
         cliProbe: options.extensionsCliProbe,
         command: `svvyx extensions build ${quoteCommandWord(extension.id)} --json`,
         cwd: options.cwd,
+        dependencyApprovalState: options.extensionDependencyApprovalState,
         env: options.env,
         envSecretStore: options.envSecretStore,
         extensionsRoot,
@@ -454,94 +449,6 @@ function nextGeneratedPackageBackupPath(generatedPackagePath: string): string {
     `Unable to allocate Workflows generated package backup path for ${generatedPackagePath}`,
     generatedPackagePath,
   );
-}
-
-export function ensureWorkflowsPackageLink(input: {
-  extensionsGeneratedPackagePath?: string;
-  generatedPackagePath?: string;
-  workspaceCwd: string;
-}): boolean {
-  return ensureGeneratedPackageLink({
-    generatedPackagePath: input.generatedPackagePath ?? getWorkflowsGeneratedPackagePath(),
-    packageName: "workflows",
-    workspaceCwd: input.workspaceCwd,
-  });
-}
-
-export function ensureExtensionsPackageLink(input: {
-  extensionsGeneratedPackagePath?: string;
-  generatedPackagePath?: string;
-  workspaceCwd: string;
-}): boolean {
-  return ensureGeneratedPackageLink({
-    generatedPackagePath: effectiveExtensionsGeneratedPackagePath(input),
-    packageName: "extensions",
-    workspaceCwd: input.workspaceCwd,
-  });
-}
-
-export function ensureWorkflowsPackageLinks(input: {
-  extensionsGeneratedPackagePath?: string;
-  generatedPackagePath?: string;
-  workspaceCwd: string;
-}): boolean {
-  const workflowsLinked = ensureWorkflowsPackageLink(input);
-  const extensionsLinked = ensureExtensionsPackageLink(input);
-  return workflowsLinked || extensionsLinked;
-}
-
-function ensureGeneratedPackageLink(input: {
-  generatedPackagePath: string;
-  packageName: "extensions" | "workflows";
-  workspaceCwd: string;
-}): boolean {
-  const smithersRoot = join(input.workspaceCwd, ".smithers");
-  if (!existsSync(smithersRoot) || !statSync(smithersRoot).isDirectory()) {
-    return false;
-  }
-  if (
-    !existsSync(input.generatedPackagePath) ||
-    !statSync(input.generatedPackagePath).isDirectory()
-  ) {
-    return false;
-  }
-  const scopeRoot = join(smithersRoot, "node_modules", GENERATED_PACKAGE_SCOPE);
-  const linkPath = join(scopeRoot, input.packageName);
-  mkdirSync(scopeRoot, { recursive: true });
-  if (existsSync(linkPath)) {
-    const existing = lstatSync(linkPath);
-    if (existing.isSymbolicLink()) {
-      unlinkSync(linkPath);
-    } else {
-      throw workflowLibraryError(
-        "link_failed",
-        `Cannot replace non-symlink ${input.packageName} package path: ${linkPath}`,
-        linkPath,
-      );
-    }
-  }
-  symlinkSync(input.generatedPackagePath, linkPath, "dir");
-  return true;
-}
-
-function linkGeneratedWorkflowsPackageIntoWorkspaces(
-  workspaceCwds: readonly string[],
-  generatedPackagePath: string,
-  extensionsGeneratedPackagePath: string,
-): string[] {
-  const linked: string[] = [];
-  for (const workspaceCwd of new Set(workspaceCwds)) {
-    if (
-      ensureWorkflowsPackageLinks({
-        extensionsGeneratedPackagePath,
-        generatedPackagePath,
-        workspaceCwd,
-      })
-    ) {
-      linked.push(workspaceCwd);
-    }
-  }
-  return linked;
 }
 
 export function writeWorkflowSourceItem(input: {
@@ -1419,6 +1326,34 @@ function isTaskAgentExtensionOverrideState(
   );
 }
 
+function validateTaskAgentParametersSourceContract(
+  item: WorkflowSourceItem,
+  diagnostics: WorkflowsBuildDiagnostic[],
+): void {
+  const parameters = item.agentParameters ?? {};
+  const { extensionOrder, ...bridgeParameters } = parameters;
+  if (
+    extensionOrder !== undefined &&
+    (!Array.isArray(extensionOrder) || !extensionOrder.every((value) => typeof value === "string"))
+  ) {
+    diagnostics.push({
+      code: "invalid_agent_parameters",
+      message: `Workflow agent ${item.exportName} extensionOrder must be an array of extension ids.`,
+      path: item.sourcePath,
+      exportName: item.exportName,
+    });
+    return;
+  }
+  if (Exit.isFailure(decodeUnknownTaskAgentParametersSourceExit(bridgeParameters))) {
+    diagnostics.push({
+      code: "invalid_agent_parameters",
+      message: `Workflow agent ${item.exportName} must match TaskAgentParametersSource.`,
+      path: item.sourcePath,
+      exportName: item.exportName,
+    });
+  }
+}
+
 function reasoningEffortProperty(parameters: Record<string, unknown>): ReasoningEffort | null {
   const reasoning = parameters.reasoning;
   if (!isRecord(reasoning)) return null;
@@ -1454,6 +1389,7 @@ function validateWorkflowSourceItems(
 
     if (item.kind !== "agent") continue;
     const parameters = item.agentParameters ?? {};
+    validateTaskAgentParametersSourceContract(item, diagnostics);
     const provider = stringProperty(parameters, "provider");
     const model = stringProperty(parameters, "model");
     const reasoningEffort = reasoningEffortProperty(parameters);
@@ -1684,6 +1620,7 @@ function writeAgentsIndex(
       "  onStdout?: (text: string) => void;",
       "  onStderr?: (text: string) => void;",
       "};",
+      "const WORKFLOW_TASK_AGENT_BRIDGE_MAX_RESPONSE_BYTES = 1048576;",
       "function readRequiredEnv(name: string): string {",
       '  const value = typeof process === "undefined" ? undefined : process.env?.[name];',
       "  if (!value) {",
@@ -1701,6 +1638,15 @@ function writeAgentsIndex(
       "    throw new Error(`Invalid svvy workflow task-agent bridge env var: ${name} must be a positive integer.`);",
       "  }",
       "  return parsed;",
+      "}",
+      "function readOptionalPositiveIntegerValue(name: string, value: unknown): number | undefined {",
+      "  if (value === undefined) {",
+      "    return undefined;",
+      "  }",
+      '  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {',
+      "    throw new Error(`Invalid svvy workflow task-agent bridge option: ${name} must be a positive integer.`);",
+      "  }",
+      "  return value;",
       "}",
       "function isBridgeRecord(value: unknown): value is Record<string, unknown> {",
       '  return Boolean(value) && typeof value === "object" && !Array.isArray(value);',
@@ -1771,6 +1717,36 @@ function writeAgentsIndex(
       "  args.onEvent?.(text);",
       "  args.onStderr?.(`${text}\\n`);",
       "}",
+      "async function readBridgeResponseText(response: Response, maxResponseBytes: number): Promise<string> {",
+      "  if (!response.body) {",
+      '    return "";',
+      "  }",
+      "  const reader = response.body.getReader();",
+      "  const chunks: Uint8Array[] = [];",
+      "  let totalBytes = 0;",
+      "  while (true) {",
+      "    const { done, value } = await reader.read();",
+      "    if (done) {",
+      "      break;",
+      "    }",
+      "    if (!value) {",
+      "      continue;",
+      "    }",
+      "    totalBytes += value.byteLength;",
+      "    if (totalBytes > maxResponseBytes) {",
+      "      await reader.cancel().catch(() => undefined);",
+      '      throw new Error("svvy workflow task-agent bridge response exceeded the configured byte limit.");',
+      "    }",
+      "    chunks.push(value);",
+      "  }",
+      "  const body = new Uint8Array(totalBytes);",
+      "  let offset = 0;",
+      "  for (const chunk of chunks) {",
+      "    body.set(chunk, offset);",
+      "    offset += chunk.byteLength;",
+      "  }",
+      "  return new TextDecoder().decode(body);",
+      "}",
       "async function callTaskAgentBridge(parameters: TaskAgentParametersSource, rawArgs: unknown): Promise<RunTaskAgentResult> {",
       '  const args = (rawArgs && typeof rawArgs === "object" ? rawArgs : {}) as GenerateArgs;',
       '  const bridgeUrl = readRequiredEnv("SVVY_WORKFLOW_AGENT_BRIDGE_URL");',
@@ -1778,6 +1754,8 @@ function writeAgentsIndex(
       '  const workspaceSessionId = readRequiredEnv("SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID");',
       '  const sourceCommandId = readRequiredEnv("SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID");',
       '  const timeoutMs = readOptionalPositiveIntegerEnv("SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS");',
+      '  const configuredMaxResponseBytes = readOptionalPositiveIntegerEnv("SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES");',
+      '  const maxResponseBytes = readOptionalPositiveIntegerValue("maxOutputBytes", args.maxOutputBytes) ?? configuredMaxResponseBytes ?? WORKFLOW_TASK_AGENT_BRIDGE_MAX_RESPONSE_BYTES;',
       "  const smithersContext = readSmithersContext(args);",
       "  const promptSource = readPromptSource(args);",
       "  const payload = {",
@@ -1809,7 +1787,7 @@ function writeAgentsIndex(
       "      body,",
       "      ...(timeoutController ? { signal: timeoutController.signal } : {}),",
       "    });",
-      '    const responseText = await response.text().catch(() => "");',
+      "    const responseText = await readBridgeResponseText(response, maxResponseBytes);",
       "    const responseBody = responseText.length > 0 ? parseBridgeJson(responseText) : {};",
       "    if (!response.ok) {",
       "      throw new Error(`svvy workflow task-agent bridge rejected runTaskAgent (${response.status} ${bridgeErrorCode(responseBody)}): ${bridgeErrorMessage(responseBody)}`);",
@@ -1861,7 +1839,7 @@ function writeAgentsIndex(
 }
 
 function serializeAgentParameters(parameters: Record<string, unknown>): string {
-  const { overrides, ...rest } = parameters;
+  const { overrides, extensionOrder: _extensionOrder, ...rest } = parameters;
   const overrideEntries = isRecord(overrides)
     ? Object.entries(overrides).filter(
         (entry): entry is [string, TaskAgentExtensionOverrideState] =>

@@ -1,15 +1,19 @@
 export * from "./extension-records";
 export * from "./extension-source-roots-port";
+export * from "./execute-typescript-facade-declarations";
 export * from "./extensions-service";
 export * from "./generated-package-root-port";
 export {
   GENERATED_EXTENSIONS_PACKAGE_NAME,
+  generatedExtensionExportIds,
   generatedExtensionExportIdsFromHost,
   generatedExtensionReferenceExpression,
+  generatedExtensionsPackageContents,
   generatedExtensionsPackageContentsFromHost,
   renderGeneratedExtensionsPackageFiles,
 } from "./generated-extensions-package";
 export type { GeneratedExtensionExportDiscoveryHost } from "./generated-extensions-package";
+export { renderGeneratedWorkflowsPackageFiles } from "./generated-workflows-package";
 export * from "./list-extensions-handler";
 export * from "./load-extension-handler";
 export * from "./native-tool-catalog";

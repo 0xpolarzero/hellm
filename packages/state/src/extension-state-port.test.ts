@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import * as Effect from "effect/Effect";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AbsolutePath,
   CommandId,
+  ExtensionDependencyApprovalIdentity,
   ExtensionDependencyReadiness,
   ExtensionId,
   IsoDateTimeString,
+  RecordRuntimeSourceScanInput,
 } from "@svvy/core";
 import {
   createStructuredSessionStateStore,
@@ -23,6 +24,18 @@ const absolutePath = (value: string): AbsolutePath => value as AbsolutePath;
 const checkedAt = (value: string): NonNullable<ExtensionDependencyReadiness["checkedAt"]> =>
   value as NonNullable<ExtensionDependencyReadiness["checkedAt"]>;
 const isoDateTime = (value: string): IsoDateTimeString => value as IsoDateTimeString;
+const extensionDependencyApprovalIdentity = (
+  input: Pick<ExtensionDependencyApprovalIdentity, "kind" | "name" | "version"> &
+    Partial<Omit<ExtensionDependencyApprovalIdentity, "kind" | "name" | "version">>,
+): ExtensionDependencyApprovalIdentity => ({
+  kind: input.kind,
+  packageManager: input.packageManager ?? "bun",
+  source: input.source ?? "npm",
+  name: input.name,
+  version: input.version,
+  integrity: input.integrity ?? null,
+  resolution: input.resolution ?? null,
+});
 
 function createDeterministicClock(start = "2026-04-18T09:00:00.000Z") {
   let cursor = Date.parse(start);
@@ -65,9 +78,15 @@ describe("extension state port", () => {
     return store;
   }
 
-  it("reads dependency readiness from state and delegates approval/source reads to host overrides", async () => {
+  it("reads dependency readiness, approval, and source fingerprints from state", async () => {
     const store = createStore();
     const extensionIdValue = extensionId("ext_tinyfish");
+    const sourceRoot = absolutePath("/extensions/source");
+    const dependency = extensionDependencyApprovalIdentity({
+      kind: "dependency",
+      name: "tinyfish",
+      version: "1.2.3",
+    });
     store.recordExtensionDependencyReadiness({
       readiness: {
         extensionId: extensionIdValue,
@@ -81,15 +100,29 @@ describe("extension state port", () => {
       sourceCommandId: commandId("cmd_dependency_01"),
       recordedAt: isoDateTime("2026-04-18T09:00:02.000Z"),
     });
-
-    const port = extensionStatePortFromStore(store, {
-      records: {
-        readSourceFingerprint: () => Effect.succeed("source-fingerprint-01"),
-      },
-      dependencies: {
-        isApproved: () => Effect.succeed(true),
-      },
+    store.recordExtensionDependencyApproval({
+      dependency,
+      approvedAt: isoDateTime("2026-04-18T09:00:03.000Z"),
+      approvedBy: "user",
+      sourceCommandId: commandId("cmd_dependency_approval_01"),
     });
+    store.recordRuntimeSourceScan({
+      scope: { kind: "app-global" },
+      domain: "extensions",
+      sourceFingerprint: "extensions-domain-fingerprint-01",
+      sourceRoots: [
+        {
+          sourceRoot,
+          rootFingerprint: "source-fingerprint-01",
+        },
+      ],
+      diagnostics: [],
+      scannedAt: isoDateTime(
+        "2026-04-18T09:00:04.000Z",
+      ) as RecordRuntimeSourceScanInput["scannedAt"],
+    });
+
+    const port = extensionStatePortFromStore(store);
 
     const readiness = await runTestEffect(
       port.dependencies.readReadiness({
@@ -104,19 +137,23 @@ describe("extension state port", () => {
       }),
     );
     const sourceFingerprint = await runTestEffect(
-      port.records.readSourceFingerprint({ sourceRoot: absolutePath("/extensions/source") }),
+      port.records.readSourceFingerprint({ sourceRoot }),
+    );
+    const missingSourceFingerprint = await runTestEffect(
+      port.records.readSourceFingerprint({ sourceRoot: absolutePath("/extensions/missing") }),
     );
     const approved = await runTestEffect(
       port.dependencies.isApproved({
-        dependency: {
+        dependency,
+      }),
+    );
+    const missingApproval = await runTestEffect(
+      port.dependencies.isApproved({
+        dependency: extensionDependencyApprovalIdentity({
           kind: "dependency",
-          packageManager: "bun",
-          source: "npm",
           name: "tinyfish",
-          version: "1.2.3",
-          integrity: null,
-          resolution: null,
-        },
+          version: "9.9.9",
+        }),
       }),
     );
 
@@ -125,6 +162,94 @@ describe("extension state port", () => {
     expect(readiness?.status).toBe("ready");
     expect(missing).toBeNull();
     expect(sourceFingerprint).toBe("source-fingerprint-01");
+    expect(missingSourceFingerprint).toBeNull();
     expect(approved).toBe(true);
+    expect(missingApproval).toBe(false);
+  });
+
+  it("requires complete dependency approval identity matches", async () => {
+    const store = createStore();
+    const dependency = extensionDependencyApprovalIdentity({
+      kind: "dependency",
+      name: "tinyfish",
+      version: "1.2.3",
+      integrity: "sha512-good",
+      resolution: "https://registry.npmjs.org/tinyfish/-/tinyfish-1.2.3.tgz",
+    });
+    const first = store.recordExtensionDependencyApproval({
+      dependency,
+      approvedAt: isoDateTime("2026-04-18T09:00:03.000Z"),
+      approvedBy: "user",
+      sourceCommandId: commandId("cmd_dependency_approval_01"),
+    });
+    const second = store.recordExtensionDependencyApproval({
+      dependency,
+      approvedAt: isoDateTime("2026-04-18T09:00:04.000Z"),
+      approvedBy: "user",
+      sourceCommandId: commandId("cmd_dependency_approval_02"),
+    });
+    const port = extensionStatePortFromStore(store);
+
+    expect(first.createdAt).toBe("2026-04-18T09:00:03.000Z");
+    expect(second.createdAt).toBe("2026-04-18T09:00:03.000Z");
+    expect(second.updatedAt).toBe("2026-04-18T09:00:04.000Z");
+    expect(second.sourceCommandId as string).toBe("cmd_dependency_approval_02");
+    await expectApproved(port, dependency, true);
+    await expectApproved(
+      port,
+      extensionDependencyApprovalIdentity({
+        kind: "dependency",
+        name: "tinyfish",
+        version: "1.2.3",
+      }),
+      false,
+    );
+    await expectApproved(
+      port,
+      extensionDependencyApprovalIdentity({
+        kind: "dependency",
+        name: "tinyfish",
+        version: "1.2.3",
+        integrity: "sha512-other",
+        resolution: dependency.resolution,
+      }),
+      false,
+    );
+    await expectApproved(
+      port,
+      extensionDependencyApprovalIdentity({
+        kind: "dependency",
+        name: "tinyfish",
+        version: "1.2.3",
+        integrity: dependency.integrity,
+        resolution: "https://registry.npmjs.org/tinyfish/-/tinyfish-1.2.3-other.tgz",
+      }),
+      false,
+    );
+    await expectApproved(
+      port,
+      extensionDependencyApprovalIdentity({
+        kind: "trusted_dependency",
+        name: "tinyfish",
+        version: "1.2.3",
+        integrity: dependency.integrity,
+        resolution: dependency.resolution,
+      }),
+      false,
+    );
   });
 });
+
+async function expectApproved(
+  port: ReturnType<typeof extensionStatePortFromStore>,
+  dependency: ExtensionDependencyApprovalIdentity,
+  expected: boolean,
+) {
+  await expect(
+    runTestEffect(
+      port.dependencies.isApproved({
+        dependency,
+      }),
+    ),
+  ).resolves.toBe(expected);
+}

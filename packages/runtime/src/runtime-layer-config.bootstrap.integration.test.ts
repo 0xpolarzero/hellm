@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import {
+  RuntimeStartupError,
   RuntimeShutdownPreparation,
   RuntimeStartupReadiness,
   awaitRuntimeStartupReadiness,
@@ -11,11 +12,18 @@ import {
   defaultRuntimeLayerConfig,
   prepareRuntimeShutdown,
 } from "./bootstrap";
-import type { RuntimePrepareShutdownInput } from "./bootstrap";
+import type { RuntimePrepareShutdownInput } from "./runtime-layer-config";
+import type { RuntimeStartupReadinessReceipt } from "./runtime-layer-config";
 
 describe("@svvy/runtime bootstrap lifecycle gates", () => {
   it("awaits startup readiness through the runtime-owned service", async () => {
     let readyCalls = 0;
+    const receipt: RuntimeStartupReadinessReceipt = {
+      status: "ready" as const,
+      readyAt: "2026-06-21T12:34:56.789Z",
+      completedPhases: ["layer-acquisition", "event-bus"] as const,
+      degradedPhases: [],
+    };
 
     const managedRuntime = ManagedRuntime.make(
       Layer.succeed(
@@ -23,14 +31,39 @@ describe("@svvy/runtime bootstrap lifecycle gates", () => {
         RuntimeStartupReadiness.of({
           awaitReady: Effect.sync(() => {
             readyCalls += 1;
+            return receipt;
           }),
         }),
       ),
     );
 
     try {
-      await awaitRuntimeStartupReadiness(managedRuntime);
+      await expect(awaitRuntimeStartupReadiness(managedRuntime)).resolves.toEqual(receipt);
       expect(readyCalls).toBe(1);
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("rejects startup readiness with the typed runtime startup error", async () => {
+    const startupError = new RuntimeStartupError({
+      operation: "runtime.startup.awaitReadiness",
+      phase: "app-source-reconcile",
+      reason: "required-startup-check-failed",
+      message: "App source reconcile failed.",
+    });
+
+    const managedRuntime = ManagedRuntime.make(
+      Layer.succeed(
+        RuntimeStartupReadiness,
+        RuntimeStartupReadiness.of({
+          awaitReady: Effect.fail(startupError),
+        }),
+      ),
+    );
+
+    try {
+      await expect(awaitRuntimeStartupReadiness(managedRuntime)).rejects.toBe(startupError);
     } finally {
       await managedRuntime.dispose();
     }

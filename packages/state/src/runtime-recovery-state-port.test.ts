@@ -10,7 +10,8 @@ import {
   type WorkspaceId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeRecoveryStatePort, runtimeRecoveryStatePortFromStore } from "./index";
+import { layerRuntimeRecoveryStatePort } from "./index";
+import { runtimeRecoveryStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,
@@ -101,6 +102,7 @@ describe("RuntimeRecoveryStatePort", () => {
           ]);
 
           const ensuredMutation = yield* port.ensureRecoveryWork({
+            scope: { kind: "workspace", workspaceId },
             kind: "active_turn_recovery",
             ownerScope: {
               kind: "surface",
@@ -117,8 +119,10 @@ describe("RuntimeRecoveryStatePort", () => {
           });
           expect(ensuredMutation.afterCommit).toEqual([]);
           const ensured = ensuredMutation.value;
+          expect(ensured.scope).toEqual({ kind: "workspace", workspaceId });
           const claimedMutation = yield* port.claimNextRecoveryWork({
             claimedBy: "runtime-recovery-state-port-test" as RuntimeOwnerId,
+            scope: { kind: "workspace", workspaceId },
           });
           expect(claimedMutation.afterCommit).toEqual([]);
           const claimed = claimedMutation.value;
@@ -163,6 +167,7 @@ describe("RuntimeRecoveryStatePort", () => {
     await expect(
       runTestEffect(
         port.ensureRecoveryWork({
+          scope: { kind: "workspace", workspaceId },
           kind: "title_generation",
           ownerScope: { kind: "workspace" },
           idempotencyKey: "title_generation:failure",

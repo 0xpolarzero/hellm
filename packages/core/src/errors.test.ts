@@ -10,8 +10,10 @@ import {
   encodeProviderAuthPortErrorExit,
   encodeRuntimeContractErrorEffect,
   encodeRuntimeContractErrorExit,
+  ExtensionError,
   formatBoundaryIssues,
   normalizeBoundaryIssuePath,
+  PiAdapterError,
   RuntimeContractError,
 } from "./errors";
 
@@ -38,6 +40,7 @@ describe("@svvy/core errors", () => {
       "event-replay-unavailable",
       "stream-failed",
       "bridge-invalid-request",
+      "bridge-payload-too-large",
       "bridge-forbidden",
       "source-command-not-found",
       "source-command-not-handler-owned",
@@ -48,6 +51,67 @@ describe("@svvy/core errors", () => {
         Schema.decodeUnknownSync(RuntimeContractError)({
           _tag: "RuntimeContractError",
           operation: "runtime.test",
+          reason,
+          message: reason,
+        }).reason,
+      ).toBe(reason);
+    }
+  });
+
+  it("decodes every public extension error reason", () => {
+    const reasons = [
+      "invalid-input",
+      "not-found",
+      "not-loaded",
+      "dependency-not-ready",
+      "unsupported-operation",
+      "read-only-source",
+      "execution-failed",
+      "redaction-failed",
+    ] as const;
+
+    for (const reason of reasons) {
+      expect(
+        Schema.decodeUnknownSync(ExtensionError)({
+          _tag: "ExtensionError",
+          operation: "extensions.test",
+          reason,
+          message: reason,
+        }).reason,
+      ).toBe(reason);
+    }
+  });
+
+  it("decodes every public pi adapter error reason", () => {
+    const reasons = [
+      "provider-auth-failed",
+      "provider-auth-missing",
+      "provider-auth-expired",
+      "provider-auth-refresh-failed",
+      "runtime-paths-failed",
+      "session-conflict",
+      "session-not-found",
+      "session-open-failed",
+      "session-create-failed",
+      "session-close-failed",
+      "session-reference-failed",
+      "active-turn-running",
+      "turn-not-active",
+      "turn-mismatch",
+      "turn-already-terminal",
+      "turn-failed",
+      "event-decode-failed",
+      "model-read-failed",
+      "history-operation-failed",
+      "helper-job-failed",
+      "tool-execution-failed",
+    ] as const;
+
+    for (const reason of reasons) {
+      expect(
+        Schema.decodeUnknownSync(PiAdapterError)({
+          _tag: "PiAdapterError",
+          operation: "pi-adapter.test",
           reason,
           message: reason,
         }).reason,

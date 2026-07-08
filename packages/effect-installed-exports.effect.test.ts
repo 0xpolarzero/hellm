@@ -1,49 +1,85 @@
-import { assert, describe, effect as it, layer as effectLayer } from "@effect/vitest";
+import { assert as effectAssert, describe, it, layer as effectLayer } from "@effect/vitest";
+import assert from "node:assert/strict";
 import * as BunCrypto from "@effect/platform-bun/BunCrypto";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Channel from "effect/Channel";
+import * as ChannelSchema from "effect/ChannelSchema";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FiberHandle from "effect/FiberHandle";
 import * as FiberMap from "effect/FiberMap";
+import * as FiberSet from "effect/FiberSet";
+import * as Filter from "effect/Filter";
 import * as FileSystem from "effect/FileSystem";
+import * as Hash from "effect/Hash";
+import * as JsonPatch from "effect/JsonPatch";
+import * as JsonSchema from "effect/JsonSchema";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
+import * as LogLevel from "effect/LogLevel";
 import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Pool from "effect/Pool";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as RcMap from "effect/RcMap";
 import * as RcRef from "effect/RcRef";
 import * as Ref from "effect/Ref";
+import * as Request from "effect/Request";
+import * as RequestResolver from "effect/RequestResolver";
+import * as Result from "effect/Result";
 import * as Resource from "effect/Resource";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaRepresentation from "effect/SchemaRepresentation";
+import * as Schedule from "effect/Schedule";
+import * as ScopedCache from "effect/ScopedCache";
+import * as ScopedRef from "effect/ScopedRef";
 import * as Semaphore from "effect/Semaphore";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Struct from "effect/Struct";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Take from "effect/Take";
-import type * as Redacted from "effect/Redacted";
+import * as References from "effect/References";
+import * as Tracer from "effect/Tracer";
+import * as Redacted from "effect/Redacted";
 import { TestClock } from "effect/testing";
+import * as TestClockModule from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   adoptedEffectRuntimeModuleExports,
   adoptedEffectTypeOnlyModules,
+  auditedEffectInstalledExports,
+  auditedEffectInstalledExportPolicies,
 } from "./effect-adoption-manifest";
 
 describe("Effect installed export audit", () => {
-  it("proves adopted Effect v4 exports exist in the installed beta.84 stack", () =>
+  it.effect("proves adopted Effect v4 exports exist in the installed beta.84 stack", () =>
     Effect.gen(function* () {
       const installedRuntimeModules = {
         "@effect/platform-bun/BunCrypto": BunCrypto,
@@ -51,9 +87,12 @@ describe("Effect installed export audit", () => {
         "@effect/platform-bun/BunPath": BunPath,
         "effect/Cause": Cause,
         "effect/Config": Config,
+        "effect/ConfigProvider": ConfigProvider,
         "effect/Context": Context,
+        "effect/Crypto": Crypto,
         "effect/DateTime": DateTime,
         "effect/Deferred": Deferred,
+        "effect/Duration": Duration,
         "effect/Effect": Effect,
         "effect/Exit": Exit,
         "effect/FileSystem": FileSystem,
@@ -62,7 +101,9 @@ describe("Effect installed export audit", () => {
         "effect/Option": Option,
         "effect/Path": Path,
         "effect/Queue": Queue,
+        "effect/Redacted": Redacted,
         "effect/Ref": Ref,
+        "effect/Schedule": Schedule,
         "effect/Schema": Schema,
         "effect/SchemaIssue": SchemaIssue,
         "effect/Scope": Scope,
@@ -95,112 +136,216 @@ describe("Effect installed export audit", () => {
         "effect/Path",
         "effect/Redacted",
         "effect/Schema",
+        "effect/SchemaAST",
+        "effect/Scope",
       ]);
-      const redactedTypeProof: Redacted.Redacted<string> | null = null;
-      assert.strictEqual(redactedTypeProof, null, "Redacted type import must compile");
+      type AdoptedEffectTypeOnlyCanary = {
+        readonly crypto: Crypto.Crypto;
+        readonly effect: Effect.Effect<string>;
+        readonly fileSystem: FileSystem.FileSystem;
+        readonly layer: Layer.Layer<never>;
+        readonly managedRuntime: ManagedRuntime.ManagedRuntime<never, never>;
+        readonly path: Path.Path;
+        readonly redacted: Redacted.Redacted<string>;
+        readonly schema: Schema.Schema<string>;
+        readonly schemaAstParseOptions: SchemaAST.ParseOptions;
+        readonly scope: Scope.Scope;
+      };
+      const typeOnlyCanary: AdoptedEffectTypeOnlyCanary | null = null;
+      assert.strictEqual(typeOnlyCanary, null, "Adopted type-only Effect imports must compile");
 
-      const adoptedFunctions = [
-        ["Config.nonEmptyString", Config.nonEmptyString],
-        ["Config.orElse", Config.orElse],
-        ["Config.schema", Config.schema],
-        ["Config.unwrap", Config.unwrap],
-        ["Config.withDefault", Config.withDefault],
-        ["ConfigProvider.constantCase", ConfigProvider.constantCase],
-        ["ConfigProvider.fromEnv", ConfigProvider.fromEnv],
-        ["ConfigProvider.fromUnknown", ConfigProvider.fromUnknown],
-        ["ConfigProvider.layer", ConfigProvider.layer],
-        ["ConfigProvider.layerAdd", ConfigProvider.layerAdd],
-        ["ConfigProvider.nested", ConfigProvider.nested],
-        ["Crypto.make", Crypto.make],
-        ["ChildProcess.make", ChildProcess.make],
-        ["ChildProcessSpawner.ChildProcessSpawner", ChildProcessSpawner.ChildProcessSpawner],
-        ["LayerMap.Service", LayerMap.Service],
-        ["Logger.batched", Logger.batched],
-        ["Logger.layer", Logger.layer],
-        ["ManagedRuntime.make", ManagedRuntime.make],
-        ["Metric.counter", Metric.counter],
-        ["Metric.disableRuntimeMetrics", Metric.disableRuntimeMetrics],
-        ["Metric.enableRuntimeMetrics", Metric.enableRuntimeMetrics],
-        ["Metric.histogram", Metric.histogram],
-        ["Metric.snapshotUnsafe", Metric.snapshotUnsafe],
-        ["Metric.timer", Metric.timer],
-        ["Metric.update", Metric.update],
-        ["Metric.value", Metric.value],
-        ["Metric.withAttributes", Metric.withAttributes],
-        ["PubSub.bounded", PubSub.bounded],
-        ["PubSub.publish", PubSub.publish],
-        ["PubSub.shutdown", PubSub.shutdown],
-        ["PubSub.sliding", PubSub.sliding],
-        ["PubSub.subscribe", PubSub.subscribe],
-        ["PubSub.unbounded", PubSub.unbounded],
-        ["Queue.end", Queue.end],
-        ["Queue.fail", Queue.fail],
-        ["Queue.make", Queue.make],
-        ["Queue.offer", Queue.offer],
-        ["Queue.shutdown", Queue.shutdown],
-        ["Queue.take", Queue.take],
-        ["Resource.auto", Resource.auto],
-        ["Resource.get", Resource.get],
-        ["Resource.manual", Resource.manual],
-        ["Resource.refresh", Resource.refresh],
-        ["RcMap.get", RcMap.get],
-        ["RcMap.invalidate", RcMap.invalidate],
-        ["RcMap.make", RcMap.make],
-        ["RcMap.touch", RcMap.touch],
-        ["RcRef.get", RcRef.get],
-        ["RcRef.invalidate", RcRef.invalidate],
-        ["RcRef.make", RcRef.make],
-        ["Scope.close", Scope.close],
-        ["Scope.make", Scope.make],
-        ["Scope.provide", Scope.provide],
-        ["Scope.use", Scope.use],
-        ["Stream.callback", Stream.callback],
-        ["Stream.fromPubSubTake", Stream.fromPubSubTake],
-        ["Stream.fromSubscription", Stream.fromSubscription],
-        ["Stream.toAsyncIterableEffect", Stream.toAsyncIterableEffect],
-        ["Stream.toAsyncIterableWith", Stream.toAsyncIterableWith],
-        ["SubscriptionRef.changes", SubscriptionRef.changes],
-        ["SubscriptionRef.get", SubscriptionRef.get],
-        ["SubscriptionRef.make", SubscriptionRef.make],
-        ["SubscriptionRef.modify", SubscriptionRef.modify],
-        ["SubscriptionRef.set", SubscriptionRef.set],
-        ["SubscriptionRef.update", SubscriptionRef.update],
-        ["Take.toPull", Take.toPull],
-        ["TestClock.adjust", TestClock.adjust],
-        ["TestClock.setTime", TestClock.setTime],
-        ["TestClock.withLive", TestClock.withLive],
-        ["Crypto.Crypto", Crypto.Crypto],
-      ] as const;
+      const auditedRuntimeModules = {
+        "@effect/platform-bun/BunCrypto": BunCrypto,
+        "@effect/platform-bun/BunFileSystem": BunFileSystem,
+        "@effect/platform-bun/BunPath": BunPath,
+        "effect/Cache": Cache,
+        "effect/Cause": Cause,
+        "effect/Channel": Channel,
+        "effect/ChannelSchema": ChannelSchema,
+        "effect/Config": Config,
+        "effect/ConfigProvider": ConfigProvider,
+        "effect/Context": Context,
+        "effect/Clock": Clock,
+        "effect/Crypto": Crypto,
+        "effect/Data": Data,
+        "effect/DateTime": DateTime,
+        "effect/Deferred": Deferred,
+        "effect/Duration": Duration,
+        "effect/Effect": Effect,
+        "effect/Encoding": Encoding,
+        "effect/Equal": Equal,
+        "effect/Exit": Exit,
+        "effect/Fiber": Fiber,
+        "effect/FiberHandle": FiberHandle,
+        "effect/FiberMap": FiberMap,
+        "effect/FiberSet": FiberSet,
+        "effect/Filter": Filter,
+        "effect/FileSystem": FileSystem,
+        "effect/Hash": Hash,
+        "effect/JsonPatch": JsonPatch,
+        "effect/JsonSchema": JsonSchema,
+        "effect/Latch": Latch,
+        "effect/Layer": Layer,
+        "effect/LayerMap": LayerMap,
+        "effect/Logger": Logger,
+        "effect/LogLevel": LogLevel,
+        "effect/ManagedRuntime": ManagedRuntime,
+        "effect/Metric": Metric,
+        "effect/Option": Option,
+        "effect/Path": Path,
+        "effect/PlatformError": PlatformError,
+        "effect/Pool": Pool,
+        "effect/PubSub": PubSub,
+        "effect/Queue": Queue,
+        "effect/Random": Random,
+        "effect/References": References,
+        "effect/Ref": Ref,
+        "effect/Request": Request,
+        "effect/RequestResolver": RequestResolver,
+        "effect/Redacted": Redacted,
+        "effect/Result": Result,
+        "effect/Resource": Resource,
+        "effect/RcMap": RcMap,
+        "effect/RcRef": RcRef,
+        "effect/Schema": Schema,
+        "effect/SchemaAST": SchemaAST,
+        "effect/SchemaIssue": SchemaIssue,
+        "effect/SchemaRepresentation": SchemaRepresentation,
+        "effect/Schedule": Schedule,
+        "effect/ScopedCache": ScopedCache,
+        "effect/Scope": Scope,
+        "effect/ScopedRef": ScopedRef,
+        "effect/Semaphore": Semaphore,
+        "effect/Sink": Sink,
+        "effect/Stream": Stream,
+        "effect/Struct": Struct,
+        "effect/SubscriptionRef": SubscriptionRef,
+        "effect/SynchronizedRef": SynchronizedRef,
+        "effect/Take": Take,
+        "effect/Tracer": Tracer,
+        "effect/testing": { TestClock },
+        "effect/testing/TestClock": TestClockModule,
+        "effect/unstable/process": { ChildProcess, ChildProcessSpawner },
+        "@effect/vitest": { assert: effectAssert, describe, it, layer: effectLayer },
+      } as const;
 
-      const adoptedLayers = [
-        ["BunCrypto.layer", BunCrypto.layer],
-        ["BunFileSystem.layer", BunFileSystem.layer],
-        ["BunPath.layer", BunPath.layer],
-        ["Metric.disableRuntimeMetricsLayer", Metric.disableRuntimeMetricsLayer],
-        ["Metric.enableRuntimeMetricsLayer", Metric.enableRuntimeMetricsLayer],
-      ] as const;
-
-      const adoptedValues = [
-        ["Logger.tracerLogger", Logger.tracerLogger],
-        ["Metric.snapshot", Metric.snapshot],
-      ] as const;
-
-      for (const [name, value] of adoptedFunctions) {
-        assert.strictEqual(
-          typeof value,
-          "function",
-          `${name} must be an installed function export`,
-        );
+      for (const entry of auditedEffectInstalledExports) {
+        assert.strictEqual(entry.scope, "installed-export-audit");
+        assert.strictEqual(entry.owner, "docs/specs/package-architecture/effect-v4.spec.md");
+        assert.strictEqual(entry.verifiedOn, "2026-06-25");
+        const namespace = auditedRuntimeModules[entry.module as keyof typeof auditedRuntimeModules];
+        assert.notStrictEqual(namespace, undefined, `${entry.module} must be audit-bound`);
+        for (const member of entry.members) {
+          const value = readDottedMember(namespace as Record<string, unknown>, member);
+          assert.notStrictEqual(
+            value,
+            undefined,
+            `${entry.module}.${member} must be an installed audited export`,
+          );
+        }
       }
-      for (const [name, value] of adoptedLayers) {
-        assert.strictEqual(typeof value, "object", `${name} must be an installed layer export`);
-      }
-      for (const [name, value] of adoptedValues) {
-        assert.strictEqual(typeof value, "object", `${name} must be an installed value export`);
-      }
+      assert.strictEqual(
+        typeof TestClock.adjust,
+        "function",
+        "TestClock.adjust must remain available",
+      );
+      assert.strictEqual(
+        typeof TestClock.setTime,
+        "function",
+        "TestClock.setTime must remain available",
+      );
+      assert.strictEqual(
+        typeof TestClock.withLive,
+        "function",
+        "TestClock.withLive must remain available",
+      );
+      assert.strictEqual(
+        typeof ChildProcess.make,
+        "function",
+        "ChildProcess.make must remain available",
+      );
+      assert.strictEqual(
+        typeof ChildProcessSpawner.ChildProcessSpawner,
+        "function",
+        "ChildProcessSpawner.ChildProcessSpawner must remain available",
+      );
+      const auditedModules = auditedEffectInstalledExports.map((entry) => entry.module).toSorted();
+      const policyModules = auditedEffectInstalledExportPolicies
+        .map((entry) => entry.module)
+        .toSorted();
+      assert.deepStrictEqual(
+        policyModules,
+        auditedModules,
+        "Every installed-export audit row must have exactly one adoption policy.",
+      );
+      assert.deepStrictEqual(
+        adoptedEffectRuntimeModuleExports
+          .map((entry) => entry.module)
+          .filter((module) => !auditedModules.includes(module))
+          .toSorted(),
+        [],
+        "Every adopted production Effect module must also have installed-export audit and policy coverage.",
+      );
+      assert.deepStrictEqual(
+        countAuditPoliciesByState(auditedEffectInstalledExportPolicies),
+        {
+          "adoptable-member-gated": 39,
+          conditional: 22,
+          "scoped-adoptable-member-gated": 8,
+          "test-only": 3,
+        },
+        "Audit policy counts must distinguish production permission from installed canaries.",
+      );
 
-      assert.strictEqual(typeof it, "function", "@effect/vitest effect must be installed");
-      assert.strictEqual(typeof effectLayer, "function", "@effect/vitest layer must be installed");
+      let scopedFinalizerRan = false;
+      const scopedValue = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => Effect.sync(() => void (scopedFinalizerRan = true)));
+          return "scoped-value";
+        }),
+      );
+      assert.strictEqual(scopedValue, "scoped-value", "Effect.scoped must return the scoped value");
+      assert.strictEqual(scopedFinalizerRan, true, "Effect.scoped must close its scope");
+
+      yield* Effect.yieldNow;
+
+      class ServiceHelperCanary extends Context.Service<
+        ServiceHelperCanary,
+        { readonly value: string }
+      >()("svvy/effect-audit/ServiceHelperCanary") {}
+      const serviceHelperImplementation = ServiceHelperCanary.of({ value: "service-helper" });
+      const serviceHelperLayer = Layer.succeed(ServiceHelperCanary, serviceHelperImplementation);
+      const serviceUseValue = yield* ServiceHelperCanary.use((service) =>
+        Effect.succeed(`${service.value}:use`),
+      ).pipe(Effect.provide(serviceHelperLayer));
+      assert.strictEqual(serviceUseValue, "service-helper:use");
+      const serviceUseSyncValue = yield* ServiceHelperCanary.useSync(
+        (service) => `${service.value}:useSync`,
+      ).pipe(Effect.provide(serviceHelperLayer));
+      assert.strictEqual(serviceUseSyncValue, "service-helper:useSync");
+
+      class ProvideMergeBase extends Context.Service<
+        ProvideMergeBase,
+        { readonly value: string }
+      >()("svvy/effect-audit/ProvideMergeBase") {}
+      class ProvideMergeDerived extends Context.Service<
+        ProvideMergeDerived,
+        { readonly value: string }
+      >()("svvy/effect-audit/ProvideMergeDerived") {}
+      const provideMergeDerivedLayer = Layer.effect(
+        ProvideMergeDerived,
+        Effect.map(ProvideMergeBase, (base) => ({
+          value: `${base.value}:derived`,
+        })),
+      );
+      const provideMergeValue = yield* ProvideMergeDerived.pipe(
+        Effect.provide(
+          provideMergeDerivedLayer.pipe(
+            Layer.provideMerge(Layer.succeed(ProvideMergeBase, { value: "base" })),
+          ),
+        ),
+      );
+      assert.strictEqual(provideMergeValue.value, "base:derived");
 
       const scope = yield* Scope.make();
       assert.strictEqual(typeof Scope.provide(scope), "function", "Scope.provide must curry");
@@ -208,9 +353,21 @@ describe("Effect installed export audit", () => {
       yield* Scope.close(scope, Exit.void);
 
       const queue = yield* Queue.make<string>();
-      yield* Queue.offer(queue, "queued");
-      assert.strictEqual(yield* Queue.take(queue), "queued");
+      const enqueue = Queue.asEnqueue(queue);
+      const dequeue = Queue.asDequeue(queue);
+      assert.strictEqual(typeof enqueue, "object", "Queue.asEnqueue must return enqueue handle");
+      assert.strictEqual(typeof dequeue, "object", "Queue.asDequeue must return dequeue handle");
+      assert.strictEqual(yield* Queue.offer(enqueue, "queued"), true);
+      assert.strictEqual(yield* Queue.take(dequeue), "queued");
       yield* Queue.end(queue);
+      const interruptQueue = yield* Queue.make<string>();
+      yield* Queue.offer(interruptQueue, "buffered-a");
+      yield* Queue.offer(interruptQueue, "buffered-b");
+      yield* Queue.interrupt(interruptQueue);
+      assert.strictEqual(yield* Queue.take(interruptQueue), "buffered-a");
+      assert.strictEqual(yield* Queue.take(interruptQueue), "buffered-b");
+      assert.strictEqual(Exit.isFailure(yield* Effect.exit(Queue.take(interruptQueue))), true);
+      assert.strictEqual(yield* Queue.offer(interruptQueue, "after-interrupt"), false);
 
       const pubsub = yield* PubSub.sliding<string>({ capacity: 2, replay: 1 });
       const subscription = yield* PubSub.subscribe(pubsub);
@@ -225,12 +382,15 @@ describe("Effect installed export audit", () => {
       const takePull = Take.toPull(["taken"]);
       assert.strictEqual(typeof takePull, "object", "Take.toPull must construct a pull value");
 
-      const callbackStream = Stream.callback<number>((callbackQueue) => {
-        return Effect.sync(() => {
-          Queue.offerUnsafe(callbackQueue, 1);
-          Queue.endUnsafe(callbackQueue);
-        });
-      });
+      const callbackStream = Stream.callback<number>(
+        (callbackQueue) => {
+          return Effect.gen(function* () {
+            yield* Queue.offer(callbackQueue, 1);
+            yield* Queue.end(callbackQueue);
+          });
+        },
+        { bufferSize: 8, strategy: "sliding" },
+      );
       assert.strictEqual(
         typeof callbackStream,
         "object",
@@ -244,6 +404,50 @@ describe("Effect installed export audit", () => {
         "Stream.fromPubSubTake must construct a stream",
       );
       yield* PubSub.shutdown(takePubSub);
+
+      const forkChildWithOptions = Effect.forkChild(Effect.void, {
+        startImmediately: true,
+        uninterruptible: "inherit",
+      });
+      const forkScopedWithOptions = Effect.forkScoped(Effect.void, {
+        startImmediately: false,
+        uninterruptible: true,
+      });
+      const forkScope = yield* Scope.make();
+      const forkInWithOptions = Effect.forkIn(Effect.void, forkScope, {
+        startImmediately: true,
+        uninterruptible: false,
+      });
+      const uninterruptibleEffect = Effect.uninterruptible(Effect.void);
+      const uninterruptibleMaskEffect = Effect.uninterruptibleMask((restore) =>
+        restore(Effect.void),
+      );
+      assert.strictEqual(
+        typeof forkChildWithOptions,
+        "object",
+        "Effect.forkChild must accept beta.84 fork options",
+      );
+      assert.strictEqual(
+        typeof forkScopedWithOptions,
+        "object",
+        "Effect.forkScoped must accept beta.84 fork options",
+      );
+      assert.strictEqual(
+        typeof forkInWithOptions,
+        "object",
+        "Effect.forkIn must accept beta.84 fork options",
+      );
+      assert.strictEqual(
+        typeof uninterruptibleEffect,
+        "object",
+        "Effect.uninterruptible must construct an Effect",
+      );
+      assert.strictEqual(
+        typeof uninterruptibleMaskEffect,
+        "object",
+        "Effect.uninterruptibleMask must construct an Effect",
+      );
+      yield* Scope.close(forkScope, Exit.void);
 
       const fiberMap = yield* FiberMap.make<string>();
       yield* FiberMap.run(fiberMap, "audit", Effect.succeed("done"));
@@ -272,14 +476,21 @@ describe("Effect installed export audit", () => {
       yield* RcRef.invalidate(rcRef);
 
       const schemaConfig = Config.schema(Schema.Struct({ value: Schema.String }), "example");
+      const redactedConfig = Config.redacted("SECRET");
       const wrappedConfig = Config.unwrap({ example: Config.string("EXAMPLE") });
       const configWithDefault = Config.withDefault(Config.nonEmptyString("OPTIONAL"), "fallback");
       const configFallback = Config.orElse(configWithDefault, () => Config.string("ALTERNATE"));
       const unknownProvider = ConfigProvider.fromUnknown({ example: { value: "ok" } });
       const constantProvider = ConfigProvider.constantCase(unknownProvider);
       const nestedProvider = ConfigProvider.nested(unknownProvider, "APP");
+      const replacementLayer = ConfigProvider.layer(unknownProvider);
       const additiveLayer = ConfigProvider.layerAdd(unknownProvider);
       assert.strictEqual(typeof schemaConfig, "object", "Config.schema must construct a Config");
+      assert.strictEqual(
+        typeof redactedConfig,
+        "object",
+        "Config.redacted must construct a Config",
+      );
       assert.strictEqual(typeof wrappedConfig, "object", "Config.unwrap must construct a Config");
       assert.strictEqual(typeof configFallback, "object", "Config.orElse must construct a Config");
       assert.strictEqual(
@@ -293,16 +504,30 @@ describe("Effect installed export audit", () => {
         "ConfigProvider.nested must construct a provider",
       );
       assert.strictEqual(
+        typeof replacementLayer,
+        "object",
+        "ConfigProvider.layer must construct a layer",
+      );
+      assert.strictEqual(
         typeof additiveLayer,
         "object",
         "ConfigProvider.layerAdd must construct a layer",
       );
 
       const tracerLayer = Logger.layer([Logger.tracerLogger]);
+      const batchedTracerLogger = Logger.batched(Logger.tracerLogger, {
+        window: Duration.millis(10),
+        flush: () => Effect.void,
+      });
       assert.strictEqual(
         typeof tracerLayer,
         "object",
         "Logger.layer([Logger.tracerLogger]) must construct a layer",
+      );
+      assert.strictEqual(
+        typeof batchedTracerLogger,
+        "object",
+        "Logger.batched must construct a scoped logger effect",
       );
 
       interface AuditLayerMapDependency {
@@ -335,6 +560,30 @@ describe("Effect installed export audit", () => {
         "function",
         "LayerMap.Service.invalidate exists",
       );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const auditLayerMap = yield* LayerMap.make(
+            (key: string) => Layer.succeed(AuditLayerMapDependency, { value: `make:${key}` }),
+            { idleTimeToLive: "1 minute" },
+          );
+
+          assert.strictEqual(typeof auditLayerMap.get, "function", "LayerMap.make.get exists");
+          assert.strictEqual(
+            typeof auditLayerMap.contextEffect,
+            "function",
+            "LayerMap.make.contextEffect exists",
+          );
+          assert.strictEqual(
+            typeof auditLayerMap.invalidate,
+            "function",
+            "LayerMap.make.invalidate exists",
+          );
+
+          const context = yield* auditLayerMap.contextEffect("canary");
+          assert.strictEqual(Context.get(context, AuditLayerMapDependency).value, "make:canary");
+          yield* auditLayerMap.invalidate("canary");
+        }),
+      );
 
       const TestCrypto = Layer.succeed(
         Crypto.Crypto,
@@ -362,6 +611,31 @@ describe("Effect installed export audit", () => {
         true,
         "Metric.snapshot must be yieldable as an Effect value",
       );
+      assert.strictEqual(
+        typeof Metric.enableRuntimeMetricsLayer,
+        "object",
+        "Metric.enableRuntimeMetricsLayer must be a Layer value",
+      );
+      assert.strictEqual(
+        typeof Metric.disableRuntimeMetricsLayer,
+        "object",
+        "Metric.disableRuntimeMetricsLayer must be a Layer value",
+      );
+      assert.strictEqual(
+        typeof Metric.enableRuntimeMetrics(Effect.void),
+        "object",
+        "Metric.enableRuntimeMetrics must wrap an Effect",
+      );
+      assert.strictEqual(
+        typeof Metric.disableRuntimeMetrics(Effect.void),
+        "object",
+        "Metric.disableRuntimeMetrics must wrap an Effect",
+      );
+      assert.strictEqual(
+        Array.isArray(Metric.snapshotUnsafe(Context.empty())),
+        true,
+        "Metric.snapshotUnsafe must synchronously read snapshots from a Context",
+      );
 
       const subscriptionRef = yield* SubscriptionRef.make("initial");
       assert.strictEqual(yield* SubscriptionRef.get(subscriptionRef), "initial");
@@ -378,5 +652,71 @@ describe("Effect installed export audit", () => {
       ]);
       assert.strictEqual(modifiedFrom, "set-updated");
       assert.strictEqual(yield* SubscriptionRef.get(subscriptionRef), "modified");
-    }));
+    }),
+  );
+
+  class VitestLayerBase extends Context.Service<VitestLayerBase, { readonly value: string }>()(
+    "svvy/effect-audit/VitestLayerBase",
+  ) {}
+  class VitestLayerNested extends Context.Service<VitestLayerNested, { readonly value: string }>()(
+    "svvy/effect-audit/VitestLayerNested",
+  ) {}
+
+  effectLayer(Layer.succeed(VitestLayerBase, { value: "layer" }), {
+    timeout: "5 seconds",
+    excludeTestServices: false,
+  })("@effect/vitest layer canaries", (layerIt) => {
+    layerIt.effect.each([
+      ["direct", "layer"],
+      ["derived", "layer:derived"],
+    ] as const)("proves it.effect.each installed shape for %s", ([kind, expected]) =>
+      Effect.gen(function* () {
+        const base = yield* VitestLayerBase;
+        const actual = kind === "direct" ? base.value : `${base.value}:derived`;
+        assert.strictEqual(actual, expected);
+      }),
+    );
+
+    layerIt.layer(
+      Layer.effect(
+        VitestLayerNested,
+        Effect.map(VitestLayerBase, (base) => ({ value: `${base.value}:nested` })),
+      ),
+      { timeout: "5 seconds" },
+    )("proves nested it.layer installed shape", (nestedIt) => {
+      nestedIt.effect("provides merged parent and nested contexts", () =>
+        Effect.gen(function* () {
+          const base = yield* VitestLayerBase;
+          const nested = yield* VitestLayerNested;
+          assert.strictEqual(base.value, "layer");
+          assert.strictEqual(nested.value, "layer:nested");
+        }),
+      );
+    });
+  });
 });
+
+function readDottedMember(namespace: Record<string, unknown>, member: string): unknown {
+  return member
+    .split(".")
+    .reduce<unknown>(
+      (value, segment) =>
+        value && typeof value === "object"
+          ? (value as Record<string, unknown>)[segment]
+          : undefined,
+      namespace,
+    );
+}
+
+function countAuditPoliciesByState(
+  policies: readonly { readonly adoptionState: string }[],
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(
+      policies.reduce<Record<string, number>>((counts, policy) => {
+        counts[policy.adoptionState] = (counts[policy.adoptionState] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+}

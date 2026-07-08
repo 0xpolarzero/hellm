@@ -8,6 +8,8 @@
   "type": "module",
   "scripts": {
     "generate:api": "bun scripts/generate-api-declarations.ts && bun x oxfmt generated/*.generated.ts",
+    "generate:core-index": "bun scripts/generate-core-public-symbol-index.ts",
+    "check:core-index": "bun scripts/generate-core-public-symbol-index.ts --check",
     "start": "bun run generate:api && vite build && electrobun dev",
     "dev": "bun run generate:api && bun scripts/dev.ts",
     "dev:clean": "bun run clean:session-state && bun run dev",
@@ -18,7 +20,7 @@
     "build:dev": "bun run generate:api && vite build && electrobun build --env=dev",
     "run": "electrobun run",
     "workflow:implement-feature": "bun workflows/scripts/run-implement-feature.ts",
-    "check": "bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+    "check": "bun run check:core-index && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
     "test": "bun run test:unit && bun run test:e2e",
     "test:unit": "bun run generate:api && bun test $(rg --files ./src ./packages -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' -g '!*.effect.test.ts')",
     "test:effect": "vitest run --root . $(rg --files packages -g '*.effect.test.ts')",

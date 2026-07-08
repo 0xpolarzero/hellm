@@ -3,7 +3,9 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import type {
   AppLogEntry,
   AppLogLevel,
@@ -31,7 +33,9 @@ const HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+=_-]{32,}\b/g;
 
 export interface CreateAppLogStoreOptions {
   databasePath?: string;
-  now?: () => string;
+  busyTimeoutMs?: number;
+  filesystemSetup?: "store" | "caller";
+  now: () => string;
   memoryLimit?: number;
   persistedLimit?: number;
   retentionDays?: number;
@@ -96,7 +100,7 @@ type AppLogRow = {
 
 type AppLogError = NonNullable<AppLogEntry["error"]>;
 
-export function createAppLogStore(options: CreateAppLogStoreOptions = {}): AppLogStore {
+export function createAppLogStore(options: CreateAppLogStoreOptions): AppLogStore {
   return new SqliteAppLogStore(options);
 }
 
@@ -123,10 +127,15 @@ export function appLogStateFromStore(store: AppLogStore): AppLogState["Service"]
 }
 
 export const makeAppLogState = Effect.fn("@svvy/state/makeAppLogState")(function* (
-  options: CreateAppLogStoreOptions = {},
+  options: CreateAppLogStoreOptions,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* prepareAppLogDatabasePath(options, fileSystem, path);
   const store = yield* Effect.acquireRelease(
-    tryAppLogStoreOperation("app-log.open", () => createAppLogStore(options)),
+    tryAppLogStoreOperation("app-log.open", () =>
+      createAppLogStore({ ...options, filesystemSetup: "caller" }),
+    ),
     (acquiredStore) =>
       tryAppLogStoreOperation("app-log.close", () => acquiredStore.close()).pipe(Effect.ignore),
   );
@@ -134,8 +143,8 @@ export const makeAppLogState = Effect.fn("@svvy/state/makeAppLogState")(function
 });
 
 export const layerAppLogState = (
-  options: CreateAppLogStoreOptions = {},
-): Layer.Layer<AppLogState, StateContractError> =>
+  options: CreateAppLogStoreOptions,
+): Layer.Layer<AppLogState, StateContractError, FileSystem.FileSystem | Path.Path> =>
   Layer.effect(AppLogState, makeAppLogState(options));
 
 export function redactAppLogValue(value: unknown): unknown {
@@ -180,11 +189,12 @@ class SqliteAppLogStore implements AppLogStore {
 
   constructor(options: CreateAppLogStoreOptions) {
     const databasePath = options.databasePath ?? MEMORY_DATABASE;
-    if (databasePath !== MEMORY_DATABASE) {
+    if (databasePath !== MEMORY_DATABASE && options.filesystemSetup !== "caller") {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
     this.db = new Database(databasePath);
-    this.now = options.now ?? (() => new Date().toISOString());
+    applyBusyTimeout(this.db, options.busyTimeoutMs);
+    this.now = options.now;
     this.memoryLimit = options.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
     this.persistedLimit = options.persistedLimit ?? DEFAULT_PERSISTED_LIMIT;
     this.retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
@@ -444,6 +454,20 @@ class SqliteAppLogStore implements AppLogStore {
   }
 }
 
+function prepareAppLogDatabasePath(
+  options: CreateAppLogStoreOptions,
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+): Effect.Effect<void, StateContractError> {
+  const databasePath = options.databasePath ?? MEMORY_DATABASE;
+  if (databasePath === MEMORY_DATABASE) {
+    return Effect.void;
+  }
+  return fileSystem
+    .makeDirectory(path.dirname(databasePath), { recursive: true })
+    .pipe(Effect.mapError((cause) => appLogStoreError("app-log.open.prepare-directory", cause)));
+}
+
 function initializeSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_log (
@@ -474,6 +498,14 @@ function initializeSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_app_log_level ON app_log(level);
     CREATE INDEX IF NOT EXISTS idx_app_log_source ON app_log(source);
   `);
+}
+
+function applyBusyTimeout(db: Database, busyTimeoutMs: number | undefined): void {
+  if (busyTimeoutMs === undefined) return;
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs <= 0) {
+    throw new Error("SQLite busyTimeoutMs must be a positive safe integer.");
+  }
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
 }
 
 function rowToEntry(row: AppLogRow): AppLogEntry {

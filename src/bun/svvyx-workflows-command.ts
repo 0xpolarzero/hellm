@@ -109,7 +109,6 @@ export async function runSvvyxWorkflowsCommand(input: {
   readModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   sourceRoot?: string;
   workspaceCwd?: string;
-  workspaceCwds?: readonly string[];
 }): Promise<SvvyxWorkflowsCommandResult> {
   const words = splitCommandLine(input.command);
   if (words[0] !== "svvyx" || words[1] !== "workflows") {
@@ -142,7 +141,6 @@ export async function runSvvyxWorkflowsCommand(input: {
       generatedPackagePath: input.generatedPackagePath,
       modelCatalog: (input.readModelCatalog ?? readDefaultModelCatalog)(),
       sourceRoot: input.sourceRoot,
-      workspaceCwds: input.workspaceCwds ?? defaultWorkspaceCwds(input),
     });
   }
   if (commandId === "save") {
@@ -159,7 +157,6 @@ export async function runSvvyxWorkflowsCommand(input: {
       modelCatalog: (input.readModelCatalog ?? readDefaultModelCatalog)(),
       sourceRoot: input.sourceRoot,
       workspaceCwd: input.workspaceCwd,
-      workspaceCwds: input.workspaceCwds ?? defaultWorkspaceCwds(input),
     });
   }
 
@@ -195,11 +192,6 @@ export async function runSvvyxWorkflowsCommand(input: {
   };
 }
 
-function defaultWorkspaceCwds(input: { cwd?: string; workspaceCwd?: string }): string[] {
-  const workspaceCwd = input.workspaceCwd ?? input.cwd;
-  return workspaceCwd ? [workspaceCwd] : [];
-}
-
 async function runBuildCommand(
   words: string[],
   options: {
@@ -214,7 +206,6 @@ async function runBuildCommand(
     generatedPackagePath?: string;
     modelCatalog: readonly SvvyxWorkflowsModelChoice[];
     sourceRoot?: string;
-    workspaceCwds?: readonly string[];
   },
 ): Promise<SvvyxWorkflowsCommandResult> {
   const flags = parseFlags(words);
@@ -232,7 +223,6 @@ async function runBuildCommand(
     generatedPackagePath: options.generatedPackagePath,
     modelCatalog: options.modelCatalog,
     sourceRoot: options.sourceRoot,
-    workspaceCwds: options.workspaceCwds,
   });
   if (!result.ok) {
     throw workflowsCommandError("build_failed", "Workflows build failed.", result.diagnostics);
@@ -242,7 +232,6 @@ async function runBuildCommand(
       ok: true,
       generatedPackagePath: result.generatedPackagePath,
       diagnostics: result.diagnostics,
-      linkedWorkspaces: result.linkedWorkspaces,
       items: result.items.map((item) => ({
         kind: item.kind,
         namespace: item.namespace,
@@ -256,7 +245,6 @@ async function runBuildCommand(
       workflowBuildOk: true,
       workflowExportCount: result.items.length,
       workflowDiagnosticCount: result.diagnostics.length,
-      workflowLinkedWorkspaceCount: result.linkedWorkspaces.length,
     },
   };
 }
@@ -276,7 +264,6 @@ async function runSaveCommand(
     modelCatalog: readonly SvvyxWorkflowsModelChoice[];
     sourceRoot?: string;
     workspaceCwd?: string;
-    workspaceCwds?: readonly string[];
   },
 ): Promise<SvvyxWorkflowsCommandResult> {
   const flags = parseFlags(words);
@@ -356,7 +343,6 @@ async function runSaveCommand(
       generatedPackagePath: options.generatedPackagePath,
       modelCatalog: options.modelCatalog,
       sourceRoot: options.sourceRoot,
-      workspaceCwds: options.workspaceCwds,
     });
     if (!build.ok) {
       restoreSourceAfterFailedSave(targetPath, previous);
@@ -370,7 +356,6 @@ async function runSaveCommand(
         exportName,
         kind,
         diagnostics: build.diagnostics,
-        linkedWorkspaces: build.linkedWorkspaces,
       },
       commandFacts: {
         workflowSavedExportName: exportName,
@@ -378,7 +363,6 @@ async function runSaveCommand(
         workflowSourcePath: targetPath,
         workflowBuildOk: true,
         workflowExportCount: build.items.length,
-        workflowLinkedWorkspaceCount: build.linkedWorkspaces.length,
       },
     };
   } catch (error) {

@@ -9,7 +9,6 @@
   "dependencies": {
     "@svvy/core": "workspace:*",
     "@svvy/runtime": "workspace:*",
-    "@svvy/state": "workspace:*",
-    "effect": "4.0.0-beta.84"
+    "@svvy/state": "workspace:*"
   }
 }

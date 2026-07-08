@@ -20,6 +20,10 @@ export function runtimeExtensionStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeExtensionStatePortService {
   return {
+    recordDependencyApproval: (input) =>
+      state
+        .recordExtensionDependencyApproval(input)
+        .pipe(Effect.map(() => mutationResult(undefined, extensionInvalidations))),
     recordDependencyReadiness: (input) =>
       state
         .recordExtensionDependencyReadiness(input)

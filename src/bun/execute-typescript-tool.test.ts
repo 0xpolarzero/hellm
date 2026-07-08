@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -11,8 +12,13 @@ import {
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
-import type { StateContractError } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import type {
+  AbsolutePath,
+  BuildLaunchPolicyInput,
+  SandboxLaunchFacts,
+  StateContractError,
+} from "@svvy/core";
 import * as Effect from "effect/Effect";
 import type { AppLoggerEvent } from "./app-logger";
 import {
@@ -20,13 +26,33 @@ import {
   runtimeCommandStatePortFromStore,
   runtimeThreadStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
-import { createExecuteTypescriptTool as createExecuteTypescriptToolBase } from "./execute-typescript-tool";
+import {
+  createExecuteTypescriptTool as createExecuteTypescriptToolBase,
+  type ExecuteTypescriptLaunchHandle,
+  type ExecuteTypescriptResult,
+} from "./execute-typescript-tool";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
+
+/**
+ * Unwrap a `tsFacts(NativeToolResult)` payload back into the typed
+ * `ExecuteTypescriptResult` shape for assertion. The runtime wraps the result as
+ * `details.commandFacts` (a `CommandFactsPayload` JSON record); tests read the
+ * typed fields through this cast.
+ */
+function tsFacts(result: {
+  readonly details?: { readonly commandFacts?: unknown } | undefined;
+}): ExecuteTypescriptResult {
+  return result.details?.commandFacts as ExecuteTypescriptResult;
+}
 import {
   resolveActorExtensionState,
   type ExtensionCliRequirement,
@@ -36,9 +62,19 @@ import {
 function createExecuteTypescriptTool(
   options: Omit<
     Parameters<typeof createExecuteTypescriptToolBase>[0],
-    "artifactState" | "commandState" | "threadState" | "turnState" | "runState"
+    | "artifactState"
+    | "commandState"
+    | "threadState"
+    | "turnState"
+    | "runState"
+    | "workspaceId"
+    | "acquireExecuteTypescriptLaunch"
   > & {
     store: StructuredSessionStateStore;
+    workspaceId?: string;
+    acquireExecuteTypescriptLaunch?: (
+      input: Omit<BuildLaunchPolicyInput, "launchKind">,
+    ) => Promise<ExecuteTypescriptLaunchHandle>;
   } & Partial<
       Pick<
         Parameters<typeof createExecuteTypescriptToolBase>[0],
@@ -47,16 +83,59 @@ function createExecuteTypescriptTool(
     >,
 ): ReturnType<typeof createExecuteTypescriptToolBase> {
   return createExecuteTypescriptToolBase({
-    managedSandbox: false,
     ...options,
+    workspaceId: options.workspaceId ?? options.cwd,
+    acquireExecuteTypescriptLaunch:
+      options.acquireExecuteTypescriptLaunch ?? testExecuteTypescriptLaunchAcquisition,
     artifactState: options.artifactState ?? runtimeArtifactStatePortFromStore(options.store),
     commandState: options.commandState ?? runtimeCommandStatePortFromStore(options.store),
     threadState: options.threadState ?? runtimeThreadStatePortFromStore(options.store),
     turnState: options.turnState ?? runtimeTurnStatePortFromStore(options.store),
+    readArtifactRootForSession:
+      options.readArtifactRootForSession ??
+      ((sessionId: string) => options.store.getSessionState(sessionId).workspace.artifactDir),
     runState:
       options.runState ??
       (<A>(effect: Effect.Effect<A, StateContractError>) => Effect.runSync(effect)),
   });
+}
+
+async function testExecuteTypescriptLaunchAcquisition(
+  input: Omit<BuildLaunchPolicyInput, "launchKind">,
+): Promise<ExecuteTypescriptLaunchHandle> {
+  const facts = testExecuteTypescriptLaunchFacts(input);
+  return {
+    facts,
+    close: async () => {},
+  };
+}
+
+function testExecuteTypescriptLaunchFacts(
+  input: Omit<BuildLaunchPolicyInput, "launchKind">,
+): SandboxLaunchFacts {
+  const [executable, ...args] = input.command;
+  return {
+    mode: "omitted_full_access",
+    spawn: {
+      executable: executable! as AbsolutePath,
+      args,
+      cwd: input.cwd,
+      envFacts: input.envFacts,
+    },
+    policySnapshot: {
+      snapshotId: "test-execute-typescript-snapshot",
+      fingerprint: "test-execute-typescript-fingerprint",
+      resolvedAt: "2026-04-18T09:00:00.000Z" as never,
+      scope: input.scope,
+      ...(input.surfacePiSessionId ? { surfacePiSessionId: input.surfacePiSessionId } : {}),
+      commandId: input.commandId,
+      launchKind: "execute_typescript_runtime",
+      cwd: input.cwd,
+      sandboxMode: "omitted_full_access",
+      networkPolicy: "allow",
+      filesystemPolicy: { defaultAccess: "read", entries: [] },
+    },
+  };
 }
 
 const stores: StructuredSessionStateStore[] = [];
@@ -299,6 +378,7 @@ function defaultLinearCommandManifest(): Record<string, unknown> {
 
 function createStore(sessionId: string, workspaceCwd: string): StructuredSessionStateStore {
   const store = createStructuredSessionStateStore({
+    digest: testDigest,
     workspace: {
       id: workspaceCwd,
       label: "svvy",
@@ -434,7 +514,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "const title: string = 42;",
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: false,
       error: {
         stage: "typecheck",
@@ -532,7 +612,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "console.log('should not run');\nconst title: string = 42;",
     });
 
-    expect(result.details!).toEqual({
+    expect(tsFacts(result)).toEqual({
       success: false,
       error: {
         message: "User denied Execute TypeScript.",
@@ -615,43 +695,73 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return 'allowed';",
     });
 
-    expect(result.details!).toEqual({
+    expect(tsFacts(result)).toEqual({
       success: true,
       result: "allowed",
     });
   });
 
-  it("launches approved execute_typescript through the managed runtime sandbox policy seam", async () => {
+  it("launches approved execute_typescript with runtime-owned SandboxLaunchFacts", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-managed-runtime-seam", workspaceCwd);
     const runtime = createRuntime(store, "session-managed-runtime-seam");
     const launches: Array<{
       command: readonly string[];
       cwd: string;
-      fileSystemPolicyKind: string;
-      managedSandbox: boolean;
-      networkAccess: boolean;
-      entries: Array<{ access: string; path: string }>;
     }> = [];
+    const launchRequests: Array<Omit<BuildLaunchPolicyInput, "launchKind">> = [];
     const tool = createExecuteTypescriptTool({
       cwd: workspaceCwd,
       runtime,
       store,
       approvalMode: "user",
       approvalBoundary: () => ({ approved: true }),
-      managedSandbox: true,
-      networkAccess: false,
+      acquireExecuteTypescriptLaunch: async (input) => {
+        launchRequests.push(input);
+        const facts: SandboxLaunchFacts = {
+          mode: "managed",
+          spawn: {
+            executable: process.execPath as AbsolutePath,
+            args: input.command.slice(1),
+            cwd: input.cwd,
+            envFacts: input.envFacts,
+          },
+          helperPath: "/tmp/svvy-test-helper" as AbsolutePath,
+          helperArgs: ["--test-helper"],
+          policySnapshot: {
+            snapshotId: "managed-runtime-seam-snapshot",
+            fingerprint: "managed-runtime-seam-fingerprint",
+            resolvedAt: "2026-04-18T09:00:00.000Z" as never,
+            scope: input.scope,
+            ...(input.surfacePiSessionId ? { surfacePiSessionId: input.surfacePiSessionId } : {}),
+            commandId: input.commandId,
+            launchKind: "execute_typescript_runtime",
+            cwd: input.cwd,
+            sandboxMode: "managed",
+            networkPolicy: "deny",
+            filesystemPolicy: {
+              defaultAccess: "read",
+              entries: [
+                {
+                  access: "write",
+                  path: workspaceCwd as AbsolutePath,
+                  recursive: true,
+                  source: "workspace",
+                },
+              ],
+            },
+            profileDigest: "managed-runtime-seam-profile",
+          },
+        };
+        return {
+          facts,
+          close: async () => {},
+        };
+      },
       runtimeProcessSpawner: (input) => {
         launches.push({
           command: input.command,
           cwd: input.cwd,
-          fileSystemPolicyKind: input.fileSystemPolicy.kind,
-          managedSandbox: input.managedSandbox,
-          networkAccess: input.networkAccess,
-          entries: input.fileSystemPolicy.entries.map((entry) => ({
-            access: entry.access,
-            path: entry.path,
-          })),
         });
         return spawn(input.command[0]!, input.command.slice(1), {
           cwd: input.cwd,
@@ -664,27 +774,31 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return { sandboxed: true };",
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: { sandboxed: true },
+    });
+    expect(launchRequests).toHaveLength(1);
+    expect(launchRequests[0]).toMatchObject({
+      scope: { kind: "workspace", workspaceId: workspaceCwd },
+      commandId: expect.any(String),
+      cwd: workspaceCwd,
     });
     expect(launches).toEqual([
       expect.objectContaining({
         cwd: workspaceCwd,
-        fileSystemPolicyKind: "restricted",
-        managedSandbox: true,
-        networkAccess: false,
       }),
     ]);
     expect(launches[0]!.command[0]).toBe(process.execPath);
-    expect(launches[0]!.entries).toEqual(
-      expect.arrayContaining([expect.objectContaining({ access: "write", path: workspaceCwd })]),
-    );
     const command = store.getSessionState("session-managed-runtime-seam").commands[0]!;
     expect(command.facts).toMatchObject({
-      fileSystemPolicyKind: "restricted",
-      managedSandbox: true,
-      networkAccess: false,
+      sandboxMode: "managed",
+      networkPolicy: "deny",
+      policySnapshotId: "managed-runtime-seam-snapshot",
+      policyFingerprint: "managed-runtime-seam-fingerprint",
+      launchKind: "execute_typescript_runtime",
+      commandFamily: "execute_typescript",
+      profileDigest: "managed-runtime-seam-profile",
     });
   });
 
@@ -706,7 +820,7 @@ describe("execute_typescript tool", () => {
           "return { leaked: (globalThis as any).process?.env?.SVVY_PARENT_ONLY_TEST_SECRET ?? null };",
       });
 
-      expect(result.details!).toEqual({
+      expect(tsFacts(result)).toEqual({
         success: true,
         result: {
           leaked: null,
@@ -742,9 +856,9 @@ describe("execute_typescript tool", () => {
       const typechecked = await tool.execute(`tool-call-${property}-typecheck`, {
         typescriptCode: `return await api.${property}({});`,
       });
-      expect(typechecked.details!.success).toBe(false);
-      expect(typechecked.details!.error?.stage).toBe("typecheck");
-      expect(typechecked.details!.error?.message).toContain("api");
+      expect(tsFacts(typechecked).success).toBe(false);
+      expect(tsFacts(typechecked).error?.stage).toBe("typecheck");
+      expect(tsFacts(typechecked).error?.message).toContain("api");
     }
 
     const runtimeResult = await tool.execute("tool-call-no-global-api-runtime", {
@@ -756,7 +870,7 @@ describe("execute_typescript tool", () => {
         "};",
       ].join("\n"),
     });
-    expect(runtimeResult.details).toMatchObject({
+    expect(tsFacts(runtimeResult)).toMatchObject({
       success: true,
       result: {
         hasApi: false,
@@ -796,7 +910,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         total: 6,
@@ -902,8 +1016,8 @@ describe("execute_typescript tool", () => {
         'console.log("api_key=typescript-secret");\nreturn { token: "typescript-secret", visible: "ok" };',
     });
 
-    expect(JSON.stringify(success.details)).not.toContain("typescript-secret");
-    expect(success.details).toMatchObject({
+    expect(JSON.stringify(tsFacts(success))).not.toContain("typescript-secret");
+    expect(tsFacts(success)).toMatchObject({
       success: true,
       result: {
         token: "[REDACTED]",
@@ -936,8 +1050,8 @@ describe("execute_typescript tool", () => {
       typescriptCode: 'throw new Error("access_token=runtime-secret");',
     });
 
-    expect(JSON.stringify(failure.details)).not.toContain("runtime-secret");
-    expect(failure.details).toMatchObject({
+    expect(JSON.stringify(tsFacts(failure))).not.toContain("runtime-secret");
+    expect(tsFacts(failure)).toMatchObject({
       success: false,
       error: {
         message: "access_token=[REDACTED]",
@@ -969,7 +1083,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: 'throw new Error("runtime exploded");',
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: false,
       error: {
         stage: "runtime",
@@ -1252,9 +1366,9 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!.success).toBe(false);
-    expect(result.details!.error?.stage).toBe("typecheck");
-    expect(result.details!.error?.message).toContain("linear");
+    expect(tsFacts(result).success).toBe(false);
+    expect(tsFacts(result).error?.stage).toBe("typecheck");
+    expect(tsFacts(result).error?.message).toContain("linear");
   });
 
   it("rejects user svvyx generated declaration access when the extension is not loaded", async () => {
@@ -1291,9 +1405,9 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!.success).toBe(false);
-    expect(result.details!.error?.stage).toBe("typecheck");
-    expect(result.details!.error?.message).toContain("linear");
+    expect(tsFacts(result).success).toBe(false);
+    expect(tsFacts(result).error?.stage).toBe("typecheck");
+    expect(tsFacts(result).error?.message).toContain("linear");
   });
 
   it("runs the generated Artifacts client and links created artifacts to child commands", async () => {
@@ -1315,21 +1429,19 @@ describe("execute_typescript tool", () => {
         "  ok: created.ok,",
         "  id: created.data.id,",
         "  name: created.data.name,",
-        "  outputMatchesData: created.output.id === created.data.id,",
         "  factArtifactId: created.meta.commandFacts.artifactId,",
         "};",
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         ok: true,
         name: "plan.md",
-        outputMatchesData: true,
       },
     });
-    const returned = result.details!.result as { id: string; factArtifactId: string };
+    const returned = tsFacts(result).result as { id: string; factArtifactId: string };
     expect(returned.factArtifactId).toBe(returned.id);
 
     const snapshot = store.getSessionState("session-artifact-client");
@@ -1395,7 +1507,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         name: "bracket.md",
@@ -1431,9 +1543,9 @@ describe("execute_typescript tool", () => {
         'return await extensions.artifacts.run("create", { options: { name: "blocked.md" } });',
     });
 
-    expect(result.details!.success).toBe(false);
-    expect(result.details!.error?.stage).toBe("typecheck");
-    expect(result.details!.error?.message).toContain("artifacts");
+    expect(tsFacts(result).success).toBe(false);
+    expect(tsFacts(result).error?.stage).toBe("typecheck");
+    expect(tsFacts(result).error?.message).toContain("artifacts");
     const snapshot = store.getSessionState("session-artifact-unloaded");
     expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
   });
@@ -1480,7 +1592,6 @@ describe("execute_typescript tool", () => {
         },
       ],
       workflowsSourceRoot,
-      workflowsWorkspaceCwds: () => [workspaceCwd, otherWorkspaceCwd],
     });
 
     const result = await tool.execute("tool-call-workflows-client", {
@@ -1500,14 +1611,13 @@ describe("execute_typescript tool", () => {
         "  providerCount: models.meta.commandFacts.workflowProviderCount,",
         "  savedKind: saved.data.kind,",
         "  savedExportName: saved.data.exportName,",
-        "  linkedWorkspaces: saved.data.linkedWorkspaces,",
+        "  hasLinkedWorkspaces: Object.hasOwn(saved.data, 'linkedWorkspaces'),",
         "  listed: listed.data.items.map((item) => item.qualifiedName),",
-        "  outputMatchesData: listed.output.items[0].qualifiedName === listed.data.items[0].qualifiedName,",
         "};",
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         extensionKeys: ["artifacts", "workflows"],
@@ -1515,9 +1625,8 @@ describe("execute_typescript tool", () => {
         providerCount: 1,
         savedKind: "prompt",
         savedExportName: "ReviewPrompt",
-        linkedWorkspaces: [workspaceCwd, otherWorkspaceCwd],
+        hasLinkedWorkspaces: false,
         listed: ["Prompts.ReviewPrompt"],
-        outputMatchesData: true,
       },
     });
     expect(existsSync(join(workflowsSourceRoot, "prompts", "ReviewPrompt.mdx"))).toBe(true);
@@ -1525,11 +1634,11 @@ describe("execute_typescript tool", () => {
       true,
     );
     expect(existsSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(
-      true,
+      false,
     );
     expect(
       existsSync(join(otherWorkspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows")),
-    ).toBe(true);
+    ).toBe(false);
     expect(generatedPackageEvents).toHaveLength(1);
     expect(generatedPackageEvents[0]).toMatchObject({
       reason: "svvyx-workflows-save",
@@ -1537,7 +1646,6 @@ describe("execute_typescript tool", () => {
         workflowSavedExportName: "ReviewPrompt",
         workflowSavedKind: "prompt",
         workflowBuildOk: true,
-        workflowLinkedWorkspaceCount: 2,
       },
     });
 
@@ -1597,7 +1705,6 @@ describe("execute_typescript tool", () => {
       extensionId: "workflows",
       workflowSavedExportName: "ReviewPrompt",
       workflowSavedKind: "prompt",
-      workflowLinkedWorkspaceCount: 2,
     });
     expect(workflowCommands[2]?.facts).toMatchObject({
       extensionId: "workflows",
@@ -1618,7 +1725,6 @@ describe("execute_typescript tool", () => {
           workflowBuildOk: true,
           workflowSavedExportName: "ReviewPrompt",
           workflowSavedKind: "prompt",
-          workflowLinkedWorkspaceCount: 2,
         }),
       }),
     );
@@ -1711,7 +1817,6 @@ describe("execute_typescript tool", () => {
         },
       ],
       workflowsSourceRoot,
-      workflowsWorkspaceCwds: () => [workspaceCwd],
     });
 
     const result = await tool.execute("tool-call-workflows-client-cli-prebuild", {
@@ -1729,7 +1834,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -1789,7 +1894,6 @@ describe("execute_typescript tool", () => {
       onAppLog: (event) => appLogEvents.push(event),
       workflowsGeneratedPackagePath,
       workflowsSourceRoot,
-      workflowsWorkspaceCwds: () => [workspaceCwd],
     });
 
     const result = await tool.execute("tool-call-workflows-client-outside-source", {
@@ -1804,8 +1908,8 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!.success).toBe(false);
-    expect(result.details!.error?.message).toContain("workspace .smithers source file");
+    expect(tsFacts(result).success).toBe(false);
+    expect(tsFacts(result).error?.message).toContain("workspace .smithers source file");
     expect(existsSync(join(workflowsSourceRoot, "prompts", "OutsidePrompt.mdx"))).toBe(false);
     expect(existsSync(join(workflowsGeneratedPackagePath, "prompts", "OutsidePrompt.ts"))).toBe(
       false,
@@ -1862,7 +1966,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return Object.keys(extensions).sort();",
     });
 
-    expect(orchestratorResult.details).toMatchObject({
+    expect(tsFacts(orchestratorResult)).toMatchObject({
       success: true,
       result: ["artifacts"],
     });
@@ -1879,7 +1983,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: "return Object.keys(extensions).sort();",
     });
 
-    expect(handlerResult.details).toMatchObject({
+    expect(tsFacts(handlerResult)).toMatchObject({
       success: true,
       result: ["artifacts", "workflows"],
     });
@@ -1917,9 +2021,9 @@ describe("execute_typescript tool", () => {
         typescriptCode: `await extensions.workflows.run(${JSON.stringify(commandId)}, { options: {} });`,
       });
 
-      expect(result.details!.success).toBe(false);
-      expect(result.details!.error?.stage).toBe("typecheck");
-      expect(result.details!.error?.message).toContain(JSON.stringify(commandId));
+      expect(tsFacts(result).success).toBe(false);
+      expect(tsFacts(result).error?.stage).toBe("typecheck");
+      expect(tsFacts(result).error?.message).toContain(JSON.stringify(commandId));
       const snapshot = store.getSessionState(sessionId);
       expect(snapshot.commands.map((command) => command.toolName)).toEqual(["execute_typescript"]);
     }
@@ -1951,7 +2055,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -2017,7 +2121,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         artifactName: "both.md",
@@ -2065,7 +2169,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -2115,13 +2219,13 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         opened: true,
       },
     });
-    const returned = result.details!.result as { id: string };
+    const returned = tsFacts(result).result as { id: string };
     expect(openedArtifacts).toEqual([
       {
         sessionId: "session-artifact-open",
@@ -2155,7 +2259,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         clientError: true,
@@ -2215,8 +2319,8 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    const returned = result.details!.result as { createdId: string; listedIds: string[] };
-    expect(result.details!.success).toBe(true);
+    const returned = tsFacts(result).result as { createdId: string; listedIds: string[] };
+    expect(tsFacts(result).success).toBe(true);
     expect(returned.listedIds).toContain(returned.createdId);
     const snapshot = store.getSessionState("session-artifact-handler");
     const handlerThread = snapshot.threads[0];
@@ -2253,7 +2357,7 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     });
 
-    expect(result.details!).toMatchObject({
+    expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
         errorName: "Incur.ClientError",
@@ -2267,22 +2371,22 @@ describe("execute_typescript tool", () => {
     const unsupportedIncurImport = await tool.execute("tool-call-invalid-incur-import", {
       typescriptCode: 'import { Secrets } from "incur/client";\nreturn Secrets;',
     });
-    expect(unsupportedIncurImport.details!).toMatchObject({
+    expect(tsFacts(unsupportedIncurImport)).toMatchObject({
       success: false,
       error: {
         stage: "compile",
       },
     });
-    expect(unsupportedIncurImport.details!.error?.message).toContain(
+    expect(tsFacts(unsupportedIncurImport).error?.message).toContain(
       "Only named imports Client, Resources, Run",
     );
 
     const nodeImport = await tool.execute("tool-call-node-import", {
       typescriptCode: 'import { readFileSync } from "node:fs";\nreturn readFileSync;',
     });
-    expect(nodeImport.details!.success).toBe(false);
-    expect(nodeImport.details!.error?.stage).toBe("compile");
-    expect(nodeImport.details!.error?.message).toContain(
+    expect(tsFacts(nodeImport).success).toBe(false);
+    expect(tsFacts(nodeImport).error?.stage).toBe("compile");
+    expect(tsFacts(nodeImport).error?.message).toContain(
       "Unsupported execute_typescript import declaration: node:fs",
     );
 
@@ -2297,7 +2401,7 @@ describe("execute_typescript tool", () => {
       const generatedPackageImport = await tool.execute(`tool-call-generated-import-${index}`, {
         typescriptCode: `import { Agents } from "${moduleName}";\nreturn Agents;`,
       });
-      expect(generatedPackageImport.details).toMatchObject({
+      expect(tsFacts(generatedPackageImport)).toMatchObject({
         success: false,
         error: {
           stage: "compile",
@@ -2316,7 +2420,7 @@ describe("execute_typescript tool", () => {
       const namespaceImport = await tool.execute(`tool-call-namespace-import-${index}`, {
         typescriptCode: `import * as Package from "${moduleName}";\nreturn Package;`,
       });
-      expect(namespaceImport.details).toMatchObject({
+      expect(tsFacts(namespaceImport)).toMatchObject({
         success: false,
         error: {
           stage: "compile",
@@ -2327,7 +2431,7 @@ describe("execute_typescript tool", () => {
       const sideEffectImport = await tool.execute(`tool-call-side-effect-import-${index}`, {
         typescriptCode: `import "${moduleName}";\nreturn {};`,
       });
-      expect(sideEffectImport.details).toMatchObject({
+      expect(tsFacts(sideEffectImport)).toMatchObject({
         success: false,
         error: {
           stage: "compile",
@@ -2338,7 +2442,7 @@ describe("execute_typescript tool", () => {
       const dynamicImport = await tool.execute(`tool-call-dynamic-import-${index}`, {
         typescriptCode: `const module = await import("${moduleName}");\nreturn module;`,
       });
-      expect(dynamicImport.details).toMatchObject({
+      expect(tsFacts(dynamicImport)).toMatchObject({
         success: false,
         error: {
           stage: "compile",

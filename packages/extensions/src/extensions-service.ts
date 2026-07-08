@@ -1,29 +1,37 @@
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import {
   type AbsolutePath,
+  type BuildExecuteTypescriptFacadeDeclarationsInput,
+  type ExecuteTypescriptFacadeDeclarations,
   ExtensionError as CoreExtensionError,
   type ExtensionError,
-  type ExtensionStatePort,
+  ExtensionStatePort,
   type GeneratedPackageBuildInput,
   type GeneratedPackageBuildPlanResult,
+  type GeneratedPackageBuildStatus,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackageWorkspaceLinkRepairPlan,
-  type GeneratedPackageRefreshStatus,
-  type NativeToolSchemaExtension,
+  type NativeToolDeclaration,
+  type NativeToolHandlerLookupInput,
+  type OpenExtensionSourceEditInput,
+  type SaveExtensionSourceEditInput,
+  type SourceEditSaveResult,
+  type SourceEditSession,
 } from "@svvy/core";
-import { refreshGeneratedExtensionsPackage as refreshGeneratedExtensionsPackageFiles } from "./generated-extensions-package";
+import {
+  GENERATED_EXTENSIONS_PACKAGE_NAME,
+  refreshGeneratedExtensionsPackage as refreshGeneratedExtensionsPackageFiles,
+} from "./generated-extensions-package";
 import {
   GENERATED_WORKFLOWS_PACKAGE_NAME,
   refreshGeneratedWorkflowsPackage as refreshGeneratedWorkflowsPackageFiles,
 } from "./generated-workflows-package";
-import {
-  buildNativeToolSchemaJsonForExtension,
-  buildNativeToolSchemasJson,
-} from "./native-tool-catalog";
+import { nativeToolDeclarationsForExtensions } from "./native-tool-catalog";
 import {
   type NativeToolCommandMetadata,
   getNativeToolCommandMetadata,
@@ -35,6 +43,11 @@ import { loadExtensionHandler } from "./load-extension-handler";
 import { requestUserInputHandler } from "./request-user-input-handler";
 import { threadStartHandler } from "./thread-start-handler";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
+import { PackagedExtensionTemplatesPort } from "./packaged-extension-templates-port";
+import {
+  openExtensionSourceEditSession,
+  saveExtensionSourceEditSession,
+} from "./source-edit-sessions";
 import { GeneratedPackageRootPort } from "./generated-package-root-port";
 import { WorkspaceSourceLinkPort } from "./workspace-source-link-port";
 import {
@@ -48,6 +61,7 @@ import {
   resolveActorExtensionState,
   visibleExtensionRecords,
 } from "./extension-records";
+import { buildExecuteTypescriptFacadeDeclarations } from "./execute-typescript-facade-declarations";
 
 export interface ExtensionRegistryInspectInput {
   id: string;
@@ -74,20 +88,13 @@ export interface VisibleExtensionRecordsResult {
   available: readonly VisibleAvailableExtensionRecord[];
 }
 
-export interface NativeToolSchemasJsonInput {
-  records: readonly NativeToolSchemaExtension[];
+export interface ToolDeclarationInput {
+  actorKind: NativeToolHandlerLookupInput["actorKind"];
+  actorBinding: NativeToolHandlerLookupInput["actorBinding"];
 }
 
-export interface NativeToolSchemaJsonForExtensionInput {
-  extension: NativeToolSchemaExtension;
-}
-
-export interface NativeToolCommandMetadataInput {
-  toolName: string;
-}
-
-export interface NativeToolHandlerInput {
-  toolName: string;
+export interface ToolMetadataInput extends ToolDeclarationInput {
+  toolName?: NativeToolHandlerLookupInput["toolName"];
 }
 
 export interface ExtensionsService {
@@ -102,35 +109,32 @@ export interface ExtensionsService {
     ): Effect.Effect<VisibleExtensionRecordsResult>;
   };
   nativeTools: {
-    schemasJson(input: NativeToolSchemasJsonInput): Effect.Effect<string, ExtensionError>;
-    schemaJsonForExtension(
-      input: NativeToolSchemaJsonForExtensionInput,
-    ): Effect.Effect<string, ExtensionError>;
-    listCommandMetadata(): Effect.Effect<readonly NativeToolCommandMetadata[]>;
-    getCommandMetadata(
-      input: NativeToolCommandMetadataInput,
-    ): Effect.Effect<NativeToolCommandMetadata | null>;
-    handler(input: NativeToolHandlerInput): Effect.Effect<ExtensionHandler, ExtensionError>;
+    declarations(
+      input: ToolDeclarationInput,
+    ): Effect.Effect<readonly NativeToolDeclaration[], ExtensionError>;
+    metadata(input: ToolMetadataInput): Effect.Effect<readonly NativeToolCommandMetadata[]>;
+    handler(input: NativeToolHandlerLookupInput): Effect.Effect<ExtensionHandler, ExtensionError>;
+  };
+  executeTypescriptFacadeDeclarations: {
+    build(
+      input: BuildExecuteTypescriptFacadeDeclarationsInput,
+    ): Effect.Effect<ExecuteTypescriptFacadeDeclarations, ExtensionError>;
   };
   generatedPackages: {
     refresh(
       input: GeneratedPackageBuildInput,
-    ): Effect.Effect<
-      GeneratedPackageBuildPlanResult,
-      ExtensionError,
-      | FileSystem.FileSystem
-      | Path.Path
-      | ExtensionStatePort
-      | ExtensionSourceRootsPort
-      | GeneratedPackageRootPort
-    >;
+    ): Effect.Effect<GeneratedPackageBuildPlanResult, ExtensionError>;
     planWorkspaceLink(
       input: GeneratedPackageWorkspaceLinkRepairInput,
-    ): Effect.Effect<
-      GeneratedPackageWorkspaceLinkRepairPlan,
-      ExtensionError,
-      WorkspaceSourceLinkPort | GeneratedPackageRootPort | Path.Path
-    >;
+    ): Effect.Effect<GeneratedPackageWorkspaceLinkRepairPlan, ExtensionError>;
+  };
+  sources: {
+    openEditSession(
+      input: OpenExtensionSourceEditInput,
+    ): Effect.Effect<SourceEditSession, ExtensionError>;
+    saveEditSession(
+      input: SaveExtensionSourceEditInput,
+    ): Effect.Effect<SourceEditSaveResult, ExtensionError>;
   };
 }
 
@@ -138,75 +142,202 @@ export class Extensions extends Context.Service<Extensions, ExtensionsService>()
   "@svvy/extensions/Extensions",
 ) {}
 
+export type ExtensionsLayerRequirements =
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | ExtensionStatePort
+  | ExtensionSourceRootsPort
+  | PackagedExtensionTemplatesPort
+  | GeneratedPackageRootPort
+  | WorkspaceSourceLinkPort;
+
 export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
-  Effect.succeed(
-    Extensions.of({
-      registry: {
-        list: () => Effect.succeed(BUILTIN_EXTENSIONS),
-        inspect: ({ id }) => {
-          const record = getExtensionRecord(id);
-          if (!record) {
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const extensionState = yield* ExtensionStatePort;
+    const extensionSourceRoots = yield* ExtensionSourceRootsPort;
+    const packagedExtensionTemplates = yield* PackagedExtensionTemplatesPort;
+    const generatedPackageRoot = yield* GeneratedPackageRootPort;
+    const workspaceSourceLink = yield* WorkspaceSourceLinkPort;
+    void packagedExtensionTemplates;
+
+    return yield* Effect.succeed(
+      Extensions.of({
+        registry: {
+          list: () => Effect.succeed(BUILTIN_EXTENSIONS),
+          inspect: ({ id }) => {
+            const record = getExtensionRecord(id);
+            if (!record) {
+              return Effect.fail(
+                new CoreExtensionError({
+                  extensionId: id,
+                  operation: "extensions.registry.inspect",
+                  reason: "not-found",
+                  message: `Extension record does not exist: ${id}`,
+                }),
+              );
+            }
+            return Effect.succeed(record);
+          },
+        },
+        actorBindings: {
+          resolve: (input) => Effect.succeed(resolveActorExtensionState(input)),
+          visibleRecords: (input) => Effect.succeed(visibleExtensionRecords(input)),
+        },
+        nativeTools: {
+          declarations: (input) =>
+            tryExtensionCatalogOperation("extensions.nativeTools.declarations", () =>
+              nativeToolDeclarationsForExtensions(loadedNativeToolExtensionRecords(input)),
+            ),
+          metadata: (input) =>
+            Effect.succeed(
+              nativeToolCommandMetadata.filter(
+                (metadata) =>
+                  isNativeToolLoadedForActor(metadata, input) &&
+                  (input.toolName === undefined || metadata.toolName === input.toolName),
+              ),
+            ),
+          handler: (input) => {
+            const metadata = getNativeToolCommandMetadata(input.toolName);
+            const eligibilityError = validateNativeToolHandlerEligibility(input, metadata);
+            if (eligibilityError) {
+              return Effect.fail(eligibilityError);
+            }
+            const { toolName } = input;
+            if (toolName === "list_extensions") {
+              return Effect.succeed(listExtensionsHandler);
+            }
+            if (toolName === "load_extension") {
+              return Effect.succeed(loadExtensionHandler);
+            }
+            if (toolName === "request_user_input") {
+              return Effect.succeed(requestUserInputHandler);
+            }
+            if (toolName === "thread_start") {
+              return Effect.succeed(threadStartHandler);
+            }
             return Effect.fail(
               new CoreExtensionError({
-                extensionId: id,
-                operation: "extensions.registry.inspect",
-                reason: "not-found",
-                message: `Extension record does not exist: ${id}`,
+                ...(metadata?.extensionIds[0] ? { extensionId: metadata.extensionIds[0] } : {}),
+                operation: "extensions.nativeTools.handler",
+                reason: "unsupported-operation",
+                message: `Native tool handler is declared but not implemented in @svvy/extensions: ${toolName}`,
               }),
             );
-          }
-          return Effect.succeed(record);
+          },
         },
-      },
-      actorBindings: {
-        resolve: (input) => Effect.succeed(resolveActorExtensionState(input)),
-        visibleRecords: (input) => Effect.succeed(visibleExtensionRecords(input)),
-      },
-      nativeTools: {
-        schemasJson: ({ records }) =>
-          tryExtensionCatalogOperation("extensions.native-tools.schemas-json", () =>
-            buildNativeToolSchemasJson(records),
-          ),
-        schemaJsonForExtension: ({ extension }) =>
-          tryExtensionCatalogOperation(
-            "extensions.native-tools.schema-json-for-extension",
-            () => buildNativeToolSchemaJsonForExtension(extension),
-            extension.id,
-          ),
-        listCommandMetadata: () => Effect.succeed(nativeToolCommandMetadata),
-        getCommandMetadata: ({ toolName }) =>
-          Effect.succeed(getNativeToolCommandMetadata(toolName)),
-        handler: ({ toolName }) => {
-          if (toolName === "list_extensions") {
-            return Effect.succeed(listExtensionsHandler);
-          }
-          if (toolName === "load_extension") {
-            return Effect.succeed(loadExtensionHandler);
-          }
-          if (toolName === "request_user_input") {
-            return Effect.succeed(requestUserInputHandler);
-          }
-          if (toolName === "thread_start") {
-            return Effect.succeed(threadStartHandler);
-          }
-          return Effect.fail(
-            new CoreExtensionError({
-              operation: "extensions.native-tools.handler",
-              reason: "not-found",
-              message: `Native tool handler does not exist: ${toolName}`,
-            }),
-          );
+        executeTypescriptFacadeDeclarations: {
+          build: (input) =>
+            tryExtensionCatalogOperation(
+              "extensions.executeTypescriptFacadeDeclarations.build",
+              () => buildExecuteTypescriptFacadeDeclarations(input),
+            ),
         },
-      },
-      generatedPackages: {
-        refresh: (input) => refreshGeneratedPackages(input),
-        planWorkspaceLink: (input) => planGeneratedPackageWorkspaceLink(input),
-      },
-    }),
-  ),
+        generatedPackages: {
+          refresh: (input) =>
+            refreshGeneratedPackages(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ExtensionStatePort, extensionState),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(GeneratedPackageRootPort, generatedPackageRoot),
+            ),
+          planWorkspaceLink: (input) =>
+            planGeneratedPackageWorkspaceLink(input).pipe(
+              Effect.provideService(WorkspaceSourceLinkPort, workspaceSourceLink),
+              Effect.provideService(GeneratedPackageRootPort, generatedPackageRoot),
+              Effect.provideService(Path.Path, path),
+            ),
+        },
+        sources: {
+          openEditSession: (input) =>
+            openExtensionSourceEditSession(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          saveEditSession: (input) =>
+            saveExtensionSourceEditSession(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+        },
+      }),
+    );
+  }),
 );
 
-export const layerExtensions = Layer.effect(Extensions, makeExtensions());
+export const layer: Layer.Layer<Extensions, never, ExtensionsLayerRequirements> = Layer.effect(
+  Extensions,
+  makeExtensions(),
+);
+
+function validateNativeToolHandlerEligibility(
+  input: NativeToolHandlerLookupInput,
+  metadata: NativeToolCommandMetadata | null,
+): ExtensionError | null {
+  if (!metadata) {
+    return new CoreExtensionError({
+      operation: "extensions.nativeTools.handler",
+      reason: "not-found",
+      message: `Native tool handler does not exist: ${input.toolName}`,
+    });
+  }
+  const actorAvailability = metadata.actorAvailability[input.actorKind];
+  if (actorAvailability !== "loaded") {
+    return new CoreExtensionError({
+      operation: "extensions.nativeTools.handler",
+      reason: "not-found",
+      message: `Native tool is not loaded for actor ${input.actorKind}: ${input.toolName}`,
+    });
+  }
+  const loadedExtensionIds = new Set<string>(input.actorBinding.loadedExtensionIds);
+  const loadedOwner = metadata.extensionIds.find((extensionId) =>
+    loadedExtensionIds.has(extensionId),
+  );
+  if (!loadedOwner) {
+    const extensionId = metadata.extensionIds[0];
+    return new CoreExtensionError({
+      ...(extensionId ? { extensionId } : {}),
+      operation: "extensions.nativeTools.handler",
+      reason: "not-loaded",
+      message: `Native tool extension is not loaded for this actor: ${input.toolName}`,
+    });
+  }
+  return null;
+}
+
+function loadedNativeToolExtensionRecords(input: ToolDeclarationInput): readonly ExtensionRecord[] {
+  const loadedExtensionIds = new Set<string>(input.actorBinding.loadedExtensionIds);
+  const loadedToolExtensionIds = new Set(
+    nativeToolCommandMetadata
+      .filter((metadata) => isNativeToolLoadedForActor(metadata, input))
+      .flatMap((metadata) => metadata.extensionIds),
+  );
+  return BUILTIN_EXTENSIONS.filter(
+    (record) =>
+      record.interface === "native_tool" &&
+      loadedExtensionIds.has(record.id) &&
+      loadedToolExtensionIds.has(record.id),
+  );
+}
+
+function isNativeToolLoadedForActor(
+  metadata: NativeToolCommandMetadata,
+  input: ToolDeclarationInput,
+): boolean {
+  if (metadata.actorAvailability[input.actorKind] !== "loaded") {
+    return false;
+  }
+  const loadedExtensionIds = new Set<string>(input.actorBinding.loadedExtensionIds);
+  return metadata.extensionIds.some((extensionId) => loadedExtensionIds.has(extensionId));
+}
 
 function tryExtensionCatalogOperation<A>(
   operation: string,
@@ -230,6 +361,24 @@ function describeExtensionCatalogCause(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+function unknownGeneratedPackageError(operation: string, packageName: string): ExtensionError {
+  return new CoreExtensionError({
+    operation,
+    reason: "invalid-input",
+    message: `Unknown generated package: ${packageName}`,
+  });
+}
+
+function findUnknownGeneratedPackage(packageNames: readonly string[]): string | null {
+  return (
+    packageNames.find(
+      (packageName) =>
+        packageName !== GENERATED_EXTENSIONS_PACKAGE_NAME &&
+        packageName !== GENERATED_WORKFLOWS_PACKAGE_NAME,
+    ) ?? null
+  );
+}
+
 function refreshGeneratedPackages(
   input: GeneratedPackageBuildInput,
 ): Effect.Effect<
@@ -242,9 +391,14 @@ function refreshGeneratedPackages(
   | GeneratedPackageRootPort
 > {
   const operation = "extensions.generated-packages.refresh";
+  const unknownPackage = findUnknownGeneratedPackage(input.packages);
+  if (unknownPackage) {
+    return Effect.fail(unknownGeneratedPackageError(operation, unknownPackage));
+  }
   const requestedPackages = new Set(input.packages);
   const mustRefreshExtensions =
-    requestedPackages.has("@svvyx/extensions") || requestedPackages.has("@svvyx/workflows");
+    requestedPackages.has(GENERATED_EXTENSIONS_PACKAGE_NAME) ||
+    requestedPackages.has(GENERATED_WORKFLOWS_PACKAGE_NAME);
   const mustRefreshWorkflows = requestedPackages.has(GENERATED_WORKFLOWS_PACKAGE_NAME);
   if (!mustRefreshExtensions && !mustRefreshWorkflows) {
     return Effect.succeed({ packages: [] });
@@ -273,6 +427,8 @@ function refreshGeneratedPackages(
       mustRefreshWorkflows && extensionsBuildId
         ? yield* refreshGeneratedWorkflowsPackageFiles({
             extensionsBuildId,
+            extensionIds: extensionsRefresh.extensionIds,
+            coreTypeContractPackageRoot: generatedPackageRoots.coreTypeContractPackageRoot,
             generatedPackagePath: generatedPackageRoots.workflowsPackageRoot,
             workflowsSourceRoot: sourceRoots.workflowsSourceRoot,
           })
@@ -280,11 +436,11 @@ function refreshGeneratedPackages(
     return { extensionsRefresh, workflowsRefresh };
   }).pipe(
     Effect.map(({ extensionsRefresh, workflowsRefresh }): GeneratedPackageBuildPlanResult => {
-      const packages: GeneratedPackageRefreshStatus[] = [];
+      const packages: GeneratedPackageBuildStatus[] = [];
 
       if (extensionsRefresh) {
         packages.push({
-          packageName: "@svvyx/extensions",
+          packageName: GENERATED_EXTENSIONS_PACKAGE_NAME,
           action: "written",
           buildId: extensionsRefresh.evidence.buildId,
           manifestPath: extensionsRefresh.manifestPath as AbsolutePath,
@@ -336,6 +492,10 @@ function planGeneratedPackageWorkspaceLink(
   WorkspaceSourceLinkPort | GeneratedPackageRootPort | Path.Path
 > {
   const operation = "extensions.generated-packages.plan-workspace-link";
+  const unknownPackage = findUnknownGeneratedPackage([input.packageName]);
+  if (unknownPackage) {
+    return Effect.fail(unknownGeneratedPackageError(operation, unknownPackage));
+  }
   return Effect.gen(function* () {
     const linkPath = yield* (yield* WorkspaceSourceLinkPort).generatedPackageLinkPath(input);
     const roots = yield* (yield* GeneratedPackageRootPort).roots();

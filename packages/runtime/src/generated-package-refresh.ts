@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import {
   RuntimeContractError,
   RuntimeGeneratedPackageStatePort,
+  type GeneratedPackageBuildStatus,
   type GeneratedPackageRefreshStatus,
   type GeneratedPackageBuildInput,
   type GeneratedPackageBuildPlanResult,
@@ -9,12 +10,14 @@ import {
   type GeneratedPackageWorkspaceLinkRepairPlan,
   type GeneratedPackagesRefreshResult,
   type GeneratedPackageWorkspaceLinkRepairInput,
-  type RefreshGeneratedPackagesRequest,
+  type InternalRefreshGeneratedPackagesRequest,
   type RefreshGeneratedContextRequest,
   type SourceDomain,
   type StateInvalidationDescriptor,
   type StateContractError,
   type WorkspaceId,
+  type RecoveryWorkId,
+  type IsoDateTimeString,
 } from "@svvy/core";
 
 export type RuntimeGeneratedPackageRefreshStatus =
@@ -27,9 +30,16 @@ export interface RuntimeGeneratedPackageRefreshHost {
   buildGeneratedPackages(
     input: GeneratedPackageBuildInput,
   ): Effect.Effect<GeneratedPackageBuildPlanResult, RuntimeContractError>;
+  listAcquiredWorkspaceIds(): Effect.Effect<readonly WorkspaceId[], RuntimeContractError>;
+  listRecoverableWorkspaceIds(): Effect.Effect<readonly WorkspaceId[], RuntimeContractError>;
+  materializeCoreTypeContractPackage(): Effect.Effect<void, RuntimeContractError>;
+  now(): Effect.Effect<IsoDateTimeString, RuntimeContractError>;
   planWorkspaceLinkRepair(
     input: GeneratedPackageWorkspaceLinkRepairInput,
   ): Effect.Effect<GeneratedPackageWorkspaceLinkRepairPlan, RuntimeContractError>;
+  publishStateInvalidations(
+    afterCommit: readonly StateInvalidationDescriptor[],
+  ): Effect.Effect<void, RuntimeContractError>;
   readonly workspaceLinkFileHost: RuntimeGeneratedPackageWorkspaceLinkFileHost;
 }
 
@@ -135,7 +145,7 @@ function smithersRootFromPath(path: string): string | null {
 
 export function generatedPackagesForRuntimeSourceInvalidation(
   domains: readonly SourceDomain[],
-): RefreshGeneratedPackagesRequest["packages"] {
+): InternalRefreshGeneratedPackagesRequest["packages"] {
   const packages = new Set<GeneratedPackageName>();
   if (domains.includes("workflows")) {
     packages.add("@svvyx/workflows");
@@ -149,7 +159,7 @@ export function generatedPackagesForRuntimeSourceInvalidation(
 
 function orderedGeneratedPackages(
   packages: readonly GeneratedPackageName[],
-): RefreshGeneratedPackagesRequest["packages"] {
+): InternalRefreshGeneratedPackagesRequest["packages"] {
   const requested = new Set(packages);
   return (["@svvyx/extensions", "@svvyx/workflows"] as const).filter((packageName) =>
     requested.has(packageName),
@@ -167,7 +177,7 @@ export function generatedContextReasonForRuntimeSourceInvalidation(
 function packageFailureStatus(
   packageName: GeneratedPackageName,
   error: RuntimeContractError,
-): RuntimeGeneratedPackageRefreshStatus {
+): GeneratedPackageBuildStatus {
   return {
     packageName,
     action: "failed",
@@ -202,9 +212,31 @@ function generatedPackageStateError(
   });
 }
 
+function generatedPackageEventError(operation: string, cause: unknown): RuntimeContractError {
+  return new RuntimeContractError({
+    operation,
+    reason: "state-conflict",
+    message:
+      cause instanceof Error
+        ? cause.message
+        : "Runtime generated-package event publication failed.",
+    cause,
+  });
+}
+
+function publishGeneratedPackageInvalidations(
+  operation: string,
+  afterCommit: readonly StateInvalidationDescriptor[],
+  host: RuntimeGeneratedPackageRefreshHost,
+): Effect.Effect<void, RuntimeContractError> {
+  return host
+    .publishStateInvalidations(afterCommit)
+    .pipe(Effect.mapError((error) => generatedPackageEventError(operation, error)));
+}
+
 function recordPackageStatus(
   status: RuntimeGeneratedPackageRefreshStatus,
-  input: RefreshGeneratedPackagesRequest,
+  input: InternalRefreshGeneratedPackagesRequest,
 ): Effect.Effect<
   readonly StateInvalidationDescriptor[],
   RuntimeContractError,
@@ -218,11 +250,15 @@ function recordPackageStatus(
       ...(sourceCommandId ? { sourceCommandId } : {}),
       ...(recoveryWorkId ? { recoveryWorkId } : {}),
     };
+    const refreshStatus = {
+      ...status,
+      refreshScope: "app-global-build" as const,
+    };
     const result =
       status.action === "failed"
         ? yield* state
             .recordGeneratedPackageFailure({
-              status: status as GeneratedPackageRefreshStatus & { action: "failed" },
+              status: refreshStatus as GeneratedPackageRefreshStatus & { action: "failed" },
               ...lineage,
             })
             .pipe(
@@ -235,7 +271,7 @@ function recordPackageStatus(
             )
         : yield* state
             .recordGeneratedPackageBuild({
-              status: status as GeneratedPackageRefreshStatus & {
+              status: refreshStatus as GeneratedPackageRefreshStatus & {
                 action: "written" | "unchanged";
               },
               ...lineage,
@@ -254,7 +290,7 @@ function recordPackageStatus(
 
 function recordWorkspaceLinkStatus(
   status: RuntimeGeneratedPackageWorkspaceLinkStatus,
-  input: RefreshGeneratedPackagesRequest,
+  input: InternalRefreshGeneratedPackagesRequest,
 ): Effect.Effect<
   readonly StateInvalidationDescriptor[],
   RuntimeContractError,
@@ -319,12 +355,99 @@ function linkStatusForPackage(
   });
 }
 
+function repairableGeneratedPackages(
+  statuses: Iterable<RuntimeGeneratedPackageRefreshStatus>,
+): readonly GeneratedPackageName[] {
+  return Array.from(statuses)
+    .filter((status) => status.action === "written" || status.action === "unchanged")
+    .map((status) => status.packageName);
+}
+
+function fanOutWorkspaceLinkRepairForAcquiredWorkspaces(input: {
+  packages: readonly GeneratedPackageName[];
+  request: InternalRefreshGeneratedPackagesRequest & { scope: "app-global" };
+  host: RuntimeGeneratedPackageRefreshHost;
+}): Effect.Effect<
+  readonly RecoveryWorkId[],
+  RuntimeContractError,
+  RuntimeGeneratedPackageStatePort
+> {
+  if (input.packages.length === 0) {
+    return Effect.succeed([]);
+  }
+
+  return Effect.gen(function* () {
+    const workspaceIds = yield* input.host.listAcquiredWorkspaceIds();
+    const acquiredWorkspaceIds = new Set(workspaceIds);
+    for (const workspaceId of workspaceIds) {
+      for (const packageName of input.packages) {
+        const status = yield* linkStatusForPackage(
+          { packageName, workspaceId },
+          input.host.planWorkspaceLinkRepair({
+            packageName,
+            workspaceId,
+          }),
+          input.host,
+        );
+        const afterCommit = yield* recordWorkspaceLinkStatus(status, input.request);
+        yield* publishGeneratedPackageInvalidations(
+          "runtime.sourceInvalidation.refreshGeneratedPackages.publishWorkspaceLinkFanout",
+          afterCommit,
+          input.host,
+        );
+      }
+    }
+    const recoverableWorkspaceIds = yield* input.host.listRecoverableWorkspaceIds();
+    const unopenedWorkspaceIds = recoverableWorkspaceIds.filter(
+      (workspaceId) => !acquiredWorkspaceIds.has(workspaceId),
+    );
+    if (unopenedWorkspaceIds.length === 0) {
+      return [];
+    }
+
+    const state = yield* RuntimeGeneratedPackageStatePort;
+    const requestedAt = yield* input.host.now();
+    const sourceCommandId =
+      "sourceCommandId" in input.request ? input.request.sourceCommandId : undefined;
+    const recoveryWorkIds: RecoveryWorkId[] = [];
+    for (const workspaceId of unopenedWorkspaceIds) {
+      const result = yield* state
+        .markWorkspaceLinksRepairNeeded({
+          workspaceId,
+          packages: input.packages,
+          reason: "app-global-generated-package-refreshed",
+          requestedAt,
+          maxAttempts: 5,
+          ...(sourceCommandId ? { sourceCommandId } : {}),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            generatedPackageStateError(
+              "runtime.sourceInvalidation.refreshGeneratedPackages.markWorkspaceLinksRepairNeeded",
+              error,
+            ),
+          ),
+        );
+      recoveryWorkIds.push(...result.value.recoveryWorkIds);
+      yield* publishGeneratedPackageInvalidations(
+        "runtime.sourceInvalidation.refreshGeneratedPackages.publishWorkspaceLinkRepairNeeded",
+        result.afterCommit,
+        input.host,
+      );
+    }
+    return recoveryWorkIds;
+  });
+}
+
 export const refreshRuntimeGeneratedPackages = Effect.fn(
   "@svvy/runtime/sourceInvalidation.refreshGeneratedPackages",
-)(function* (input: RefreshGeneratedPackagesRequest, host: RuntimeGeneratedPackageRefreshHost) {
-  const requested = new Set(input.packages);
+)(function* (
+  input: InternalRefreshGeneratedPackagesRequest,
+  host: RuntimeGeneratedPackageRefreshHost,
+) {
   const statuses = new Map<GeneratedPackageName, RuntimeGeneratedPackageRefreshStatus>();
   const workspaceLinks: RuntimeGeneratedPackageWorkspaceLinkStatus[] = [];
+  const recoveryWorkIds: RecoveryWorkId[] = [];
 
   const setStatus = (status: RuntimeGeneratedPackageRefreshStatus): void => {
     statuses.set(status.packageName, status);
@@ -341,7 +464,12 @@ export const refreshRuntimeGeneratedPackages = Effect.fn(
         host,
       );
       workspaceLinks.push(status);
-      yield* recordWorkspaceLinkStatus(status, input);
+      const afterCommit = yield* recordWorkspaceLinkStatus(status, input);
+      yield* publishGeneratedPackageInvalidations(
+        "runtime.sourceInvalidation.refreshGeneratedPackages.publishWorkspaceLink",
+        afterCommit,
+        host,
+      );
     }
 
     return {
@@ -357,17 +485,26 @@ export const refreshRuntimeGeneratedPackages = Effect.fn(
     { packages: buildPackages },
     host.buildGeneratedPackages({ packages: buildPackages }),
   )) {
-    if (!requested.has(status.packageName)) {
-      continue;
-    }
     setStatus(status);
-    yield* recordPackageStatus(status, input);
+    const afterCommit = yield* recordPackageStatus(status, input);
+    yield* publishGeneratedPackageInvalidations(
+      "runtime.sourceInvalidation.refreshGeneratedPackages.publishPackage",
+      afterCommit,
+      host,
+    );
   }
+  recoveryWorkIds.push(
+    ...(yield* fanOutWorkspaceLinkRepairForAcquiredWorkspaces({
+      packages: repairableGeneratedPackages(statuses.values()),
+      request: input,
+      host,
+    })),
+  );
 
   return {
     scope: "app-global",
     packages: [...statuses.values()],
     workspaceLinks: [],
-    recoveryWorkIds: [],
+    recoveryWorkIds,
   } satisfies GeneratedPackagesRefreshResult;
 });

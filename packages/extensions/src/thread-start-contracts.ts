@@ -21,10 +21,6 @@ export const ThreadStartInputSchema = Schema.Struct({
 
 export type ThreadStartInput = typeof ThreadStartInputSchema.Type;
 
-export const decodeThreadStartInput = Schema.decodeUnknownSync(
-  ThreadStartInputSchema,
-  strictBoundaryParseOptions,
-);
 export const decodeThreadStartInputExit = Schema.decodeUnknownExit(
   ThreadStartInputSchema,
   strictBoundaryParseOptions,

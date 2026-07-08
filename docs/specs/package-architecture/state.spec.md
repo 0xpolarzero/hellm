@@ -33,9 +33,15 @@ Multi-write state port methods must call exactly one package-private transaction
 commits all affected rows and computes the final descriptor set from the committed transaction
 result. A port implementation must not compose multiple mutating store calls and synthesize one
 `StateMutationResult` afterward. This rule applies to queue settlement, prompt/turn settlement,
-source-save commits, generated-package refresh commits, extension-state writes, app-log writes, and
-recovery transitions. If a product operation needs multiple state domains changed atomically, add a
-specific transactional store method for that product operation instead of exposing or reusing a
+source-fact commits, generated-package refresh commits, extension-state writes, and recovery
+transitions. App-log read-state command services are single-domain state commands over the app-log
+read-state domain; they return committed command results plus app-log read-model invalidation
+descriptors through `StateCommands`. `createStateCommandsFacade(...)` only adapts those services to
+the app-owned `ManagedRuntime` and does not call app-log stores or package-private app-log facades
+directly. If an app-log command later writes multiple state domains atomically, add a specific
+transactional store method for that product operation. If any product operation needs multiple state
+domains changed atomically, add a specific transactional store method for that product operation
+instead of exposing or reusing a
 generic transaction builder.
 
 A mutating state-backed Effect port method is any method that can create, update, delete, claim,
@@ -47,30 +53,99 @@ domain value exists. Runtime-facing state ports use write verbs for mutations an
 `snapshot` for non-mutating reads. Read-only methods perform no writes and return
 `Effect.Effect<T, StateContractError>` or the port-specific read error directly.
 
-All public state-backed port DTOs and read models are schema-backed contracts exported from
-`@svvy/core` or explicitly listed extension-owned contracts. Public DTOs do not use interface-only
-shapes, raw string ids where a branded id exists, raw `number` durations where a duration brand
-exists, or unbranded timestamp strings where `IsoDateTimeString` exists. Package-private
-`Structured*` selector outputs may exist inside `@svvy/state` to make SQL projection code readable,
-but they are not target package-root or public-subpath APIs and they are not consumed by runtime,
-desktop, generated packages, extensions, sandbox, or renderer/shared contracts as public contracts.
-Public read-model results are derived from the core-owned schema DTOs only. The only permitted
-target package-root exports are the state service/layer factories, approved read facades, approved
-command facades, approved state-backed port layers, state-owned public errors, and schema-backed
-facade contracts named in this spec. The target package root does not export
-`StructuredSessionStateStore`, `StructuredSessionStateStoreInput`, `Structured*` result DTOs, raw
-repository helpers, SQLite helpers, table helpers, migration helpers, transaction helpers, or broad
-store-construction helpers. Stable pure selector helpers may be public only when this spec names
+Public state-backed port DTOs are schema-backed contracts exported from `@svvy/core` or explicitly
+listed extension-owned contracts. Public facade DTOs use branded ids and branded timestamps where
+those brands exist, and they must either be derived from schema-backed contracts or named in this
+spec as state-owned facade DTOs that remain in-process TypeScript facade contracts and are not
+exposed over renderer or RPC transport unless this spec names matching schemas/codecs. Package-private `Structured*` selector outputs may exist inside `@svvy/state` to make
+SQL projection code readable, but they are not package-root contracts and they are not consumed by
+runtime, desktop, generated packages, extensions, sandbox, or renderer/shared contracts as public
+contracts. Public read-model results are derived from the core-owned schema DTOs where those schema
+DTOs exist; state-owned read-model DTOs are package-root facade contracts only for read-model slices
+whose schemas/codecs have not been promoted to transport boundaries. The only permitted
+package-root exports are the state service/layer factories, approved read facades, approved command
+facades, approved
+state-backed port layers, state-owned public errors, and schema-backed facade contracts named in
+this spec. The package root uses explicit named re-exports only. It does not export
+`StructuredSessionStateStore`, `StructuredSessionStateStoreInput`, `Structured*` result DTOs,
+`*FromStore` adapters, `*FromStructuredSessionState` adapters, structured-session port aggregate
+layers, raw repository helpers, SQLite helpers, table helpers, migration helpers, transaction
+helpers, broad store-construction helpers, or duplicated helper exports already assigned to public
+subpaths.
+
+The public subpath `@svvy/state/session-navigation` owns renderer-safe pure session-navigation
+helpers. The restricted exported subpaths `@svvy/state/structured-session-state`,
+`@svvy/state/structured-session-adapters`, `@svvy/state/structured-session-projections`, and
+`@svvy/state/generated-package-maintenance` are restricted bootstrap/test wiring surfaces named by
+this spec and package-boundary tests; they are not renderer, runtime facade, app-developer,
+extension, browser-tool, headless, or generated-package APIs. Product app bootstrap may use them
+only to acquire one structured-session state graph, adapt that graph to named core-owned state
+ports, project structured-session read models for the app-bootstrap session catalog edge, and compose
+app-owned generated-package maintenance wiring.
+Concrete store constructors, raw repository aggregates, SQLite helpers, migrations, transaction
+helpers, and package-private selector/storage modules remain package-private implementation modules,
+not public `@svvy/state` subpaths. Product app bootstrap composes `@svvy/state` root layer inputs,
+named state-backed port layers, approved read facades, approved command facades, and the restricted
+wiring subpaths above. Boundary-tested app/bootstrap composition edges include
+`src/bun/session-catalog.ts` for structured-session wiring/adapters and
+`src/bun/workspace-runtime-registry.ts` for generated-package maintenance; those files may import
+only the exact restricted state subpaths named here for their approved composition reason. No other
+production file may treat concrete stores, raw adapters, or package-private implementation modules
+as package architecture.
+Repo-local tests may import package-private implementation modules only through boundary-test
+allowlists that do not become product API.
+
+Boundary tests keep an explicit restricted-state-subpath ledger: each approved restricted export is
+named in the package export-map/public-symbol expectations, production consumers are scanned, the
+boundary-tested app/bootstrap composition files are named above, and runtime, desktop,
+renderer/shared, extensions, pi-adapter, sandbox, browser-tool, headless, and generated-package
+consumers are rejected unless this spec and the boundary ledger name the exact reason. Test consumers
+stay limited to `@svvy/state` tests and approved app/bootstrap integration fixtures. Every other
+production consumer uses package-root state facades, command facades, or core-owned state port
+layers. Stable pure selector helpers may be public only when this spec names
 their subpath, schema-backed input, schema-backed output, owning read model, and boundary tests;
 otherwise selectors are package-private implementation code.
+
+Restricted subpath export status is explicit:
+
+- `@svvy/state/structured-session-state` is a restricted bootstrap/test wiring surface. Its export
+  set is limited to `StructuredSessionState`, `structuredSessionStateFromStore`,
+  `makeStructuredSessionState`, `layerStructuredSessionState`, `createStructuredSessionStateStore`,
+  `StructuredSessionStateStore`, `CreateStructuredSessionStateStoreOptions`, `StateDigestHelper`,
+  and package-private `Structured*` record types only for explicitly named app-bootstrap and
+  state-test boundaries. Runtime, desktop, renderer/shared, extensions, pi-adapter, sandbox,
+  browser-tool, headless, and generated packages must not import this subpath. Raw store
+  constructors, raw store types, and selector/storage DTOs are not production-visible restricted
+  exports unless this spec names the exact app-bootstrap or state-test boundary allowlist.
+- `@svvy/state/structured-session-adapters` is a restricted adapter ledger for per-port
+  `*FromStructuredSessionState` helpers plus their corresponding `*FromStore` helpers. `*FromStore`
+  helpers are implementation escape hatches allowed only for state tests and approved app/bootstrap
+  integration fixtures; they are not product API. Product app/bootstrap targets
+  `*FromStructuredSessionState` helpers or named zero-argument port layers.
+- `@svvy/state/structured-session-projections` is a restricted app-bootstrap projection ledger for
+  the finite structured-session read-model projection helpers consumed by `src/bun/session-catalog.ts`.
+  It re-exports only the projection helpers and projection result types named by package-boundary
+  tests. It does not expose store constructors, repositories, SQL helpers, mutation helpers,
+  generic selector registries, or app-log APIs.
+- `@svvy/state/generated-package-maintenance` is app-bootstrap/test wiring for generated-package
+  maintenance facts only. It does not expose generated package parsing policy, runtime refresh
+  scheduling, link repair execution, read models, or generated package source inspection.
+
+`@svvy/state` is `private: true` for npm publication, but "public" in this spec means monorepo
+package-boundary public API. Boundary tests and consumer restrictions apply to package-root exports
+and exported subpaths even though the package is not published independently.
 
 ## Owns
 
 - App and workspace settings persistence.
 - Provider auth status rows and implementations/layers for core-owned provider auth status and
-  secret storage ports. Live provider credential snapshots remain outside product state and are
-  returned only by the host-backed `ProviderAuthPort`.
-- Persisted extension env values, env status records, and encrypted extension secrets.
+  provider-auth status state ports. Live provider credential snapshots remain outside product state
+  and are returned only by the host/live `ProviderAuthPort`.
+- Persisted extension env values, env status records, encrypted extension secret references, and
+  state-owned command facade operations that create, update, remove, and report secret readiness.
+  Raw secret reads for extension invocation are performed only by the host/live `SecretStorePort` at
+  the trusted invocation boundary. State command facades may use `SecretStoreMutationPort` only to
+  write/remove user-entered secret material and persist references/status facts.
 - Ambient resource category settings.
 - Workspace identity, default workspace state, worktree identity/context, layout identity, and
   workspace tab state.
@@ -83,8 +158,9 @@ otherwise selectors are package-private implementation code.
   links, and workflow status summaries required by product read models.
 - Request-input request, question, option, answer, timeout, and queue-delivery facts.
 - Command records, command output events, diagnostics, approval state, and command facts.
-- Artifact metadata, physical artifact file-store persistence, immutable markers,
-  source-command/thread/workflow linkage, and deleted state.
+- Artifact metadata, materialization lifecycle rows, immutable markers,
+  source-command/thread/workflow linkage, stored-path facts, byte/digest facts supplied by runtime,
+  and deleted state.
 - Snippet records and transcript provenance.
 - App logs, unread state, normalized error payloads, and related links.
 - Durable title-generation job facts, title values, manual rename flags, and freeze state.
@@ -100,7 +176,8 @@ otherwise selectors are package-private implementation code.
 - Sandbox profile generation.
 - Extension instruction composition or invocation.
 - UI rendering.
-- Smithers or Workflows extension guidance.
+- Smithers/Workflows source files, generated guidance, generated packages, or Smithers runtime
+  state; state owns only `svvy` product facts observed from CLI/bridge execution.
 - Lifecycle policy decisions owned by `@svvy/runtime` or `@svvy/extensions`. State still enforces
   persisted integrity invariants such as transaction atomicity, queue claim consistency, terminal
   command immutability, foreign-key validity, and read-model projection consistency.
@@ -115,8 +192,6 @@ Effect-native service surface:
 
 ```ts
 import * as Context from "effect/Context";
-import * as Config from "effect/Config";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -124,9 +199,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   CommandId,
+  ExtensionEnvName,
   ExtensionStatePort,
   PiSessionReferencePort,
-  ProviderAuthPort,
   ProviderAuthStatusStatePort,
   RecoveryWorkKind,
   RuntimeActorExtensionBindingStatePort,
@@ -140,6 +215,7 @@ import {
   RuntimeExtensionContextImpactStatePort,
   RuntimeGeneratedPackageStatePort,
   RuntimeArtifactStatePort,
+  RuntimePromptDefaultsStatePort,
   RuntimeQueueStatePort,
   RuntimeReadModelStatePort,
   RuntimeRecoveryStatePort,
@@ -149,8 +225,9 @@ import {
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
   SandboxPolicySource,
-  AppLogWritePort,
   SecretStorePort,
+  SecretStoreMutationPort,
+  AppLogWritePort,
   StateContractError,
   WorkspaceId,
 } from "@svvy/core";
@@ -170,93 +247,109 @@ export class StateReadModels extends Context.Service<
   }
 >()("@svvy/state/StateReadModels") {}
 
+// Canonical service surface. A command method is public only when this service surface, the
+// command facade shape, schema-backed inputs/results, state transaction, post-commit descriptors,
+// package-root exports, and tests all name the same method.
 export class StateCommands extends Context.Service<
   StateCommands,
   {
     readonly workspaceChrome: WorkspaceChromeStateCommands;
     readonly workspaceLayout: WorkspaceLayoutStateCommands;
+    readonly appLogs: AppLogReadStateCommands;
     readonly appPreferences: AppPreferencesStateCommands;
-    readonly agentProfiles: AgentProfileStateCommands;
-    readonly snippets: SnippetStateCommands;
     readonly providerAuth: ProviderAuthStateCommands;
     readonly extensionEnv: ExtensionEnvStateCommands;
-    readonly appLogs: AppLogReadStateCommands;
+    readonly agentProfiles: AgentProfileStateCommands;
+    readonly snippets: SnippetStateCommands;
   }
 >()("@svvy/state/StateCommands") {}
 
 export const layer = (input: {
   config: StateLayerConfig;
-  secretStore: SecretStoreAdapter;
+  digest?: StateDigestHelper;
 }): Layer.Layer<
-  | StateReadModels
-  | StateCommands
-  | RuntimeWorkspaceStatePort
-  | RuntimeSurfaceLifecycleStatePort
-  | RuntimeComposerDraftStatePort
-  | RuntimeQueueStatePort
-  | RuntimeTurnStatePort
-  | RuntimeCommandStatePort
-  | RuntimeApprovalStatePort
-  | RuntimeActorExtensionBindingStatePort
-  | RuntimeEpisodeStatePort
-  | RuntimeExtensionStatePort
-  | RuntimeThreadStatePort
-  | RuntimeRequestStatePort
-  | RuntimeSessionWaitStatePort
-  | RuntimeSourceStatePort
-  | RuntimeExtensionContextImpactStatePort
-  | RuntimeGeneratedPackageStatePort
-  | RuntimeArtifactStatePort
-  | RuntimeRecoveryStatePort
-  | RuntimeReadModelStatePort
-  | ExtensionStatePort
-  | SandboxPolicySource
-  | ProviderAuthPort
-  | ProviderAuthStatusStatePort
-  | PiSessionReferencePort
-  | AppLogWritePort
-  | SecretStorePort,
-  StateLayerError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  StateReadModels | StateCommands | AppLogWritePort | StateLayerProvidedPortServices,
+  StateContractError,
+  FileSystem.FileSystem | Path.Path
 > => makeStateLayer(input);
 ```
+
+`StateLayerProvidedPortServices` is a package-private documentation shorthand for the finite set of
+core-owned state-backed port tags listed in this spec. It is not an exported type, not an importable
+aggregate layer, and not a public umbrella state-port service. Public callers depend on the exact
+core-owned port service tags or on `StateReadModels` / `StateCommands`, never on a
+`StructuredSessionStatePorts` bundle.
+
+`@svvy/state.layer(input)` receives only decoded state configuration. Secret-store mutation access is
+required only by state-owned secret-write command services/facade paths if they are added to write
+or remove user-entered secret material, through the core-owned `SecretStoreMutationPort` Effect service in the
+caller-owned app runtime context. Secret reads for extension invocation remain host/live
+invocation-boundary work through `SecretStorePort` and are not state read-model or command results.
+`@svvy/state` must not define or accept a separate `SecretStoreAdapter` input that bypasses the
+core-owned port contracts.
 
 `StateReadModels` and `StateCommands` are narrow state-owned services with explicitly named method
 groups. They are allowed public layer outputs because their contracts are finite Effect service
 contracts, not an umbrella state store. Their Promise facades are separate adapters over these
 Effect services. They do not expose repositories, SQL, transactions, raw snapshots, generic
 mutation, queue execution policy, runtime command lifecycle helpers, or file-backed source editing.
+`StateReadModels.refetchInvalidation(...)` is the durable read-model follow-up for runtime and
+app/bootstrap invalidation notifications. Desktop, browser-tool, and headless consumers use it after
+renderer-safe or programmatic notifications name affected models. They do not treat runtime event
+payloads as read models, and `@svvy/state` does not subscribe to runtime events directly.
 The package-architecture table phrase “no public umbrella service export” means no public
 `StateStore`, no broad `State` service, and no raw store/service output.
 
-The app/bootstrap host layer provides `FileSystem.FileSystem` and `Path.Path` to `@svvy/state`.
-State uses those services for state database parent-directory setup, artifact root resolution,
-staging, copy, rename, stat, digest, delete, and temp cleanup. State repository and selector code
-still does not receive raw host globals, source-checkout-relative paths, or filesystem access
-outside the database setup and artifact file-store ports.
+The app/bootstrap host layer provides `FileSystem.FileSystem` and `Path.Path` to `@svvy/state` only
+for state database parent-directory setup, SQLite adapter acquisition, migration support, and
+state-owned metadata/fingerprint helpers named by this spec. State fingerprint helpers persist,
+compare, and checksum bytes or strings supplied by the owning runtime, extension, sandbox, or state
+repository path; they do not watch, scan, read, edit, or materialize file-backed source inputs.
+During state layer acquisition, state may ensure the configured artifact root directory exists so
+state-backed artifact metadata can reference a valid storage root. Artifact byte staging, copy,
+rename, stat, delete, and digest calculation are runtime-owned file effects, not state-layer
+behavior.
+Synchronous state stores that must compute non-artifact checksums receive a narrow package-owned
+`StateDigestHelper` in their layer input. App/bootstrap and state tests provide the live/test
+implementation; state production modules do not import `node:crypto`, WebCrypto globals, Bun crypto
+globals, or `BunCrypto.layer`, and the public state layer does not require `Crypto.Crypto`. The
+digest helper is used only for state-owned sandbox policy fingerprints, persisted source and
+generated-package fingerprint values supplied by their owning services, and persisted checksums
+named by state-owned schemas. Managed sandbox profile digests are computed by `@svvy/sandbox` from
+generated launch-profile material. Artifact byte and digest facts are supplied by runtime after
+runtime reads the materialized artifact bytes.
+State repository and selector code still does not receive raw host globals, source-checkout-relative
+paths, or filesystem/digest access outside database setup, fingerprint, checksum, and id-generation
+ports.
 
 Layer input is host configuration, not product state. Product settings such as provider auth,
 extension usage, snippets, prompt history, and artifact metadata are read and written through state
 ports after the layer starts.
 
 `layer(input)` constructs the package-private store/repository graph and provides each core-owned
-state-backed port service from the same scoped database handle. Callers depend on the narrow port
-service they need; they do not call a broad runtime-state bundle or receive shortcuts that bypass
+state-backed port service over one decoded state configuration. The state layer owns scoped SQLite
+store acquisition for app logs and structured-session state against the configured database path.
+Callers depend on the narrow port service they need; they do not call a broad runtime-state bundle or
+receive store handles, repositories, SQL clients, transaction builders, or shortcuts that bypass
 service ownership.
 
-Named state-backed port layer factories are optional public conveniences over the same state layer
-identity. When exported, their exact signature is a projection from an already constructed state
-layer value:
+Named state-backed port layers are zero-argument Effect layer values that provide one core-owned
+port service and require the package-private `StructuredSessionState` service in their environment.
+They do not receive a store object, repository object, SQLite handle, mutable state bundle, or
+caller-constructed state-port service as a function argument:
 
 ```ts
-type StateLayer = ReturnType<typeof layer>;
-
-export const layerRuntimeQueueStatePort = (
-  stateLayer: StateLayer,
-): Layer.Layer<RuntimeQueueStatePort, StateLayerError> => projectRuntimeQueueStatePort(stateLayer);
+export const layerRuntimeQueueStatePort: Layer.Layer<
+  RuntimeQueueStatePort,
+  StateContractError,
+  StructuredSessionState
+> = Layer.effect(RuntimeQueueStatePort, makeRuntimeQueueStatePort());
 ```
 
-The target public named projection factories are exactly:
+`makeRuntimeQueueStatePort()` is an Effect value factory. Package examples must call it when
+installing the layer; they must not pass the factory function itself as the service effect.
+
+The public named state-backed port layers are exactly:
 
 - `layerRuntimeWorkspaceStatePort`
 - `layerRuntimeSurfaceLifecycleStatePort`
@@ -270,6 +363,7 @@ The target public named projection factories are exactly:
 - `layerRuntimeExtensionStatePort`
 - `layerRuntimeExtensionContextImpactStatePort`
 - `layerRuntimeGeneratedPackageStatePort`
+- `layerRuntimePromptDefaultsStatePort`
 - `layerRuntimeArtifactStatePort`
 - `layerRuntimeRecoveryStatePort`
 - `layerRuntimeReadModelStatePort`
@@ -279,96 +373,109 @@ The target public named projection factories are exactly:
 - `layerRuntimeThreadStatePort`
 - `layerExtensionStatePort`
 - `layerSandboxPolicySource`
-- `layerProviderAuthPort`
+- `layerSandboxPolicySourceWithConfig(config)`
+- `layerProviderAuthStatusStatePort`
 - `layerPiSessionReferencePort`
 - `layerAppLogWritePort`
-- `layerSecretStorePort`
 
-The named factory must not call `layer(input)`, open SQLite, construct secret stores, run
-migrations, or rebuild repository graphs. It can only project/adapt services from the same
-`StateLayer` layer description. Under the app-owned `ManagedRuntime`, Effect v4 layer memoization
-ensures those projections share the same acquired state graph and database handle. If app bootstrap
-uses the full `layer(input)` output directly, it does not need the named factories at all. Public
-target port layer exports are projection factories of shape
-`(stateLayer: StateLayer) => Layer.Layer<Port, StateLayerError>`, or an equivalent owner-named
-projection type that carries the same already-constructed state layer identity. Mixing
-zero-argument port layers with a separately provided state layer is not a target architecture
-pattern because it leaves resource identity ambiguous.
+`layerSandboxPolicySourceWithConfig(config)` is the only public named port-layer factory in this
+set. Its config is app/bootstrap-supplied host/root context for generated output roots, extension
+dependency roots, and temporary roots used by sandbox policy snapshots; it is not product state and
+does not replace app preferences or workspace facts read from the acquired state service.
+
+The named port layer must not call `layer(input)`, open SQLite, construct secret stores, run
+migrations, or rebuild repository graphs. It can only yield `StructuredSessionState` from the Effect
+environment and adapt that already-acquired service to the corresponding core-owned port. App
+bootstrap composes one acquired state layer with the named projection layers inside the same app
+layer graph; Effect v4 memoization preserves that explicit composition so every projection shares
+the same acquired state graph and database handle. `layerSandboxPolicySource` follows this exact
+zero-argument pattern for the DB-backed projection: it requires `StructuredSessionState`, adapts it
+to the core-owned
+`SandboxPolicySource`, and does not read ambient config, open SQLite, or acquire a standalone policy
+store. The root `layer({ config })` may provide immutable app-bootstrap sandbox policy roots from
+`StateLayerConfig.sandboxPolicy` to the sandbox-policy projection. Those roots are host/app config
+inputs such as app-owned generated-output roots, extension dependency roots, and temporary roots;
+they are not persisted state rows and not runtime-supplied ad hoc policy fragments.
+
+App bootstrap constructs one state layer for the app runtime and receives the public root layer or
+named projection layers already composed by `@svvy/state`; it does not import the package-private
+`StructuredSessionState` tag. That explicit composition is the production wiring form. A named port
+layer is never independently configured, never hides a call to `layer(input)`, and never acquires a
+separate store. Aggregate port-layer composition helpers may exist only as package-private
+implementation or state-test helpers; they are not public restricted subpath exports and are not
+product app APIs. Internal package code may use the package-private aggregate helper to implement
+the root `layer(input)` facade, but app/bootstrap, runtime, desktop, renderer/shared, extensions,
+pi-adapter, sandbox, browser-tool, headless, and generated packages must not import or compose that
+helper.
+
+Package-root exports, general public subpaths, tests, and app-entry code must not expose or consume
+`StateStore`, `StructuredSessionState`, app-log store objects, repository objects, SQL clients,
+migration helpers, transaction helpers, table helpers, or state-port layers that acquire their own
+store. The restricted `@svvy/state/structured-session-adapters` subpath exposes only the explicit
+store-adapter helpers named for the app-bootstrap structured-session state composition edge; it does
+not export an aggregate port layer. State package boundaries do not expose
+implementation seams that bypass the named state ports, state read facades, state command facades,
+or the shared `StructuredSessionState` provider described in this spec.
 
 ```ts
 type StateLayerConfig = {
   databasePath: AbsolutePath;
   artifactRoot: AbsolutePath;
   busyTimeoutMs: PositiveDurationMs;
+  sandboxPolicy?: {
+    generatedOutputRoots?: AbsolutePath[];
+    extensionDependencyRoots?: AbsolutePath[];
+    temporaryRoots?: AbsolutePath[];
+  };
 };
 
 export const StateLayerConfigSchema = Schema.Struct({
   databasePath: AbsolutePath,
   artifactRoot: AbsolutePath,
   busyTimeoutMs: PositiveDurationMsSchema,
+  sandboxPolicy: Schema.optionalKey(
+    Schema.Struct({
+      generatedOutputRoots: Schema.optionalKey(Schema.Array(AbsolutePath)),
+      extensionDependencyRoots: Schema.optionalKey(Schema.Array(AbsolutePath)),
+      temporaryRoots: Schema.optionalKey(Schema.Array(AbsolutePath)),
+    }),
+  ),
 });
-
-export const StateLayerConfigFromEnv = Config.schema(StateLayerConfigSchema, "state");
 ```
 
-App/bootstrap resolves `StateLayerConfigFromEnv` once using the installed `ConfigProvider`; the
-state layer receives a fully decoded `StateLayerConfig` and does not also read host config. Tests
-pass a resolved config or install `ConfigProvider.fromUnknown(...)` only around app-bootstrap
-config tests. State code uses Effect `Clock`/`DateTime` for persisted timestamps, lease
-comparisons, OAuth expiry comparisons, and retention cutoff comparisons supplied by explicit state
-command or runtime state-port inputs. Request-input timeout defaults,
+`StateLayerConfig`, `StateLayerConfigSchema`, and `SandboxPolicySourceConfig` are public root
+exports from `@svvy/state`.
+`@svvy/state` does not define or export `StateLayerConfigFromEnv`; app/bootstrap passes a decoded
+`StateLayerConfig` into `@svvy/state.layer({ config, digest? })`. Ambient env reads belong to an
+app-edge config reader before the decoded config enters the state layer. Production time policy is
+runtime/app-edge owned and enters state as explicit method input when state must persist or compare
+resulting facts. State repository and selector code must not read ambient time through `Date.now()`,
+`new Date()`, unsafe `DateTime`/`Clock` calls, or host globals. Request-input timeout defaults,
 queue/recovery/title/request-input lease durations, command output batching/retention thresholds,
 app-log retention policy, and runtime worker cadences are runtime-owned policy and enter state only
 as explicit method inputs when state must persist or compare resulting facts.
 
-`StateLayerConfigFromEnv` reads only explicit `SVVY_STATE_*` keys from the app/bootstrap-installed
-`ConfigProvider`. Source/provider failures map to `StateLayerError` reason
-`"config-source-failed"`; schema validation failures map to `"config-schema-failed"` with formatted
-`BoundaryIssue[]`. Defaults apply only to missing optional values. Explicitly configured invalid
-values fail startup before SQLite, secret-store, artifact, migration, repository, or state-port
-services are exposed.
+The app/bootstrap state-config reader is the only component that may read ambient env for state
+config. In env-driven/headless app-edge lanes it reads exactly these keys:
 
-`StateLayerError` is the state-owned public bootstrap/layer error exported from `@svvy/state`
-because root layer signatures expose it. It uses `Schema.TaggedErrorClass`, includes a closed reason
-vocabulary, optional structured boundary issues, and an optional redacted defect cause, and exports
-the public codec quartet required by `SVVY-EFFECT-016`:
+- `SVVY_STATE_DATABASE_PATH`
+- `SVVY_STATE_ARTIFACT_ROOT`
+- `SVVY_STATE_BUSY_TIMEOUT_MS`
 
-```ts
-export class StateLayerError extends Schema.TaggedErrorClass<StateLayerError>()("StateLayerError", {
-  operation: Schema.String,
-  reason: Schema.Literals([
-    "config-source-failed",
-    "config-schema-failed",
-    "database-open-failed",
-    "sqlite-setup-failed",
-    "migration-failed",
-    "schema-verification-failed",
-    "secret-store-unavailable",
-    "shutdown-failed",
-  ]),
-  message: Schema.String,
-  issues: Schema.optionalKey(Schema.Array(BoundaryIssueSchema)),
-  cause: Schema.optionalKey(Schema.Defect({ excludeCause: true })),
-}) {}
+Those env-driven lanes require all three values. Missing values are config-source failures, and
+explicitly configured invalid values fail startup without falling back to defaults. Packaged
+desktop startup resolves equivalent decoded values from packaged app configuration and user-data
+paths before calling `@svvy/state.layer({ config, digest? })`; `@svvy/state` receives only decoded
+`StateLayerConfig` and never reads env or applies app-edge defaults internally. App/bootstrap is
+responsible for mapping config/source failures and schema validation failures into the core-owned
+`StateContractError` channel before SQLite, secret-store, artifact, migration, repository, or
+state-port services are exposed.
 
-export const StateLayerErrorSchema = StateLayerError;
-export const decodeUnknownStateLayerErrorEffect = Schema.decodeUnknownEffect(
-  StateLayerErrorSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeUnknownStateLayerErrorExit = Schema.decodeUnknownExit(
-  StateLayerErrorSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeStateLayerErrorEffect = Schema.encodeEffect(
-  StateLayerErrorSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeStateLayerErrorExit = Schema.encodeExit(
-  StateLayerErrorSchema,
-  strictBoundaryParseOptions,
-);
-```
+`StateLayerConfig.sandboxPolicy` is optional programmatic app-bootstrap config, not env. It carries
+immutable host/app roots that state cannot derive from DB rows: app-owned generated-output roots
+such as the declaration-only `@svvy/core` type-contract package root, app-owned extension dependency
+roots, and temporary roots. App/bootstrap resolves those roots from packaged app configuration and
+passes them with the decoded state config before acquiring the state layer.
 
 Promise read facade for non-Effect consumers:
 
@@ -376,19 +483,27 @@ Promise read facade for non-Effect consumers:
 const state = createStateFacade(managedRuntime);
 
 const result = await state.readModels.fetch({
-  kind: "workspace",
-  workspaceId,
+  kind: "appLogs",
+  query: {
+    limit: 50,
+    direction: "backward",
+  },
 });
-if (result.kind !== "workspace") {
+if (result.kind !== "appLogs") {
   throw new Error("Unexpected read model result");
 }
-const workspace = result.value;
+const appLogs = result.value;
 
 const baseline = await state.readModels.rebaseline({
   workspaceId,
   reason: "renderer-startup",
 });
 ```
+
+`createStateFacade(managedRuntime)` adapts an already-created app-bootstrap-owned
+`ManagedRuntime`. It must not call `ManagedRuntime.make`, compose layers, acquire SQLite, create
+state scopes, or own shutdown. It may only run `StateReadModels` effects through the supplied
+runtime and map results/errors into the facade contract.
 
 The read-model Promise facade is read-only. The separate `createStateCommandsFacade(...)` covers the
 finite DB/product-state-backed UI command groups. Runtime mutations, command event appends, queue
@@ -426,6 +541,9 @@ reject with a `StateFacadeError extends Error` class for JavaScript ergonomics, 
 must decode from exactly one `StateFacadeErrorContractSchema` variant. Adapters do not expose raw
 `Cause`, stack traces, thrown objects, SQLite driver errors, host errors, or invalidation
 descriptors.
+`@svvy/state` exports only the JavaScript `StateFacadeError` wrapper. Bridge/RPC adapters
+encode/decode the wrapper's `contract` field with the core schema rather than serializing `Error`
+object fields, stack traces, raw causes, SQLite errors, or thrown defects.
 
 ```ts
 type StateReadModelInvalidationRefetchRequest = {
@@ -433,75 +551,18 @@ type StateReadModelInvalidationRefetchRequest = {
 };
 
 type StateReadModelRequest =
-  | { kind: "workspace"; workspaceId: WorkspaceId }
-  | { kind: "sessionNavigation"; workspaceId: WorkspaceId }
-  | { kind: "surface"; target: RuntimeSurfaceTarget }
-  | { kind: "surfaceTranscript"; target: RuntimeSurfaceTarget }
-  | { kind: "commandInspector"; commandId: CommandId }
-  | { kind: "handlerThreadInspector"; threadId: ThreadId }
-  | { kind: "workflowTaskAttemptInspector"; workflowTaskAttemptId: WorkflowTaskAttemptId }
-  | { kind: "requestInput"; workspaceId?: WorkspaceId; target?: RuntimeSurfaceTarget }
-  | { kind: "runtimeApprovals"; workspaceId?: WorkspaceId; target?: RuntimeSurfaceTarget }
-  | { kind: "agents"; workspaceId?: WorkspaceId }
-  | { kind: "extensions"; workspaceId?: WorkspaceId; actor?: ActorKind }
-  | { kind: "settings" }
-  | { kind: "providerAuth" }
+  | { kind: "appLogs"; workspaceId?: WorkspaceId; query?: AppLogQuery }
+  | { kind: "appLogSummary"; workspaceId?: WorkspaceId }
   | { kind: "appPreferences" }
-  | { kind: "snippets"; workspaceId?: WorkspaceId }
-  | { kind: "workflowsGenerated"; workspaceId?: WorkspaceId }
-  | { kind: "appLogs"; workspaceId?: WorkspaceId; cursor?: AppLogCursor; filter?: AppLogFilter }
-  | { kind: "appLogSummary"; workspaceId?: WorkspaceId };
+  | { kind: "settings" }
+  | { kind: "providerAuth"; workspaceId?: WorkspaceId };
 
 type StateReadModelResult =
-  | { kind: "workspace"; value: WorkspaceReadModel }
-  | { kind: "sessionNavigation"; value: WorkspaceSessionNavigationReadModel }
-  | { kind: "surface"; value: SurfaceReadModel }
-  | { kind: "surfaceTranscript"; value: SurfaceTranscriptReadModel }
-  | { kind: "commandInspector"; value: CommandInspectorReadModel }
-  | { kind: "handlerThreadInspector"; value: HandlerThreadInspectorReadModel }
-  | { kind: "workflowTaskAttemptInspector"; value: WorkflowTaskAttemptInspectorReadModel }
-  | { kind: "requestInput"; value: RequestInputReadModel }
-  | { kind: "runtimeApprovals"; value: RuntimeApprovalsReadModel }
-  | { kind: "agents"; value: AgentsReadModel }
-  | { kind: "extensions"; value: ExtensionsReadModel }
-  | { kind: "settings"; value: SettingsReadModel }
-  | { kind: "providerAuth"; value: ProviderAuthReadModel }
-  | { kind: "appPreferences"; value: AppPreferencesReadModel }
-  | { kind: "snippets"; value: SnippetsReadModel }
-  | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
   | { kind: "appLogs"; value: AppLogReadModel }
-  | { kind: "appLogSummary"; value: AppLogSummary };
-
-type WorkspaceReadModel = {
-  workspace: {
-    workspaceId: WorkspaceId;
-    cwd: AbsolutePath;
-    workspaceLabel: string;
-    branch: string | null;
-    kind: "default" | "user";
-  };
-  chrome: WorkspaceChromeReadModel;
-  layoutSlots: readonly WorkspaceLayoutSlotSummary[];
-  capabilities: WorkspaceCapabilitySummary;
-  statusCounts: WorkspaceStatusCounts;
-};
-
-type AgentsReadModel = {
-  profiles: readonly AgentProfileRowReadModel[];
-  workflowAgents: readonly WorkflowAgentProfileRowReadModel[];
-  modelOptions: readonly ProviderModelOption[];
-  extensionUsageRows: readonly AgentExtensionUsageRowReadModel[];
-  sourceConflicts: readonly SourceEditConflictSummary[];
-};
-
-type ExtensionsReadModel = {
-  inventory: readonly ExtensionInventoryRowReadModel[];
-  externalInstructions: readonly ExternalInstructionRowReadModel[];
-  generatedContextPreviews: readonly GeneratedContextPreviewSummary[];
-  dependencyActions: readonly ExtensionDependencyActionSummary[];
-  envStatuses: readonly ExtensionEnvStatusSummary[];
-  snapshots: readonly ExtensionSnapshotSummary[];
-};
+  | { kind: "appLogSummary"; value: AppLogSummary }
+  | { kind: "appPreferences"; value: AppPreferencesReadModel }
+  | { kind: "settings"; value: SettingsReadModel }
+  | { kind: "providerAuth"; value: ProviderAuthReadModel };
 
 type SettingsReadModel = {
   preferences: {
@@ -517,27 +578,6 @@ type SettingsReadModel = {
 type ProviderAuthReadModel = {
   providers: readonly ProviderAuthStatus[];
   usableModelProviders: readonly ProviderId[];
-};
-
-type WorkflowsGeneratedReadModel = {
-  packageStatus: GeneratedPackageRefreshStatus | null;
-  workspaceLinks: readonly GeneratedPackageWorkspaceLinkStatus[];
-  exports: readonly WorkflowsGeneratedExportReadModel[];
-  diagnostics: readonly GeneratedPackageDiagnostic[];
-};
-
-type WorkflowsGeneratedExportReadModel = {
-  kind: "workflow" | "agent" | "prompt" | "component";
-  namespace: string;
-  exportName: string;
-  qualifiedName: string;
-  sourcePath: AbsolutePath;
-  generatedPath: AbsolutePath;
-  uiLinks: readonly (
-    | { kind: "generated-file"; path: AbsolutePath }
-    | { kind: "source-file"; path: AbsolutePath }
-    | { kind: "agents-pane"; agentId: WorkflowAgentId }
-  )[];
 };
 
 type AppLogReadModel = {
@@ -563,10 +603,29 @@ type StateReadModelBaseline = {
 };
 ```
 
-`refetchInvalidation(...)` accepts exactly the `StateInvalidationDescriptor` carried by a
-`workspace_read_model.changed` or `app_read_model.changed` runtime event. The caller supplies the
-event cursor fields for gap detection and supplies no fabricated event payload, ad hoc scope,
-command-specific invalidation, or caller-authored descriptor. Workspace `{ model: "surface",
+`createStateFacade(...)` exposes only read-model kinds whose schemas/codecs or approved facade DTOs,
+builders, invalidation mappings, package-root exports, and positive/negative boundary tests are
+defined by this spec.
+
+Command input DTOs exported from `state-command-schemas.ts` are schema-backed; read facade
+request/result/read-model DTOs in `state-facade.ts` are package-root TypeScript facade contracts
+unless this spec names matching Effect Schema codecs for renderer/RPC transport.
+
+`@svvy/state` exposes exactly the `StateReadModelRequest.kind` and `StateReadModelResult.kind` union
+declared above. Additional read-model kinds are not package-root facade contracts unless this spec
+names their request/result variants, builders, invalidation mappings, root exports, and tests.
+
+`refetchInvalidation(...)` maps committed read-model invalidation descriptors to affected facade
+read requests, and `rebaseline(...)` returns the authoritative baseline for the requested
+app/workspace scope.
+
+`refetchInvalidation(...)` accepts exactly one `StateInvalidationDescriptor` represented by a
+`workspace_read_model.changed` or `app_read_model.changed` runtime event: workspace events map to
+`{ scope: "workspace", workspaceId: event.workspaceId, invalidation: event.invalidation }`, and app
+events map to `{ scope: "app", invalidation: event.invalidation }`. Runtime event subscription and
+app/bootstrap notification fanout own cursor tracking, sequence-gap detection, and rebaseline
+decisions; state refetch callers supply no fabricated event payload, ad hoc scope,
+command-specific invalidation, caller-authored descriptor, or separate cursor fields. Workspace `{ model: "surface",
 ids }` descriptors expand into every open surface-scoped read request the caller asks state to
 maintain for that surface: surface summary, surface transcript, composer state, queued-message
 state, prompt-history state, prompt status, and surface-local chrome. Those slices may have
@@ -575,37 +634,32 @@ invalidation descriptors. Workspace `{ model: "commandInspector", ids }` descrip
 `commandInspector` read model; state does not expose a separate live stdout/stderr/progress delta
 read model.
 
-Every `StateReadModelRequest.kind` has a matching exported request schema, result schema,
-read-model builder, invalidation mapping, and positive/negative contract tests. A new UI pane,
-runtime notification, or headless read use case is not promoted until it appears in this union and
-has an invalidation descriptor that lets callers refetch it without receiving duplicate read-model
-payloads in runtime events.
-
-`WorkspaceReadModel.workspace` is the canonical workspace identity payload for desktop, browser
-tools, and headless automation. It includes `workspaceId`, `cwd`, `workspaceLabel`, nullable
-`branch`, and `kind: "default" | "user"`. Do not define a separate workspace-info response;
-callers consume this field.
-
-`WorkflowsGeneratedReadModel.exports[]` is a product read model for the Workflows pane and source
-navigation. `uiLinks` may point at generated files, source files, or Agents-pane rows, but those
-links are UI navigation facts only and are not agent-facing API.
+Every `StateReadModelRequest.kind` in the package-root facade has a matching read-model builder,
+invalidation mapping where applicable, root export, and positive/negative contract tests. Renderer
+or RPC transport exposure additionally requires matching exported request/result schemas unless this
+spec names the DTO as a state-owned facade contract for that slice. UI panes, runtime notifications,
+and headless read use cases consume only request kinds that appear in this union and have an
+invalidation descriptor that lets callers refetch them without receiving duplicate read-model
+payloads in runtime events. Workspace and workflows-generated read models are not package-root state
+facade contracts unless their exact request/result variants are added to the `StateReadModelRequest`
+and `StateReadModelResult` unions above.
 
 `AppLogReadModel` is the Logs-pane read model. It includes the requested query, ordered retained log
 entries, pagination/window metadata, summary counts, persisted view preferences, and read-state
 metadata. It must not contain canonical session, command, artifact, workflow, generated-package, or
 extension state; logs link to those records by id and callers refetch the authoritative read model.
 
-Example fetches:
+Fetch examples for named read-model kinds:
 
 ```ts
-const transcript = await state.readModels.fetch({
-  kind: "surfaceTranscript",
-  target,
+const logs = await state.readModels.fetch({
+  kind: "appLogs",
+  workspaceId,
+  query: { limit: 50 },
 });
 
-const agents = await state.readModels.fetch({
-  kind: "agents",
-  workspaceId,
+const settings = await state.readModels.fetch({
+  kind: "settings",
 });
 ```
 
@@ -616,9 +670,7 @@ scope. Layer shutdown is owned by app/bootstrap through `managedRuntime.dispose(
 State-owned command facade for DB/product-state-backed UI intents:
 
 ```ts
-const stateCommands = createStateCommandsFacade(managedRuntime, {
-  invalidationSink,
-});
+const stateCommands = createStateCommandsFacade(managedRuntime);
 
 const result = await stateCommands.appPreferences.update({
   patch: { appearance: "dark", networkAccess: true },
@@ -630,23 +682,32 @@ const result = await stateCommands.appPreferences.update({
 });
 ```
 
-`createStateCommandsFacade(managedRuntime, { invalidationSink })` is a separate root export from
+`createStateCommandsFacade(managedRuntime)` is a separate root export from
 `createStateFacade(managedRuntime)`. It exposes only named product commands whose writes are owned
 by `@svvy/state` and backed by SQLite/product state. It does not expose generic mutation,
 repository, table, transaction, SQL, migration, queue, command-fact, request-input,
 generated-package build, source-file edit, sandbox, pi, or extension-handler methods. Every method
-validates its input through an Effect Schema contract, executes one state transaction, and returns
-only committed output plus a state-issued receipt. Failed transactions return a typed
-`StateContractError` and no success receipt.
+validates its input through an Effect Schema contract, executes the state-owned commit protocol
+named by that command, and returns only committed output plus a state-issued receipt. Commands whose
+protocol is SQLite-only execute one state transaction. Secret write/remove commands first use
+`SecretStoreMutationPort` according to the secret update/removal ordering below, then commit the
+SQLite reference/status transaction. Failed command protocols return a typed `StateContractError`
+and no success receipt.
+
+`StateCommands` and `createStateCommandsFacade(...)` expose only the named state-owned product
+commands in this spec. Each public command has schema-backed input/result contracts, executes one
+state-owned commit protocol, returns committed output plus a state-issued receipt, maps post-commit
+descriptors, defines facade error mapping and idempotency behavior, and has package-root export and
+positive/negative test coverage. Desktop, browser-tool, headless, runtime, and non-bootstrap app code
+use this facade instead of structured-session wiring subpaths or store adapters.
 
 The `@svvy/state` package root value exports `layer(input)`, `createStateFacade(...)`,
 `createStateCommandsFacade(...)`, the Effect service tags `StateReadModels` and `StateCommands`,
-and the named state-backed port layer factories allowed by this spec. It also exports the
+and the named state-backed port layer values allowed by this spec. It also exports the
 TypeScript-only facade and command contract names `StateFacade`, `StateFacadeCallOptions`,
-`StateCommandsFacade`, `CreateStateCommandsFacadeOptions`, `StateCommandInvalidationSink`, and
-`StateCommandResult`, plus `StateLayerError` and its root-layer codec helpers. `StateCommandReceipt`
-is a core-owned shared encoded contract exported from `@svvy/core`, then imported and reused by
-`@svvy/state`; `@svvy/state` does not redefine it. Those
+`StateCommandsFacade`, and `StateCommandResult`, plus the root-layer config contracts and
+`StateFacadeError`. `StateCommandReceipt` is a core-owned shared encoded contract exported from
+`@svvy/core`, then imported and reused by `@svvy/state`; `@svvy/state` does not redefine it. Those
 type exports do not add alternate state surfaces. Facade object/interface shapes may be
 TypeScript-only; facade method inputs, results, receipts, and error payloads are not. Every facade
 method payload that crosses a package, renderer, desktop bridge, browser-tool, headless automation,
@@ -656,18 +717,28 @@ that schema.
 State command Promise facades do not return raw `StateInvalidationDescriptor` arrays to renderer,
 desktop, browser-tool, or headless callers. State Effect write services return core-owned
 `StateInvalidationDescriptor` values in an internal `afterCommit` field. The
-`createStateCommandsFacade(managedRuntime, { invalidationSink })` runs the state write through the
-caller-owned app `ManagedRuntime`, collects `afterCommit` only after the state transaction commits,
-then invokes the injected invalidation sink before resolving the public command result. The sink is
-an app/bootstrap-owned narrow callback over the same app runtime context; its implementation may
-call the runtime-owned publication service, but `@svvy/state` does not import `@svvy/runtime` and
-does not know how publication is implemented. Public command facade result schemas never expose
-descriptors, and non-Effect callers never receive raw descriptors. Runtime remains the sole
-publisher on the public event stream, performs any runtime-owned refresh, scheduling, queue wakeup,
-source work, or recovery work after state commits. If the state transaction commits but the invalidation sink
-rejects, the facade returns a typed post-commit notification failure that includes the committed
-receipt and requires caller rebaseline. Retrying with the same `clientRequestId` returns
+`createStateCommandsFacade(managedRuntime)` facade requires the app-bootstrap-owned
+`ManagedRuntime` passed by the facade creator, and that runtime context must contain both
+`StateCommands` and the core-owned
+`StateCommandPostCommitNotificationPort`; secret write/remove command methods also require the
+core-owned `SecretStoreMutationPort` in that runtime context. It runs the state write through that
+runtime, collects `afterCommit` only after the state commit protocol succeeds, and hands the
+committed descriptors to the notification port provided by `@svvy/runtime` in the composed app
+runtime. `@svvy/state` consumes the port contract but does not provide it, import `@svvy/runtime`,
+or own runtime event publication. Public command facade result schemas never expose descriptors, and
+non-Effect callers
+never receive raw descriptors. Runtime remains the sole publisher on the public event stream and
+performs any runtime-owned refresh, scheduling, queue wakeup, source work, or recovery work after
+state commits. If post-commit notification handling fails after the state transaction commits, the
+facade rejects with `StateFacadeErrorContract.reason: "post-commit-notification-failed"` carrying
+the committed receipt and typed notification error; callers must rebaseline through state read
+models before retrying UI projection. Retrying with the same `clientRequestId` returns
 `outcome: "duplicate"` and does not recreate descriptors.
+`StateCommandPostCommitNotificationPort.notifyCommittedStateCommand(...)` is called only when the
+committed mutation result has at least one `afterCommit` descriptor. Its acknowledgement is internal
+runtime/app-bootstrap evidence and is never returned to the facade caller. Facade success returns
+only the committed command result; a post-commit notification failure means projection delivery
+failed after commit, not that the write rolled back.
 Desktop consumers refetch state-backed read models after notifications.
 Renderer panes and desktop UI state-command paths never manually fan out invalidations or call
 runtime source-invalidation methods for DB/product-state writes. Browser-tool, headless,
@@ -678,20 +749,31 @@ file-backed reconciliation domains named by `runtime.spec.md`.
 runtime-owned lanes. `StateCommandsFacade` hides those descriptors and returns only the state command
 receipt plus command-specific committed output.
 
-The target command facade shape is:
+StateCommandsFacade exposes the DB/product-state-backed command groups named in the canonical
+facade shape below. Each command group is public only when its method names, result schemas,
+secret-store ordering where applicable, transactions, notification behavior, package-root exports,
+and tests are all named by this spec.
+
+`StateCommandResult` is a TypeScript facade result type whose `receipt` field reuses the core-owned
+`StateCommandReceipt` contract. Command facade results are package-root JavaScript/TypeScript facade
+results, not independent renderer/RPC DTO schemas, unless this spec names the exact state-owned
+command result schema, command method, transaction, notification behavior, package-root export, and
+tests.
+
+The canonical command facade shape is:
 
 ```ts
 type StateCommandsFacade = {
   workspaceChrome: {
-    setWorkspaceTabs(
+    setTabs(
       input: SetWorkspaceTabsCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    selectWorkspaceTab(
+    selectTab(
       input: SelectWorkspaceTabCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    selectWorkspaceLayoutSlot(
+    selectLayoutSlot(
       input: SelectWorkspaceLayoutSlotCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
@@ -710,6 +792,20 @@ type StateCommandsFacade = {
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
+  appLogs: {
+    markRead(
+      input: MarkAppLogReadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    markVisibleRangeRead(
+      input: MarkVisibleAppLogRangeReadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    clearWorkspaceUnread(
+      input: ClearWorkspaceAppLogUnreadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
   appPreferences: {
     update(
       input: UpdateAppPreferencesCommandInput,
@@ -725,17 +821,17 @@ type StateCommandsFacade = {
       input: RemoveProviderCredentialCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    recordProviderStatus(
+    recordStatus(
       input: RecordProviderAuthStatusInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
   extensionEnv: {
-    setNonSecretOverride(
+    setOverride(
       input: SetExtensionEnvOverrideCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    removeNonSecretOverride(
+    removeOverride(
       input: RemoveExtensionEnvOverrideCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
@@ -749,19 +845,19 @@ type StateCommandsFacade = {
     ): Promise<StateCommandResult>;
   };
   agentProfiles: {
-    updateOrchestratorProfile(
+    updateOrchestrator(
       input: UpdateOrchestratorProfileCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    updateThreadHandlerProfile(
+    updateThreadHandler(
       input: UpdateThreadHandlerProfileCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    deleteOrchestratorProfile(
+    deleteOrchestrator(
       input: DeleteOrchestratorProfileCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    reorderOrchestratorProfiles(
+    reorderOrchestrators(
       input: ReorderOrchestratorProfilesCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
@@ -769,7 +865,7 @@ type StateCommandsFacade = {
       input: SetProfileExtensionUsageCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
-    promoteProfileExtensionDefault(
+    promoteExtensionDefault(
       input: PromoteProfileExtensionDefaultCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
@@ -800,34 +896,13 @@ type StateCommandsFacade = {
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
-  appLogs: {
-    markRead(
-      input: MarkAppLogReadCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    markVisibleRangeRead(
-      input: MarkVisibleAppLogRangeReadCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    clearWorkspaceUnread(
-      input: ClearWorkspaceAppLogUnreadCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-  };
+  close(): void;
 };
 
 import type { StateCommandReceipt } from "@svvy/core";
 
 type StateFacadeCallOptions = {
   signal?: AbortSignal;
-};
-
-type StateCommandInvalidationSink = {
-  publishCommittedStateInvalidations(input: {
-    source: "state-command-facade";
-    descriptors: readonly StateInvalidationDescriptor[];
-    clientSubmission?: RuntimeClientSubmissionInput;
-  }): Promise<void>;
 };
 
 type StateCommandResult<Extra extends object = Record<never, never>> = Extra & {
@@ -855,15 +930,18 @@ commit or complete the short uninterruptible commit section and return the commi
 not continue silently after the facade has reported caller abort.
 
 Every state command facade method is idempotent when `clientSubmission.clientRequestId` is present.
-The state transaction stores one command receipt keyed by command name, caller/source, target
-identity, and `clientRequestId`. A repeated matching submission returns the committed output with
-`receipt.outcome: "duplicate"`. Durable extra output fields, such as a
-created `snippetId`, match the original committed output. Duplicate replay never returns
-publication-ready after-commit descriptors, repeats file effects, repeats SQL writes, inserts new
-invalidations, or republishes app/runtime notifications. If the same id is reused with a different
-decoded input, the method fails with `StateContractError` code `stale-state` or `invalid-input`
-according to the owning command contract. Commands without a client request id are single-shot calls
-and receive `clientRequestId: null`.
+The state transaction stores one command receipt keyed by command name, caller/source, the command
+subject identity derived from the decoded input, and `clientRequestId`. The subject identity is
+command-specific, such as workspace id, workspace tab id, snippet id, provider/workspace credential
+scope, extension env key, app/global scope, or app-log workspace scope; it is not inferred from
+mutable current UI state unless that current value is explicitly part of the decoded command input.
+A repeated matching submission returns the committed output with `receipt.outcome: "duplicate"`.
+Durable extra output fields, such as a created `snippetId`, match the original committed output.
+Duplicate replay never returns publication-ready after-commit descriptors, repeats file effects,
+repeats SQL writes, inserts new invalidations, or republishes app/runtime notifications. If the same
+id is reused with a different decoded input, the method fails with `StateContractError` code
+`stale-state` or `invalid-input` according to the owning command contract. Commands without a client
+request id are single-shot calls and receive `clientRequestId: null`.
 
 Exact state command input contracts:
 
@@ -1029,27 +1107,27 @@ type RecordProviderAuthStatusInput = {
 
 type SetExtensionEnvOverrideCommandInput = {
   extensionId: ExtensionId;
-  name: string;
+  envName: ExtensionEnvName;
   value: string;
   clientSubmission?: StateCommandClientSubmission;
 };
 
 type RemoveExtensionEnvOverrideCommandInput = {
   extensionId: ExtensionId;
-  name: string;
+  envName: ExtensionEnvName;
   clientSubmission?: StateCommandClientSubmission;
 };
 
 type SetExtensionSecretValueCommandInput = {
   extensionId: ExtensionId;
-  name: string;
+  envName: ExtensionEnvName;
   secretValue: string;
   clientSubmission?: StateCommandClientSubmission;
 };
 
 type RemoveExtensionSecretValueCommandInput = {
   extensionId: ExtensionId;
-  name: string;
+  envName: ExtensionEnvName;
   clientSubmission?: StateCommandClientSubmission;
 };
 
@@ -1153,23 +1231,45 @@ type SetSnippetEnabledCommandInput = {
 
 Snippets using `Redacted.Redacted<T>` assume `import type * as Redacted from "effect/Redacted"`.
 Secret-bearing local types stay process-local. Persisted state, RPC contracts, generated package
-files, read models, diagnostics, and app logs expose only presence, non-secret labels, key names, or
-fingerprints.
+files, read models, diagnostics, and app logs expose only presence, non-secret labels, extension
+env names, or fingerprints.
 
-Promise/RPC command facades accept raw user-entered `secretValue: string` only at the trusted
-user-entry boundary and immediately wrap it into `Redacted.Redacted<string>` before it reaches
-Effect-local services, logs, diagnostics, persistence adapters, or generated declarations. Internal
-state services may use `Redacted.Redacted<string>` for in-process secret handling; public state
-facades must not require callers to construct Effect `Redacted` values.
+Promise/RPC command facades that accept provider or extension secrets accept raw user-entered
+`secretValue: string` only at the trusted user-entry boundary and immediately wrap it into
+`Redacted.Redacted<string>` before it reaches Effect-local services, logs, diagnostics, persistence
+adapters, or generated declarations. Internal state services may use `Redacted.Redacted<string>` for
+in-process secret handling; public state facades must not require callers to construct Effect
+`Redacted` values.
+`UpsertProviderCredentialCommandInputSchema` and
+`SetExtensionSecretValueCommandInputSchema` are the only state-owned secret-intake schemas. They are
+accepted only at approved state command facade ingress. Package-boundary tests must forbid
+runtime, extensions, pi-adapter, sandbox, generated packages, renderer/shared modules, browser-tool
+bridges, headless bridges, and generic app-entry modules from importing or decoding these
+secret-intake schemas directly; app/bootstrap and the approved state command facade are the only
+trusted intake edges. Repository, read-model, app-log, runtime-event, command-fact, artifact,
+transcript, generated-package, and all other state command schemas must not contain `secretValue` or
+`Redacted` fields. Boundary tests classify exactly these two schemas as the complete state-owned
+secret-intake allowlist.
+`RemoveProviderCredentialCommandInputSchema` and
+`RemoveExtensionSecretValueCommandInputSchema` are state-owned secret-removal contracts and must not
+contain `secretValue` or `Redacted` fields.
 
 Public command patch contracts are named schemas, not `Partial<...>` aliases. Patch schema fields
 use `Schema.optionalKey(...)` so omitted means “leave unchanged” and `undefined` is not accepted as
 a value. Explicit `null` is used only where clearing a nullable field is a product operation.
 
-Every command input and command result type above has a matching exported schema named
-`<TypeName>Schema` from `@svvy/state`, plus decoded and encoded types,
-`decodeUnknown<TypeName>Effect`, `decodeUnknown<TypeName>Exit`, `encode<TypeName>Effect`, and,
-where bridge adapters need non-throwing outbound mapping, `encodeUnknown<TypeName>Exit`.
+Every exposed command facade method has a matching exported input schema named `<TypeName>Schema`
+from `@svvy/state`, plus decoded and encoded types, `decodeUnknown<TypeName>Effect`,
+`decodeUnknown<TypeName>Exit`, `encode<TypeName>Effect`, and `encode<TypeName>Exit`. Separate
+non-throwing outbound helpers land only when bridge adapters explicitly need them. Command methods return the shared
+`StateCommandResult` receipt contract plus method-specific committed output where the method has a
+domain value to return; method-specific output schemas must land before those outputs cross renderer
+or RPC transport boundaries.
+`StateCommandsFacade` exposes only the finite command groups named in the facade shape above:
+`workspaceChrome`, `workspaceLayout`, `appPreferences`, `providerAuth`, `extensionEnv`,
+`agentProfiles`, `snippets`, and `appLogs`. Provider-auth and extension-env secret schemas are
+trusted user-entry ingress contracts only for the named `providerAuth` and `extensionEnv` methods
+above. No other command group accepts raw secret values.
 Result payloads are encoded before RPC/facade emission; decoded class, redacted, and `DateTime`
 values do not cross bridge or persistence boundaries. `StateCommandsFacade` exposes only methods
 with input schema, result schema, transaction behavior, invalidation set, and package-boundary
@@ -1183,26 +1283,27 @@ receives only commit-scoped facts that cannot be fetched before the write, such 
 
 `StateCommandsFacade` owns these DB/product-state-backed use cases:
 
-| Facade group      | Use case                                                                                                                                                                                                                                                                                  | Product-state owner                                               | Not allowed in this group                                                                                                  |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `workspaceChrome` | Persist app-global workspace tab order, active tab, known workspace tab records, selected slot.                                                                                                                                                                                           | `@svvy/state` workspace chrome tables                             | Acquiring a workspace runtime, opening a repository picker, closing a runtime, pi session lifecycle, file watching.        |
-| `workspaceLayout` | Persist slot-scoped Dockview snapshot, svvy panel metadata, pane binding, focused pane.                                                                                                                                                                                                   | `@svvy/state` workspace layout tables                             | Rendering Dockview, owning Svelte pane state, creating prompt turns, mutating pi sessions.                                 |
-| `appPreferences`  | Persist appearance, external editor, artifact directory, approval mode, network access, ambient resource settings.                                                                                                                                                                        | `@svvy/state` settings tables                                     | Provider OAuth flows, secret entry UI, sandbox launch execution, prompt rebuilding.                                        |
-| `providerAuth`    | Persist provider credential presence, provider auth status, and OAuth result/status facts through state-owned provider auth and secret ports.                                                                                                                                             | `@svvy/state` provider auth tables and secret references          | Live OAuth browser/device flow, model probing, pi provider calls, returning raw secrets.                                   |
-| `extensionEnv`    | Persist app-global non-secret extension env overrides, secret references, and env status facts used by readiness and invocation env resolution.                                                                                                                                           | `@svvy/state` extension env tables and secret references          | Running extension commands, exposing raw secrets, editing extension source manifests, generated package refresh execution. |
-| `agentProfiles`   | Persist orchestrator profile rows, singleton handler profile, orchestrator/handler extension usage, DB-backed external-instruction actor usage/order, and workflow-task actor defaults for newly created workflow task-agent attempts that are not tied to one `.agent.json` source file. | `@svvy/state` agent/profile and external-instruction usage tables | Workflow-agent `.agent.json` row edits, extension source edits, generated actor-context rendering.                         |
-| `snippets`        | Persist managed svvy snippets and enablement state for managed/discovered snippets.                                                                                                                                                                                                       | `@svvy/state` snippet tables                                      | Editing read-only host snippet files, watching snippet source roots, expanding snippets into prompt text during send.      |
-| `appLogs`         | Persist app-log read cursors, visible-range read marking, and workspace/app unread clearing.                                                                                                                                                                                              | `@svvy/state` app-log read-state tables                           | Deleting log rows, rewriting payloads, publishing live bridge messages directly, or inferring command/session state.       |
+| Facade group      | Use case                                                                                                                                                                                                                                                                                                                                                                                   | Product-state owner                                               | Not allowed in this group                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceChrome` | Persist app-global workspace tab order, active tab, known workspace tab records, selected slot.                                                                                                                                                                                                                                                                                            | `@svvy/state` workspace chrome tables                             | Acquiring a workspace runtime, opening a repository picker, closing a runtime, pi session lifecycle, file watching.        |
+| `workspaceLayout` | Persist slot-scoped Dockview snapshot, svvy panel metadata, pane binding, focused pane.                                                                                                                                                                                                                                                                                                    | `@svvy/state` workspace layout tables                             | Rendering Dockview, owning Svelte pane state, creating prompt turns, mutating pi sessions.                                 |
+| `appPreferences`  | Persist appearance, external editor, preferred artifact directory, approval mode, network access, ambient resource settings. App/bootstrap resolves the preferred artifact directory into `StateLayerConfig.artifactRoot` before acquiring `@svvy/state`; changing the persisted preference affects artifact file effects only after app/bootstrap reacquires the app runtime/state graph. | `@svvy/state` settings tables                                     | Provider OAuth flows, secret entry UI, sandbox launch execution, prompt rebuilding.                                        |
+| `providerAuth`    | Persist provider credential presence, provider auth status rows, and OAuth result/status facts through state-owned provider auth status rows and secret references coordinated with host/live `SecretStorePort`.                                                                                                                                                                           | `@svvy/state` provider auth tables and secret references          | Live OAuth browser/device flow, model probing, pi provider calls, returning raw secrets.                                   |
+| `extensionEnv`    | Persist app-global non-secret extension env overrides, secret references, and env status facts used by readiness and invocation env resolution.                                                                                                                                                                                                                                            | `@svvy/state` extension env tables and secret references          | Running extension commands, exposing raw secrets, editing extension source manifests, generated package refresh execution. |
+| `agentProfiles`   | Persist orchestrator profile rows, singleton handler profile, orchestrator/handler extension usage, DB-backed external-instruction actor usage/order, and workflow-task actor defaults for newly created workflow task-agent attempts that are not tied to one `.agent.json` source file.                                                                                                  | `@svvy/state` agent/profile and external-instruction usage tables | Workflow-agent `.agent.json` row edits, extension source edits, generated actor-context rendering.                         |
+| `snippets`        | Persist managed svvy snippets and enablement state for managed/discovered snippets.                                                                                                                                                                                                                                                                                                        | `@svvy/state` snippet tables                                      | Editing read-only host snippet files, watching snippet source roots, expanding snippets into prompt text during send.      |
+| `appLogs`         | Persist app-log read cursors, visible-range read marking, and workspace/app unread clearing.                                                                                                                                                                                                                                                                                               | `@svvy/state` app-log read-state tables                           | Deleting log rows, rewriting payloads, publishing live bridge messages directly, or inferring command/session state.       |
 
 File-backed source commands are excluded by construction. Workflow-agent `.agent.json` edits,
 including that workflow agent's provider, model, reasoning, instruction text, extension usage
 overrides, and source-order metadata, go through the runtime source-edit service over a
 `WorkflowAgentSourceRef` and `@svvy/extensions` source services. Workflows prompt/component/workflow
 edits, normal extension source edits, and extension generated contributor source edits use that same
-runtime/source-edit boundary. External instruction records are read-only discovered inputs:
-runtime/workspace watchers and `@svvy/extensions` discovery services read their file content and
-fingerprints, while actor enablement, ordering, diagnostics, and participation facts stay
-DB/product-state-backed in `@svvy/state`. Generated-package refresh is a runtime command/effect path.
+runtime/source-edit boundary. External instruction input records are read-only discovered inputs:
+runtime/workspace watchers and `@svvy/extensions` discovery services read their file identity,
+content, and fingerprints, while actor enablement, ordering, diagnostics, and participation facts
+stay DB/product-state-backed in `@svvy/state`. Generated-package refresh is a runtime
+command/effect path.
 Runtime queue, turn, command-fact, request-input, recovery, and title mutations stay on
 runtime-facing Effect state ports and are not available to desktop as state commands.
 
@@ -1246,11 +1347,12 @@ source text, no renderer draft state, no read-model payload, and no pi objects. 
 generated context details or updated Agents-pane data fetches the relevant state read model after
 invalidations publish.
 
-App-log implementation helpers are package-private or explicit test-only subpaths. The root
-entrypoint exports the primary state layer factory, approved state read and command facades, layer
-exports for core-owned state-backed ports, and approved pure selectors only. `StateStore` is an
-internal implementation service and is not a public dependency for `@svvy/runtime`,
-`@svvy/extensions`, `@svvy/pi-adapter`, `@svvy/desktop`, renderer code, or bridge code.
+App-log implementation helpers are package-private or explicit state-owned subpaths. The root
+entrypoint exports the primary state layer factory, approved state read and command facades, and
+layer exports for core-owned state-backed ports only. Pure helpers live on their named subpaths, not
+the root. `StateStore` is an internal implementation service and is not a public dependency for
+`@svvy/runtime`, `@svvy/extensions`, `@svvy/pi-adapter`, `@svvy/desktop`, renderer code, or bridge
+code.
 
 The root entrypoint exposes enough app-bootstrap surface to compose one state layer and wire
 state-backed ports into dependent package layers. Non-state packages consume only their declared
@@ -1287,29 +1389,40 @@ State-owned domain and port slices, not `StateStore` or facade API groups:
 - `migrations`
 - `transactions`
 
+This list names internal package organization and approved core-owned state-backed port areas, not
+package-root exports. In particular, migrations and transactions are package-private
+implementation slices; public callers never import migration runners, transaction services, SQL
+clients, table helpers, repositories, or broad store handles.
+
 The app-log state slice is DB/product-state-backed. `@svvy/core` owns `AppLogLevel`,
 `AppLogSource`, `AppLogEntry`, `AppLogSummary`, `AppLogQuery`, `AppLogReadModel`, and
 `AppLogUpdateMessage`. `@svvy/state` owns the SQLite-backed app-log persistence implementation,
 redaction before persistence/live delivery, unread state, query filtering, bounded retention, and a
 finite app-log implementation behind state ports and the named state read/command facades. The
-target package root must not export separate app-log facades or loggers such as `AppLogFacade`,
+package root exports `createStateAppLogsFacade(...)` only as a state-owned app/bootstrap facade that
+preserves synchronous append/query/summary/mark-seen/subscribe/close behavior and exposes the
+matching `AppLogWritePortService` for runtime composition from the same backing store. The package
+root must not export separate app-log implementation facades or loggers such as `AppLogFacade`,
 `AppLogAppender`, `AppLogAppendInput`, `CreateAppLogFacadeOptions`, `createAppLogFacade`,
 `AppLogger`, `CreateAppLoggerOptions`, `createAppLogger`, `AppLogStore`, `createAppLogStore`,
 `AppLogState`, `AppLogStateService`, `appLogStateFromStore`, `makeAppLogState`, or
-`layerAppLogState`. The package root exports only named app-log state ports, read facades, and
-command facades. Internal app-log stores, logger helpers, and bootstrap/test helpers stay private or
-test-only and must not be imported by runtime, desktop, generated-package, extension, sandbox, or
-renderer/shared code. Public app-log writes go through `AppLogWritePort`; public reads and
-read-state mutations go through `StateReadModels` and `StateCommandsFacade.appLogs`. Bridge
+`layerAppLogState`. Internal app-log stores and logger helpers stay package-private to
+`@svvy/state` implementation or state-local tests. Production app bootstrap, runtime, desktop,
+generated-package, extension, sandbox, browser-tool, headless, and renderer/shared code must not
+import app-log implementation modules or standalone app-log facade helpers. Public app-log writes
+go through `AppLogWritePort`; public reads and read-state mutations go through `StateReadModels`
+and `StateCommandsFacade.appLogs`. Bridge
 forwarding is app/bootstrap/runtime-owned; bridge transport, workspace routing, and renderer
 delivery stay outside `@svvy/state`.
 `AppLogWritePort.append(input)` validates `AppendAppLogInputSchema`, redacts before persistence,
 inserts one app-log row in a write transaction, and returns
 `StateMutationResult<{ appLogEntryId: AppLogEntryId }>` with the app-log entry id in `value`.
-Success returns an `appLogs` invalidation for the related workspace when present. There is an
-`appLogSummary` read model, but no separate invalidation descriptor; the `appLogs` invalidation is
-the signal for both `appLogs` and `appLogSummary` refetch. App-log sink failure is recorded as
-metrics/diagnostic fallback and must not fail the domain operation that emitted the Effect log.
+Success returns an `appLogs` invalidation only when `input.workspaceId` is present; app-global
+app-log appends return no invalidation descriptor. There is an `appLogSummary` read model,
+but no separate invalidation descriptor. Direct
+`AppLogWritePort.append(...)` failure is a state command failure for that append operation. Only the
+separate best-effort Effect-log-to-app-log bridge may degrade to metrics/diagnostic fallback, and
+bridge failure must not fail the domain operation that emitted the Effect log.
 `AppLogUpdateMessage` is a redacted post-commit live delivery optimization for open panes. It is not
 a durable event log, not an app-log read model, and not sufficient for recovery. Renderer and
 headless consumers fall back to the `appLogs` invalidation/read-model refetch path whenever a live
@@ -1339,26 +1452,40 @@ test layers for those ports.
   source/build facts, env status, dependency readiness, source fingerprints, and read-only
   generated-package fact selectors needed by `@svvy/extensions`. Generated-package fact writes
   remain runtime-owned through `RuntimeGeneratedPackageStatePort`.
-- `sandboxPolicyPort()` exposes immutable `SandboxPolicySnapshot` resolution defined in
-  `@svvy/core`.
+- `SandboxPolicySource.snapshot(input)` exposes immutable `SandboxPolicySnapshot` resolution
+  defined in `@svvy/core`. The input is the core-owned `SandboxPolicySnapshotInput` naming the
+  target workspace/session scope and the command/run context whose launch policy is being resolved;
+  callers do not pass raw settings rows, renderer preferences, profile fragments, or filesystem
+  roots. The source of truth is committed `@svvy/state` app/workspace settings, committed generated
+  package facts, and immutable app-bootstrap sandbox policy roots supplied through
+  `StateLayerConfig.sandboxPolicy` at layer composition. The returned snapshot is an immutable
+  launch input for `@svvy/sandbox`, not a live settings view and not a policy mutation surface.
 - `layerAppLogWritePort` is the public state-owned layer for the append-only durable
-  `AppLogWritePort` implementation. Runtime and app/bootstrap may use it for product facts and the
-  Effect-log-to-app-log bridge. Other packages emit `Effect.log*` under the caller-provided logging
-  policy by default; they may call `AppLogWritePort` directly only when their package spec names the
-  exact durable diagnostic fact, input shape, redaction policy, and tests. Extensions, pi-adapter,
-  and sandbox still do not publish runtime events or command/session facts.
-- `secretStorePort()` exposes secret status/listing and invocation-local resolution only. Secret
-  create, update, and remove operations are state-owned app command facade operations reached from
-  user-owned UI or runtime command paths; runtime, extensions, pi-adapter, sandbox, generated
-  packages, and agent-facing tools never receive a cross-package secret mutation port or raw secret
-  values.
+  `AppLogWritePort` implementation. Direct calls to `AppLogWritePort.append(...)` are durable
+  product-state writes for exact app-log facts and return committed invalidation descriptors.
+  Runtime and app/bootstrap may use that direct durable path for named product facts. State does not
+  expose an Effect-log observation surface. Any Effect-log diagnostic sink must be specified as its
+  own app/bootstrap diagnostic adapter, may observe promoted `Effect.log*` events only after the
+  exact members are promoted in `packages/effect-adoption-manifest.ts`, and sink failure must not
+  fail the domain operation that emitted the Effect log. Other packages use caller-provided logging
+  policy without assuming `Effect.log*` production imports; they may call `AppLogWritePort` directly
+  only when their package spec names the exact durable diagnostic fact, input shape, redaction policy, and
+  tests.
+  Extensions, pi-adapter, and sandbox still do not publish runtime events or command/session facts.
+- Secret create, update, and remove operations are state-owned app command facade operations reached
+  from user-owned UI or runtime command paths. `@svvy/state` never owns or exports its own
+  secret-store implementation or state-backed secret mutation port. State-owned command services may
+  require the core-owned host/live `SecretStoreMutationPort` from the app runtime context only to
+  write or remove user-entered secret material, then persist redacted refs/status rows. Runtime,
+  extensions, pi-adapter, sandbox, generated packages, and agent-facing tools never receive raw
+  secret values. Invocation-local secret resolution is provided by the host/live `SecretStorePort`,
+  which returns only status records or `Redacted` invocation values.
 - `RuntimeArtifactStatePort` exposes artifact metadata creation, inspection, listing, deletion,
-  command linkage, materialization status, immutable flags, digests, and stored-file facts for
+  command linkage, materialization status, immutable flags, digests, and stored-path facts for
   runtime-owned artifact commands. Physical artifact file effects, immutable-path placement,
-  digest/byte calculation, and file deletion run inside the state-owned artifact-port
-  implementation through injected `FileSystem`/`Path` services. Runtime orchestrates the command,
-  approval, sandbox, and cancellation policy, calls the artifact port, and publishes only committed
-  `afterCommit` descriptors.
+  digest/byte calculation, and file deletion run in runtime-owned artifact file-effect services.
+  Runtime calls the artifact port only to commit metadata lifecycle transitions and publishes only
+  committed `afterCommit` descriptors.
 
 Ports must not expose SQLite table handles. Ports must return typed domain records and read models.
 Ports are Effect-native. State-backed runtime ports use `StateContractError`. Core-owned provider
@@ -1383,12 +1510,12 @@ status updates; visible row listing and manual reordering belong to read-model/U
 // @svvy/state exports implementations and layers for those tags.
 const RuntimeQueueStatePortLayer = Layer.effect(
   RuntimeQueueStatePort,
-  makeRuntimeQueueStatePort,
+  makeRuntimeQueueStatePort(),
 );
 
-const RuntimeTurnStatePortLayer = Layer.effect(RuntimeTurnStatePort, makeRuntimeTurnStatePort);
+const RuntimeTurnStatePortLayer = Layer.effect(RuntimeTurnStatePort, makeRuntimeTurnStatePort());
 
-// Each listed port must be specified in this section before implementation is promoted:
+// Each listed port must be specified in this section before it is added to the public state boundary:
 // one core-owned tag, one exact method contract, one state-owned live implementation, and one
 // state-owned test layer.
 
@@ -1418,11 +1545,11 @@ boundary, exact Effect error channel, transaction isolation/locking rule, after-
 behavior, and focused tests. Package-boundary tests reject adding a method to any state port without
 the corresponding contract block.
 
-The public target contract is the core-owned service shape exported from `@svvy/core` state-port
-modules. This matrix uses the exact exported method names unless the same change deliberately
-renames the core port and all state implementations/tests. All promoted state-backed write port
-methods return mutation result wrappers that include committed domain output plus `afterCommit`.
-Read-only methods return domain read results without `afterCommit`.
+The public contract is the core-owned service shape exported from `@svvy/core` state-port
+modules. This matrix uses the exact exported method names from that core-owned service shape. All
+public state-backed write port methods return mutation result wrappers that include committed
+domain output plus `afterCommit`. Read-only methods return domain read results without
+`afterCommit`.
 
 ```ts
 type StateMutationResult<T> = {
@@ -1460,13 +1587,16 @@ type RuntimeWorkspaceStatePort = {
 
 RuntimeQueueStatePort:
 
-- Caller: @svvy/runtime queue dispatcher.
+- Caller: `@svvy/runtime` queue dispatcher and runtime-owned queue insertion paths only.
 - Methods: acceptSubmittedSurfaceMessage, enqueueSurfaceMessage, getSurfaceQueuedMessage,
   claimNextQueuedSurfaceMessage, releaseExpiredSurfaceMessageClaims, markSurfaceMessageSteering,
   markSurfaceMessageQueued, markSurfaceMessageDelivered, markSurfaceMessageFailed,
   cancelSurfaceMessage.
-- Rule: queue mutations are transactional; write methods return after-commit invalidations only
-  after commit.
+- Rule: queue mutations are transactional; write methods return `StateMutationResult<T>` with
+  committed `afterCommit` descriptors after the state commit succeeds. The port never publishes
+  runtime events, wakes queue lanes, starts turns, schedules retries, or performs post-commit work;
+  runtime collects descriptors after commit, publishes typed notifications, and wakes the affected
+  committed queue lanes.
 - Rule: ordinary runtime composer send acceptance uses
   `acceptSubmittedSurfaceMessage(...)`, which inserts the `user_message` queue row and clears the
   submitted durable composer draft inside one state transaction. Duplicate idempotency-key replay
@@ -1524,6 +1654,32 @@ fibers. Those live resources are runtime-owned scoped services under `Runtime.la
 may validate stored pi/session references through core-owned reference facts, but it must not return
 live handles.
 
+RuntimePromptDefaultsStatePort:
+
+- Caller: @svvy/runtime prompt submission through `RuntimePromptDefaultsService`.
+- Methods: resolvePromptDefaults.
+- Rule: prompt default resolution reads durable surface/profile/model state and returns the
+  provider, model, and reasoning effort that runtime must use for prompt admission. It does not
+  return prompt text, generated-context read-model payloads, extension instruction bodies, pi-native model
+  objects, or UI snapshots. File-backed prompt and instruction content remains owned by
+  `@svvy/extensions`; live pi session handles remain owned by `@svvy/pi-adapter`.
+
+`RuntimePromptDefaultsStatePort` is only the DB/product-state-backed defaults source for
+`RuntimePromptDefaultsService`. It must not absorb extension-owned prompt files, generated-context
+rendering, extension binding materialization, or prompt-preview construction. Runtime composes this
+state result with `@svvy/extensions` services when prompt dispatch needs prompt binding,
+generated-context fingerprint/revision, or extension binding facts.
+
+The exact prompt defaults state port is:
+
+```ts
+type RuntimePromptDefaultsStatePort = {
+  resolvePromptDefaults(
+    input: ResolveRuntimePromptDefaultsInput,
+  ): Effect.Effect<RuntimePromptDefaultsRecord, StateContractError>;
+};
+```
+
 RuntimeComposerDraftStatePort:
 
 - Caller: renderer-facing state command facades and runtime cleanup paths that already have an
@@ -1546,9 +1702,13 @@ type RuntimeComposerDraftStatePort = {
 
 RuntimeTurnStatePort:
 
-- Caller: @svvy/runtime turn execution.
+- Caller: `@svvy/runtime` turn execution after a queue row has been durably claimed through
+  `RuntimeQueueStatePort`.
 - Methods: startTurn, setTurnDecision, finishTurn.
-- Rule: active-turn writes are serialized by surface and prompt-lock ownership.
+- Rule: active-turn writes are serialized by surface and prompt-lock ownership. `startTurn(...)`
+  records turn state for the already claimed queue item but does not claim queue rows, choose queue
+  ordering, wake lanes, or enqueue follow-up work. Queue row delivery/failure/retry settlement
+  remains on `RuntimeQueueStatePort`; runtime coordinates the sequence across the two ports.
 
 The exact turn state port is:
 
@@ -1578,9 +1738,13 @@ RuntimeCommandStatePort:
   port is not an inspector/read-model API and never exposes a full session snapshot. The only
   command-event read it exposes is `hasCommandOutputEvent(...)`, used by runtime command tracking to
   avoid duplicating final stdout/stderr when live command output has already been recorded.
-  `recordCommandEvent(...)` accepts only the closed runtime-owned command event kinds that append
-  command detail facts after command creation: `argument_snapshot`, `diagnostic`, `output`,
-  `patch_snapshot`, and `progress`. Accepted stdin writes are not appended through
+  `recordCommandEvent(...)` accepts only the closed runtime-owned durable state event kinds that
+  append command detail facts after command creation: `command.arg_snapshot`,
+  `command.diagnostics`, `command.output`, `command.patch_snapshot`, and `command.progress`. These
+  durable row kinds are storage command-event kinds; runtime notification and projection change
+  kinds still use the shorter public change vocabulary such as `argument_snapshot`, `diagnostic`,
+  `output`, `patch_snapshot`, and `progress`.
+  Accepted stdin writes are not appended through
   `recordCommandEvent(...)`; runtime uses `recordStdinWrite(...)` only after live command-session
   admission returns `accepted`. That method records one `command.stdin` event with exact `text` and
   `acceptedBytes`, returns `StateMutationResult<void>`, and emits command-inspector invalidation.
@@ -1592,9 +1756,13 @@ RuntimeCommandStatePort:
   still need a `startCommand(...)` transition, or `streaming` for already-live streamed tool-call
   rows. `finishCommand(...)` accepts only terminal or waiting states: `waiting`, `succeeded`,
   `failed`, or `cancelled`. It never accepts `requested`, `running`, or `streaming`.
-  `command.output` source values are the closed runtime vocabulary `live-stream`, `final-result`,
-  `execute_typescript`, and `retained-log-artifact`; arbitrary source strings are not part of the
-  port contract.
+  `recordCommandEvent(...)` persists the core `CommandOutputEventPayload` shape for
+  `command.output`: `stream`, optional `source`, optional `text`, optional `chunkRef`, and optional
+  `truncated`. State does not reinterpret that payload as raw bytes, base64 bytes, byte counts, or a
+  sequenced output-chunk record. Runtime-owned command output callers use the closed source
+  vocabulary `live-stream`, `final-result`, `execute_typescript`, and `retained-log-artifact`.
+  `hasCommandOutputEvent(...)` accepts only that closed vocabulary for source filters; it is a query
+  contract for runtime-owned command output sources, not a second persisted event-payload schema.
 
 RuntimeApprovalStatePort:
 
@@ -1615,13 +1783,13 @@ type RuntimeApprovalStatus = "pending" | "approved" | "denied" | "cancelled";
 type RuntimeApprovalResolvedStatus = "approved" | "denied" | "cancelled";
 type RuntimeApprovalReviewer = "auto-review" | "user";
 
-type RuntimeApprovalRequestRecord = {
-  approvalId: RuntimeApprovalId;
-  workspaceSessionId: WorkspaceSessionId;
+type RuntimeApprovalRecord = {
+  requestId: RuntimeApprovalId;
+  sessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
   threadId: ThreadId | null;
   turnId: TurnId | null;
-  commandId: CommandId;
+  commandId: CommandId | null;
   toolCallId: ToolItemId;
   toolName: RuntimeApprovalToolName;
   approvalMode: RuntimeApprovalMode;
@@ -1631,20 +1799,23 @@ type RuntimeApprovalRequestRecord = {
   patch: string | null;
   snippetArtifactId: ArtifactId | null;
   typescriptCode: string | null;
+  context: {
+    reason: "sandbox_denial_escalation";
+    sandboxDenied: true;
+  } | null;
   status: RuntimeApprovalStatus;
   decisionReason: string | null;
   reviewer: RuntimeApprovalReviewer | null;
   createdAt: IsoDateTimeString;
-  answeredAt: IsoDateTimeString | null;
+  completedAt: IsoDateTimeString | null;
 };
 
 type CreateRuntimeApprovalRequestInput = {
-  approvalId?: RuntimeApprovalId;
-  workspaceSessionId: WorkspaceSessionId;
+  sessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
   threadId?: ThreadId | null;
   turnId?: TurnId | null;
-  commandId: CommandId;
+  commandId?: CommandId | null;
   toolCallId: ToolItemId;
   toolName: RuntimeApprovalToolName;
   approvalMode: RuntimeApprovalMode;
@@ -1654,48 +1825,46 @@ type CreateRuntimeApprovalRequestInput = {
   patch?: string | null;
   snippetArtifactId?: ArtifactId | null;
   typescriptCode?: string | null;
-  createdAt: IsoDateTimeString;
+  context?: {
+    reason: "sandbox_denial_escalation";
+    sandboxDenied: true;
+  } | null;
 };
 
 type GetRuntimeApprovalRequestInput = {
-  approvalId: RuntimeApprovalId;
-  workspaceSessionId?: WorkspaceSessionId;
-  surfacePiSessionId?: SurfacePiSessionId;
+  requestId: RuntimeApprovalId;
 };
 
 type ListOpenRuntimeApprovalRequestsInput = {
-  workspaceSessionId?: WorkspaceSessionId;
+  sessionId?: WorkspaceSessionId;
   surfacePiSessionId?: SurfacePiSessionId;
 };
 
 type ResolveRuntimeApprovalRequestInput = {
-  approvalId: RuntimeApprovalId;
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
+  requestId: RuntimeApprovalId;
   status: RuntimeApprovalResolvedStatus;
   reviewer: RuntimeApprovalReviewer;
   decisionReason?: string | null;
-  answeredAt: IsoDateTimeString;
 };
 
 type RuntimeApprovalStatePort = {
   createApprovalRequest(
     input: CreateRuntimeApprovalRequestInput,
-  ): Effect.Effect<StateMutationResult<RuntimeApprovalRequestRecord>, StateContractError>;
+  ): Effect.Effect<StateMutationResult<RuntimeApprovalRecord>, StateContractError>;
   getApprovalRequest(
     input: GetRuntimeApprovalRequestInput,
-  ): Effect.Effect<RuntimeApprovalRequestRecord, StateContractError>;
+  ): Effect.Effect<RuntimeApprovalRecord, StateContractError>;
   listOpenApprovalRequests(
     input?: ListOpenRuntimeApprovalRequestsInput,
-  ): Effect.Effect<readonly RuntimeApprovalRequestRecord[], StateContractError>;
+  ): Effect.Effect<readonly RuntimeApprovalRecord[], StateContractError>;
   resolveApprovalRequest(
     input: ResolveRuntimeApprovalRequestInput,
-  ): Effect.Effect<StateMutationResult<RuntimeApprovalRequestRecord>, StateContractError>;
+  ): Effect.Effect<StateMutationResult<RuntimeApprovalRecord>, StateContractError>;
 };
 ```
 
 `createApprovalRequest(...)` inserts a pending row and returns
-`StateMutationResult<RuntimeApprovalRequestRecord>`. `resolveApprovalRequest(...)` is a
+`StateMutationResult<RuntimeApprovalRecord>`. `resolveApprovalRequest(...)` is a
 compare-and-set transition from `pending` to one terminal status; resolving an already terminal row
 with the same terminal facts is idempotent and returns `afterCommit: []`. A conflicting terminal
 answer fails with `StateContractError.reason: "conflict"`. Successful create/resolve writes emit
@@ -1704,21 +1873,33 @@ invalidation descriptors.
 
 RuntimeActorExtensionBindingStatePort:
 
-- Caller: @svvy/runtime actor extension binding updates.
-- Methods: updateActorExtensionBinding, setActorExtensionBinding.
-- Rule: orchestrator bindings update DB-backed session extension ids; handler bindings update
-  DB-backed thread extension ids. `updateActorExtensionBinding(...)` applies one
-  loaded/available/off usage transition and requires `usage: "loaded"` to refer to an extension that
-  is currently available or already loaded for that actor. `setActorExtensionBinding(...)` replaces
-  the complete loaded/available extension id lists for a runtime-owned binding refresh after the
-  caller has validated the list. Workflow-task binding mutation is not part of this port; workflow
-  task-agent extension defaults are resolved from task-agent/profile context before the attempt
-  starts.
+- Caller: @svvy/runtime actor extension binding updates and prompt-dispatch binding reads.
+- Methods: readRuntimePromptBinding, updateActorExtensionBinding, setActorExtensionBinding.
+- Rule: `readRuntimePromptBinding(...)` is the read-only runtime prompt binding lookup for a
+  prompt target. It first validates target ownership, then reads the exact DB/product-state-backed
+  generated-context binding row addressed by the target's currently bound generated-context
+  fingerprint. It returns only binding id, fingerprint, revision, bound loaded/available extension
+  ids, external source hashes, and the target's update-before-next-turn intent. It must not return
+  provider/model/reasoning defaults, system-prompt bodies, `svvyxGuidance`, command declarations,
+  native tool schema JSON, generated-context preview data, extension instruction bodies, or
+  pi-native objects. Runtime resolves prompt/declaration material from `@svvy/extensions`, the
+  generated-context owner, before dispatch. Orchestrator binding mutations update DB-backed session
+  extension ids; handler binding mutations update DB-backed thread extension ids.
+  `updateActorExtensionBinding(...)` applies one loaded/available/off usage transition and requires
+  `usage: "loaded"` to refer to an extension that is currently available or already loaded for that
+  actor. `setActorExtensionBinding(...)` replaces the complete loaded/available extension id lists
+  for a runtime-owned binding refresh after the caller has validated the list. Workflow-task binding
+  mutation is not part of this port; workflow task-agent extension defaults are resolved from
+  task-agent/profile context before the attempt starts.
 
 The exact actor extension binding state port is:
 
 ```ts
 type RuntimeActorExtensionBindingStatePort = {
+  readRuntimePromptBinding(
+    input: ReadRuntimePromptBindingInput,
+  ): Effect.Effect<RuntimePromptBindingRecord, StateContractError>;
+
   updateActorExtensionBinding(
     input: UpdateActorExtensionBindingRequest,
   ): Effect.Effect<StateMutationResult<RuntimeActorExtensionBindingRecord>, StateContractError>;
@@ -1734,10 +1915,16 @@ RuntimeEpisodeStatePort:
 - Caller: @svvy/runtime accepted episode-producing tools and runtime flows.
 - Methods: recordHandlerThreadEpisode.
 - Rule: handler-thread episode writes validate `workspaceSessionId`, `threadId`, and
-  `threadGroupId` before creating the durable episode row. Outcome-bearing requests conclude the
-  handler thread through the same state boundary. Non-thread episode scopes are outside the
+  `threadGroupId`, plus any related command, artifact, and workflow-run ids, before creating the
+  durable episode row. Outcome-bearing requests conclude the handler thread through the same state
+  boundary. Non-thread episode scopes are outside the
   `RuntimeEpisodeStatePort` contract; adding one requires a product spec that first defines its
   state rows, read models, ownership checks, and runtime applier.
+- Transaction rule: `recordHandlerThreadEpisode(...)` delegates to one package-private
+  `StructuredSessionState.recordHandlerThreadEpisode(...)` SQLite transaction method. The state
+  port adapter must not compose `getSessionState(...)`, `createEpisode(...)`, and
+  `updateThread(...)` calls. The transaction owns validation, episode insertion, optional
+  handler-thread conclusion, event rows, and the committed records used for descriptor derivation.
 - Mutation result rule: `recordHandlerThreadEpisode(...)` returns
   `StateMutationResult<RuntimeEpisodeRecord>` with `surface(surfacePiSessionId)`,
   `handlerThreadInspector(threadId)`, and `sessionNavigation` descriptors. Surface invalidation is
@@ -1753,25 +1940,24 @@ type RuntimeEpisodeKind = "change" | "clarification" | "report" | "handoff" | "c
 type RuntimeEpisodeOutcome = "completed" | "failed" | "blocked" | "cancelled";
 
 type RecordRuntimeHandlerThreadEpisodeInput = {
+  scope: "handler-thread";
   workspaceSessionId: WorkspaceSessionId;
   threadId: ThreadId;
   threadGroupId: ThreadGroupId;
-  sourceCommandId: CommandId;
+  sourceCommandId?: CommandId;
   kind: RuntimeEpisodeKind;
-  title: string;
   summary: string;
-  body: string;
-  outcome?: RuntimeEpisodeOutcome | null;
+  body?: string;
+  outcome?: RuntimeEpisodeOutcome;
+  notifyOrchestrator?: boolean;
   relatedCommandIds?: readonly CommandId[];
   relatedArtifactIds?: readonly ArtifactId[];
   relatedWorkflowRunIds?: readonly WorkflowRunId[];
-  createdAt: IsoDateTimeString;
-  idempotencyKey: string;
 };
 
 type RuntimeEpisodeRecord = {
   id: EpisodeId;
-  workspaceSessionId: WorkspaceSessionId;
+  sessionId: WorkspaceSessionId;
   threadId: ThreadId;
   threadGroupId: ThreadGroupId;
   sourceCommandId: CommandId | null;
@@ -1779,10 +1965,6 @@ type RuntimeEpisodeRecord = {
   title: string;
   summary: string;
   body: string;
-  outcome: RuntimeEpisodeOutcome | null;
-  relatedCommandIds: readonly CommandId[];
-  relatedArtifactIds: readonly ArtifactId[];
-  relatedWorkflowRunIds: readonly WorkflowRunId[];
   createdAt: IsoDateTimeString;
 };
 
@@ -1793,10 +1975,10 @@ type RuntimeEpisodeStatePort = {
 };
 ```
 
-`recordHandlerThreadEpisode(...)` is idempotent by `(workspaceSessionId, sourceCommandId,
-idempotencyKey)`. Replaying the same input returns the existing episode with `afterCommit: []`;
-replaying the same idempotency key with different episode content fails with
-`StateContractError.reason: "conflict"`.
+`summary` on runtime episode records is a durable user-facing episode fact authored by runtime from
+completed handler/workflow evidence. It is not a cache, preview, best-effort compression of hidden
+transcript state, or duplicate request payload. Longer inspection content belongs in `body` and
+linked artifacts; read models may derive display snippets from these stored episode facts.
 
 RuntimeThreadStatePort:
 
@@ -1804,17 +1986,19 @@ RuntimeThreadStatePort:
 - Methods: startHandlerThreads, ensureHandlerThreadRunnable.
 - Rule: `startHandlerThreads(...)` is the only state port method that commits the state-owned rows
   for a `handler_thread.start` effect. It accepts only runtime-prepared facts: workspace/session
-  ownership, the orchestrator turn id, source command id, optional thread group id, handler pi
-  surface ids already allocated by runtime/pi-adapter, display titles, objectives, history mode,
-  worktree id, resolved loaded/available extension ids, optional serialized agent profile facts,
-  exact generated actor context binding text/fingerprint, and exact initial queue payloads. State
-  does not allocate pi sessions, build generated context, choose profiles, validate extension
-  availability, derive forked history, publish runtime events, wake queues, create desktop panes, or
-  execute handler turns.
+  ownership, the orchestrator turn id, source command id, optional per-thread parent handler thread
+  id, optional thread group id, handler pi surface ids already allocated by runtime/pi-adapter,
+  display titles, objectives, history mode, worktree id, resolved loaded/available extension ids,
+  optional serialized agent profile facts, exact generated actor context binding text/fingerprint,
+  and exact runtime-created initial queue payloads. State does not allocate pi sessions, build
+  generated context, choose profiles, validate extension availability, derive forked history,
+  publish runtime events, wake queues, create desktop panes, or execute handler turns.
 - `startHandlerThreads(...)` commits one transaction containing one or more handler-thread rows, one
   generated-context binding row per created thread, and one `initial_handler_start` queue row per
   created thread. It validates that `orchestratorTurnId` belongs to `workspaceSessionId`. It stores
-  `sourceCommandId` on each initial queue row so command lineage is durable. If the same
+  `sourceCommandId` on each initial queue row so command lineage is durable. When a prepared thread
+  carries `parentThreadId`, state validates that the parent thread belongs to the same
+  `workspaceSessionId` before inheriting lineage or committing the child row. If the same
   `sourceCommandId` is replayed after a successful commit, it returns the already-created thread,
   binding, and queue records rather than creating duplicates; a replay with a different thread count
   is a state contract conflict.
@@ -1830,13 +2014,12 @@ interface StartRuntimeHandlerThreadsInput {
 }
 
 interface StartRuntimeHandlerThreadInput {
+  parentThreadId?: ThreadId | null;
   surfacePiSessionId: SurfacePiSessionId;
   title: string;
   objective: string;
   historyMode: "isolated" | "forked";
   worktreeId?: WorktreeId | null;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
   agentProfileJson?: string | null;
   generatedAgentContextBinding: RuntimeHandlerThreadGeneratedContextBindingInput;
   initialQueue: RuntimeHandlerThreadInitialQueueInput;
@@ -1844,25 +2027,18 @@ interface StartRuntimeHandlerThreadInput {
 
 interface RuntimeHandlerThreadGeneratedContextBindingInput {
   aggregateCacheKey: string;
-  systemPrompt: string;
-  svvyxGuidance: string;
-  commandsDts: string;
-  nativeToolSchemasJson: string;
   generatedAgentContextFingerprint: string;
   generatedAgentContextRevision: number;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
   externalSourceHashes: readonly string[];
 }
 
 interface RuntimeHandlerThreadInitialQueueInput {
   idempotencyKey: string;
   priority?: "interactive" | "runtime" | "background";
-  orderingKey?: string | null;
   nextAttemptAt?: string | null;
   maxAttempts?: number;
-  messageJson: string;
-  payloadJson: string;
+  inheritedHistory?: HandlerInheritedHistoryBlock;
+  overrides?: Readonly<Record<ExtensionId, "loaded" | "available" | "unavailable">>;
 }
 
 interface StartRuntimeHandlerThreadsResult {
@@ -1885,6 +2061,7 @@ interface StartedRuntimeHandlerThread {
   threadGroupId: ThreadGroupId;
   workspaceSessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
+  parentThreadId: ThreadId | null;
   title: string;
   objective: string;
   historyMode: "isolated" | "forked";
@@ -1892,13 +2069,42 @@ interface StartedRuntimeHandlerThread {
   status: "running-handler";
   wait: null;
   worktreeId: WorktreeId | null;
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
   generatedAgentContextFingerprint: string;
   generatedAgentContextBindingId: string;
-  queuedMessage: RuntimeSurfaceMessageRecord;
+  queuedMessageId: QueueItemId;
 }
 ```
+
+Generated context binding inputs and handler-thread start receipts are reference/fact contracts only.
+They carry the aggregate cache key, generated-context fingerprint/revision, external source hashes,
+created ids, and queued row id needed for idempotency and post-commit scheduling. They do not carry
+system-prompt bodies, generated `svvyx` guidance, TypeScript declaration text, native tool schema
+JSON, loaded/available extension id projections, or a full queue-row preview. Runtime resolves
+prompt/declaration material from the generated-context owner before dispatch, and callers use state
+read models or generated-context/actor-binding read models for projection details.
+
+`RuntimeHandlerThreadInitialQueueInput` carries queue policy plus id-free runtime-prepared start
+metadata only. It never accepts caller-supplied `messageJson`, `payloadJson`, `threadId`, or concrete
+new `threadGroupId`, because those facts are not all known until the state transaction creates the
+handler thread row. Inside the same `startHandlerThreads(...)` transaction, after `threadId` and the
+resolved `threadGroupId` exist, state writes `messageJson` as `{}` and writes one canonical
+`initial_handler_start` `payloadJson` with:
+
+- `kind: "initial_handler_start"`
+- allocated `threadId`
+- resolved `threadGroupId`
+- committed `objective`
+- optional committed `worktreeId`
+- optional runtime-prepared `inheritedHistory`
+- optional runtime-prepared per-thread `overrides`
+
+Runtime creates the handler's first prompt-bearing start item, including objective text and any
+product-filtered inherited-history block, after decoding the accepted `handler_thread.start` effect
+and before calling this state port. Extension handlers provide creation intent only; they do not
+author handler transcript messages, serialize forked history, allocate queue ids, or create
+`thread_start` / `initial_handler_start` queue rows. State owns only the id-dependent final queue JSON
+materialization inside this atomic handler-start commit; it does not infer inherited-history content
+or extension override intent from transcripts or product settings.
 
 - `ensureHandlerThreadRunnable(...)` is the narrow existing-handler transition used before a handler
   surface resumes execution. It validates `workspaceSessionId`, `surfacePiSessionId`, and `threadId`,
@@ -1916,26 +2122,36 @@ interface StartedRuntimeHandlerThread {
   `handlerThreadInspector(threadId)`, and `sessionNavigation`; when the thread is already
   `running-handler` with no wait, it returns `afterCommit: []`.
 - Runtime prepares, validates, and owns the typed meaning of `agentProfileJson`,
-  `nativeToolSchemasJson`, `messageJson`, and `payloadJson` before this port is called. State stores
-  those exact JSON strings as committed facts and may reject invalid JSON as a contract error, but
-  it does not derive prompt policy, queue payload meaning, native tool declarations, or generated
-  context from them.
+  `nativeToolSchemasJson`, inherited-history content, and extension override intent before this port
+  is called. In particular, runtime is the only owner of `thread_start` application and the
+  resulting `initial_handler_start` queue item creation. State stores runtime-supplied JSON strings
+  for agent profile and native tool declarations exactly as committed facts, and state materializes
+  only the id-dependent `initial_handler_start` queue JSON after allocating the handler thread row.
+  State may reject invalid JSON as a contract error, but it does not derive prompt policy,
+  inherited-history content, extension override intent, native tool declarations, or generated
+  context from those JSON strings.
 
 RuntimeExtensionStatePort:
 
-- Caller: @svvy/runtime extension dependency command completion.
-- Methods: recordDependencyReadiness.
-- Rule: this port records app-global extension dependency readiness facts after runtime-owned
-  dependency install/update/probe commands finish and `@svvy/extensions` has returned immutable
-  readiness evidence. It returns `StateMutationResult<ExtensionDependencyReadiness>` and emits the
-  app-level `extensions` read-model invalidation descriptor. It does not approve dependencies,
-  launch dependency commands, inspect CLIs, read source fingerprints, generate packages, or mutate
-  extension source.
+- Caller: @svvy/runtime extension dependency command and approval completion.
+- Methods: recordDependencyApproval, recordDependencyReadiness.
+- Rule: this port records committed app-global extension dependency approval facts after a
+  runtime-owned approval answer is accepted, and records app-global extension dependency readiness
+  facts after runtime-owned dependency probe work finishes and `@svvy/extensions` has returned
+  immutable readiness evidence. `recordDependencyApproval(...)` returns `StateMutationResult<void>`
+  because callers can refetch the state-backed approval/readiness models and must not rely on
+  mutation-return previews. `recordDependencyReadiness(...)` returns
+  `StateMutationResult<ExtensionDependencyReadiness>`. Both writes emit the app-level `extensions`
+  read-model invalidation descriptor. This port does not launch dependency install/update commands,
+  inspect CLIs, read source fingerprints, generate packages, or mutate extension source.
 
 The exact extension dependency state port is:
 
 ```ts
 type RuntimeExtensionStatePort = {
+  recordDependencyApproval(
+    input: RecordExtensionDependencyApprovalInput,
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   recordDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): Effect.Effect<StateMutationResult<ExtensionDependencyReadiness>, StateContractError>;
@@ -1945,13 +2161,26 @@ type RuntimeExtensionStatePort = {
 RuntimeSourceStatePort:
 
 - Caller: @svvy/runtime source edit and invalidation workers.
-- Methods: readSourceVersion, recordSourceSave, recordSourceDelete.
-- Rule: this port owns source-version facts needed for compare-and-swap editable source saves,
-  source deletion facts, and recovery after two-phase file/state work. `readSourceVersion(...)` is
-  read-only. `recordSourceSave(...)` and `recordSourceDelete(...)` return
-  `StateMutationResult<RuntimeSourceFactRecord>` and emit only source/read-model invalidations
-  backed by committed product state. The port does not read or write file contents, watch files,
-  generate extension packages, or mutate renderer drafts.
+- Methods: readSourceVersion, recordSourceSave, recordSourceDelete, recordSourceScan,
+  recordObservedSourceDeletion, recordSourceDiagnostic.
+- Rule: this port owns three distinct durable source fact families. Editable source facts are keyed
+  by `(sourceInvalidationScope, sourceKind, sourceId)` and support compare-and-swap source edits,
+  source deletion facts, and recovery after two-phase file/state work. Runtime source-root
+  fingerprint facts are keyed by the source-root path supplied by runtime's deterministic source
+  scan, with committed scope/domain metadata, and store the current deterministic aggregate
+  fingerprint, root diagnostics, observation timestamp, and commit timestamps used by
+  `ExtensionStatePort.records.readSourceFingerprint(...)`. Runtime source scan facts record the
+  accepted aggregate domain fingerprint, diagnostics, scan timestamp, and commit timestamps for the
+  reconciliation work; they are receipts for reconciliation work, not the authoritative current
+  source-root fingerprint. `readSourceVersion(...)` is read-only.
+  `recordSourceSave(...)` and `recordSourceDelete(...)` are reserved for explicit user-owned
+  source-edit operations. `recordSourceScan(...)`, `recordObservedSourceDeletion(...)`, and
+  `recordSourceDiagnostic(...)` are reserved for runtime-owned deterministic reconciliation and
+  return `StateMutationResult<RuntimeSourceScanFactRecord>`. Every write emits only committed
+  source/read-model invalidation descriptors derived from the affected source kind or source
+  domain plus the committed scope. The port does not infer scope from a bound workspace store, read
+  or write file contents, watch files, generate extension packages, build generated context, own
+  recovery scheduling, publish runtime events, or mutate renderer drafts.
 
 The exact source state port is:
 
@@ -1968,8 +2197,80 @@ type RuntimeSourceStatePort = {
   recordSourceDelete(
     input: RecordRuntimeSourceDeleteInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+
+  recordSourceScan(
+    input: RecordRuntimeSourceScanInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+
+  recordObservedSourceDeletion(
+    input: RecordObservedRuntimeSourceDeletionInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+
+  recordSourceDiagnostic(
+    input: RecordRuntimeSourceDiagnosticInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
 };
 ```
+
+The exact source-state inputs are the core-owned schemas below. They are not interchangeable with
+runtime source-edit facade inputs:
+
+```ts
+type RecordRuntimeSourceSaveInput = {
+  scope: SourceInvalidationScope;
+  sourceKind: ExtensionSourceKind;
+  sourceId: string;
+  path: AbsolutePath;
+  previousSourceVersion?: string | null;
+  sourceVersion: string;
+  fingerprint: string;
+  diagnostics: SourceDiagnostic[];
+  sourceCommandId?: CommandId | null;
+  savedAt: IsoDateTimeString;
+};
+
+type ReadRuntimeSourceVersionInput = {
+  scope: SourceInvalidationScope;
+  sourceKind: ExtensionSourceKind;
+  sourceId: string;
+};
+
+type RecordRuntimeSourceDeleteInput = {
+  scope: SourceInvalidationScope;
+  sourceKind: ExtensionSourceKind;
+  sourceId: string;
+  previousSourceVersion?: string | null;
+  deletedAt: IsoDateTimeString;
+};
+
+type RecordRuntimeSourceScanInput = {
+  scope: SourceInvalidationScope;
+  domain: SourceDomain;
+  sourceFingerprint: string;
+  sourceRoots?: {
+    sourceRoot: AbsolutePath;
+    rootFingerprint: string;
+  }[];
+  diagnostics: SourceDiagnostic[];
+  scannedAt: IsoDateTimeString;
+};
+```
+
+`SaveExtensionSourceEditInput.expectedSourceVersion` belongs to the runtime source-edit facade and
+does not appear on `RecordRuntimeSourceSaveInput`. `RecordRuntimeSourceSaveInput.previousSourceVersion`
+is state-port evidence produced after the source owner resolves the file-backed save. The state
+port save input owns `scope`, `path`, `sourceVersion`, `fingerprint`, `diagnostics`, and `savedAt`;
+callers must not submit renderer draft state, generated-context read-model payloads, source text, or
+best-effort summaries. `RecordRuntimeSourceScanInput.sourceFingerprint` is the aggregate
+domain-level scan receipt fingerprint. `RecordRuntimeSourceScanInput.sourceRoots` contains the
+source-root fingerprints observed in the same deterministic scan batch. Runtime is responsible for
+submitting stable source-root paths; state stores and looks up the exact submitted path. Committing a
+scan input upserts the current `runtime_source_root_fingerprint_fact` rows for each listed source
+root and updates the `runtime_source_scan_fact` receipt for the reconciliation attempt in the same
+state transaction. `runtime_source_scan_fact` rows must not be treated as the current source-root
+fingerprint index. `RecordRuntimeSourceScanInput` records only deterministic scan evidence and must
+not accept storage/projection fields such as `scopeKey`, `lastObservedPath`, `lastObservationKind`,
+`observedAt`, `createdAt`, or `updatedAt`.
 
 RuntimeRequestStatePort:
 
@@ -1984,6 +2285,11 @@ RuntimeRequestStatePort:
   separately through `RuntimeCommandStatePort`. Session/surface wait projections are handled
   separately through `RuntimeSessionWaitStatePort`; request-input timer scheduling itself is runtime
   process behavior and is never owned by state.
+- Transaction rule: answer recording and timer pause/resume delegate surface ownership validation and
+  committed row changes to structured-session write methods. The state port adapter must not
+  pre-read `getRequestUserInputRequest(...)` only to recover session ownership, validate the target
+  surface, or derive stale invalidations before calling `answerRequestUserInput(...)` or
+  `setRequestUserInputTimerPaused(...)`.
 
 RuntimeSessionWaitStatePort:
 
@@ -1993,12 +2299,12 @@ RuntimeSessionWaitStatePort:
 - Rule: this port owns only durable wait projection facts used by read models and recovery. It does
   not own in-memory pending registries, timeout scheduling, command settlement, approval decisions,
   request-input answers, queue delivery, or pi prompt control.
-- Mutation result rule: `setApprovalWait` and `setUserWait` return
-  `StateMutationResult<RuntimeSessionWaitRecord>` with `surface(surfacePiSessionId)` plus
-  `sessionNavigation` descriptors for the affected orchestrator or handler-thread surface.
-  Non-no-op `clearSessionWait` returns `StateMutationResult<RuntimeSessionWaitRecord | null>` with
-  the cleared record as `value`; when the session has no matching wait to clear it returns
-  `value: null` and `afterCommit: []`.
+- Mutation result rule: `setApprovalWait`, `setUserWait`, and `clearSessionWait` return
+  `StateMutationResult<void>`. Runtime consumers use the committed success/failure and
+  `afterCommit` descriptors; they do not read wait records from this port. Approval request rows,
+  request-input rows, command facts, and read-model projections remain the authoritative sources for
+  the pending action details. A no-op `clearSessionWait` returns `value: undefined` and
+  `afterCommit: []`.
 
 Wait projection contract:
 
@@ -2007,85 +2313,45 @@ type RuntimeSessionWaitOwner =
   | { kind: "orchestrator" }
   | { kind: "thread"; threadId: ThreadId };
 
-type RuntimeSessionWaitRecord =
-  | {
-      kind: "approval";
-      workspaceSessionId: WorkspaceSessionId;
-      surfacePiSessionId: SurfacePiSessionId;
-      owner: RuntimeSessionWaitOwner;
-      commandId: CommandId;
-      approvalId: RuntimeApprovalId;
-      reason: string;
-      resumeWhen: string;
-      startedAt: IsoDateTimeString;
-      expiresAt: null;
-    }
-  | {
-      kind: "user";
-      workspaceSessionId: WorkspaceSessionId;
-      surfacePiSessionId: SurfacePiSessionId;
-      owner: RuntimeSessionWaitOwner;
-      commandId: CommandId;
-      requestId: RequestInputRequestId;
-      reason: string;
-      resumeWhen: string;
-      startedAt: IsoDateTimeString;
-      expiresAt: IsoDateTimeString | null;
-    };
-
-type SetRuntimeApprovalWaitInput = {
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
+type SetRuntimeApprovalSessionWaitInput = {
+  sessionId: WorkspaceSessionId;
   owner: RuntimeSessionWaitOwner;
-  commandId: CommandId;
-  approvalId: RuntimeApprovalId;
   reason: string;
   resumeWhen: string;
-  startedAt: IsoDateTimeString;
 };
 
-type SetRuntimeUserWaitInput = {
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId: SurfacePiSessionId;
+type SetRuntimeUserSessionWaitInput = {
+  sessionId: WorkspaceSessionId;
   owner: RuntimeSessionWaitOwner;
-  commandId: CommandId;
-  requestId: RequestInputRequestId;
   reason: string;
   resumeWhen: string;
-  startedAt: IsoDateTimeString;
-  expiresAt?: IsoDateTimeString | null;
 };
 
 type ClearRuntimeSessionWaitInput = {
-  workspaceSessionId: WorkspaceSessionId;
-  surfacePiSessionId?: SurfacePiSessionId;
-  owner?: RuntimeSessionWaitOwner;
-  commandId?: CommandId;
-  approvalId?: RuntimeApprovalId;
-  requestId?: RequestInputRequestId;
-  clearedAt: IsoDateTimeString;
-  reason: "approval_resolved" | "user_answered" | "timeout_defaulted" | "command_cancelled" | "surface_closed" | "recovery";
+  sessionId: WorkspaceSessionId;
 };
 
 type RuntimeSessionWaitStatePort = {
   setApprovalWait(
-    input: SetRuntimeApprovalWaitInput,
-  ): Effect.Effect<StateMutationResult<RuntimeSessionWaitRecord>, StateContractError>;
+    input: SetRuntimeApprovalSessionWaitInput,
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   setUserWait(
-    input: SetRuntimeUserWaitInput,
-  ): Effect.Effect<StateMutationResult<RuntimeSessionWaitRecord>, StateContractError>;
+    input: SetRuntimeUserSessionWaitInput,
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   clearSessionWait(
     input: ClearRuntimeSessionWaitInput,
-  ): Effect.Effect<StateMutationResult<RuntimeSessionWaitRecord | null>, StateContractError>;
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
 };
 ```
 
 `setApprovalWait(...)` and `setUserWait(...)` overwrite only the wait projection for the addressed
-`workspaceSessionId` and owner after validating that the supplied `surfacePiSessionId` belongs to
-that owner. They do not create approval/request rows. `clearSessionWait(...)` clears only a wait
-matching all supplied owner fields; stale clear attempts are idempotent no-ops with
-`afterCommit: []`. Runtime timers, `Deferred` registries, approval answers, request-input answers,
-and command settlement stay outside this port.
+`sessionId` and owner. They do not create approval/request rows and do not return the projection
+record as an operation result. `clearSessionWait(...)` clears the session wait projection for the
+addressed `sessionId`; stale clear attempts are idempotent no-ops with `afterCommit: []`. Runtime
+timers, `Deferred` registries, approval answers, request-input answers, and command settlement stay
+outside this port. If owner-scoped clears become necessary to reject stale callers, that must be a
+separate core contract change with runtime consumer updates; it is not implied by this port's
+current return value.
 
 There is no public `RuntimeTitleStatePort`. Title generation is runtime-owned work represented by
 `RuntimeRecoveryStatePort` recovery rows with the `title_generation` kind plus state-owned title
@@ -2097,7 +2363,12 @@ RuntimeRecoveryStatePort:
 - Caller: @svvy/runtime recovery workers.
 - Methods: normalizeWorkspaceRecoveryState, listWorkspaceRecoveryStartupSnapshots,
   ensureRecoveryWork, claimNextRecoveryWork, completeRecoveryWork, failOrRetryRecoveryWork.
-- Rule: recovery claims use the same owner/lease/version discipline as queue claims.
+- Rule: recovery claims use the same owner/lease/version discipline as queue claims. Recovery work
+  is explicitly scoped as `{ kind: "app" }` or `{ kind: "workspace"; workspaceId }`; app-global
+  work such as source reconciliation and generated-package refresh is not forced into a workspace
+  bucket. `RuntimeRecoveryWorkOwnerScope`, `RuntimeRecoveryWorkRecord`, and
+  `EnsureRuntimeRecoveryWorkInput` carry enough scope to route through one app-owned runtime state
+  service without relying on a bound single-workspace store.
 - `listWorkspaceRecoveryStartupSnapshots(...)` is read-only and returns recovery startup snapshots
   for workspace-scoped runtime recovery.
 - `normalizeWorkspaceRecoveryState(...)`, `ensureRecoveryWork(...)`, `claimNextRecoveryWork(...)`,
@@ -2168,7 +2439,7 @@ RuntimeExtensionContextImpactStatePort:
   not emit `handlerThreadInspector` descriptors unless the handler-thread inspector read model adds
   extension-list facts that are not already refetched through the surface invalidation contract.
 - Runtime paths consume the Effect service port and collect `afterCommit` after the committed state
-  write. No target public state facade unwraps this mutation result into a raw affected-surface
+  write. No public state facade unwraps this mutation result into a raw affected-surface
   array.
 
 The exact extension context-impact state port is:
@@ -2201,8 +2472,11 @@ Generated-context state ownership:
   binding and stale-surface facts through the actor-extension binding port after deciding the safe
   refresh boundary. No separate `RuntimeGeneratedContextStatePort` exists in the target
   architecture.
-- Read operations that inspect current generated-context binding, stale binding status, or
-  affected surfaces return state records without `afterCommit`.
+- `RuntimeActorExtensionBindingStatePort.readRuntimePromptBinding(...)` is the runtime prompt
+  dispatch read for the current generated-context binding. It resolves the target row, uses the
+  target's bound fingerprint for an exact binding lookup, and returns state records without
+  `afterCommit`. Other read operations that inspect stale binding status or affected surfaces also
+  return state records without `afterCommit`.
 - Mutation operations that update a surface generated-context binding return
   `StateMutationResult<SurfaceGeneratedContextBinding>` from the actor-extension binding port. Their
   `afterCommit` contains a `surface(surfacePiSessionId)` invalidation and any affected
@@ -2214,9 +2488,11 @@ RuntimeGeneratedPackageStatePort:
 - Caller: @svvy/runtime generated-package refresh/recovery.
 - Methods: recordGeneratedPackageBuild, recordGeneratedPackageFailure,
   recordWorkspaceLinkStatus, readLinksNeedingRepair, readGeneratedPackageFacts,
-  reconcileGeneratedPackageManifest, markGeneratedPackageRefreshNeeded.
-- Rule: generated package files are never edited by state; state stores manifests, diagnostics, and
-  link facts.
+  reconcileGeneratedPackageManifest, markGeneratedPackageRefreshNeeded,
+  markWorkspaceLinksRepairNeeded.
+- Rule: generated package files and manifest bodies are never edited by state; state stores indexed
+  generated-package facts, diagnostics, manifest path/build identity, file-list digest, and link
+  facts.
 
 The exact generated package state port is:
 
@@ -2252,6 +2528,13 @@ type RuntimeGeneratedPackageStatePort = {
   markGeneratedPackageRefreshNeeded(
     input: MarkGeneratedPackageRefreshNeededInput,
   ): Effect.Effect<StateMutationResult<RuntimeGeneratedPackageFactRecord>, StateContractError>;
+
+  markWorkspaceLinksRepairNeeded(
+    input: MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  ): Effect.Effect<
+    StateMutationResult<MarkWorkspaceGeneratedPackageLinksRepairNeededResult>,
+    StateContractError
+  >;
 };
 ```
 
@@ -2301,8 +2584,6 @@ type RuntimeThreadCurrentReadModel = RuntimeThreadCompactRow & {
     request: string;
     createdAt: IsoDateTimeString;
   }[];
-  loadedExtensionIds: readonly ExtensionId[];
-  availableExtensionIds: readonly ExtensionId[];
 };
 
 type ListRuntimeThreadsInput = {
@@ -2361,21 +2642,28 @@ runtime-facing state method that returns every episode in a workspace session.
 ExtensionStatePort:
 
 - Caller: @svvy/extensions.
-- Methods: extension inventory, source, env, dependency, build, and generated-context fact methods
-  listed in the extension spec.
-- Rule: extension writes are product-state writes; source files remain owned by @svvy/extensions.
+- Methods: `records.readSourceFingerprint(...)`, `dependencies.isApproved(...)`, and
+  `dependencies.readReadiness(...)`.
+- Rule: extension-facing state reads expose only committed source-root fingerprints and dependency
+  approval/readiness facts needed by `@svvy/extensions` validation and build planning. Source files,
+  extension inventory, actor bindings, env planning, generated-context writes, and generated-package
+  writes remain owned by their separately named ports and services.
+  `layerExtensionStatePort` targets only the core-owned `ExtensionStatePort` tag consumed by
+  `@svvy/extensions`; package-boundary tests reject structural-provider exports or accidental
+  provision of another state/source service under this layer name.
 
 ProviderAuthPort / ProviderAuthStatusStatePort:
 
-- Caller: @svvy/pi-adapter and runtime model surfaces for live credential snapshots;
-  @svvy/runtime/app for redacted status persistence.
+- Caller: `@svvy/pi-adapter` and runtime model surfaces for live credential snapshots; app
+  bootstrap records redacted provider status through runtime-owned state ports.
 - Methods: `ProviderAuthPort.getProviderAuthSnapshot`,
   `ProviderAuthPort.refreshProviderCredentialSnapshot`,
   `ProviderAuthStatusStatePort.listProviderStatuses`,
   `ProviderAuthStatusStatePort.recordProviderStatus`.
 - Rule: credential material is returned only by live `ProviderAuthPort` snapshot methods for trusted
   invocations. DB/product-state-backed provider status contains redacted account labels, health,
-  expiry, and issues only.
+  expiry, and issues only. `@svvy/state` implements `ProviderAuthStatusStatePort`; app/bootstrap
+  supplies the host/live `ProviderAuthPort`.
 
 PiSessionReferencePort:
 
@@ -2388,22 +2676,29 @@ SandboxPolicySource:
 
 - Caller: @svvy/sandbox.
 - Methods: snapshot.
-- Rule: returns immutable policy snapshots only; sandbox never reads settings/state directly.
+- Rule: `snapshot(input: SandboxPolicySnapshotInput)` reads committed state-owned settings and
+  policy facts plus immutable root config supplied at state-layer composition for the requested
+  workspace/session command context and returns an immutable policy snapshot only. `@svvy/sandbox`
+  never reads settings/state directly, never passes ad hoc policy fragments, and never receives a
+  mutable policy handle. `layerSandboxPolicySource` targets only `SandboxPolicySource` consumed by
+  `@svvy/sandbox`; package-boundary tests reject swapped service targets or structural-provider
+  exports.
 
 RuntimeArtifactStatePort:
 
 - Caller: @svvy/runtime artifact effect application and runtime-owned artifact command adapters.
-- Methods: createArtifact, inspectArtifact, listArtifacts, deleteArtifact.
-- Rule: artifact metadata, stored files, immutable-path placement, digest/byte calculation,
-  deleted lifecycle fields, command/thread/workflow links, and read-model indexes are paired inside
-  the state-owned implementation of the core-owned runtime artifact port. Extension handlers do not
-  receive artifact state or artifact file-store ports; they return validated handler results,
-  command facts, and `ExtensionRuntimeOperation` items wrapping `RuntimeEffectRequest` values or
-  immutable execution plans for runtime to apply.
+- Methods: recordArtifactMetadata, inspectArtifact, listArtifacts, markArtifactMetadataDeleted.
+- Rule: artifact metadata, stored-path facts, materialization status, deleted lifecycle fields,
+  command/thread/workflow links, and read-model indexes are DB/product-state-backed facts committed
+  by the state implementation of the core-owned runtime artifact port. Runtime owns the matching
+  physical file effects and supplies byte size, digest, and final stored-path facts to this port.
+  Extension handlers do not receive artifact state or artifact file-store ports; they return
+  validated handler results, command facts, and `ExtensionRuntimeOperation` items wrapping
+  `RuntimeEffectRequest` values or immutable execution plans for runtime to apply.
 
-The method names above are target public contracts. A promoted implementation must either implement
-the exact name or update this matrix in the same change; similar private repository/helper names are
-not substitutes for the public port contract.
+The method names above are public contracts. Implementations either provide the exact name or update
+this matrix in the same change; similar private repository/helper names are not substitutes for the
+public port contract.
 \*/
 
 type RuntimeQueueStatePort = {
@@ -2453,7 +2748,6 @@ workflowTaskAttemptId?: WorkflowTaskAttemptId | null;
 kind: RuntimeSurfaceQueueItemKind;
 idempotencyKey: string;
 priority: RuntimeSurfaceQueuePriority;
-orderingKey: string;
 sourceCommandId?: CommandId | null;
 maxAttempts?: number;
 nextAttemptAt?: IsoDateTimeString | null;
@@ -2461,6 +2755,11 @@ message: RuntimeSubmittedMessage;
 payload?: QueueItemPayload | null;
 position?: "front" | "back";
 };
+
+`RuntimeQueueStatePort.enqueueSurfaceMessage(...)` derives and stores the durable `orderingKey` from
+`surfacePiSessionId`, queue item `kind`, and committed target lineage. Runtime supplies queue kind,
+priority, idempotency, timing, source-command lineage, message, and typed payload; callers do not
+supply `orderingKey`.
 
 type ClaimNextRuntimeSurfaceMessageInput = {
   surfacePiSessionId: SurfacePiSessionId;
@@ -2620,6 +2919,13 @@ updatedAt: IsoDateTimeString;
 finishedAt: IsoDateTimeString | null;
 };
 
+`title` and `summary` on runtime command records are durable command display facts for command
+projection, collapsed tool spans, and inspectors. Runtime writes them from accepted tool metadata,
+command lifecycle state, terminal facts, and normalized errors. They are not source contents, queue
+request summaries, generated-context read-model payloads, or duplicated submitted prompt text. Raw arguments,
+progress, stdout/stderr, patch snapshots, artifacts, diagnostics, and structured terminal facts stay
+in command event rows and command fact payloads addressed by command id.
+
 type CreateRuntimeCommandInput = {
 turnId?: TurnId | null;
 workflowTaskAttemptId?: WorkflowTaskAttemptId | null;
@@ -2709,10 +3015,10 @@ workspaceSessionId?: WorkspaceSessionId | null;
 surfacePiSessionId?: SurfacePiSessionId | null;
 },
 ): Effect.Effect<readonly RuntimeRequestInputDetailsRecord[], StateContractError>;
-answerRequestInput(input: AnswerRequestInputInput): Effect.Effect<StateMutationResult<AnswerRequestInputResult>, StateContractError>;
+answerRequestInput(input: AnswerRequestInputInput): Effect.Effect<StateMutationResult<RuntimeAnswerRequestInputCommitResult>, StateContractError>;
 setRequestInputTimerPaused(
 input: SetRequestInputTimerPausedInput,
-): Effect.Effect<StateMutationResult<SetRequestInputTimerPausedResult>, StateContractError>;
+): Effect.Effect<StateMutationResult<RuntimeRequestInputDetailsRecord>, StateContractError>;
 defaultOpenRequestInputQuestions(input: {
 requestId: RequestInputRequestId;
 answeredBy: "timeout_default";
@@ -2732,17 +3038,30 @@ questions: readonly RuntimeRequestInputQuestionInput[];
 timeout: null | { enabled: boolean; durationMs: number };
 };
 
+type RuntimeAnswerRequestInputCommitResult = {
+answer: AnswerRequestInputResult;
+target: PromptTarget;
+};
+
 `AnswerRequestInputInput`, `AnswerRequestInputResult`, `SetRequestInputTimerPausedInput`, and
 `SetRequestInputTimerPausedResult` are core-owned runtime request-input contracts imported from
 `@svvy/core`. `RuntimeRequestStatePort` must not import these shapes from `@svvy/runtime` or define
 state-local aliases with the same names. Runtime facade methods and state ports share the core
 contract, while state owns only the DB-backed request rows, question rows, answer rows, timeout
-facts, and `StateMutationResult.afterCommit` descriptors.
+facts and committed request-input post-commit handoff values.
 
-State computes and persists request-input timeout deadline facts during
-`createRequestInput(...)` using `Clock.Clock`: `durationMs`, `createdAt`, `expiresAt`,
-`pausedAt: null`, and `remainingMsWhenPaused: null`. Runtime passes only requested duration and
-mode; callers do not author persisted deadline timestamps. On pause, state writes `pausedAt` and
+`answerRequestInput(...)` returns the public `AnswerRequestInputResult` inside
+`RuntimeAnswerRequestInputCommitResult.answer` and the committed owning `PromptTarget` inside
+`RuntimeAnswerRequestInputCommitResult.target`. State derives `target` from the committed request
+record returned by the answer transaction: `threadId === null` means orchestrator, and non-null
+`threadId` means handler. Runtime uses this committed target for nonblocking queued-answer wakeup and
+must not issue a post-answer `getRequestInput(...)` read only to reconstruct the wake target. The
+public runtime facade still returns only `AnswerRequestInputResult`.
+
+State persists request-input timeout deadline facts during `createRequestInput(...)` from explicit
+runtime-provided timestamp/duration inputs plus manifest-adopted `DateTime`/`Duration` helpers.
+Runtime remains the owner of timeout policy and clock access. Runtime passes only requested duration
+and mode; callers do not author persisted deadline timestamps. On pause, state writes `pausedAt` and
 `remainingMsWhenPaused` from the committed clock time and clears `expiresAt`. On resume, state
 recomputes `expiresAt = now + remainingMsWhenPaused`, clears pause fields, and keeps the original
 `durationMs`. Restart recovery and timeout scans read persisted `expiresAt` / pause fields rather
@@ -2773,8 +3092,10 @@ paused: boolean;
 };
 
 `setRequestInputTimerPaused(...)` validates surface ownership and an open blocking request with an
-enabled timeout, writes paused/resumed timer facts transactionally, and returns only the committed
-request id. Runtime reschedules or clears process-local timeout/wait fibers only after this state
+enabled timeout, writes paused/resumed timer facts transactionally, and returns the committed
+`RuntimeRequestInputDetailsRecord` through `StateMutationResult.value`. Runtime adapts that
+state-port value back to the public `SetRequestInputTimerPausedResult` `{ requestId }` facade
+result. Runtime reschedules or clears process-local timeout/wait fibers only after this state
 commit. State never owns host timers, Effect fibers, queue wakeups, or command settlement for timer
 pause.
 
@@ -2803,7 +3124,11 @@ Request-input mutations use the same single envelope as every other runtime-faci
 `defaultOpenRequestInputQuestions`, `cancelRequestInput`, and `setRequestInputTimerPaused` return
 their committed domain value as `value` and their publication descriptors as `afterCommit`. They do
 not embed a second nested `afterCommit`, `receipt`, queue row preview, or best-effort delivery claim
-object inside `value`.
+object inside `value`. `answerRequestInput(...)` is the answer-specific exception where `value` is
+the committed handoff object `{ answer, target }`: `answer` is the exact public
+`AnswerRequestInputResult`, and `target` is the committed `PromptTarget` required for runtime
+post-commit wake behavior. This is not a queue-row preview and must not require a runtime
+post-answer state read.
 
 type SurfaceTranscriptReadModelInput = {
 target: RuntimeSurfaceTarget;
@@ -3113,7 +3438,7 @@ tool-result transcript entries may be retained internally as pi references, but 
 transcript read models must not expose independent `tool` message rows that duplicate command
 spans.
 
-Runtime-facing state ports are exact method groups for the target architecture, not examples to
+Runtime-facing state ports are exact method groups for the architecture, not examples to
 reinterpret as raw table access. Queue claim methods atomically select one eligible row, mark it
 dispatching, attach owner/lease facts, and return after-commit invalidations. Eligibility is
 `status` in `queued` or `steering`, `nextAttemptAt` absent or due, and no active unexpired claim
@@ -3122,8 +3447,10 @@ lease. Within one `surfacePiSessionId` and `orderingKey`, claim order is:
 by `sequence`, then priority `interactive > runtime > background`, then FIFO `sequence`.
 `orderingKey` is the durable
 serialization key for rows that must not overtake each other on the same surface; ordinary surface
-prompt work uses the surface key. State implements this ordering atomically, while runtime owns the
-policy that assigns priority, ordering key, steering facts, retry timing, and cancellation.
+prompt work uses the surface key. State implements this ordering atomically and derives the stored
+`orderingKey` at enqueue time from the committed target surface and queue item kind. Runtime owns
+the policy that assigns priority, steering facts, retry timing, cancellation, and the typed queue
+item kind/payload it asks state to enqueue.
 State increments `attemptCount` and `leaseVersion` when a row is claimed. The default
 `maxAttempts` for newly enqueued surface rows is `3` unless the caller provides a stricter value.
 State never chooses queue, recovery, title, or request-input delivery lease durations from layer
@@ -3146,9 +3473,10 @@ concurrency. State must not implement claim as a select outside a transaction fo
 update. Runtime may decide claim owner, lease duration, retry timing, priorities, and non-default
 max attempts, but the state port enforces deterministic ordering, lease versioning, and attempt
 counting atomically.
-Runtime starts one drain lane per `(surfacePiSessionId, orderingKey)`. Ordinary prompt-bearing rows
-use `orderingKey = surface:<surfacePiSessionId>`. Runtime must not claim across ordering keys unless
-the owning runtime spec defines a cross-lane arbitration policy for that queue item kind.
+Runtime starts one drain lane per committed `(surfacePiSessionId, orderingKey)` returned by state.
+Ordinary prompt-bearing rows use the state-derived `orderingKey = surface:<surfacePiSessionId>`.
+Runtime must not claim across ordering keys unless the owning runtime spec defines a cross-lane
+arbitration policy for that queue item kind.
 
 Claim-settling methods that complete or retry a dispatching row require `ownerId` and
 `leaseVersion`; rows claimed by another owner or a later lease version fail with a typed
@@ -3171,17 +3499,23 @@ settle the row.
 
 Settings, provider auth, extension env, and snippets are DB/product-state-backed ports. App
 preferences, provider readiness, OAuth status, agent profiles, extension usage, managed snippets,
-and prompt history are not renderer storage and are not watched as file-backed source. Runtime reads
-provider credentials through `ProviderCredentialSnapshot` records that contain only the information
-needed to configure the pi/provider port for one invocation. Secret values are resolved through the
-secure secret-store adapter into `Redacted.Redacted<string>` values at the trusted invocation
-boundary, are redacted in logs/read models/events, and are never returned in extension inventory,
-generated context, app logs, command facts, transcripts, or desktop bridge payloads.
+and prompt history are not renderer storage and are not watched as file-backed source.
+`ProviderAuthPort` is host/live, not DB/product-state. Usable provider snapshots may carry
+operation-scoped `Redacted` credential material; unusable snapshots and `ProviderAuthStatusStatePort`
+rows carry only redacted account/status metadata, health, expiry, and issue fields. Product state
+stores provider status and secret references/status only; it never exposes raw provider tokens,
+refresh tokens, or reusable host secret-store paths in read models or persisted public DTOs. Secret
+values are resolved through the host-owned secure secret-store adapter into
+`Redacted.Redacted<string>` values at the trusted invocation boundary, are redacted in logs/read
+models/events, and are never returned in extension
+inventory, generated context, app logs, command facts, transcripts, or desktop bridge payloads. A
+provider snapshot must not contain raw environment variable names, provider-specific token payloads,
+refresh tokens, or reusable secret-store paths as public state data.
 Secret values never appear in state read models. `SecretStorePort` methods return only secret refs,
-presence, fingerprints, status records, or `Redacted` invocation values. Provider status writes invalidate
-`providerAuth` app read models. Pi session reference writes invalidate the owning surface/session
-recovery read models. Validation failures return the port-specific typed error and do not delete or
-rewrite references unless the caller uses the explicit delete method.
+presence, fingerprints, status records, or `Redacted` invocation values. Provider status writes
+invalidate `providerAuth` app read models. Pi session reference writes invalidate the owning
+`surface` and `sessionNavigation` read models. Validation failures return the port-specific typed
+error and do not delete or rewrite references unless the caller uses the explicit delete method.
 
 Read-model invalidations are returned descriptors from committed writes, not a separate mutable
 state API. State may expose pure helper functions that derive `StateInvalidationDescriptor` values
@@ -3363,7 +3697,7 @@ type GetExtensionInvocationEnvInput = {
 type ExtensionExecutionEnvPlan = {
   extensionId: ExtensionId;
   nonSecretValues: Readonly<Record<string, string>>;
-  secretKeyNames: readonly string[];
+  secretRefs: readonly ExtensionEnvSecretRef[];
   redactedLabels: Readonly<Record<string, string>>;
   secretRevisionFingerprint: string;
 };
@@ -3402,6 +3736,7 @@ type ReadExtensionDependencyReadinessInput = {
 };
 
 type RecordExtensionDependencyReadinessInput = {
+  scope: { kind: "app" };
   readiness: ExtensionDependencyReadiness;
   sourceCommandId?: CommandId | null;
   recordedAt: IsoDateTimeString;
@@ -3426,26 +3761,9 @@ type GeneratedPackageWorkspaceLink = RuntimeGeneratedPackageWorkspaceLinkRecord;
 
 type ExtensionStatePortService = {
   records: {
-    list(
-      input: ListExtensionRecordsInput,
-    ): Effect.Effect<ReadonlyArray<ExtensionRecord>, StateContractError>;
-    get(input: GetExtensionRecordInput): Effect.Effect<ExtensionRecord, StateContractError>;
     readSourceFingerprint(
       input: ReadExtensionSourceFingerprintInput,
     ): Effect.Effect<string | null, StateContractError>;
-  };
-  usage: {
-    resolveActorBinding(
-      input: ResolveActorExtensionBindingInput,
-    ): Effect.Effect<ActorExtensionBinding, StateContractError>;
-  };
-  env: {
-    listStatus(
-      input: ListExtensionEnvStatusInput,
-    ): Effect.Effect<ReadonlyArray<ExtensionEnvStatus>, StateContractError>;
-    getInvocationEnv(
-      input: GetExtensionInvocationEnvInput,
-    ): Effect.Effect<ExtensionExecutionEnvPlan, StateContractError>;
   };
   dependencies: {
     isApproved(
@@ -3453,15 +3771,7 @@ type ExtensionStatePortService = {
     ): Effect.Effect<boolean, StateContractError>;
     readReadiness(
       input: ReadExtensionDependencyReadinessInput,
-    ): Effect.Effect<ExtensionDependencyReadiness, StateContractError>;
-  };
-  generatedPackages: {
-    readFacts(
-      input: ReadGeneratedPackageFactsInput,
-    ): Effect.Effect<GeneratedPackageFacts, StateContractError>;
-    readLinksNeedingRepair(
-      input: ReadGeneratedPackageLinksNeedingRepairInput,
-    ): Effect.Effect<ReadonlyArray<GeneratedPackageWorkspaceLink>, StateContractError>;
+    ): Effect.Effect<ExtensionDependencyReadiness | null, StateContractError>;
   };
 };
 ```
@@ -3472,45 +3782,24 @@ transaction internally and return mutation result wrappers containing committed 
 workspace-link writes are not extension-facing operations; they are runtime-owned writes through
 `RuntimeGeneratedPackageStatePort`.
 
-Implementation-local artifact file-store helper shape:
-
-```ts
-type InternalArtifactFileStore = {
-  createEmpty(
-    input: CreateEmptyArtifactFileInput,
-  ): Effect.Effect<ArtifactStoredFile, StateContractError | ArtifactFileStoreError>;
-  copyIntoStore(
-    input: CopyArtifactIntoStoreInput,
-  ): Effect.Effect<ArtifactStoredFile, StateContractError | ArtifactFileStoreError>;
-  read(
-    input: ReadArtifactFileInput,
-  ): Effect.Effect<ArtifactFileBytes, StateContractError | ArtifactFileStoreError>;
-  stat(
-    input: StatArtifactFileInput,
-  ): Effect.Effect<ArtifactStoredFile, StateContractError | ArtifactFileStoreError>;
-  markImmutable(
-    input: MarkArtifactImmutableInput,
-  ): Effect.Effect<ArtifactStoredFile, StateContractError | ArtifactFileStoreError>;
-  delete(
-    input: DeleteArtifactFileInput,
-  ): Effect.Effect<DeletedArtifactFile, StateContractError | ArtifactFileStoreError>;
-};
-```
-
-This helper is not exported; public consumers receive only `RuntimeArtifactStatePort`.
+Artifact file-store helpers are not part of `@svvy/state`. Runtime owns package-private artifact
+file-effect helpers and may implement them with `FileSystem.FileSystem`, `Path.Path`, and
+`Crypto.Crypto` provided by the runtime platform layer. State ports never receive raw artifact
+content, mutable source paths, temp paths, file handles, directory handles, or host filesystem
+capabilities for artifact bytes.
 
 `ExtensionStatePortService` is DB/product-state-backed and is provided through the core-owned
-`ExtensionStatePort` tag. It exposes extension records, usage policy,
-env readiness, dependency approval/readiness, source fingerprints, and read-only generated-package
-fact selectors for validation and listing. It does not expose generated-context writes,
-generated-package fact writes, workspace-link writes, command writes, recovery writes, or read-model
-invalidation publication. Generated-context writes remain runtime-owned through
+`ExtensionStatePort` tag. It exposes committed source-root fingerprints and dependency
+approval/readiness facts for extension validation and build planning. It does not expose extension
+inventory, usage policy, env planning, generated-context writes, generated-package fact writes,
+workspace-link writes, command writes, recovery writes, or read-model invalidation publication.
+Extension inventory and env planning are resolved through the separately named extension services
+and state-backed contracts that own those read models. Generated-context writes remain runtime-owned through
 `RuntimeActorExtensionBindingStatePort` and `RuntimeExtensionContextImpactStatePort`.
 Generated-package fact and workspace-link writes remain runtime-owned through
 `RuntimeGeneratedPackageStatePort`.
 `records.readSourceFingerprint(...)` reads the currently recorded fingerprint for a source root, and
-`dependencies.isApproved(...)` reads the dependency approval ledger for a single exact dependency
-identity:
+`dependencies.isApproved(...)` reads committed approval facts for a single exact dependency identity:
 
 ```ts
 type ExtensionDependencyApprovalIdentity = {
@@ -3529,66 +3818,65 @@ dependency declaration normalizes it to `packageManager: "bun"`, `source: "npm"`
 `integrity: null`, and `resolution: null` before calling the port. It does not read or write
 generated package files directly.
 
-`RuntimeArtifactStatePort` is the core-owned artifact state boundary. `@svvy/state` owns its live
-implementation and layer. It creates, inspects, lists, and deletes artifacts while maintaining the
-matching DB-backed artifact metadata, stored-file path, digest, byte count, deleted lifecycle,
-command/thread/workflow links, and read-model indexes. Runtime/command adapters may refresh file
-source bytes or source paths while producing command output, but the state-owned port owns final
-placement, digest, byte count, and metadata records. The port returns metadata records and does not
-return artifact file contents.
-`createArtifact` and `deleteArtifact` return `StateMutationResult<RuntimeArtifactRecord>`.
+`RuntimeArtifactStatePort` is the core-owned artifact metadata boundary. `@svvy/state` owns its live
+implementation and layer. It commits DB-backed artifact metadata, stored-path facts, digest facts,
+byte-count facts, materialization status, deleted lifecycle, command/thread/workflow links, and
+read-model indexes. Runtime/command services own final path resolution, temporary staging,
+copy/write/rename/stat/delete operations, digest calculation, and recovery for partial file effects.
+The port returns metadata records and does not return artifact file contents.
+`recordArtifactMetadata` and `markArtifactMetadataDeleted` return
+`StateMutationResult<ArtifactMetadataRecord>`.
 `inspectArtifact` and `listArtifacts` are read-only and return raw records. Artifact mutation
 descriptors target only existing read-model invalidation vocabulary: `sessionNavigation`,
 `commandInspector(sourceCommandId)` when present, `handlerThreadInspector(threadId)` when present,
 and `workflowTaskAttemptInspector(workflowTaskAttemptId)` when present. There is no standalone
 artifact invalidation descriptor unless a standalone artifact read model is added in this spec.
-Implementation-local file-store helpers may exist inside `@svvy/state`, but they are not exported
-to `@svvy/extensions` or `@svvy/runtime`.
+Implementation-local artifact metadata helpers may exist inside `@svvy/state`, but file-store
+helpers do not.
 `RuntimeArtifactStatePort` exposes only:
 
 ```ts
 type RuntimeArtifactStatePort = {
-  createArtifact(
-    input: CreateRuntimeArtifactInput,
-  ): Effect.Effect<StateMutationResult<RuntimeArtifactRecord>, StateContractError>;
+  recordArtifactMetadata(
+    input: RecordRuntimeArtifactMetadataInput,
+  ): Effect.Effect<StateMutationResult<ArtifactMetadataRecord>, StateContractError>;
   inspectArtifact(
     input: InspectRuntimeArtifactInput,
-  ): Effect.Effect<RuntimeArtifactRecord, StateContractError>;
+  ): Effect.Effect<ArtifactMetadataRecord, StateContractError>;
   listArtifacts(
     input: ListRuntimeArtifactsInput,
-  ): Effect.Effect<ReadonlyArray<RuntimeArtifactRecord>, StateContractError>;
-  deleteArtifact(
-    input: DeleteRuntimeArtifactInput,
-  ): Effect.Effect<StateMutationResult<RuntimeArtifactRecord>, StateContractError>;
+  ): Effect.Effect<ReadonlyArray<ArtifactMetadataRecord>, StateContractError>;
+  markArtifactMetadataDeleted(
+    input: MarkRuntimeArtifactMetadataDeletedInput,
+  ): Effect.Effect<StateMutationResult<ArtifactMetadataRecord>, StateContractError>;
 };
 
-type CreateRuntimeArtifactInput = {
+type RecordRuntimeArtifactMetadataInput = {
   workspaceSessionId: WorkspaceSessionId;
   threadId?: ThreadId | null;
   workflowRunId?: WorkflowRunId | null;
   workflowTaskAttemptId?: WorkflowTaskAttemptId | null;
-  sourceCommandId?: CommandId | null;
+  sourceCommandId: CommandId;
   kind: "text" | "log" | "json" | "file";
-  name?: string;
-  source:
-    | { kind: "inline"; content: string }
-    | { kind: "copy_file"; path: AbsolutePath }
-    | { kind: "empty" };
-  mimeType?: string;
-  immutable?: boolean;
+  name: string;
+  storedPath: AbsolutePath;
+  mimeType: string;
+  byteSize: NonNegativeSafeInteger;
+  sha256: string;
+  immutable: boolean;
+  materializationStatus: "ready";
 };
+```
 
-`CreateRuntimeArtifactInput.workspaceSessionId` is required because every artifact record is durable
-product state under one workspace session. `source` is a closed one-of:
+`RecordRuntimeArtifactMetadataInput.workspaceSessionId` is required because every artifact record is
+durable product state under one workspace session. `storedPath`, `byteSize`, and `sha256` are
+observed facts from runtime-owned materialization after the final artifact bytes exist. The input
+never contains inline content, a mutable source path, `copy_file`, temp paths, or open file handles.
+Runtime validates the original artifact create request, materializes bytes, computes these facts,
+and then commits this metadata record. State validates ownership, id uniqueness, stored-path
+namespace, digest format, lifecycle transition, and read-model indexes.
 
-- `inline` stores runtime-provided content into a new artifact file.
-- `copy_file` copies the referenced file into the artifact store, records only the immutable stored
-  path, and never persists the caller's mutable source path as the artifact location.
-- `empty` creates a placeholder file owned by the artifact store for runtime-owned writers that fill
-  content later under the same command/session context.
-
-Exactly one `source` variant is accepted. Inline content and file path cannot both be supplied.
-
+```ts
 type InspectRuntimeArtifactInput = {
   workspaceSessionId?: WorkspaceSessionId | null;
   artifactId: ArtifactId;
@@ -3597,49 +3885,54 @@ type InspectRuntimeArtifactInput = {
 type ListRuntimeArtifactsInput = {
   workspaceSessionId: WorkspaceSessionId;
   threadId?: ThreadId | null;
-  limit?: number;
+  limit?: PositiveSafeInteger;
 };
 
-type DeleteRuntimeArtifactInput = {
+type MarkRuntimeArtifactMetadataDeletedInput = {
   workspaceSessionId?: WorkspaceSessionId | null;
   artifactId: ArtifactId;
 };
 
-type RuntimeArtifactRecord = {
-  id: ArtifactId;
+type ArtifactMetadataRecord = {
+  artifactId: ArtifactId;
   workspaceSessionId: WorkspaceSessionId;
   threadId: ThreadId | null;
   workflowRunId: WorkflowRunId | null;
   workflowTaskAttemptId: WorkflowTaskAttemptId | null;
-  sourceCommandId: CommandId | null;
-  kind: "text" | "log" | "json" | "file";
+  sourceCommandId: CommandId;
   name: string;
-  path?: AbsolutePath;
+  storedPath: AbsolutePath;
   mimeType: string;
-  bytes: NonNegativeSafeInteger;
+  byteSize: NonNegativeSafeInteger;
   sha256: string;
   immutable: boolean;
+  materializationStatus: "staging" | "ready" | "delete_pending" | "deleted" | "failed";
   createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
   deletedAt: IsoDateTimeString | null;
+  lastRecoveryWorkId: RecoveryWorkId | null;
 };
 ```
 
-File-store failures are mapped into the shared `StateContractError` vocabulary at the public port:
-missing artifacts map to `not-found`, duplicate artifact names map to `conflict`, invalid names or
-source paths map to `invalid-input`, and store-level `COPY_FAILED` / `DELETE_FAILED` materialization
-failures map to `transaction-failed` unless the shared state error vocabulary is explicitly expanded
-in `@svvy/core`.
+Metadata failures are mapped into the shared `StateContractError` vocabulary at the public port:
+missing artifacts map to `not-found`, duplicate active artifact names map to `conflict`, invalid
+names, stored paths, digests, byte sizes, ownership links, or lifecycle transitions map to
+`invalid-input` or `stale-state`, and transaction failures map to `transaction-failed`. Runtime-owned
+file-effect failures are runtime command/recovery failures; state does not translate copy, write,
+rename, stat, digest, or delete errors.
 
 Artifact commands use a two-phase materialization protocol:
 
-1. Stage new bytes outside the SQL transaction under a state-owned temporary path.
-2. Enter a short SQL transaction, decode the command input, insert or update artifact metadata with
-   `materializationStatus: "staging"`, command/thread/workflow links, digest intent, immutable
-   intent, and after-commit invalidations.
-3. Promote the staged file into its final artifact-store path with atomic rename where the host
-   filesystem supports it.
-4. Enter a second short SQL transaction that marks the artifact `materializationStatus: "ready"`,
-   records byte size and digest, and returns after-commit read-model invalidation descriptors.
+1. Runtime validates the artifact command or execution plan, derives workspace/session ownership,
+   resolves the final stored path, and stages new bytes under a runtime-owned temporary path in the
+   same artifact root.
+2. Runtime writes/copies the bytes, flushes the handle when required by the platform adapter, computes
+   byte size and SHA-256 from the staged bytes, and promotes the staged file into its final
+   artifact-store path with atomic rename where the host filesystem supports it.
+3. Runtime calls `RuntimeArtifactStatePort.recordArtifactMetadata(...)` with only final metadata facts:
+   stored path, byte size, digest, MIME type, immutable flag, ownership links, and command linkage.
+4. State commits the metadata row and read-model invalidation descriptors in one short SQL
+   transaction. Runtime publishes notifications only after that commit.
 
 Artifact metadata shape:
 
@@ -3655,9 +3948,9 @@ type ArtifactMetadataRecord = {
   storedPath: AbsolutePath;
   immutable: boolean;
   mimeType: string;
-  byteSize: number;
+  byteSize: NonNegativeSafeInteger;
   sha256: string;
-  materializationStatus: "staging" | "ready" | "delete_pending" | "deleted" | "failed";
+  materializationStatus: "ready" | "delete_pending" | "deleted" | "failed";
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
   deletedAt: IsoDateTimeString | null;
@@ -3665,15 +3958,15 @@ type ArtifactMetadataRecord = {
 };
 ```
 
-If promotion or the second transaction fails, state records or enqueues
-`artifact_materialization` recovery work that can remove an orphan staged file, remove orphan ready
-bytes without metadata, or complete metadata for a promoted file whose digest can still be verified.
-Deletes mark metadata deleted transactionally, then remove bytes, then record recovery work when
+If promotion or metadata commit fails, runtime records or enqueues `artifact_materialization`
+recovery work that can remove an orphan staged file, remove orphan ready bytes without metadata, or
+complete metadata for a promoted file whose digest can still be verified. Deletes mark metadata
+`delete_pending`, runtime removes bytes, then runtime commits `deleted` or records recovery work when
 byte removal fails. SQL transactions never perform file I/O while open.
 
 Staging must happen under the same artifact root/filesystem as the final path. If same-filesystem
-atomic rename cannot be guaranteed, the port must fail before metadata insertion or use an explicit
-copy-then-digest-verify path that records `artifact_materialization` recovery before exposing
+atomic rename cannot be guaranteed, runtime must fail before metadata insertion or use an explicit
+copy-then-digest-verify path that records `artifact_materialization` recovery before committing
 `materializationStatus: "ready"`.
 
 DB/product-state-backed slices include:
@@ -3685,17 +3978,17 @@ DB/product-state-backed slices include:
   and manual title rows
 - command, command event, command output, diagnostic, patch snapshot, child command, command fact,
   and app-log rows
-- extension record, usage, env status, encrypted secret reference, dependency readiness,
-  generated-package fact, and generated-package workspace-link rows
+- extension availability/readiness record, usage, env status, encrypted secret reference,
+  dependency readiness, generated-package fact, and generated-package workspace-link rows
 - Smithers-observed workflow/run/task/node/iteration/attempt bridge facts that product read models
   require
 - artifact metadata, immutable marker, deleted marker, source-command/thread/workflow links, and
   read-model indexes
 
-State-exposed file-backed assets are limited to:
+File-backed artifact assets are runtime-owned:
 
-- artifact bytes and immutable artifact files written through `RuntimeArtifactStatePort`
-- temporary staged files used by state-owned artifact replacement commands
+- artifact bytes and immutable artifact files written by runtime artifact materialization services
+- temporary staged files used by runtime-owned artifact create/delete/recovery operations
 
 `@svvy/state` stores DB rows for source fingerprints, source versions, diagnostics,
 generated-context facts, generated-package facts, and workspace-link facts. It does not own
@@ -3720,10 +4013,37 @@ The concrete state records for the runtime lifecycle/source ports are:
   thread/workflow-task ids when applicable, lifecycle status, open count, open/close timestamps,
   close reason, and update timestamp. It never stores prompt locks, queues, command fibers, watcher
   handles, or live pi handles.
-- `runtime_source_fact`, keyed by `(source_kind, source_id)`, records file-backed source path,
-  source version, fingerprint, diagnostics, source command lineage, creation/update timestamps, and
-  optional deletion timestamp. Save operations clear `deleted_at`; delete operations mark the
-  existing fact deleted and require the expected source version when supplied.
+- `pi_session_reference`, keyed by `surface_pi_session_id`, records the persisted adapter reference
+  for reopening a pi session: workspace id, workspace session id, surface kind, actor kind, optional
+  thread/workflow-task identity, adapter kind, adapter version, storage locator, optional
+  pi-native session id, reference fingerprint, adapter-owned metadata JSON, created/updated
+  timestamps, last validated timestamp, and optional deleted timestamp. The row stores only opaque
+  adapter reopen metadata and validation fields; it never stores pi-native live handles, prompt text,
+  transcript text, provider credentials, runtime queues, or command facts. `savePiSessionReference`
+  commits the row and returns `surface`/`sessionNavigation` invalidations when the persisted reopen
+  state changes. `deletePiSessionReference` marks the row deleted before runtime releases retained
+  surface scopes. `@svvy/state` owns only the durable deletion marker and invalidations; physical
+  cleanup of adapter-owned bytes, when any exist, is owned by `@svvy/pi-adapter` and recorded by
+  runtime recovery/observation after the SQL transaction. `validatePiSessionReference` compares the
+  durable row to the requested workspace, surface, actor, adapter kind/version, and reference
+  fingerprint before `@svvy/pi-adapter` attempts a reopen.
+- `runtime_source_fact`, keyed by `(source_invalidation_scope, source_kind, source_id)`, records
+  editable file-backed source path, source version, per-source fingerprint, diagnostics, source
+  command lineage, creation/update timestamps, and optional deletion timestamp. Save operations clear
+  `deleted_at`; delete operations mark the existing fact deleted and require the expected source
+  version when supplied. This table is the editable-source compare-and-swap ledger, not the
+  deterministic source-root scan ledger.
+- `runtime_source_root_fingerprint_fact`, keyed by the exact `source_root` supplied by runtime with
+  committed source-invalidation scope and source-domain metadata, records the current deterministic
+  aggregate fingerprint for a source root, root diagnostics, observation timestamp, and commit
+  timestamps. Runtime source invalidation computes deterministic source evidence and commits this
+  table from the accepted scan batch; `ExtensionStatePort.records.readSourceFingerprint` reads this
+  table directly by `sourceRoot`; it never derives a root fingerprint from `runtime_source_fact`,
+  generated-package facts, host callbacks, or aggregate scan receipts.
+- `runtime_source_scan_fact` records reconciliation receipts: scope, domain, accepted aggregate
+  source fingerprint, diagnostics, scan timestamp, and commit timestamps. It does not reuse or
+  collide with editable source fact keys and is not the authoritative current source-root
+  fingerprint.
 - `state_revision`, keyed by singleton id `1`, is the local state revision counter used by current
   lifecycle APIs that must return `StateRevision`. It is a state commit cursor, not an app-wide event
   bus sequence and not a replacement for runtime notification sequencing.
@@ -3776,25 +4096,73 @@ the selector has no host, database, clock, runtime-event, or filesystem dependen
 State resources are scoped layers:
 
 - SQLite database handle acquisition, migration, pragma setup, and close.
-- Secure secret-store adapter acquisition and close when the adapter has a lifecycle.
-- Artifact file-store root resolution, directory creation, and cleanup of temporary staging
-  directories through injected `FileSystem.FileSystem` and `Path.Path`.
+- Consumption of the host-owned `SecretStoreMutationPort` by secret-write command services/facade
+  paths;
+  app/bootstrap provides that port in the app runtime context and owns acquisition/close when the
+  host implementation has a lifecycle.
+- Artifact metadata root configuration and committed stored-path fact validation. Runtime owns
+  artifact directory creation, byte staging, promotion, deletion, digest calculation, and staged-file
+  cleanup through its runtime-owned file-effect services.
+  `RuntimeArtifactStatePort` implementations must reject committed artifact metadata whose
+  `storedPath` is outside the configured artifact root, outside the owning workspace session's
+  artifact directory, or inconsistent with the artifact's mutable/immutable placement rules. Core
+  schemas can brand `storedPath` as an absolute path only; containment, session-root matching, and
+  immutable-child placement are state implementation checks backed by focused escaped-path,
+  wrong-session-root, and mutable/immutable-placement tests.
 - No product source watcher lives in `@svvy/state`; runtime owns source watchers. State may only own
-  lifecycle for storage adapters such as SQLite, secret store, and artifact temp cleanup.
+  lifecycle for storage adapters such as SQLite.
+
+Provider credentials and extension secrets use a two-store protocol. Extension env secrets are
+addressed through core-owned `ExtensionEnvSecretRef` records shaped as
+`{ kind: "extension-env", extensionId, envName }`. The host secret store contains the encrypted or
+OS-protected secret material for that ref; SQLite contains only the secret ref/status row,
+readiness/status facts, declaration identity, non-secret metadata, revision, created/updated
+timestamps, and redacted invalidation descriptors. User-entered raw secret values exist only inside
+the state command effect until the secret-store write succeeds or fails.
+Provider credential and extension env secret command inputs reject missing or empty `secretValue`
+values; examples must use non-empty example secret values such as `sk-test-secret`, never `""`, `null`, or an
+omitted secret field.
+
+Secret update order is strict:
+
+1. Decode and validate the state command input, allocate the extension env secret ref and revision,
+   and write the raw secret value to the host-owned `SecretStoreMutationPort` outside the SQLite
+   transaction.
+2. Commit the SQLite reference/status row in one state transaction after the secure-store write
+   succeeds, collecting `providerAuth`, `extensions`, `settings`, or app-log invalidations named by
+   the command contract.
+3. If the SQLite commit fails after the secure-store write succeeded, record or schedule secret
+   orphan cleanup by secret ref and report a typed state command failure without exposing the raw
+   value.
+4. On replacement, write the new secret first, commit the new SQLite reference/revision second, then
+   remove the prior secret-store material for the previous ref after commit. If prior material
+   removal fails, record cleanup recovery; the newly committed ref remains authoritative.
+5. On removal, mark the SQLite reference removed or not-configured in one transaction first, publish
+   only the committed invalidations, then remove the secret-store material for the ref. Failed
+   material removal is cleanup recovery and must not resurrect the DB reference.
+
+Secret writes are idempotent by command id / client submission key plus declaration identity. A
+replayed command returns the committed reference/status result when the SQLite revision already
+matches, and never writes the raw secret into logs, app logs, command facts, generated packages,
+prompt context, read models, or runtime events. Startup and recovery scan for orphaned
+secret-store material and DB refs whose host material is missing, surface redacted app-log facts,
+and update only status/readiness rows through committed state transactions.
 
 No state service may hide a process-wide mutable singleton. The app creates state layers once per
 runtime graph and disposes them through the owning `ManagedRuntime` / layer scope.
 
-| Resource                               | Owner package/service                | Backing kind            | Lifetime kind     | Acquired by                                                                                                 | Released by                                                                                                 | Reused across calls                     | Interruption behavior                                                                                                    | Required receipts/tests                                                                       |
-| -------------------------------------- | ------------------------------------ | ----------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| SQLite database handle                 | `@svvy/state` layer                  | DB/product-state-backed | `layer-acquired`  | `@svvy/state layer({ config, secretStore })` under the app runtime layer                                    | app `ManagedRuntime.dispose()` closes the layer scope and database handle                                   | yes, for the app runtime graph          | request interruption cancels the current transaction/effect only; app disposal closes the handle                         | scoped database lifecycle test, transaction rollback test, no handle access after scope close |
-| Migration and pragma setup             | `@svvy/state` layer                  | DB/product-state-backed | `layer-acquired`  | `@svvy/state layer(input)` before exposing state ports/facades under the app runtime layer                  | app runtime disposal; migration receipts remain in SQLite                                                   | yes, setup runs once per acquired layer | interruption before layer acquisition fails startup; interruption after setup does not rerun until reacquire             | migration ordering receipt, pragma verification, startup-failure typed error test             |
-| Secret-store adapter                   | `@svvy/state` secret-store service   | host resource           | `layer-acquired`  | state layer from decoded `StateLayerConfig` and injected host secret-store implementation                   | adapter close/finalizer on state layer scope close                                                          | yes, while app runtime graph is alive   | operation interruption cancels the current secret operation; app disposal closes adapter when it has a lifecycle         | fake secret-store lifecycle test, redaction/no-raw-secret read-model test                     |
-| Artifact durable root metadata         | `@svvy/state` artifact state service | DB/product-state-backed | `layer-acquired`  | state layer validates configured artifact root and state command facades materialize metadata               | app runtime disposal for adapter handles; metadata persists until explicit state command deletes/updates it | yes                                     | interruption cancels current metadata command; committed rows remain authoritative                                       | artifact metadata command tests, pure selector no-filesystem test                             |
-| Artifact temporary staging directories | `@svvy/state` artifact state service | file-backed             | `operationScoped` | artifact command effect through injected `FileSystem.FileSystem` / `Path.Path`                              | operation finalizer or terminal artifact materialization fact                                               | no                                      | interruption runs staging cleanup finalizers; committed durable artifact facts are not rolled back by filesystem cleanup | temp staging cleanup test, interrupted artifact write test                                    |
-| State read-model projection rows       | `@svvy/state` projection services    | DB/product-state-backed | `layer-acquired`  | state command facades inside transactions under the state layer                                             | explicit state transactions update/delete rows; app disposal closes access handles only                     | yes                                     | interruption before commit leaves prior projection; after commit runtime receives after-commit descriptors               | projection transaction atomicity test, after-commit descriptor receipt test                   |
-| Provider auth status rows              | `@svvy/state` provider auth status port | DB/product-state-backed | `layer-acquired`  | `layerProviderAuthStatusStatePort` over the structured session state layer                                  | explicit provider status writes update rows; app disposal closes access handles only                       | yes                                     | interruption before commit leaves prior provider status; after commit runtime receives `providerAuth` invalidations      | provider auth status state-port test, redacted/no-secret status test                         |
-| App log rows                           | `@svvy/state` app-log command port   | DB/product-state-backed | `layer-acquired`  | runtime/state command facade within owning transaction or recovery observation effect under the state layer | retention/clear command or database lifecycle, not runtime event disposal                                   | yes                                     | interruption before commit drops uncommitted log; after commit log is durable                                            | app-log write/read-model test, no runtime-published-only log test                             |
+| Resource                           | Owner package/service                                                | Backing kind            | Lifetime kind    | Acquired by                                                                                                                                                                                                                                                   | Released by                                                                                                                                                                            | Reused across calls                                                             | Interruption behavior                                                                                                | Required receipts/tests                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------- | ----------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| SQLite database handle             | `@svvy/state` layer                                                  | DB/product-state-backed | `layer-acquired` | `@svvy/state.layer({ config })` provided with decoded state config and the required abstract filesystem/path services under the app runtime layer                                                                                                             | app `ManagedRuntime.dispose()` closes the layer scope and database handle                                                                                                              | yes, for the app runtime graph                                                  | request interruption cancels the current transaction/effect only; app disposal closes the handle                     | scoped database lifecycle test, transaction rollback test, no handle access after scope close |
+| Migration and pragma setup         | `@svvy/state` layer                                                  | DB/product-state-backed | `layer-acquired` | `@svvy/state layer(input)` before exposing state ports/facades under the app runtime layer                                                                                                                                                                    | app runtime disposal; migration receipts remain in SQLite                                                                                                                              | yes, setup runs once per acquired layer                                         | interruption before layer acquisition fails startup; interruption after setup does not rerun until reacquire         | migration ordering receipt, pragma verification, startup-failure typed error test             |
+| Host secret-store implementation   | app/bootstrap `SecretStorePort` and `SecretStoreMutationPort` layers | host resource           | `layer-acquired` | app layer provides the core-owned `SecretStorePort` for invocation reads and `SecretStoreMutationPort` for state-owned secret writes/removals; `@svvy/state` owns only persisted refs/status rows                                                             | app runtime disposal closes the host secret-store implementation when it has a lifecycle                                                                                               | yes, while app runtime graph is alive                                           | operation interruption cancels the current secret operation; app disposal closes host implementation when applicable | fake secret-store lifecycle test, redaction/no-raw-secret read-model test                     |
+| Artifact durable metadata          | `@svvy/state` artifact state service                                 | DB/product-state-backed | `layer-acquired` | state layer validates configured artifact root settings and committed stored-path facts; runtime supplies byte size, digest, stored path, and lifecycle transition facts through `RuntimeArtifactStatePort`                                                   | explicit metadata lifecycle transitions; app runtime disposal closes access handles only                                                                                               | yes                                                                             | interruption cancels the current state effect only; committed artifact metadata remains authoritative                | artifact metadata command tests, pure selector no-filesystem test                             |
+| State read-model projection rows   | `@svvy/state` projection services                                    | DB/product-state-backed | `layer-acquired` | state command facades inside transactions under the state layer                                                                                                                                                                                               | explicit state transactions update/delete rows; app disposal closes access handles only                                                                                                | yes                                                                             | interruption before commit leaves prior projection; after commit runtime receives after-commit descriptors           | projection transaction atomicity test, after-commit descriptor receipt test                   |
+| State port projection graph        | `@svvy/state` state-backed port layers                               | DB/product-state-backed | `layer-acquired` | zero-argument `layerRuntime*StatePort`, `layerExtensionStatePort`, `layerSandboxPolicySource`, `layerProviderAuthStatusStatePort`, `layerPiSessionReferencePort`, and `layerAppLogWritePort` layers all provided with the same `StructuredSessionState` layer | app `ManagedRuntime.dispose()` or test layer scope closes the shared state handle                                                                                                      | yes, every projected port shares one acquired `StructuredSessionState` provider | interruption cancels the current port effect only; the acquired state graph remains live until layer scope shutdown  | state projection identity test proves multiple ports share one acquired state layer           |
+| Pi session reference state port    | `@svvy/state` pi reference port                                      | DB/product-state-backed | `layer-acquired` | `layerPiSessionReferencePort` provided with the same `StructuredSessionState` layer                                                                                                                                                                           | explicit `deletePiSessionReference` marks the row deleted; adapter-owned byte cleanup is `@svvy/pi-adapter` work observed by runtime recovery; app disposal closes access handles only | yes                                                                             | interruption cancels the current port effect only; committed opaque reopen references remain authoritative           | pi session reference state-port test, adapter-validation mismatch test                        |
+| Runtime prompt defaults state port | `@svvy/state` prompt defaults port                                   | DB/product-state-backed | `layer-acquired` | `layerRuntimePromptDefaultsStatePort` provided with the same `StructuredSessionState` layer                                                                                                                                                                   | explicit surface/thread/profile state writes update durable defaults; app disposal closes access handles only                                                                          | yes                                                                             | interruption cancels the current read effect only; committed surface/thread defaults remain authoritative            | runtime prompt defaults state-port test, state projection identity coverage                   |
+| Provider auth status rows          | `@svvy/state` provider auth status port                              | DB/product-state-backed | `layer-acquired` | `layerProviderAuthStatusStatePort` provided with the same `StructuredSessionState` layer                                                                                                                                                                      | explicit provider status writes update rows; app disposal closes access handles only                                                                                                   | yes                                                                             | interruption before commit leaves prior provider status; after commit runtime receives `providerAuth` invalidations  | provider auth status state-port test, redacted/no-secret status test                          |
+| App log rows                       | `@svvy/state` app-log command port                                   | DB/product-state-backed | `layer-acquired` | runtime/state command facade within owning transaction or recovery observation effect under the state layer                                                                                                                                                   | retention/clear command or database lifecycle, not runtime event disposal                                                                                                              | yes                                                                             | interruption before commit drops uncommitted log; after commit log is durable                                        | app-log write/read-model test, no runtime-published-only log test                             |
 
 Startup order inside the state layer is deterministic:
 
@@ -3802,16 +4170,12 @@ Startup order inside the state layer is deterministic:
 2. Create the parent directory for the configured SQLite file through injected
    `FileSystem.FileSystem` / `Path.Path` after validating that the configured absolute path belongs
    to the app-owned state root.
-3. Open the SQLite connection.
-4. Ensure WAL is enabled, apply `PRAGMA foreign_keys = ON` and the configured busy timeout, and
-   verify effective connection settings. The state SQLite adapter may enable WAL by default unless
-   disabled, but svvy still verifies the effective setting before migrations or repositories are
-   exposed. The setup layer also verifies the repository sequence/cursor/lease numeric policy before
-   any runtime/state facade is exposed: repository schemas/storage choices must bind numeric values
-   to safe JavaScript numbers, text, or `bigint` according to the repository contract. The busy
-   timeout value is a schema-validated positive safe integer and is applied only through a
-   state-owned helper/adapter API that emits a reviewed integer PRAGMA; no caller-provided SQL text
-   or arbitrary PRAGMA fragment may reach setup.
+3. Open every SQLite connection through the state-owned adapter.
+4. Apply the configured busy timeout to every SQLite connection opened by `@svvy/state` through a
+   state-owned helper that accepts only a schema-validated positive safe integer and emits the
+   reviewed `PRAGMA busy_timeout = <integer>` statement. Effective-setting verification for WAL,
+   foreign keys, busy timeout, and numeric policy is part of state startup and has focused startup
+   tests.
 5. Run the state migrator.
 6. Construct package-private repositories, ports, and read-model services.
 7. Expose the state layer, approved facades, and core-owned state-backed port layers to app
@@ -3819,25 +4183,25 @@ Startup order inside the state layer is deterministic:
    package-private. Dependent packages receive only the narrow ports or facades they declare, never a
    broad `StateStore` service.
 
-No runtime queue worker, source invalidation coordinator, generated-package worker, title worker,
-or desktop bridge facade starts before this layer has successfully completed startup.
+No runtime queue dispatcher, source invalidation coordinator, generated-package service, title
+service, or desktop bridge facade starts before this layer has successfully completed startup.
 
 `@svvy/state` owns this setup order with its package-private SQLite repository adapter. Effect SQL
-is not part of the target state architecture. Production state code must not import
+is not part of the state architecture. Production state code must not import
 `effect/unstable/sql/*`, `@effect/sql-sqlite-bun`, `@effect/sql-sqlite-node`, `SqlClient`,
 `SqlSchema`, `SqlResolver`, upstream Effect SQL migrators, or Effect SQL reactive/streaming helpers.
 The package may use direct SQLite implementation modules only inside `@svvy/state` repository,
 setup, migration, and test-layer code. No direct SQLite handle, transaction object, repository
 object, table helper, migration helper, or row store crosses the public state package boundary.
+Direct `bun:sqlite` imports are allowed only in package-private state SQLite adapter, setup,
+migration, repository modules that this spec assigns to the SQLite persistence edge, and their
+driver-integration tests. State-port, facade, read-model, and domain modules depend on the
+state-owned adapter/repository boundary, not `bun:sqlite` directly, unless this spec names the exact
+file as SQLite adapter code.
 
-The state SQLite handle is acquired exactly once per acquired `@svvy/state.layer(...)` scope and is
-reused by setup, migration, repository, read-model, and state-port implementation sublayers. Tests
-prove one database handle is acquired and finalized once per state scope. `@svvy/state.layer` must
-verify effective SQLite settings before exposing ports: WAL enabled, `foreign_keys = ON`,
-configured busy timeout applied, and sequence/cursor/lease numeric policy explicitly wired through
-repository context or schemas. Startup fails with `StateLayerError` if verification fails. A
-state-owned setup effect/layer runs required pragmas and verifies the effective connection settings
-before exposing repository layers or public state services.
+The root layer acquires the structured-session store and app-log store once per state scope, using
+the configured database path and busy timeout. The state layer owns SQLite adapter acquisition and
+startup verification; public consumers never receive SQLite handles or adapter objects.
 
 Repository code stores and decodes sequence, cursor, lease, count, and ordering values deliberately.
 Values that can exceed JavaScript's safe integer range are stored and decoded as text or `bigint`.
@@ -3876,11 +4240,12 @@ loader ids remain after the migration runner, or migration rows exist without ch
 classifies startup as migration-locked/incomplete and retries or fails according to the state
 startup policy before exposing ports. SQLite database lock errors fail startup unless the state
 startup policy has explicitly classified and retried them. State startup maps SQLite, schema, and
-migration-body failures into `StateLayerError` before exposing any state services.
+migration-body failures into the root-layer startup error contract before exposing any state
+services.
 State startup uses numbered immutable migrations only.
 `CREATE TABLE IF NOT EXISTS`,
 `ensureColumn`, and ad hoc backfills are allowed only inside migration bodies. There are no down
-migrations, runtime schema probes, runtime table creation, compatibility branches, or dynamic
+migrations, runtime schema probes, runtime table creation, alternate schema branches, or dynamic
 `ALTER TABLE` paths outside numbered migrations. Schema-required seed/default product rows are
 inserted by explicit numbered migrations. Startup reconciliation may upsert only deterministic
 product facts derived from current config, packaged defaults, or file-backed source scans through
@@ -3889,9 +4254,9 @@ schemas, compensate for missing migrations, or hide migration failures. Test see
 test-only exports. Migration failures fail the state layer and prevent the app runtime graph from
 exposing runtime or desktop facades.
 
-V1 exposes no public SQLite backup, export, checkpoint, vacuum, load-extension, or maintenance
-surface. Future database maintenance must be state-owned, adapter-aware, scoped, and exposed through
-typed state service methods rather than raw SQLite clients, database objects, connections,
+`@svvy/state` exposes no public SQLite backup, export, checkpoint, vacuum, load-extension, or
+maintenance surface. Any maintenance surface must be state-owned, adapter-aware, scoped, and exposed
+through typed state service methods rather than raw SQLite clients, database objects, connections,
 backup/export handles, or adapter-specific handles.
 
 ## Transactions
@@ -3916,10 +4281,11 @@ implements the nested call with `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` rather tha
 SQLite transaction. No public export may expose `StateTransaction`, `Database`,
 `StructuredSessionStateStore`, repositories, or transaction helpers.
 
-`TransactionPort` is a package-private state contract unless a specific runtime-owned port in
-`@svvy/core` names an after-commit domain operation. `CurrentTransaction` and
-`TransactionContext` are state-internal implementation details and are not exported from the
-`@svvy/state` root.
+`TransactionPort` is always package-private state implementation. If runtime needs an atomic
+multi-domain write, `@svvy/core` names a domain-specific state port method for that product
+operation, and the `@svvy/state` implementation uses package-private transaction services
+internally. `CurrentTransaction` and `TransactionContext` are state-internal implementation details
+and are not exported from the `@svvy/state` root.
 
 Required transaction surface:
 
@@ -3970,7 +4336,8 @@ Rules:
   after-commit descriptors; `@svvy/state` does not publish runtime events.
 - `TransactionPort.run(...)` provides the active transaction context to the callback and also makes
   `CurrentTransaction` available to lower-level state helpers for the duration of that callback.
-  Consumers do not place `TransactionContext` in the public Effect requirement channel.
+  State-internal repository/domain helpers do not place `TransactionContext` in any public Effect
+  requirement channel.
 - Nested product transaction requests reuse the active `CurrentTransaction` context by default so
   state ports do not accidentally create nested product event boundaries. State-internal repository
   code may use the SQL client's savepoint semantics only inside that active product transaction and
@@ -3995,7 +4362,7 @@ Rules:
 - Read models observe committed state only.
 - Transaction names are included in Effect spans/log annotations.
 
-The target state repository architecture is direct package-private SQLite repositories wrapped in
+The state repository architecture uses direct package-private SQLite repositories wrapped in
 Effect services and layers. SQLite remains the canonical store; browser IndexedDB, renderer stores,
 Effect `Ref`, Effect `Queue`, Effect `PubSub`, and file watchers are never substitutes for
 authoritative product state.
@@ -4041,11 +4408,12 @@ Repository rules:
   actual claim ordering atomically.
 - Worktree state is first-class: surfaces, handler threads, Shell/Smithers command cwd, defaults,
   and UI read models must be able to resolve the intended worktree explicitly.
-- Artifact files are durable product state. State owns artifact file-store implementation,
-  metadata, and the implementation/layer for the core-owned `RuntimeArtifactStatePort`; sandbox
-  enforces immutable/generated boundaries; extensions only create validated handler results,
-  command facts, and `ExtensionRuntimeOperation` items wrapping `RuntimeEffectRequest` values or
-  immutable execution plans for runtime to apply.
+- Artifact files are durable file-backed product facts with DB-backed metadata. Runtime owns byte
+  materialization, deletion, and recovery; state owns artifact metadata, lifecycle indexes, and the
+  implementation/layer for the core-owned `RuntimeArtifactStatePort`; sandbox enforces
+  immutable/generated boundaries; extensions only create validated handler results, command facts,
+  and `ExtensionRuntimeOperation` items wrapping `RuntimeEffectRequest` values or immutable
+  execution plans for runtime to apply.
 - Runtime events are not persisted state. They are notifications derived from runtime actions and
   state mutations. Recovery uses persisted facts, not event-stream replay.
 - Read models are selectors over authoritative facts. State stores persisted workspace tab order,
@@ -4066,42 +4434,48 @@ Repository rules:
   policy, such as `Schema.optionalKey(...)` for absent-only optional fields and
   `Schema.Redacted(...)` / `Schema.RedactedFromValue(...)` fail-closed settings for secret-bearing
   values. Stored rows, read models, app bridge payloads, command facts, app logs,
-  generated-package metadata, and migration envelopes test both the shared parse options and the
-  schema-level optionality/redaction/transform behavior instead of relying on Effect defaults.
+  generated-package metadata, and schema-versioned payload envelopes test both the shared parse
+  options and the schema-level optionality/redaction/transform behavior instead of relying on Effect
+  defaults.
 - All public state DTOs, state port inputs/results, read models, facade request/result schemas,
-  persisted JSON payload schemas, command facts, app logs, and migration envelope schemas use
+  persisted JSON payload schemas, command facts, app logs, and schema-versioned payload schemas use
   `Schema.optionalKey(...)` for absent-only optional object fields. `Schema.optional(...)` inside a
   public `Schema.Struct({ ... })` field is allowed only when `undefined` is intentionally part of the
   encoded and decoded contract, and that exception has focused decode/encode tests.
-- Static row schemas and compiled schema functions are hoisted at module scope, including
-  `Schema.is`, `Schema.decodeEffect`, `Schema.decodeUnknownEffect`, `Schema.decodeExit`,
-  `Schema.decodeUnknownExit`, `Schema.decodeSync`, `Schema.decodeUnknownSync`,
-  `Schema.encodeEffect`, `Schema.encodeUnknownEffect`, `Schema.encodeExit`,
-  `Schema.encodeUnknownExit`, `Schema.encodeSync`, and `Schema.encodeUnknownSync`. Effect v4
-  `Schema.asserts(schema, input)` is a direct assertion call, not a reusable guard compiler. State
-  boundary code therefore uses hoisted decoders, encoders, `Schema.is`, or package-owned wrapper
-  helpers whose compiler calls happen at module scope. Direct inline assertion calls are allowed
-  only in named dynamic schema factory files where the schema cannot be known at module scope.
+- Static row schemas and manifest-adopted compiled schema functions are hoisted at module scope,
+  including `Schema.decodeUnknownEffect`, `Schema.decodeUnknownExit`,
+  `Schema.decodeUnknownSync`, `Schema.encodeEffect`, `Schema.encodeExit`, and
+  `Schema.encodeUnknownSync`. Other schema compiler helpers such as `Schema.is`,
+  `Schema.decodeEffect`, `Schema.decodeExit`, `Schema.encodeUnknownEffect`, and
+  `Schema.encodeUnknownExit` are not adopted production helpers unless exact manifest rows and focused
+  tests exist.
+  Effect v4 `Schema.asserts(schema, input)` is a direct assertion call, not a reusable guard
+  compiler. State boundary code therefore uses hoisted manifest-adopted decoders, encoders, or
+  package-owned wrapper helpers whose compiler calls happen at module scope. Direct inline
+  assertion calls are allowed only in named dynamic schema factory files where the schema cannot be
+  known at module scope.
 - Decode and encode failures map to typed state boundary errors with operation context and a stable
   schema issue summary.
 - State tests prove repositories do not expose raw SQLite handles, transactions, SQL streams, or
   reactive SQL handles across public state ports.
-- `@svvy/state` exports named test fixtures only from test-only entrypoints:
-  `layerTestSqlite`, `layerTestSqliteIsolated`, `layerTestInMemoryPorts`, and explicit fake port
-  layers.
-  `layerTestSqlite` and `layerTestSqliteIsolated` use temp-file SQLite and run the same setup,
-  pragma verification, migration, repository, and port layers as production. Runtime package tests
-  may import those test entrypoints only. SQL behavior, migrations, queue claims, recovery leases,
-  reopen behavior, locking behavior, and source-version compare-and-swap must use temp-file SQLite
-  layers, not in-memory fakes. In-memory real SQLite adapters are allowed only for narrow numeric
-  decode/encode tests that do not assert persistence, locking, reopen, migration, queue, or recovery
-  behavior.
+- State package tests may use package-local test helpers and the SQLite-backed
+  `@svvy/state/structured-session-state` entrypoint. Runtime, extensions, pi-adapter, sandbox, and
+  desktop package tests use fake core-owned ports or their own package-local harnesses. App/bootstrap
+  integration tests may compose concrete state layers through the approved integration fixture path.
+  SQL behavior, migrations, queue claims, recovery leases, reopen behavior, locking behavior, and
+  source-version compare-and-swap must use temp-file SQLite layers, not in-memory fakes. In-memory
+  real SQLite adapters are allowed only for narrow numeric decode/encode tests that do not assert
+  persistence, locking, reopen, migration, queue, or recovery behavior.
 
 ## Dependency Rules
 
 - Depends on `@svvy/core`.
 - Depends on Effect v4.
-- May depend on storage and secure-secret-store adapters.
+- May depend on package-private SQLite code, metadata validation helpers, and core-owned state-port
+  contracts.
+- Does not own live secure-secret-store adapters. State persists encrypted secret references and
+  status rows; live secret resolution happens through host-owned `SecretStorePort` boundaries at
+  trusted invocation edges.
 - Must not depend on `@svvy/runtime`, `@svvy/extensions`, `@svvy/pi-adapter`, `@svvy/sandbox`,
   `@svvy/desktop`, Svelte, or Electrobun.
 
@@ -4111,10 +4485,17 @@ Target package paths:
 
 - `packages/state/src/**`
 - state-local migrations and schema modules
-- state-local SQLite/secret-store/file-store adapters
-- explicit pure selector subpaths such as `packages/state/src/session-navigation.ts`
-- internal structured-session storage modules and approved pure selector modules such as
-  `packages/state/src/structured-session-state.ts` and
+- state-local SQLite adapters and metadata validation helpers, plus state logic that consumes the
+  host-owned `SecretStorePort` for persisted secret refs/status rows
+- explicit public pure selector subpaths named by this spec and package-boundary tests, such as
+  `packages/state/src/session-navigation.ts`
+- explicit public bootstrap/maintenance subpaths named by this spec and package-boundary tests, such
+  as `packages/state/src/structured-session-adapters.ts` and
+  `packages/state/src/structured-session-projections.ts` and
+  `packages/state/src/generated-package-maintenance.ts`
+- restricted public structured-session bootstrap/test wiring modules named by this spec, such as
+  `packages/state/src/structured-session-state.ts`
+- package-private structured-session storage modules and selector implementation modules such as
   `packages/state/src/structured-session-selectors.ts`
 - state facade and port modules exported through package-boundary tests
 
@@ -4124,13 +4505,15 @@ Target package paths:
   migrations, durable queue persistence, secrets metadata, and committed read-model projections.
 - State ports expose domain operations and typed read models, not raw table handles or generic SQL
   escape hatches.
-- `@svvy/state` exports test layers such as `layerTestSqlite`, `layerTestSqliteIsolated`, and
-  `layerTestInMemoryPorts` only for tests. Those layers preserve transaction, invalidation, clock,
-  secret-store, and lifecycle semantics rather than becoming anonymous mock objects. Persistence,
-  migrations, SQL constraints, transaction rollback, queue claims, reopen behavior, locking
-  behavior, source-version compare-and-swap behavior, recovery leases, and read-model projections
-  are tested with temp-file SQLite layers. Fake or in-memory state layers are only port-contract
-  doubles for dependent package unit tests that are not validating SQL-backed behavior.
+- `@svvy/state` keeps test helpers package-local unless an explicit package export map and
+  package-boundary test names a public testing subpath. Runtime, extensions, pi-adapter, sandbox,
+  and desktop tests use fake core-owned ports or their own package-local harnesses; app/bootstrap
+  integration tests may compose concrete state layers through the approved integration fixture path.
+  Persistence, migrations, SQL constraints, transaction rollback, queue claims, reopen behavior,
+  locking behavior, source-version compare-and-swap behavior, recovery leases, and read-model
+  projections are tested with temp-file SQLite layers. Fake or in-memory state layers are only
+  port-contract doubles for dependent package unit tests that are not validating SQL-backed
+  behavior.
 - Every state write that can affect runtime/UI observation is transactional and returns
   publication-ready invalidation descriptors only after commit. `@svvy/runtime` turns those
   descriptors into runtime notifications; `@svvy/state` does not publish notifications itself.
@@ -4141,19 +4524,31 @@ Target package paths:
 ## Tests
 
 - Transactional write tests.
-- `@effect/vitest` service/layer tests.
-- Test-layer coverage for `layerTestSqlite`, `layerTestSqliteIsolated`, state-port fake layers,
-  fake secret stores, and `TestClock`; tests do not create `ManagedRuntime` manually except
-  facade/bootstrap integration tests. Real SQLite layers prove SQL behavior, migrations,
-  transactions, constraints, queue claiming, and read-model selectors. Fake/in-memory layers are
-  only for consumers of state ports when the test is not validating SQL behavior.
+- `@effect/vitest` service/layer tests for state services, state ports, schemas, and package-local
+  fake layers that do not import Bun-only SQLite modules.
+- Bun-lane Effect tests for SQLite-backed state modules while the active persistence adapter imports
+  `bun:sqlite` directly. Tests that import `bun:sqlite`, `packages/state/src/app-log-store.ts`, or
+  package-private structured-session storage through source paths or the explicitly allowlisted
+  `@svvy/state/structured-session-state` subpath use `bun:test` plus the state-local
+  `runTestEffect` helper instead of `@effect/vitest`. Production use of that subpath is restricted
+  to the app-bootstrap structured-session state composition edge. These tests still test
+  Effect-returning state APIs and must not create `ManagedRuntime` manually.
+- Test coverage for concrete temp-file SQLite state layers, package-local state-port fake layers,
+  fake secret stores, and `TestClock`. Tests do not create `ManagedRuntime` manually except the
+  named state facade test harness that proves the JavaScript facade edge over an explicitly supplied
+  test `ManagedRuntime`. That harness is not production app/bootstrap behavior, must be
+  package-boundary allowlisted by exact file path, and must not introduce package-level,
+  facade-owned, per-request, workspace-level, or surface-level runtime creation. Real SQLite layers
+  prove SQL behavior, migrations, transactions, constraints, queue claiming, and read-model
+  selectors. Fake/in-memory layers are only for consumers of state ports when the test is not
+  validating SQL behavior.
 - Scoped database lifecycle tests.
 - Queue persistence and query-order tests.
 - Runtime-facing queue recovery read tests.
 - Transaction commit/after-commit-notification-order tests.
 - Transaction rollback tests proving no runtime event notification is emitted for failed writes.
 - Worktree context selector tests.
-- Artifact file-store persistence tests.
+- Artifact metadata lifecycle and runtime-supplied byte/digest fact tests.
 - Selector snapshot tests.
 - Command inspector read-model tests for stdin mode, `canAttemptWrite`, accepted stdin receipt
   ordering, malformed receipt rejection, and terminal/non-running projection.
@@ -4167,8 +4562,8 @@ Target package paths:
 - Recovery claim conflict tests.
 - Terminal command immutability tests.
 - Post-terminal observation gating tests for `AppendCommandEventInput.postTerminalObservation`.
-- Artifact materialization crash-recovery tests at each staging, metadata, promotion, digest, ready,
-  delete, and recovery phase.
+- Artifact metadata lifecycle tests for runtime-supplied staging, promotion, digest, ready, delete,
+  and recovery facts.
 - Source-version compare-and-swap conflict tests.
 - Generated-package fact repair tests.
 - Service-tag ownership/package-boundary import tests.

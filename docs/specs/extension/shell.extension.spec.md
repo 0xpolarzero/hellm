@@ -3,7 +3,8 @@
 ## Status
 
 - Date: 2026-06-03
-- Status: accepted extension index; detailed execution policy remains in `docs/specs/extensions-and-tools.spec.md`
+- Status: accepted extension index; detailed execution policy is owned by the package architecture,
+  runtime, sandbox, and Effect specs named below
 - Scope:
   - define the builtin native-tool extension that exposes `exec_command` and `write_stdin`
   - point to the current canonical `exec_command` and `write_stdin` contracts
@@ -23,10 +24,10 @@
 
 Default usage:
 
-| Actor kind | State |
-| --- | --- |
-| Orchestrator | `loaded` |
-| Handler thread | `loaded` |
+| Actor kind          | State    |
+| ------------------- | -------- |
+| Orchestrator        | `loaded` |
+| Handler thread      | `loaded` |
 | Workflow task agent | `loaded` |
 
 ## Tool Surface
@@ -34,13 +35,15 @@ Default usage:
 The Shell extension exposes exactly:
 
 ```ts
-exec_command(input)
-write_stdin(input)
+exec_command(input);
+write_stdin(input);
 ```
 
 Detailed behavior and package ownership are defined across:
 
 - `docs/specs/package-architecture/extensions.spec.md`, "Shell"
+- `docs/specs/package-architecture/runtime.spec.md`, "BuildLaunchPolicyInput" and runtime-owned
+  command lifecycle
 - `docs/specs/package-architecture/effect-v4.spec.md`, "Child Process Rules"
 - `docs/specs/package-architecture/sandbox.spec.md`
 - `docs/specs/extension/svvyx-incur-runtime.spec.md` for `svvyx ...` command-family dispatch
@@ -63,7 +66,7 @@ generic command execution separate from generic Incur-backed `svvyx` CLI usage.
 
 This file owns generic `exec_command` and `write_stdin` guidance. Its canonical content is:
 
-````md
+```md
 # Shell
 
 Use `exec_command` to run shell commands. Use `write_stdin` only to continue a runtime-owned
@@ -81,7 +84,7 @@ by `exec_command` inside a model turn.
 For repository inspection, prefer `rg` for text search and `rg --files` for filename search. Use
 ordinary shell tools such as `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc` for file
 inspection. Set the `workdir` field on `exec_command` instead of relying on `cd`.
-````
+```
 
 ### `020-incur-cli-usage.mdx`
 
@@ -100,8 +103,8 @@ commands from the agent's perspective. Run them with `exec_command`:
 ```ts
 exec_command({
   cmd: "svvyx <extension-id> <command> ...",
-  workdir: "/path/to/workspace"
-})
+  workdir: "/path/to/workspace",
+});
 ```
 
 Agent Shell usage of `svvyx ...` happens strictly through `exec_command`. The app-owned `svvyx`
@@ -222,12 +225,12 @@ format.
 
 Control format with `--format <fmt>` or `--json`:
 
-| Flag            | Format   | Description                                  |
-| --------------- | -------- | -------------------------------------------- |
+| Flag            | Format   | Description                                       |
+| --------------- | -------- | ------------------------------------------------- |
 | _(default)_     | TOON     | Token-efficient, about 40% fewer tokens than JSON |
-| `--format json` | JSON     | `JSON.parse()`-safe                          |
-| `--format yaml` | YAML     | Human-readable                               |
-| `--format md`   | Markdown | Tables for docs/issues                       |
+| `--format json` | JSON     | `JSON.parse()`-safe                               |
+| `--format yaml` | YAML     | Human-readable                                    |
+| `--format md`   | Markdown | Tables for docs/issues                            |
 
 When you need to parse output reliably in the agent, prefer `--json`.
 
@@ -279,7 +282,8 @@ With `--full-output`, truncated output includes `meta.nextOffset` for programmat
 Read CTAs in success or error envelopes as suggested next commands. They are suggestions, not
 automatic actions; decide whether they fit the user's goal before running them.
 
-Incur adapts output based on whether stdout is a TTY:
+In Shell `exec_command`, `svvyx ...` runs in the pipe-backed non-TTY command lane. If the same CLI
+is run by a human outside svvy in a real terminal, Incur may use its TTY behavior:
 
 | Scenario              | TTY (human)             | Non-TTY (agent/pipe) |
 | --------------------- | ----------------------- | -------------------- |
@@ -290,13 +294,13 @@ Incur adapts output based on whether stdout is a TTY:
 
 ## Built-In Flags
 
-| Flag             | Description                                 |
-| ---------------- | ------------------------------------------- |
-| `--help`, `-h`   | Show help for the CLI or a specific command |
-| `--version`      | Print CLI version                           |
-| `--llms`         | Output agent-readable command manifest      |
-| `--json`         | Shorthand for `--format json`               |
-| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md` |
+| Flag             | Description                                  |
+| ---------------- | -------------------------------------------- |
+| `--help`, `-h`   | Show help for the CLI or a specific command  |
+| `--version`      | Print CLI version                            |
+| `--llms`         | Output agent-readable command manifest       |
+| `--json`         | Shorthand for `--format json`                |
+| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md`  |
 | `--full-output`  | Include full envelope (`ok`, `data`, `meta`) |
 
 Do not use or document Incur MCP registration, HTTP serving, `cli.fetch`, Skills installation, or

@@ -52,6 +52,10 @@ describe("Smithers instruction generator", () => {
       "Effect",
       "agent skill",
       "product workflow wrapper",
+      "workflow.*",
+      "svvyx smithers",
+      "package-level runtime creation",
+      "per-request Effect layer graphs",
     ]) {
       expect(SMITHERS_CORE_INSTRUCTIONS).not.toContain(forbidden);
     }

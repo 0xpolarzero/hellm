@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
@@ -15,8 +15,9 @@ import {
   type SandboxPolicySourceService,
   type WorkspaceId,
 } from "@svvy/core";
+import { StructuredSessionState } from "./structured-session-state";
 
-export type SandboxPolicySourceSettings = {
+type SandboxPolicySourceSettings = {
   readonly workspace: {
     readonly id: WorkspaceId;
     readonly cwd: AbsolutePath;
@@ -31,17 +32,97 @@ export type SandboxPolicySourceSettings = {
   readonly generatedOutputRoots?: readonly AbsolutePath[];
   readonly extensionDependencyRoots?: readonly AbsolutePath[];
   readonly temporaryRoots?: readonly AbsolutePath[];
-  readonly now?: () => string;
+  readonly digest?: StateDigestHelper;
 };
 
-export function sandboxPolicySourceFromSettings(
-  settings: SandboxPolicySourceSettings,
+export type SandboxPolicySourceConfig = Pick<
+  SandboxPolicySourceSettings,
+  "generatedOutputRoots" | "extensionDependencyRoots" | "temporaryRoots"
+>;
+
+export interface SandboxPolicySourceConfigPort {
+  readonly _tag: "SandboxPolicySourceConfigPort";
+}
+
+export interface SandboxPolicySourceConfigPortService {
+  readonly config: SandboxPolicySourceConfig;
+}
+
+export const SandboxPolicySourceConfigPort = Context.Service<
+  SandboxPolicySourceConfigPort,
+  SandboxPolicySourceConfigPortService
+>("@svvy/state/SandboxPolicySourceConfigPort");
+
+type StateDigestHelper = {
+  readonly sha256Hex: (data: string | Uint8Array) => string;
+};
+
+const makeSandboxPolicySource = Effect.fn("@svvy/state/makeSandboxPolicySource")(function* () {
+  const state = yield* StructuredSessionState;
+  const config = yield* SandboxPolicySourceConfigPort;
+  return sandboxPolicySourceFromStructuredSessionState(state, config.config);
+});
+
+export const layerSandboxPolicySource = Layer.effect(
+  SandboxPolicySource,
+  makeSandboxPolicySource(),
+).pipe(Layer.provide(Layer.succeed(SandboxPolicySourceConfigPort, { config: {} })));
+
+export function layerSandboxPolicySourceWithConfig(
+  config: SandboxPolicySourceConfig,
+): Layer.Layer<SandboxPolicySource, never, StructuredSessionState> {
+  return Layer.effect(SandboxPolicySource, makeSandboxPolicySource()).pipe(
+    Layer.provide(Layer.succeed(SandboxPolicySourceConfigPort, { config })),
+  );
+}
+
+function sandboxPolicySourceFromStructuredSessionState(
+  state: StructuredSessionState["Service"],
+  config: SandboxPolicySourceConfig,
 ): SandboxPolicySourceService {
   return {
     snapshot: (input) =>
-      Effect.try({
-        try: () => buildSnapshot(settings, input),
-        catch: (cause) =>
+      Effect.gen(function* () {
+        const workspace = yield* state.getWorkspaceRecord();
+        const appPreferences = yield* state.readAppPreferences();
+        const generatedPackageRoots = yield* readGeneratedPackageRoots(state);
+        const resolvedAt = yield* state.getCurrentTimestamp();
+        const digest = yield* state.getDigestHelper();
+        const settings: SandboxPolicySourceSettings = {
+          workspace: {
+            id: workspace.id as WorkspaceId,
+            cwd: workspace.cwd as AbsolutePath,
+            artifactDir: workspace.artifactDir as AbsolutePath,
+          },
+          appPreferences: {
+            approvalMode: appPreferences.approvalMode,
+            networkAccess: appPreferences.networkAccess,
+          },
+          generatedPackageRoots,
+          ...(config.generatedOutputRoots
+            ? { generatedOutputRoots: config.generatedOutputRoots }
+            : {}),
+          ...(config.extensionDependencyRoots
+            ? { extensionDependencyRoots: config.extensionDependencyRoots }
+            : {}),
+          ...(config.temporaryRoots ? { temporaryRoots: config.temporaryRoots } : {}),
+          digest,
+        };
+        return yield* Effect.try({
+          try: () => buildSnapshot(settings, input, resolvedAt),
+          catch: (cause) =>
+            cause instanceof SandboxPolicyError
+              ? cause
+              : new SandboxPolicyError({
+                  operation: "SandboxPolicySource.snapshot",
+                  reason: "invalid-policy",
+                  message:
+                    cause instanceof Error ? cause.message : "Unable to build sandbox policy.",
+                  cause,
+                }),
+        });
+      }).pipe(
+        Effect.mapError((cause) =>
           cause instanceof SandboxPolicyError
             ? cause
             : new SandboxPolicyError({
@@ -50,23 +131,43 @@ export function sandboxPolicySourceFromSettings(
                 message: cause instanceof Error ? cause.message : "Unable to build sandbox policy.",
                 cause,
               }),
-      }),
+        ),
+      ),
   };
 }
 
-export const makeSandboxPolicySource = Effect.fn("@svvy/state/makeSandboxPolicySource")(
-  (settings: SandboxPolicySourceSettings) =>
-    Effect.succeed(sandboxPolicySourceFromSettings(settings)),
-);
-
-export const layerSandboxPolicySource = (
-  settings: SandboxPolicySourceSettings,
-): Layer.Layer<SandboxPolicySource> =>
-  Layer.effect(SandboxPolicySource, makeSandboxPolicySource(settings));
+function readGeneratedPackageRoots(
+  state: StructuredSessionState["Service"],
+): Effect.Effect<Partial<Record<GeneratedPackageName, AbsolutePath>>, SandboxPolicyError> {
+  return state.readGeneratedPackageFacts().pipe(
+    Effect.map((facts) => {
+      const roots: Partial<Record<GeneratedPackageName, AbsolutePath>> = {};
+      for (const fact of facts) {
+        if (fact.status !== "ready" || !fact.manifestPath) continue;
+        roots[fact.packageName] = normalizeAbsolutePath(
+          dirname(fact.manifestPath),
+          "generated package root",
+        );
+      }
+      return roots;
+    }),
+    Effect.mapError(
+      (cause) =>
+        new SandboxPolicyError({
+          operation: "SandboxPolicySource.snapshot",
+          reason: "invalid-policy",
+          message:
+            cause instanceof Error ? cause.message : "Unable to read generated package facts.",
+          cause,
+        }),
+    ),
+  );
+}
 
 function buildSnapshot(
   settings: SandboxPolicySourceSettings,
   input: SandboxPolicySnapshotInput,
+  resolvedAt: string,
 ): SandboxPolicySnapshot {
   const cwd = normalizeAbsolutePath(input.cwd ?? settings.workspace.cwd, "cwd");
   const scope = validateScope(settings, input.scope);
@@ -91,13 +192,11 @@ function buildSnapshot(
     networkPolicy,
     filesystemPolicy,
   };
-  const fingerprint = sha256Json(fingerprintInput);
-  const resolvedAt = (settings.now?.() ??
-    new Date().toISOString()) as unknown as SandboxPolicySnapshot["resolvedAt"];
+  const fingerprint = sha256Json(settings, fingerprintInput);
   return {
     snapshotId: `sandbox_policy_${fingerprint.slice(0, 16)}`,
     fingerprint,
-    resolvedAt,
+    resolvedAt: resolvedAt as SandboxPolicySnapshot["resolvedAt"],
     scope,
     ...(input.surfacePiSessionId ? { surfacePiSessionId: input.surfacePiSessionId } : {}),
     commandId: input.commandId,
@@ -106,7 +205,6 @@ function buildSnapshot(
     sandboxMode,
     networkPolicy,
     filesystemPolicy,
-    ...(sandboxMode === "managed" ? { profileDigest: sha256Json(filesystemPolicy) } : {}),
   };
 }
 
@@ -266,8 +364,16 @@ function dedupeEntries(
   );
 }
 
-function sha256Json(value: unknown): string {
-  return createHash("sha256").update(stableJson(value)).digest("hex");
+function sha256Json(settings: SandboxPolicySourceSettings, value: unknown): string {
+  const digest = settings.digest;
+  if (!digest) {
+    throw new SandboxPolicyError({
+      operation: "SandboxPolicySource.snapshot",
+      reason: "invalid-policy",
+      message: "Sandbox policy digest helper is required.",
+    });
+  }
+  return digest.sha256Hex(stableJson(value));
 }
 
 function stableJson(value: unknown): string {

@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -13,24 +15,27 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import type {
-  CommandId,
-  RecoveryWorkId,
-  RuntimeEvent,
-  RuntimeEventSequence,
-  WorkspaceId,
-} from "@svvy/core";
+import type { CommandId, RecoveryWorkId, RuntimeEvent, WorkspaceId } from "@svvy/core";
 import { WorkspaceRuntimeRegistry } from "./workspace-runtime-registry";
-import { getWorkspaceRuntimeForRequest } from "./workspace-rpc-routing";
-import { getSvvySessionDir } from "./session-catalog";
+import {
+  getWorkspaceRuntimeForRequest,
+  getWorkspaceRuntimeOperationsForRequest,
+} from "./workspace-rpc-routing";
+import { STRUCTURED_SESSION_DB_FILENAME, getSvvySessionDir } from "./session-catalog";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { getDefaultWorkspaceCwd } from "./workspace-context";
 import type { AppLogUpdateMessage } from "../shared/workspace-contract";
+import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
 
 const tempDirs: string[] = [];
 const registries: WorkspaceRuntimeRegistry[] = [];
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 afterEach(async () => {
-  for (const registry of registries.splice(0)) {
+  const registriesToClose = registries.splice(0);
+  for (const registry of registriesToClose) {
     for (let attempts = 0; registry.listOpenWorkspaces().length && attempts < 20; attempts += 1) {
       await Promise.all(
         registry
@@ -39,8 +44,10 @@ afterEach(async () => {
       );
     }
     await registry.closeSourceInvalidationCoordinator();
-    await registry.closeRuntimeEventBus();
   }
+});
+
+afterAll(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -71,7 +78,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getActiveWorkspaceId()).toBe(workspace.workspaceId);
   });
 
-  it("acquires the same cwd as one shared runtime for duplicate workspace tabs", async () => {
+  it("acquires the same cwd as one shared workspace scope for duplicate workspace tabs", async () => {
     const cwd = tempWorkspace("duplicate-cwd");
     const registry = createRegistry(cwd);
 
@@ -86,7 +93,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     ]);
   });
 
-  it("does not use a visual tab id as the runtime identity", async () => {
+  it("does not use a visual tab id as the workspace scope identity", async () => {
     const cwd = tempWorkspace("persisted-tab-id");
     const registry = createRegistry(cwd);
 
@@ -129,13 +136,13 @@ describe("WorkspaceRuntimeRegistry", () => {
     );
   });
 
-  it("lists open runtimes without manufacturing visual workspace tab ids", async () => {
+  it("lists open workspace scopes without manufacturing visual workspace tab ids", async () => {
     const cwd = tempWorkspace("runtime-list-not-tabs");
     const registry = createRegistry(cwd);
 
     const runtime = await registry.acquireWorkspace(cwd);
     const [workspace] = registry.listOpenWorkspaces();
-    if (!workspace) throw new Error("Expected an open workspace runtime.");
+    if (!workspace) throw new Error("Expected an open workspace scope.");
 
     expect(workspace).toMatchObject({
       workspaceId: runtime.workspaceId,
@@ -146,7 +153,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(Object.hasOwn(workspace, "openedAt")).toBeFalse();
   });
 
-  it("uses different stable runtime ids for different canonical cwds", async () => {
+  it("uses different stable workspace scope ids for different canonical cwds", async () => {
     const cwd = tempWorkspace("runtime-id");
     const otherCwd = tempWorkspace("other-runtime-id");
     const registry = createRegistry(cwd);
@@ -213,12 +220,12 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(
       first.appLogs
         .query({ sources: ["app.lifecycle"] })
-        .entries.filter((entry) => entry.message === "Workspace runtime opened."),
+        .entries.filter((entry) => entry.message === "Workspace scope opened."),
     ).toMatchObject([
       {
         seq: 1,
         source: "app.lifecycle",
-        message: "Workspace runtime opened.",
+        message: "Workspace scope opened.",
         details: {
           workspaceId: first.workspaceId,
           kind: "user",
@@ -249,7 +256,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(first.appLogs.summary().seenSeq).toBe(latestSeq);
   });
 
-  it("broadcasts cwd-scoped app log updates once per shared runtime", async () => {
+  it("broadcasts cwd-scoped app log updates once per shared workspace scope", async () => {
     const cwd = tempWorkspace("shared-app-log-updates");
     const updates: Array<{ workspaceId: string; payload: AppLogUpdateMessage }> = [];
     const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
@@ -276,99 +283,168 @@ describe("WorkspaceRuntimeRegistry", () => {
     ).toBeTrue();
   });
 
-  it("publishes workspace read-model invalidations through the runtime facade event stream", async () => {
-    const cwd = tempWorkspace("runtime-event-app-log");
-    const registry = createRegistry(cwd);
-    const runtime = await registry.acquireWorkspace(cwd);
-    const events = await runtime.runtimeFacade.events({
-      workspaceId: runtime.workspaceId as WorkspaceId,
-    });
-    const iterator = events[Symbol.asyncIterator]();
+  it("persists workspace app logs across runtime release and reacquire", async () => {
+    const cwd = tempWorkspace("persisted-app-logs");
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
+    const first = await registry.acquireWorkspace(cwd);
+    const workspaceId = first.workspaceId;
 
-    try {
-      const nextEvent = iterator.next();
-      runtime.appLog.info("workspace", "Runtime event test log.");
+    first.appLog.info("workspace", "Persisted app log.");
+    const latestSeq = first.appLogs.summary().latestSeq;
 
-      await expect(nextEvent).resolves.toMatchObject({
-        done: false,
-        value: {
-          type: "workspace_read_model.changed",
-          workspaceId: runtime.workspaceId,
-          invalidation: { model: "appLogs" },
-        },
-      });
-    } finally {
-      await iterator.return?.();
-    }
+    expect(await registry.releaseWorkspace(workspaceId)).toBeTrue();
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+
+    const reacquired = await registry.acquireWorkspace(cwd);
+
+    expect(reacquired.workspaceId).toBe(workspaceId);
+    expect(reacquired.appLogs.summary().latestSeq).toBeGreaterThanOrEqual(latestSeq);
+    expect(
+      reacquired.appLogs.query({ sources: ["workspace"] }).entries.map((entry) => entry.message),
+    ).toContain("Persisted app log.");
   });
 
   it("does not expose product-state invalidation as a public source invalidation method", async () => {
     const cwd = tempWorkspace("runtime-product-state-event");
     const registry = createRegistry(cwd);
     const runtime = await registry.acquireWorkspace(cwd);
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: runtime.workspaceId,
+    });
 
-    expect(
-      Reflect.has(runtime.runtimeFacade.sourceInvalidation, "productStateChanged"),
-    ).toBeFalse();
+    expect(Reflect.has(runtimeOperations.sourceInvalidation, "productStateChanged")).toBeFalse();
   });
 
   it("refreshes generated @svvyx/extensions through the runtime facade package refresh", async () => {
     const cwd = tempWorkspace("runtime-generated-extensions-refresh");
-    const generatedExtensionsPackagePath = tempWorkspace("generated-extensions-refresh-package");
+    const generatedExtensionsPackagePath = join(
+      tempWorkspace("generated-extensions-refresh-package-parent"),
+      "package",
+    );
     const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
       workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
     });
+    await registry.ready();
     const runtime = await registry.acquireWorkspace(cwd);
-    const events = await runtime.runtimeFacade.events({
-      includeAppEvents: true,
-      afterSequence: 0 as RuntimeEventSequence,
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: runtime.workspaceId,
     });
-    const iterator = events[Symbol.asyncIterator]();
-
-    try {
-      const nextEvent = nextMatchingRuntimeEvent(
-        iterator,
-        (event) =>
-          event.type === "app_read_model.changed" && event.invalidation.model === "extensions",
-      );
-      await expect(
-        runtime.runtimeFacade.sourceInvalidation.refreshGeneratedPackages({
-          scope: "app-global",
-          packages: ["@svvyx/extensions"],
-          reason: "explicit-build",
-          sourceCommandId: "cmd_generated_extensions_refresh_01" as CommandId,
-          recoveryWorkId: "recovery_generated_extensions_refresh_01" as RecoveryWorkId,
-        }),
-      ).resolves.toMatchObject({
+    await expect(
+      runtimeOperations.sourceInvalidation.refreshGeneratedPackages({
         scope: "app-global",
-        packages: [{ packageName: "@svvyx/extensions", action: "written" }],
-        workspaceLinks: [],
-        recoveryWorkIds: [],
-      });
+        packages: ["@svvyx/extensions"],
+        reason: "explicit-build",
+        sourceCommandId: "cmd_generated_extensions_refresh_01" as CommandId,
+        recoveryWorkId: "recovery_generated_extensions_refresh_01" as RecoveryWorkId,
+      }),
+    ).resolves.toMatchObject({
+      scope: "app-global",
+      packages: [{ packageName: "@svvyx/extensions", action: "written" }],
+      workspaceLinks: [],
+      recoveryWorkIds: [],
+    });
 
-      const packageJson = readFileSync(
-        join(generatedExtensionsPackagePath, "package.json"),
-        "utf8",
-      );
-      expect(JSON.parse(packageJson)).toMatchObject({
-        name: "@svvyx/extensions",
-        type: "module",
-      });
-      const index = readFileSync(join(generatedExtensionsPackagePath, "index.ts"), "utf8");
-      expect(index).toContain("export const Extensions = {");
-      expect(index).toContain('"artifacts": {"id":"artifacts"');
-      expect(index).not.toContain("createExtensionsFacade");
-      expect(packageJson).not.toContain("cmd_generated_extensions_refresh_01");
-      expect(packageJson).not.toContain("recovery_generated_extensions_refresh_01");
-      expect(index).not.toContain("cmd_generated_extensions_refresh_01");
-      expect(index).not.toContain("recovery_generated_extensions_refresh_01");
+    const packageJson = readFileSync(join(generatedExtensionsPackagePath, "package.json"), "utf8");
+    expect(JSON.parse(packageJson)).toMatchObject({
+      name: "@svvyx/extensions",
+      type: "module",
+    });
+    const index = readFileSync(join(generatedExtensionsPackagePath, "index.ts"), "utf8");
+    expect(index).toContain("export const Extensions = {");
+    expect(index).toContain('"artifacts": {"id":"artifacts"');
+    expect(index).not.toContain("createExtensionsFacade");
+    expect(packageJson).not.toContain("cmd_generated_extensions_refresh_01");
+    expect(packageJson).not.toContain("recovery_generated_extensions_refresh_01");
+    expect(index).not.toContain("cmd_generated_extensions_refresh_01");
+    expect(index).not.toContain("recovery_generated_extensions_refresh_01");
+  });
 
-      await expect(nextEvent).resolves.toMatchObject({
-        type: "app_read_model.changed",
-        invalidation: { model: "extensions" },
+  it("records repair-needed rows and recovery work for recoverable unopened workspaces", async () => {
+    const ownerCwd = tempWorkspace("runtime-generated-owner-refresh");
+    const unopenedCwd = tempWorkspace("runtime-generated-unopened-repair");
+    const agentDir = tempWorkspace("generated-unopened-agent-dir");
+    const generatedExtensionsPackagePath = join(
+      tempWorkspace("generated-unopened-extensions-package-parent"),
+      "package",
+    );
+    const unopenedInfo: ReturnType<WorkspaceRuntimeRegistry["listOpenWorkspaces"]>[number] = {
+      workspaceId: "workspace_generated_unopened_repair" as WorkspaceId,
+      workspaceLabel: "Unopened Workspace",
+      cwd: realpathSync.native(unopenedCwd),
+      kind: "user",
+    };
+    let recoverableWorkspaces: ReturnType<WorkspaceRuntimeRegistry["listOpenWorkspaces"]> = [
+      unopenedInfo,
+    ];
+    const registry = createRegistry(ownerCwd, agentDir, {
+      workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
+      listRecoverableWorkspaces: () => recoverableWorkspaces,
+    });
+    await registry.ready();
+    const ownerRuntime = await registry.acquireWorkspace(ownerCwd);
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: ownerRuntime.workspaceId,
+    });
+
+    const result = await runtimeOperations.sourceInvalidation.refreshGeneratedPackages({
+      scope: "app-global",
+      packages: ["@svvyx/extensions"],
+      reason: "explicit-build",
+      sourceCommandId: "cmd_generated_unopened_repair_01" as CommandId,
+    });
+
+    expect(result).toMatchObject({
+      scope: "app-global",
+      packages: [{ packageName: "@svvyx/extensions", action: "written" }],
+      workspaceLinks: [],
+    });
+    expect(result.recoveryWorkIds).toHaveLength(1);
+
+    const unopenedStore = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: unopenedInfo.workspaceId,
+        label: unopenedInfo.workspaceLabel,
+        cwd: unopenedInfo.cwd,
+        artifactDir: join(unopenedInfo.cwd, "artifacts"),
+      },
+      databasePath: join(
+        getSvvySessionDir(unopenedInfo.cwd, agentDir),
+        STRUCTURED_SESSION_DB_FILENAME,
+      ),
+    });
+    try {
+      expect(
+        unopenedStore
+          .readLinksNeedingRepair({ packages: ["@svvyx/extensions"] })
+          .find((link) => link.lastRecoveryWorkId === result.recoveryWorkIds[0]),
+      ).toMatchObject({
+        workspaceId: unopenedInfo.workspaceId,
+        packageName: "@svvyx/extensions",
+        status: "repair-needed",
+        sourceCommandId: "cmd_generated_unopened_repair_01",
+        lastRecoveryWorkId: result.recoveryWorkIds[0],
+      });
+      expect(
+        unopenedStore.listRecoveryWork().find((work) => work.id === result.recoveryWorkIds[0]),
+      ).toMatchObject({
+        id: result.recoveryWorkIds[0],
+        scope: { kind: "workspace", workspaceId: unopenedInfo.workspaceId },
+        kind: "workspace_generated_package_link_repair",
+        status: "pending",
+        payloadJson: {
+          refreshGeneratedPackages: {
+            scope: "workspace-link-repair",
+            workspaceId: unopenedInfo.workspaceId,
+            packages: ["@svvyx/extensions"],
+            reason: "link-repair",
+            sourceCommandId: "cmd_generated_unopened_repair_01",
+            scheduledReason: "app-global-generated-package-refreshed",
+          },
+        },
       });
     } finally {
-      await iterator.return?.();
+      unopenedStore.close();
     }
   });
 
@@ -384,20 +460,10 @@ describe("WorkspaceRuntimeRegistry", () => {
       workflowsGeneratedPackagePath: generatedPackagePath,
     });
     const runtime = await registry.acquireWorkspace(cwd);
-    const events = await runtime.runtimeFacade.events({
-      includeAppEvents: true,
-      afterSequence: 0 as RuntimeEventSequence,
-    });
-    const iterator = events[Symbol.asyncIterator]();
-
+    const runtimeEvents = await collectRuntimeEvents(
+      registry.getRuntimeEventSubscription(runtime.workspaceId, { includeAppEvents: true }),
+    );
     try {
-      const nextExtensionsEvent = nextMatchingRuntimeEvent(
-        iterator,
-        (event) =>
-          event.type === "app_read_model.changed" && event.invalidation.model === "extensions",
-        3000,
-      );
-
       const extensionsPackageDir = join(agentParent, "extensions", "package");
       mkdirSync(extensionsPackageDir, { recursive: true });
       writeFileSync(
@@ -406,24 +472,8 @@ describe("WorkspaceRuntimeRegistry", () => {
       );
       registry.requestSourceInvalidationScan("test-extension-source-change");
 
-      await expect(nextExtensionsEvent).resolves.toMatchObject({
-        type: "app_read_model.changed",
-        invalidation: { model: "extensions" },
-      });
-      await expect(
-        nextMatchingRuntimeEvent(
-          iterator,
-          (event) =>
-            event.type === "app_read_model.changed" &&
-            event.invalidation.model === "workflowsGenerated",
-          3000,
-        ),
-      ).resolves.toMatchObject({
-        type: "app_read_model.changed",
-        invalidation: { model: "workflowsGenerated" },
-      });
-      expect(existsSync(join(generatedExtensionsPackagePath, "package.json"))).toBe(true);
-      expect(existsSync(join(generatedPackagePath, "package.json"))).toBe(true);
+      await waitFor(() => existsSync(join(generatedExtensionsPackagePath, "package.json")));
+      await waitFor(() => existsSync(join(generatedPackagePath, "package.json")));
       await waitFor(() =>
         runtime.appLogs
           .query({ sources: ["workflow.library"] })
@@ -431,30 +481,91 @@ describe("WorkspaceRuntimeRegistry", () => {
             (entry) => entry.message === "Source invalidation refreshed generated package.",
           ),
       );
+      await waitFor(() =>
+        runtimeEvents.events.some(
+          (event) =>
+            event.type === "app_read_model.changed" && event.invalidation.model === "extensions",
+        ),
+      );
     } finally {
-      await iterator.return?.();
+      await runtimeEvents.close();
     }
+  });
+
+  it("refreshes app-global generated packages before any user workspace scope opens", async () => {
+    const cwd = tempWorkspace("runtime-source-invalidation-no-user-runtime");
+    const agentParent = tempWorkspace("source-invalidation-no-user-runtime-agent-parent");
+    const agentDir = join(agentParent, "agent");
+    const appDataDir = tempWorkspace("source-invalidation-no-user-runtime-app-data");
+    mkdirSync(agentDir, { recursive: true });
+    const generatedPackagePath = tempWorkspace("source-invalidation-no-user-runtime-workflows");
+    const generatedExtensionsPackagePath = join(
+      tempWorkspace("source-invalidation-no-user-runtime-extensions-parent"),
+      "package",
+    );
+    const registry = createRegistry(cwd, agentDir, {
+      appDataDir,
+      workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
+      workflowsGeneratedPackagePath: generatedPackagePath,
+    });
+
+    const extensionsPackageDir = join(agentParent, "extensions", "package");
+    mkdirSync(extensionsPackageDir, { recursive: true });
+    writeFileSync(
+      join(extensionsPackageDir, "package.json"),
+      JSON.stringify({ name: "svvy-extension-package-input" }),
+    );
+
+    registry.requestSourceInvalidationScan("test-extension-source-change");
+
+    await waitFor(() => existsSync(join(generatedExtensionsPackagePath, "package.json")));
+    await waitFor(() => existsSync(join(generatedPackagePath, "package.json")));
+    const defaultCwd = getDefaultWorkspaceCwd(appDataDir);
+    const dbPath = join(getSvvySessionDir(defaultCwd, agentDir), STRUCTURED_SESSION_DB_FILENAME);
+    await waitFor(() => {
+      if (!existsSync(dbPath)) return false;
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        return Boolean(
+          db
+            .query(
+              `SELECT 1 FROM runtime_source_scan_fact
+               WHERE scope_key = 'app-global'
+                 AND domain = 'extensions'
+                 AND last_observation_kind = 'scan'`,
+            )
+            .get(),
+        );
+      } finally {
+        db.close();
+      }
+    });
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry.getActiveWorkspaceId()).toBeNull();
   });
 
   it("opens and saves extension source edits through the production runtime facade", async () => {
     const cwd = tempWorkspace("source-edits");
     const registry = createRegistry(cwd);
     const runtime = await registry.acquireWorkspace(cwd);
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: runtime.workspaceId,
+    });
 
-    const opened = await runtime.runtimeFacade.sourceEdits.open({
+    const opened = await runtimeOperations.sourceEdits.open({
       sourceKind: "builtin-extension",
       sourceId: "base-common",
     });
     const nextText = `${opened.text.trimEnd()}\n\nRuntime source edit test.\n`;
 
-    const saved = await runtime.runtimeFacade.sourceEdits.save({
+    const saved = await runtimeOperations.sourceEdits.save({
       sourceKind: "builtin-extension",
       sourceId: "base-common",
       expectedSourceVersion: opened.sourceVersion,
       text: nextText,
       saveMode: "compare-and-swap",
     });
-    const reopened = await runtime.runtimeFacade.sourceEdits.open({
+    const reopened = await runtimeOperations.sourceEdits.open({
       sourceKind: "builtin-extension",
       sourceId: "base-common",
     });
@@ -470,7 +581,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(readFileSync(reopened.path, "utf8")).toBe(nextText);
   }, 10000);
 
-  it("records lifecycle logs when workspace runtimes open and close", async () => {
+  it("records lifecycle logs when workspace scopes open and close", async () => {
     const cwd = tempWorkspace("lifecycle-app-logs");
     const updates: Array<{ workspaceId: string; payload: AppLogUpdateMessage }> = [];
     const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
@@ -488,14 +599,14 @@ describe("WorkspaceRuntimeRegistry", () => {
       .filter(
         (entry) =>
           entry?.source === "app.lifecycle" &&
-          (entry.message === "Workspace runtime opened." ||
-            entry.message === "Workspace runtime closed."),
+          (entry.message === "Workspace scope opened." ||
+            entry.message === "Workspace scope closed."),
       );
 
     expect(lifecycleEntries).toMatchObject([
       {
         source: "app.lifecycle",
-        message: "Workspace runtime opened.",
+        message: "Workspace scope opened.",
         details: {
           workspaceId,
           kind: "user",
@@ -504,7 +615,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       },
       {
         source: "app.lifecycle",
-        message: "Workspace runtime closed.",
+        message: "Workspace scope closed.",
         details: {
           workspaceId,
           kind: "user",
@@ -515,7 +626,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(updates.every((update) => update.workspaceId === workspaceId)).toBeTrue();
   });
 
-  it("keeps a shared runtime alive until every acquired visual owner is released", async () => {
+  it("keeps a workspace scope alive until every acquired visual owner is released", async () => {
     const cwd = tempWorkspace("reference-counted-runtime");
     const registry = createRegistry(cwd);
     const first = await registry.acquireWorkspace(cwd);
@@ -529,7 +640,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(() => registry.getRuntime(first.workspaceId)).toThrow("Workspace is not open");
   });
 
-  it("creates a stable default workspace runtime under the svvy app data dir", async () => {
+  it("creates a stable default workspace scope under the svvy app data dir", async () => {
     const initialCwd = tempWorkspace("initial-cwd");
     const agentDir = tempWorkspace("agent-dir");
     const appDataDir = tempWorkspace("app-data-dir");
@@ -561,6 +672,13 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getActiveWorkspaceId()).toBe(second.workspaceId);
 
     const targeted = getWorkspaceRuntimeForRequest(registry, { workspaceId: first.workspaceId });
+    const targetedOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: first.workspaceId,
+    });
+    expect(Object.hasOwn(first, "runtimeFacade")).toBeFalse();
+    expect(Object.hasOwn(second, "runtimeFacade")).toBeFalse();
+    expect(targetedOperations).toBe(registry.getRuntimeOperations(first.workspaceId));
+    expect(targetedOperations).not.toBe(registry.getRuntimeOperations(second.workspaceId));
     await targeted.catalog.createSession(
       { title: "Targeted A" },
       {
@@ -575,6 +693,21 @@ describe("WorkspaceRuntimeRegistry", () => {
     ]);
     expect((await second.catalog.listSessions()).sessions).toEqual([]);
   });
+
+  it("passes the decoded runtime layer config into workspace catalogs and runtime adapter creation", () => {
+    const source = readFileSync(
+      new URL("./workspace-runtime-registry.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("runtimeLayerConfig: RuntimeLayerConfig;");
+    expect(source).toContain("this.options.runtimeLayerConfig");
+    expect(source).toContain("createCatalogBackedRuntime(");
+    expect(source).toContain("sourceDebounceMs");
+    expect(source).toContain("sourceMaxCoalescingLatencyMs");
+    expect(source).toContain("appSourceReconcileIntervalMs");
+    expect(source).toContain("workspaceSourceReconcileIntervalMs");
+  });
 });
 
 function createRegistry(
@@ -583,16 +716,23 @@ function createRegistry(
   options: {
     openInitialWorkspace?: boolean;
     appDataDir?: string;
+    coreTypeContractPackagePath?: string;
     onAppLogUpdate?: ConstructorParameters<typeof WorkspaceRuntimeRegistry>[0]["onAppLogUpdate"];
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
+    listRecoverableWorkspaces?: ConstructorParameters<
+      typeof WorkspaceRuntimeRegistry
+    >[0]["listRecoverableWorkspaces"];
   } = {},
 ): WorkspaceRuntimeRegistry {
   const registry = new WorkspaceRuntimeRegistry({
     initialCwd,
     agentDir,
     sourceWatchEnabled: false,
+    runtimeLayerConfig: defaultRuntimeLayerConfig,
+    coreTypeContractPackagePath:
+      options.coreTypeContractPackagePath ?? tempWorkspace("generated-core-type-contract"),
     workflowsSourceRoot: options.workflowsSourceRoot ?? tempWorkspace("workflows-source"),
     ...options,
   });
@@ -615,22 +755,28 @@ async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void
   expect(assertion()).toBe(true);
 }
 
-async function nextMatchingRuntimeEvent(
-  iterator: AsyncIterator<RuntimeEvent>,
-  predicate: (event: RuntimeEvent) => boolean,
-  timeoutMs = 1000,
-): Promise<RuntimeEvent> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = Math.max(1, deadline - Date.now());
-    const result = await Promise.race([
-      iterator.next(),
-      new Promise<IteratorResult<RuntimeEvent>>((resolve) =>
-        setTimeout(() => resolve({ done: true, value: undefined }), remaining),
-      ),
-    ]);
-    if (result.done) break;
-    if (predicate(result.value)) return result.value;
-  }
-  throw new Error("Timed out waiting for matching runtime event.");
+async function collectRuntimeEvents(
+  subscriptionPromise: Promise<
+    AsyncIterable<RuntimeEvent> & {
+      close(): Promise<void>;
+    }
+  >,
+): Promise<{
+  events: RuntimeEvent[];
+  close(): Promise<void>;
+}> {
+  const subscription = await subscriptionPromise;
+  const events: RuntimeEvent[] = [];
+  const pump = (async () => {
+    for await (const event of subscription) {
+      events.push(event);
+    }
+  })();
+  return {
+    events,
+    close: async () => {
+      await subscription.close();
+      await pump.catch(() => {});
+    },
+  };
 }

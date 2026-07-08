@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import { createThreadReportTool } from "./thread-report-tool";
 import {
   runtimeCommandStatePortFromStore,
   runtimeEpisodeStatePortFromStore,
   runtimeReadModelStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -24,6 +25,9 @@ const WORKSPACE = {
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -41,6 +45,7 @@ function createStore() {
   const artifactDir = mkdtempSync(join(tmpdir(), "svvy-thread-report-artifacts-"));
   tempDirs.push(artifactDir);
   const store = createStructuredSessionStateStore({
+    digest: testDigest,
     workspace: {
       ...WORKSPACE,
       artifactDir,
@@ -141,7 +146,7 @@ describe("thread_report tool", () => {
 
     const snapshot = store.getSessionState("session-thread-report-tool");
     const thread = snapshot.threads[0]!;
-    expect(result.details).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       threadId: thread.id,
       objectiveState: "active",
       notificationQueued: true,
@@ -207,7 +212,7 @@ describe("thread_report tool", () => {
 
     const snapshot = store.getSessionState("session-thread-report-tool");
     const command = snapshot.commands.find((entry) => entry.toolName === "thread_report");
-    expect(result.details).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       objectiveState: "concluded",
     });
     expect(snapshot.threads[0]).toMatchObject({
@@ -280,7 +285,7 @@ describe("thread_report tool", () => {
 
     const snapshot = store.getSessionState("session-thread-report-tool");
     expect(snapshot.episodes).toHaveLength(1);
-    expect(result.details).toMatchObject({
+    expect(result.details!.commandFacts).toMatchObject({
       notificationQueued: false,
       notificationError: "queue unavailable",
     });

@@ -5,14 +5,14 @@ import {
   RuntimeThreadStatePort,
   StateContractError,
   type CommandId,
-  type ExtensionId,
   type SurfacePiSessionId,
   type ThreadId,
   type TurnId,
   type WorkspaceId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeThreadStatePort, runtimeThreadStatePortFromStore } from "./index";
+import { layerRuntimeThreadStatePort } from "./index";
+import { runtimeThreadStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,
@@ -66,6 +66,13 @@ describe("RuntimeThreadStatePort", () => {
               since: "2026-04-18T09:00:00.000Z",
             },
           });
+          yield* state.setSessionWait({
+            sessionId: "session-runtime-thread-state-port",
+            owner: { kind: "thread", threadId: thread.id },
+            kind: "user",
+            reason: "Waiting for input.",
+            resumeWhen: "User answers.",
+          });
 
           const port = yield* RuntimeThreadStatePort;
           const result = yield* port.ensureHandlerThreadRunnable({
@@ -97,6 +104,7 @@ describe("RuntimeThreadStatePort", () => {
 
           const snapshot = yield* state.getSessionState("session-runtime-thread-state-port");
           const updated = snapshot.threads.find((entry) => entry.id === thread.id);
+          expect(snapshot.session.wait).toBeNull();
           expect(updated).toMatchObject({
             id: thread.id,
             status: "running-handler",
@@ -145,6 +153,12 @@ describe("RuntimeThreadStatePort", () => {
             surfacePiSessionId: "surface-orchestrator-start",
             requestSummary: "Start handler threads.",
           });
+          const parentThread = yield* state.createThread({
+            turnId: turn.id,
+            surfacePiSessionId: "surface-orchestrator-start",
+            title: "Orchestrator parent",
+            objective: "Coordinate delegated handler starts.",
+          });
 
           const port = yield* RuntimeThreadStatePort;
           const input = {
@@ -153,58 +167,43 @@ describe("RuntimeThreadStatePort", () => {
             sourceCommandId: "command-thread-start-port" as CommandId,
             threads: [
               {
+                parentThreadId: parentThread.id as ThreadId,
                 surfacePiSessionId: "surface-handler-start-a" as SurfacePiSessionId,
                 title: "Handler A",
                 objective: "Review the runtime contract.",
                 historyMode: "isolated" as const,
                 worktreeId: null,
-                loadedExtensionIds: ["extension-thread-handling" as ExtensionId],
-                availableExtensionIds: ["extension-github" as ExtensionId],
                 agentProfileJson: JSON.stringify({ profile: "handler" }),
                 generatedAgentContextBinding: {
                   aggregateCacheKey: "handler-a-cache",
-                  systemPrompt: "Handle objective A.",
-                  svvyxGuidance: "Use svvyx when needed.",
-                  commandsDts: "declare const svvyx: unknown;",
-                  nativeToolSchemasJson: "[]",
                   generatedAgentContextFingerprint: "fingerprint-handler-a",
                   generatedAgentContextRevision: 3,
-                  loadedExtensionIds: ["extension-thread-handling" as ExtensionId],
-                  availableExtensionIds: ["extension-github" as ExtensionId],
                   externalSourceHashes: ["hash-a"],
                 },
                 initialQueue: {
                   idempotencyKey: "initial-handler-start:a",
                   priority: "runtime" as const,
-                  messageJson: JSON.stringify({ role: "user", content: "Start A." }),
-                  payloadJson: JSON.stringify({ source: "thread_start", objective: "A" }),
+                  overrides: {
+                    shell: "loaded",
+                  },
                 },
               },
               {
+                parentThreadId: parentThread.id as ThreadId,
                 surfacePiSessionId: "surface-handler-start-b" as SurfacePiSessionId,
                 title: "Handler B",
                 objective: "Review the state transaction.",
                 historyMode: "forked" as const,
                 worktreeId: null,
-                loadedExtensionIds: ["extension-thread-handling" as ExtensionId],
-                availableExtensionIds: [],
                 generatedAgentContextBinding: {
                   aggregateCacheKey: "handler-b-cache",
-                  systemPrompt: "Handle objective B.",
-                  svvyxGuidance: "",
-                  commandsDts: "",
-                  nativeToolSchemasJson: "[]",
                   generatedAgentContextFingerprint: "fingerprint-handler-b",
                   generatedAgentContextRevision: 3,
-                  loadedExtensionIds: ["extension-thread-handling" as ExtensionId],
-                  availableExtensionIds: [],
                   externalSourceHashes: ["hash-b"],
                 },
                 initialQueue: {
                   idempotencyKey: "initial-handler-start:b",
                   priority: "runtime" as const,
-                  messageJson: JSON.stringify({ role: "user", content: "Start B." }),
-                  payloadJson: JSON.stringify({ source: "thread_start", objective: "B" }),
                 },
               },
             ] as const,
@@ -234,10 +233,44 @@ describe("RuntimeThreadStatePort", () => {
           });
           expect(secondThread.threadGroupId).toBe(started.threadGroupId);
           expect(firstThread.threadGroupId).toBe(started.threadGroupId);
-          expect(firstThread.queuedMessage).toMatchObject({
+          expect(firstThread.queuedMessageId).toBeString();
+          expect(secondThread.queuedMessageId).toBeString();
+
+          const snapshot = yield* state.getSessionState("session-runtime-thread-start-port");
+          expect(snapshot.threads).toHaveLength(3);
+          const committedHandlerThreads = snapshot.threads.filter(
+            (thread) => thread.parentThreadId === parentThread.id,
+          );
+          expect(committedHandlerThreads).toHaveLength(2);
+          expect(snapshot.generatedAgentContextBindings).toHaveLength(2);
+          expect(snapshot.queuedMessages).toHaveLength(2);
+          const queuedMessages = snapshot.queuedMessages ?? [];
+          const firstQueuedMessage = queuedMessages.find(
+            (message) => message.id === firstThread.queuedMessageId,
+          );
+          const secondQueuedMessage = queuedMessages.find(
+            (message) => message.id === secondThread.queuedMessageId,
+          );
+          expect(firstQueuedMessage).toMatchObject({
             kind: "initial_handler_start",
             sourceCommandId: "command-thread-start-port",
             threadId: firstThread.threadId,
+            messageJson: "{}",
+          });
+          expect(JSON.parse(firstQueuedMessage?.payloadJson ?? "{}")).toEqual({
+            kind: "initial_handler_start",
+            threadId: firstThread.threadId,
+            threadGroupId: firstThread.threadGroupId,
+            objective: "Review the runtime contract.",
+            overrides: {
+              shell: "loaded",
+            },
+          });
+          expect(JSON.parse(secondQueuedMessage?.payloadJson ?? "{}")).toEqual({
+            kind: "initial_handler_start",
+            threadId: secondThread.threadId,
+            threadGroupId: secondThread.threadGroupId,
+            objective: "Review the state transaction.",
           });
           expect(startedMutation.afterCommit).toEqual([
             {
@@ -275,11 +308,6 @@ describe("RuntimeThreadStatePort", () => {
             },
           ]);
 
-          const snapshot = yield* state.getSessionState("session-runtime-thread-start-port");
-          expect(snapshot.threads).toHaveLength(2);
-          expect(snapshot.generatedAgentContextBindings).toHaveLength(2);
-          expect(snapshot.queuedMessages).toHaveLength(2);
-
           const replayedMutation = yield* port.startHandlerThreads(input);
           expect(replayedMutation.afterCommit).toEqual([]);
           const replayed = replayedMutation.value;
@@ -287,7 +315,7 @@ describe("RuntimeThreadStatePort", () => {
             started.threads.map((thread) => thread.threadId),
           );
           const replaySnapshot = yield* state.getSessionState("session-runtime-thread-start-port");
-          expect(replaySnapshot.threads).toHaveLength(2);
+          expect(replaySnapshot.threads).toHaveLength(3);
           expect(replaySnapshot.queuedMessages).toHaveLength(2);
         }).pipe(
           Effect.provide(
@@ -325,9 +353,9 @@ function createFailingStore(): StructuredSessionStateStore {
     workspaceId: "workspace_failure",
     databasePath: ":memory:",
     close: () => undefined,
-    getSessionState: () => {
+    ensureHandlerThreadRunnable: () => {
       throw new StateContractError({
-        operation: "structured-session.getSessionState",
+        operation: "structured-session.ensureHandlerThreadRunnable",
         reason: "not-found",
         message: "Missing session.",
       });

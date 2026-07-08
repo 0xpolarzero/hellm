@@ -50,8 +50,8 @@ import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
 } from "../shared/agent-settings";
-import { resolveActorExtensionState, type ExtensionUsageState } from "@svvy/extensions";
-import { buildWorkspaceSessionNavigation } from "@svvy/state/session-navigation";
+import type { ExtensionUsageState } from "@svvy/core";
+import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
 
 mock.module("electrobun/view", () => {
@@ -1302,23 +1302,11 @@ function createFakeRpc(input: {
           workspaceId,
         }) => {
           const next = await harness.client.request.getAgentSettings({ workspaceId });
-          const updateExtensionUsage = (
-            actor: "orchestrator" | "handler" | "workflow-task",
-            extensionUsage: Record<string, ExtensionUsageState>,
-          ) => {
-            const defaultUsage = { ...extensionUsage };
-            delete defaultUsage[extensionId];
-            const defaultState = resolveActorExtensionState({
-              actor,
-              profileExtensionUsage: defaultUsage,
-            });
-            const baselineState = defaultState.loadedExtensionIds.includes(extensionId)
-              ? "loaded"
-              : defaultState.availableExtensionIds.includes(extensionId)
-                ? "available"
-                : "unavailable";
-            if (state === baselineState) {
-              return defaultUsage;
+          const updateExtensionUsage = (extensionUsage: Record<string, ExtensionUsageState>) => {
+            if (extensionUsage[extensionId] === state) {
+              const nextUsage = { ...extensionUsage };
+              delete nextUsage[extensionId];
+              return nextUsage;
             }
             return { ...extensionUsage, [extensionId]: state };
           };
@@ -1326,7 +1314,7 @@ function createFakeRpc(input: {
             profile.id === agentProfile
               ? {
                   ...profile,
-                  extensionUsage: updateExtensionUsage("orchestrator", profile.extensionUsage),
+                  extensionUsage: updateExtensionUsage(profile.extensionUsage),
                 }
               : profile,
           );
@@ -1334,14 +1322,12 @@ function createFakeRpc(input: {
             next.agents.special.threadHandler = {
               ...next.agents.special.threadHandler,
               extensionUsage: updateExtensionUsage(
-                "handler",
                 next.agents.special.threadHandler.extensionUsage,
               ),
             };
           }
           if (next.workflowAgents[agentProfile]) {
             const overrides = updateExtensionUsage(
-              "workflow-task",
               next.workflowAgents[agentProfile].overrides ?? {},
             );
             next.workflowAgents[agentProfile] = {

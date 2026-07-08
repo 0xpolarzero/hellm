@@ -1,31 +1,28 @@
 import {
-  BUILTIN_EXTENSIONS,
-  type ExtensionsService,
   type ListExtensionsDetails,
   type NativeToolDefinition,
-  getExtensionRecord,
   listExtensionsForActor,
   summarizeListExtensions,
 } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
-import { resolveExtensionRecord, resolveVisibleExtensionRecords } from "./svvyx-extensions-command";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import type { CommandFactsPayload } from "@svvy/core";
+import { nativeToolParameters } from "./native-tool-parameters";
+import { resolveVisibleExtensionRecords } from "./svvyx-extensions-command";
 import {
-  ExtensionError as CoreExtensionError,
-  RuntimeContractError,
   type PromptTarget,
   type CommandId,
-  type RefreshGeneratedContextRequest,
+  type NativeToolResult,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimeCommandStatePortService,
   type RuntimeTurnStatePortService,
   type StateContractError,
+  type PromptExecutionContext,
   type ToolCallId,
   type ToolItemId,
   type TurnId,
 } from "@svvy/core";
 import * as Effect from "effect/Effect";
-import { runAcceptedLoadExtensionToolCallAtRuntimeBoundary } from "./runtime-service-adapter";
 
 export const LIST_EXTENSIONS_TOOL_NAME = "list_extensions";
 export const LOAD_EXTENSION_TOOL_NAME = "load_extension";
@@ -52,17 +49,53 @@ type ExtensionToolState = {
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
 };
 
+export type RunAcceptedLoadExtension = (input: {
+  toolCallId: ToolCallId;
+  toolItemId: ToolItemId;
+  arguments: LoadExtensionParams;
+  context: PromptExecutionContext;
+  actorBinding: {
+    loadedExtensionIds: readonly string[];
+    availableExtensionIds: readonly string[];
+    loadedExtensionRecords: ReturnType<typeof resolveVisibleExtensionRecords>;
+    availableExtensionRecords: ReturnType<typeof resolveVisibleExtensionRecords>;
+  };
+  command: {
+    commandId: CommandId;
+    target: PromptTarget;
+    turnId: TurnId;
+    approvalMode: "auto-review" | "user" | "full-access";
+    approvalFacts?: Readonly<Record<string, unknown>>;
+    sandbox: {
+      snapshot: Readonly<Record<string, unknown>>;
+      launchPolicy?: Readonly<Record<string, unknown>>;
+    };
+    cwd: string;
+    baseEnv: Readonly<Record<string, string>>;
+  };
+}) => Promise<{
+  toolResult: NativeToolResult;
+  appliedEffects: readonly {
+    type: string;
+    binding?: {
+      loadedExtensionIds: readonly string[];
+      availableExtensionIds: readonly string[];
+      generatedAgentContextFingerprint?: string | null | undefined;
+    };
+  }[];
+}>;
+
 export function createListExtensionsTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ExtensionToolState;
   extensionsRoot?: string;
-}): NativeToolDefinition<ListExtensionsParams, ListExtensionsDetails> {
+}): NativeToolDefinition<ListExtensionsParams> {
   return {
     label: "List Extensions",
     name: LIST_EXTENSIONS_TOOL_NAME,
     description:
       "List the current actor's loaded and available extensions without unavailable details, secrets, fingerprints, or global profile state.",
-    parameters: listExtensionsParamsSchema,
+    parameters: nativeToolParameters(listExtensionsParamsSchema),
     execute: async (_toolCallId, _params: ListExtensionsParams) => {
       const runtime = requireActiveRuntime(options.runtime, LIST_EXTENSIONS_TOOL_NAME);
       if (runtime.turnId) {
@@ -127,7 +160,14 @@ export function createListExtensionsTool(options: {
         );
         return {
           content: [{ type: "text", text: summarizeListExtensions(details) }],
-          details,
+          details: {
+            summary: summarizeListExtensions(details),
+            commandFacts: {
+              type: "list_extensions.finished",
+              loaded: details.loaded,
+              available: details.available,
+            } as unknown as CommandFactsPayload,
+          },
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to list extensions.";
@@ -149,14 +189,14 @@ export function createLoadExtensionTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ExtensionToolState;
   extensionsRoot?: string;
-  refreshGeneratedContext: (input: RefreshGeneratedContextRequest) => Promise<void>;
-}): NativeToolDefinition<LoadExtensionParams, LoadExtensionDetails> {
+  runAcceptedLoadExtension: RunAcceptedLoadExtension;
+}): NativeToolDefinition<LoadExtensionParams> {
   return {
     label: "Load Extension",
     name: LOAD_EXTENSION_TOOL_NAME,
     description:
       "Load one available ready extension into this actor session and refresh actor-local extension visibility.",
-    parameters: loadExtensionParamsSchema,
+    parameters: nativeToolParameters(loadExtensionParamsSchema),
     execute: async (_toolCallId, params: LoadExtensionParams) => {
       const runtime = requireActiveRuntime(options.runtime, LOAD_EXTENSION_TOOL_NAME);
       const id = params.extensionId.trim();
@@ -203,46 +243,33 @@ export function createLoadExtensionTool(options: {
           runtime.availableExtensionIds ?? [],
           options.extensionsRoot,
         );
-        const executed = await runAcceptedLoadExtensionToolCallAtRuntimeBoundary({
-          request: {
-            toolCallId: _toolCallId as ToolCallId,
-            toolItemId: _toolCallId as ToolItemId,
-            arguments: {
-              extensionId: id,
-            },
-            context: runtime,
-            actorBinding: {
-              loadedExtensionIds: runtime.loadedExtensionIds ?? [],
-              availableExtensionIds: runtime.availableExtensionIds ?? [],
-              loadedExtensionRecords,
-              availableExtensionRecords,
-            },
-            command: {
-              commandId: command.id as CommandId,
-              target,
-              turnId: runtime.turnId! as TurnId,
-              approvalMode: "auto-review",
-              sandbox: { snapshot: {} },
-              cwd: "",
-              baseEnv: {},
-            },
-            sourceInvalidation: {
-              refreshGeneratedContext: (input) =>
-                hostPromise("load_extension.refreshGeneratedContext", () =>
-                  options.refreshGeneratedContext(input),
-                ),
-              refreshGeneratedPackages: () =>
-                Effect.die("load_extension must not refresh generated packages."),
-            },
+        const executed = await options.runAcceptedLoadExtension({
+          toolCallId: _toolCallId as ToolCallId,
+          toolItemId: _toolCallId as ToolItemId,
+          arguments: {
+            extensionId: id,
           },
-          commandStatePort: options.state.commandState,
-          actorExtensionBindingStatePort: options.state.actorExtensionBindingState,
-          extensionsService: runtimeBoundaryExtensionsService(options.extensionsRoot),
+          context: runtime,
+          actorBinding: {
+            loadedExtensionIds: runtime.loadedExtensionIds ?? [],
+            availableExtensionIds: runtime.availableExtensionIds ?? [],
+            loadedExtensionRecords,
+            availableExtensionRecords,
+          },
+          command: {
+            commandId: command.id as CommandId,
+            target,
+            turnId: runtime.turnId! as TurnId,
+            approvalMode: "auto-review",
+            sandbox: { snapshot: {} },
+            cwd: "",
+            baseEnv: {},
+          },
         });
         const bindingEffect = executed.appliedEffects.find(
           (effect) => effect.type === "actor_extension_binding.update",
         );
-        if (bindingEffect?.type === "actor_extension_binding.update") {
+        if (bindingEffect?.type === "actor_extension_binding.update" && bindingEffect.binding) {
           runtime.loadedExtensionIds = [...bindingEffect.binding.loadedExtensionIds];
           runtime.availableExtensionIds = [...bindingEffect.binding.availableExtensionIds];
           if (bindingEffect.binding.generatedAgentContextFingerprint) {
@@ -250,26 +277,31 @@ export function createLoadExtensionTool(options: {
               bindingEffect.binding.generatedAgentContextFingerprint;
           }
         }
-        const details = {
-          loadedExtensionId: id,
-          ...listExtensionsForActor({
-            actor: runtime.surfaceKind,
-            loadedExtensionIds: runtime.loadedExtensionIds ?? [],
-            loadedExtensionRecords: resolveVisibleExtensionRecords(
-              runtime.loadedExtensionIds ?? [],
-              options.extensionsRoot,
-            ),
-            availableExtensionIds: runtime.availableExtensionIds ?? [],
-            availableExtensionRecords: resolveVisibleExtensionRecords(
-              runtime.availableExtensionIds ?? [],
-              options.extensionsRoot,
-            ),
-            externalInstructionSources: runtime.externalInstructionSources ?? [],
-          }),
-        };
+        const postLoadDetails = listExtensionsForActor({
+          actor: runtime.surfaceKind,
+          loadedExtensionIds: runtime.loadedExtensionIds ?? [],
+          loadedExtensionRecords: resolveVisibleExtensionRecords(
+            runtime.loadedExtensionIds ?? [],
+            options.extensionsRoot,
+          ),
+          availableExtensionIds: runtime.availableExtensionIds ?? [],
+          availableExtensionRecords: resolveVisibleExtensionRecords(
+            runtime.availableExtensionIds ?? [],
+            options.extensionsRoot,
+          ),
+          externalInstructionSources: runtime.externalInstructionSources ?? [],
+        });
         return {
           content: executed.toolResult.content,
-          details,
+          details: {
+            summary: `Loaded extension ${id}.`,
+            commandFacts: {
+              type: "load_extension.finished",
+              loadedExtensionId: id,
+              loaded: postLoadDetails.loaded,
+              available: postLoadDetails.available,
+            } as unknown as CommandFactsPayload,
+          },
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : `Failed to load extension ${id}.`;
@@ -311,60 +343,6 @@ function promptTargetFromRuntime(
     } as PromptTarget;
   }
   throw new Error(`${toolName} can only run on orchestrator or handler surfaces.`);
-}
-
-function runtimeBoundaryExtensionsService(extensionsRoot?: string): ExtensionsService {
-  return {
-    registry: {
-      list: () => Effect.succeed(BUILTIN_EXTENSIONS),
-      inspect: ({ id }) => {
-        const record = resolveExtensionRecord(id, extensionsRoot) ?? getExtensionRecord(id);
-        if (record) {
-          return Effect.succeed(record);
-        }
-        return Effect.fail(
-          new CoreExtensionError({
-            extensionId: id,
-            operation: "extensions.registry.inspect",
-            reason: "not-found",
-            message: `Extension record does not exist: ${id}`,
-          }),
-        );
-      },
-    },
-    actorBindings: {
-      resolve: () => Effect.die("Unexpected actor binding resolution in load_extension boundary."),
-      visibleRecords: () =>
-        Effect.die("Unexpected visible record resolution in load_extension boundary."),
-    },
-    nativeTools: {
-      schemasJson: () => Effect.die("Unexpected native tool schema request."),
-      schemaJsonForExtension: () => Effect.die("Unexpected native tool schema request."),
-      listCommandMetadata: () => Effect.die("Unexpected command metadata request."),
-      getCommandMetadata: () => Effect.die("Unexpected command metadata request."),
-      handler: () => Effect.die("Unexpected native tool handler request."),
-    },
-    generatedPackages: {
-      refresh: () => Effect.die("Unexpected generated package refresh."),
-      planWorkspaceLink: () => Effect.die("Unexpected generated package workspace link plan."),
-    },
-  };
-}
-
-function hostPromise<A>(
-  operation: string,
-  run: () => Promise<A>,
-): Effect.Effect<A, RuntimeContractError> {
-  return Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new RuntimeContractError({
-        operation,
-        reason: "stale-state",
-        message: cause instanceof Error ? cause.message : `${operation} failed.`,
-        cause,
-      }),
-  });
 }
 
 function requireActiveRuntime(

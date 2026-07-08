@@ -1,7 +1,9 @@
 import type { NativeToolDefinition } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
-import type { PromptExecutionRuntimeHandle } from "@svvy/core";
+import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import { nativeToolParameters } from "./native-tool-parameters";
 import type {
+  CommandFactsPayload,
   RuntimeCommandStatePortService,
   RuntimeEpisodeRecord,
   RuntimeEpisodeStatePortService,
@@ -59,12 +61,12 @@ export function createThreadReportTool(options: {
   turnState: RuntimeTurnStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   queueThreadReportNotification: (request: ThreadReportNotificationRequest) => Promise<void>;
-}): NativeToolDefinition<ThreadReportParams, Record<string, unknown>> {
+}): NativeToolDefinition<ThreadReportParams> {
   return {
     label: "Thread Report",
     name: THREAD_REPORT_TOOL_NAME,
     description: THREAD_REPORT_DESCRIPTION,
-    parameters: threadReportParamsSchema,
+    parameters: nativeToolParameters(threadReportParamsSchema),
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveHandlerRuntime(options.runtime);
       const threadId = runtime.threadId;
@@ -204,11 +206,13 @@ export function createThreadReportTool(options: {
             },
           ],
           details: {
-            threadId,
-            episodeId: episode.id,
-            objectiveState: params.outcome ? "concluded" : "active",
-            notificationQueued,
-            notificationError,
+            commandFacts: {
+              threadId,
+              episodeId: episode.id,
+              objectiveState: params.outcome ? "concluded" : "active",
+              notificationQueued,
+              notificationError,
+            } as CommandFactsPayload,
           },
         };
       } catch (error) {

@@ -1,20 +1,24 @@
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
 import type { AppLoggerEvent } from "./app-logger";
 import type {
-  AbsolutePath,
   ArtifactId,
+  ArtifactMetadataRecord,
   CommandId,
   PromptExecutionSurfaceKind,
-  RuntimeArtifactKind,
-  RuntimeArtifactRecord,
   RuntimeArtifactStatePortService,
   StateContractError,
   ThreadId,
   WorkspaceSessionId,
 } from "@svvy/core";
 import type * as Effect from "effect/Effect";
+import {
+  artifactRootForSession,
+  deleteRuntimeArtifact,
+  inferArtifactKind,
+  materializeRuntimeArtifact,
+  refreshRuntimeArtifact,
+  resolveArtifactSourcePath,
+  type RuntimeArtifactMaterializedRecord,
+} from "./runtime-artifact-materializer";
 
 export type SvvyxArtifactsCommandResult = {
   output: unknown;
@@ -75,6 +79,7 @@ export async function runSvvyxArtifactsCommand(input: {
   artifactState: RuntimeArtifactStatePortService;
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
@@ -180,6 +185,7 @@ export async function runSvvyxArtifactsOperation(input: {
   artifactState: RuntimeArtifactStatePortService;
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
@@ -219,6 +225,7 @@ async function runSvvyxArtifactsOperationCore(input: {
   artifactState: RuntimeArtifactStatePortService;
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
+  readArtifactRootForSession?: (sessionId: string) => string | null;
   openArtifact?: SvvyxArtifactOpenHandler;
 }): Promise<SvvyxArtifactsCommandResult> {
   if (input.operation.commandId === "create") {
@@ -231,22 +238,28 @@ async function runSvvyxArtifactsOperationCore(input: {
         name,
       );
     }
-    const artifact = input.runState(
-      input.artifactState.createArtifact({
-        sessionId: workspaceSessionId(input.runtime.sessionId),
-        threadId:
-          input.runtime.surfaceKind === "handler"
-            ? optionalThreadId(input.runtime.surfaceThreadId)
-            : null,
-        sourceCommandId: input.sourceCommand.id,
-        kind: inferArtifactKind(name ?? sourcePath ?? ""),
-        ...(name ? { name } : {}),
-        ...(sourcePath ? { path: resolveCommandPath(input.cwd, sourcePath) } : {}),
-        ...(mimeType ? { mimeType } : {}),
-        immutable,
+    const artifact = materializeRuntimeArtifact({
+      artifactRoot: artifactRootForSession({
+        cwd: input.cwd,
+        sessionId: input.runtime.sessionId,
+        readArtifactRootForSession: input.readArtifactRootForSession,
       }),
-    ).value;
-    const output = artifactRef(refreshArtifactRef(artifact));
+      artifactState: input.artifactState,
+      runState: input.runState,
+      workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
+      threadId:
+        input.runtime.surfaceKind === "handler"
+          ? optionalThreadId(input.runtime.surfaceThreadId)
+          : null,
+      sourceCommandId: input.sourceCommand.id,
+      kind: inferArtifactKind(name ?? sourcePath ?? ""),
+      ...(name ? { name } : {}),
+      ...(sourcePath ? { sourcePath: resolveArtifactSourcePath(input.cwd, sourcePath) } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      content: sourcePath ? undefined : "",
+      immutable,
+    });
+    const output = artifactRef(artifact);
     return {
       output,
       commandFacts: {
@@ -266,12 +279,12 @@ async function runSvvyxArtifactsOperationCore(input: {
   if (input.operation.commandId === "inspect") {
     const artifact = input.runState(
       input.artifactState.inspectArtifact({
-        sessionId: workspaceSessionId(input.runtime.sessionId),
+        workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
         artifactId: artifactIdentifier(input.operation.options.id),
       }),
     );
     ensureNotDeleted(artifact);
-    const output = artifactRef(refreshArtifactRef(artifact));
+    const output = artifactRef(refreshRuntimeArtifact(artifact));
     return {
       output,
       commandFacts: {
@@ -291,7 +304,7 @@ async function runSvvyxArtifactsOperationCore(input: {
     const artifacts = input
       .runState(
         input.artifactState.listArtifacts({
-          sessionId: workspaceSessionId(input.runtime.sessionId),
+          workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
           threadId:
             optionalThreadId(threadId) ??
             (input.runtime.surfaceKind === "handler"
@@ -303,7 +316,7 @@ async function runSvvyxArtifactsOperationCore(input: {
       .flatMap((artifact) => {
         try {
           ensureNotDeleted(artifact);
-          return [artifactRef(refreshArtifactRef(artifact))];
+          return [artifactRef(refreshRuntimeArtifact(artifact))];
         } catch (error) {
           if (isArtifactErrorCode(error, "ARTIFACT_FILE_MISSING")) {
             return [];
@@ -324,7 +337,7 @@ async function runSvvyxArtifactsOperationCore(input: {
   if (input.operation.commandId === "open") {
     const artifact = input.runState(
       input.artifactState.inspectArtifact({
-        sessionId: workspaceSessionId(input.runtime.sessionId),
+        workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
         artifactId: artifactIdentifier(input.operation.options.id),
       }),
     );
@@ -333,7 +346,7 @@ async function runSvvyxArtifactsOperationCore(input: {
       input.openArtifact !== undefined
         ? await input.openArtifact({
             sessionId: input.runtime.sessionId,
-            artifactId: artifact.id,
+            artifactId: artifact.artifactId,
           })
         : false;
     if (!opened) {
@@ -345,27 +358,34 @@ async function runSvvyxArtifactsOperationCore(input: {
         input.operation.options.id,
       );
     }
-    const output = { id: artifact.id, opened: true };
+    const output = { id: artifact.artifactId, opened: true };
     return {
       output,
       commandFacts: {
-        artifactId: artifact.id,
+        artifactId: artifact.artifactId,
         opened: true,
       },
     };
   }
 
-  const artifact = input.runState(
-    input.artifactState.deleteArtifact({
-      sessionId: workspaceSessionId(input.runtime.sessionId),
+  const existing = input.runState(
+    input.artifactState.inspectArtifact({
+      workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
       artifactId: artifactIdentifier(input.operation.options.id),
     }),
-  ).value;
-  const output = { id: artifact.id, deleted: true };
+  );
+  ensureNotDeleted(existing);
+  const artifact = deleteRuntimeArtifact({
+    artifactState: input.artifactState,
+    runState: input.runState,
+    workspaceSessionId: workspaceSessionId(input.runtime.sessionId),
+    artifact: existing,
+  });
+  const output = { id: artifact.artifactId, deleted: true };
   return {
     output,
     commandFacts: {
-      artifactId: artifact.id,
+      artifactId: artifact.artifactId,
       deleted: true,
     },
   };
@@ -635,89 +655,26 @@ function parseOperationLimit(value: number | undefined): number | undefined {
   return value;
 }
 
-function inferArtifactKind(nameOrPath: string): RuntimeArtifactKind {
-  const lower = nameOrPath.toLowerCase();
-  if (lower.endsWith(".json")) {
-    return "json";
-  }
-  if (lower.endsWith(".log")) {
-    return "log";
-  }
-  if (
-    lower.endsWith(".md") ||
-    lower.endsWith(".txt") ||
-    lower.endsWith(".html") ||
-    lower.endsWith(".css") ||
-    lower.endsWith(".js") ||
-    lower.endsWith(".ts")
-  ) {
-    return "text";
-  }
-  return "file";
-}
-
-function resolveCommandPath(cwd: string, path: string): AbsolutePath {
-  return (isAbsolute(path) ? path : resolve(cwd, path)) as AbsolutePath;
-}
-
-function ensureNotDeleted(artifact: RuntimeArtifactRecord): void {
+function ensureNotDeleted(artifact: ArtifactMetadataRecord): void {
   if (artifact.deletedAt) {
     throw artifactCommandError(
       "ARTIFACT_DELETED",
-      `Artifact is deleted: ${artifact.id}`,
+      `Artifact is deleted: ${artifact.artifactId}`,
       undefined,
       undefined,
-      artifact.id,
+      artifact.artifactId,
     );
   }
 }
 
-function refreshArtifactRef(artifact: RuntimeArtifactRecord): RuntimeArtifactRecord {
-  const path = artifact.path;
-  if (!path || !existsSync(path)) {
-    throw artifactCommandError(
-      "ARTIFACT_FILE_MISSING",
-      `Artifact file is missing: ${artifact.id}`,
-      path,
-      undefined,
-      artifact.id,
-    );
-  }
-  const stats = statSync(path);
-  if (!stats.isFile()) {
-    throw artifactCommandError(
-      "ARTIFACT_FILE_MISSING",
-      `Artifact path is not a file: ${artifact.id}`,
-      path,
-      undefined,
-      artifact.id,
-    );
-  }
-  const bytes = readFileSync(path);
+function artifactRef(artifact: RuntimeArtifactMaterializedRecord) {
   return {
-    ...artifact,
-    bytes: stats.size,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-  };
-}
-
-function artifactRef(artifact: RuntimeArtifactRecord) {
-  if (!artifact.path) {
-    throw artifactCommandError(
-      "ARTIFACT_FILE_MISSING",
-      `Artifact file is missing: ${artifact.id}`,
-      undefined,
-      undefined,
-      artifact.id,
-    );
-  }
-  return {
-    id: artifact.id,
-    path: artifact.path,
+    id: artifact.artifactId,
+    path: artifact.storedPath,
     name: artifact.name,
     immutable: artifact.immutable,
     mimeType: artifact.mimeType,
-    bytes: artifact.bytes,
+    bytes: artifact.byteSize,
     sha256: artifact.sha256,
     createdAt: artifact.createdAt,
   };

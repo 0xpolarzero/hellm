@@ -1,38 +1,26 @@
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import {
   RuntimeContractError,
   RuntimeRequestStatePort,
   type AnswerRequestInputInput,
   type AnswerRequestInputResult,
+  type PromptTarget,
   type SetRequestInputTimerPausedInput,
   type SetRequestInputTimerPausedResult,
 } from "@svvy/core";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 
 export type RuntimeRequestInputAnswerCommittedInput = {
   readonly surfacePiSessionId: AnswerRequestInputInput["surfacePiSessionId"];
   readonly requestId: AnswerRequestInputInput["requestId"];
-  readonly queuedItemId: AnswerRequestInputResult["delivery"]["queuedItemId"];
+  readonly delivery: AnswerRequestInputResult["delivery"];
+  readonly target: PromptTarget;
 };
 
 export type RuntimeRequestInputTimerPausedCommittedInput = {
   readonly requestId: SetRequestInputTimerPausedResult["requestId"];
 };
-
-export interface RuntimeRequestInputPostCommitLaneService {
-  afterAnswerCommitted(
-    input: RuntimeRequestInputAnswerCommittedInput,
-  ): Effect.Effect<void, RuntimeContractError>;
-  afterTimerPausedCommitted(
-    input: RuntimeRequestInputTimerPausedCommittedInput,
-  ): Effect.Effect<void, RuntimeContractError>;
-}
-
-export class RuntimeRequestInputPostCommitLane extends Context.Service<
-  RuntimeRequestInputPostCommitLane,
-  RuntimeRequestInputPostCommitLaneService
->()("@svvy/runtime/RuntimeRequestInputPostCommitLane") {}
 
 function mapRequestStateError(
   operation: string,
@@ -57,12 +45,12 @@ export function answerRuntimeRequestInput(
 ): Effect.Effect<
   AnswerRequestInputResult,
   RuntimeContractError,
-  RuntimeEventBus | RuntimeRequestStatePort | RuntimeRequestInputPostCommitLane
+  RuntimeEventBus | RuntimeRequestStatePort | RuntimeRequestInputWaitService
 > {
   return Effect.gen(function* () {
     const requestState = yield* RuntimeRequestStatePort;
     const eventBus = yield* RuntimeEventBus;
-    const postCommitHost = yield* RuntimeRequestInputPostCommitLane;
+    const waitService = yield* RuntimeRequestInputWaitService;
     const answerResult = yield* requestState
       .answerRequestInput(input)
       .pipe(Effect.mapError((cause) => mapRequestStateError("runtime.requestInput.answer", cause)));
@@ -77,11 +65,12 @@ export function answerRuntimeRequestInput(
           }),
       ),
     );
-    const result = answerResult.value;
-    yield* postCommitHost.afterAnswerCommitted({
+    const result = answerResult.value.answer;
+    yield* waitService.afterAnswerCommitted({
       surfacePiSessionId: input.surfacePiSessionId,
       requestId: input.requestId,
-      queuedItemId: result.delivery.queuedItemId,
+      delivery: result.delivery,
+      target: answerResult.value.target,
     });
     return result;
   });
@@ -92,12 +81,12 @@ export function setRuntimeRequestInputTimerPaused(
 ): Effect.Effect<
   SetRequestInputTimerPausedResult,
   RuntimeContractError,
-  RuntimeEventBus | RuntimeRequestStatePort | RuntimeRequestInputPostCommitLane
+  RuntimeEventBus | RuntimeRequestStatePort | RuntimeRequestInputWaitService
 > {
   return Effect.gen(function* () {
     const requestState = yield* RuntimeRequestStatePort;
     const eventBus = yield* RuntimeEventBus;
-    const postCommitHost = yield* RuntimeRequestInputPostCommitLane;
+    const waitService = yield* RuntimeRequestInputWaitService;
     const result = yield* requestState
       .setRequestInputTimerPaused(input)
       .pipe(
@@ -116,7 +105,7 @@ export function setRuntimeRequestInputTimerPaused(
           }),
       ),
     );
-    yield* postCommitHost.afterTimerPausedCommitted({ requestId: result.value.requestId });
-    return result.value;
+    yield* waitService.afterTimerPausedCommitted({ requestId: result.value.requestId });
+    return { requestId: result.value.requestId };
   });
 }

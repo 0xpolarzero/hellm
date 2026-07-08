@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { createAppLogFacade } from "./app-log-facade";
 import { appendAppLoggerEvent, createAppLogger } from "./app-logger";
 
+const testClock = () => "2026-06-21T12:00:00.000Z";
+
 describe("app logger", () => {
   it("stores redacted entry details and errors", () => {
-    const appLogs = createAppLogFacade();
+    const appLogs = createAppLogFacade({ now: testClock });
     const logger = createAppLogger({ appLogs });
 
     logger.error(
@@ -33,7 +35,7 @@ describe("app logger", () => {
   });
 
   it("keeps readable warning producer calls on the warn storage contract", () => {
-    const appLogs = createAppLogFacade();
+    const appLogs = createAppLogFacade({ now: testClock });
     const logger = createAppLogger({ appLogs });
 
     const entry = logger.warning("workspace", "Workspace warning.");
@@ -47,7 +49,7 @@ describe("app logger", () => {
   });
 
   it("persists typed app log events with related ids outside redacted details", () => {
-    const appLogs = createAppLogFacade();
+    const appLogs = createAppLogFacade({ now: testClock });
     const logger = createAppLogger({ appLogs });
 
     appendAppLoggerEvent(logger, {

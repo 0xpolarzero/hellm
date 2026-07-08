@@ -9,7 +9,8 @@ import {
   type RuntimeReadModelStatePortService,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeReadModelStatePort, runtimeReadModelStatePortFromStore } from "./index";
+import { layerRuntimeReadModelStatePort } from "./index";
+import { runtimeReadModelStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,
@@ -112,7 +113,10 @@ describe("RuntimeReadModelStatePort", () => {
           });
           const episodes = yield* port.readThreadEpisodes({
             workspaceSessionId,
-            threadId: thread.id as ThreadId,
+            target: {
+              kind: "thread",
+              threadId: thread.id as ThreadId,
+            },
             limit: 1,
           });
           const group = yield* port.getThreadGroup({
@@ -123,8 +127,6 @@ describe("RuntimeReadModelStatePort", () => {
           expect(current).toMatchObject({
             threadId: thread.id,
             threadGroupId: thread.threadGroupId,
-            loadedExtensionIds: ["shell"],
-            availableExtensionIds: ["web"],
             pendingReportRequests: [
               expect.objectContaining({
                 request: "Send a concise report.",

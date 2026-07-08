@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
 import type {
+  CommandId,
+  InternalRefreshGeneratedPackagesRequest,
   QueueItemId,
   RecoveryWorkId,
   RuntimeOwnerId,
@@ -29,7 +31,12 @@ describe("WorkspaceRecoveryCoordinator", () => {
       ensured,
       snapshots: [createStartupSnapshot()],
     });
-    const coordinator = new WorkspaceRecoveryCoordinator(recoveryState, createHandlers(), runState);
+    const coordinator = new WorkspaceRecoveryCoordinator(
+      "workspace-recovery-coordinator" as WorkspaceId,
+      recoveryState,
+      createHandlers(),
+      runState,
+    );
 
     coordinator.seedFromDurableState();
 
@@ -74,6 +81,7 @@ describe("WorkspaceRecoveryCoordinator", () => {
     });
     const drainedTargets: string[] = [];
     const coordinator = new WorkspaceRecoveryCoordinator(
+      "workspace-recovery-coordinator" as WorkspaceId,
       recoveryState,
       createHandlers({
         drainSurfaceQueue: async (target) => {
@@ -110,6 +118,7 @@ describe("WorkspaceRecoveryCoordinator", () => {
       retried,
     });
     const coordinator = new WorkspaceRecoveryCoordinator(
+      "workspace-recovery-coordinator" as WorkspaceId,
       recoveryState,
       createHandlers({
         recoverSurfaceTurn: async () => {
@@ -124,6 +133,60 @@ describe("WorkspaceRecoveryCoordinator", () => {
     await waitFor(() => retried.length === 1);
     coordinator.close();
     expect(retried).toEqual([{ id: claimed[0]!.id, error: "surface recovery failed" }]);
+  });
+
+  it("dispatches generated package link recovery through runtime refresh requests", async () => {
+    const completed: RecoveryWorkId[] = [];
+    const claimed = [
+      createRecoveryWork({
+        id: "recovery-work-generated-package-link" as RecoveryWorkId,
+        kind: "workspace_generated_package_link_repair",
+        ownerScope: { kind: "workspace" },
+        claimedBy: "workspace-recovery-test" as RuntimeOwnerId,
+        leaseVersion: 1,
+        payloadJson: {
+          refreshGeneratedPackages: {
+            scope: "workspace-link-repair",
+            workspaceId: "workspace-recovery-coordinator",
+            packages: ["@svvyx/extensions"],
+            reason: "link-repair",
+            sourceCommandId: "cmd_generated_link_repair",
+            scheduledReason: "app-global-generated-package-refreshed",
+          },
+        },
+      }),
+    ];
+    const recoveryState = createFakeRecoveryState({
+      claimed,
+      completed,
+    });
+    const refreshRequests: InternalRefreshGeneratedPackagesRequest[] = [];
+    const coordinator = new WorkspaceRecoveryCoordinator(
+      "workspace-recovery-coordinator" as WorkspaceId,
+      recoveryState,
+      createHandlers({
+        refreshGeneratedPackages: async (input) => {
+          refreshRequests.push(input);
+        },
+      }),
+      runState,
+    );
+
+    coordinator.start();
+
+    await waitFor(() => completed.length === 1);
+    coordinator.close();
+    expect(refreshRequests).toEqual([
+      {
+        scope: "workspace-link-repair",
+        workspaceId: "workspace-recovery-coordinator" as WorkspaceId,
+        packages: ["@svvyx/extensions"],
+        reason: "link-repair",
+        sourceCommandId: "cmd_generated_link_repair" as CommandId,
+        recoveryWorkId: "recovery-work-generated-package-link" as RecoveryWorkId,
+      },
+    ]);
+    expect(completed).toEqual([claimed[0]!.id]);
   });
 });
 
@@ -174,7 +237,7 @@ function createHandlers(overrides: Partial<WorkspaceRecoveryCoordinatorHandlers>
     recoverSurfaceTurn: async () => undefined,
     drainSurfaceQueue: async () => undefined,
     generateTitle: async () => undefined,
-    repairWorkspaceGeneratedPackageLinks: async () => undefined,
+    refreshGeneratedPackages: async () => undefined,
     resolveSurfaceTarget: (surfacePiSessionId: string) => ({
       workspaceSessionId: "session-recovery-coordinator",
       surface: "orchestrator" as const,
@@ -225,7 +288,10 @@ function createRecoveryWork(
 ): RuntimeRecoveryWorkRecord {
   return {
     id: input.id ?? (`recovery-work-${input.kind}` as RecoveryWorkId),
-    workspaceId: input.workspaceId ?? ("workspace-recovery-coordinator" as WorkspaceId),
+    scope: input.scope ?? {
+      kind: "workspace",
+      workspaceId: "workspace-recovery-coordinator" as WorkspaceId,
+    },
     kind: input.kind,
     status: input.status ?? "claimed",
     ownerScope: input.ownerScope ?? { kind: "workspace" },

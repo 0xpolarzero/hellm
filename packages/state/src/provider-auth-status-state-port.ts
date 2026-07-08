@@ -27,7 +27,11 @@ export function providerAuthStatusStatePortFromStructuredSessionState(
     recordProviderStatus: (input) =>
       state
         .recordProviderAuthStatus(input)
-        .pipe(Effect.map((status) => mutationResult(status, providerAuthInvalidations(status)))),
+        .pipe(
+          Effect.map((record) =>
+            mutationResult(record.status, providerAuthInvalidations(record.status)),
+          ),
+        ),
   };
 }
 

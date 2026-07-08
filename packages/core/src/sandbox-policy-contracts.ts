@@ -50,7 +50,7 @@ export const SandboxPolicySnapshotInputSchema = Schema.Struct({
   surfacePiSessionId: Schema.optionalKey(SurfacePiSessionId),
   commandId: CommandId,
   launchKind: SandboxLaunchKindSchema,
-  cwd: Schema.optionalKey(AbsolutePath),
+  cwd: AbsolutePath,
 });
 export type SandboxPolicySnapshotInput = typeof SandboxPolicySnapshotInputSchema.Type;
 
@@ -115,9 +115,12 @@ export type BuildLaunchPolicyInput = typeof BuildLaunchPolicyInputSchema.Type;
 export const SandboxLaunchFactsSchema = Schema.Union([
   Schema.Struct({
     mode: Schema.Literal("managed"),
-    command: Schema.Array(Schema.String),
-    cwd: AbsolutePath,
-    envFacts: Schema.Array(EnvironmentFactSchema),
+    spawn: Schema.Struct({
+      executable: AbsolutePath,
+      args: Schema.Array(Schema.String),
+      cwd: AbsolutePath,
+      envFacts: Schema.Array(EnvironmentFactSchema),
+    }),
     helperPath: AbsolutePath,
     helperArgs: Schema.Array(Schema.String),
     profilePath: Schema.optionalKey(AbsolutePath),
@@ -125,9 +128,12 @@ export const SandboxLaunchFactsSchema = Schema.Union([
   }),
   Schema.Struct({
     mode: Schema.Literal("omitted_full_access"),
-    command: Schema.Array(Schema.String),
-    cwd: AbsolutePath,
-    envFacts: Schema.Array(EnvironmentFactSchema),
+    spawn: Schema.Struct({
+      executable: AbsolutePath,
+      args: Schema.Array(Schema.String),
+      cwd: AbsolutePath,
+      envFacts: Schema.Array(EnvironmentFactSchema),
+    }),
     policySnapshot: SandboxPolicySnapshotSchema,
   }),
 ]);

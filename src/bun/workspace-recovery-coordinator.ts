@@ -1,6 +1,8 @@
 import type { PromptTarget } from "../shared/workspace-contract";
 import { randomUUID } from "node:crypto";
+import * as Exit from "effect/Exit";
 import type {
+  InternalRefreshGeneratedPackagesRequest,
   JsonValue,
   RuntimeOwnerId,
   RuntimeRecoveryStatePortService,
@@ -10,14 +12,16 @@ import type {
   StateContractError,
   SurfacePiSessionId,
   TitleJobId,
+  WorkspaceId,
 } from "@svvy/core";
+import { decodeUnknownInternalRefreshGeneratedPackagesRequestExit } from "@svvy/core";
 import type * as Effect from "effect/Effect";
 
 export interface WorkspaceRecoveryCoordinatorHandlers {
   recoverSurfaceTurn(surfacePiSessionId: string): Promise<void>;
   drainSurfaceQueue(target: PromptTarget): Promise<void>;
   generateTitle(owner: { sessionId?: string; threadId?: string }): Promise<void>;
-  repairWorkspaceGeneratedPackageLinks(work: RuntimeRecoveryWorkRecord): Promise<void>;
+  refreshGeneratedPackages(input: InternalRefreshGeneratedPackagesRequest): Promise<void>;
   resolveSurfaceTarget(surfacePiSessionId: string): PromptTarget;
 }
 
@@ -28,6 +32,7 @@ export class WorkspaceRecoveryCoordinator {
   private closed = false;
 
   constructor(
+    private readonly workspaceId: WorkspaceId,
     private readonly recoveryState: RuntimeRecoveryStatePortService,
     private readonly handlers: WorkspaceRecoveryCoordinatorHandlers,
     private readonly runState: <A>(effect: Effect.Effect<A, StateContractError>) => A,
@@ -186,6 +191,7 @@ export class WorkspaceRecoveryCoordinator {
     return this.runState(
       this.recoveryState.ensureRecoveryWork({
         ...input,
+        scope: { kind: "workspace", workspaceId: this.workspaceId },
         orderingSeq: input.orderingSeq ?? 0,
         priority: input.priority ?? 50,
         availableAt: new Date().toISOString(),
@@ -197,7 +203,10 @@ export class WorkspaceRecoveryCoordinator {
   private async drain(): Promise<void> {
     while (!this.closed) {
       const work = this.runState(
-        this.recoveryState.claimNextRecoveryWork({ claimedBy: this.claimedBy }),
+        this.recoveryState.claimNextRecoveryWork({
+          claimedBy: this.claimedBy,
+          scope: { kind: "workspace", workspaceId: this.workspaceId },
+        }),
       ).value;
       if (!work) return;
       void this.executeClaimedWork(work);
@@ -245,7 +254,7 @@ export class WorkspaceRecoveryCoordinator {
         );
         return;
       case "workspace_generated_package_link_repair":
-        await this.handlers.repairWorkspaceGeneratedPackageLinks(work);
+        await this.handlers.refreshGeneratedPackages(readRefreshGeneratedPackagesRequest(work));
         return;
       case "title_generation":
         await this.handlers.generateTitle({
@@ -270,4 +279,27 @@ function readSurfacePiSessionId(work: RuntimeRecoveryWorkRecord): string {
     return work.ownerScope.surfacePiSessionId;
   }
   throw new Error(`Recovery work ${work.id} is not surface-scoped.`);
+}
+
+function readRefreshGeneratedPackagesRequest(
+  work: RuntimeRecoveryWorkRecord,
+): InternalRefreshGeneratedPackagesRequest {
+  const payload = isRecord(work.payloadJson) ? work.payloadJson : {};
+  const refresh = isRecord(payload.refreshGeneratedPackages)
+    ? payload.refreshGeneratedPackages
+    : {};
+  const sourceCommandId =
+    typeof refresh.sourceCommandId === "string" ? refresh.sourceCommandId : undefined;
+  const decoded = decodeUnknownInternalRefreshGeneratedPackagesRequestExit({
+    scope: refresh.scope,
+    workspaceId: refresh.workspaceId,
+    packages: refresh.packages,
+    reason: refresh.reason,
+    ...(sourceCommandId ? { sourceCommandId } : {}),
+    recoveryWorkId: work.id,
+  });
+  if (Exit.isSuccess(decoded)) {
+    return decoded.value;
+  }
+  throw new Error(`Recovery work ${work.id} has an invalid generated-package refresh payload.`);
 }

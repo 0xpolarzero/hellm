@@ -5,22 +5,19 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  type GeneratedExtensionExportDiscoveryHost,
   generatedExtensionExportIdsFromHost,
   generatedExtensionsPackageContentsFromHost,
   renderGeneratedExtensionsPackageFiles,
-  type GeneratedExtensionExportDiscoveryHost,
 } from "@svvy/extensions";
-import type { AbsolutePath } from "@svvy/core";
-import {
-  ExtensionDependencyApprovalStore,
-  extensionDependencyIdentityFromDeclaration,
-} from "./extension-dependency-approval-store";
+import type { AbsolutePath, ExtensionDependencyApprovalIdentity } from "@svvy/core";
+import { extensionDependencyIdentityFromDeclaration } from "./extension-dependency-approval-store";
+import type { ExtensionDependencyCommittedApprovalState } from "./svvyx-extensions-command";
 
 export { GENERATED_EXTENSIONS_PACKAGE_NAME } from "@svvy/extensions";
 export { generatedExtensionReferenceExpression } from "@svvy/extensions";
@@ -50,6 +47,7 @@ export function effectiveExtensionsGeneratedPackagePath(
 
 export function refreshGeneratedExtensionsPackage(
   options: {
+    dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
     extensionsGeneratedPackagePath?: string;
     extensionsRoot?: string;
     generatedPackagePath?: string;
@@ -59,7 +57,7 @@ export function refreshGeneratedExtensionsPackage(
   const extensionsRoot = options.extensionsRoot ?? defaultExtensionsRoot();
   const contents = generatedExtensionsPackageContentsFromHost(
     { extensionsRoot: extensionsRoot as AbsolutePath },
-    generatedExtensionDiscoveryHost(extensionsRoot),
+    generatedExtensionDiscoveryHost(options.dependencyApprovalState),
   );
   writeGeneratedExtensionsPackageFiles(generatedPackagePath, contents.files);
   return {
@@ -89,28 +87,32 @@ function writeGeneratedExtensionsPackageFiles(
 }
 
 export function generatedExtensionExportIds(
-  options: { extensionsRoot?: string } = {},
+  options: {
+    dependencyApprovalState?: ExtensionDependencyCommittedApprovalState;
+    extensionsRoot?: string;
+  } = {},
 ): Set<string> {
   const extensionsRoot = options.extensionsRoot ?? defaultExtensionsRoot();
   return generatedExtensionExportIdsFromHost(
     { extensionsRoot: extensionsRoot as AbsolutePath },
-    generatedExtensionDiscoveryHost(extensionsRoot),
+    generatedExtensionDiscoveryHost(options.dependencyApprovalState),
   );
 }
 
 function generatedExtensionDiscoveryHost(
-  extensionsRoot: string,
+  dependencyApprovalState: ExtensionDependencyCommittedApprovalState | undefined,
 ): GeneratedExtensionExportDiscoveryHost {
-  const dependencyApprovalStore = new ExtensionDependencyApprovalStore({ extensionsRoot });
   return {
-    isDependencyApproved: (dependency) =>
-      dependencyApprovalStore.hasApproved(extensionDependencyIdentityFromDeclaration(dependency)),
+    isDependencyApproved: (dependency: ExtensionDependencyApprovalIdentity) =>
+      dependencyApprovalState?.isApproved(extensionDependencyIdentityFromDeclaration(dependency)) ??
+      false,
     join,
     readDirectory: (path) => {
-      if (!existsSync(path) || !statSync(path).isDirectory()) {
+      try {
+        return readdirSync(path);
+      } catch {
         return [];
       }
-      return readdirSync(path);
     },
     readFileString: (path) => {
       try {
@@ -119,11 +121,17 @@ function generatedExtensionDiscoveryHost(
         return null;
       }
     },
-    sourceFingerprint: sourceBuildFingerprint,
+    sourceFingerprint: (sourceRoot) => sourceBuildFingerprint(sourceRoot),
     statType: (path) => {
       try {
-        const stat = statSync(path);
-        return stat.isDirectory() ? "Directory" : stat.isFile() ? "File" : "Other";
+        const stats = lstatSync(path);
+        if (stats.isDirectory()) {
+          return "Directory";
+        }
+        if (stats.isFile()) {
+          return "File";
+        }
+        return "Other";
       } catch {
         return null;
       }

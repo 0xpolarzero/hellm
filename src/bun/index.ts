@@ -6,6 +6,8 @@ import {
   defineElectrobunRPC,
 } from "electrobun/bun";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
 import type {
   AbortPromptInput,
   CommandId,
@@ -70,7 +72,11 @@ import {
   supportsOAuth,
 } from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import { getSvvyAgentDir, type SessionDefaults } from "./session-catalog";
+import {
+  decodePromptClientSubmissionToRuntimeInput,
+  getSvvyAgentDir,
+  type SessionDefaults,
+} from "./session-catalog";
 import {
   buildWorkflowsGeneratedPackage,
   getWorkflowsSourceRoot,
@@ -80,13 +86,18 @@ import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-work
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
+import { RuntimeLayerConfigFromEnv } from "@svvy/runtime/bootstrap";
 import {
   FILE_BACKED_EDIT_CONFLICT_CODE,
   isFileBackedEditConflictError,
 } from "../shared/file-backed-edit";
 import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
-import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
+import {
+  getWorkspaceRuntimeForRequest,
+  getWorkspaceRuntimeOperationsForRequest,
+  stripWorkspaceId,
+} from "./workspace-rpc-routing";
 import {
   assertExtensionEnvOverrideTarget,
   assertExtensionEnvSecretTarget,
@@ -927,9 +938,17 @@ const recordDevBrowserToolsLog: DevBrowserToolsRecorder["recordLog"] = (...args)
 const recordDevBrowserToolsError: DevBrowserToolsRecorder["recordError"] = (...args) =>
   devBrowserToolsRecorder.recordError(...args);
 
+const runtimeConfigEnv = Object.fromEntries(
+  Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+);
+const runtimeLayerConfig = Effect.runSync(
+  RuntimeLayerConfigFromEnv.parse(ConfigProvider.fromEnv({ env: runtimeConfigEnv })),
+);
+
 const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   initialCwd: startupWorkspaceCwd,
   openInitialWorkspace: !!process.env.SVVY_WORKSPACE_CWD,
+  runtimeLayerConfig,
   forwardBridgeLog: (level, message, source, details, error) => {
     if (level === "error") {
       recordDevBrowserToolsError("app", message, source, details, error);
@@ -940,8 +959,8 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   runtimeDependencies: {
     ensureUsableProviderAuth,
     getProviderAuthUnavailableMessage,
-    recordDevBrowserToolsEvent,
   },
+  listRecoverableWorkspaces: () => appWorkspaceTabsStore.getState()?.knownWorkspaces ?? [],
   onAppLogUpdate: (workspaceId, payload) => {
     try {
       rpc.send.sendAppLogUpdate({
@@ -1023,6 +1042,12 @@ function recordAppRuntimeError(
 
 function getWorkspaceRuntime(input: Parameters<typeof getWorkspaceRuntimeForRequest>[1]) {
   return getWorkspaceRuntimeForRequest(workspaceRuntimeRegistry, input);
+}
+
+function getWorkspaceRuntimeOperations(
+  input: Parameters<typeof getWorkspaceRuntimeOperationsForRequest>[1],
+) {
+  return getWorkspaceRuntimeOperationsForRequest(workspaceRuntimeRegistry, input);
 }
 
 function addWorkspaceBranch<T extends { cwd: string }>(info: T): T & { branch?: string } {
@@ -1499,13 +1524,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       setExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { extensionId, name, value } = input;
-        assertExtensionEnvSecretTarget({ extensionId, name });
+        const { extensionId, envName, value } = input;
+        assertExtensionEnvSecretTarget({ extensionId, envName });
         assertExtensionEnvWriteValue(value);
-        extensionEnvSecretStore.set({ extensionId, name }, value);
+        extensionEnvSecretStore.set({ kind: "extension-env", extensionId, envName }, value);
         runtime.appLog.info("settings", "Extension env secret updated.", {
           extensionId,
-          envName: name,
+          envName,
         });
         return readBuiltinExtensionsInventory({
           agentSettingsStore: runtime.agentSettingsStore,
@@ -1518,12 +1543,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       removeExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { extensionId, name } = input;
-        assertExtensionEnvSecretTarget({ extensionId, name });
-        extensionEnvSecretStore.remove({ extensionId, name });
+        const { extensionId, envName } = input;
+        assertExtensionEnvSecretTarget({ extensionId, envName });
+        extensionEnvSecretStore.remove({ kind: "extension-env", extensionId, envName });
         runtime.appLog.info("settings", "Extension env secret removed.", {
           extensionId,
-          envName: name,
+          envName,
         });
         return readBuiltinExtensionsInventory({
           agentSettingsStore: runtime.agentSettingsStore,
@@ -1536,8 +1561,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       setExtensionEnvOverride: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { extensionId, name, value } = input;
-        assertExtensionEnvOverrideTarget({ extensionId, name });
+        const { extensionId, envName, value } = input;
+        assertExtensionEnvOverrideTarget({ extensionId, envName });
         assertExtensionEnvWriteValue(value);
         const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
         runtime.agentSettingsStore.setExtensionEnv({
@@ -1545,13 +1570,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             ...current,
             [extensionId]: {
               ...current[extensionId],
-              [name]: value,
+              [envName]: value,
             },
           },
         });
         runtime.appLog.info("settings", "Extension env override updated.", {
           extensionId,
-          envName: name,
+          envName,
         });
         return readBuiltinExtensionsInventory({
           agentSettingsStore: runtime.agentSettingsStore,
@@ -1564,11 +1589,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       removeExtensionEnvOverride: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { extensionId, name } = input;
-        assertExtensionEnvOverrideTarget({ extensionId, name });
+        const { extensionId, envName } = input;
+        assertExtensionEnvOverrideTarget({ extensionId, envName });
         const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
         const extensionOverrides = { ...current[extensionId] };
-        delete extensionOverrides[name];
+        delete extensionOverrides[envName];
         const next = { ...current, [extensionId]: extensionOverrides };
         if (Object.keys(extensionOverrides).length === 0) {
           delete next[extensionId];
@@ -1576,7 +1601,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         runtime.agentSettingsStore.setExtensionEnv({ nonSecretOverrides: next });
         runtime.appLog.info("settings", "Extension env override removed.", {
           extensionId,
-          envName: name,
+          envName,
         });
         return readBuiltinExtensionsInventory({
           agentSettingsStore: runtime.agentSettingsStore,
@@ -1771,18 +1796,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const saved = next.workflowAgents[key] ?? settings;
         runtime.appLog.info("settings", "Workflow agent settings updated.", { key });
         try {
-          const build = await buildWorkflowsGeneratedPackage({
-            modelCatalog,
-            workspaceCwds: workspaceRuntimeRegistry
-              .listOpenWorkspaces()
-              .map((workspace) => workspace.cwd),
-          });
+          const build = await buildWorkflowsGeneratedPackage({ modelCatalog });
           if (build.ok) {
             runtime.appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
               reason: "workflow-agent-settings",
               workflowDiagnosticCount: build.diagnostics.length,
               workflowExportCount: build.items.length,
-              workflowLinkedWorkspaceCount: build.linkedWorkspaces.length,
             });
           } else {
             runtime.appLog.warning(
@@ -1843,9 +1862,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         try {
           const build = await buildWorkflowsGeneratedPackage({
             modelCatalog: readDefaultModelCatalog(),
-            workspaceCwds: workspaceRuntimeRegistry
-              .listOpenWorkspaces()
-              .map((workspace) => workspace.cwd),
           });
           if (!build.ok) {
             runtime.agentSettingsStore.setWorkflowAgent(key, previous);
@@ -2125,11 +2141,17 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
       },
       writeCommandStdin: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        return await runtime.runtimeFacade.commands.writeStdin({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        return await runtimeOperations.commands.writeStdin({
           commandId: input.commandId as CommandId,
           text: input.text,
-          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
+          ...(input.clientSubmission
+            ? {
+                clientSubmission: decodePromptClientSubmissionToRuntimeInput(
+                  input.clientSubmission,
+                ),
+              }
+            : {}),
         });
       },
       listHandlerThreads: async (input) => {
@@ -2366,12 +2388,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
-        const runtime = getWorkspaceRuntime(payload);
-        const result = await runtime.runtimeFacade.messages.submit({
+        const runtimeOperations = getWorkspaceRuntimeOperations(payload);
+        const result = await runtimeOperations.messages.submit({
           target: payload.target as SubmitMessageInput["target"],
           message: payload.message,
           delivery: payload.delivery,
-          clientSubmission: payload.clientSubmission,
+          clientSubmission: decodePromptClientSubmissionToRuntimeInput(payload.clientSubmission),
         });
         return {
           target: result.target,
@@ -2455,14 +2477,24 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       deleteQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.deleteQueuedSurfaceMessage(input);
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        const abortInput = {
+          target: input.target as AbortPromptInput["target"],
+          mode: "queued",
+          queuedMessageId: input.queuedMessageId as Extract<
+            AbortPromptInput,
+            { readonly mode: "queued" }
+          >["queuedMessageId"],
+          reason: "Deleted queued surface message.",
+        } satisfies AbortPromptInput;
+        await runtimeOperations.messages.abort(abortInput);
         runtime.appLog.info("prompt", "Queued surface message deleted.", {
           workspaceSessionId: input.target.workspaceSessionId,
           surfacePiSessionId: input.target.surfacePiSessionId,
           threadId: input.target.threadId,
           queuedMessageId: input.queuedMessageId,
         });
-        return result;
+        return runtime.catalog.refreshQueuedSurfaceMutation({ target: input.target });
       },
       editQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2488,8 +2520,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       steerQueuedSurfaceMessage: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runtime.runtimeFacade.queues.steer({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        await runtimeOperations.queues.steer({
           target: input.target as SteerQueuedMessageInput["target"],
           queuedMessageId: input.queuedMessageId as SteerQueuedMessageInput["queuedMessageId"],
         });
@@ -2497,7 +2529,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       answerRequestUserInput: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const answerResult = await runtime.runtimeFacade.requestInput.answer({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        const answerResult = await runtimeOperations.requestInput.answer({
           surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
           requestId: input.requestId as RequestInputRequestId,
           questionId: input.questionId as RequestInputQuestionId,
@@ -2509,7 +2542,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
                 }
               : ({ kind: "custom", text: input.answer.text } satisfies RequestUserInputAnswer),
           delivery: input.delivery,
-          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
+          ...(input.clientSubmission
+            ? {
+                clientSubmission: decodePromptClientSubmissionToRuntimeInput(
+                  input.clientSubmission,
+                ),
+              }
+            : {}),
         });
         const result = runtime.catalog.getRequestInputSurfaceMutationResponse({
           surfacePiSessionId: input.surfacePiSessionId,
@@ -2528,7 +2567,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       answerRuntimeApprovalRequest: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        await runtime.runtimeFacade.approvals.answer({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        await runtimeOperations.approvals.answer({
           approvalId: input.requestId as RuntimeApprovalId,
           decision: input.approved ? "approved" : "denied",
           ...(input.reason === undefined ? {} : { reason: input.reason ?? "" }),
@@ -2542,11 +2582,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       setRequestUserInputTimerPaused: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        await runtime.runtimeFacade.requestInput.setTimerPaused({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        await runtimeOperations.requestInput.setTimerPaused({
           surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
           requestId: input.requestId as RequestInputRequestId,
           paused: input.paused,
-          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
+          ...(input.clientSubmission
+            ? {
+                clientSubmission: decodePromptClientSubmissionToRuntimeInput(
+                  input.clientSubmission,
+                ),
+              }
+            : {}),
         });
         runtime.appLog.info("prompt", "Request user input timer updated.", {
           surfacePiSessionId: input.surfacePiSessionId,
@@ -2567,8 +2614,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       cancelPrompt: async (input): Promise<{ ok: boolean }> => {
-        const runtime = getWorkspaceRuntime(input);
-        await runtime.runtimeFacade.messages.abort({
+        const runtimeOperations = getWorkspaceRuntimeOperations(input);
+        await runtimeOperations.messages.abort({
           target: input.target as AbortPromptInput["target"],
           mode: "all-for-surface",
         });

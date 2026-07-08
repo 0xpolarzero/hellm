@@ -1,23 +1,28 @@
-import type { RuntimeEvent, RuntimeSurfaceTarget } from "@svvy/core";
+import type {
+  RuntimeEventSequence,
+  RuntimeSurfaceTarget,
+  StateInvalidationDescriptor,
+  SurfaceStreamPatchInput,
+  SurfacePiSessionId,
+  WorkspaceId,
+} from "@svvy/core";
 import type { createRuntimeFacade } from "@svvy/runtime";
+import type { createStateCommandsFacade, createStateFacade } from "@svvy/state";
 
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
 type RuntimeCommandsFacade = RuntimeFacade["commands"];
+type BootstrapStateFacade = ReturnType<typeof createStateFacade>;
 
-export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close">;
+export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;
 
 export interface RendererStateFacade {
-  readonly readModels: {
-    fetch(input: unknown, options?: unknown): Promise<unknown>;
-    refetchInvalidation(input: unknown, options?: unknown): Promise<readonly unknown[]>;
-    rebaseline(input: unknown, options?: unknown): Promise<unknown>;
-  };
-  close(): void;
+  readonly readModels: Pick<
+    BootstrapStateFacade["readModels"],
+    "fetch" | "refetchInvalidation" | "rebaseline"
+  >;
 }
 
-export interface StateCommandsFacade {
-  readonly [group: string]: unknown;
-}
+export type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
 
 export interface DesktopNotificationBridge {
   start(): Promise<void>;
@@ -58,7 +63,26 @@ export interface DesktopBridgeRegistration {
 export type DesktopRendererCommand = "command-palette.open" | "quick-open.open" | "settings.open";
 
 export type DesktopRendererNotification =
-  | { readonly kind: "runtime-event"; readonly event: RuntimeEvent }
+  | {
+      readonly kind: "read-model-changed";
+      readonly sequence: RuntimeEventSequence;
+      readonly scope:
+        | { readonly kind: "app" }
+        | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
+        | {
+            readonly kind: "surface";
+            readonly workspaceId: WorkspaceId;
+            readonly surfacePiSessionId: SurfacePiSessionId;
+          };
+      readonly invalidation: StateInvalidationDescriptor;
+    }
+  | {
+      readonly kind: "surface-stream-patch";
+      readonly sequence: RuntimeEventSequence;
+      readonly workspaceId: WorkspaceId;
+      readonly surfacePiSessionId: SurfacePiSessionId;
+      readonly patch: SurfaceStreamPatchInput;
+    }
   | { readonly kind: "read-model-rebaseline-required"; readonly reason: string }
   | { readonly kind: "renderer-command"; readonly command: DesktopRendererCommand }
   | { readonly kind: "app-shutdown"; readonly reason: string };

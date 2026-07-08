@@ -24,11 +24,10 @@ describe("Bun app-log entrypoints", () => {
     expect(indexSource).toContain('"surface", "Surface closed."');
     expect(indexSource).toContain('"surface", "Surface model changed."');
     expect(indexSource).toContain('"surface", "Surface reasoning changed."');
-    expect(runtimeLayerSource).toContain('"prompt", "Prompt requested."');
-    expect(runtimeLayerSource).toContain('"prompt", "Prompt started."');
-    expect(runtimeLayerSource).toContain('"prompt", "Prompt finished."');
-    expect(runtimeLayerSource).toContain('"Prompt queued for active surface."');
-    expect(runtimeLayerSource).toContain('"Prompt dispatched to pi runtime."');
+    expect(runtimeLayerSource).toContain('source: "prompt"');
+    expect(runtimeLayerSource).toContain('message: "Prompt requested."');
+    expect(runtimeLayerSource).toContain('"Prompt queued for surface delivery."');
+    expect(runtimeLayerSource).toContain('"Prompt queued and surface queue wake requested."');
     expect(indexSource).toContain(
       '"external-editor", "Workspace source opened in external editor."',
     );

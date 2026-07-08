@@ -1,8 +1,9 @@
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type {
   NativeToolDeclaration,
   NativeToolResult,
   PiToolExecutor,
+  PiToolExecutionUpdate,
   RuntimeToolExecutionError,
   SurfacePiSessionId,
   ToolCallId,
@@ -14,10 +15,19 @@ export type RunPiToolEffect = (
   effect: Effect.Effect<NativeToolResult, RuntimeToolExecutionError>,
 ) => Promise<NativeToolResult>;
 
+export type EmitPiToolExecutionUpdate = (input: {
+  readonly turnId: TurnId;
+  readonly surfacePiSessionId: SurfacePiSessionId;
+  readonly piToolCallId: ToolCallId;
+  readonly toolName: string;
+  readonly update: PiToolExecutionUpdate;
+}) => Effect.Effect<void, RuntimeToolExecutionError>;
+
 export function createPiCustomToolDefinitions(
   declarations: readonly NativeToolDeclaration[],
   executor: PiToolExecutor,
   runToolEffect: RunPiToolEffect,
+  emitToolExecutionUpdate: EmitPiToolExecutionUpdate,
   getExecutionContext: (input: {
     readonly piToolCallId: ToolCallId;
     readonly toolName: string;
@@ -42,6 +52,14 @@ export function createPiCustomToolDefinitions(
             piToolCallId,
             toolName: tool.name,
             argumentsJson: JSON.stringify(params ?? null),
+            emit: (update) =>
+              emitToolExecutionUpdate({
+                turnId: context.turnId,
+                surfacePiSessionId: context.surfacePiSessionId,
+                piToolCallId,
+                toolName: tool.name,
+                update,
+              }),
           }),
         );
         return result as Awaited<ReturnType<ToolDefinition["execute"]>>;

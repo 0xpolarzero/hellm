@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import {
   buildAppGlobalSourceWatchInputs,
   buildWorkspaceSourceWatchInputs,
-  type SourceInvalidationHost,
-} from "@svvy/runtime/bootstrap";
+} from "./source-watch-inputs";
+import type { RuntimeSourceInvalidationHost } from "@svvy/runtime/bootstrap";
 
 const tempDirs: string[] = [];
 
@@ -109,7 +109,7 @@ describe("source invalidation coordinator", () => {
   });
 });
 
-function testHost(homeDir: string): SourceInvalidationHost {
+function testHost(homeDir: string): RuntimeSourceInvalidationHost {
   return {
     homeDir,
     path: {
@@ -143,6 +143,7 @@ function testHost(homeDir: string): SourceInvalidationHost {
               : ("other" as const),
         })),
       readFileString: (path) => readFileSync(path, "utf8"),
+      realPath: (path) => resolve(path),
     },
     hashStrings: (parts) => {
       const hash = createHash("sha256");

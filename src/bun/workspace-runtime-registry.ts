@@ -1,5 +1,6 @@
-import { basename, join } from "node:path";
-import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -11,32 +12,29 @@ import {
 } from "node:fs";
 import * as Effect from "effect/Effect";
 import {
-  buildAppGlobalSourceWatchInputs,
-  buildWorkspaceSourceWatchInputs,
-  type SourceInvalidationEvent,
-  type SourceInvalidationHost,
-  generatedContextReasonForRuntimeSourceInvalidation,
-  generatedPackagesForRuntimeSourceInvalidation,
   type RuntimeGeneratedPackageWorkspaceLinkFileHost,
+  type RuntimeLayerConfig,
+  type RuntimeSourceInvalidationEvent,
+  type RuntimeSourceInvalidationHost,
+  type RuntimeSourceInvalidationScanPortService,
 } from "@svvy/runtime/bootstrap";
 import {
+  createRuntimeSourceInvalidationCoordinatorHandle,
+  type RuntimeSourceInvalidationCoordinatorHandle,
+} from "@svvy/runtime/source-invalidation-coordinator-adapter";
+import {
   RuntimeContractError,
+  StateContractError,
   type AbsolutePath,
-  type GeneratedPackagesRefreshResult,
+  type ExtensionStatePortService,
+  type GeneratedPackageWorkspaceLinkRepairInput,
+  type IsoDateTimeString,
   type RefreshGeneratedContextRequest,
-  type RefreshGeneratedPackagesRequest,
-  type OpenExtensionSourceEditInput,
-  type SaveExtensionSourceEditInput,
-  type SourceEditSaveResult,
-  type SourceEditSession,
-  type SourceInvalidationHint,
-  type SourceReconcileRequest,
-  type SourceReconcileResult,
-  type StateInvalidationDescriptor,
-  type RuntimeEvent,
   type RuntimeGeneratedPackageStatePortService,
+  type RuntimeSourceStatePortService,
   type WorkspaceId,
 } from "@svvy/core";
+import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import type {
   AppLogUpdateMessage,
   SurfaceSyncMessage,
@@ -45,13 +43,15 @@ import type {
   WorkspaceSyncMessage,
 } from "../shared/workspace-contract";
 import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
-import { createAppLogFacade, type AppLogFacade } from "@svvy/state";
+import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
+import { markPersistedWorkspaceGeneratedPackageLinksRepairNeeded } from "@svvy/state/generated-package-maintenance";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import {
   getSvvySessionDir,
   getSvvyAgentDir,
   getSvvyDataDir,
-  WorkspaceSessionCatalog,
+  STRUCTURED_SESSION_DB_FILENAME,
+  type WorkspaceSessionCatalog,
   type TitleGenerationLogEvent,
   type WorkflowsGeneratedPackageLogEvent,
 } from "./session-catalog";
@@ -60,30 +60,54 @@ import {
   getWorkflowsGeneratedPackagePath,
   getWorkflowsSourceRoot,
 } from "./smithers-runtime/workflow-library";
+import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-package";
 import {
-  effectiveExtensionsGeneratedPackagePath,
-  sourceBuildFingerprint,
-} from "./generated-extensions-package";
-import {
-  readBuiltinExtensionsInventory,
-  writeExtensionInstructionFile,
-} from "./svvyx-extensions-command";
-import { ExtensionDependencyApprovalStore } from "./extension-dependency-approval-store";
+  getCoreTypeContractPackagePath,
+  materializeGeneratedCoreTypeContractPackage,
+} from "./generated-core-type-contract-package";
 import { canonicalizeWorkspaceCwd, getDefaultWorkspaceCwd } from "./workspace-context";
 import { WorkspacePathIndex } from "./workspace-path-index";
 import {
-  createRuntimeSourceInvalidationCoordinatorHandle,
   createCatalogBackedRuntime,
   createNodeSourceInvalidationHost,
-  createRuntimeEventBusHandle,
-  refreshRuntimeGeneratedPackagesAtRuntimeBoundary,
+  createRuntimeBackedWorkspaceSessionCatalog,
   type CatalogBackedRuntime,
   type CatalogBackedRuntimeDependencies,
-  type RuntimeSourceInvalidationCoordinatorHandle,
+  type RuntimeGeneratedPackageRefreshBoundaryHost,
 } from "./runtime-service-adapter";
+import {
+  buildAppGlobalSourceWatchInputs,
+  buildWorkspaceSourceWatchInputs,
+} from "./source-watch-inputs";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 
+type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
+  readonly sourceRoots: ExtensionSourceRoots;
+  readonly generatedPackageRoots: GeneratedPackageRoots;
+  readonly extensionStatePort: ExtensionStatePortService;
+  generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
+};
+
 type RuntimeFacade = CatalogBackedRuntime["facade"];
+type RuntimeSourceInvalidationReactionInput =
+  | {
+      readonly scope: { readonly kind: "app-global" };
+      readonly event: RuntimeSourceInvalidationEvent;
+    }
+  | {
+      readonly scope: { readonly kind: "workspace"; readonly workspaceId: WorkspaceId };
+      readonly event: RuntimeSourceInvalidationEvent;
+    };
+export type WorkspaceRuntimeOperations = Pick<
+  RuntimeFacade,
+  | "approvals"
+  | "commands"
+  | "messages"
+  | "queues"
+  | "requestInput"
+  | "sourceEdits"
+  | "sourceInvalidation"
+>;
 
 const nodeGeneratedPackageWorkspaceLinkFileHost: RuntimeGeneratedPackageWorkspaceLinkFileHost = {
   pathExists: (path: string): boolean => existsSync(path),
@@ -119,14 +143,6 @@ const nodeGeneratedPackageWorkspaceLinkFileHost: RuntimeGeneratedPackageWorkspac
   },
 };
 
-function sourceEditContractError(
-  operation: string,
-  reason: RuntimeContractError["reason"],
-  message: string,
-): RuntimeContractError {
-  return new RuntimeContractError({ operation, reason, message });
-}
-
 type WorkspaceRuntimeRegistryOptions = {
   initialCwd: string;
   openInitialWorkspace?: boolean;
@@ -142,19 +158,16 @@ type WorkspaceRuntimeRegistryOptions = {
   onAppLogUpdate?: (workspaceId: string, payload: AppLogUpdateMessage) => void;
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
+  listRecoverableWorkspaces?: () => readonly WorkspaceInfoResponse[];
   runtimeDependencies?: Partial<CatalogBackedRuntimeDependencies>;
-  sourceInvalidationHost?: SourceInvalidationHost;
+  runtimeLayerConfig: RuntimeLayerConfig;
+  sourceInvalidationHost?: RuntimeSourceInvalidationHost;
   sourceWatchEnabled?: boolean;
   workflowsGeneratedPackagePath?: string;
   workflowsExtensionsGeneratedPackagePath?: string;
+  coreTypeContractPackagePath?: string;
   workflowsSourceRoot?: string;
 };
-
-type RuntimeEventDraft = RuntimeEvent extends infer Event
-  ? Event extends { sequence: number }
-    ? Omit<Event, "eventGenerationId" | "sequence">
-    : never
-  : never;
 
 type OpenWorkspaceOptions = {
   kind?: WorkspaceKind;
@@ -169,9 +182,8 @@ export type WorkspaceRuntime = {
   catalog: WorkspaceSessionCatalog;
   pathIndex: WorkspacePathIndex;
   agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
-  appLogs: AppLogFacade;
+  appLogs: StateAppLogsFacade;
   appLog: ReturnType<typeof createAppLogger>;
-  runtimeFacade: RuntimeFacade;
   getInfo: () => WorkspaceInfoResponse;
   dispose: () => Promise<void>;
 };
@@ -182,22 +194,30 @@ type RuntimeRecord = WorkspaceRuntime & {
   unsubscribeAppLog: () => void;
 };
 
+type AppGlobalRuntimeRecord = {
+  facade: RuntimeFacade;
+  sourceStatePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
+  dispose(): Promise<void>;
+};
+
 export class WorkspaceRuntimeRegistry {
   private readonly runtimes = new Map<string, RuntimeRecord>();
+  private readonly runtimeFacades = new Map<string, RuntimeFacade>();
   private readonly pendingRuntimes = new Map<string, Promise<RuntimeRecord>>();
+  private appGlobalRuntime: Promise<AppGlobalRuntimeRecord> | null = null;
   private readonly startupReady: Promise<void>;
   private readonly sharedAppLogFacades = new Map<
     string,
     {
-      appLogs: AppLogFacade;
+      appLogs: StateAppLogsFacade;
       refCount: number;
     }
   >();
   private readonly agentDir: string;
   private readonly appDataDir: string;
-  private readonly sourceInvalidationHost: SourceInvalidationHost;
+  private readonly sourceInvalidationHost: RuntimeSourceInvalidationHost;
   private readonly appGlobalSourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle;
-  private readonly runtimeEventBus = createRuntimeEventBusHandle();
+  private readonly appGlobalSourceReady: Promise<void>;
   private activeWorkspaceId: string | null = null;
 
   constructor(private readonly options: WorkspaceRuntimeRegistryOptions) {
@@ -206,7 +226,9 @@ export class WorkspaceRuntimeRegistry {
     this.sourceInvalidationHost =
       options.sourceInvalidationHost ?? createNodeSourceInvalidationHost();
     this.appGlobalSourceInvalidationCoordinator = createRuntimeSourceInvalidationCoordinatorHandle({
+      debounceMs: this.options.runtimeLayerConfig.sourceDebounceMs,
       host: this.sourceInvalidationHost,
+      maxCoalescingLatencyMs: this.options.runtimeLayerConfig.sourceMaxCoalescingLatencyMs,
       readInputs: () =>
         buildAppGlobalSourceWatchInputs({
           extensionsRoot: extensionsRootForAgentDir(this.agentDir),
@@ -215,7 +237,10 @@ export class WorkspaceRuntimeRegistry {
         }),
       onDomainsChanged: (event) =>
         Effect.promise(async () => {
-          await this.handleSourceInvalidationEvent(event);
+          await this.handleSourceInvalidationEvent({
+            scope: { kind: "app-global" },
+            event,
+          });
           for (const runtime of this.runtimes.values()) {
             runtime.appLog.info("source.graph", "Source inputs changed.", {
               domains: event.domains,
@@ -232,99 +257,30 @@ export class WorkspaceRuntimeRegistry {
           error,
         );
       },
+      reconciliationIntervalMs: this.options.runtimeLayerConfig.appSourceReconcileIntervalMs,
+      retryInitialDelayMs: this.options.runtimeLayerConfig.sourceRetryInitialDelayMs,
+      retryMaxAttempts: this.options.runtimeLayerConfig.sourceRetryMaxAttempts,
+      retryMaxDelayMs: this.options.runtimeLayerConfig.sourceRetryMaxDelayMs,
+      sourceScanRecorder: {
+        scope: { kind: "app-global" },
+        statePort: {
+          recordSourceScan: (input) =>
+            Effect.flatMap(
+              Effect.promise(() => this.getAppGlobalRuntimeRecord()),
+              (runtime) => runtime.sourceStatePort.recordSourceScan(input),
+            ),
+        },
+      },
       watchEnabled: this.options.sourceWatchEnabled,
     });
-    this.startupReady = this.appGlobalSourceInvalidationCoordinator.ready().then(async () => {
+    this.appGlobalSourceReady = this.appGlobalSourceInvalidationCoordinator.ready();
+    this.startupReady = this.appGlobalSourceReady.then(async () => {
       if (!options.openInitialWorkspace) {
         return;
       }
       const runtime = await this.acquireWorkspace(options.initialCwd);
       this.activeWorkspaceId = runtime.workspaceId;
     });
-  }
-
-  private async openExtensionSourceEdit(
-    agentSettingsStore: ReturnType<typeof createAgentSettingsStore>,
-    catalog: WorkspaceSessionCatalog,
-    cwd: string,
-    input: OpenExtensionSourceEditInput,
-  ): Promise<SourceEditSession> {
-    const inventory = await readBuiltinExtensionsInventory({
-      agentSettingsStore,
-      cwd,
-      extensionsRoot: catalog.getExtensionsRoot(),
-      externalInstructionSources: await catalog.getGeneratedAgentContextExternalSources(),
-      includeUserExtensions: true,
-    });
-    const extension = inventory.extensions.find((candidate) => candidate.id === input.sourceId);
-    if (!extension) {
-      throw sourceEditContractError(
-        "runtime.sourceEdits.open",
-        "target-not-found",
-        `Extension source does not exist: ${input.sourceId}`,
-      );
-    }
-    const expectedCategory =
-      input.sourceKind === "builtin-extension"
-        ? "builtin"
-        : input.sourceKind === "user-extension"
-          ? "user"
-          : null;
-    if (!expectedCategory || extension.category !== expectedCategory) {
-      throw sourceEditContractError(
-        "runtime.sourceEdits.open",
-        "read-only-source",
-        `Source kind ${input.sourceKind} is not editable through the extension source edit facade.`,
-      );
-    }
-    const minimal = extension.minimalInstruction;
-    if (!minimal?.editable || !minimal.path) {
-      throw sourceEditContractError(
-        "runtime.sourceEdits.open",
-        "read-only-source",
-        `Extension source is not editable: ${input.sourceId}`,
-      );
-    }
-    return {
-      sourceKind: input.sourceKind,
-      sourceId: input.sourceId,
-      path: minimal.path as AbsolutePath,
-      sourceVersion: minimal.sourceVersion,
-      fingerprint: minimal.sourceVersion,
-      text: minimal.content,
-      diagnostics: [],
-    };
-  }
-
-  private async saveExtensionSourceEdit(
-    agentSettingsStore: ReturnType<typeof createAgentSettingsStore>,
-    catalog: WorkspaceSessionCatalog,
-    cwd: string,
-    input: SaveExtensionSourceEditInput,
-  ): Promise<SourceEditSaveResult> {
-    const current = await this.openExtensionSourceEdit(agentSettingsStore, catalog, cwd, input);
-    if (
-      input.saveMode === "compare-and-swap" &&
-      current.sourceVersion !== input.expectedSourceVersion
-    ) {
-      return { status: "stale", current };
-    }
-    const written = writeExtensionInstructionFile({
-      extensionId: input.sourceId,
-      file: "minimal.md",
-      kind: "minimal",
-      content: input.text,
-      baseSourceVersion: input.expectedSourceVersion,
-      mode: input.saveMode,
-      extensionsRoot: catalog.getExtensionsRoot(),
-    });
-    return {
-      status: "saved",
-      sourceVersion: written.sourceVersion,
-      fingerprint: written.sourceVersion,
-      diagnostics: [],
-      reconcileRequired: true,
-    };
   }
 
   ready(): Promise<void> {
@@ -339,6 +295,7 @@ export class WorkspaceRuntimeRegistry {
     cwd: string,
     options: OpenWorkspaceOptions = {},
   ): Promise<WorkspaceRuntime> {
+    await this.appGlobalSourceReady;
     const workspaceCwd = canonicalizeWorkspaceCwd(cwd);
     const workspaceId = normalizeWorkspaceRuntimeId(workspaceCwd);
     const existing = this.runtimes.get(workspaceId);
@@ -379,6 +336,26 @@ export class WorkspaceRuntimeRegistry {
       throw new Error(`Workspace is not open: ${workspaceId}`);
     }
     return runtime;
+  }
+
+  getRuntimeOperations(workspaceId: string): WorkspaceRuntimeOperations {
+    return this.requireRuntimeFacade(workspaceId);
+  }
+
+  getRuntimeEventSubscription(
+    workspaceId: string,
+    input?: Parameters<RuntimeFacade["events"]>[0],
+  ): ReturnType<RuntimeFacade["events"]> {
+    const workspaceEvents = this.requireRuntimeFacade(workspaceId).events(input);
+    if (!input?.includeAppEvents) {
+      return workspaceEvents;
+    }
+    return Promise.all([
+      workspaceEvents,
+      this.getAppGlobalRuntimeFacade().then((facade) => facade.events(input)),
+    ]).then((subscriptions) => mergeRuntimeEventSubscriptions(subscriptions)) as ReturnType<
+      RuntimeFacade["events"]
+    >;
   }
 
   getActiveRuntime(): WorkspaceRuntime {
@@ -437,6 +414,14 @@ export class WorkspaceRuntimeRegistry {
     return true;
   }
 
+  private requireRuntimeFacade(workspaceId: string): RuntimeFacade {
+    const facade = this.runtimeFacades.get(workspaceId);
+    if (!facade) {
+      throw new Error(`Workspace scope is not open: ${workspaceId}`);
+    }
+    return facade;
+  }
+
   requestSourceInvalidationScan(reason: string): void {
     void this.appGlobalSourceInvalidationCoordinator.requestScan(reason);
     for (const runtime of this.runtimes.values()) {
@@ -445,16 +430,15 @@ export class WorkspaceRuntimeRegistry {
   }
 
   async closeSourceInvalidationCoordinator(): Promise<void> {
+    const appGlobalRuntime = this.appGlobalRuntime;
+    this.appGlobalRuntime = null;
     await Promise.all([
       this.appGlobalSourceInvalidationCoordinator.close(),
       ...Array.from(this.runtimes.values()).map((runtime) =>
         runtime.sourceInvalidationCoordinator.close(),
       ),
+      appGlobalRuntime?.then((runtime) => runtime.dispose()),
     ]);
-  }
-
-  async closeRuntimeEventBus(): Promise<void> {
-    await this.runtimeEventBus.close();
   }
 
   private async createRuntime(
@@ -465,7 +449,12 @@ export class WorkspaceRuntimeRegistry {
     const label = kind === "default" ? "Default Workspace" : basename(cwd) || "workspace";
     const sessionDir = getSvvySessionDir(cwd, this.agentDir);
     const commandStdin = createLiveCommandStdinRegistry();
-    const catalog = new WorkspaceSessionCatalog(
+    let catalog!: WorkspaceSessionCatalog;
+    let resolveRuntimeForRecovery!: (runtime: CatalogBackedRuntime) => void;
+    const runtimeForRecovery = new Promise<CatalogBackedRuntime>((resolve) => {
+      resolveRuntimeForRecovery = resolve;
+    });
+    catalog = createRuntimeBackedWorkspaceSessionCatalog(
       cwd,
       this.agentDir,
       sessionDir,
@@ -476,10 +465,35 @@ export class WorkspaceRuntimeRegistry {
           this.options.workflowsExtensionsGeneratedPackagePath,
         workflowsGeneratedPackagePath: this.options.workflowsGeneratedPackagePath,
         workflowsSourceRoot: this.options.workflowsSourceRoot,
+        refreshGeneratedPackages: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.sourceInvalidation.refreshGeneratedPackages(request);
+        },
+        acquireExecuteTypescriptLaunch: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.launchFacts.acquireExecuteTypescript(request);
+        },
+        acquireDirectToolLaunch: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.launchFacts.acquireDirectToolLaunch(request);
+        },
+        runAcceptedLoadExtension: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.runLoadExtension(request);
+        },
+        runAcceptedRequestUserInput: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.runRequestUserInput(request);
+        },
+        requestDirectToolApproval: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.requestDirectToolApproval(request);
+        },
       },
       undefined,
       undefined,
       commandStdin,
+      this.options.runtimeLayerConfig,
     );
     const pathIndex = new WorkspacePathIndex(cwd);
     const agentSettingsStore = createAgentSettingsStore({
@@ -500,13 +514,8 @@ export class WorkspaceRuntimeRegistry {
         entries,
         summary,
       });
-      void this.publishRuntimeEvent({
-        type: "workspace_read_model.changed",
-        workspaceId: workspaceId as WorkspaceId,
-        invalidation: { model: "appLogs" },
-      });
     });
-    appLog.info("app.lifecycle", "Workspace runtime opened.", {
+    appLog.info("app.lifecycle", "Workspace scope opened.", {
       workspaceId,
       kind,
       cwd,
@@ -535,50 +544,62 @@ export class WorkspaceRuntimeRegistry {
     catalog.setAppLogListener((event) => {
       appendAppLoggerEvent(appLog, event);
     });
-    catalog.setOpenWorkspaceCwdsReader(() =>
-      this.listOpenWorkspaces().map((workspace) => workspace.cwd),
-    );
+    const generatedPackageBoundaryHost = this.createGeneratedPackageRefreshBoundaryHost(catalog, {
+      workspaceId,
+      cwd,
+    });
     const runtimeAdapter = await createCatalogBackedRuntime(
       {
+        sourceRoots: generatedPackageBoundaryHost.sourceRoots,
+        generatedPackageRoots: generatedPackageBoundaryHost.generatedPackageRoots,
+        extensionStatePort: generatedPackageBoundaryHost.extensionStatePort,
+        generatedPackageLinkPath: generatedPackageBoundaryHost.generatedPackageLinkPath,
         catalog,
-        sourceEdits: {
-          open: (input) => this.openExtensionSourceEdit(agentSettingsStore, catalog, cwd, input),
-          save: (input) => this.saveExtensionSourceEdit(agentSettingsStore, catalog, cwd, input),
-        },
-        events: (input) => this.runtimeEventBus.events(input),
-        publishStateInvalidations: (input) => this.runtimeEventBus.publishStateInvalidations(input),
         commandStdin,
         commandControl: commandStdin,
-        sourceInvalidation: {
-          hint: (input) => this.handleSourceInvalidationHint(workspaceId, input),
-          reconcile: (input) => this.reconcileSourceInvalidation(workspaceId, input),
-          refreshGeneratedContext: (input) => this.refreshGeneratedContext(input),
-          refreshGeneratedPackages: (input) => this.refreshGeneratedPackages(workspaceId, input),
+        generatedContextRefreshHost: {
+          refresh: (input) => this.refreshGeneratedContext(input),
         },
-        appLog,
+        generatedPackageRefreshHost: {
+          listAcquiredWorkspaceIds: generatedPackageBoundaryHost.listAcquiredWorkspaceIds,
+          listRecoverableWorkspaceIds: generatedPackageBoundaryHost.listRecoverableWorkspaceIds,
+          now: generatedPackageBoundaryHost.now,
+          workspaceLinkFileHost: generatedPackageBoundaryHost.workspaceLinkFileHost,
+          materializeCoreTypeContractPackage:
+            generatedPackageBoundaryHost.materializeCoreTypeContractPackage,
+        },
+        generatedPackageStatePort: this.createGeneratedPackageStatePort(catalog, {
+          workspaceId,
+          cwd,
+        }),
+        sourceInvalidationScan: this.createSourceInvalidationScanPort(),
+        appLogWritePort: appLogs.writePort,
       },
-      {
-        ensureUsableProviderAuth:
-          this.options.runtimeDependencies?.ensureUsableProviderAuth ??
-          (async () => "test-provider-auth"),
-        getProviderAuthUnavailableMessage:
-          this.options.runtimeDependencies?.getProviderAuthUnavailableMessage ??
-          ((provider) => `No provider auth available for ${provider}.`),
-        recordDevBrowserToolsEvent:
-          this.options.runtimeDependencies?.recordDevBrowserToolsEvent ?? (() => {}),
-      },
+      this.runtimeDependencies(),
+      this.options.runtimeLayerConfig,
     );
+    resolveRuntimeForRecovery(runtimeAdapter);
+    this.runtimeFacades.set(workspaceId, runtimeAdapter.facade);
     const sourceInvalidationCoordinator = createRuntimeSourceInvalidationCoordinatorHandle({
+      debounceMs: this.options.runtimeLayerConfig.sourceDebounceMs,
       host: this.sourceInvalidationHost,
+      maxCoalescingLatencyMs: this.options.runtimeLayerConfig.sourceMaxCoalescingLatencyMs,
       readInputs: () =>
         buildWorkspaceSourceWatchInputs({
           cwd,
           externalInstructions: agentSettingsStore.getState().appPreferences.externalInstructions,
           host: this.sourceInvalidationHost,
         }),
+      sourceScanRecorder: {
+        scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+        statePort: catalog.getRuntimeSourceStatePort(),
+      },
       onDomainsChanged: (event) =>
         Effect.promise(async () => {
-          await this.handleSourceInvalidationEvent(event);
+          await this.handleSourceInvalidationEvent({
+            scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+            event,
+          });
           appLog.info("source.graph", "Source inputs changed.", {
             domains: event.domains,
             reason: event.reason,
@@ -593,6 +614,10 @@ export class WorkspaceRuntimeRegistry {
           error,
         );
       },
+      reconciliationIntervalMs: this.options.runtimeLayerConfig.workspaceSourceReconcileIntervalMs,
+      retryInitialDelayMs: this.options.runtimeLayerConfig.sourceRetryInitialDelayMs,
+      retryMaxAttempts: this.options.runtimeLayerConfig.sourceRetryMaxAttempts,
+      retryMaxDelayMs: this.options.runtimeLayerConfig.sourceRetryMaxDelayMs,
       watchEnabled: this.options.sourceWatchEnabled,
     });
     await sourceInvalidationCoordinator.ready();
@@ -608,7 +633,6 @@ export class WorkspaceRuntimeRegistry {
       agentSettingsStore,
       appLogs,
       appLog,
-      runtimeFacade: runtimeAdapter.facade,
       sourceInvalidationCoordinator,
       unsubscribeAppLog,
       getInfo: () => ({
@@ -618,7 +642,7 @@ export class WorkspaceRuntimeRegistry {
         kind,
       }),
       dispose: async () => {
-        appLog.info("app.lifecycle", "Workspace runtime closed.", {
+        appLog.info("app.lifecycle", "Workspace scope closed.", {
           workspaceId,
           kind,
           cwd,
@@ -629,7 +653,7 @@ export class WorkspaceRuntimeRegistry {
         catalog.setTitleGenerationLogListener(null);
         catalog.setWorkflowsGeneratedPackageLogListener(null);
         catalog.setAppLogListener(null);
-        catalog.setOpenWorkspaceCwdsReader(null);
+        this.runtimeFacades.delete(workspaceId);
         await sourceInvalidationCoordinator.close();
         await runtimeAdapter.dispose();
         await catalog.dispose();
@@ -639,134 +663,259 @@ export class WorkspaceRuntimeRegistry {
     return runtime;
   }
 
-  private async publishRuntimeEvent(event: RuntimeEventDraft): Promise<void> {
-    try {
-      await this.runtimeEventBus.publish(event);
-    } catch (error) {
-      this.options.forwardBridgeLog?.(
-        "warn",
-        "Runtime event publication failed.",
-        "runtime.events",
-        {},
-        error,
-      );
-    }
+  private async getAppGlobalRuntimeFacade(): Promise<RuntimeFacade> {
+    return (await this.getAppGlobalRuntimeRecord()).facade;
   }
 
-  private async handleSourceInvalidationHint(
-    workspaceId: string,
-    input: SourceInvalidationHint,
-  ): Promise<void> {
-    const reason = `runtime_source_hint:${input.domain}`;
-    if (input.scope.kind === "app-global") {
-      await this.appGlobalSourceInvalidationCoordinator.requestScan(reason);
-      return;
+  private async getAppGlobalRuntimeRecord(): Promise<AppGlobalRuntimeRecord> {
+    if (!this.appGlobalRuntime) {
+      this.appGlobalRuntime = this.createAppGlobalRuntime();
     }
-    const runtime = this.runtimes.get(workspaceId);
-    if (!runtime) {
-      throw new Error(`Workspace is not open: ${workspaceId}`);
-    }
-    await runtime.sourceInvalidationCoordinator.requestScan(reason);
+    return await this.appGlobalRuntime;
   }
 
-  private async handleSourceInvalidationEvent(event: SourceInvalidationEvent): Promise<void> {
-    const packageRefresh = generatedPackagesForRuntimeSourceInvalidation(event.domains);
-    if (packageRefresh.length > 0) {
+  private async createAppGlobalRuntime(): Promise<AppGlobalRuntimeRecord> {
+    const cwd = canonicalizeWorkspaceCwd(getDefaultWorkspaceCwd(this.appDataDir));
+    const workspaceId = normalizeWorkspaceRuntimeId(cwd);
+    const sessionDir = getSvvySessionDir(cwd, this.agentDir);
+    const commandStdin = createLiveCommandStdinRegistry();
+    let resolveRuntimeForRecovery!: (runtime: CatalogBackedRuntime) => void;
+    const runtimeForRecovery = new Promise<CatalogBackedRuntime>((resolve) => {
+      resolveRuntimeForRecovery = resolve;
+    });
+    const catalog = createRuntimeBackedWorkspaceSessionCatalog(
+      cwd,
+      this.agentDir,
+      sessionDir,
+      join(sessionDir, "namer"),
+      workspaceId,
+      {
+        workflowsExtensionsGeneratedPackagePath:
+          this.options.workflowsExtensionsGeneratedPackagePath,
+        workflowsGeneratedPackagePath: this.options.workflowsGeneratedPackagePath,
+        workflowsSourceRoot: this.options.workflowsSourceRoot,
+        refreshGeneratedPackages: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.sourceInvalidation.refreshGeneratedPackages(request);
+        },
+        acquireExecuteTypescriptLaunch: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.launchFacts.acquireExecuteTypescript(request);
+        },
+        acquireDirectToolLaunch: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.launchFacts.acquireDirectToolLaunch(request);
+        },
+        runAcceptedLoadExtension: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.runLoadExtension(request);
+        },
+        runAcceptedRequestUserInput: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.runRequestUserInput(request);
+        },
+        requestDirectToolApproval: async (request) => {
+          const runtime = await runtimeForRecovery;
+          return runtime.internal.acceptedNativeTools.requestDirectToolApproval(request);
+        },
+      },
+      undefined,
+      undefined,
+      commandStdin,
+      this.options.runtimeLayerConfig,
+    );
+    const appLogs = this.acquireAppLogFacade(cwd);
+    const appLog = createAppLogger({
+      appLogs,
+      forwardBridgeLog: (level, message, source, details, error) => {
+        this.options.forwardBridgeLog?.(level, message, source, details, error);
+      },
+    });
+
+    catalog.setTitleGenerationLogListener((event) => {
+      recordTitleGenerationLog(appLog, event);
+    });
+    catalog.setWorkflowsGeneratedPackageLogListener((event) => {
       for (const runtime of this.runtimes.values()) {
-        runtime.appLog.info(
-          "workflow.library",
-          "Source invalidation started generated package refresh.",
-          {
-            domains: event.domains,
-            reason: event.reason,
-            packages: packageRefresh,
-          },
-        );
+        recordWorkflowsGeneratedPackageLog(runtime.appLog, event);
       }
-      const ownerRuntime = this.runtimes.values().next().value;
-      if (!ownerRuntime) {
-        return;
-      }
-      const refresh = await this.refreshGeneratedPackages(ownerRuntime.workspaceId, {
-        scope: "app-global",
-        packages: packageRefresh,
-        reason: "source-changed",
-      });
-      for (const status of refresh.packages) {
-        for (const runtime of this.runtimes.values()) {
-          if (status.action === "written" || status.action === "unchanged") {
-            runtime.appLog.info(
-              "workflow.library",
-              "Source invalidation refreshed generated package.",
-              {
-                domains: event.domains,
-                packageName: status.packageName,
-                reason: event.reason,
-              },
-            );
-          } else if (status.action === "failed") {
-            runtime.appLog.warning(
-              "workflow.library",
-              "Source invalidation left generated package stale because refresh failed.",
-              {
-                diagnostics: status.diagnostics ?? [],
-                domains: event.domains,
-                packageName: status.packageName,
-                reason: event.reason,
-              },
-            );
-          }
-        }
-      }
-    }
+    });
+    catalog.setAppLogListener((event) => {
+      appendAppLoggerEvent(appLog, event);
+    });
 
-    const contextRefreshReason = generatedContextReasonForRuntimeSourceInvalidation(event.domains);
-    if (contextRefreshReason) {
-      await Promise.all(
-        Array.from(this.runtimes.values()).map((runtime) =>
-          this.refreshGeneratedContext({
-            scope: "workspace",
-            workspaceId: runtime.workspaceId as WorkspaceId,
-            reason: contextRefreshReason,
-          }),
-        ),
-      );
-    }
-  }
+    const generatedPackageBoundaryHost = this.createGeneratedPackageRefreshBoundaryHost(catalog, {
+      workspaceId,
+      cwd,
+    });
+    const runtimeAdapter = await createCatalogBackedRuntime(
+      {
+        sourceRoots: generatedPackageBoundaryHost.sourceRoots,
+        generatedPackageRoots: generatedPackageBoundaryHost.generatedPackageRoots,
+        extensionStatePort: generatedPackageBoundaryHost.extensionStatePort,
+        generatedPackageLinkPath: generatedPackageBoundaryHost.generatedPackageLinkPath,
+        catalog,
+        commandStdin,
+        commandControl: commandStdin,
+        generatedContextRefreshHost: {
+          refresh: (input) => this.refreshGeneratedContext(input),
+        },
+        generatedPackageRefreshHost: {
+          listAcquiredWorkspaceIds: generatedPackageBoundaryHost.listAcquiredWorkspaceIds,
+          listRecoverableWorkspaceIds: generatedPackageBoundaryHost.listRecoverableWorkspaceIds,
+          now: generatedPackageBoundaryHost.now,
+          workspaceLinkFileHost: generatedPackageBoundaryHost.workspaceLinkFileHost,
+          materializeCoreTypeContractPackage:
+            generatedPackageBoundaryHost.materializeCoreTypeContractPackage,
+        },
+        generatedPackageStatePort: this.createGeneratedPackageStatePort(catalog, {
+          workspaceId,
+          cwd,
+        }),
+        sourceInvalidationScan: this.createSourceInvalidationScanPort(),
+        appLogWritePort: appLogs.writePort,
+      },
+      this.runtimeDependencies(),
+      this.options.runtimeLayerConfig,
+    );
+    resolveRuntimeForRecovery(runtimeAdapter);
 
-  private async reconcileSourceInvalidation(
-    workspaceId: string,
-    input: SourceReconcileRequest,
-  ): Promise<SourceReconcileResult> {
-    const reason = `runtime_source_reconcile:${input.reason}`;
-    if (input.scope.kind === "app-global") {
-      await this.appGlobalSourceInvalidationCoordinator.requestScan(reason);
-    } else {
-      const runtime = this.runtimes.get(workspaceId);
-      if (!runtime) {
-        throw new Error(`Workspace is not open: ${workspaceId}`);
-      }
-      await runtime.sourceInvalidationCoordinator.requestScan(reason);
-    }
     return {
-      changedReadModelCount: 0,
-      generatedPackageRefreshes: [],
-      recoveryWorkIds: [],
+      facade: runtimeAdapter.facade,
+      sourceStatePort: catalog.getRuntimeSourceStatePort(),
+      dispose: async () => {
+        catalog.setTitleGenerationLogListener(null);
+        catalog.setWorkflowsGeneratedPackageLogListener(null);
+        catalog.setAppLogListener(null);
+        await runtimeAdapter.dispose();
+        await catalog.dispose();
+        this.releaseAppLogFacade(cwd);
+      },
     };
   }
 
-  private async publishStateInvalidations(afterCommit: readonly StateInvalidationDescriptor[]) {
-    if (afterCommit.length === 0) {
-      return;
-    }
+  private createSourceInvalidationScanPort(): RuntimeSourceInvalidationScanPortService {
+    return {
+      classifyHint: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (input.scope.kind === "app-global") {
+              return await this.appGlobalSourceInvalidationCoordinator.classifyHint(input);
+            }
+            const runtime = this.runtimes.get(input.scope.workspaceId);
+            if (!runtime) {
+              throw new RuntimeContractError({
+                operation: "runtime.sourceInvalidation.hint",
+                reason: "target-not-found",
+                message: `Workspace source invalidation requires an acquired workspace scope for ${input.scope.workspaceId}.`,
+              });
+            }
+            return await runtime.sourceInvalidationCoordinator.classifyHint(input);
+          },
+          catch: (cause: unknown) =>
+            runtimeRegistrySourceInvalidationError("runtime.sourceInvalidation.hint", cause),
+        }),
+      listAcquiredWorkspaceIds: () =>
+        Effect.succeed(
+          Array.from(this.runtimes.values()).map((runtime) => runtime.workspaceId as WorkspaceId),
+        ),
+      reconcile: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (input.scope.kind === "app-global") {
+              return await this.appGlobalSourceInvalidationCoordinator.reconcile({
+                domains: input.domains,
+                reason: `runtime_source_reconcile:${input.reason}`,
+              });
+            }
+            const runtime = this.runtimes.get(input.scope.workspaceId);
+            if (!runtime) {
+              throw new RuntimeContractError({
+                operation: "runtime.sourceInvalidation.reconcile",
+                reason: "target-not-found",
+                message: `Workspace source invalidation requires an acquired workspace scope for ${input.scope.workspaceId}.`,
+              });
+            }
+            return await runtime.sourceInvalidationCoordinator.reconcile({
+              domains: input.domains,
+              reason: `runtime_source_reconcile:${input.reason}`,
+            });
+          },
+          catch: (cause: unknown) =>
+            runtimeRegistrySourceInvalidationError("runtime.sourceInvalidation.reconcile", cause),
+        }),
+      requestScan: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            const request = {
+              domains: input.domains,
+              reason: `runtime_source_hint:${input.reason}`,
+            };
+            if (input.scope.kind === "app-global") {
+              await this.appGlobalSourceInvalidationCoordinator.requestScan(request);
+              return;
+            }
+            const runtime = this.runtimes.get(input.scope.workspaceId);
+            if (!runtime) {
+              throw new RuntimeContractError({
+                operation: "runtime.sourceInvalidation.hint",
+                reason: "target-not-found",
+                message: `Workspace source invalidation requires an acquired workspace scope for ${input.scope.workspaceId}.`,
+              });
+            }
+            await runtime.sourceInvalidationCoordinator.requestScan(request);
+          },
+          catch: (cause: unknown) =>
+            runtimeRegistrySourceInvalidationError("runtime.sourceInvalidation.hint", cause),
+        }),
+    };
+  }
+
+  private async handleSourceInvalidationEvent(
+    input: RuntimeSourceInvalidationReactionInput,
+  ): Promise<void> {
+    const { event } = input;
     try {
-      await this.runtimeEventBus.publishStateInvalidations({ afterCommit });
+      const facade =
+        input.scope.kind === "app-global"
+          ? await this.getAppGlobalRuntimeFacade()
+          : this.requireRuntimeFacade(input.scope.workspaceId);
+      const result = await facade.sourceInvalidation.applyCommittedScanEvent(input);
+
+      for (const refresh of result.generatedPackageRefreshes) {
+        for (const status of refresh.packages) {
+          for (const runtime of this.runtimes.values()) {
+            if (status.action === "written" || status.action === "unchanged") {
+              runtime.appLog.info(
+                "workflow.library",
+                "Source invalidation refreshed generated package.",
+                {
+                  domains: event.domains,
+                  packageName: status.packageName,
+                  reason: event.reason,
+                },
+              );
+            } else if (status.action === "failed") {
+              runtime.appLog.warning(
+                "workflow.library",
+                "Source invalidation left generated package stale because refresh failed.",
+                {
+                  diagnostics: status.diagnostics ?? [],
+                  domains: event.domains,
+                  packageName: status.packageName,
+                  reason: event.reason,
+                },
+              );
+            }
+          }
+        }
+      }
     } catch (error) {
       this.options.forwardBridgeLog?.(
         "warn",
-        "Runtime state invalidation publication failed.",
-        "runtime.events",
-        {},
+        "Runtime source invalidation reaction failed.",
+        "source.graph",
+        { domains: event.domains, reason: event.reason, scope: input.scope.kind },
         error,
       );
     }
@@ -786,86 +935,173 @@ export class WorkspaceRuntimeRegistry {
     );
   }
 
-  private async refreshGeneratedPackages(
-    ownerWorkspaceId: string,
-    input: RefreshGeneratedPackagesRequest,
-  ): Promise<GeneratedPackagesRefreshResult> {
+  private createGeneratedPackageRefreshBoundaryHost(
+    catalog: WorkspaceSessionCatalog,
+    startupWorkspace: { workspaceId: string; cwd: string },
+  ): WorkspaceGeneratedPackageBoundaryHost {
     const extensionsRoot = extensionsRootForAgentDir(this.agentDir);
-    const extensionDependencyApprovalStore = new ExtensionDependencyApprovalStore({
-      extensionsRoot,
-    });
-    const invalidations: StateInvalidationDescriptor[] = [];
-    const ownerRuntime = this.getRuntime(ownerWorkspaceId);
-    const generatedPackageStatePort = ownerRuntime.catalog.getRuntimeGeneratedPackageStatePort();
-    const extensionStatePort = ownerRuntime.catalog.getExtensionStatePort({
-      records: {
-        readSourceFingerprint: ({ sourceRoot }) =>
-          Effect.sync(() => sourceBuildFingerprint(sourceRoot)),
+    return {
+      sourceRoots: {
+        extensionsRoot: extensionsRoot as AbsolutePath,
+        workflowsSourceRoot: (this.options.workflowsSourceRoot ??
+          getWorkflowsSourceRoot()) as AbsolutePath,
       },
-      dependencies: {
-        isApproved: ({ dependency }) =>
-          Effect.sync(() => extensionDependencyApprovalStore.hasApproved(dependency)),
+      generatedPackageRoots: {
+        extensionsPackageRoot: effectiveExtensionsGeneratedPackagePath({
+          extensionsGeneratedPackagePath: this.options.workflowsExtensionsGeneratedPackagePath,
+          generatedPackagePath: this.options.workflowsGeneratedPackagePath,
+        }) as AbsolutePath,
+        workflowsPackageRoot: (this.options.workflowsGeneratedPackagePath ??
+          getWorkflowsGeneratedPackagePath()) as AbsolutePath,
+        coreTypeContractPackageRoot: (this.options.coreTypeContractPackagePath ??
+          getCoreTypeContractPackagePath()) as AbsolutePath,
       },
-    });
-    const collectAfterCommit = <A extends { afterCommit: readonly StateInvalidationDescriptor[] }>(
-      result: A,
-    ): A => {
-      invalidations.push(...result.afterCommit);
-      return result;
+      extensionStatePort: catalog.getExtensionStatePort(),
+      listAcquiredWorkspaceIds: () =>
+        Effect.succeed(
+          Array.from(this.runtimes.values()).map((runtime) => runtime.workspaceId as WorkspaceId),
+        ),
+      listRecoverableWorkspaceIds: () =>
+        Effect.succeed(
+          this.options
+            .listRecoverableWorkspaces?.()
+            .filter((workspace) => workspace.kind === "user")
+            .map((workspace) => workspace.workspaceId as WorkspaceId) ?? [],
+        ),
+      now: () => Effect.succeed(new Date().toISOString() as IsoDateTimeString),
+      generatedPackageLinkPath: async ({ packageName, workspaceId }) => {
+        const runtimeCwd =
+          workspaceId === startupWorkspace.workspaceId
+            ? startupWorkspace.cwd
+            : this.getRuntime(workspaceId).cwd;
+        const packageBasename = packageName === "@svvyx/workflows" ? "workflows" : "extensions";
+        return join(
+          runtimeCwd,
+          ".smithers",
+          "node_modules",
+          "@svvyx",
+          packageBasename,
+        ) as AbsolutePath;
+      },
+      workspaceLinkFileHost: nodeGeneratedPackageWorkspaceLinkFileHost,
+      materializeCoreTypeContractPackage: () =>
+        Effect.try({
+          try: () =>
+            materializeGeneratedCoreTypeContractPackage(
+              this.options.coreTypeContractPackagePath ?? getCoreTypeContractPackagePath(),
+            ),
+          catch: (cause: unknown) =>
+            runtimeRegistrySourceInvalidationError(
+              "runtime.sourceInvalidation.materializeCoreTypeContractPackage",
+              cause,
+            ),
+        }),
     };
-    const notifyingGeneratedPackageStatePort: RuntimeGeneratedPackageStatePortService = {
-      ...generatedPackageStatePort,
-      recordGeneratedPackageBuild: (recordInput) =>
-        generatedPackageStatePort
-          .recordGeneratedPackageBuild(recordInput)
-          .pipe(Effect.map(collectAfterCommit)),
-      recordGeneratedPackageFailure: (recordInput) =>
-        generatedPackageStatePort
-          .recordGeneratedPackageFailure(recordInput)
-          .pipe(Effect.map(collectAfterCommit)),
-      recordWorkspaceLinkStatus: (recordInput) =>
-        generatedPackageStatePort
-          .recordWorkspaceLinkStatus(recordInput)
-          .pipe(Effect.map(collectAfterCommit)),
-    };
-    return await refreshRuntimeGeneratedPackagesAtRuntimeBoundary({
-      request: input,
-      generatedPackageStatePort: notifyingGeneratedPackageStatePort,
-      host: {
-        sourceRoots: {
-          extensionsRoot: extensionsRoot as AbsolutePath,
-          workflowsSourceRoot: (this.options.workflowsSourceRoot ??
-            getWorkflowsSourceRoot()) as AbsolutePath,
-        },
-        generatedPackageRoots: {
-          extensionsPackageRoot: effectiveExtensionsGeneratedPackagePath({
-            extensionsGeneratedPackagePath: this.options.workflowsExtensionsGeneratedPackagePath,
-            generatedPackagePath: this.options.workflowsGeneratedPackagePath,
-          }) as AbsolutePath,
-          workflowsPackageRoot: (this.options.workflowsGeneratedPackagePath ??
-            getWorkflowsGeneratedPackagePath()) as AbsolutePath,
-        },
-        extensionStatePort,
-        generatedPackageLinkPath: async ({ packageName, workspaceId }) => {
-          const runtime = this.getRuntime(workspaceId);
-          const packageBasename = packageName === "@svvyx/workflows" ? "workflows" : "extensions";
-          return join(
-            runtime.cwd,
-            ".smithers",
-            "node_modules",
-            "@svvyx",
-            packageBasename,
-          ) as AbsolutePath;
-        },
-        workspaceLinkFileHost: nodeGeneratedPackageWorkspaceLinkFileHost,
-      },
-    }).then(async (result) => {
-      await this.publishStateInvalidations(invalidations);
-      return result;
-    });
   }
 
-  private acquireAppLogFacade(cwd: string): AppLogFacade {
+  private createGeneratedPackageStatePort(
+    catalog: WorkspaceSessionCatalog,
+    currentWorkspace: { workspaceId: string; cwd: string },
+  ): RuntimeGeneratedPackageStatePortService {
+    const base = catalog.getRuntimeGeneratedPackageStatePort();
+    return {
+      ...base,
+      markWorkspaceLinksRepairNeeded: (input) => {
+        if (input.workspaceId === currentWorkspace.workspaceId) {
+          return base.markWorkspaceLinksRepairNeeded(input);
+        }
+
+        const acquiredRuntime = this.runtimes.get(input.workspaceId);
+        if (acquiredRuntime) {
+          return acquiredRuntime.catalog
+            .getRuntimeGeneratedPackageStatePort()
+            .markWorkspaceLinksRepairNeeded(input);
+        }
+
+        const recoverableWorkspace = this.findRecoverableWorkspace(input.workspaceId);
+        if (!recoverableWorkspace) {
+          return Effect.fail(
+            new StateContractError({
+              operation: "runtime.generatedPackages.markWorkspaceLinksRepairNeeded",
+              reason: "not-found",
+              message: `Workspace generated-package link repair target is not recoverable: ${input.workspaceId}.`,
+            }),
+          );
+        }
+
+        return Effect.acquireUseRelease(
+          Effect.try({
+            try: () => this.persistedWorkspaceStateStoreOptions(recoverableWorkspace),
+            catch: (cause: unknown) =>
+              new StateContractError({
+                operation: "runtime.generatedPackages.openRecoverableWorkspaceState",
+                reason: "transaction-failed",
+                message:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Unable to open recoverable workspace state.",
+                cause,
+              }),
+          }),
+          (store) =>
+            markPersistedWorkspaceGeneratedPackageLinksRepairNeeded({
+              store,
+              request: input,
+            }),
+          () => Effect.void,
+        );
+      },
+    };
+  }
+
+  private findRecoverableWorkspace(workspaceId: WorkspaceId): WorkspaceInfoResponse | null {
+    return (
+      this.options
+        .listRecoverableWorkspaces?.()
+        .find((workspace) => workspace.workspaceId === workspaceId && workspace.kind === "user") ??
+      null
+    );
+  }
+
+  private runtimeDependencies(): CatalogBackedRuntimeDependencies {
+    return {
+      ensureUsableProviderAuth:
+        this.options.runtimeDependencies?.ensureUsableProviderAuth ??
+        (async () => "test-provider-auth"),
+      getProviderAuthUnavailableMessage:
+        this.options.runtimeDependencies?.getProviderAuthUnavailableMessage ??
+        ((provider) => `No provider auth available for ${provider}.`),
+    };
+  }
+
+  private persistedWorkspaceStateStoreOptions(workspace: WorkspaceInfoResponse) {
+    const workspaceCwd = canonicalizeWorkspaceCwd(workspace.cwd);
+    const sessionDir = getSvvySessionDir(workspaceCwd, this.agentDir);
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd: workspaceCwd,
+      agentDir: this.agentDir,
+      workflowsSourceRoot: this.options.workflowsSourceRoot,
+    });
+    return {
+      digest: {
+        sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+      },
+      idFactory: (prefix: string) => `${prefix}-${randomUUID()}`,
+      now: () => new Date().toISOString(),
+      workspace: {
+        id: workspace.workspaceId,
+        label: workspace.workspaceLabel,
+        cwd: workspaceCwd,
+        artifactDir: resolveConfiguredArtifactDirectory(
+          agentSettingsStore.getState().appPreferences.artifactDirectory,
+          workspaceCwd,
+        ),
+      },
+      databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+    };
+  }
+
+  private acquireAppLogFacade(cwd: string): StateAppLogsFacade {
     const existing = this.sharedAppLogFacades.get(cwd);
     if (existing) {
       existing.refCount += 1;
@@ -877,8 +1113,9 @@ export class WorkspaceRuntimeRegistry {
       "workspace-runtimes",
       sanitizeWorkspaceRuntimeStorageKey(cwd),
     );
-    const appLogs = createAppLogFacade({
+    const appLogs = createStateAppLogsFacade({
       databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+      now: () => new Date().toISOString(),
     });
     this.sharedAppLogFacades.set(cwd, {
       appLogs,
@@ -901,9 +1138,88 @@ function sanitizeWorkspaceRuntimeStorageKey(value: string): string {
   return value.replace(/^[/\\]/, "").replace(/[/\\:#]/g, "-");
 }
 
+function mergeRuntimeEventSubscriptions(
+  subscriptions: Array<Awaited<ReturnType<RuntimeFacade["events"]>>>,
+): Awaited<ReturnType<RuntimeFacade["events"]>> {
+  let closed = false;
+  return {
+    closed: Promise.all(subscriptions.map((subscription) => subscription.closed)).then(
+      ([receipt]) => receipt!,
+    ),
+    async close() {
+      closed = true;
+      await Promise.all(subscriptions.map((subscription) => subscription.close()));
+    },
+    async *[Symbol.asyncIterator]() {
+      const slots = subscriptions.map((subscription) => {
+        const iterator = subscription[Symbol.asyncIterator]();
+        return {
+          iterator,
+          next: iterator.next(),
+        };
+      });
+      try {
+        while (slots.length > 0) {
+          if (closed) break;
+          const { slotIndex, nextResult } = await Promise.race(
+            slots.map((slot, candidateIndex) =>
+              slot.next.then((candidateResult) => ({
+                slotIndex: candidateIndex,
+                nextResult: candidateResult,
+              })),
+            ),
+          );
+          if (closed) break;
+          if (nextResult.done) {
+            slots.splice(slotIndex, 1);
+            continue;
+          }
+          slots[slotIndex]!.next = slots[slotIndex]!.iterator.next();
+          yield nextResult.value;
+        }
+      } finally {
+        await Promise.all(
+          slots.map((slot) =>
+            typeof slot.iterator.return === "function"
+              ? slot.iterator.return().then(() => undefined)
+              : Promise.resolve(),
+          ),
+        );
+      }
+    },
+  };
+}
+
+function resolveConfiguredArtifactDirectory(input: string, cwd: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") {
+    return homedir();
+  }
+  if (trimmed.startsWith("~/")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return isAbsolute(trimmed) ? trimmed : resolvePath(cwd, trimmed);
+}
+
 function normalizeWorkspaceRuntimeId(cwd: string): string {
   const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 24);
   return `workspace:${hash}`;
+}
+
+function runtimeRegistrySourceInvalidationError(
+  operation: string,
+  cause: unknown,
+): RuntimeContractError {
+  if (cause instanceof RuntimeContractError) {
+    return cause;
+  }
+  return new RuntimeContractError({
+    operation,
+    reason: "state-conflict",
+    message:
+      cause instanceof Error ? cause.message : "Runtime source-invalidation reaction failed.",
+    cause,
+  });
 }
 
 function recordTitleGenerationLog(
@@ -943,7 +1259,6 @@ function pickWorkflowGeneratedPackageFacts(
   for (const key of [
     "workflowDiagnosticCount",
     "workflowExportCount",
-    "workflowLinkedWorkspaceCount",
     "workflowSavedExportName",
     "workflowSavedKind",
   ]) {

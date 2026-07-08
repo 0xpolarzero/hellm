@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
 import { nativeToolCommandMetadata } from "@svvy/extensions";
-import { createPromptExecutionContext } from "@svvy/core";
+import { createPromptExecutionContext } from "@svvy/runtime/prompt-execution-context";
 import type { AppLoggerEvent } from "./app-logger";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
-import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state/structured-session-adapters";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 

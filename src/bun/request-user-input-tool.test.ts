@@ -1,22 +1,41 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
-import { createPromptExecutionContext } from "@svvy/core";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
+import {
+  RuntimeContractError,
+  RuntimeCommandStatePort,
+  type RuntimeCommandRecord,
+  type RuntimeRequestInputDetailsRecord,
+  RuntimeRequestStatePort,
+  RuntimeSessionWaitStatePort,
+} from "@svvy/core";
+import type { RequestUserInputResult } from "@svvy/extensions";
+import { createPromptExecutionContext } from "@svvy/runtime/prompt-execution-context";
 import {
   runtimeCommandStatePortFromStore,
   runtimeRequestStatePortFromStore,
   runtimeSessionWaitStatePortFromStore,
   runtimeTurnStatePortFromStore,
-} from "@svvy/state";
+} from "@svvy/state/structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
+import { buildStructuredSessionView } from "@svvy/state/structured-session-projections";
 import {
-  createRequestUserInputTool,
+  createRequestUserInputTool as createRequestUserInputToolBase,
   RequestUserInputRuntime,
+  type RunAcceptedRequestUserInput,
   type RequestUserInputToolState,
 } from "./request-user-input-tool";
-import { buildStructuredSessionView } from "@svvy/state/structured-session-selectors";
+import { runAcceptedRequestUserInputToolCall } from "../../packages/runtime/src/request-user-input-operation";
+import {
+  makeRuntimeBlockingRequestInputWaitRegistry,
+  type RuntimeBlockingRequestInputWaitRegistry,
+} from "../../packages/runtime/src/request-input-blocking-controller";
+import { RuntimeEventBus } from "../../packages/runtime/src/runtime-event-bus";
+import { RuntimeRequestInputWaitService } from "../../packages/runtime/src/runtime-request-input-wait-service";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -25,6 +44,26 @@ const WORKSPACE = {
 } as const;
 
 const stores: StructuredSessionStateStore[] = [];
+
+const runToolEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
+
+function createRequestUserInputTool(
+  options: Omit<Parameters<typeof createRequestUserInputToolBase>[0], "runToolEffect"> & {
+    requestInputWaitHarness?: RequestInputWaitTestHarness;
+  },
+) {
+  const requestUserInputRuntime = options.requestUserInputRuntime ?? new RequestUserInputRuntime();
+  const requestInputWaitHarness =
+    options.requestInputWaitHarness ?? createRequestInputWaitTestHarness(options.state);
+  return createRequestUserInputToolBase({
+    ...options,
+    requestUserInputRuntime,
+    runToolEffect,
+    runAcceptedRequestUserInput:
+      options.runAcceptedRequestUserInput ??
+      requestUserInputRunnerFromState(options.state, requestInputWaitHarness),
+  });
+}
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -90,7 +129,7 @@ describe("request_user_input tool", () => {
       ],
     });
 
-    expect(result.details).toEqual({
+    expect(result.details!.commandFacts).toEqual({
       answers: [
         {
           title: "CI scope",
@@ -113,11 +152,11 @@ describe("request_user_input tool", () => {
         },
       ],
     });
-    expect(JSON.stringify(result.details)).not.toContain("requestId");
-    expect(JSON.stringify(result.details)).not.toContain("questionId");
-    expect(JSON.stringify(result.details)).not.toContain("optionId");
-    expect(JSON.stringify(result.details)).not.toContain("mode");
-    expect(JSON.stringify(result.details)).not.toContain("timer");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("requestId");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("questionId");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("optionId");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("mode");
+    expect(JSON.stringify(result.details!.commandFacts)).not.toContain("timer");
 
     const snapshot = store.getSessionState("session-request-input");
     expect(snapshot.turns[0]?.turnDecision).toBe("request_user_input");
@@ -270,10 +309,12 @@ describe("request_user_input tool", () => {
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const tool = createRequestUserInputTool({
       state: requestInputState,
       runtime,
       requestUserInputRuntime,
+      requestInputWaitHarness,
     });
 
     const pending = tool.execute("tool-call-blocking-start", {
@@ -344,18 +385,19 @@ describe("request_user_input tool", () => {
       (choice) => choice.label === "Full suite",
     )!;
     store.answerRequestUserInput({
-      sessionId: "session-request-input",
       surfacePiSessionId: "session-request-input",
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
       answer: { kind: "option", optionId: fullSuite.optionId },
       delivery: "enqueue-and-run",
     });
-    await requestUserInputRuntime.resolveBlockingRequest(requestInputState, request.requestId);
+    await requestInputWaitHarness.resolveBlockingRequest(requestInputState, request.requestId);
 
     await expect(pending).resolves.toMatchObject({
       details: {
-        answers: [expect.objectContaining({ answeredBy: "user" })],
+        commandFacts: {
+          answers: [expect.objectContaining({ answeredBy: "user" })],
+        },
       },
     });
   });
@@ -510,10 +552,12 @@ describe("request_user_input tool", () => {
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const tool = createRequestUserInputTool({
       state: requestInputState,
       runtime,
       requestUserInputRuntime,
+      requestInputWaitHarness,
     });
 
     const pending = tool.execute("tool-call-blocking-request-input", {
@@ -558,7 +602,6 @@ describe("request_user_input tool", () => {
       (choice) => choice.label === "Full suite",
     )!;
     const answered = store.answerRequestUserInput({
-      sessionId: "session-request-input",
       surfacePiSessionId: "session-request-input",
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
@@ -566,21 +609,23 @@ describe("request_user_input tool", () => {
       delivery: "enqueue-and-run",
     });
     expect(answered.queuedMessage).toBeNull();
-    await requestUserInputRuntime.resolveBlockingRequest(requestInputState, request.requestId);
+    await requestInputWaitHarness.resolveBlockingRequest(requestInputState, request.requestId);
 
     await expect(pending).resolves.toMatchObject({
       details: {
-        answers: [
-          {
-            title: "CI scope",
-            answer: {
-              kind: "option",
-              label: "Full suite",
-              text: "Full suite",
+        commandFacts: {
+          answers: [
+            {
+              title: "CI scope",
+              answer: {
+                kind: "option",
+                label: "Full suite",
+                text: "Full suite",
+              },
+              answeredBy: "user",
             },
-            answeredBy: "user",
-          },
-        ],
+          ],
+        },
       },
     });
     expect(store.getSessionState("session-request-input").commands[0]).toMatchObject({
@@ -596,12 +641,14 @@ describe("request_user_input tool", () => {
     const requestUserInputRuntime = new RequestUserInputRuntime();
     requestUserInputRuntime.setSettings({
       mode: "blocking",
-      blockingTimeout: { enabled: true, durationMs: 0 },
+      blockingTimeout: { enabled: true, durationMs: 1 },
     });
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const tool = createRequestUserInputTool({
       state: requestInputState,
       runtime,
       requestUserInputRuntime,
+      requestInputWaitHarness,
     });
 
     const result = await tool.execute("tool-call-blocking-timeout", {
@@ -614,7 +661,7 @@ describe("request_user_input tool", () => {
       ],
     });
 
-    expect(result.details).toEqual({
+    expect(result.details!.commandFacts).toEqual({
       answers: [
         {
           title: "Release note tone",
@@ -647,12 +694,12 @@ describe("request_user_input tool", () => {
 
   it("restores orphaned blocking requests and finalizes them when the user answers", async () => {
     const { store, requestInputState } = createHarness();
-    const requestUserInputRuntime = new RequestUserInputRuntime();
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const request = createDurableBlockingRequest(store, {
       timeout: { enabled: false, durationMs: 300_000 },
     });
 
-    await requestUserInputRuntime.restoreOpenBlockingRequests(requestInputState);
+    await requestInputWaitHarness.restoreOpenBlockingRequests(requestInputState);
 
     expect(store.getSessionState("session-request-input").commands[0]).toMatchObject({
       status: "waiting",
@@ -667,7 +714,6 @@ describe("request_user_input tool", () => {
       (choice) => choice.label === "Full suite",
     )!;
     const answered = store.answerRequestUserInput({
-      sessionId: "session-request-input",
       surfacePiSessionId: "session-request-input",
       requestId: request.requestId,
       questionId: request.questions[0]!.questionId,
@@ -676,7 +722,7 @@ describe("request_user_input tool", () => {
     });
     expect(answered.queuedMessage).toBeNull();
 
-    const result = await requestUserInputRuntime.resolveBlockingRequest(
+    const result = await requestInputWaitHarness.resolveBlockingRequest(
       requestInputState,
       request.requestId,
     );
@@ -704,12 +750,12 @@ describe("request_user_input tool", () => {
 
   it("restores orphaned blocking request timers and applies timeout defaults", async () => {
     const { store, requestInputState } = createHarness();
-    const requestUserInputRuntime = new RequestUserInputRuntime();
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const request = createDurableBlockingRequest(store, {
-      timeout: { enabled: true, durationMs: 0 },
+      timeout: { enabled: true, durationMs: 1 },
     });
 
-    await requestUserInputRuntime.restoreOpenBlockingRequests(requestInputState);
+    await requestInputWaitHarness.restoreOpenBlockingRequests(requestInputState);
     await waitFor(
       () =>
         store.getSessionState("session-request-input").requestUserInputRequests[0]?.status ===
@@ -743,10 +789,12 @@ describe("request_user_input tool", () => {
       mode: "blocking",
       blockingTimeout: { enabled: false, durationMs: 300_000 },
     });
+    const requestInputWaitHarness = createRequestInputWaitTestHarness(requestInputState);
     const tool = createRequestUserInputTool({
       state: requestInputState,
       runtime,
       requestUserInputRuntime,
+      requestInputWaitHarness,
     });
 
     const pending = tool.execute("tool-call-cancel-rui", {
@@ -771,7 +819,7 @@ describe("request_user_input tool", () => {
     await Promise.resolve();
 
     const request = store.getSessionState("session-request-input").requestUserInputRequests[0]!;
-    await requestUserInputRuntime.cancelBlockingRequestsForSurface(
+    await requestInputWaitHarness.cancelBlockingRequestsForSurface(
       requestInputState,
       request.surfacePiSessionId,
       "Prompt cancelled.",
@@ -848,6 +896,146 @@ function createRequestInputToolState(
     turnState: runtimeTurnStatePortFromStore(store),
     runState: (effect) => Effect.runSync(effect),
   };
+}
+
+type RequestInputWaitTestHarness = {
+  waitForBlockingRequest(input: {
+    state: Pick<RequestUserInputToolState, "commandState" | "requestState" | "sessionWaitState">;
+    request: RuntimeRequestInputDetailsRecord;
+    command: RuntimeCommandRecord;
+  }): Promise<RequestUserInputResult>;
+  resolveBlockingRequest(
+    state: RequestUserInputToolState,
+    requestId: string,
+  ): Promise<RequestUserInputResult | null>;
+  rescheduleBlockingTimeout(state: RequestUserInputToolState, requestId: string): Promise<void>;
+  restoreOpenBlockingRequests(state: RequestUserInputToolState): Promise<void>;
+  cancelBlockingRequestsForSurface(
+    state: RequestUserInputToolState,
+    surfacePiSessionId: string,
+    reason?: string,
+  ): Promise<void>;
+  close(): Promise<void>;
+};
+
+function createRequestInputWaitTestHarness(
+  state: RequestUserInputToolState,
+): RequestInputWaitTestHarness {
+  const registryPromise = Effect.runPromise(
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry().pipe(
+        Effect.provideService(Scope.Scope, scope),
+      );
+      return { registry, scope };
+    }),
+  );
+  const runRegistry = async <A>(
+    run: (registry: RuntimeBlockingRequestInputWaitRegistry) => Effect.Effect<A, unknown>,
+  ): Promise<A> => {
+    const { registry } = await registryPromise;
+    return Effect.runPromise(run(registry));
+  };
+  const effectState = {
+    commandState: state.commandState,
+    requestState: state.requestState,
+    sessionWaitState: state.sessionWaitState,
+  };
+  return {
+    waitForBlockingRequest: (input) =>
+      runRegistry((registry) => registry.waitForBlockingRequest(input)),
+    resolveBlockingRequest: (_state, requestId) =>
+      runRegistry((registry) => registry.resolveBlockingRequest(effectState, requestId)),
+    rescheduleBlockingTimeout: (_state, requestId) =>
+      runRegistry((registry) => registry.rescheduleBlockingTimeout(effectState, requestId)),
+    restoreOpenBlockingRequests: () =>
+      runRegistry((registry) => registry.restoreOpenBlockingRequests(effectState)),
+    cancelBlockingRequestsForSurface: (_state, surfacePiSessionId, reason) =>
+      runRegistry((registry) =>
+        registry.cancelBlockingRequestsForSurface(effectState, surfacePiSessionId, reason),
+      ),
+    close: async () => {
+      const { scope } = await registryPromise;
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+    },
+  };
+}
+
+function requestUserInputRunnerFromState(
+  state: RequestUserInputToolState,
+  requestInputWaitHarness: RequestInputWaitTestHarness,
+): RunAcceptedRequestUserInput {
+  return (input) =>
+    runToolEffect(
+      runAcceptedRequestUserInputToolCall(input).pipe(
+        Effect.provideService(RuntimeCommandStatePort, state.commandState),
+        Effect.provideService(RuntimeRequestStatePort, state.requestState),
+        Effect.provideService(RuntimeSessionWaitStatePort, state.sessionWaitState),
+        Effect.provideService(
+          RuntimeEventBus,
+          RuntimeEventBus.of({
+            publishLive: () => Effect.die("Unexpected live event publication."),
+            publishStateInvalidations: () => Effect.succeed([]),
+            subscribe: () => Effect.die("Unexpected runtime event subscription."),
+          }),
+        ),
+        Effect.provideService(
+          RuntimeRequestInputWaitService,
+          RuntimeRequestInputWaitService.of({
+            waitForBlockingRequest: ({ request, command }) =>
+              Effect.tryPromise({
+                try: () =>
+                  requestInputWaitHarness.waitForBlockingRequest({
+                    state,
+                    request,
+                    command,
+                  }),
+                catch: (cause) => runtimeWaitError("test.requestInput.wait", cause),
+              }),
+            afterAnswerCommitted: ({ requestId, delivery }) =>
+              delivery.kind === "blocking-resolved"
+                ? Effect.tryPromise({
+                    try: async () => {
+                      await requestInputWaitHarness.resolveBlockingRequest(state, requestId);
+                    },
+                    catch: (cause) => runtimeWaitError("test.requestInput.answer", cause),
+                  })
+                : Effect.void,
+            afterTimerPausedCommitted: ({ requestId }) =>
+              Effect.tryPromise({
+                try: () => requestInputWaitHarness.rescheduleBlockingTimeout(state, requestId),
+                catch: (cause) => runtimeWaitError("test.requestInput.timer", cause),
+              }),
+            restoreOpenBlockingRequests: () =>
+              Effect.tryPromise({
+                try: () => requestInputWaitHarness.restoreOpenBlockingRequests(state),
+                catch: (cause) => runtimeWaitError("test.requestInput.restore", cause),
+              }),
+            cancelBlockingRequestsForSurface: ({ surfacePiSessionId, reason }) =>
+              Effect.tryPromise({
+                try: () =>
+                  requestInputWaitHarness.cancelBlockingRequestsForSurface(
+                    state,
+                    surfacePiSessionId,
+                    reason,
+                  ),
+                catch: (cause) => runtimeWaitError("test.requestInput.cancel", cause),
+              }),
+          }),
+        ),
+      ),
+    );
+}
+
+function runtimeWaitError(operation: string, cause: unknown): RuntimeContractError {
+  return cause instanceof RuntimeContractError
+    ? cause
+    : new RuntimeContractError({
+        operation,
+        reason: "stale-state",
+        message: cause instanceof Error ? cause.message : "Request-input test wait failed.",
+        cause,
+      });
 }
 
 function createDurableBlockingRequest(

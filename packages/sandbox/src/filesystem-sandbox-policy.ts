@@ -5,6 +5,8 @@ export type FileSystemAccessMode = "read" | "write" | "none";
 export interface FileSystemSandboxEntry {
   path: string;
   access: FileSystemAccessMode;
+  recursive?: boolean;
+  source?: string;
   protectedMetadataNames?: readonly string[];
 }
 
@@ -74,14 +76,14 @@ export function resolveFileSystemAccess(
   }
   const target = resolveCandidatePath(path, cwd);
   const match = policy.entries
-    .map((entry) => ({ entry, path: normalizePolicyPath(entry.path) }))
-    .filter(({ path: entryPath }) => isPathInside(entryPath, target))
+    .map(normalizeEntry)
+    .filter((entry) => entryMatchesPath(entry, target))
     .toSorted((left, right) => {
       const specificity = pathSpecificity(right.path) - pathSpecificity(left.path);
       if (specificity !== 0) return specificity;
-      return ACCESS_PRECEDENCE[right.entry.access] - ACCESS_PRECEDENCE[left.entry.access];
+      return ACCESS_PRECEDENCE[right.access] - ACCESS_PRECEDENCE[left.access];
     })[0];
-  return match?.entry.access ?? "none";
+  return match?.access ?? "none";
 }
 
 export function canReadFileSystemPath(
@@ -143,11 +145,14 @@ function isProtectedMetadataWriteDenied(
     return false;
   }
   const target = resolveCandidatePath(path, cwd);
-  for (const entry of policy.entries) {
+  for (const entry of policy.entries.map(normalizeEntry)) {
     if (entry.access !== "write" || !entry.protectedMetadataNames?.length) {
       continue;
     }
-    const root = normalizePolicyPath(entry.path);
+    if (!entryMatchesPath(entry, target)) {
+      continue;
+    }
+    const root = entry.path;
     for (const metadataName of entry.protectedMetadataNames) {
       const metadataRoot = resolvePath(root, metadataName);
       if (!isPathInside(metadataRoot, target)) {
@@ -169,14 +174,15 @@ function hasExplicitMetadataWrite(
   target: string,
 ): boolean {
   return policy.entries.some((entry) => {
-    if (entry.access !== "write") {
+    const normalized = normalizeEntry(entry);
+    if (normalized.access !== "write") {
       return false;
     }
-    const entryPath = normalizePolicyPath(entry.path);
+    const entryPath = normalized.path;
     return (
       entryPath !== broadWritableRoot &&
       isPathInside(metadataRoot, entryPath) &&
-      isPathInside(entryPath, target)
+      entryMatchesPath(normalized, target)
     );
   });
 }
@@ -190,26 +196,24 @@ function buildSeatbeltFileReadPolicy(
     return "";
   }
   const unreadableRoots = policy.entries
-    .map((entry) => ({ ...entry, path: normalizePolicyPath(entry.path) }))
+    .map(normalizeEntry)
     .filter((entry) => entry.access === "none")
     .filter((entry) => resolveFileSystemAccess(policy, entry.path, cwd) === "none")
-    .map((entry) => entry.path)
-    .toSorted();
+    .toSorted((left, right) => left.path.localeCompare(right.path));
   if (unreadableRoots.length === 0) {
     return "";
   }
   const roots = unreadableRoots.flatMap((root, index) => {
     const rootParam = `UNREADABLE_ROOT_${index}`;
-    parameters[rootParam] = root;
-    const requirements = [`(literal (param "${rootParam}"))`, `(subpath (param "${rootParam}"))`];
+    parameters[rootParam] = root.path;
+    const requirements = entrySeatbeltPathRequirements(rootParam, root.recursive);
     const excludedRequirements = readableSubpathsForUnreadableRoot(policy, root, cwd).flatMap(
       (excluded, excludedIndex) => {
         const excludedParam = `UNREADABLE_ROOT_${index}_EXCLUDED_${excludedIndex}`;
-        parameters[excludedParam] = excluded;
-        return [
-          `(require-not (literal (param "${excludedParam}")))`,
-          `(require-not (subpath (param "${excludedParam}")))`,
-        ];
+        parameters[excludedParam] = excluded.path;
+        return entrySeatbeltPathRequirements(excludedParam, excluded.recursive).map(
+          (requirement) => `(require-not ${requirement})`,
+        );
       },
     );
     if (excludedRequirements.length === 0) {
@@ -224,16 +228,15 @@ function buildSeatbeltFileReadPolicy(
 
 function readableSubpathsForUnreadableRoot(
   policy: FileSystemSandboxPolicy,
-  root: string,
+  root: NormalizedFileSystemSandboxEntry,
   cwd: string,
-): string[] {
+): NormalizedFileSystemSandboxEntry[] {
   return policy.entries
-    .map((entry) => ({ ...entry, path: normalizePolicyPath(entry.path) }))
+    .map(normalizeEntry)
     .filter((entry) => entry.access !== "none")
-    .filter((entry) => isPathInside(root, entry.path))
+    .filter((entry) => entryContainsPath(root, entry.path))
     .filter((entry) => canReadFileSystemPath(policy, entry.path, cwd))
-    .map((entry) => entry.path)
-    .toSorted();
+    .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
 function buildSeatbeltFileWritePolicy(
@@ -245,7 +248,7 @@ function buildSeatbeltFileWritePolicy(
     return "";
   }
   const writableRoots = policy.entries
-    .map((entry) => ({ ...entry, path: normalizePolicyPath(entry.path) }))
+    .map(normalizeEntry)
     .filter((entry) => entry.access === "write")
     .filter((entry) => canWriteFileSystemPath(policy, entry.path, cwd));
   if (writableRoots.length === 0) {
@@ -254,16 +257,19 @@ function buildSeatbeltFileWritePolicy(
   const roots = writableRoots.map((root, index) => {
     const rootParam = `WRITABLE_ROOT_${index}`;
     parameters[rootParam] = root.path;
-    const requirements = [`(subpath (param "${rootParam}"))`];
+    const requirements = root.recursive
+      ? [`(subpath (param "${rootParam}"))`]
+      : [`(literal (param "${rootParam}"))`];
     for (const [excludedIndex, excluded] of readOnlySubpathsForWritableRoot(
       policy,
-      root.path,
+      root,
       cwd,
     ).entries()) {
       const excludedParam = `WRITABLE_ROOT_${index}_EXCLUDED_${excludedIndex}`;
-      parameters[excludedParam] = excluded;
-      requirements.push(`(require-not (literal (param "${excludedParam}")))`);
-      requirements.push(`(require-not (subpath (param "${excludedParam}")))`);
+      parameters[excludedParam] = excluded.path;
+      for (const requirement of entrySeatbeltPathRequirements(excludedParam, excluded.recursive)) {
+        requirements.push(`(require-not ${requirement})`);
+      }
     }
     for (const metadataName of root.protectedMetadataNames ?? []) {
       requirements.push(
@@ -277,16 +283,44 @@ function buildSeatbeltFileWritePolicy(
 
 function readOnlySubpathsForWritableRoot(
   policy: FileSystemSandboxPolicy,
-  root: string,
+  root: NormalizedFileSystemSandboxEntry,
   cwd: string,
-): string[] {
+): NormalizedFileSystemSandboxEntry[] {
   return policy.entries
-    .map((entry) => ({ ...entry, path: normalizePolicyPath(entry.path) }))
+    .map(normalizeEntry)
     .filter((entry) => entry.access !== "write")
-    .filter((entry) => isPathInside(root, entry.path))
+    .filter((entry) => entryContainsPath(root, entry.path))
     .filter((entry) => !canWriteFileSystemPath(policy, entry.path, cwd))
-    .map((entry) => entry.path)
-    .toSorted();
+    .toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+type NormalizedFileSystemSandboxEntry = FileSystemSandboxEntry & {
+  path: string;
+  recursive: boolean;
+};
+
+function normalizeEntry(entry: FileSystemSandboxEntry): NormalizedFileSystemSandboxEntry {
+  return {
+    ...entry,
+    path: normalizePolicyPath(entry.path),
+    recursive: entry.recursive !== false,
+  };
+}
+
+function entryMatchesPath(entry: NormalizedFileSystemSandboxEntry, target: string): boolean {
+  return entry.recursive ? isPathInside(entry.path, target) : entry.path === target;
+}
+
+function entryContainsPath(entry: NormalizedFileSystemSandboxEntry, path: string): boolean {
+  return entry.recursive
+    ? isPathInside(entry.path, path)
+    : entry.path === normalizePolicyPath(path);
+}
+
+function entrySeatbeltPathRequirements(parameterName: string, recursive: boolean): string[] {
+  return recursive
+    ? [`(literal (param "${parameterName}"))`, `(subpath (param "${parameterName}"))`]
+    : [`(literal (param "${parameterName}"))`];
 }
 
 function seatbeltProtectedMetadataNameRegex(root: string, name: string): string {

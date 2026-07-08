@@ -8,7 +8,8 @@ import {
   type RuntimeTurnStatePortService,
   type WorkspaceId,
 } from "@svvy/core";
-import { layerRuntimeTurnStatePort, runtimeTurnStatePortFromStore } from "./index";
+import { layerRuntimeTurnStatePort } from "./index";
+import { runtimeTurnStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,

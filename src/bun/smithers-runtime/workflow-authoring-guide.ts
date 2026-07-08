@@ -5,9 +5,12 @@ export const SMITHERS_SVVY_BOUNDARY_APPENDIX = [
   "",
   "Work in the workspace `.smithers/` package. Use official `bunx smithers-orchestrator ...` commands through Shell. TypeScript Smithers source still imports from `smithers-orchestrator`.",
   "Import reusable svvy workflow material from `@svvyx/workflows` when it exists and matches the task.",
+  "Smithers `.smithers/agents/**` is workspace-local Smithers config. Reusable svvy task-agent parameters live in the app-global Workflows source library and are consumed through generated `@svvyx/workflows` `Agents.*` exports.",
   "Use `svvyx workflows models list --json` when choosing provider/model/reasoning values for saved workflow agents or reusable task-agent parameters.",
   "Use `svvyx workflows save` only when promoting reusable material to the app-global Workflows source library.",
   "Generated Workflows output is read-only; edit source and rebuild.",
+  "Do not use `workflow.*`, `svvyx smithers`, Smithers runtime-control APIs, loopback runtime-control tools, or broad bridge helpers.",
+  "Do not create package-level runtimes or per-request Effect layer graphs for Smithers handoff; runtime task-agent handoff is only the narrow generated `runTaskAgent` bridge owned by `@svvy/runtime` inside the app-owned Effect `ManagedRuntime`.",
 ].join("\n");
 
 const HANDLER_WORKFLOW_AUTHORING_GUIDE_LINES = [
@@ -18,8 +21,10 @@ const HANDLER_WORKFLOW_AUTHORING_GUIDE_LINES = [
   "- Use official `bunx smithers-orchestrator ...` commands through Shell for workflow initialization, execution, process inspection, and run inspection.",
   "- Author workspace-local Smithers source under `.smithers/` when the delegated task needs a concrete workflow.",
   "- Inspect app-global reusable workflow source with `svvyx workflows list` only when reusable source-library context is relevant.",
-  "- Import reusable values from `@svvyx/workflows` when they exist and match the task.",
+  "- In workspace `.smithers` TypeScript/TSX source, import reusable generated values from `@svvyx/workflows` when they exist and match the task.",
+  "- Do not create or edit `.smithers/agents/**` to configure reusable svvy task-agent model, systemPrompt, extensions, bridge credentials, or runtime behavior; use app-global Workflows source and generated `@svvyx/workflows` `Agents.*` for reusable svvy task-agent parameters.",
   "- Save or build app-global reusable workflow source with `svvyx workflows save` or `svvyx workflows build` only when the user explicitly asks for reusable workflow-library assets.",
+  "- Do not import `@svvyx/workflows` from persistent app-global Workflows source under `~/.config/svvy/workflows/**`; app-global source uses the Workflows authoring globals described by `svvyx workflows`.",
   "",
   "Smithers model:",
   "- A workflow is a React/JSX tree rendered by createSmithers(...).",
@@ -101,8 +106,6 @@ const ASSET_AND_AGENT_EXAMPLE = [
   "",
   "Example: write reusable app-global workflow agent parameters only when the user wants reusable agents",
   "```ts",
-  'import { Agents } from "@svvyx/workflows";',
-  "",
   "export const reviewerAgent = Agents.defineTaskAgent({",
   "  id: 'reviewer',",
   "  label: 'Reviewer',",
@@ -116,7 +119,7 @@ const ASSET_AND_AGENT_EXAMPLE = [
 ].join("\n");
 
 const TASK_AGENT_EXAMPLE = [
-  "Example: use reusable task-agent parameters in a task",
+  "Example: use reusable task-agent parameters in a workspace `.smithers` task",
   "```ts",
   'import { Agents } from "@svvyx/workflows";',
   "",
@@ -130,7 +133,7 @@ const TASK_AGENT_EXAMPLE = [
   "});",
   "```",
   "",
-  "Example: define task-agent parameters directly when the workflow owns the task-agent configuration",
+  "Example: define task-agent parameters directly in workspace `.smithers` source when the workflow owns the task-agent configuration",
   "```ts",
   'import { Agents } from "@svvyx/workflows";',
   "",

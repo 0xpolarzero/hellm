@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +26,10 @@ function createDeterministicClock(start = "2026-04-18T12:00:00.000Z") {
     return next;
   };
 }
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 function seedSession(
   store: StructuredSessionStateStore,
@@ -65,6 +71,7 @@ describe("structured session state SQLite persistence", () => {
     const workspaceCwd = root;
     const artifactDir = join(root, "artifact-store");
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: workspaceCwd,
         label: "svvy",
@@ -86,10 +93,37 @@ describe("structured session state SQLite persistence", () => {
     store.close();
   }
 
+  it("applies configured SQLite busy timeout on open", () => {
+    const { store } = createSqliteStore();
+    closeTrackedStore(store);
+
+    const root = mkdtempSync(join(tmpdir(), "svvy-structured-busy-timeout-"));
+    tempDirs.push(root);
+    const configuredStore = createStructuredSessionStateStore({
+      busyTimeoutMs: 3_456,
+      digest: testDigest,
+      workspace: {
+        id: root,
+        label: "svvy",
+        cwd: root,
+        artifactDir: join(root, "artifact-store"),
+      },
+      databasePath: join(root, "structured-session-state.sqlite"),
+      now: createDeterministicClock(),
+    });
+    openStores.push(configuredStore);
+    const timeout = (configuredStore as unknown as { db: Database }).db
+      .query("PRAGMA busy_timeout")
+      .get() as { timeout: number };
+
+    expect(timeout.timeout).toBe(3_456);
+  });
+
   it("defaults artifact storage to the app-global config directory", () => {
     const root = mkdtempSync(join(tmpdir(), "svvy-structured-default-artifacts-"));
     tempDirs.push(root);
     const store = createStructuredSessionStateStore({
+      digest: testDigest,
       workspace: {
         id: root,
         label: "svvy",
@@ -351,6 +385,80 @@ describe("structured session state SQLite persistence", () => {
     });
     expect(existsSync(artifact.path!)).toBe(true);
     expect(readFileSync(artifact.path!, "utf8")).toBe('console.log("hello from artifact");\n');
+  });
+
+  it("records artifact metadata without materializing or deleting files", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-artifact-metadata",
+      title: "Artifact Metadata",
+    });
+    const turn = store.startTurn({
+      sessionId: "session-artifact-metadata",
+      surfacePiSessionId: "session-artifact-metadata",
+      requestSummary: "Commit artifact metadata",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: "session-artifact-metadata",
+      toolName: "execute_typescript",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Materialize artifact",
+      summary: "Materialize artifact bytes before metadata commit.",
+    });
+    const storedPath = join(
+      workspaceCwd,
+      "artifact-store",
+      "session-artifact-metadata",
+      "ready.md",
+    );
+
+    const metadata = store.recordArtifactMetadata({
+      workspaceSessionId: "session-artifact-metadata",
+      sourceCommandId: command.id,
+      kind: "text",
+      name: "ready.md",
+      storedPath,
+      mimeType: "text/markdown",
+      byteSize: 12,
+      sha256: "1".repeat(64),
+      immutable: false,
+      materializationStatus: "ready",
+    });
+
+    expect(metadata.artifactId as string).toMatch(/^artifact-/);
+    expect(metadata.workspaceSessionId as string).toBe("session-artifact-metadata");
+    expect(metadata.sourceCommandId as string).toBe(command.id);
+    expect(metadata.threadId).toBeNull();
+    expect(metadata.workflowRunId).toBeNull();
+    expect(metadata.workflowTaskAttemptId).toBeNull();
+    expect(metadata.name).toBe("ready.md");
+    expect(metadata.storedPath as string).toBe(storedPath);
+    expect(metadata.immutable).toBe(false);
+    expect(metadata.mimeType).toBe("text/markdown");
+    expect(metadata.byteSize).toBe(12);
+    expect(metadata.sha256).toBe("1".repeat(64));
+    expect(metadata.materializationStatus).toBe("ready");
+    expect(metadata.createdAt as string).toBe("2026-04-18T12:00:02.000Z");
+    expect(metadata.updatedAt as string).toBe("2026-04-18T12:00:02.000Z");
+    expect(metadata.deletedAt).toBeNull();
+    expect(metadata.lastRecoveryWorkId).toBeNull();
+    expect(existsSync(storedPath)).toBe(false);
+
+    mkdirSync(join(workspaceCwd, "artifact-store", "session-artifact-metadata"), {
+      recursive: true,
+    });
+    writeFileSync(storedPath, "ready bytes\n");
+    const deleted = store.markArtifactMetadataDeleted({
+      workspaceSessionId: "session-artifact-metadata",
+      artifactId: metadata.artifactId,
+    });
+
+    expect(deleted.materializationStatus).toBe("deleted");
+    expect(deleted.deletedAt as string).toBe("2026-04-18T12:00:03.000Z");
+    expect(existsSync(storedPath)).toBe(true);
+    expect(store.listArtifacts({ sessionId: "session-artifact-metadata" })).toEqual([]);
   });
 
   it("stores immutable artifacts under the session immutable directory", () => {

@@ -6,7 +6,6 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,11 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "bun:test";
-import { ExtensionDependencyApprovalStore } from "../extension-dependency-approval-store";
+import { extensionDependencyApprovalIdentityKey } from "../extension-dependency-approval-store";
+import type { ExtensionDependencyCommittedApprovalState } from "../svvyx-extensions-command";
 import {
   buildWorkflowsGeneratedPackage,
-  ensureExtensionsPackageLink,
-  ensureWorkflowsPackageLink,
   extractWorkflowAgentParametersFromSource,
   extractWorkflowSourceExportItem,
   getExtensionsGeneratedPackagePath,
@@ -33,6 +31,18 @@ import { createWorkflowAgentId } from "../../mainview/agent-profile-ids";
 const tempDirs: string[] = [];
 const IMPORT_PATTERN =
   /\bimport\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|export\s+(?:type\s+)?[^'"]*?\s+from\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+function createCommittedDependencyApprovalState(): ExtensionDependencyCommittedApprovalState {
+  const approvedKeys = new Set<string>();
+  return {
+    isApproved: (identity) => approvedKeys.has(extensionDependencyApprovalIdentityKey(identity)),
+    recordApprovedRequest: ({ identities }) => {
+      for (const identity of identities) {
+        approvedKeys.add(extensionDependencyApprovalIdentityKey(identity));
+      }
+    },
+  };
+}
 
 describe("Workflows generated read model", () => {
   afterEach(() => {
@@ -232,6 +242,14 @@ describe("Workflows generated read model", () => {
     expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID");
     expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID");
     expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS");
+    expect(agentsIndex).toContain("SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES");
+    expect(agentsIndex).toContain("const WORKFLOW_TASK_AGENT_BRIDGE_MAX_RESPONSE_BYTES = 1048576;");
+    expect(agentsIndex).toContain(
+      "async function readBridgeResponseText(response: Response, maxResponseBytes: number): Promise<string>",
+    );
+    expect(agentsIndex).toContain(
+      "svvy workflow task-agent bridge response exceeded the configured byte limit.",
+    );
     expect(agentsIndex).toContain('operation: "runTaskAgent"');
     expect(agentsIndex).toContain("taskIdentity: readSmithersTaskIdentity(args)");
     expect(agentsIndex).toContain("...(smithersContext ? { smithersContext } : {})");
@@ -268,6 +286,12 @@ describe("Workflows generated read model", () => {
     expect(agentsIndex).toContain("smithersRunId");
     expect(agentsIndex).toContain("nodeId");
     expect(agentsIndex).toContain("maxOutputBytes?: unknown;");
+    expect(agentsIndex).toContain(
+      "function readOptionalPositiveIntegerValue(name: string, value: unknown): number | undefined",
+    );
+    expect(agentsIndex).toContain(
+      'const maxResponseBytes = readOptionalPositiveIntegerValue("maxOutputBytes", args.maxOutputBytes) ?? configuredMaxResponseBytes ?? WORKFLOW_TASK_AGENT_BRIDGE_MAX_RESPONSE_BYTES;',
+    );
     expect(agentsIndex).not.toContain("copySerializableGenerateFields");
     expect(agentsIndex).not.toContain("copySmithersIdentityFields");
     expect(agentsIndex).not.toContain("supportsNativeStructuredOutput");
@@ -358,6 +382,7 @@ describe("Workflows generated read model", () => {
     process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID = "command-workflow-001";
     process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID = "workspace-session-001";
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS = "2500";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES = "4096";
 
     try {
       const workflows = await import(`${pathToFileURL(join(packageRoot, "index.ts")).href}?bridge`);
@@ -389,6 +414,7 @@ describe("Workflows generated read model", () => {
           node: { id: "node-review" },
           iteration: { index: 2 },
           attempt: { index: 1 },
+          maxOutputBytes: 64,
           onEvent: () => {},
           onStdout: () => {},
         }),
@@ -429,6 +455,7 @@ describe("Workflows generated read model", () => {
         },
       },
     ]);
+    expect(received[0]).not.toHaveProperty("maxOutputBytes");
   });
 
   it("reports clear generated AgentLike bridge errors for missing env and bridge failures", async () => {
@@ -484,6 +511,7 @@ describe("Workflows generated read model", () => {
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
     process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID = "command-workflow-001";
     process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES = "4096";
     process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS = "not-a-number";
     try {
       await expect(agent.generate({ prompt: "bad timeout" })).rejects.toThrow(
@@ -513,53 +541,81 @@ describe("Workflows generated read model", () => {
     }
   });
 
-  it("links generated Workflows packages into Smithers workspaces without replacing non-symlinks", async () => {
+  it("uses Smithers maxOutputBytes only as the generated bridge response cap", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
-    const workspaceCwd = join(root, "workspace");
     const packageRoot = join(root, "generated", "package");
     const extensionsPackageRoot = join(root, "generated", "extensions-package");
-    mkdirSync(join(sourceRoot, "prompts"), { recursive: true });
-    mkdirSync(join(workspaceCwd, ".smithers"), { recursive: true });
-    writeFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "# Review\n");
+    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(sourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Review bridge payloads.",
+        },
+        null,
+        2,
+      ),
+    );
 
     const build = await buildWorkflowsGeneratedPackage({
       extensionsGeneratedPackagePath: extensionsPackageRoot,
       generatedPackagePath: packageRoot,
-      modelCatalog: [],
+      modelCatalog: [modelChoice()],
       sourceRoot,
-      workspaceCwds: [workspaceCwd],
     });
-    const linkPath = join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows");
-    const extensionsLinkPath = join(
-      workspaceCwd,
-      ".smithers",
-      "node_modules",
-      "@svvyx",
-      "extensions",
-    );
+    expect(build.ok).toBe(true);
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvyx/extensions",
+      targetPath: extensionsPackageRoot,
+    });
+    linkPackageForGeneratedImport({
+      packageRoot,
+      packageName: "@svvy/core",
+      targetPath: join(import.meta.dir, "..", "..", "..", "packages", "core"),
+    });
 
-    expect(build.linkedWorkspaces).toEqual([workspaceCwd]);
-    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(linkPath)).toBe(packageRoot);
-    expect(lstatSync(extensionsLinkPath).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(extensionsLinkPath)).toBe(extensionsPackageRoot);
+    const received: unknown[] = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((requestInfo: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(requestInfo, init);
+      return request.json().then((body) => {
+        received.push(body);
+        return Response.json({ text: "x".repeat(256) });
+      });
+    }) as typeof fetch;
+    const previousEnv = snapshotBridgeEnv();
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN = "bridge-token";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL = "http://svvy-workflow-agent-bridge.test/run";
+    process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID = "command-workflow-001";
+    process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID = "workspace-session-001";
+    process.env.SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES = "64";
 
-    rmSync(linkPath);
-    mkdirSync(linkPath);
-    expect(() =>
-      ensureWorkflowsPackageLink({ generatedPackagePath: packageRoot, workspaceCwd }),
-    ).toThrow("Cannot replace non-symlink");
+    try {
+      const workflows = await import(
+        `${pathToFileURL(join(packageRoot, "index.ts")).href}?max-output`
+      );
+      const agent = workflows.Agents.defineTaskAgent(workflows.Agents.reviewerAgent);
 
-    rmSync(extensionsLinkPath);
-    mkdirSync(extensionsLinkPath);
-    expect(() =>
-      ensureExtensionsPackageLink({
-        extensionsGeneratedPackagePath: extensionsPackageRoot,
-        generatedPackagePath: packageRoot,
-        workspaceCwd,
-      }),
-    ).toThrow("Cannot replace non-symlink");
+      await expect(agent.generate({ prompt: "Review." })).rejects.toThrow(
+        "svvy workflow task-agent bridge response exceeded the configured byte limit.",
+      );
+      await expect(agent.generate({ prompt: "Review.", maxOutputBytes: 0 })).rejects.toThrow(
+        "Invalid svvy workflow task-agent bridge option: maxOutputBytes must be a positive integer.",
+      );
+    } finally {
+      restoreBridgeEnv(previousEnv);
+      globalThis.fetch = previousFetch;
+    }
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).not.toHaveProperty("maxOutputBytes");
   });
 
   it("fails builds on invalid workflow-agent model, reasoning, and extension references", async () => {
@@ -693,6 +749,87 @@ describe("Workflows generated read model", () => {
     expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
       'export { explorerCopy } from "./explorerCopy";',
     );
+    expect(readFileSync(join(packageRoot, "agents", "explorerCopy.ts"), "utf8")).not.toContain(
+      "extensionOrder",
+    );
+  });
+
+  it("rejects workflow-agent source fields outside the task-agent source contract", async () => {
+    const root = createTempDir();
+    const sourceRoot = join(root, "source");
+    const packageRoot = join(root, "generated", "package");
+    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(sourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Review the requested area.",
+          preview: "not a task-agent source field",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const build = await buildWorkflowsGeneratedPackage({
+      generatedPackagePath: packageRoot,
+      modelCatalog: [modelChoice()],
+      sourceRoot,
+    });
+
+    expect(build.ok).toBe(false);
+    expect(build.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "invalid_agent_parameters",
+        exportName: "reviewerAgent",
+        message: "Workflow agent reviewerAgent must match TaskAgentParametersSource.",
+      }),
+    );
+    expect(existsSync(packageRoot)).toBe(false);
+  });
+
+  it("rejects workflow-agent extensionOrder outside source metadata shape", async () => {
+    const root = createTempDir();
+    const sourceRoot = join(root, "source");
+    const packageRoot = join(root, "generated", "package");
+    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(sourceRoot, "agents", "reviewerAgent.agent.json"),
+      JSON.stringify(
+        {
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Review the requested area.",
+          extensionOrder: ["git", 42],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const build = await buildWorkflowsGeneratedPackage({
+      generatedPackagePath: packageRoot,
+      modelCatalog: [modelChoice()],
+      sourceRoot,
+    });
+
+    expect(build.ok).toBe(false);
+    expect(build.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "invalid_agent_parameters",
+        exportName: "reviewerAgent",
+        message: "Workflow agent reviewerAgent extensionOrder must be an array of extension ids.",
+      }),
+    );
+    expect(existsSync(packageRoot)).toBe(false);
   });
 
   it("fails builds on unauthenticated providers and unknown extension overrides", async () => {
@@ -730,14 +867,12 @@ describe("Workflows generated read model", () => {
     ]);
   });
 
-  it("generates and links @svvyx/extensions for workflow agent extension references", async () => {
+  it("generates @svvyx/extensions for workflow agent extension references", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
     const extensionsPackageRoot = join(root, "generated", "extensions-package");
-    const workspaceCwd = join(root, "workspace");
     mkdirSync(join(sourceRoot, "agents"), { recursive: true });
-    mkdirSync(join(workspaceCwd, ".smithers"), { recursive: true });
     writeFileSync(
       join(sourceRoot, "agents", "reviewerAgent.agent.json"),
       JSON.stringify(
@@ -760,7 +895,6 @@ describe("Workflows generated read model", () => {
       generatedPackagePath: packageRoot,
       modelCatalog: [modelChoice()],
       sourceRoot,
-      workspaceCwds: [workspaceCwd],
     });
 
     expect(build.ok).toBe(true);
@@ -798,12 +932,6 @@ describe("Workflows generated read model", () => {
       git: "loaded",
       github: "loaded",
     });
-    expect(
-      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "workflows")),
-    ).toBe(packageRoot);
-    expect(
-      readlinkSync(join(workspaceCwd, ".smithers", "node_modules", "@svvyx", "extensions")),
-    ).toBe(extensionsPackageRoot);
   });
 
   it("derives workflow-agent generated extensions from source overrides", async () => {
@@ -811,9 +939,7 @@ describe("Workflows generated read model", () => {
     const sourceRoot = join(root, "source");
     const generatedPackagePath = join(root, "generated", "workflows-package");
     const extensionsPackageRoot = join(root, "generated", "extensions-package");
-    const workspaceCwd = join(root, "workspace");
     mkdirSync(join(sourceRoot, "agents"), { recursive: true });
-    mkdirSync(join(workspaceCwd, ".smithers"), { recursive: true });
     writeFileSync(
       join(sourceRoot, "agents", "reviewerAgent.agent.json"),
       JSON.stringify(
@@ -840,7 +966,6 @@ describe("Workflows generated read model", () => {
       generatedPackagePath,
       extensionsGeneratedPackagePath: extensionsPackageRoot,
       modelCatalog: [modelChoice()],
-      workspaceCwds: [workspaceCwd],
     });
 
     expect(build.ok).toBe(true);
@@ -915,6 +1040,7 @@ describe("Workflows generated read model", () => {
     const packageRoot = join(root, "generated", "package");
     const extensionsPackageRoot = join(root, "generated", "extensions-package");
     const extensionsRoot = join(root, "extensions");
+    const extensionDependencyApprovalState = createCommittedDependencyApprovalState();
     mkdirSync(join(sourceRoot, "agents"), { recursive: true });
     writeReadyUserExtension({
       extensionsRoot,
@@ -923,7 +1049,7 @@ describe("Workflows generated read model", () => {
       typescriptApiEnabled: true,
     });
     writeInstalledExtensionPackage(extensionsRoot, "@notes/sdk", "1.2.3");
-    approveExtensionDependency(extensionsRoot, {
+    approveExtensionDependency(extensionDependencyApprovalState, {
       kind: "dependency",
       name: "@notes/sdk",
       version: "1.2.3",
@@ -946,6 +1072,7 @@ describe("Workflows generated read model", () => {
     );
 
     const build = await buildWorkflowsGeneratedPackage({
+      extensionDependencyApprovalState,
       extensionsGeneratedPackagePath: extensionsPackageRoot,
       extensionsRoot,
       generatedPackagePath: packageRoot,
@@ -961,7 +1088,7 @@ describe("Workflows generated read model", () => {
     expect(build.items[0]?.agentParameters?.overrides).toEqual({ "installed-api": "loaded" });
   });
 
-  it("rejects dependency-backed user svvyx extensions with exact artifacts but no approval ledger entry", async () => {
+  it("rejects dependency-backed user svvyx extensions with exact artifacts but no committed approval fact", async () => {
     const root = createTempDir();
     const sourceRoot = join(root, "source");
     const packageRoot = join(root, "generated", "package");
@@ -1217,6 +1344,7 @@ describe("Workflows generated read model", () => {
     const packageRoot = join(root, "generated", "package");
     const extensionsPackageRoot = join(root, "generated", "extensions-package");
     const extensionsRoot = join(root, "extensions");
+    const extensionDependencyApprovalState = createCommittedDependencyApprovalState();
     mkdirSync(join(sourceRoot, "agents"), { recursive: true });
     writeReadyUserExtension({
       extensionsRoot,
@@ -1231,7 +1359,7 @@ describe("Workflows generated read model", () => {
       typescriptApiEnabled: true,
     });
     writeInstalledExtensionPackage(extensionsRoot, "esbuild", "0.25.3");
-    approveExtensionDependency(extensionsRoot, {
+    approveExtensionDependency(extensionDependencyApprovalState, {
       kind: "trusted_dependency",
       name: "esbuild",
       version: "0.25.4",
@@ -1269,6 +1397,7 @@ describe("Workflows generated read model", () => {
     );
 
     const build = await buildWorkflowsGeneratedPackage({
+      extensionDependencyApprovalState,
       extensionsGeneratedPackagePath: extensionsPackageRoot,
       extensionsRoot,
       generatedPackagePath: packageRoot,
@@ -1748,12 +1877,11 @@ function writeInstalledExtensionPackage(
 }
 
 function approveExtensionDependency(
-  extensionsRoot: string,
+  dependencyApprovalState: ExtensionDependencyCommittedApprovalState,
   dependency: { kind: "dependency" | "trusted_dependency"; name: string; version: string },
 ): void {
-  const dependencyApprovalStore = new ExtensionDependencyApprovalStore({ extensionsRoot });
-  const request = dependencyApprovalStore.findOrCreatePendingRequest({
-    extensionId: "test-extension",
+  dependencyApprovalState.recordApprovedRequest?.({
+    approvedAt: new Date(0).toISOString(),
     identities: [
       {
         kind: dependency.kind,
@@ -1765,10 +1893,8 @@ function approveExtensionDependency(
         resolution: null,
       },
     ],
+    requestId: "test-dependency-approval",
   });
-  if (request) {
-    dependencyApprovalStore.approveRequest(request.requestId);
-  }
 }
 
 function linkPackageForGeneratedImport(input: {
@@ -1786,6 +1912,8 @@ function snapshotBridgeEnv(): Record<string, string | undefined> {
     SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN,
     SVVY_WORKFLOW_AGENT_BRIDGE_URL: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_URL,
     SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS: process.env.SVVY_WORKFLOW_AGENT_BRIDGE_TIMEOUT_MS,
+    SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES:
+      process.env.SVVY_WORKFLOW_AGENT_BRIDGE_MAX_RESPONSE_BYTES,
     SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID: process.env.SVVY_WORKFLOW_AGENT_SOURCE_COMMAND_ID,
     SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID: process.env.SVVY_WORKFLOW_AGENT_WORKSPACE_SESSION_ID,
   };

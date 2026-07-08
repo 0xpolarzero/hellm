@@ -6,7 +6,8 @@ import {
   StateContractError,
   type RuntimeCommandStatePortService,
 } from "@svvy/core";
-import { layerRuntimeCommandStatePort, runtimeCommandStatePortFromStore } from "./index";
+import { layerRuntimeCommandStatePort } from "./index";
+import { runtimeCommandStatePortFromStore } from "./structured-session-adapters";
 import {
   layerStructuredSessionState,
   StructuredSessionState,

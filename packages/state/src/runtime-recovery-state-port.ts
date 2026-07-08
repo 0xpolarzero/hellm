@@ -9,6 +9,7 @@ import {
   type RuntimeRecoveryStartupSnapshot,
   type RuntimeRecoveryWorkOwnerScope,
   type RuntimeRecoveryWorkRecord,
+  type RuntimeRecoveryWorkScope,
   type SurfacePiSessionId,
   type TitleJobId,
   type ThreadId,
@@ -131,10 +132,18 @@ function runtimeRecoveryWorkRecordFromState(
   return {
     ...work,
     id: work.id as RecoveryWorkId,
-    workspaceId: work.workspaceId as WorkspaceId,
+    scope: runtimeRecoveryWorkScopeFromState(work.scope),
     claimedBy: work.claimedBy as RuntimeOwnerId | null,
     ownerScope: runtimeRecoveryWorkOwnerScopeFromState(work.ownerScope),
   };
+}
+
+function runtimeRecoveryWorkScopeFromState(
+  scope: StructuredRecoveryWorkRecord["scope"],
+): RuntimeRecoveryWorkScope {
+  return scope.kind === "workspace"
+    ? { kind: "workspace", workspaceId: scope.workspaceId as WorkspaceId }
+    : { kind: "app" };
 }
 
 function runtimeRecoveryWorkOwnerScopeFromState(

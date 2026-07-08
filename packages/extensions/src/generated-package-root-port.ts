@@ -6,6 +6,7 @@ import type { AbsolutePath, ExtensionError } from "@svvy/core";
 export interface GeneratedPackageRoots {
   readonly workflowsPackageRoot: AbsolutePath;
   readonly extensionsPackageRoot: AbsolutePath;
+  readonly coreTypeContractPackageRoot: AbsolutePath;
 }
 
 export interface GeneratedPackageRootPortService {

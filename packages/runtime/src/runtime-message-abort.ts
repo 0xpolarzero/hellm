@@ -1,4 +1,3 @@
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import {
   RuntimeContractError,
@@ -14,17 +13,6 @@ export type RuntimeQueuedMessageAbortedInput = {
   readonly input: RuntimeQueuedMessageAbortInput;
   readonly queued: RuntimeSurfaceMessageRecord;
 };
-
-export interface RuntimeQueuedMessageAbortPostCommitHostService {
-  afterQueuedMessageAborted(
-    input: RuntimeQueuedMessageAbortedInput,
-  ): Effect.Effect<void, RuntimeContractError>;
-}
-
-export class RuntimeQueuedMessageAbortPostCommitHost extends Context.Service<
-  RuntimeQueuedMessageAbortPostCommitHost,
-  RuntimeQueuedMessageAbortPostCommitHostService
->()("@svvy/runtime/RuntimeQueuedMessageAbortPostCommitHost") {}
 
 function mapQueueStateFailure(operation: string, cause: unknown): RuntimeContractError {
   const stateCause = cause as {
@@ -73,7 +61,6 @@ export const abortRuntimeQueuedMessage = Effect.fn("@svvy/runtime/messages.abort
   function* ({ input }: { readonly input: RuntimeQueuedMessageAbortInput }) {
     const queue = yield* RuntimeQueueStatePort;
     const eventBus = yield* RuntimeEventBus;
-    const postCommitHost = yield* RuntimeQueuedMessageAbortPostCommitHost;
     const existing = yield* queue
       .getSurfaceQueuedMessage({ id: input.queuedMessageId })
       .pipe(
@@ -87,8 +74,6 @@ export const abortRuntimeQueuedMessage = Effect.fn("@svvy/runtime/messages.abort
       .pipe(
         Effect.mapError((cause) => mapQueueStateFailure("runtime.messages.abort.cancel", cause)),
       );
-    const queued = cancelledResult.value;
-
     yield* eventBus.publishStateInvalidations({ afterCommit: cancelledResult.afterCommit }).pipe(
       Effect.mapError(
         (cause) =>
@@ -100,7 +85,5 @@ export const abortRuntimeQueuedMessage = Effect.fn("@svvy/runtime/messages.abort
           }),
       ),
     );
-
-    yield* postCommitHost.afterQueuedMessageAborted({ input, queued });
   },
 );

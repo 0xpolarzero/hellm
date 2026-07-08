@@ -7,10 +7,8 @@ import {
   type SurfacePiSessionId,
   type WorkspaceId,
 } from "@svvy/core";
-import {
-  layerRuntimeSurfaceLifecycleStatePort,
-  runtimeSurfaceLifecycleStatePortFromStore,
-} from "./index";
+import { layerRuntimeSurfaceLifecycleStatePort } from "./index";
+import { runtimeSurfaceLifecycleStatePortFromStore } from "./structured-session-adapters";
 import {
   createStructuredSessionStateStore,
   layerStructuredSessionState,
@@ -43,6 +41,7 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
     );
     const closed = await runTestEffect(
       port.closeSurface({
+        workspaceId,
         target: created.value.target,
         closeReason: "pane-closed",
       }),

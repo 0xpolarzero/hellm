@@ -2,33 +2,94 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import type * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
+  AbsolutePath,
   AppLogEntryId,
-  AppLogQuerySchema,
+  type AppLogEntry,
+  type AppLogLevel,
   type IsoDateTimeString,
-  IsoDateTimeStringSchema,
   type AppLogQuery,
   type AppLogReadModel,
+  type AppLogSource,
   type AppLogSummary,
   type AppLogWritePort,
+  type AppLogWritePortService,
+  type ExtensionStatePort,
+  type JsonValue as JsonValueType,
+  type PiSessionReferencePort,
+  type ProviderAuthStatus,
+  type ProviderAuthStatusStatePort,
+  type ProviderId,
+  type RuntimeActorExtensionBindingStatePort,
+  type RuntimeApprovalStatePort,
+  type RuntimeArtifactStatePort,
   type RuntimeClientSubmissionInput,
-  RuntimeClientSubmissionInputSchema,
+  type RuntimeCommandStatePort,
+  type RuntimeComposerDraftStatePort,
+  type RuntimeEpisodeStatePort,
+  type RuntimeExtensionContextImpactStatePort,
+  type RuntimeExtensionStatePort,
+  type RuntimeGeneratedPackageStatePort,
+  type RuntimePromptDefaultsStatePort,
+  type RuntimeQueueStatePort,
+  type RuntimeReadModelStatePort,
+  type RuntimeRecoveryStatePort,
+  type RuntimeRequestStatePort,
+  type RuntimeSessionWaitStatePort,
+  type RuntimeSourceStatePort,
+  type RuntimeSurfaceLifecycleStatePort,
+  type RuntimeThreadStatePort,
+  type RuntimeTurnStatePort,
+  type RuntimeWorkspaceStatePort,
+  type SandboxPolicySource,
+  type StateCommandPostCommitNotificationError,
+  StateCommandPostCommitNotificationPort,
   type StateCommandReceipt,
   StateContractError,
   type StateFacadeErrorContract,
   type StateInvalidationDescriptor,
   type StateMutationResult,
   type StateRevision,
-  strictBoundaryParseOptions,
-  WorkspaceId,
   type WorkspaceId as WorkspaceIdType,
 } from "@svvy/core";
-import { AppLogState, type CreateAppLogStoreOptions, layerAppLogState } from "./app-log-store";
+import {
+  appLogStateFromStore,
+  createAppLogStore,
+  AppLogState,
+  layerAppLogState,
+} from "./app-log-store";
+import { appLogWritePortFromAppLogState } from "./app-log-write-port";
 import { layerAppLogWritePort } from "./app-log-write-port";
 import { mutationResult } from "./state-mutation-result";
+import { structuredSessionStatePortsLayerWithSandboxPolicyConfig } from "./structured-session-state-ports-layer";
+import {
+  createStructuredSessionStateStore,
+  structuredSessionStateFromStore,
+  StructuredSessionState,
+  type StateDigestHelper,
+  type StructuredAppPreferencesRecord,
+  type StructuredSessionStateStore,
+} from "./structured-session-state";
+import type { StateLayerConfig } from "./state-layer-config";
+import {
+  decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect,
+  decodeUnknownMarkAppLogReadCommandInputEffect,
+  decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect,
+  decodeUnknownRecordProviderAuthStatusCommandInputEffect,
+  decodeUnknownUpdateAppPreferencesCommandInputEffect,
+  type AppPreferenceAppearance,
+  type AppPreferenceApprovalMode,
+  type ClearWorkspaceAppLogUnreadCommandInput,
+  type MarkAppLogReadCommandInput,
+  type MarkVisibleAppLogRangeReadCommandInput,
+  type RecordProviderAuthStatusCommandInput,
+  type UpdateAppPreferencesCommandInput,
+} from "./state-command-schemas";
 
 export interface StateFacadeCallOptions {
   signal?: AbortSignal;
@@ -45,14 +106,49 @@ export type AppLogReadModelRequest =
       workspaceId?: WorkspaceIdType;
     };
 
-export type StateReadModelRequest = AppLogReadModelRequest;
+export type StateReadModelRequest =
+  | AppLogReadModelRequest
+  | AppPreferencesReadModelRequest
+  | ProviderAuthReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
-  | { kind: "appLogSummary"; value: AppLogSummary };
+  | { kind: "appLogSummary"; value: AppLogSummary }
+  | { kind: "appPreferences"; value: AppPreferencesReadModel }
+  | { kind: "settings"; value: SettingsReadModel }
+  | { kind: "providerAuth"; value: ProviderAuthReadModel };
+
+export interface AppPreferencesReadModel {
+  appearance: AppPreferenceAppearance;
+  externalEditor: string | null;
+  artifactDirectory: string;
+  approvalMode: AppPreferenceApprovalMode;
+  networkAccess: boolean;
+  ambientResources: JsonValueType;
+  updatedAt: IsoDateTimeString;
+  revision: StateRevision;
+}
+
+export interface SettingsReadModel {
+  preferences: AppPreferencesReadModel;
+}
+
+export interface AppPreferencesReadModelRequest {
+  kind: "appPreferences" | "settings";
+}
+
+export interface ProviderAuthReadModel {
+  providers: readonly ProviderAuthStatus[];
+  usableModelProviders: readonly ProviderId[];
+}
+
+export interface ProviderAuthReadModelRequest {
+  kind: "providerAuth";
+  workspaceId?: WorkspaceIdType;
+}
 
 export interface StateReadModelInvalidationRefetchRequest {
-  descriptors: readonly StateInvalidationDescriptor[];
+  descriptor: StateInvalidationDescriptor;
 }
 
 export interface StateReadModelBaseline {
@@ -84,40 +180,6 @@ export type StateCommandResult<Extra extends object = Record<never, never>> = Ex
   receipt: StateCommandReceipt;
 };
 
-export interface MarkAppLogReadCommandInput {
-  workspaceId?: WorkspaceIdType;
-  entryIds: readonly AppLogEntryId[];
-  readAt: IsoDateTimeString;
-  clientSubmission: RuntimeClientSubmissionInput;
-}
-
-export interface MarkVisibleAppLogRangeReadCommandInput {
-  workspaceId?: WorkspaceIdType;
-  newestVisibleEntryId: AppLogEntryId;
-  oldestVisibleEntryId: AppLogEntryId;
-  readAt: IsoDateTimeString;
-  filter?: AppLogQuery;
-  clientSubmission: RuntimeClientSubmissionInput;
-}
-
-export interface ClearWorkspaceAppLogUnreadCommandInput {
-  workspaceId?: WorkspaceIdType;
-  readAt: IsoDateTimeString;
-  clientSubmission: RuntimeClientSubmissionInput;
-}
-
-export interface StateCommandInvalidationSink {
-  publishCommittedStateInvalidations(input: {
-    source: "state-command-facade";
-    descriptors: readonly StateInvalidationDescriptor[];
-    clientSubmission?: RuntimeClientSubmissionInput;
-  }): Promise<void>;
-}
-
-export interface CreateStateCommandsFacadeOptions {
-  invalidationSink?: StateCommandInvalidationSink;
-}
-
 export interface AppLogReadStateCommands {
   markRead(
     input: MarkAppLogReadCommandInput,
@@ -130,8 +192,22 @@ export interface AppLogReadStateCommands {
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
 }
 
+export interface AppPreferencesStateCommands {
+  update(
+    input: UpdateAppPreferencesCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
+export interface ProviderAuthStateCommands {
+  recordStatus(
+    input: RecordProviderAuthStatusCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
 export interface StateCommandsService {
   appLogs: AppLogReadStateCommands;
+  appPreferences: AppPreferencesStateCommands;
+  providerAuth: ProviderAuthStateCommands;
 }
 
 export class StateCommands extends Context.Service<StateCommands, StateCommandsService>()(
@@ -171,12 +247,87 @@ export interface StateCommandsFacade {
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
+  appPreferences: {
+    update(
+      input: UpdateAppPreferencesCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  providerAuth: {
+    recordStatus(
+      input: RecordProviderAuthStatusCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
   close(): void;
 }
 
-export interface StateLayerInput {
-  appLogs?: CreateAppLogStoreOptions;
+export interface StateAppLogAppendInput {
+  createdAt?: string;
+  level: AppLogLevel;
+  source: AppLogSource;
+  message: string;
+  details?: Record<string, unknown>;
+  error?: unknown;
+  workspaceSessionId?: string;
+  surfacePiSessionId?: string;
+  threadId?: string;
+  workflowRunId?: string;
+  workflowTaskAttemptId?: string;
+  commandId?: string;
+  artifactId?: string;
 }
+
+export interface StateAppLogsFacade {
+  append(entry: StateAppLogAppendInput): AppLogEntry;
+  query(query?: AppLogQuery): AppLogReadModel;
+  summary(): AppLogSummary;
+  markSeen(throughSeq: number): AppLogSummary;
+  subscribe(listener: (entries: AppLogEntry[], summary: AppLogSummary) => void): () => void;
+  writePort: AppLogWritePortService;
+  close(): void;
+}
+
+export interface CreateStateAppLogsFacadeOptions {
+  databasePath?: string;
+  now: () => string;
+  memoryLimit?: number;
+  persistedLimit?: number;
+  retentionDays?: number;
+}
+
+type StateLayerConfigInput = {
+  readonly config: StateLayerConfig;
+  readonly digest?: StateDigestHelper;
+};
+
+type StateLayerProvidedPortServices =
+  | ExtensionStatePort
+  | RuntimeWorkspaceStatePort
+  | RuntimeSurfaceLifecycleStatePort
+  | RuntimeComposerDraftStatePort
+  | RuntimeQueueStatePort
+  | RuntimeTurnStatePort
+  | RuntimeCommandStatePort
+  | RuntimeApprovalStatePort
+  | RuntimeActorExtensionBindingStatePort
+  | RuntimeEpisodeStatePort
+  | RuntimeExtensionStatePort
+  | RuntimeExtensionContextImpactStatePort
+  | RuntimeGeneratedPackageStatePort
+  | RuntimePromptDefaultsStatePort
+  | RuntimeArtifactStatePort
+  | RuntimeRecoveryStatePort
+  | RuntimeReadModelStatePort
+  | RuntimeRequestStatePort
+  | RuntimeSessionWaitStatePort
+  | RuntimeSourceStatePort
+  | RuntimeThreadStatePort
+  | ProviderAuthStatusStatePort
+  | SandboxPolicySource
+  | PiSessionReferencePort;
+
+const stateLayerNow = () => "1970-01-01T00:00:00.000Z";
 
 export function createStateFacade(
   managedRuntime: ManagedRuntime.ManagedRuntime<StateReadModels, unknown>,
@@ -225,11 +376,13 @@ export function createStateFacade(
 }
 
 export function createStateCommandsFacade(
-  managedRuntime: ManagedRuntime.ManagedRuntime<StateCommands, unknown>,
-  options: CreateStateCommandsFacadeOptions = {},
+  managedRuntime: ManagedRuntime.ManagedRuntime<
+    StateCommands | StateCommandPostCommitNotificationPort,
+    unknown
+  >,
 ): StateCommandsFacade {
   let closed = false;
-  const run = <A, E>(
+  const run = <A extends { readonly receipt: StateCommandReceipt }, E>(
     operation: string,
     effect: Effect.Effect<StateMutationResult<A>, E, StateCommands>,
     clientSubmission: RuntimeClientSubmissionInput | undefined,
@@ -243,15 +396,26 @@ export function createStateCommandsFacade(
       effect: Effect.gen(function* () {
         const result = yield* effect;
         if (result.afterCommit.length > 0) {
-          yield* Effect.tryPromise({
-            try: () =>
-              options.invalidationSink?.publishCommittedStateInvalidations({
-                source: "state-command-facade",
-                descriptors: result.afterCommit,
-                ...(clientSubmission ? { clientSubmission } : {}),
-              }) ?? Promise.resolve(),
-            catch: (cause) => postCommitNotificationError(operation, result.value, cause),
-          });
+          const notifications = yield* StateCommandPostCommitNotificationPort;
+          yield* notifications
+            .notifyCommittedStateCommand({
+              operation,
+              receipt: result.value.receipt,
+              descriptors: result.afterCommit,
+              ...(clientSubmission ? { clientSubmission } : {}),
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.fail(
+                  postCommitNotificationError(
+                    operation,
+                    result.value.receipt,
+                    result.afterCommit,
+                    cause,
+                  ),
+                ),
+              ),
+            );
         }
         return result.value;
       }),
@@ -290,69 +454,251 @@ export function createStateCommandsFacade(
           callOptions,
         ),
     },
+    appPreferences: {
+      update: (input, callOptions) =>
+        run(
+          "stateCommands.appPreferences.update",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.appPreferences.update(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    providerAuth: {
+      recordStatus: (input, callOptions) =>
+        run(
+          "stateCommands.providerAuth.recordStatus",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.providerAuth.recordStatus(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
     close: () => {
       closed = true;
     },
   };
 }
 
+export function createStateAppLogsFacade(
+  options: CreateStateAppLogsFacadeOptions,
+): StateAppLogsFacade {
+  const store = createAppLogStore(options);
+  const appLogState = appLogStateFromStore(store);
+  return {
+    append: (entry) => store.append(entry),
+    query: (query) => store.query(query),
+    summary: () => store.summary(),
+    markSeen: (throughSeq) => store.markSeen(throughSeq),
+    subscribe: (listener) => store.subscribe(listener),
+    writePort: appLogWritePortFromAppLogState(appLogState),
+    close: () => store.close(),
+  };
+}
+
 const makeStateReadModels = Effect.fn("@svvy/state/makeStateReadModels")(function* () {
   const appLogs = yield* AppLogState;
-  return stateReadModelsFromAppLogState(appLogs);
+  const structuredSession = yield* StructuredSessionState;
+  return stateReadModelsFromState({ appLogs, structuredSession });
 });
 
 const layerStateReadModels = Layer.effect(StateReadModels, makeStateReadModels());
 
 const makeStateCommands = Effect.fn("@svvy/state/makeStateCommands")(function* () {
   const appLogs = yield* AppLogState;
-  return stateCommandsFromAppLogState(appLogs);
+  const structuredSession = yield* StructuredSessionState;
+  return stateCommandsFromState({ appLogs, structuredSession });
 });
 
 const layerStateCommands = Layer.effect(StateCommands, makeStateCommands());
 
 export const layer = (
-  input: StateLayerInput = {},
-): Layer.Layer<StateReadModels | StateCommands | AppLogWritePort, StateContractError> =>
-  Layer.mergeAll(layerStateReadModels, layerStateCommands, layerAppLogWritePort).pipe(
-    Layer.provide(layerAppLogState(input.appLogs)),
+  input: StateLayerConfigInput,
+): Layer.Layer<
+  StateReadModels | StateCommands | AppLogWritePort | StateLayerProvidedPortServices,
+  StateContractError,
+  FileSystem.FileSystem | Path.Path
+> => {
+  const structuredSessionLayer = layerRootStructuredSessionState(input);
+  const packageStateLayer = Layer.mergeAll(
+    layerAppLogState({
+      databasePath: input.config.databasePath,
+      busyTimeoutMs: input.config.busyTimeoutMs,
+      now: stateLayerNow,
+    }),
+    structuredSessionLayer,
   );
+  return Layer.mergeAll(
+    Layer.mergeAll(layerStateReadModels, layerStateCommands, layerAppLogWritePort).pipe(
+      Layer.provide(packageStateLayer),
+    ),
+    structuredSessionStatePortsLayerWithSandboxPolicyConfig(input.config.sandboxPolicy ?? {}).pipe(
+      Layer.provide(structuredSessionLayer),
+    ),
+  );
+};
 
-function stateReadModelsFromAppLogState(
-  appLogs: AppLogState["Service"],
-): StateReadModels["Service"] {
+function layerRootStructuredSessionState(
+  input: StateLayerConfigInput,
+): Layer.Layer<StructuredSessionState, StateContractError, FileSystem.FileSystem | Path.Path> {
+  return Layer.effect(
+    StructuredSessionState,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem
+        .makeDirectory(path.dirname(input.config.databasePath), { recursive: true })
+        .pipe(
+          Effect.mapError((cause) =>
+            stateLayerOpenError("state.structuredSession.prepareDatabaseDirectory", cause),
+          ),
+        );
+      yield* fileSystem
+        .makeDirectory(input.config.artifactRoot, { recursive: true })
+        .pipe(Effect.catch(() => Effect.void));
+
+      const store = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () =>
+            createStructuredSessionStateStore({
+              databasePath: input.config.databasePath,
+              busyTimeoutMs: input.config.busyTimeoutMs,
+              filesystemSetup: "caller",
+              ...(input.digest ? { digest: input.digest } : {}),
+              workspace: {
+                id: "workspace_state_root" as WorkspaceIdType,
+                label: "State root",
+                cwd: path.dirname(input.config.databasePath) as typeof AbsolutePath.Type,
+                artifactDir: input.config.artifactRoot,
+              },
+              now: stateLayerNow,
+            }),
+          catch: (cause) => stateLayerOpenError("state.structuredSession.open", cause),
+        }),
+        (acquiredStore: StructuredSessionStateStore) =>
+          Effect.try({
+            try: () => acquiredStore.close(),
+            catch: (cause) => stateLayerOpenError("state.structuredSession.close", cause),
+          }).pipe(Effect.ignore),
+      );
+      return structuredSessionStateFromStore(store);
+    }),
+  );
+}
+
+function stateLayerOpenError(operation: string, cause: unknown): StateContractError {
+  if (cause instanceof StateContractError) {
+    return cause;
+  }
+  return new StateContractError({
+    operation,
+    reason: "transaction-failed",
+    message: cause instanceof Error ? cause.message : "State layer open failed.",
+    cause,
+  });
+}
+
+function stateReadModelsFromState(state: {
+  appLogs: AppLogState["Service"];
+  structuredSession: StructuredSessionState["Service"];
+}): StateReadModels["Service"] {
   return StateReadModels.of({
-    fetch: (input) =>
+    fetch: (request) =>
       Effect.gen(function* () {
-        switch (input.kind) {
+        switch (request.kind) {
           case "appLogs":
-            return { kind: "appLogs", value: yield* appLogs.query(input.query) };
+            return { kind: "appLogs", value: yield* state.appLogs.query(request.query) };
           case "appLogSummary":
-            return { kind: "appLogSummary", value: yield* appLogs.summary() };
+            return { kind: "appLogSummary", value: yield* state.appLogs.summary() };
+          case "appPreferences": {
+            const record = yield* state.structuredSession.readAppPreferences();
+            const preferences = appPreferencesReadModel(record);
+            return { kind: "appPreferences", value: preferences };
+          }
+          case "settings": {
+            const record = yield* state.structuredSession.readAppPreferences();
+            const preferences = appPreferencesReadModel(record);
+            return { kind: "settings", value: { preferences } };
+          }
+          case "providerAuth": {
+            const providers = yield* state.structuredSession.listProviderAuthStatuses(
+              request.workspaceId ? { workspaceId: request.workspaceId } : {},
+            );
+            return { kind: "providerAuth", value: providerAuthReadModel(providers) };
+          }
         }
       }),
-    refetchInvalidation: (input) =>
+    refetchInvalidation: (request) =>
       Effect.gen(function* () {
-        const shouldFetchAppLogs = input.descriptors.some(
-          (descriptor) =>
-            descriptor.scope === "workspace" && descriptor.invalidation.model === "appLogs",
-        );
-        if (!shouldFetchAppLogs) return [];
-        const value = yield* appLogs.query();
-        return [{ kind: "appLogs", value }];
+        switch (request.descriptor.invalidation.model) {
+          case "appLogs": {
+            const [logs, summary] = yield* Effect.all([
+              state.appLogs.query(),
+              state.appLogs.summary(),
+            ]);
+            return [
+              { kind: "appLogs", value: logs },
+              { kind: "appLogSummary", value: summary },
+            ];
+          }
+          case "appPreferences": {
+            const record = yield* state.structuredSession.readAppPreferences();
+            const preferences = appPreferencesReadModel(record);
+            return [{ kind: "appPreferences", value: preferences }];
+          }
+          case "settings": {
+            const record = yield* state.structuredSession.readAppPreferences();
+            const preferences = appPreferencesReadModel(record);
+            return [{ kind: "settings", value: { preferences } }];
+          }
+          case "providerAuth": {
+            const providers = yield* state.structuredSession.listProviderAuthStatuses(
+              request.descriptor.scope === "workspace"
+                ? { workspaceId: request.descriptor.workspaceId }
+                : {},
+            );
+            return [{ kind: "providerAuth", value: providerAuthReadModel(providers) }];
+          }
+          default:
+            return [];
+        }
       }),
     rebaseline: () =>
       Effect.gen(function* () {
-        const [logs, summary] = yield* Effect.all([appLogs.query(), appLogs.summary()]);
+        const [logs, summary, currentStateRevision] = yield* Effect.all([
+          state.appLogs.query(),
+          state.appLogs.summary(),
+          state.structuredSession.readCurrentStateRevision(),
+        ]);
+        const record = yield* state.structuredSession.readAppPreferences();
+        const preferences = appPreferencesReadModel(record);
         return {
-          app: [{ kind: "appLogSummary", value: summary }],
+          app: [
+            { kind: "appLogSummary", value: summary },
+            { kind: "appPreferences", value: preferences },
+            { kind: "settings", value: { preferences } },
+            {
+              kind: "providerAuth",
+              value: providerAuthReadModel(
+                yield* state.structuredSession.listProviderAuthStatuses({}),
+              ),
+            },
+          ],
           workspaces: [{ kind: "appLogs", value: logs }],
-          revision: summary.latestSeq as StateRevision,
+          revision: Math.max(summary.latestSeq, currentStateRevision) as StateRevision,
         };
       }),
   });
 }
 
-function stateCommandsFromAppLogState(appLogs: AppLogState["Service"]): StateCommands["Service"] {
+function stateCommandsFromState(state: {
+  appLogs: AppLogState["Service"];
+  structuredSession: StructuredSessionState["Service"];
+}): StateCommands["Service"] {
   const receipts = new Map<string, StateMutationResult<StateCommandResult>>();
 
   const runCommand = <
@@ -386,30 +732,86 @@ function stateCommandsFromAppLogState(appLogs: AppLogState["Service"]): StateCom
 
   return StateCommands.of({
     appLogs: {
-      markRead: (input) =>
+      markRead: (commandInput) =>
         Effect.gen(function* () {
-          const decoded = yield* decodeMarkAppLogReadInput(input);
-          return yield* runCommand(decoded, () => markAppLogEntriesRead(appLogs, decoded.entryIds));
-        }),
-      markVisibleRangeRead: (input) =>
-        Effect.gen(function* () {
-          const decoded = yield* decodeMarkVisibleAppLogRangeReadInput(input);
+          const decoded = yield* decodeMarkAppLogReadInput(commandInput);
           return yield* runCommand(decoded, () =>
-            markAppLogEntriesRead(appLogs, [
+            markAppLogEntriesRead(state.appLogs, decoded.entryIds),
+          );
+        }),
+      markVisibleRangeRead: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeMarkVisibleAppLogRangeReadInput(commandInput);
+          return yield* runCommand(decoded, () =>
+            markAppLogEntriesRead(state.appLogs, [
               decoded.newestVisibleEntryId,
               decoded.oldestVisibleEntryId,
             ]),
           );
         }),
-      clearWorkspaceUnread: (input) =>
+      clearWorkspaceUnread: (commandInput) =>
         Effect.gen(function* () {
-          const decoded = yield* decodeClearWorkspaceAppLogUnreadInput(input);
+          const decoded = yield* decodeClearWorkspaceAppLogUnreadInput(commandInput);
           return yield* runCommand(decoded, () =>
             Effect.gen(function* () {
-              const summary = yield* appLogs.summary();
-              return yield* appLogs.markSeen(summary.latestSeq);
+              const summary = yield* state.appLogs.summary();
+              return yield* state.appLogs.markSeen(summary.latestSeq);
             }),
           );
+        }),
+    },
+    appPreferences: {
+      update: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeUpdateAppPreferencesInput(commandInput);
+          const clientRequestId = decoded.clientSubmission?.clientRequestId;
+          if (clientRequestId) {
+            const existing = receipts.get(clientRequestId);
+            if (existing) return duplicateMutationResult(existing);
+          }
+          const updatedAt = yield* state.structuredSession.getCurrentTimestamp();
+          const updated = yield* state.structuredSession.updateAppPreferences({
+            ...decoded.patch,
+            updatedAt,
+          });
+          const value: StateCommandResult = {
+            receipt: {
+              clientRequestId: clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: updated.updatedAt as StateCommandReceipt["committedAt"],
+              stateRevision: updated.stateRevision,
+            },
+          };
+          const result = mutationResult(value, appPreferencesStateInvalidations());
+          if (clientRequestId) receipts.set(clientRequestId, result);
+          return result;
+        }),
+    },
+    providerAuth: {
+      recordStatus: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeRecordProviderAuthStatusInput(commandInput);
+          const clientRequestId = decoded.clientSubmission?.clientRequestId;
+          if (clientRequestId) {
+            const existing = receipts.get(clientRequestId);
+            if (existing) return duplicateMutationResult(existing);
+          }
+          const record = yield* state.structuredSession.recordProviderAuthStatus({
+            status: decoded.status,
+            observedAt: decoded.observedAt,
+            source: decoded.source,
+          });
+          const value: StateCommandResult = {
+            receipt: {
+              clientRequestId: clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: decoded.observedAt as StateCommandReceipt["committedAt"],
+              stateRevision: record.stateRevision,
+            },
+          };
+          const result = mutationResult(value, providerAuthStateInvalidations(record.status));
+          if (clientRequestId) receipts.set(clientRequestId, result);
+          return result;
         }),
     },
   });
@@ -448,7 +850,42 @@ function appLogReadStateInvalidations(
 ): readonly StateInvalidationDescriptor[] {
   return workspaceId
     ? [{ scope: "workspace", workspaceId, invalidation: { model: "appLogs" } }]
-    : [];
+    : [{ scope: "app", invalidation: { model: "appLogs" } }];
+}
+
+function appPreferencesStateInvalidations(): readonly StateInvalidationDescriptor[] {
+  return [
+    { scope: "app", invalidation: { model: "appPreferences" } },
+    { scope: "app", invalidation: { model: "settings" } },
+  ];
+}
+
+function providerAuthStateInvalidations(
+  status: ProviderAuthStatus,
+): readonly StateInvalidationDescriptor[] {
+  return [{ scope: "app", invalidation: { model: "providerAuth", ids: [status.providerId] } }];
+}
+
+function appPreferencesReadModel(record: StructuredAppPreferencesRecord): AppPreferencesReadModel {
+  return {
+    appearance: record.appearance,
+    externalEditor: record.externalEditor,
+    artifactDirectory: record.artifactDirectory,
+    approvalMode: record.approvalMode,
+    networkAccess: record.networkAccess,
+    ambientResources: record.ambientResources,
+    updatedAt: record.updatedAt as IsoDateTimeString,
+    revision: record.stateRevision,
+  };
+}
+
+function providerAuthReadModel(providers: readonly ProviderAuthStatus[]): ProviderAuthReadModel {
+  return {
+    providers,
+    usableModelProviders: providers
+      .filter((provider) => provider.health === "usable")
+      .map((provider) => provider.providerId),
+  };
 }
 
 function runStateFacadeEffect<A, E, R>(input: {
@@ -526,6 +963,15 @@ function stateFacadeErrorFromCause(
 function defectMessage(defect: unknown): string {
   if (defect instanceof Error && defect.message.trim().length > 0) return defect.message;
   if (typeof defect === "string" && defect.trim().length > 0) return defect;
+  if (
+    defect &&
+    typeof defect === "object" &&
+    "message" in defect &&
+    typeof defect.message === "string" &&
+    defect.message.trim().length > 0
+  ) {
+    return defect.message;
+  }
   return "State facade defect.";
 }
 
@@ -571,77 +1017,78 @@ function isPostCommitNotificationFailure(value: unknown): value is PostCommitNot
 
 function postCommitNotificationError(
   operation: string,
-  value: unknown,
-  cause: unknown,
+  receipt: StateCommandReceipt,
+  descriptors: readonly StateInvalidationDescriptor[],
+  cause: Cause.Cause<unknown>,
 ): PostCommitNotificationFailure {
-  const receipt = (value as { receipt?: StateCommandReceipt }).receipt;
+  const notificationError = stateCommandPostCommitNotificationError(
+    operation,
+    receipt,
+    descriptors,
+    Cause.squash(cause),
+  );
   return new PostCommitNotificationFailure({
     type: "state-facade-error",
     reason: "post-commit-notification-failed",
-    receipt: receipt ?? {
-      clientRequestId: null,
-      outcome: "applied",
-      committedAt: new Date(0).toISOString() as StateCommandReceipt["committedAt"],
-      stateRevision: 0 as StateRevision,
-    },
-    message: `${operation} committed but state invalidation publication failed: ${describeCause(
-      cause,
-    )}`,
+    receipt,
+    notificationError,
+    message: `${operation} committed but state invalidation publication failed: ${notificationError.message}`,
   });
 }
 
-function describeCause(cause: unknown): string {
-  if (cause instanceof Error && cause.message) return cause.message;
-  if (typeof cause === "string" && cause) return cause;
-  return "Unknown notification failure.";
+function stateCommandPostCommitNotificationError(
+  operation: string,
+  receipt: StateCommandReceipt,
+  descriptors: readonly StateInvalidationDescriptor[],
+  cause: unknown,
+): StateCommandPostCommitNotificationError {
+  if (
+    cause &&
+    typeof cause === "object" &&
+    "type" in cause &&
+    cause.type === "state-command-post-commit-notification-error" &&
+    "reason" in cause &&
+    (cause.reason === "publication-failed" ||
+      cause.reason === "runtime-shutdown" ||
+      cause.reason === "runtime-disposed") &&
+    "message" in cause &&
+    typeof cause.message === "string"
+  ) {
+    return cause as StateCommandPostCommitNotificationError;
+  }
+  return {
+    type: "state-command-post-commit-notification-error",
+    operation,
+    reason: "publication-failed",
+    receipt,
+    message: defectMessage(cause),
+    affectedReadModels: descriptors,
+  };
 }
 
-const BaseAppLogReadCommandInputSchema = Schema.Struct({
-  workspaceId: Schema.optionalKey(WorkspaceId),
-  readAt: IsoDateTimeStringSchema,
-  clientSubmission: RuntimeClientSubmissionInputSchema,
-});
-
-const MarkAppLogReadCommandInputSchema = Schema.Struct({
-  ...BaseAppLogReadCommandInputSchema.fields,
-  entryIds: Schema.Array(AppLogEntryId),
-});
-
-const MarkVisibleAppLogRangeReadCommandInputSchema = Schema.Struct({
-  ...BaseAppLogReadCommandInputSchema.fields,
-  newestVisibleEntryId: AppLogEntryId,
-  oldestVisibleEntryId: AppLogEntryId,
-  filter: Schema.optionalKey(AppLogQuerySchema),
-});
-
-const ClearWorkspaceAppLogUnreadCommandInputSchema = BaseAppLogReadCommandInputSchema;
-
-const decodeMarkAppLogReadCommandInputEffect = Schema.decodeUnknownEffect(
-  MarkAppLogReadCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-const decodeMarkVisibleAppLogRangeReadCommandInputEffect = Schema.decodeUnknownEffect(
-  MarkVisibleAppLogRangeReadCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-const decodeClearWorkspaceAppLogUnreadCommandInputEffect = Schema.decodeUnknownEffect(
-  ClearWorkspaceAppLogUnreadCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-
 const decodeMarkAppLogReadInput = (input: unknown) =>
-  decodeMarkAppLogReadCommandInputEffect(input).pipe(
+  decodeUnknownMarkAppLogReadCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.appLogs.markRead")),
   );
 
 const decodeMarkVisibleAppLogRangeReadInput = (input: unknown) =>
-  decodeMarkVisibleAppLogRangeReadCommandInputEffect(input).pipe(
+  decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.appLogs.markVisibleRangeRead")),
   );
 
 const decodeClearWorkspaceAppLogUnreadInput = (input: unknown) =>
-  decodeClearWorkspaceAppLogUnreadCommandInputEffect(input).pipe(
+  decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.appLogs.clearWorkspaceUnread")),
+  );
+
+const decodeUpdateAppPreferencesInput = (input: unknown) =>
+  decodeUnknownUpdateAppPreferencesCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.appPreferences.update")),
+  );
+
+const decodeRecordProviderAuthStatusInput = (input: unknown) =>
+  decodeUnknownRecordProviderAuthStatusCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.providerAuth.recordStatus")),
   );
 
 function commandDecodeError(operation: string) {

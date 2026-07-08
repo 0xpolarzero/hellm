@@ -3,6 +3,41 @@ export type AdoptedEffectRuntimeModuleExport = {
   readonly members: readonly string[];
 };
 
+export type AuditedEffectInstalledExport = AdoptedEffectRuntimeModuleExport & {
+  readonly scope: "installed-export-audit";
+  readonly owner: string;
+  readonly verifiedOn: "2026-06-25";
+};
+
+export type AuditedEffectInstalledExportAdoptionState =
+  | "adopted-source-gated"
+  | "adoptable-member-gated"
+  | "scoped-adoptable-member-gated"
+  | "conditional"
+  | "test-only";
+
+export type AuditedEffectInstalledExportPolicy = {
+  readonly module: string;
+  readonly adoptionState: AuditedEffectInstalledExportAdoptionState;
+  readonly productReason: string;
+};
+
+export type AuditedEffectInstalledExportMemberPolicy = {
+  readonly module: string;
+  readonly member: string;
+  readonly adoptionState: AuditedEffectInstalledExportAdoptionState;
+  readonly allowedSourceGlobs: readonly string[];
+  readonly productReason: string;
+};
+
+export type AdoptedEffectInstanceMemberPolicy = {
+  readonly module: string;
+  readonly receiver: string;
+  readonly members: readonly string[];
+  readonly allowedSourceGlobs: readonly string[];
+  readonly productReason: string;
+};
+
 export const adoptedEffectRuntimeModuleExports = [
   { module: "@effect/platform-bun/BunCrypto", members: ["layer"] },
   { module: "@effect/platform-bun/BunFileSystem", members: ["layer"] },
@@ -18,14 +53,20 @@ export const adoptedEffectRuntimeModuleExports = [
       "squash",
     ],
   },
-  { module: "effect/Config", members: ["ConfigError", "all", "int", "mapOrFail", "withDefault"] },
-  { module: "effect/Context", members: ["Service", "getOption"] },
+  {
+    module: "effect/Config",
+    members: ["ConfigError", "all", "int", "mapOrFail", "withDefault"],
+  },
+  { module: "effect/ConfigProvider", members: ["fromEnv"] },
+  { module: "effect/Context", members: ["Service"] },
   { module: "effect/DateTime", members: ["formatIso", "now"] },
   { module: "effect/Deferred", members: ["await", "fail", "make", "succeed"] },
+  { module: "effect/Duration", members: ["millis", "min"] },
   {
     module: "effect/Effect",
     members: [
       "acquireRelease",
+      "acquireUseRelease",
       "addFinalizer",
       "all",
       "andThen",
@@ -33,8 +74,8 @@ export const adoptedEffectRuntimeModuleExports = [
       "asVoid",
       "catch",
       "catchCause",
+      "context",
       "clockWith",
-      "contextWith",
       "die",
       "ensuring",
       "fail",
@@ -52,26 +93,38 @@ export const adoptedEffectRuntimeModuleExports = [
       "promise",
       "provide",
       "provideService",
+      "retry",
       "runPromise",
+      // Module-level With runners are adopted only for the package-private
+      // @svvy/pi-adapter turn callback bridge; package-boundary tests keep
+      // production reads pinned to packages/pi-adapter/src/pi-adapter.ts.
+      "runPromiseWith",
+      "runPromiseExitWith",
       "runSync",
+      "serviceOption",
       "sleep",
       "succeed",
       "suspend",
       "sync",
       "tap",
+      "timeoutOrElse",
       "try",
       "tryPromise",
+      "uninterruptible",
       "void",
     ],
   },
   { module: "effect/Exit", members: ["isFailure", "isSuccess", "match", "succeed", "void"] },
+  { module: "effect/Crypto", members: ["Crypto"] },
   { module: "effect/FileSystem", members: ["FileSystem"] },
-  { module: "effect/Layer", members: ["effect", "mergeAll", "provide", "succeed"] },
+  { module: "effect/Layer", members: ["effect", "mergeAll", "provide", "provideMerge", "succeed"] },
   { module: "effect/ManagedRuntime", members: ["make"] },
-  { module: "effect/Option", members: ["isNone", "some"] },
+  { module: "effect/Option", members: ["getOrElse", "isNone", "some"] },
   { module: "effect/Path", members: ["Path"] },
-  { module: "effect/Queue", members: ["dropping", "offer", "shutdown"] },
+  { module: "effect/Queue", members: ["bounded", "dropping", "fail", "offer", "shutdown"] },
+  { module: "effect/Redacted", members: ["make", "value"] },
   { module: "effect/Ref", members: ["get", "getAndSet", "make", "modify", "update"] },
+  { module: "effect/Schedule", members: ["exponential", "modifyDelay"] },
   {
     module: "effect/Schema",
     members: [
@@ -119,7 +172,7 @@ export const adoptedEffectRuntimeModuleExports = [
   { module: "effect/SchemaIssue", members: ["InvalidValue", "makeFormatterStandardSchemaV1"] },
   {
     module: "effect/Scope",
-    members: ["Scope", "addFinalizer", "close", "fork", "make", "makeUnsafe"],
+    members: ["Scope", "addFinalizer", "close", "fork", "make"],
   },
   { module: "effect/Semaphore", members: ["make"] },
   {
@@ -137,6 +190,203 @@ export const adoptedEffectRuntimeModuleExports = [
   },
 ] as const satisfies readonly AdoptedEffectRuntimeModuleExport[];
 
+export const adoptedEffectInstanceMemberPolicies = [
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["context", "dispose", "runPromise"],
+    allowedSourceGlobs: ["src/bun/runtime-service-adapter.ts"],
+    productReason:
+      "App bootstrap uses ManagedRuntime.context to acquire the app-composed layer context before exposing facades, ManagedRuntime.runPromise to run runtime-internal app-edge operations that are intentionally not exposed on the public Promise facade, and ManagedRuntime.dispose to release the single app runtime during shutdown.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromise", "runPromiseExit"],
+    allowedSourceGlobs: ["packages/runtime/src/runtime-layer-config.ts"],
+    productReason:
+      "Runtime bootstrap lifecycle helpers run readiness and shutdown effects over the caller-owned ManagedRuntime and map typed exits/errors at the JavaScript facade boundary without creating package runtimes or rebuilding layers per call.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromiseExit"],
+    allowedSourceGlobs: ["packages/runtime/src/index.ts"],
+    productReason:
+      "The runtime Promise facade maps service effects through a caller-owned ManagedRuntime and inspects exits so typed failures, defects, interruption, and cancellation become stable facade errors.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromise"],
+    allowedSourceGlobs: ["packages/runtime/src/accepted-native-tool-execution.ts"],
+    productReason:
+      "The accepted native-tool execution adapter maps app-bootstrap accepted-tool entry effects through the caller-owned ManagedRuntime while keeping the accepted-tool service tag, layer, and service interface package-private.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromiseExit"],
+    allowedSourceGlobs: ["packages/state/src/state-facade.ts"],
+    productReason:
+      "The state Promise facade maps state command/read effects through a caller-owned ManagedRuntime and inspects exits so typed failures, defects, interruption, and cancellation become stable facade errors.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["access", "exists", "readFile", "realPath", "stat"],
+    allowedSourceGlobs: ["packages/sandbox/src/sandbox.ts"],
+    productReason:
+      "Sandbox helper validation and effectful path-access resolution use the injected abstract FileSystem service to verify candidate helper existence, executable metadata, regular-file status, helper bytes, canonical paths, and nearest-existing-parent containment without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["exists", "makeDirectory", "readFileString", "rename", "stat", "writeFileString"],
+    allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
+    productReason:
+      "Extension source edit sessions use the injected abstract FileSystem service to inspect editable extension source files, read source text, and atomically save source edits under extension-owned source roots without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "makeTempDirectory",
+      "remove",
+      "rename",
+      "writeFileString",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/generated-package-writer.ts"],
+    productReason:
+      "Extension generated-package writer uses the injected abstract FileSystem service to create temp roots, write generated files, atomically replace app-owned generated @svvyx package roots, and clean failed/backup roots without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["readDirectory", "readFileString", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/generated-extensions-package.ts"],
+    productReason:
+      "Extension generated @svvyx/extensions package service uses the injected abstract FileSystem service to discover ready user extension directories, inspect manifest/build files, and read generated-package evidence without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["readDirectory", "readFileString", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/generated-workflows-package.ts"],
+    productReason:
+      "Extension generated @svvyx/workflows package service uses the injected abstract FileSystem service to discover workflow source files, inspect file kinds, and read source text without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["makeDirectory"],
+    allowedSourceGlobs: ["packages/state/src/state-facade.ts"],
+    productReason:
+      "State root layer uses the injected abstract FileSystem service to prepare the structured-session database directory and configured artifact root before opening SQLite-backed state.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["makeDirectory"],
+    allowedSourceGlobs: ["packages/state/src/app-log-store.ts"],
+    productReason:
+      "State app-log store uses the injected abstract FileSystem service to prepare the app-log database directory before opening SQLite-backed app logs.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "isAbsolute", "join", "normalize", "relative", "resolve"],
+    allowedSourceGlobs: ["packages/sandbox/src/sandbox.ts"],
+    productReason:
+      "Sandbox effectful path-access resolution uses the injected abstract Path service to resolve relative user paths, normalize candidate paths, and project missing descendants under canonical existing parents without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "join", "resolve"],
+    allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
+    productReason:
+      "Extension source edit sessions use the injected abstract Path service to resolve known extension/workflow source roots, source file candidates, and atomic-save temp paths under extension-owned source roots without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["basename", "dirname", "join"],
+    allowedSourceGlobs: ["packages/extensions/src/generated-package-writer.ts"],
+    productReason:
+      "Extension generated-package writer uses the injected abstract Path service to resolve generated package parent directories, package-name-derived temp prefixes, and generated file paths without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["join"],
+    allowedSourceGlobs: ["packages/extensions/src/generated-extensions-package.ts"],
+    productReason:
+      "Extension generated @svvyx/extensions package service uses the injected abstract Path service to resolve source manifests, build manifests, dependency artifacts, evidence manifest paths, and generated file paths without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["join", "relative"],
+    allowedSourceGlobs: ["packages/extensions/src/generated-workflows-package.ts"],
+    productReason:
+      "Extension generated @svvyx/workflows package service uses the injected abstract Path service to resolve workflow source directories, source files, evidence manifest paths, generated file paths, and relative file: dependency paths without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname"],
+    allowedSourceGlobs: ["packages/extensions/src/extensions-service.ts"],
+    productReason:
+      "Extensions workspace-link planning uses the injected abstract Path service to derive the required workspace-link parent path without importing host path modules.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname"],
+    allowedSourceGlobs: ["packages/state/src/state-facade.ts"],
+    productReason:
+      "State root layer uses the injected abstract Path service to derive the structured-session database parent directory for SQLite setup and the root workspace cwd fact.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname"],
+    allowedSourceGlobs: ["packages/state/src/app-log-store.ts"],
+    productReason:
+      "State app-log store uses the injected abstract Path service to derive the app-log database parent directory before opening SQLite-backed app logs.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["digest"],
+    allowedSourceGlobs: ["packages/sandbox/src/sandbox.ts"],
+    productReason:
+      "Sandbox managed launch construction hashes the generated Seatbelt profile material through the injected Crypto service so profile digests are sandbox-owned and testable without direct node:crypto imports.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["digest", "randomUUIDv4"],
+    allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
+    productReason:
+      "Extension source edit sessions hash saved source text into source-version fingerprints and use injected UUID generation for atomic temp filenames without importing host crypto modules.",
+  },
+  {
+    module: "effect/Semaphore",
+    receiver: "Semaphore.Semaphore",
+    members: ["withPermit"],
+    allowedSourceGlobs: [
+      "packages/runtime/src/runtime-event-bus.ts",
+      "packages/runtime/src/runtime-surface-event-publisher.ts",
+    ],
+    productReason:
+      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, and the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus.",
+  },
+] as const satisfies readonly AdoptedEffectInstanceMemberPolicy[];
+
 export const adoptedEffectTypeOnlyModules = [
   "effect/Crypto",
   "effect/Effect",
@@ -146,4 +396,940 @@ export const adoptedEffectTypeOnlyModules = [
   "effect/Path",
   "effect/Redacted",
   "effect/Schema",
+  "effect/SchemaAST",
+  "effect/Scope",
 ] as const;
+
+export const auditedEffectInstalledExportPolicies = [
+  ...[
+    "@effect/platform-bun/BunCrypto",
+    "@effect/platform-bun/BunFileSystem",
+    "@effect/platform-bun/BunPath",
+    "effect/Cause",
+    "effect/Config",
+    "effect/ConfigProvider",
+    "effect/Context",
+    "effect/Crypto",
+    "effect/Data",
+    "effect/Clock",
+    "effect/DateTime",
+    "effect/Deferred",
+    "effect/Duration",
+    "effect/Effect",
+    "effect/Encoding",
+    "effect/Equal",
+    "effect/Exit",
+    "effect/Filter",
+    "effect/FileSystem",
+    "effect/Hash",
+    "effect/Layer",
+    "effect/LogLevel",
+    "effect/ManagedRuntime",
+    "effect/Option",
+    "effect/Path",
+    "effect/PubSub",
+    "effect/Queue",
+    "effect/Random",
+    "effect/References",
+    "effect/Ref",
+    "effect/Result",
+    "effect/Schedule",
+    "effect/SchemaIssue",
+    "effect/Scope",
+    "effect/Semaphore",
+    "effect/Stream",
+    "effect/Struct",
+    "effect/Take",
+  ].map(
+    (module): AuditedEffectInstalledExportPolicy => ({
+      module,
+      adoptionState: "adoptable-member-gated",
+      productReason:
+        "Installed and audited module surface whose production import permission still requires the exact member to be listed in adoptedEffectRuntimeModuleExports and enforced by package-boundary gates.",
+    }),
+  ),
+  ...[
+    "effect/Channel",
+    "effect/ChannelSchema",
+    "effect/JsonSchema",
+    "effect/PlatformError",
+    "effect/Schema",
+    "effect/SchemaAST",
+    "effect/SchemaRepresentation",
+    "effect/Sink",
+  ].map(
+    (module): AuditedEffectInstalledExportPolicy => ({
+      module,
+      adoptionState: "scoped-adoptable-member-gated",
+      productReason:
+        "Installed and audited module surface reserved for package-owned schema, declaration, file/platform, protocol, stream, or boundary adapter paths; production import permission still requires exact member adoption.",
+    }),
+  ),
+  ...[
+    "effect/Cache",
+    "effect/Fiber",
+    "effect/FiberHandle",
+    "effect/FiberMap",
+    "effect/FiberSet",
+    "effect/JsonPatch",
+    "effect/Latch",
+    "effect/LayerMap",
+    "effect/Logger",
+    "effect/Metric",
+    "effect/Pool",
+    "effect/Request",
+    "effect/RequestResolver",
+    "effect/Resource",
+    "effect/RcMap",
+    "effect/RcRef",
+    "effect/ScopedRef",
+    "effect/ScopedCache",
+    "effect/SynchronizedRef",
+    "effect/SubscriptionRef",
+    "effect/Tracer",
+    "effect/unstable/process",
+  ].map(
+    (module): AuditedEffectInstalledExportPolicy => ({
+      module,
+      adoptionState: "conditional",
+      productReason:
+        "Installed-version canary only; not production permission. Production value reads require exact adoptedEffectRuntimeModuleExports entries plus an owning package/spec record naming product reason, resource/lifetime policy, exact imports, boundary allowlist, and focused tests in the same change.",
+    }),
+  ),
+  {
+    module: "effect/testing",
+    adoptionState: "test-only",
+    productReason: "Effect test-lane service used only from @effect/vitest and *.effect.test.ts.",
+  },
+  {
+    module: "effect/testing/TestClock",
+    adoptionState: "test-only",
+    productReason:
+      "Effect test-lane clock controls used only from *.effect.test.ts canaries and time-sensitive Effect tests.",
+  },
+  {
+    module: "@effect/vitest",
+    adoptionState: "test-only",
+    productReason:
+      "Effect service/layer test runtime helpers used only from *.effect.test.ts through the root test:effect lane.",
+  },
+  {
+    module: "effect/Redacted",
+    adoptionState: "adoptable-member-gated",
+    productReason:
+      "Redacted value helpers are installed-audited and production-gated by exact member adoption because pi-adapter needs to unwrap state-provided usable provider credentials only at the pi-auth host boundary.",
+  },
+] as const satisfies readonly AuditedEffectInstalledExportPolicy[];
+
+export const auditedEffectInstalledExportMemberPolicies = [
+  {
+    module: "effect/Effect",
+    member: "scoped",
+    adoptionState: "test-only",
+    allowedSourceGlobs: [
+      "packages/effect-installed-exports.effect.test.ts",
+      "packages/**/*.effect.test.ts",
+      "packages/state/src/effect.test-support.ts",
+      "packages/state/src/*.test.ts",
+    ],
+    productReason:
+      "Effect.scoped is installed-audited for Effect-lane tests and SQLite-backed state Bun-lane tests that acquire one-shot scoped resources and assert release behavior. Production bridge handles use explicit Scope.make/provideService/close ownership unless an exact package owner promotes Effect.scoped.",
+  },
+  {
+    module: "effect/Effect",
+    member: "forkScoped",
+    adoptionState: "test-only",
+    allowedSourceGlobs: [
+      "packages/effect-installed-exports.effect.test.ts",
+      "packages/**/*.effect.test.ts",
+    ],
+    productReason:
+      "Effect.forkScoped is installed-audited for tests that exercise scoped stream/facade behavior. Production scoped workers require exact package-owner promotion before use.",
+  },
+  {
+    module: "effect/Layer",
+    member: "provideMerge",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: [
+      "packages/effect-installed-exports.effect.test.ts",
+      "packages/**/*.effect.test.ts",
+      "packages/state/src/*.test.ts",
+      "packages/runtime/src/index.ts",
+    ],
+    productReason:
+      "Layer.provideMerge is adopted for runtime root-layer composition that must retain package-private internal dependency services while assembling the runtime internal service bundle, before the exported Runtime.layer hides that bundle behind Layer.provide(...). It remains available to Effect test lanes and SQLite-backed state Bun-lane tests for local harnesses that must access both the service under test and fixture/handle services.",
+  },
+  {
+    module: "effect/Layer",
+    member: "withSpan",
+    adoptionState: "conditional",
+    allowedSourceGlobs: [],
+    productReason:
+      "Layer.withSpan is an installed-version canary only. It is not production or general test permission without exact owner policy, boundary allowlist, and focused tests.",
+  },
+  {
+    module: "effect/Effect",
+    member: "serviceOption",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: [
+      "packages/runtime/src/accepted-native-tool-execution-service.ts",
+      "packages/runtime/src/runtime-effect-requests.ts",
+    ],
+    productReason:
+      "Runtime may probe the optional RuntimeHandlerThreadStartPreparationHost only at the two handler-thread preparation seams named by runtime and Effect package specs.",
+  },
+  {
+    module: "effect/Queue",
+    member: "fail",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    productReason:
+      "Pi-adapter may fail its queue-backed turn/event protocol when pi callbacks report typed stream errors; other packages need their own owner/spec/test promotion before failing queues.",
+  },
+  {
+    module: "effect/Effect",
+    member: "runPromise",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: [
+      "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
+      "src/bun/runtime-service-adapter.ts",
+    ],
+    productReason:
+      "Runtime app-bootstrap and source-invalidation coordinator adapters are the named Promise edges for already composed runtime effects; they start, signal, run, or close runtime-owned work without exposing generic runners or package-private service/layer/policy surfaces.",
+  },
+  {
+    module: "effect/Effect",
+    member: "runPromiseWith",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    productReason:
+      "Pi-adapter callback bridge runs queue/close effects over the captured runtime context without creating a ManagedRuntime.",
+  },
+  {
+    module: "effect/Effect",
+    member: "runPromiseExitWith",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    productReason:
+      "Pi-adapter callback bridge inspects queue-offer/guard exits over the captured runtime context without creating a ManagedRuntime.",
+  },
+  {
+    module: "effect/Effect",
+    member: "uninterruptible",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/extensions/src/generated-package-writer.ts"],
+    productReason:
+      "Generated-package promotion uses one short uninterruptible rename/restore critical section so interruption cannot leave the previous ready package outside the canonical live root.",
+  },
+  {
+    module: "effect/Redacted",
+    member: "make",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["src/bun/session-catalog.ts"],
+    productReason:
+      "The app title-helper provider-auth edge wraps raw provider credentials immediately after trusted host credential intake and before handing them to typed provider-auth snapshots.",
+  },
+  {
+    module: "effect/Redacted",
+    member: "value",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    productReason:
+      "Pi-adapter unwraps usable provider credentials only at the trusted pi/model registry invocation boundary.",
+  },
+  {
+    module: "effect/SchemaIssue",
+    member: "makeFormatterStandardSchemaV1",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/core/src/errors.ts"],
+    productReason:
+      "Core formats Effect Schema issues into stable public boundary error payloads without exposing raw schema internals.",
+  },
+  ...["interrupt", "join"].map(
+    (member): AuditedEffectInstalledExportMemberPolicy => ({
+      module: "effect/Fiber",
+      member,
+      adoptionState: "test-only",
+      allowedSourceGlobs: ["packages/**/*.effect.test.ts"],
+      productReason:
+        "Fiber helpers are installed-audited only for tests that observe scoped runtime/facade fibers.",
+    }),
+  ),
+  ...["encodeSync", "toCodecJson"].map(
+    (member): AuditedEffectInstalledExportMemberPolicy => ({
+      module: "effect/Schema",
+      member,
+      adoptionState: "test-only",
+      allowedSourceGlobs: [
+        "packages/core/src/core-module-boundaries.test.ts",
+        "packages/core/src/provider-auth-ports.effect.test.ts",
+      ],
+      productReason:
+        "These Schema helpers are used only in core contract tests that prove Redacted values fail closed when encoded through JSON codecs.",
+    }),
+  ),
+  ...["empty", "make", "never", "runCollect", "take"].map(
+    (member): AuditedEffectInstalledExportMemberPolicy => ({
+      module: "effect/Stream",
+      member,
+      adoptionState: "test-only",
+      allowedSourceGlobs: [
+        "packages/**/*.effect.test.ts",
+        "packages/runtime/src/runtime-facade.test.ts",
+      ],
+      productReason:
+        "Additional Stream helpers are installed-audited only for tests that construct bounded streams or collect scoped runtime/facade output.",
+    }),
+  ),
+] as const satisfies readonly AuditedEffectInstalledExportMemberPolicy[];
+
+export const auditedEffectInstalledExports = [
+  {
+    module: "@effect/platform-bun/BunCrypto",
+    members: ["layer"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "@effect/platform-bun/BunFileSystem",
+    members: ["layer"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "@effect/platform-bun/BunPath",
+    members: ["layer"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Cache",
+    members: ["get", "invalidate", "make", "makeWith"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Cause",
+    members: [
+      "hasInterruptsOnly",
+      "isDieReason",
+      "isFailReason",
+      "isInterruptReason",
+      "pretty",
+      "squash",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Channel",
+    members: [
+      "fromAsyncIterable",
+      "fromQueue",
+      "pipeTo",
+      "pipeToOrFail",
+      "runDrain",
+      "runIntoPubSub",
+      "runIntoQueue",
+      "toPubSub",
+      "toPubSubTake",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/ChannelSchema",
+    members: ["decode", "decodeUnknown", "duplex", "duplexUnknown", "encode", "encodeUnknown"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Config",
+    members: ["nonEmptyString", "orElse", "redacted", "schema", "unwrap"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/ConfigProvider",
+    members: ["constantCase", "fromEnv", "fromUnknown", "layer", "layerAdd", "nested"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Context",
+    members: ["Service"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Crypto",
+    members: ["make"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Data",
+    members: ["Class", "Error", "TaggedClass", "TaggedError", "taggedEnum"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Clock",
+    members: ["currentTimeMillis", "currentTimeNanos"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/DateTime",
+    members: ["formatIso", "now"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Deferred",
+    members: ["await", "fail", "make", "succeed"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Duration",
+    members: ["millis", "seconds", "toMillis", "isFinite", "isPositive"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Effect",
+    members: [
+      "annotateCurrentSpan",
+      "annotateLogs",
+      "annotateLogsScoped",
+      "annotateSpans",
+      "abortSignal",
+      "callback",
+      "fnUntraced",
+      "forkChild",
+      "forkIn",
+      "forkScoped",
+      "log",
+      "logDebug",
+      "logError",
+      "logFatal",
+      "logInfo",
+      "logTrace",
+      "logWarning",
+      "logWithLevel",
+      "scoped",
+      "trackDuration",
+      "uninterruptible",
+      "uninterruptibleMask",
+      "withLogSpan",
+      "withParentSpan",
+      "withSpan",
+      "yieldNow",
+      "withTracerEnabled",
+      "withTracerTiming",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Encoding",
+    members: [
+      "decodeBase64",
+      "decodeBase64String",
+      "decodeBase64Url",
+      "decodeBase64UrlString",
+      "decodeHex",
+      "decodeHexString",
+      "encodeBase64",
+      "encodeBase64Url",
+      "encodeHex",
+      "isEncodingError",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Equal",
+    members: ["equals", "isEqual", "symbol"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Exit",
+    members: ["isFailure", "isSuccess", "match", "succeed", "void"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Fiber",
+    members: ["join", "interrupt"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/FiberHandle",
+    members: ["make", "run", "awaitEmpty", "clear"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/FiberMap",
+    members: ["make", "run", "awaitEmpty", "remove"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/FiberSet",
+    members: ["make", "run", "awaitEmpty", "clear"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Filter",
+    members: ["fromPredicate", "fromPredicateOption", "toOption", "toPredicate", "toResult"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/FileSystem",
+    members: ["FileSystem"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Hash",
+    members: ["hash", "isHash", "string", "symbol"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/JsonPatch",
+    members: ["apply", "get"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/JsonSchema",
+    members: [
+      "toDocumentDraft07",
+      "toMultiDocumentOpenApi3_1",
+      "fromSchemaDraft07",
+      "resolveTopLevel$ref",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Latch",
+    members: ["make", "await", "open", "close", "release"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Layer",
+    members: ["provideMerge", "withSpan"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/LayerMap",
+    members: ["Service", "make"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Logger",
+    members: ["batched", "layer", "tracerLogger"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/LogLevel",
+    members: ["values"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    members: ["make"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Metric",
+    members: [
+      "counter",
+      "disableRuntimeMetrics",
+      "disableRuntimeMetricsLayer",
+      "enableRuntimeMetrics",
+      "enableRuntimeMetricsLayer",
+      "histogram",
+      "snapshot",
+      "snapshotUnsafe",
+      "timer",
+      "update",
+      "value",
+      "withAttributes",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Option",
+    members: ["getOrElse", "isNone", "some"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Path",
+    members: ["Path"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/PlatformError",
+    members: ["BadArgument", "PlatformError", "SystemError", "badArgument", "systemError"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Pool",
+    members: ["get", "invalidate", "make", "makeWithStrategy", "makeWithTTL"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/PubSub",
+    members: ["bounded", "publish", "shutdown", "sliding", "subscribe", "unbounded"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Random",
+    members: [
+      "next",
+      "nextBetween",
+      "nextBoolean",
+      "nextInt",
+      "nextIntBetween",
+      "shuffle",
+      "withSeed",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Queue",
+    members: [
+      "asDequeue",
+      "asEnqueue",
+      "end",
+      "fail",
+      "interrupt",
+      "make",
+      "offer",
+      "shutdown",
+      "sliding",
+      "take",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/References",
+    members: [
+      "CurrentConcurrency",
+      "CurrentLogAnnotations",
+      "CurrentLogLevel",
+      "CurrentLogSpans",
+      "CurrentTraceLevel",
+      "DisablePropagation",
+      "MaxOpsBeforeYield",
+      "MinimumLogLevel",
+      "MinimumTraceLevel",
+      "PreventSchedulerYield",
+      "Scheduler",
+      "TracerEnabled",
+      "TracerSpanAnnotations",
+      "TracerSpanLinks",
+      "TracerTimingEnabled",
+      "UnhandledLogLevel",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Request",
+    members: ["Class", "TaggedClass", "complete", "completeEffect", "fail", "succeed"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/RequestResolver",
+    members: [
+      "asCache",
+      "batchN",
+      "fromEffect",
+      "fromFunction",
+      "fromFunctionBatched",
+      "make",
+      "withCache",
+      "withSpan",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Redacted",
+    members: ["make", "value"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Ref",
+    members: ["get", "getAndSet", "make", "modify", "update"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Result",
+    members: ["fail", "gen", "isFailure", "isSuccess", "map", "mapError", "match", "succeed"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Resource",
+    members: ["auto", "get", "manual", "refresh"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/RcMap",
+    members: ["get", "invalidate", "make", "touch"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/RcRef",
+    members: ["get", "invalidate", "make"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Schema",
+    members: [
+      "Class",
+      "RedactedFromValue",
+      "TaggedClass",
+      "TaggedStruct",
+      "annotateEncoded",
+      "encodeSync",
+      "toJsonSchemaDocument",
+      "toCodecJson",
+      "toStandardSchemaV1",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/SchemaAST",
+    members: ["collectSentinels", "defaultParseOptions", "isJson", "isStringTree"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/SchemaIssue",
+    members: ["InvalidValue", "makeFormatterStandardSchemaV1"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/SchemaRepresentation",
+    members: ["toJsonSchemaDocument", "toJsonSchemaMultiDocument", "toCodeDocument", "fromAST"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/ScopedCache",
+    members: ["get", "invalidate", "make", "makeWith"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Schedule",
+    members: ["spaced", "fixed", "exponential", "jittered", "modifyDelay", "recurs", "take"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Scope",
+    members: ["close", "make", "provide", "use"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/ScopedRef",
+    members: ["fromAcquire", "make", "get", "set"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Semaphore",
+    members: ["make"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Sink",
+    members: ["collect", "count", "fold", "foldUntil", "fromChannel", "head", "take"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Stream",
+    members: [
+      "callback",
+      "empty",
+      "fromAsyncIterable",
+      "fromEventListener",
+      "fromPubSubTake",
+      "fromSubscription",
+      "make",
+      "never",
+      "runCollect",
+      "take",
+      "toAsyncIterableEffect",
+      "toAsyncIterableWith",
+      "withSpan",
+    ],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/testing/TestClock",
+    members: ["adjust", "setTime", "withLive"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Struct",
+    members: ["pick", "omit", "map", "assign", "mapPick", "mapOmit"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/SynchronizedRef",
+    members: ["make", "get", "modify", "updateEffect"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/SubscriptionRef",
+    members: ["changes", "get", "make", "modify", "set", "update"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Take",
+    members: ["toPull"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/Tracer",
+    members: ["DisablePropagation"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/testing",
+    members: ["TestClock"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "effect/unstable/process",
+    members: ["ChildProcess", "ChildProcessSpawner"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+  {
+    module: "@effect/vitest",
+    members: ["assert", "describe", "it", "layer"],
+    scope: "installed-export-audit",
+    owner: "docs/specs/package-architecture/effect-v4.spec.md",
+    verifiedOn: "2026-06-25",
+  },
+] as const satisfies readonly AuditedEffectInstalledExport[];

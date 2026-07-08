@@ -2,20 +2,37 @@ import * as Effect from "effect/Effect";
 import {
   RuntimeContractError,
   RuntimeQueueStatePort,
+  RuntimeTurnStatePort,
+  type RuntimeOwnerId,
   type RuntimeSurfaceMessageRecord,
+  type RuntimeTurnRecord,
+  type PositiveDurationMs,
+  type StartRuntimeTurnInput,
   type StateContractError,
+  type WorkspaceId,
 } from "@svvy/core";
 
 export type SurfaceQueueMaterializedMessage<TMessage, TMetadata = never> =
   | { kind: "dispatch"; message: TMessage; metadata?: TMetadata }
   | { kind: "delivered" };
 
+export interface SurfaceQueuePreparedTurn<TPrepared = undefined> {
+  startTurnInput: StartRuntimeTurnInput;
+  prepared: TPrepared;
+}
+
 export interface SurfaceQueueStartedPrompt {
   promptDone: Promise<void>;
   continueAfterPrompt(): boolean;
 }
 
-export interface SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata = never> {
+export interface SurfaceQueueDispatchHost<
+  TTarget,
+  TSurface,
+  TMessage,
+  TMetadata = never,
+  TPrepared = undefined,
+> {
   isClosed(): boolean;
   resolveTarget(target: TTarget): TTarget | Promise<TTarget>;
   retainSurface(target: TTarget): Promise<TSurface>;
@@ -23,20 +40,25 @@ export interface SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata
   isSurfaceActive(input: { target: TTarget; surface: TSurface }): boolean;
   activePromptDone(input: { target: TTarget; surface: TSurface }): Promise<void> | null;
   continueAfterActivePrompt(input: { target: TTarget; surface: TSurface }): boolean;
-  hasClaimableQueuedMessage(input: {
-    target: TTarget;
-    surface: TSurface;
-  }): boolean | Promise<boolean>;
   refreshBeforeDispatch(input: { target: TTarget; surface: TSurface }): Promise<TSurface>;
   materializeQueuedMessage(input: {
     target: TTarget;
     surface: TSurface;
     queued: RuntimeSurfaceMessageRecord;
   }): Promise<SurfaceQueueMaterializedMessage<TMessage, TMetadata>>;
+  prepareTurn(input: {
+    target: TTarget;
+    surface: TSurface;
+    queued: RuntimeSurfaceMessageRecord;
+    message: TMessage;
+    metadata: TMetadata | undefined;
+  }): Promise<SurfaceQueuePreparedTurn<TPrepared>>;
   startPrompt(input: {
     target: TTarget;
     surface: TSurface;
     queued: RuntimeSurfaceMessageRecord;
+    turn: RuntimeTurnRecord;
+    prepared: TPrepared;
     message: TMessage;
     metadata: TMetadata | undefined;
   }): Promise<SurfaceQueueStartedPrompt>;
@@ -46,11 +68,11 @@ export interface SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata
 export interface SurfaceQueueDispatcher<TTarget> {
   drainSurfaceQueue(
     target: TTarget,
-  ): Effect.Effect<void, RuntimeContractError, RuntimeQueueStatePort>;
+  ): Effect.Effect<void, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort>;
   drainNextQueuedSurfaceMessage(
     target: TTarget,
     options: { awaitPrompt: boolean },
-  ): Effect.Effect<boolean, RuntimeContractError, RuntimeQueueStatePort>;
+  ): Effect.Effect<boolean, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort>;
 }
 
 export function createSurfaceQueueDispatcher<
@@ -58,10 +80,13 @@ export function createSurfaceQueueDispatcher<
   TSurface,
   TMessage,
   TMetadata = never,
+  TPrepared = undefined,
 >(input: {
-  host: SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata>;
+  host: SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata, TPrepared>;
+  claimOwnerId: RuntimeOwnerId;
+  leaseDurationMs: PositiveDurationMs;
 }): SurfaceQueueDispatcher<TTarget> {
-  const { host } = input;
+  const { claimOwnerId, host, leaseDurationMs } = input;
 
   const runHost = <A>(
     operation: string,
@@ -86,7 +111,12 @@ export function createSurfaceQueueDispatcher<
       const queue = yield* RuntimeQueueStatePort;
 
       yield* queue
-        .markSurfaceMessageFailed({ id: queued.id, failureError: error.message })
+        .markSurfaceMessageFailed({
+          id: queued.id,
+          failureError: error.message,
+          claimOwnerId,
+          leaseVersion: queued.leaseVersion,
+        })
         .pipe(
           Effect.mapError((cause) =>
             runtimeQueueStateError("runtime.queue.dispatch.markFailed", cause),
@@ -101,10 +131,34 @@ export function createSurfaceQueueDispatcher<
       return yield* Effect.fail(error);
     });
 
+  const requeueClaimedDelivery = (
+    target: TTarget,
+    surface: TSurface,
+    queued: RuntimeSurfaceMessageRecord,
+    error: RuntimeContractError,
+  ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort> =>
+    Effect.gen(function* () {
+      const queue = yield* RuntimeQueueStatePort;
+      yield* queue
+        .markSurfaceMessageQueued({ id: queued.id, position: "front" })
+        .pipe(
+          Effect.mapError((cause) =>
+            runtimeQueueStateError("runtime.queue.dispatch.requeueClaimed", cause),
+          ),
+        );
+      yield* runHost("runtime.queue.dispatch.notifyQueueUpdated", () =>
+        host.notifyQueueUpdated({ target }),
+      );
+      yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
+        releaseSurface(target, surface),
+      );
+      return yield* Effect.fail(error);
+    });
+
   const drainNextQueuedSurfaceMessage = (
     target: TTarget,
     options: { awaitPrompt: boolean },
-  ): Effect.Effect<boolean, RuntimeContractError, RuntimeQueueStatePort> =>
+  ): Effect.Effect<boolean, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort> =>
     Effect.gen(function* () {
       if (host.isClosed()) {
         return false;
@@ -122,9 +176,7 @@ export function createSurfaceQueueDispatcher<
         const activePromptDone = host.activePromptDone({ target: currentTarget, surface });
         if (options.awaitPrompt && activePromptDone) {
           yield* runHost("runtime.queue.dispatch.awaitActivePrompt", () =>
-            activePromptDone.catch((error) => {
-              console.error("Failed while waiting for the active surface prompt:", error);
-            }),
+            activePromptDone.catch(() => undefined),
           );
           const shouldContinueDrain = host.continueAfterActivePrompt({
             target: currentTarget,
@@ -141,27 +193,11 @@ export function createSurfaceQueueDispatcher<
         return false;
       }
 
-      const hasClaimableQueuedMessage = yield* runHost(
-        "runtime.queue.dispatch.hasClaimableQueuedMessage",
-        () =>
-          host.hasClaimableQueuedMessage({
-            target: currentTarget,
-            surface,
-          }),
-      );
-      if (!hasClaimableQueuedMessage) {
-        yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-          releaseSurface(currentTarget, surface),
-        );
-        return false;
-      }
-
-      surface = yield* runHost("runtime.queue.dispatch.refreshBeforeDispatch", () =>
-        host.refreshBeforeDispatch({ target: currentTarget, surface }),
-      );
       const queuedResult = yield* queue
         .claimNextQueuedSurfaceMessage({
           surfacePiSessionId,
+          claimOwnerId,
+          leaseDurationMs,
         })
         .pipe(
           Effect.mapError((cause) =>
@@ -176,6 +212,12 @@ export function createSurfaceQueueDispatcher<
         return false;
       }
 
+      surface = yield* runHost("runtime.queue.dispatch.refreshBeforeDispatch", () =>
+        host.refreshBeforeDispatch({ target: currentTarget, surface }),
+      ).pipe(
+        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
+      );
+
       const materialized = yield* runHost("runtime.queue.dispatch.materializeQueuedMessage", () =>
         host.materializeQueuedMessage({
           target: currentTarget,
@@ -186,7 +228,11 @@ export function createSurfaceQueueDispatcher<
 
       if (materialized.kind === "delivered") {
         yield* queue
-          .markSurfaceMessageDelivered({ id: queued.id })
+          .markSurfaceMessageDelivered({
+            id: queued.id,
+            claimOwnerId,
+            leaseVersion: queued.leaseVersion,
+          })
           .pipe(
             Effect.mapError((cause) =>
               runtimeQueueStateError("runtime.queue.dispatch.markDelivered", cause),
@@ -198,8 +244,9 @@ export function createSurfaceQueueDispatcher<
         return true;
       }
 
-      const started = yield* runHost("runtime.queue.dispatch.startPrompt", () =>
-        host.startPrompt({
+      const turnState = yield* RuntimeTurnStatePort;
+      const preparedTurn = yield* runHost("runtime.queue.dispatch.prepareTurn", () =>
+        host.prepareTurn({
           target: currentTarget,
           surface,
           queued,
@@ -207,22 +254,37 @@ export function createSurfaceQueueDispatcher<
           metadata: materialized.metadata,
         }),
       ).pipe(
+        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
+      );
+      const turn = yield* turnState.startTurn(preparedTurn.startTurnInput).pipe(
+        Effect.map((result) => result.value),
+        Effect.mapError((cause) =>
+          runtimeQueueStateError("runtime.queue.dispatch.startTurn", cause),
+        ),
+        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
+      );
+
+      const started = yield* runHost("runtime.queue.dispatch.startPrompt", () =>
+        host.startPrompt({
+          target: currentTarget,
+          surface,
+          queued,
+          turn,
+          prepared: preparedTurn.prepared,
+          message: materialized.message,
+          metadata: materialized.metadata,
+        }),
+      ).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
-            yield* queue
-              .markSurfaceMessageQueued({ id: queued.id, position: "front" })
+            yield* turnState
+              .finishTurn({ turnId: turn.id, status: "failed" })
               .pipe(
                 Effect.mapError((cause) =>
-                  runtimeQueueStateError("runtime.queue.dispatch.requeueClaimed", cause),
+                  runtimeQueueStateError("runtime.queue.dispatch.finishStartedTurn", cause),
                 ),
               );
-            yield* runHost("runtime.queue.dispatch.notifyQueueUpdated", () =>
-              host.notifyQueueUpdated({ target: currentTarget }),
-            );
-            yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-              releaseSurface(currentTarget, surface),
-            );
-            return yield* Effect.fail(error);
+            return yield* failQueuedDelivery(currentTarget, surface, queued, error);
           }),
         ),
       );
@@ -251,6 +313,24 @@ export function createSurfaceQueueDispatcher<
       }),
     drainNextQueuedSurfaceMessage,
   };
+}
+
+export function createRuntimeSurfaceQueueDispatcher<
+  TTarget,
+  TSurface,
+  TMessage,
+  TMetadata = never,
+  TPrepared = undefined,
+>(input: {
+  host: SurfaceQueueDispatchHost<TTarget, TSurface, TMessage, TMetadata, TPrepared>;
+  workspaceId: WorkspaceId;
+  queueClaimLeaseMs: PositiveDurationMs;
+}): SurfaceQueueDispatcher<TTarget> {
+  return createSurfaceQueueDispatcher({
+    host: input.host,
+    claimOwnerId: `surface-queue-dispatcher:${input.workspaceId}` as RuntimeOwnerId,
+    leaseDurationMs: input.queueClaimLeaseMs,
+  });
 }
 
 function currentTargetSurfacePiSessionId<TTarget>(

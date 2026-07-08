@@ -5,8 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./generated-package-maintenance": "./src/generated-package-maintenance.ts",
     "./session-navigation": "./src/session-navigation.ts",
-    "./structured-session-selectors": "./src/structured-session-selectors.ts",
+    "./structured-session-adapters": "./src/structured-session-adapters.ts",
+    "./structured-session-projections": "./src/structured-session-projections.ts",
     "./structured-session-state": "./src/structured-session-state.ts"
   },
   "dependencies": {

@@ -26,6 +26,12 @@ const nativeWindowControlsLibrary = join(
   "libSvvyWindowControls.dylib",
 );
 const nativeSandboxHelper = join(projectRoot, "build", "native", "svvy-sandbox-helper");
+const nativeSandboxHelperMetadata = join(
+  projectRoot,
+  "build",
+  "native",
+  "svvy-sandbox-helper.metadata.json",
+);
 const generatedInstructionAssets = join(projectRoot, "generated", "instructions", "full");
 const generatedInstructionScripts = [
   "generate-api-declarations.ts",
@@ -118,9 +124,17 @@ function copyNativeSandboxHelper(): void {
     console.error(`postbuild: missing native sandbox helper at ${nativeSandboxHelper}`);
     process.exit(1);
   }
+  if (!existsSync(nativeSandboxHelperMetadata)) {
+    console.error(
+      `postbuild: missing native sandbox helper metadata at ${nativeSandboxHelperMetadata}`,
+    );
+    process.exit(1);
+  }
 
   const appContentsDir = join(appCodeDir, "..", "..");
-  cpSync(nativeSandboxHelper, join(appContentsDir, "MacOS", "svvy-sandbox-helper"));
+  const macOsDir = join(appContentsDir, "MacOS");
+  cpSync(nativeSandboxHelper, join(macOsDir, "svvy-sandbox-helper"));
+  cpSync(nativeSandboxHelperMetadata, join(macOsDir, "svvy-sandbox-helper.metadata.json"));
 }
 
 if (buildEnv === "dev") {

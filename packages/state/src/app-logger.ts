@@ -77,8 +77,7 @@ export function createAppLogger(options: CreateAppLoggerOptions): AppLogger {
         ...(details?.artifactId ? { artifactId: details.artifactId } : {}),
       });
       return entry;
-    } catch (logError) {
-      console.error("Failed to append app log:", logError);
+    } catch {
       return null;
     }
   };

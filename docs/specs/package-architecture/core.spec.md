@@ -10,9 +10,11 @@
 `@svvy/core` is the shared stable `svvy` domain language.
 
 It defines ids, schema-backed public domain shapes, discriminated event unions, read-model types,
-command fact envelopes, sandbox policy data contracts, version markers, and tiny pure helpers that
-are used across public `@svvy/*` packages. It contains no runtime orchestration, persistence, pi
-integration, extension implementation, filesystem IO, database IO, keychain IO, or UI rendering.
+command fact envelopes, sandbox policy data contracts, version markers, boundary issue formatting,
+annotation allowlist predicates, and explicitly indexed schema/codec validators used across public
+`@svvy/*` packages. It contains no runtime orchestration, persistence, pi integration, extension
+implementation, filesystem IO, database IO, keychain IO, UI rendering, telemetry summarization,
+display formatting, metadata normalization, or convenience helper bundles.
 
 `@svvy/core` may use Effect v4 `Schema`, branded schemas, tagged error classes, `Effect.Effect`
 return types, and data-only `Context.Service<PortIdentifier, PortService>(...)` function-style tags
@@ -23,40 +25,58 @@ convenience bundles.
 
 `@svvy/core` owns shared port input/output schemas, structural request/result contracts, and the
 live `Context.Service` tags for cross-package ports consumed by packages that must not import the
-implementation package. This includes the named core-owned state ports for queues, turns,
-commands, approvals, actor extension bindings, episodes, threads, requests, session waits,
-extension context impact, extension dependency readiness, generated-package facts, artifacts,
-recovery, workspace lifecycle,
-surface lifecycle, composer drafts, source versions/source saves, and read models, plus
+implementation package. This includes the named core-owned state and host/live ports for workspace
+lifecycle, surface lifecycle, prompt defaults, queues, turns, commands, approvals, actor extension
+bindings, episodes, threads, requests, session waits, extension context impact, extension dependency
+readiness, generated-package facts, artifacts, app-log writes, recovery, composer drafts, source
+versions/source saves, and read models, plus `StateCommandPostCommitNotificationPort`,
 `RuntimeExtensionStatePort`, `ExtensionStatePort`, `SandboxPolicySource`, `ProviderAuthPort`,
-`PiSessionReferencePort`, `PiRuntimePathsPort`, and `SecretStorePort`.
+`ProviderAuthStatusStatePort`, `PiSessionReferencePort`, `PiRuntimePathsPort`, `SecretStorePort`,
+and `SecretStoreMutationPort`.
 Runtime-internal services such as command-session registries, wait registries, event buses, recovery
 coordinators, and source-invalidation coordinators are owned by `@svvy/runtime` and stay hidden
-behind `Runtime.layer` unless a later spec promotes a narrow cross-package port for a concrete
-product reason.
+behind `Runtime.layer` unless the PRD, feature inventory, and owning package spec promote a narrow
+cross-package port for a concrete product reason.
 `@svvy/state`, app bootstrap, or the owning adapter package provide implementations and layers for
 those tags. Core-owned tags contain only method contracts and schema-backed records; they do not
 close over stores, host paths, pi objects, process handles, mutable global state, or resource
 lifetime policy.
 
-Every public cross-package DTO exported by `@svvy/core` has a hoisted Effect Schema contract, an
-encoded TypeScript type when the wire/persistence shape differs from the decoded shape, a decoded
-TypeScript type, and Effect/Exit boundary decoders where unknown input crosses a package, facade,
-generated-package, bridge, tool, or persistence boundary. Plain TypeScript interfaces are allowed
-only for internal service implementation shapes that never cross a public package boundary. This
-rule applies to every runtime-facing state port input/output record, provider-auth port input,
+Every public cross-package data payload exported by `@svvy/core` has a hoisted Effect Schema
+contract, an encoded TypeScript type when the wire/persistence shape differs from the decoded
+shape, a decoded TypeScript type, and Effect/Exit boundary decoders where unknown input crosses a
+package, facade, generated-package, bridge, tool, or persistence boundary. Plain TypeScript
+interfaces are allowed for Effect service shapes, core-owned port service method shapes, and other
+in-process structural service contracts that are not themselves serialized, persisted, bridged, or
+accepted from unknown input. Plain interfaces are not allowed as the sole contract for public DTOs
+that cross a package, facade, generated-package, bridge, tool, or persistence boundary. This rule
+applies to every runtime-facing state port input/output record, provider-auth port input,
 secret-store port input, pi-session-reference port input, extension-state port input, native-tool
 declaration document, sandbox policy value, runtime facade payload, and state facade payload.
 
-`@svvy/core` maintains a public symbol contract index. Every exported core symbol appears in that
-index with: symbol name, source module, owner domain, public/private status, schema symbol when one
-exists, encoded type, decoded type, decode helpers, encode helpers, parse options, accepted JSON
-example, rejected JSON example, and required boundary tests. A new exported schema, branded id,
-tagged error, service tag, port input/output type, runtime event, runtime-effect request,
-execution-plan item, read-model payload, command fact, app-log payload, or generated-package
-contract is not target-ready until the index row and tests exist. The index may be maintained
-manually or generated from source annotations, but it is authoritative and package-boundary tests
-compare root/barrel exports against it.
+`@svvy/core` maintains a public symbol contract index. The generated root-export coverage artifact
+lives at `docs/specs/package-architecture/core-public-symbol-index.generated.md`; it records export
+metadata for the spec-defined public root contract: symbol name, source module, owner domain, public
+status, contract kind, schema symbol when one exists, encoded type, decoded type, boundary helpers,
+parse options, and required tests. Semantic requirements for exported schemas, branded ids, tagged
+errors, service tags, port input/output types, runtime events, runtime-effect requests,
+execution-plan items, read-model payloads, command facts, app-log payloads, and generated-package
+contracts are normative in this spec and the owning contract sections. `bun run check:core-index`
+verifies checked-in index freshness against the root export surface; package-boundary tests cover
+representative module placement and boundary behavior.
+For public modules that intentionally concentrate a named contract family, the generator's
+`canonicalPublicFacadeModules` set records the canonical public contract module for that family even
+when some schemas are declared in a broader source module. The checked-in generated artifact is the
+authority for each symbol's canonical `Source module`; this prose is explanatory and must not be
+treated as a second hand-maintained ledger. Canonical facade modules may claim only symbols whose
+primary contract family is owned by that facade. Generic cross-runtime errors and boundary helpers
+declared in `errors` stay attributed to `errors` even when a facade module re-exports them for caller
+convenience. Concentrated runtime-facing modules keep `RuntimeEffectRequest`, source-invalidation,
+runtime submission, and workflow task-agent bridge imports readable without creating duplicate
+public symbols or alternate schemas. `extension-contracts` is the canonical public contract module
+for extension execution plans, extension runtime operations, extension usage/category/interface
+vocabulary, and extension handler result contracts. `runtime-submit` is also allowed to own
+submit-local helper contracts in that same module.
 
 `@svvy/core` may own facade payload schemas and TypeScript contract shapes when multiple packages or
 bridges need the same encoded API vocabulary. It does not own facade factories, facade instances,
@@ -88,26 +108,90 @@ to attach implementation helpers, defaults, static layers, mutable refs, host pa
 acquisition.
 
 Implementation packages provide these tags at composition time. For example, `@svvy/state` owns the
-DB/product-state-backed implementation of `ExtensionStatePort`, `RuntimeQueueStatePort`, and the
-other core-owned state ports; app/bootstrap provides host-backed ports such as
-`SecretStorePort` or pi reference/path ports when the app host owns the resource. A core-owned port
+DB/product-state-backed implementation of `ExtensionStatePort`, `RuntimeQueueStatePort`,
+`PiSessionReferencePort`, and the other core-owned state ports; app/bootstrap provides host/live
+ports such as `SecretStorePort`, `ProviderAuthPort`, and `PiRuntimePathsPort` when the app host
+owns the live resource. A core-owned port
 method may return `Effect.Effect<..., ..., ...>` but its requirements are other stable public port
 tags, never concrete stores, pi objects, filesystem roots, subprocess handles, or desktop bridge
 objects.
 
-The exact method inventory for each core-owned port lives in the owning domain section of this
-package spec. Implementation-owner specs may describe storage, indexing, transactions, layers, and
-failure mapping, but they must not add methods, fields, broader authority, or alternate result
-shapes beyond the core tag. If a package implementation needs more authority, the core contract must
-be updated first with the concrete product reason and boundary tests. `ExtensionStatePort` is the canonical
-extension-facing example: it is a restricted read/readiness/product-fact port consumed by
+`@svvy/core` is authoritative for the exact core-owned port tag, service shape, schemas, and method
+inventory. The generated public symbol index is authoritative for export metadata and coverage, not
+for method inventory by itself. Implementation-owner specs may describe storage, indexing,
+transactions, layers, and failure mapping, but they must not add methods, fields, broader authority,
+or alternate result shapes beyond the core tag. If a package implementation needs more authority, the core contract
+must be updated first with the concrete product reason and boundary tests. `ExtensionStatePort` is
+the canonical extension-facing example: it is a restricted
+read/readiness/product-fact port consumed by
 `@svvy/extensions`; profile default mutations, profile override writes, generated-package writes,
 workspace-link writes, runtime recovery writes, and invalidation publication are not part of that
 port and remain state-command or runtime-facing state-port operations.
 
+`StateCommandPostCommitNotificationPort` is the narrow core-owned bridge from state-owned
+UI-intent command facades to runtime-owned notification publication inside the single composed app
+`ManagedRuntime`. It is consumed only by `@svvy/state` facade implementations and implemented only
+by `@svvy/runtime`; app/bootstrap wires the layers and does not implement the port. The port
+accepts only descriptors that `@svvy/state` has already committed. It does not expose a generic
+runtime event publisher, source-invalidation callback, queue wake callback, renderer bridge handle,
+or state mutation surface.
+
+```ts
+type StateCommandPostCommitNotificationInput = {
+  operation: string;
+  receipt: StateCommandReceipt;
+  descriptors: readonly StateInvalidationDescriptor[];
+  clientSubmission?: RuntimeClientSubmissionInput;
+};
+
+type StateCommandPostCommitNotificationResult = {
+  receipt: StateCommandReceipt;
+  acceptedDescriptorCount: NonNegativeSafeInteger;
+  rebaselineRequired: boolean;
+};
+
+type StateCommandPostCommitNotificationError = {
+  type: "state-command-post-commit-notification-error";
+  operation: string;
+  reason: "publication-failed" | "runtime-shutdown" | "runtime-disposed";
+  receipt: StateCommandReceipt;
+  message: string;
+  affectedReadModels?: readonly StateInvalidationDescriptor[];
+};
+
+const StateCommandPostCommitNotificationErrorSchema = Schema.Struct({
+  type: Schema.Literal("state-command-post-commit-notification-error"),
+  operation: Schema.String,
+  reason: Schema.Literals(["publication-failed", "runtime-shutdown", "runtime-disposed"]),
+  receipt: StateCommandReceiptSchema,
+  message: Schema.String,
+  affectedReadModels: Schema.optionalKey(Schema.Array(StateInvalidationDescriptorSchema)),
+});
+
+interface StateCommandPostCommitNotificationPortService {
+  notifyCommittedStateCommand(
+    input: StateCommandPostCommitNotificationInput,
+  ): Effect.Effect<
+    StateCommandPostCommitNotificationResult,
+    StateCommandPostCommitNotificationError
+  >;
+}
+```
+
+`StateCommandPostCommitNotificationError` is a schema-backed public bridge error that includes the
+committed `StateCommandReceipt`, normalized operation, typed reason, redacted message, and affected
+read models when known. It exports the same strict codec quartet as other public bridge errors:
+`decodeUnknownStateCommandPostCommitNotificationErrorEffect`,
+`decodeUnknownStateCommandPostCommitNotificationErrorExit`,
+`encodeStateCommandPostCommitNotificationErrorEffect`, and
+`encodeStateCommandPostCommitNotificationErrorExit`. A failed notification never rolls back the
+already committed state command; facade callers receive the committed receipt plus the error and
+must rebaseline through state read models before retrying UI projection.
+
 ## Owns
 
-- Branded ids or nominal id helpers for public package boundaries. The target id set is
+- Branded ids or nominal id helpers for public package boundaries. The exported public branded
+  identity values are
   `WorkspaceId`, `WorkspaceSessionId`, `SurfacePiSessionId`, `ThreadId`, `ThreadGroupId`,
   `WorkflowRunId`, `WorkflowTaskAttemptId`, `QueueItemId`, `TurnId`, `CommandId`,
   `CommandEventId`, `ToolCallId`, `ToolItemId`, `ArtifactId`, `EpisodeId`,
@@ -116,18 +200,28 @@ port and remain state-command or runtime-facing state-port operations.
   `WorktreeId`, `AgentProfileId`, `ExtensionId`, `GeneratedPackageBuildId`,
   `GeneratedContextFingerprint`, `GeneratedContextRevision`, `MessageId`, `SnippetId`,
   `ProviderId`, `ModelId`, `ExternalInstructionSourceId`, `TitleJobId`,
-  `AppLogEntryId`, `WorkspaceTabId`, `WorkspacePaneId`, and `AbsolutePath`. Actor,
-  layout-slot, and pane ids are public contracts only when a package boundary carries them;
-  state-owned desktop command facades use `WorkspaceTabId`, `WorkspacePaneId`, and string-literal
-  layout slots `"A" | "B" | "C"`.
+  `AppLogEntryId`, `WorkspaceTabId`, `WorkspacePaneId`, `AbsolutePath`,
+  `RuntimeEventGenerationId`, `RuntimeAttachmentId`, `AttachmentDisplayName`,
+  `WorkspaceRelativePath`, `MimeType`, `Base64String`, `RuntimeClientSubmissionId`,
+  `RuntimeClientRequestId`, `RuntimeClientCorrelationId`, `RuntimeClientSubmissionSource`,
+  `RuntimeEventSequence`, `SurfaceStreamSequence`, `SurfaceStreamGenerationId`,
+  `ExtensionExecutionPlanId`, `FiniteDurationMs`, and `PositiveDurationMs`. Their schemas and
+  supporting public identity-domain primitives such as safe-integer schemas, byte-count schemas,
+  timestamp schemas, and JSON-safe value contracts are tracked by the generated public symbol index
+  under their owning source modules. Actor, layout-slot, and pane ids are public contracts only when
+  a package boundary carries them; state-owned desktop command facades use `WorkspaceTabId`,
+  `WorkspacePaneId`, and string-literal layout slots `"A" | "B" | "C"`. Adding or removing one of
+  these identity contracts requires updating the public symbol contract index, affected schemas,
+  package-boundary tests, and every owning package spec that carries the id.
 - Shared timestamp contracts: `UtcDateTime`, encoded `IsoDateTimeString`, and UTC ISO boundary
   formatting conventions. `@svvy/core` exports no current-time helpers. Owner packages acquire
   current time through Effect `DateTime.now` or `Clock` and encode boundary values with
   `DateTime.formatIso(...)`.
 - Shared JSON-safe value contracts: `JsonPrimitive`, `JsonValue`, `JsonArray`, and `JsonObject` for
-  persisted product JSON blobs, command facts, bridge payloads, and generated-package manifests that
-  intentionally store structured JSON instead of a narrower domain schema. Narrower schemas are still
-  preferred whenever the shape is known.
+  persisted product JSON blobs, command facts, and bridge payloads that intentionally store
+  structured JSON instead of a narrower domain schema. Generated-package manifest bodies are
+  file-backed build evidence indexed by state facts, not generic persisted product JSON blobs.
+  Narrower schemas are still preferred whenever the shape is known.
 - Actor kinds: `orchestrator`, `handler`, and `workflow-task`.
 - Model and reasoning selection contracts, including `ModelSelectionSchema`,
   `ReasoningEffortSchema`, and `ReasoningSelectionSchema`. These are selection values, not
@@ -147,7 +241,10 @@ port and remain state-command or runtime-facing state-port operations.
   Core is the source contract for shared extension vocabulary such as `ExtensionCategory`,
   `ExtensionInterfaceKind`, `ExtensionUsageState`, and `ExtensionUsageStateSchema`; `@svvy/extensions`
   may re-export those types but does not redefine them.
-- Generated package read-model contracts for `@svvyx/workflows` and `@svvyx/extensions`.
+- Generated-package read-model and bridge contracts for `@svvyx/workflows` and
+  `@svvyx/extensions`. Core owns contracts only; `@svvy/extensions` owns generated files,
+  `@svvy/runtime` coordinates refresh/link repair, and `@svvy/state` stores committed
+  generated-package facts.
 - Workflow task-agent bridge request/result contracts used by generated `@svvyx/workflows` code and
   consumed by `@svvy/runtime`.
 - Artifact metadata contracts.
@@ -155,111 +252,58 @@ port and remain state-command or runtime-facing state-port operations.
 - Workspace, session, surface, command inspector, request-input, runtime approval, generated
   package, and worktree read-model types.
 - Read-model invalidation contracts and source-reconcile inputs/results:
-  `StateInvalidationDescriptor` is a post-commit read-model refetch descriptor returned by
-  state-backed write ports, including ports consumed by runtime or extensions, and consumed by
-  runtime-owned event publication paths that emit typed read-model change notifications.
+  `StateInvalidationDescriptor` is a post-commit read-model invalidation descriptor returned by
+  committed state writes, including writes from ports consumed by runtime or extensions. Runtime maps
+  those descriptors to typed read-model change notifications, and consumers refetch state read models
+  after receiving those notifications.
   `SourceInvalidationHint`, `SourceReconcileRequest`, and `SourceReconcileResult` are runtime
   source-coordinator contracts. No public runtime facade accepts caller-authored
   `StateInvalidationDescriptor` values.
 - Settings and provider/auth status payload contracts.
 - Cross-package Effect service tags and immutable data contracts for core-owned state ports,
   extension state, sandbox policy source, provider auth, pi session references, pi runtime paths,
-  artifact command operations, app-log writes, and secret storage.
+  artifact metadata state-port contracts, artifact runtime-effect/execution-plan DTO contracts,
+  app-log writes, and secret-store port contracts. Core owns no secret material storage or host
+  secret-store implementation.
 - Sandbox policy source and immutable sandbox policy snapshot contracts.
 
 Workflow task-agent bridge contract:
 
-```ts
-type TaskAgentParametersSource = {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-  reasoning: {
-    effort: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  };
-  instructions: string;
-  overrides?: Record<string, "loaded" | "available" | "unavailable">;
-};
-
-type RunTaskAgentSourceInput = {
-  operation: "runTaskAgent";
-  bridgeRequestId?: string;
-  agent: TaskAgentParametersSource;
-  taskIdentity: {
-    runId: NonEmptyString;
-    nodeId: NonEmptyString;
-    iteration: NonNegativeSafeInteger;
-    attempt: NonNegativeSafeInteger;
-  };
-  smithersContext?: {
-    run?: JsonValue;
-    node?: JsonValue;
-    rootDir?: NonEmptyString;
-  };
-  promptSource:
-    | { kind: "prompt"; prompt: NonEmptyString }
-    | {
-        kind: "messages";
-        messages: NonEmptyReadonlyArray<{ role: "user" | "assistant"; text: string }>;
-      };
-  workspaceSessionId: string;
-  sourceCommandId: string;
-};
-
-type RunTaskAgentInput = Omit<
-  RunTaskAgentSourceInput,
-  "smithersContext" | "workspaceSessionId" | "sourceCommandId"
-> & {
-  smithersContext?: {
-    run?: JsonValue;
-    node?: JsonValue;
-    rootDir?: AbsolutePath;
-  };
-  workspaceSessionId: WorkspaceSessionId;
-  sourceCommandId: CommandId;
-};
-
-type RunTaskAgentResult = {
-  text: string;
-  usage?: JsonValue;
-  output?: JsonValue;
-};
-
-type RunTaskAgentErrorCode =
-  | "unauthorized"
-  | "forbidden"
-  | "invalid_request"
-  | "bridge_request_conflict"
-  | "source_command_not_found"
-  | "source_command_not_handler_owned"
-  | "source_command_terminal"
-  | "task_attempt_cancelled"
-  | "task_attempt_failed";
-
-type RunTaskAgentError = {
-  error: RunTaskAgentErrorCode;
-  message: string;
-  retryable: boolean;
-  requestId?: string;
-  workspaceSessionId?: WorkspaceSessionId;
-  sourceCommandId?: CommandId;
-  taskAttemptId?: WorkflowTaskAttemptId;
-};
-```
+The workflow task-agent bridge contract is schema-authoritative. `@svvy/core` owns the source-shape
+schemas accepted from generated `@svvyx/workflows`, the branded runtime-validated schemas consumed
+by `@svvy/runtime`, result/error schemas, and all strict boundary decoders. Hand-written TypeScript
+examples in generated-package specs are generated-client projections only; they are not an alternate
+contract source. Encoded/source bridge DTOs use plain string ids where generated packages cannot
+import branded runtime ids. Runtime validates `RunTaskAgentSourceInputSchema` into the branded
+`RunTaskAgentInputSchema` / `AuthenticatedRunTaskAgentInputSchema` before authorization, state
+writes, idempotency, or pi-adapter delivery handoff.
 
 `@svvy/core` exports `TaskAgentParametersSourceSchema`, `TaskAgentParametersSource`,
-`RunTaskAgentPromptSourceSchema`, `RunTaskAgentPromptSource`, `RunTaskAgentSourceInputSchema`,
-`RunTaskAgentSourceInput`, `RunTaskAgentInputSchema`, `RunTaskAgentInput`,
-`RunTaskAgentResultSchema`, `RunTaskAgentResult`, `RunTaskAgentErrorCodeSchema`,
-`RunTaskAgentErrorCode`, `RunTaskAgentErrorSchema`, `RunTaskAgentError`,
-`decodeUnknownRunTaskAgentSourceInputEffect`,
-`decodeUnknownRunTaskAgentSourceInputExit`, `decodeUnknownRunTaskAgentInputEffect`,
-`decodeUnknownRunTaskAgentInputExit`, `decodeUnknownRunTaskAgentResultEffect`,
-`decodeUnknownRunTaskAgentResultExit`, `decodeUnknownRunTaskAgentErrorEffect`, and
-`decodeUnknownRunTaskAgentErrorExit`.
+`ValidatedTaskAgentParametersSchema`, `ValidatedTaskAgentParameters`,
+`SmithersObservedJsonSchema`, `SmithersObservedJson`, `SmithersTaskAttemptIdentitySchema`,
+`SmithersTaskAttemptIdentity`, `SmithersTaskSourceContextSnapshotSchema`,
+`SmithersTaskSourceContextSnapshot`, `SmithersTaskContextSnapshotSchema`,
+`SmithersTaskContextSnapshot`, `RunTaskAgentOperationSchema`, `RunTaskAgentOperation`,
+`RunTaskAgentMessageSchema`, `RunTaskAgentMessage`, `RunTaskAgentPromptSourceSchema`,
+`RunTaskAgentPromptSource`, `RunTaskAgentSourceInputSchema`, `RunTaskAgentSourceInput`,
+`RunTaskAgentInputSchema`, `RunTaskAgentInput`, `AuthenticatedRunTaskAgentInputSchema`,
+`AuthenticatedRunTaskAgentInput`, `RunTaskAgentResultSchema`, `RunTaskAgentResult`,
+`RunTaskAgentErrorCodeSchema`, `RunTaskAgentErrorCode`, `RunTaskAgentErrorSchema`,
+`RunTaskAgentError`,
+`decodeUnknownRunTaskAgentSourceInputEffect`, `decodeUnknownRunTaskAgentSourceInputExit`,
+`encodeRunTaskAgentSourceInputEffect`, `encodeRunTaskAgentSourceInputExit`,
+`decodeUnknownRunTaskAgentInputEffect`, `decodeUnknownRunTaskAgentInputExit`,
+`encodeRunTaskAgentInputEffect`, `encodeRunTaskAgentInputExit`,
+`decodeUnknownAuthenticatedRunTaskAgentInputEffect`,
+`decodeUnknownAuthenticatedRunTaskAgentInputExit`, `encodeAuthenticatedRunTaskAgentInputEffect`,
+`encodeAuthenticatedRunTaskAgentInputExit`, `decodeUnknownRunTaskAgentResultEffect`,
+`decodeUnknownRunTaskAgentResultExit`, `encodeRunTaskAgentResultEffect`,
+`encodeRunTaskAgentResultExit`, `decodeUnknownRunTaskAgentErrorEffect`,
+`decodeUnknownRunTaskAgentErrorExit`, `encodeRunTaskAgentErrorEffect`, and
+`encodeRunTaskAgentErrorExit`.
 
-Core also exports four intentionally named sync decoders:
+Core also exports five intentionally named sync decoders:
+`unsafeDecodeAuthenticatedRunTaskAgentInputSyncForTestsAndBootstrap`,
 `unsafeDecodeRunTaskAgentSourceInputSyncForTestsAndBootstrap`,
 `unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap`,
 `unsafeDecodeRunTaskAgentResultSyncForTestsAndBootstrap`, and
@@ -269,33 +313,44 @@ bridge JSON before an Effect runtime is available. Runtime, extension handlers, 
 desktop, browser tools, and ordinary package services use the Effect or Exit decoders instead.
 
 Generated `@svvyx/workflows` code imports `RunTaskAgentSourceInput`, `RunTaskAgentResult`,
-`RunTaskAgentPromptSource`, and `RunTaskAgentError` type-only. It never imports branded ids.
-Runtime validates `RunTaskAgentSourceInput` into `RunTaskAgentInput` before it authorizes the bridge
-token, writes state, derives idempotency, or starts pi orchestration.
+`RunTaskAgentPromptSource`, and `RunTaskAgentError` type-only from
+the public `@svvy/core` root export. That generated-client error DTO uses plain string identity
+fields only; it never imports branded ids. Runtime validates
+`RunTaskAgentSourceInput` into `RunTaskAgentInput` before it authorizes the bridge token, writes
+state, derives idempotency, or starts pi-adapter delivery handoff. Runtime-internal error values may carry
+branded ids, but branded error variants do not cross into generated package type imports.
 
-`promptSource` is a closed `Schema.Union([...])`; the `messages` variant uses:
+`promptSource` is a closed `Schema.Union([...])`; the `messages` variant uses a non-empty array
+schema for `{ role, text }` message records:
 
 ```ts
-Schema.NonEmptyArray(
+Schema.Array(
   Schema.Struct({
     role: Schema.Literals(["user", "assistant"]),
     text: Schema.String,
   }),
-);
+).check(Schema.isNonEmpty());
 ```
 
 `smithersContext.run`, `node`, `usage`, and `output` use `Schema.Json`. All bridge decoders use
 the exported `strictBoundaryParseOptions`.
 
-`RunTaskAgentInput` has no top-level `rootDir`, no `threadId`, no system messages, no shell/app RPC
-controls, and no generated-context or tool declaration fields. Authentication is not part of the
-core DTO: runtime wraps this request in its authenticated bridge facade input before accepting a
-loopback or local bridge call.
+`RunTaskAgentSourceInput` has no top-level `rootDir`, no `threadId`, no system messages, no
+shell/app RPC controls, and no generated-context or tool declaration fields. It is the
+unauthenticated task-agent request DTO generated `@svvyx/workflows` code may reference type-only.
+`RunTaskAgentInput` is the runtime-normalized internal bridge request with branded
+`workspaceSessionId`, branded `sourceCommandId`, and normalized `smithersContext.rootDir`; generated
+packages do not import it. `AuthenticatedRunTaskAgentInput` is the separate core-owned
+authenticated bridge wrapper payload used by runtime loopback/local bridge facades; generated
+packages do not import it, and authentication fields never become part of `RunTaskAgentSourceInput`.
 
 - Persistence schema version markers and migration payload envelopes when they cross package
   boundaries.
-- Tiny pure helpers such as id type guards, exhaustive discriminant checks, and schema helpers when
-  they are stable enough to be shared.
+- Shared helper symbols only when `core.spec.md` names their exact responsibility and
+  package-boundary tests list the exported symbol. Allowed categories are branded-id
+  constructors/codecs, schema boundary issue formatting, annotation allowlists, exhaustive
+  discriminant checks used by core-owned closed unions, and stable validators for core-owned
+  contracts.
 - Effect v4 schema definitions, hoisted decoders/encoders, and typed tagged errors for public
   package boundaries.
 
@@ -316,7 +371,7 @@ contracts cross package boundaries. It does not store, execute, inspect, or own 
 
 ## Public API Shape
 
-Target API shape:
+Current package API surface:
 
 The package entrypoint is a flat barrel of approved public contract modules. It does not expose
 grouped namespace objects. Every exported symbol must be stable, documented, schema-backed where it
@@ -346,6 +401,7 @@ export * from "./pi-adapter-ports";
 export * from "./prompt-execution-context";
 export * from "./provider-auth-ports";
 export * from "./runtime-effect-requests";
+export * from "./runtime-invalidation-contracts";
 export * from "./runtime-source-edit-contracts";
 export * from "./runtime-source-invalidation";
 export * from "./runtime-state-ports";
@@ -366,6 +422,14 @@ contracts, secret-store contracts, and workflow task-agent bridge contracts.
 `AppLogWritePort` belongs to `app-log-contracts`; there is no separate public `app-log-ports`
 module. Shared strict boundary parse options belong to `boundary-parse-options`, and extension
 state port contracts belong to `extension-state-ports`.
+`runtime-state-ports` owns the source-state DTOs and port tag used by runtime and state. Editable
+source facts are keyed by `(SourceInvalidationScope, sourceKind, sourceId)` for compare-and-swap
+source edits. Runtime source scan facts are keyed by `(SourceInvalidationScope, SourceDomain)` for
+deterministic source reconciliation and include committed fingerprint, diagnostics, last observed
+deletion path, observation kind, and observation timestamp. Core owns the schemas and port method contracts;
+`@svvy/state` owns SQLite persistence and descriptor derivation, while `@svvy/runtime` owns file
+watching, scans, generated-package refresh, generated-context refresh, recovery scheduling, and
+runtime event publication.
 
 The app-log contract is a public core contract. It includes:
 
@@ -407,26 +471,83 @@ The native tool contract is a public core contract. It includes:
 - `NativeToolExtensionSchema`
 - `NativeToolSchemasDocument`
 - `NativeToolContentSchema`
+- `NativeToolDeclaration`
+- `NativeToolDeclarationSchema`
+- `NativeToolConcurrencyContract`
 - `NativeToolResultSchema`
 - `NativeToolResult`
+- `RuntimeStateDomain`
+- `NativeToolExecutionInput`
+- `NativeToolExecutor`
 - `decodeUnknownNativeToolResultEffect`, `decodeUnknownNativeToolResultExit`, and
-  `encodeNativeToolResultEffect`
+  `encodeNativeToolResultEffect`, `encodeNativeToolResultExit`
 - `ApprovalMode`
 - `RuntimeApprovalDecisionFacts`
-- pi-free structural invocation callback types when they are needed as package-boundary port
-  contracts
+- pi-free structural `PiToolExecutor`, `PiToolExecutionInput`, and `PiToolExecutionUpdate`
+  contracts when needed for the runtime-to-pi-adapter custom-tool bridge
 
-These exports contain no handler ownership or execution policy. Concrete builtin native-tool
-declaration records, descriptions, JSON parameters, actor slicing, projection metadata, and
-handlers are owned by `@svvy/extensions`. `@svvy/runtime` owns routing accepted model tool calls to handlers and
-recording command lifecycle. `@svvy/pi-adapter` owns conversion from runtime-provided
-`NativeToolDeclaration` values into pi custom-tool objects.
+These exports contain no handler ownership, concrete callback implementation, or execution policy.
+`NativeToolExecutionInput`, `NativeToolExecutor`, and `PiToolExecutorInput` are in-process executor
+callback shapes that may contain `AbortSignal`, Effect-returning emit functions, and update
+callbacks. Their schema-backed DTO fields are carried by `NativeToolDeclarationSchema`,
+`NativeToolResultSchema`, and `PiToolExecutionInputSchema`; the executor callback shapes themselves
+are not persisted, bridged, generated-package inputs, renderer payloads, or unknown-input decoders.
+Concrete builtin native-tool declaration records, descriptions, JSON parameters, actor slicing,
+projection metadata, and handlers are owned by `@svvy/extensions`. `@svvy/runtime` owns accepted
+model tool-call routing, command lifecycle, operation application, and the concrete executor passed
+to `@svvy/pi-adapter`. `@svvy/pi-adapter` owns conversion from runtime-provided
+`NativeToolDeclaration` values and the runtime-provided executor into pi custom-tool objects.
+
+Native tool declarations may include an optional `concurrency` contract. Omitted concurrency means
+`{ mode: "serial" }`.
+
+```ts
+type RuntimeStateDomain =
+  | "surface"
+  | "queue"
+  | "command"
+  | "request-input"
+  | "approval"
+  | "artifact"
+  | "extension-state"
+  | "generated-context"
+  | "generated-package"
+  | "source"
+  | "recovery";
+
+type NativeToolConcurrencyContract =
+  | { mode: "serial" }
+  | {
+      mode: "parallel-safe";
+      stateDomains: readonly RuntimeStateDomain[];
+      orderingKey: "surface" | "command" | "workspace" | "none";
+      maxConcurrency: PositiveSafeInteger;
+    };
+
+type NativeToolDeclaration = {
+  // existing declaration fields...
+  concurrency?: NativeToolConcurrencyContract;
+};
+```
+
+`stateDomains` names every durable state domain the handler or returned runtime operations may
+touch. Runtime serializes accepted tools whose domains or non-`none` ordering keys conflict.
+`orderingKey: "none"` is allowed only when the handler's state domains are empty or provably
+independent for every accepted call. Boundary tests prove serial default, conflicting-domain
+serialization, independent-domain concurrency, and active-turn cancellation interrupting all
+accepted-tool fibers before terminal turn facts commit.
 
 `NativeToolDeclaration.parameters` is a product-normalized JSON Schema object for the model-facing
 tool input. The owning extension defines the source input contract as an Effect Schema whenever the
 input is svvy-owned. `@svvy/extensions` derives model-facing JSON Schema with
 `Schema.toJsonSchemaDocument(sourceSchema, { additionalProperties: false, includeAnnotationKey:
 isPublicSchemaAnnotationKey })`, then normalizes the returned document into one parameters object.
+The current core DTO schema accepts this field as JSON for boundary transport; it does not by
+itself validate the full normalized JSON Schema object grammar. `@svvy/extensions` owns generator
+validation and tests proving that every published native-tool declaration satisfies the normalized
+root-object constraints below. Promoting a core-owned normalized JSON Schema validator requires a
+same-change `@svvy/core` schema, codec tests, generated-declaration fixtures, and package-boundary
+coverage.
 Before publishing `NativeToolDeclaration.parameters`, the generator resolves a top-level `$ref` by
 calling `JsonSchema.resolveTopLevel$ref(document)` on the full generated JSON Schema document.
 Published parameters must be a root JSON Schema object with no dangling top-level `$ref`.
@@ -452,7 +573,7 @@ Generated JSON Schema target policy:
 
 No emitter silently drops `$defs`, leaves dangling `$ref`, or inlines definitions unless the owning
 package spec promotes a named inliner with fixtures proving recursive/reference behavior, emitted
-size limits, and target compatibility.
+size limits, and target support.
 
 `@svvy/core` exports `isPublicSchemaAnnotationKey(key: string): boolean` and a test fixture listing
 every allowed non-standard annotation key. Standard JSON Schema keys are emitted by Effect; all
@@ -466,16 +587,18 @@ The prompt execution context contract is a public core contract. It includes:
 - `PromptExecutionEpisodeKind`
 - `PromptExecutionExternalInstructionSource`
 - `PromptExecutionContext`
-- `PromptExecutionRuntimeHandle`
-- `createPromptExecutionContext(...)`
 
-`@svvy/core` owns the structural shape, the live holder shape, and the content-stripping
-constructor because app-edge tool wrappers and extension handlers need to type invocation context
-without depending on `@svvy/runtime/bootstrap`. `@svvy/runtime` owns production derivation and
-lifecycle: runtime reads durable state, queue claims, generated-context facts, wait facts, and
-external-instruction summaries, then passes those facts into the core constructor. Desktop, browser
-tools, headless callers, generated packages, Smithers task-agent bridge callers, and renderer bridge
-messages do not submit prompt execution contexts.
+`@svvy/core` owns only the schema-backed data shapes, derived types, and boundary codecs for this
+context. `@svvy/runtime` owns production derivation, content stripping, and the live
+invocation/runtime handles used while executing tools as package-private implementation details.
+These constructors and live handles are not exported from `@svvy/core`, the `@svvy/runtime` package
+root, or `@svvy/runtime/bootstrap`. The only allowed public runtime surface for the narrow
+constructor/live-handle API is `@svvy/runtime/prompt-execution-context`, which exists for
+runtime-owned app-edge tool wrappers and package tests, not as a UI, bridge, generated-package, or
+agent-facing submission contract. Extension handlers receive decoded `PromptExecutionContext` data
+through runtime invocation wiring. Desktop, browser tools, headless callers, generated packages,
+Smithers task-agent bridge callers, and renderer bridge messages do not submit prompt execution
+contexts.
 
 The pi-adapter contract modules are public core contracts. They include:
 
@@ -488,24 +611,35 @@ The pi-adapter contract modules are public core contracts. They include:
 - `PiSessionRefSchema`, `PiSessionRef`, `PiSessionReferenceSchema`, `PiSessionReference`,
   `PiSessionReferencePublicSchema`, `PiSessionReferencePublic`,
   `PiSessionReferenceValidationSchema`, and `PiSessionReferenceValidation`
+- `PiAmbientPiResourceKindSchema`, `PiAmbientPiResourceKind`,
+  `PiAmbientPiResourceEnablementSchema`, and `PiAmbientPiResourceEnablement`
 - `CreatePiSessionInputSchema`, `OpenPiSessionInputSchema`, `ClosePiSessionInputSchema`, and their
   public types
-- `RunPiTurnInput`, `PiSystemPromptBindingSchema`, `PiSystemPromptBinding`, `PiToolExecutor`, and
-  `PiToolExecutionUpdate`
+- `RunPiTurnInput`, `InterruptPiTurnInputSchema`, `InterruptPiTurnInput`,
+  `PiSystemPromptBindingSchema`, `PiSystemPromptBinding`, `PiToolExecutionInputSchema`,
+  `PiToolExecutionInput`, `PiToolExecutor`, `PiToolExecutionUpdate`, `InputModalitySchema`, and
+  `InputModality`
 - `PiHistoryEntryRefSchema`, `RestorePiHistoryEntryInputSchema`,
   `ForkPiHistoryEntryInputSchema`, and their public types
 - `ModelInfoSchema`, `ModelInfo`, `ListModelsInputSchema`, `GenerateTitleInputSchema`,
   `GenerateTitleResultSchema`, `PiRuntimePathsSnapshotSchema`, and their public types
 - `PiRuntimeEventSchema`, `PiRuntimeEvent`, and the hoisted decode functions
   `decodeUnknownPiRuntimeEventExit` and `decodeUnknownPiRuntimeEventEffect`
-- `ProviderAuthPort`, `PiSessionReferencePort`, `PiRuntimePathsPort`, their service shapes, input
-  types, and typed port errors
+- `PiSessionReferencePort`, `PiRuntimePathsPort`, their service shapes, input types, and typed port
+  errors
+- `ProviderAuthPort` and its service/input/error contracts live in the provider-auth port module,
+  even though `@svvy/pi-adapter` consumes that port for live pi credential snapshots
+
+`PiSystemPromptBindingSchema` is schema-backed because `RunPiTurnInput` carries it into
+`@svvy/pi-adapter`. It is not a standalone bridge/RPC DTO surface and does not export a separate
+codec quartet unless a package boundary accepts or emits a `PiSystemPromptBinding` by itself.
 
 These symbols are pi-free. They import no `@mariozechner/*` package, contain no pi-native session,
 tool, model, provider, history, or resource-loader objects, and do not duplicate persisted state.
 `@svvy/pi-adapter` consumes these contracts; it does not redefine them. State-backed provider auth
 and pi session reference facts stay in `@svvy/state` through implementations of the core-owned
-ports.
+ports. Pi-adapter-owned session bytes and live handles remain outside state and are cleaned up by
+`@svvy/pi-adapter` under runtime recovery observation.
 
 Effect imports in `@svvy/core` use direct v4 module paths:
 
@@ -515,6 +649,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Exit from "effect/Exit";
 import type * as Stream from "effect/Stream";
 ```
 
@@ -523,24 +658,26 @@ contracts. It does not construct streams, own `PubSub`, manage replay, allocate 
 runtime event delivery. Live stream resources are owned by the implementation package, normally
 `@svvy/runtime`.
 
-Static schema definitions and compiled schema functions are hoisted at module scope, including
-`Schema.is`, `Schema.decodeEffect`, `Schema.decodeUnknownEffect`, `Schema.decodeExit`,
-`Schema.decodeUnknownExit`, `Schema.decodeSync`, `Schema.decodeUnknownSync`,
-`Schema.encodeEffect`, `Schema.encodeUnknownEffect`, `Schema.encodeExit`,
-`Schema.encodeUnknownExit`, `Schema.encodeSync`, and `Schema.encodeUnknownSync`.
+Static schema definitions and manifest-adopted compiled schema functions are hoisted at module
+scope, including `Schema.decodeUnknownEffect`, `Schema.decodeUnknownExit`,
+`Schema.decodeUnknownSync`, `Schema.encodeEffect`, `Schema.encodeExit`, and
+`Schema.encodeUnknownSync`. Other schema compiler helpers such as `Schema.is`,
+`Schema.decodeEffect`, `Schema.decodeExit`, `Schema.encodeUnknownEffect`, and
+`Schema.encodeUnknownExit` are not adopted production helpers unless exact manifest rows and focused
+tests exist.
 Effect v4 `Schema.asserts(schema, input)` is a direct assertion call, not a reusable guard compiler.
-Core boundary code therefore uses hoisted decoders, encoders, `Schema.is`, or package-owned wrapper
-helpers whose compiler calls happen at module scope. Direct inline assertion calls are allowed only
-in named dynamic schema factory files where the schema cannot be known at module scope. Static
-schemas are not compiled inside hot functions, tool handlers, event loops, read-model selectors,
-bridge handlers, or assertion sites.
+Core boundary code therefore uses hoisted manifest-adopted decoders, encoders, or package-owned
+wrapper helpers whose compiler calls happen at module scope. Direct inline assertion calls are
+allowed only in named dynamic schema factory files where the schema cannot be known at module scope.
+Static schemas are not compiled inside hot functions, tool handlers, event loops, read-model
+selectors, bridge handlers, or assertion sites.
 
 `@svvy/core` exports the one strict parse-options object used by public boundary decoders,
 StandardSchemaV1 validators, generated native-tool schemas when they validate product inputs, and
 state/runtime/app-log/read-model boundary helpers:
 
 ```ts
-import * as SchemaAST from "effect/SchemaAST";
+import type * as SchemaAST from "effect/SchemaAST";
 
 export const strictBoundaryParseOptions = {
   errors: "all",
@@ -558,6 +695,13 @@ bootstrap, or local assertions before entering an Effect boundary. Outbound deco
 `encode<TypeName>Effect` / `encode<TypeName>Exit`. `encodeUnknown<TypeName>*` is allowed only at
 non-Effect bridge edges where the outbound value is genuinely unknown and immediately mapped to a
 stable bridge error on failure.
+The only public sync outbound encode exceptions are
+`encodeRequestUserInputAnswerQueuePayload(...)` and
+`encodeRequestUserInputAnswerDeliveryPayload(...)`. They exist for durable request-input
+queue/delivery JSON payload construction where the caller already holds decoded core types and the
+result is immediately stored or enqueued as JSON. Adding another sync encode helper requires an
+exact core spec row, public symbol-index row, owner test, and a reason it cannot use
+`encode<TypeName>Effect` / `encode<TypeName>Exit`.
 
 Every public tagged boundary error exported by `@svvy/core` also exports the same codec quartet by
 exact type name:
@@ -578,8 +722,9 @@ export const encode<Name>Exit = Schema.encodeExit(<Name>Schema, strictBoundaryPa
 The required error codec set includes `RuntimeContractError`, `RuntimeFacadeErrorContract`,
 `RuntimeEventRebaselineRequired`, `RuntimeEventStreamError`, `StateContractError`,
 `StateFacadeErrorContract`, `SandboxPolicyError`, `PiAdapterError`, `ExtensionError`,
-`ProviderAuthPortError`, `SecretStorePortError`, `PiSessionReferencePortError`,
-`PiRuntimePathsPortError`, and any future public `Schema.TaggedErrorClass` or encoded
+`RuntimeToolExecutionError`, `ProviderAuthPortError`, `SecretStorePortError`, `PiSessionReferencePortError`,
+`StateCommandPostCommitNotificationError`, and any additional public
+`Schema.TaggedErrorClass` or encoded
 facade-error contract value added to this spec.
 Sync error decoders may exist only as
 `unsafeDecode<Name>SyncForTestsAndBootstrap` and are limited to tests, trusted bootstrap, and local
@@ -606,12 +751,14 @@ Required schema families:
 - sandbox policy snapshots and launch policy inputs
 - app logs, normalized errors, settings, provider/auth status, and persisted envelope versions
 
-Public persisted/RPC values use `Schema.Struct`, `Schema.Class`, `Schema.TaggedClass`, branded
-schemas, or schema constants as their source of truth. TypeScript types are derived from schemas;
-they are not maintained as hand-written parallel contracts. Use `Schema.TaggedErrorClass` for typed
-errors that cross package, RPC, persistence, or generated-declaration boundaries. Use
-`Data.TaggedError` only for package-internal failures that are never serialized and are mapped before
-leaving the package.
+Public persisted/RPC values use manifest-adopted `Schema.Struct`, branded schemas, or schema
+constants as their source of truth. `Schema.Class` and `Schema.TaggedClass` are not adopted
+production schema contracts unless exact manifest rows and focused tests exist. TypeScript types are
+derived from schemas; they are not maintained as hand-written parallel contracts. Use
+`Schema.TaggedErrorClass` for typed
+errors that cross package, RPC, persistence, or generated-declaration boundaries. Internal
+non-serialized errors may use package-local classes or plain tagged objects; `Data.TaggedError`
+requires manifest promotion before production use.
 
 Branded ids are schema-defined and types are derived from the schema:
 
@@ -622,8 +769,8 @@ export type WorkspaceId = typeof WorkspaceId.Type;
 export const SurfacePiSessionId = Schema.String.pipe(Schema.brand("SurfacePiSessionId"));
 export type SurfacePiSessionId = typeof SurfacePiSessionId.Type;
 
-export const NativeToolName = Schema.String.pipe(Schema.brand("NativeToolName"));
-export type NativeToolName = typeof NativeToolName.Type;
+export const CommandId = Schema.String.pipe(Schema.brand("CommandId"));
+export type CommandId = typeof CommandId.Type;
 
 export const AbsolutePath = Schema.String.pipe(Schema.brand("AbsolutePath"));
 export type AbsolutePath = typeof AbsolutePath.Type;
@@ -654,7 +801,7 @@ export const FiniteDurationMsSchema = Schema.Number.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
-);
+).pipe(Schema.brand("FiniteDurationMs"));
 export type FiniteDurationMs = typeof FiniteDurationMsSchema.Type;
 
 export const PositiveDurationMsSchema = Schema.Number.check(
@@ -662,7 +809,7 @@ export const PositiveDurationMsSchema = Schema.Number.check(
   Schema.isInt(),
   Schema.isGreaterThan(0),
   Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
-);
+).pipe(Schema.brand("PositiveDurationMs"));
 export type PositiveDurationMs = typeof PositiveDurationMsSchema.Type;
 
 export const NonNegativeSafeIntegerSchema = Schema.Number.check(
@@ -702,11 +849,10 @@ export const SurfaceStreamGenerationId = Schema.String.pipe(
 export type SurfaceStreamGenerationId = typeof SurfaceStreamGenerationId.Type;
 ```
 
-Internal Effect services convert at package boundaries with `Duration.millis(ms)` and
-`Duration.toMillis(duration)`. `Schema.Duration`, `Schema.DurationFromString`, and
-`Schema.DurationFromMillis` are allowed only for internal config/service contracts explicitly named
-by the owning package; persisted, RPC, read-model, command-fact, and app-log payloads use UTC
-timestamps, finite millisecond fields, or shared safe-integer/byte-count schemas.
+Internal Effect services convert millisecond inputs at package boundaries with manifest-adopted
+`Duration.millis(ms)` and keep outward contracts in finite millisecond fields. `Duration.toMillis`
+and `Schema.Duration*` helpers remain unavailable for production contracts until promoted in
+`packages/effect-adoption-manifest.ts`.
 
 `IsoDateTimeString` is a readability alias for the encoded string side of
 `Schema.DateTimeUtcFromString`, not a nominal compile-time proof. Boundary schemas must still
@@ -751,8 +897,8 @@ Required package-boundary error classes:
 Typed boundary errors that represent schema decode or encode failures include `issues`, a compact,
 stable, machine-readable StandardSchemaV1 issue array derived from a v4 `Schema.SchemaError.issue`
 with `SchemaIssue.makeFormatterStandardSchemaV1()(schemaError.issue).issues` after schema-level
-redaction has run. Do not use v3 `ParseResult` formatters, `decodeEither`, or
-`decodeUnknownEither` at package boundaries.
+redaction has run. Package boundaries use the v4 `decodeUnknown*Effect`/`Exit` boundary decoders,
+not `decodeEither` or `decodeUnknownEither`.
 
 ```ts
 export const BoundaryIssueSchema = Schema.Struct({
@@ -848,6 +994,7 @@ export class RuntimeContractError extends Schema.TaggedErrorClass<RuntimeContrac
       "event-replay-unavailable",
       "stream-failed",
       "bridge-invalid-request",
+      "bridge-payload-too-large",
       "bridge-forbidden",
       "source-command-not-found",
       "source-command-not-handler-owned",
@@ -877,7 +1024,7 @@ export class RuntimeEventStreamError extends Schema.TaggedErrorClass<RuntimeEven
   "RuntimeEventStreamError",
   {
     operation: Schema.String,
-    reason: Schema.Literals(["subscriber-closed", "slow-consumer", "stream-failed"]),
+    reason: Schema.Literals(["subscriber-closed", "stream-failed"]),
     message: Schema.String,
     lastContiguousSequence: Schema.optionalKey(RuntimeEventSequence),
     latestSequence: Schema.optionalKey(RuntimeEventSequence),
@@ -886,13 +1033,16 @@ export class RuntimeEventStreamError extends Schema.TaggedErrorClass<RuntimeEven
   },
 ) {}
 
-type RuntimeEventError = RuntimeEventRebaselineRequired | RuntimeEventStreamError;
+export const RuntimeEventErrorSchema = Schema.Union([
+  RuntimeEventRebaselineRequired,
+  RuntimeEventStreamError,
+]);
 
 export const RuntimeFacadeErrorContractSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("runtime-facade-error"),
     reason: Schema.Literal("typed-failure"),
-    error: Schema.Union([RuntimeContractError, RuntimeEventError]),
+    error: Schema.Union([RuntimeContractError, RuntimeEventErrorSchema]),
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-facade-error"),
@@ -956,6 +1106,7 @@ export const StateFacadeErrorContractSchema = Schema.Union([
     type: Schema.Literal("state-facade-error"),
     reason: Schema.Literal("post-commit-notification-failed"),
     receipt: StateCommandReceiptSchema,
+    notificationError: StateCommandPostCommitNotificationErrorSchema,
     message: Schema.String,
     diagnosticAppLogEntryId: Schema.optionalKey(AppLogEntryId),
   }),
@@ -1003,11 +1154,22 @@ export class SandboxPolicyError extends Schema.TaggedErrorClass<SandboxPolicyErr
 export class PiAdapterError extends Schema.TaggedErrorClass<PiAdapterError>()("PiAdapterError", {
   operation: Schema.String,
   reason: Schema.Literals([
+    "provider-auth-failed",
+    "provider-auth-missing",
+    "provider-auth-expired",
+    "provider-auth-refresh-failed",
+    "runtime-paths-failed",
     "session-not-found",
     "session-open-failed",
+    "session-create-failed",
+    "session-close-failed",
+    "session-reference-failed",
     "turn-failed",
     "event-decode-failed",
     "model-read-failed",
+    "history-operation-failed",
+    "helper-job-failed",
+    "tool-execution-failed",
   ]),
   message: Schema.String,
   issues: Schema.optionalKey(Schema.Array(BoundaryIssueSchema)),
@@ -1022,12 +1184,10 @@ export class ExtensionError extends Schema.TaggedErrorClass<ExtensionError>()("E
     "not-found",
     "not-loaded",
     "dependency-not-ready",
-    "env-not-ready",
-    "missing-secret",
-    "unsupported",
+    "unsupported-operation",
+    "read-only-source",
     "execution-failed",
     "redaction-failed",
-    "read-only-source",
   ]),
   message: Schema.String,
   issues: Schema.optionalKey(Schema.Array(BoundaryIssueSchema)),
@@ -1051,15 +1211,16 @@ prompts, command output, provider payloads, secret material, serialized foreign 
 unbounded stack traces.
 
 When mapping an `Exit` or `Cause` into `StateStoredError`, boundary code inspects the complete v4
-`cause.reasons` array or v4 helpers such as `Cause.hasInterruptsOnly`, `Cause.findErrorOption`, and
-`Cause.findDefect` before choosing a public result. Classification order is: no reasons maps to a
-stable unknown-defect/debug error; interrupts-only maps to the boundary's cancelled/interrupted
+`cause.reasons` array with manifest-adopted reason-level guards such as `Cause.isFailReason`,
+`Cause.isDieReason`, and `Cause.isInterruptReason`, plus aggregate helpers such as
+`Cause.hasInterruptsOnly`, before choosing a public result. Classification order is: no reasons maps
+to a stable unknown-defect/debug error; interrupts-only maps to the boundary's cancelled/interrupted
 shape; one or more fail reasons makes typed failure the primary result while recording interrupt or
 defect diagnostics when present; defects with no fail reasons map to the boundary's defect shape;
 mixed defects and interrupts with no fail reasons make defect primary and note interruption when the
 contract supports it. Boundary code then stores stable fields such as `errorTag`, `reason`,
 `message`, `interrupted`, `timedOut`, `exitCode`, `signal`, `issues`, and redacted `cause`. Durable
-product state never stores `Schema.Cause(...)`, `Schema.Exit(...)`, recursive v3 cause variants, or
+product state never stores `Schema.Cause(...)`, `Schema.Exit(...)`, recursive cause variants, or
 raw Effect cause objects. `Cause.squash(...)` may be used only after classification to produce
 redacted developer-facing detail.
 
@@ -1120,7 +1281,8 @@ resolved `workspaceId` after that validation.
 
 The programmatic runtime submission contract is the stable public submission boundary. Runtime
 consumers submit only the new user message and delivery intent. They do not submit full pi message
-arrays, active system prompts, generated prompt previews, or renderer `Agent` state.
+arrays, active system prompts, prompt text outside the committed generated-context/prompt-dispatch
+contract, or renderer `Agent` state.
 
 ```ts
 const RuntimeAttachmentId = Schema.String.pipe(Schema.brand("RuntimeAttachmentId"));
@@ -1230,7 +1392,7 @@ facades reject decoded `DateTime.Utc` objects at the wire boundary; internal ser
 encoded timestamp strings around after schema decode.
 
 `SubmitMessageResult` reports durable queue acceptance only. It never reports live dispatch state,
-turn identity, generated prompt previews, queue depth, renderer snapshots, model settings, or
+turn identity, generated-context read-model data, queue depth, renderer snapshots, model settings, or
 transcript state. Every claimed prompt-bearing dispatch creates a concrete `TurnId`, including
 workflow task-agent attempt dispatch created from `workflow_task_agent_start`, but that identity is
 published through runtime events and state read models rather than the submit return value.
@@ -1391,13 +1553,6 @@ type RuntimeEvent =
       invalidation: AppReadModelInvalidation;
     }
   | {
-      type: "runtime.lifecycle";
-      sequence: RuntimeEventSequence;
-      eventGenerationId: RuntimeEventGenerationId;
-      status: "ready" | "startup_failed" | "shutting_down";
-      at: IsoDateTimeString;
-    }
-  | {
       type: "runtime.recovery";
       sequence: RuntimeEventSequence;
       eventGenerationId: RuntimeEventGenerationId;
@@ -1506,7 +1661,8 @@ type AppReadModelInvalidation =
   | { model: "extensions"; ids?: readonly ExtensionId[] }
   | { model: "settings" }
   | { model: "providerAuth"; ids?: readonly ProviderId[] }
-  | { model: "appPreferences" };
+  | { model: "appPreferences" }
+  | { model: "appLogs" };
 
 type StateInvalidationDescriptor =
   | {
@@ -1535,7 +1691,25 @@ type SourceInvalidationHint = {
 type SourceReconcileRequest = {
   scope: SourceInvalidationScope;
   domains?: readonly SourceDomain[];
-  reason: "startup" | "periodic" | "watcher-debounce" | "manual" | "recovery";
+  reason:
+    | "startup"
+    | "periodic"
+    | "watcher-debounce"
+    | "ignored-path-parent-domain-scan"
+    | "manual"
+    | "recovery";
+};
+
+type CommittedSourceInvalidationEvent = {
+  domains: readonly SourceDomain[];
+  reason: string;
+  sourceFingerprints: Readonly<Record<SourceDomain, string>>;
+  afterCommit: readonly StateInvalidationDescriptor[];
+};
+
+type ApplyCommittedSourceInvalidationEventInput = {
+  scope: SourceInvalidationScope;
+  event: CommittedSourceInvalidationEvent;
 };
 
 type SourceReconcileResult = {
@@ -1544,6 +1718,15 @@ type SourceReconcileResult = {
   recoveryWorkIds: readonly RecoveryWorkId[];
 };
 ```
+
+`CommittedSourceInvalidationEvent` is a committed scan result, not a watcher hint, renderer
+preview, or arbitrary invalidation payload. It contains only the domains whose deterministic
+fingerprints changed, the scan reason string recorded by the coordinator, the committed source
+fingerprint evidence, and the `StateInvalidationDescriptor` values returned by the state-backed
+scan write. `ApplyCommittedSourceInvalidationEventInput` validates the same scope/domain pairs as
+`SourceInvalidationHint` and `SourceReconcileRequest`: app-global events may target only
+`extensions` and `workflows`, while workspace events may target only `external_instructions` and
+`host_snippets`.
 
 `SourceReconcileResult.changedReadModelCount` is a receipt count for committed read-model
 invalidations produced during reconciliation. It is not a descriptor transport. Runtime publishes
@@ -1557,7 +1740,7 @@ Runtime event sequencing rules:
   select workspace-scoped events from that stream and app-scoped events remain visible to app-level
   subscribers. `surface.stream.sequence` is only this app-runtime notification cursor. The cursor is
   process-runtime-local, not durable across app runtime restarts. A restarted app runtime has a new
-  stream generation even if numeric sequences start again, and consumers must discard old cursors,
+  stream generation even if numeric sequences start again, and consumers must discard prior-generation cursors,
   refetch read models, and subscribe from the current generation.
 - `surface.stream.streamSequence` is the ordered live transcript patch cursor for the target surface.
   It is monotonically increasing per `surfacePiSessionId` for the current live stream generation.
@@ -1575,6 +1758,11 @@ Runtime event sequencing rules:
   row; after command creation, runtime emits later argument snapshots with `commandId`.
 - `active_command.status: "finished"` means the terminal command fact has committed. Consumers fetch
   the exact terminal status, summary, facts, and errors from `@svvy/state` command read models.
+- `CreateRuntimeCommandInput.summary` is the stable in-progress display label committed when the
+  command row is allocated. `FinishRuntimeCommandInput.summary` and `CommandResultEnvelope.summary`
+  are optional terminal summaries; when supplied at settlement they replace the display summary as
+  the immutable terminal command summary. They are not preview fields and must be redacted before
+  persistence.
 - `queue.changed` is a notification for queue-row invalidation. Queue kind, priority, ordering,
   retry, failure, and restore metadata are fetched from state read models; they are not duplicated
   on the runtime event.
@@ -1585,7 +1773,9 @@ Runtime event sequencing rules:
 - Event stream failures use a core tagged error union. `RuntimeEventRebaselineRequired` carries
   `reason`, `requestedAfterSequence`, `retainedFromSequence`, `currentHighWaterSequence`,
   `eventGenerationId`, `affectedReadModels`, and optional `workspaceId`. Consumers handle it by
-  refetching affected read models and resubscribing from a valid cursor.
+  refetching affected read models and resubscribing from a valid cursor. When
+  `affectedReadModels` is empty, runtime could not prove the exact missed read-model ids; consumers
+  treat it as a full rebaseline for the subscription scope, not as no affected models.
 - Runtime facade rejections use the core `RuntimeFacadeErrorContractSchema` union. Typed runtime failures
   are encoded as `reason: "typed-failure"` with `RuntimeContractError`; defects use redacted
   message/class fields plus optional `diagnosticAppLogEntryId`; raw `Cause`, stack traces, thrown
@@ -1776,172 +1966,93 @@ Rejected:
 
 ## Command Event Payloads
 
-`@svvy/core` owns the closed command-event payload vocabulary used by runtime command tracking and
-state persistence. `@svvy/state` appends and decodes these payloads; `@svvy/runtime` publishes
-`command.changed` notifications after commits; the UI refetches command read models instead of
-treating command events as complete renderer snapshots.
+`@svvy/core` owns the promoted command-event kind and payload vocabulary used by runtime command
+tracking and state persistence. `@svvy/state` appends and decodes these payloads through
+`RecordRuntimeCommandEventInputSchema`; `@svvy/runtime` publishes `command.changed` notifications
+after commits; the UI refetches command read models instead of treating command events as complete
+renderer snapshots.
+
+The state row `kind` is the event discriminator. Payload records do not duplicate a `type` field.
+The promoted persisted event kinds are exactly:
+
+- `command.arg_snapshot`
+- `command.diagnostics`
+- `command.output`
+- `command.patch_snapshot`
+- `command.progress`
 
 ```ts
 type CommandEvent =
-  | { type: "created"; payload: CommandCreatedEventPayload }
-  | { type: "argument_snapshot"; payload: CommandArgumentSnapshotEventPayload }
-  | { type: "accepted"; payload: CommandAcceptedEventPayload }
-  | { type: "started"; payload: CommandStartedEventPayload }
-  | { type: "output"; payload: CommandOutputEventPayload }
-  | { type: "stdin_write"; payload: CommandStdinWriteEventPayload }
-  | { type: "progress"; payload: CommandProgressEventPayload }
-  | { type: "diagnostic"; payload: CommandDiagnosticEventPayload }
-  | { type: "patch_snapshot"; payload: CommandPatchSnapshotEventPayload }
-  | { type: "child_command"; payload: CommandChildCommandEventPayload }
-  | { type: "approval"; payload: CommandApprovalEventPayload }
-  | { type: "wait"; payload: CommandWaitEventPayload }
-  | { type: "artifact_linked"; payload: CommandArtifactLinkedEventPayload }
-  | { type: "finished"; payload: CommandFinishedEventPayload };
+  | { kind: "command.arg_snapshot"; payload: CommandArgumentSnapshotEventPayload }
+  | { kind: "command.diagnostics"; payload: CommandDiagnosticEventPayload }
+  | { kind: "command.output"; payload: CommandOutputEventPayload }
+  | { kind: "command.patch_snapshot"; payload: CommandPatchSnapshotEventPayload }
+  | { kind: "command.progress"; payload: CommandProgressEventPayload };
 
 type CommandEventPayload =
-  | CommandCreatedEventPayload
   | CommandArgumentSnapshotEventPayload
-  | CommandAcceptedEventPayload
-  | CommandStartedEventPayload
-  | CommandOutputEventPayload
-  | CommandStdinWriteEventPayload
-  | CommandProgressEventPayload
   | CommandDiagnosticEventPayload
+  | CommandOutputEventPayload
   | CommandPatchSnapshotEventPayload
-  | CommandChildCommandEventPayload
-  | CommandApprovalEventPayload
-  | CommandWaitEventPayload
-  | CommandArtifactLinkedEventPayload
-  | CommandFinishedEventPayload;
-
-type CommandCreatedEventPayload = {
-  type: "created";
-  toolName: NativeToolName;
-  parentCommandId?: CommandId;
-  toolCallId?: ToolCallId;
-};
+  | CommandProgressEventPayload;
 
 type CommandArgumentSnapshotEventPayload = {
-  type: "argument_snapshot";
-  snapshotRef: ToolItemId;
-  byteLength?: number;
-};
-
-type CommandAcceptedEventPayload = {
-  type: "accepted";
-  acceptedArgumentsRef?: ToolItemId;
-};
-
-type CommandStartedEventPayload = {
-  type: "started";
-  startedAt: IsoDateTimeString;
-  cwd?: AbsolutePath;
+  source?: string;
+  arguments: JsonValue;
+  facts?: CommandFactsPayload;
 };
 
 type CommandOutputEventPayload = {
-  type: "output";
   stream: "stdout" | "stderr";
-  source: "live-stream" | "final-result" | "execute_typescript" | "retained-log-artifact";
+  source?: string;
   chunkRef?: ToolItemId;
   text?: string;
   truncated?: boolean;
 };
 
-type CommandStdinWriteEventPayload = {
-  type: "stdin_write";
-  text: string;
-  acceptedBytes: ByteCount;
-};
-
 type CommandProgressEventPayload = {
-  type: "progress";
-  label: string;
-  current?: number;
-  total?: number;
+  source: string;
+  phase?: string;
+  family?: string;
+  command?: string;
+  message?: string;
+  progress?: number;
+  facts?: CommandFactsPayload;
 };
 
 type CommandDiagnosticEventPayload = {
-  type: "diagnostic";
-  level: "debug" | "info" | "warning" | "error";
+  source?: string;
+  stage?: string;
+  diagnostics: CommandDiagnostic[];
+};
+
+type CommandDiagnostic = {
+  severity?: string;
   message: string;
+  file?: string;
+  line?: number;
+  column?: number;
   code?: string;
 };
 
 type CommandPatchSnapshotEventPayload = {
-  type: "patch_snapshot";
-  snapshotRef: ToolItemId;
-  changedFileCount?: number;
+  source?: string;
+  files: CommandPatchSnapshotFile[];
 };
 
-type CommandChildCommandEventPayload = {
-  type: "child_command";
-  childCommandId: CommandId;
-  relationship: CommandChildRelationship;
-};
-
-type CommandChildRelationship =
-  | "workflow_task_agent"
-  | "handler_thread"
-  | "generated_package_refresh"
-  | "sandbox_child"
-  | "extension_facade_child"
-  | "subprocess";
-
-type CommandApprovalEventPayload = {
-  type: "approval";
-  approvalId: RuntimeApprovalId;
-  status: "requested" | "approved" | "denied" | "cancelled";
-};
-
-type ApprovalMode = "auto-review" | "user" | "full-access";
-
-type RuntimeApprovalDecisionFacts =
-  | {
-      mode: "full-access";
-      requiredApproval: false;
-      decidedAt: IsoDateTimeString;
-    }
-  | {
-      mode: "auto-review";
-      requiredApproval: boolean;
-      approvalId?: RuntimeApprovalId;
-      decision: "approved" | "denied";
-      reason: string;
-      decidedAt: IsoDateTimeString;
-    }
-  | {
-      mode: "user";
-      requiredApproval: true;
-      approvalId: RuntimeApprovalId;
-      decision: "approved" | "denied" | "cancelled";
-      decidedAt: IsoDateTimeString;
-    };
-
-type CommandWaitEventPayload = {
-  type: "wait";
-  owner: "request_user_input" | "approval" | "subprocess" | "runtime";
-  status: "started" | "answered" | "timed_out" | "cancelled";
-};
-
-type CommandArtifactLinkedEventPayload = {
-  type: "artifact_linked";
-  artifactId: ArtifactId;
-  relationship: "created" | "updated" | "referenced";
-};
-
-type CommandFinishedEventPayload = {
-  type: "finished";
-  status: CommandTerminalStatus;
-  summary?: string;
-  facts?: CommandFactsPayload;
+type CommandPatchSnapshotFile = {
+  path: string;
+  changeType: "created" | "deleted" | "modified";
+  additions: number;
+  deletions: number;
 };
 ```
 
-The payload `type` must equal the enclosing command event `type`. Output text is optional because
-large chunks may be stored as durable item refs and fetched through the inspector. Patch snapshots,
-argument snapshots, and output chunks use refs for large data instead of embedding renderer-ready
-previews in runtime events. Command events never include pi-native callback objects, renderer panel
-ids, full transcript rows, or unredacted secret-bearing output.
+Output text is optional because large chunks may be stored as durable item refs and fetched through
+the inspector. Patch snapshots, argument snapshots, and output chunks may use refs or structured
+payload fields for current read-model needs instead of embedding complete renderer snapshots in
+runtime events. Command events never include pi-native callback objects, renderer panel ids, full
+transcript rows, or unredacted secret-bearing output.
 
 ## RuntimeEffectRequest Algebra
 
@@ -1990,7 +2101,7 @@ export const RuntimeEffectRequestSchema = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("generated_packages.refresh"),
-    input: RefreshGeneratedPackagesRequestSchema,
+    input: InternalRefreshGeneratedPackagesRequestSchema,
   }),
 ]);
 
@@ -2248,49 +2359,25 @@ type ExtensionExecutionPlan =
     };
 ```
 
-Non-secret extension env planning contracts are also core-owned because `@svvy/extensions`,
-`@svvy/runtime`, and `@svvy/state` all exchange them:
+Non-secret extension execution env plans are core-owned because `@svvy/extensions`,
+`@svvy/runtime`, and `@svvy/state` exchange this plan inside execution-plan payloads:
 
 ```ts
-type ExtensionEnvRequirementsInput = {
-  extensionId: ExtensionId;
-};
-
-type ExtensionEnvRequirement = {
-  name: string;
-  secret: boolean;
-  required: boolean;
-  status: "configured" | "missing" | "invalid";
-  redactionLabel?: string;
-};
-
-type ExtensionEnvRequirements = {
-  extensionId: ExtensionId;
-  requirements: readonly ExtensionEnvRequirement[];
-};
-
-type PlanExtensionExecutionEnvInput = {
-  extensionId: ExtensionId;
-  commandName: NativeToolName | SvvyxCommandName;
-  commandId: CommandId;
-};
-
 type ExtensionExecutionEnvPlan = {
   extensionId: ExtensionId;
-  status: "ready" | "missing-required-secret" | "invalid";
-  requirements: readonly ExtensionEnvRequirement[];
   nonSecretValues: Readonly<Record<string, string>>;
   secretKeyNames: readonly string[];
-  envFacts: readonly EnvironmentFact[];
   redactedLabels: Readonly<Record<string, string>>;
   secretRevisionFingerprint: string;
 };
 ```
 
 `ExtensionExecutionEnvPlan` is non-secret and may be persisted as readiness evidence or command
-facts. It never contains raw secret values. Secret-bearing invocation snapshots are process-local
-implementation details of `@svvy/extensions` and must not be exported from `@svvy/core`, persisted
-in `@svvy/state`, included in generated context, or sent through renderer/browser-tool bridges.
+facts. It never contains raw secret values, readiness preview fields, duplicated requirement rows, or
+raw environment facts that can be read from the extension/source and state-owned readiness records.
+Secret-bearing invocation snapshots are process-local implementation details of `@svvy/extensions`
+and must not be exported from `@svvy/core`, persisted in `@svvy/state`, included in generated
+context, or sent through renderer/browser-tool bridges.
 
 `@svvy/core` exports the execution-plan schema, variant schemas, supporting schemas, and hoisted
 strict decoders by these exact names:
@@ -2307,10 +2394,15 @@ strict decoders by these exact names:
   `ExtensionExecutionPlanSchema` with the core boundary parse options
   `{ onExcessProperty: "error", errors: "all" }`
 
-The execution-plan union is closed to the two variants above. Extension dependency install/update is
-not represented as a handler-returned execution-plan operation item; it uses the public runtime
-command API `RunExtensionDependencyActionInput` / `RunExtensionDependencyActionResult`, with runtime
-asking `@svvy/extensions` for the dependency command plan on that service path.
+The execution-plan union is closed to the two variants above. Runtime decodes every
+handler-returned `execution_plan` with `ExtensionExecutionPlanSchema` before side effects. Unknown
+plan kinds, unsupported variants, excess fields, or dependency install/update plans returned through
+handler operations are rejected as typed runtime/command contract failures and recorded in command
+facts where the owning command envelope already exists. Extension dependency install/update is not
+represented as a handler-returned execution-plan operation item and has no public
+runtime API. No public dependency-action API exists. Adding one requires the complete runtime-owned
+lifecycle contract, schemas, implementation, state/package contracts, public error mapping, and
+tests.
 
 The prompt-cancellation contract also exports its variant schemas by exact name:
 `AbortQueuedPromptInputSchema`, `AbortActiveTurnPromptInputSchema`, and
@@ -2415,7 +2507,7 @@ type OrchestratorControlQueueInsertRequest = {
 };
 
 type RequestInputAnswerQueueInsertRequest = {
-  target: PromptTarget;
+  target: RuntimeSurfaceTarget;
   kind: "request_user_input_answer";
   payload: Extract<QueueItemPayload, { kind: "request_user_input_answer" }>;
   priority?: "interactive" | "runtime" | "background";
@@ -2434,7 +2526,8 @@ wrapping `RuntimeEffectRequest` values must not enqueue ordinary user messages.
 `workflow_task_agent_start` rows require a
 `WorkflowTaskRuntimeSurfaceTarget` and row-level `sourceCommandId`. Handler control work targets a
 handler surface, report notifications target an orchestrator surface, and nonblocking
-request-input answer queue rows target only user-messageable `PromptTarget` surfaces.
+request-input answer queue rows target the runtime surface that owns the request-input wait,
+including workflow-task surfaces when the request was created by a workflow task-agent attempt.
 
 `queue.steer` is not a `RuntimeEffectRequest` variant. Steering is exposed only through
 `Runtime.queues.steer(...)` for user, desktop, browser-tool, headless, and test actions over an
@@ -2492,26 +2585,26 @@ workspace identities are rejected at the schema boundary.
 type ValidatedTaskAgentParameters = {
   id: string;
   label: string;
-  providerId: ProviderId;
-  modelId: ModelId;
+  provider: string;
+  model: string;
   reasoning: ReasoningSelection;
   instructions: string;
-  extensionUsage?: ExtensionUsageOverrides;
+  overrides?: ExtensionUsageOverrideMap;
 };
 
-type ExtensionUsageOverrides = {
-  readonly [extensionId in ExtensionId]?: ExtensionUsageState;
+type ExtensionUsageOverrideMap = {
+  readonly [extensionId: string]: ExtensionUsageState;
 };
 ```
 
 `ValidatedTaskAgentParameters` is runtime-owned validated data. Generated `@svvyx/workflows`
 exports use `TaskAgentParametersSource` with generated-package string ids, then the `runTaskAgent`
 bridge validates those source records into `ValidatedTaskAgentParameters` before queue insertion or
-generated-context binding. `@svvy/core` brands provider ids, model ids, reasoning selections, and
-extension ids only after runtime validation against pi-normalized provider metadata, the current
-extension registry, and actor compatibility rules. The generated source type remains stringly
-because it is file-backed authoring data; the validated type is product/runtime data and must use
-branded ids plus `ExtensionUsageState`.
+generated-context binding. The validated bridge payload intentionally preserves the generated-package
+field names `provider`, `model`, and `overrides`; runtime validates those strings against
+pi-normalized provider/model metadata, the current extension registry, generated `@svvyx/extensions`
+usage state, and actor eligibility rules before they influence task-attempt creation, prompt
+binding, or pi-adapter handoff.
 
 ```ts
 type SmithersObservedJson =
@@ -2722,14 +2815,16 @@ type GeneratedPackageBuildInput = {
   packages: ReadonlyArray<GeneratedPackageName>;
 };
 
-type RefreshGeneratedPackagesRequest =
-  | {
-      scope: "app-global";
-      packages: ReadonlyArray<GeneratedPackageName>;
-      reason: "source-changed" | "explicit-build" | "snapshot-restore" | "startup-recovery";
-      sourceCommandId?: CommandId;
-      recoveryWorkId?: RecoveryWorkId;
-    }
+type RefreshGeneratedPackagesRequest = {
+  scope: "app-global";
+  packages: ReadonlyArray<GeneratedPackageName>;
+  reason: "source-changed" | "explicit-build" | "snapshot-restore" | "startup-recovery";
+  sourceCommandId?: CommandId;
+  recoveryWorkId?: RecoveryWorkId;
+};
+
+type InternalRefreshGeneratedPackagesRequest =
+  | RefreshGeneratedPackagesRequest
   | {
       scope: "workspace-link-repair";
       workspaceId: WorkspaceId;
@@ -2742,7 +2837,7 @@ type RefreshGeneratedPackagesRequest =
 type GeneratedPackagesRefreshResult =
   | {
       scope: "app-global";
-      packages: readonly GeneratedPackageRefreshStatus[];
+      packages: readonly GeneratedPackageBuildStatus[];
       workspaceLinks: readonly [];
       recoveryWorkIds: readonly RecoveryWorkId[];
     }
@@ -2754,7 +2849,7 @@ type GeneratedPackagesRefreshResult =
     };
 
 type GeneratedPackageBuildPlanResult = {
-  packages: readonly GeneratedPackageRefreshStatus[];
+  packages: readonly GeneratedPackageBuildStatus[];
 };
 
 // Link repair is deliberately separate from app-global build. Build input has no workspace id, so
@@ -2768,14 +2863,9 @@ type GeneratedPackageWorkspaceLinkRepairInput = {
 type GeneratedPackageWorkspaceLinkRepairPlan = {
   workspaceId: WorkspaceId;
   packageName: GeneratedPackageName;
-  expectedBuildId: GeneratedPackageBuildId;
-  expectedOutputFingerprint: string;
-  buildId: GeneratedPackageBuildId;
-  outputFingerprint: string;
   linkPath: AbsolutePath;
   targetPath: AbsolutePath;
   requiredParentPath: AbsolutePath;
-  expectedLinkTarget: AbsolutePath;
   overwritePolicy: "symlink-only";
 };
 
@@ -2786,16 +2876,38 @@ type GeneratedPackageFileEvidence = {
 
 type GeneratedPackageDependencyEvidence =
   | {
-      kind: "package";
-      name: string;
-      version: string;
-      resolution: "app-owned-package" | "package-manager";
+      specifier: "@svvy/core";
+      importKind: "type-only";
+      dependencyClass: "app-owned-type-contract";
+      resolutionAuthority: "app-owned-type-contract";
+      manifestDependency: "dev-type-dependency";
     }
   | {
-      kind: "generated-package";
-      name: GeneratedPackageName;
+      specifier: GeneratedPackageName;
+      importKind: "type-only" | "runtime";
+      dependencyClass: "generated-package";
+      resolutionAuthority: "generated-package-link";
+      manifestDependency: "none-generated-package-link";
       buildId: GeneratedPackageBuildId;
-      resolution: "generated-package-link";
+    }
+  | {
+      specifier: string;
+      importKind: "type-only" | "runtime";
+      dependencyClass: "workspace-authoring-external";
+      resolutionAuthority: "workspace-smithers-package" | "external-ambient-declaration";
+      manifestDependency:
+        | "dependency"
+        | "dev-type-dependency"
+        | "peer-workspace-expectation"
+        | "ambient-declaration";
+      version: string;
+    }
+  | {
+      specifier: string;
+      importKind: "type-only" | "runtime";
+      dependencyClass: "forbidden";
+      resolutionAuthority: "forbidden";
+      manifestDependency: "none-forbidden";
     };
 
 type GeneratedPackageBuildStatus = {
@@ -2817,12 +2929,27 @@ type GeneratedPackageRefreshStatus = GeneratedPackageBuildStatus & {
 type GeneratedPackageWorkspaceLinkStatus = {
   workspaceId: WorkspaceId;
   packageName: GeneratedPackageName;
-  status: "linked" | "unchanged" | "blocked-non-symlink" | "missing-smithers-root" | "failed";
+  status:
+    | "linked"
+    | "unchanged"
+    | "blocked-non-symlink"
+    | "missing-smithers-root"
+    | "repair-needed"
+    | "failed";
   linkPath?: AbsolutePath;
   targetPath?: AbsolutePath;
   diagnostics?: readonly string[];
 };
 ```
+
+`GeneratedPackagesRefreshResult.packages` contains extension-owned
+`GeneratedPackageBuildStatus` values because it is the public runtime facade result for requested
+build work. `manifestPath` and `generatedFiles` are file-backed evidence from the just-completed
+extension build, not durable generated-package read-model projections. Runtime derives
+`GeneratedPackageRefreshStatus` receipts by adding runtime-owned `refreshScope` before writing
+generated-package state facts. Public refresh callers do not receive `refreshScope`; they can
+retrieve persisted generated-package facts through state read models when they need product-state
+status.
 
 `RuntimeGeneratedPackageStatePort` is the core-owned state port used by runtime generated-package
 refresh and workspace-link repair. It is a state contract, not a generated-package build contract.
@@ -2858,11 +2985,13 @@ type RuntimeGeneratedPackageWorkspaceLinkRecord = {
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
 };
+```
 
 `RuntimeGeneratedPackageFactRecord.createdAt`, `.updatedAt`, and workspace-link record timestamps
 are UTC ISO string fields. Their schemas decode with `UtcDateTime` /
 `Schema.DateTimeUtcFromString` and encode with `DateTime.formatIso(...)`.
 
+```ts
 type StateMutationResult<T> = {
   value: T;
   afterCommit: readonly StateInvalidationDescriptor[];
@@ -2873,6 +3002,7 @@ const StateMutationResultSchema = <T>(value: Schema.Decoder<T>) =>
     value,
     afterCommit: Schema.Array(StateInvalidationDescriptorSchema),
   });
+```
 
 A mutating state-backed Effect port method is any method that can create, update, delete, claim,
 release, normalize, append, record, mark, resolve, default, cancel, clear, ensure by writing, or
@@ -2884,6 +3014,7 @@ domain value exists. Read-only runtime-facing port methods are limited to `get`,
 domain read verbs such as `fetch`, `rebaseline`, and `snapshot` when the state package spec names the
 method and the method still performs no write.
 
+```ts
 type RuntimeGeneratedPackageStatePortService = {
   recordGeneratedPackageBuild(input: {
     status: GeneratedPackageRefreshStatus & { action: "written" | "unchanged" };
@@ -2931,15 +3062,21 @@ type RuntimeGeneratedPackageStatePortService = {
     sourceCommandId?: CommandId | null;
     recoveryWorkId?: RecoveryWorkId | null;
   }): Effect.Effect<StateMutationResult<RuntimeGeneratedPackageFactRecord>, StateContractError>;
+  markWorkspaceLinksRepairNeeded(
+    input: MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  ): Effect.Effect<
+    StateMutationResult<MarkWorkspaceGeneratedPackageLinksRepairNeededResult>,
+    StateContractError
+  >;
 };
 ```
 
-`app-global` generated-package refresh has no `workspaceLinkTargets` or `force` field. Runtime
-derives link-repair work from opened/acquired workspace runtime scopes and persisted generated-package link
-facts after the app-global generated-package facts commit. Targeted workspace link work is represented by
-separate `RefreshGeneratedPackagesRequest` values with `scope: "workspace-link-repair"` and one
-`workspaceId`; durable recovery for that work uses the runtime recovery kind
-`workspace_generated_package_link_repair`.
+Public `RefreshGeneratedPackagesRequest` is app-global only and has no `workspaceLinkTargets` or
+`force` field. Runtime derives link-repair work from opened/acquired workspace runtime scopes and
+persisted generated-package link facts after the app-global generated-package facts commit. Targeted
+workspace link work is represented only by internal `InternalRefreshGeneratedPackagesRequest` values
+with `scope: "workspace-link-repair"` and one `workspaceId`; durable recovery for that work uses the
+runtime recovery kind `workspace_generated_package_link_repair`.
 
 `GeneratedPackageBuildInput` is the runtime-to-extensions generated package build contract. It has
 only `packages` and returns extension-owned `GeneratedPackageBuildStatus` values. It has no `scope`,
@@ -3052,7 +3189,7 @@ Rejected runtime effect request:
 ```
 
 - Every variant has an exact `@svvy/core` schema, a derived TypeScript type, and a runtime
-  application test. Placeholder `unknown`, generic `Record<string, unknown>`, renderer payloads, or
+  application test. Unspecified `unknown`, generic `Record<string, unknown>`, renderer payloads, or
   pi-native payloads are not valid runtime effect inputs.
 - Runtime validates request target identity against the active prompt execution context before
   applying any effect. An extension handler cannot create work for an unrelated workspace, surface,
@@ -3176,6 +3313,7 @@ type CreatePiSessionInput = {
   workspaceSessionId: WorkspaceSessionId;
   surfacePiSessionId: SurfacePiSessionId;
   actorKind: ActorKind;
+  agentProfileId?: AgentProfileId;
   generatedContextFingerprint: GeneratedContextFingerprint;
   model: ModelSelection;
   reasoning: ReasoningSelection;
@@ -3229,8 +3367,8 @@ type ModelInfo = {
   supportsReasoning: boolean;
   supportedReasoning: readonly ReasoningEffort[];
   inputModalities: readonly InputModality[];
-  contextWindow?: number;
-  maxOutputTokens?: number;
+  contextWindow?: PositiveSafeInteger;
+  maxOutputTokens?: PositiveSafeInteger;
   authStatus: ProviderAuthStatus;
 };
 
@@ -3267,7 +3405,7 @@ type PiToolExecutionInput = {
   piToolCallId: ToolCallId;
   toolName: string;
   argumentsJson: string;
-  argumentsSnapshotSequence?: number;
+  argumentsSnapshotSequence?: NonNegativeSafeInteger;
 };
 
 type PiToolExecutionUpdate =
@@ -3317,6 +3455,26 @@ type PiToolExecutor = (
     emit(update: PiToolExecutionUpdate): Effect.Effect<void, RuntimeToolExecutionError>;
   },
 ) => Effect.Effect<NativeToolResult, RuntimeToolExecutionError>;
+
+type PiToolExecutionUpdatedEvent =
+  | {
+      type: "pi.tool_execution.updated";
+      session: PiSessionRef;
+      turnId: TurnId;
+      surfacePiSessionId: SurfacePiSessionId;
+      toolCallId: ToolCallId;
+      toolName: string;
+      result: NativeToolResult;
+    }
+  | {
+      type: "pi.tool_execution.updated";
+      session: PiSessionRef;
+      turnId: TurnId;
+      surfacePiSessionId: SurfacePiSessionId;
+      toolCallId: ToolCallId;
+      toolName: string;
+      update: PiToolExecutionUpdate;
+    };
 
 // `argumentsJson` is raw only at the pi-adapter boundary because pi streams tool-call arguments as
 // JSON text. Runtime parses and validates accepted arguments against the extension-owned Effect
@@ -3385,13 +3543,29 @@ type SecretStatusSnapshot = {
   updatedAt?: IsoDateTimeString;
 };
 
+export const SecretInvocationValueSchema = Schema.Struct({
+  ref: ExtensionEnvSecretRefSchema,
+  value: Schema.Redacted(Schema.String, {
+    label: "extension-env-secret",
+    disallowJsonEncode: true,
+  }),
+  revisionFingerprint: Schema.String.check(Schema.isNonEmpty()),
+});
+type SecretInvocationValue = typeof SecretInvocationValueSchema.Type;
+```
+
+Equivalent decoded value shape:
+
+```ts
 type SecretInvocationValue = {
   ref: ExtensionEnvSecretRef;
   value: Redacted.Redacted<string>;
   revisionFingerprint: string;
 };
+```
 
-class ProviderAuthPortError extends Schema.TaggedErrorClass<ProviderAuthPortError>()(
+```ts
+export class ProviderAuthPortError extends Schema.TaggedErrorClass<ProviderAuthPortError>()(
   "ProviderAuthPortError",
   {
     operation: Schema.String,
@@ -3409,7 +3583,7 @@ class ProviderAuthPortError extends Schema.TaggedErrorClass<ProviderAuthPortErro
   },
 ) {}
 
-class PiSessionReferencePortError extends Schema.TaggedErrorClass<PiSessionReferencePortError>()(
+export class PiSessionReferencePortError extends Schema.TaggedErrorClass<PiSessionReferencePortError>()(
   "PiSessionReferencePortError",
   {
     operation: Schema.String,
@@ -3426,7 +3600,7 @@ class PiSessionReferencePortError extends Schema.TaggedErrorClass<PiSessionRefer
   },
 ) {}
 
-class SecretStorePortError extends Schema.TaggedErrorClass<SecretStorePortError>()(
+export class SecretStorePortError extends Schema.TaggedErrorClass<SecretStorePortError>()(
   "SecretStorePortError",
   {
     operation: Schema.String,
@@ -3442,6 +3616,10 @@ class SecretStorePortError extends Schema.TaggedErrorClass<SecretStorePortError>
     cause: Schema.optionalKey(Schema.Defect({ excludeCause: true })),
   },
 ) {}
+
+// ProviderAuthPortError and SecretStorePortError are public core boundary errors and must export
+// the same schema value plus decode/encode quartet required by `SVVY-EFFECT-016`. They are not
+// package-private helper classes.
 
 export interface ProviderAuthPortService {
   getProviderAuthSnapshot(
@@ -3496,6 +3674,15 @@ export interface SecretStorePortService {
   ): Effect.Effect<SecretInvocationValue, SecretStorePortError>;
 }
 
+export interface SecretStoreMutationPortService {
+  writeSecretValue(
+    input: WriteSecretValueInput,
+  ): Effect.Effect<WriteSecretValueResult, SecretStorePortError>;
+  removeSecretValue(
+    input: RemoveSecretValueInput,
+  ): Effect.Effect<RemoveSecretValueResult, SecretStorePortError>;
+}
+
 export interface SecretStorePort {
   readonly _tag: "SecretStorePort";
 }
@@ -3503,6 +3690,15 @@ export interface SecretStorePort {
 export const SecretStorePort = Context.Service<SecretStorePort, SecretStorePortService>(
   "@svvy/core/SecretStorePort",
 );
+
+export interface SecretStoreMutationPort {
+  readonly _tag: "SecretStoreMutationPort";
+}
+
+export const SecretStoreMutationPort = Context.Service<
+  SecretStoreMutationPort,
+  SecretStoreMutationPortService
+>("@svvy/core/SecretStoreMutationPort");
 
 export const GetProviderAuthSnapshotInputSchema = Schema.Struct({
   providerId: ProviderId,
@@ -3554,6 +3750,35 @@ export type ListSecretStatusInput = typeof ListSecretStatusInputSchema.Type;
 export const ResolveSecretInvocationValueInputSchema = ExtensionEnvSecretRefSchema;
 export type ResolveSecretInvocationValueInput = typeof ResolveSecretInvocationValueInputSchema.Type;
 
+export const WriteSecretValueInputSchema = Schema.Struct({
+  ref: ExtensionEnvSecretRefSchema,
+  value: Schema.Redacted(Schema.String.check(Schema.isNonEmpty()), {
+    label: "extension-env-secret",
+    disallowJsonEncode: true,
+  }),
+  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+});
+export type WriteSecretValueInput = typeof WriteSecretValueInputSchema.Type;
+
+export const WriteSecretValueResultSchema = Schema.Struct({
+  ref: ExtensionEnvSecretRefSchema,
+  revisionFingerprint: Schema.String.check(Schema.isNonEmpty()),
+});
+export type WriteSecretValueResult = typeof WriteSecretValueResultSchema.Type;
+
+export const RemoveSecretValueInputSchema = Schema.Struct({
+  ref: ExtensionEnvSecretRefSchema,
+  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+});
+export type RemoveSecretValueInput = typeof RemoveSecretValueInputSchema.Type;
+
+export const RemoveSecretValueResultSchema = Schema.Struct({
+  ref: ExtensionEnvSecretRefSchema,
+  removed: Schema.Boolean,
+  revisionFingerprint: Schema.String.check(Schema.isNonEmpty()),
+});
+export type RemoveSecretValueResult = typeof RemoveSecretValueResultSchema.Type;
+
 // Provider/auth and secret-store public port method inputs are always named schemas, never inline
 // object shapes. The service signatures above intentionally reuse those names so generated
 // declarations, tests, docs, and callers share one source contract. Each named input schema exports
@@ -3562,9 +3787,12 @@ export type ResolveSecretInvocationValueInput = typeof ResolveSecretInvocationVa
 
 // SecretStorePort returns Redacted.Redacted<string> only from invocation-resolution methods that
 // are called by trusted runtime/package invocation paths. Read-model and inventory methods return
-// only status, labels, presence, timestamps, and revision fingerprints. Secret writes/removals are
-// state-owned UI command facade operations; runtime, extensions, pi-adapter, sandbox, and generated
-// package code do not receive a cross-package secret mutation port.
+// only status, labels, presence, timestamps, and revision fingerprints. Secret writes/removals use
+// the separate SecretStoreMutationPort and are state-owned UI command facade operations. Runtime,
+// extensions, pi-adapter, sandbox, and generated package code do not receive the mutation port.
+// App/bootstrap provides SecretStoreMutationPort only into state-owned secret-write command/facade
+// layers, not into the general app runtime context available to runtime, extensions, pi-adapter, or
+// sandbox services.
 
 export const GetPiSessionReferenceInputSchema = Schema.Struct({
   surfacePiSessionId: SurfacePiSessionId,
@@ -3622,22 +3850,25 @@ export const PiSessionReferencePort = Context.Service<
   PiSessionReferencePortService
 >("@svvy/core/PiSessionReferencePort");
 
-type PiSessionReferenceValidation =
-  | {
-      valid: true;
-      reference: PiSessionReference;
-      referenceFingerprint: string;
-    }
-  | {
-      valid: false;
-      reason:
-        | "not-found"
-        | "workspace-mismatch"
-        | "surface-mismatch"
-        | "actor-mismatch"
-        | "adapter-version-mismatch";
-      referenceFingerprint?: string;
-    };
+export const PiSessionReferenceValidationSchema = Schema.Union([
+  Schema.Struct({
+    valid: Schema.Literal(true),
+    reference: PiSessionReferenceSchema,
+    referenceFingerprint: Schema.String,
+  }),
+  Schema.Struct({
+    valid: Schema.Literal(false),
+    reason: Schema.Literals([
+      "not-found",
+      "workspace-mismatch",
+      "surface-mismatch",
+      "actor-mismatch",
+      "adapter-version-mismatch",
+    ]),
+    referenceFingerprint: Schema.optionalKey(Schema.String),
+  }),
+]);
+export type PiSessionReferenceValidation = typeof PiSessionReferenceValidationSchema.Type;
 
 export interface PiRuntimePathsPortService {
   resolve(input: ResolvePiRuntimePathsInput): Effect.Effect<PiRuntimePathsSnapshot, PiAdapterError>;
@@ -3659,12 +3890,18 @@ operations already cross the adapter boundary with `PiAdapterError`.
 
 Rules:
 
-- `@svvy/core` owns the live `ProviderAuthPort`, `SecretStorePort`, `PiSessionReferencePort`, and
-  `PiRuntimePathsPort` service tags and data contracts.
+- `@svvy/core` owns the live `ProviderAuthPort`, `SecretStorePort`,
+  `SecretStoreMutationPort`, `PiSessionReferencePort`, and `PiRuntimePathsPort` service tags and
+  data contracts.
 - `@svvy/state` provides the provider auth status and persisted pi session reference
-  implementations; the live credential implementation may delegate to the host secret store but
-  still satisfies the core-owned `ProviderAuthPort` contract.
-- Product app/bootstrap provides the packaged runtime path resolution implementation.
+  implementations, and consumes `SecretStoreMutationPort` only inside state-owned secret-write
+  command services.
+- Product app/bootstrap provides the host/live `ProviderAuthPort`, host/live `SecretStorePort`, and
+  packaged runtime path resolution implementations to the composed app runtime. It provides
+  host/live `SecretStoreMutationPort` only into state-owned secret-write command/facade layers; the
+  mutation port is not present in the general runtime, extensions, pi-adapter, sandbox, desktop, or
+  generated-package service environment. The live credential implementation may delegate to the
+  host secret store but still satisfies the core-owned `ProviderAuthPort` contract.
   `@svvy/desktop` consumes renderer-safe facades and must not be the package-level provider for
   `@svvy/pi-adapter` dependencies.
 - `@svvy/pi-adapter` consumes these ports as Effect service dependencies and does not import
@@ -3720,7 +3957,7 @@ type SandboxPolicySnapshotInput = {
   surfacePiSessionId?: SurfacePiSessionId;
   commandId: CommandId;
   launchKind: SandboxLaunchKind;
-  cwd?: AbsolutePath;
+  cwd: AbsolutePath;
 };
 
 type FileSystemSandboxPolicy = {
@@ -3778,14 +4015,12 @@ type EnvironmentFact = {
 type SandboxLaunchFacts =
   | {
       mode: "managed";
-      originalCommand: readonly string[];
       spawn: {
         executable: AbsolutePath;
         args: readonly string[];
         cwd: AbsolutePath;
         envFacts: readonly EnvironmentFact[];
       };
-      envFacts: readonly EnvironmentFact[];
       helperPath: AbsolutePath;
       helperArgs: readonly string[];
       profilePath?: AbsolutePath;
@@ -3793,30 +4028,36 @@ type SandboxLaunchFacts =
     }
   | {
       mode: "omitted_full_access";
-      originalCommand: readonly string[];
       spawn: {
         executable: AbsolutePath;
         args: readonly string[];
         cwd: AbsolutePath;
         envFacts: readonly EnvironmentFact[];
       };
-      envFacts: readonly EnvironmentFact[];
-      policySnapshot: SandboxPolicySnapshot & { sandboxMode: "omitted_full_access" };
+      policySnapshot: SandboxPolicySnapshot;
     };
 ```
 
 The snapshot must be resolved before launch policy generation and must be immutable for that launch.
-It includes launch kind, workspace roots, active worktree roots, generated-output roots, immutable
-artifact roots, protected metadata roots, network policy, and whether managed sandboxing is enabled
-or omitted for full-access execution. It does not expose raw approval prompts or mutable state-store
-handles.
+It includes launch kind, state-resolved workspace/worktree policy entries, generated-output
+entries, immutable artifact entries, protected metadata entries, network policy, and whether
+managed sandboxing is enabled or omitted for full-access execution. It does not expose raw approval
+prompts or mutable state-store handles.
 
 `@svvy/core` owns the live `SandboxPolicySource` service tag, immutable snapshot contract,
 `SandboxLaunchScope`, `SandboxLaunchKind`, `BuildLaunchPolicyInput`, and `SandboxLaunchFacts`
-pi-free data contracts.
+pi-free data contracts. `SandboxLaunchFacts` is a package-to-package in-process launch receipt for
+runtime/sandbox coordination only. Its `spawn`, `helperPath`, `helperArgs`, and `profilePath` fields
+are not facade payloads, runtime events, state read models, command fact schemas, app-log payloads,
+generated-package contracts, or extension handler results; persisted/public surfaces use only the
+redacted sandbox command-fact projection named by the sandbox and runtime specs.
 `@svvy/state` provides the snapshot-source implementation. `@svvy/sandbox` consumes that service as
-an Effect dependency, validates the optional supplied snapshot, and turns the core-owned
-`BuildLaunchPolicyInput` into core-owned `SandboxLaunchFacts`.
+an Effect dependency and turns the core-owned `BuildLaunchPolicyInput` into core-owned
+`SandboxLaunchFacts`. Normal live launch callers omit `BuildLaunchPolicyInput.snapshot`; sandbox
+then resolves the current immutable snapshot from `SandboxPolicySource`. The optional supplied
+snapshot is runtime-only replay or verification input for an already committed immutable snapshot.
+App/bootstrap, extensions, generated packages, direct-tool helpers, and handler-authored plans must
+not synthesize or provide live policy snapshots.
 
 `@svvy/core` never exports Promise facades. Sandbox/debug edges consume the `@svvy/sandbox` Effect
 service or state read facades through an app/runtime-owned bridge. No sandbox diagnostics facade
@@ -3831,16 +4072,16 @@ core-owned `SandboxPolicySource` service tag through Effect.
 - Must not depend on any other `@svvy/*` package.
 - Must not depend on pi, Electrobun, Svelte, Incur, Smithers, filesystem APIs, database APIs,
   native helper APIs, or UI libraries.
-- Must not depend on v3 Effect import paths or APIs.
+- Must depend only on Effect v4 import paths and APIs.
 
 ## Versioning Rules
 
 - Breaking public core changes require a package major version bump once published.
 - Persisted schema changes require explicit schema version handling.
 - Read-model contract changes update schemas, invalidation mappings, fixtures, and consumers in the
-  same change. Do not keep parallel replacement fields, compatibility aliases, or dual-schema
-  projections unless the PRD, feature inventory, and owning specs make that dual path resolved
-  steady-state product behavior.
+  same change. A read-model has exactly one schema and one projection; a dual-schema projection is
+  allowed only when the PRD, feature inventory, and owning specs define both schemas as durable
+  product behavior.
 - Generated package names outside the `@svvyx/*` namespace are outside the core contract.
 
 ## Product Source Ownership
@@ -3853,7 +4094,8 @@ Target package paths:
 ## Acceptance Criteria
 
 - `@svvy/core` exports only shared schema-backed contracts, typed errors, stable ids, event/read
-  model contracts, target contracts, cross-package port service tags, and pure helpers.
+  model contracts, target contracts, cross-package port service tags, and explicitly named shared
+  helper symbols in the allowed categories above.
 - `@svvy/core` does not export pi-native, state, runtime, desktop, sandbox, Smithers, filesystem, or
   database implementation objects.
 - Runtime command lifecycle contracts, target contracts, schema/type contracts used by generated
@@ -3873,7 +4115,7 @@ Target package paths:
 - Event/read-model fixture tests.
 - Public API dependency tests proving `@svvy/core` imports no pi, desktop, state, runtime,
   extension, sandbox, filesystem, database, Smithers, or Incur implementation modules.
-- Persistence payload version tests for cross-package migration envelopes.
+- Persistence payload version tests for schema-backed cross-package payload envelopes.
 - Tests proving `@svvy/core` exposes no `Layer`, `ManagedRuntime`, scoped resource, fiber, queue,
   database, subprocess, host-global service ownership, or service implementation. Core may expose
   approved `Context.Service` tags only for cross-package port contracts.

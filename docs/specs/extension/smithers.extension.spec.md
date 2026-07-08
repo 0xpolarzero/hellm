@@ -7,7 +7,7 @@
 - Scope:
   - define the builtin Smithers extension record
   - define the agent-facing Smithers CLI boundary
-  - define generated Smithers instruction source and cleanup rules
+  - define generated Smithers instruction output and cleanup rules
   - define the svvy-specific Smithers boundary instruction
 
 This spec defines Smithers prompt guidance only.
@@ -108,6 +108,18 @@ through official `bunx smithers-orchestrator ...` commands.
 Agents invoke Smithers through `exec_command`. Approval, sandboxing, network policy, and command
 projection are the normal Shell extension behavior.
 
+Agents do not call Smithers through `workflow.*`, `svvyx smithers`, a Smithers-native tool, a
+loopback runtime-control tool, or a broad bridge helper. Smithers workflow code may use generated
+`@svvyx/workflows` task-agent helpers, but the generated `runTaskAgent` call is internal bridge
+plumbing: it is authenticated by `@svvy/runtime`, runs inside the app-owned Effect `ManagedRuntime`,
+and exposes only task-agent handoff rather than workflow graph, shell, settings, orchestrator, or
+handler controls.
+Smithers `.smithers/agents/**` files are workspace-local Smithers configuration. They are not the
+svvy reusable task-agent parameter store and must not be used to configure svvy task-agent model,
+systemPrompt, extension usage, bridge credentials, or runtime behavior. Reusable svvy task-agent
+parameters live in the app-global Workflows source library and are consumed through generated
+`@svvyx/workflows` `Agents.*` exports.
+
 ## Workspace Shape
 
 Smithers workspace authoring lives in:
@@ -151,7 +163,8 @@ extension-reference values are permitted only where workflow task-agent extensio
 authored. The Smithers extension may include only the boundary pointer that reusable svvy workflow
 assets are Workflows-extension material and, inside workspace `.smithers` TypeScript/TSX authoring
 source, are imported from generated `@svvyx/workflows`. It must not teach Workflows commands beyond
-that boundary pointer or present generated `@svvyx/*` packages as runtime facades.
+that boundary pointer or present generated `@svvyx/workflows` or `@svvyx/extensions` packages as
+runtime facades.
 
 ## Generated Instruction Source And Transform
 
@@ -211,10 +224,16 @@ Those hand-authored files must stay small and positive. They should say only:
 - use `svvyx workflows ...` only for reusable source-library operations owned by the Workflows
   extension
 - import reusable svvy workflow assets from generated `@svvyx/workflows` package exports
-- treat runtime task-agent handoff as the narrow generated `runTaskAgent` bridge only
+- keep workspace-local Smithers `.smithers/agents/**` config separate from reusable svvy task-agent
+  parameters in generated `@svvyx/workflows` `Agents.*` exports
+- treat runtime task-agent handoff as the narrow generated `runTaskAgent` bridge only, with
+  `@svvy/runtime` owning authentication, queueing, task-attempt lifecycle, and execution inside the
+  app-owned Effect `ManagedRuntime`
+- omit `workflow.*`, `svvyx smithers`, Smithers runtime-control APIs, loopback runtime-control
+  tools, broad bridge helpers, package-level runtime creation, and per-request Effect layer graphs
 
-It covers only the current Smithers boundary and omits Smithers runtime-control APIs or broad bridge tools, product
-UI surfaces, and non-current workspace source paths.
+It covers only the current Smithers boundary and omits Smithers runtime-control APIs or broad bridge
+tools, product UI surfaces, and non-current workspace source paths.
 
 ## Memory Fragment
 
@@ -241,17 +260,20 @@ Smithers is prompt-only official CLI guidance for handler-thread workflow work. 
 boundary is workspace `.smithers/` authoring, official `bunx smithers-orchestrator ...` commands
 through Shell, and no native or `svvyx` Smithers runtime surface.
 Smithers task agents created with `Agents.defineTaskAgent(...)` use the narrow authenticated
-`runTaskAgent` bridge described in `docs/specs/workflow-library.spec.md` so Smithers workflow code
-running inside a handler-thread command-scoped environment can ask `@svvy/runtime` to run one
-pi-backed task-agent attempt. Bridge contract types live in `@svvy/core`; generated
-`@svvyx/workflows` and generated `@svvyx/extensions` are generated workflow-authoring packages for
-workspace `.smithers` packages. Persistent app-global Workflows source under
-`~/.config/svvy/workflows/**` must not import `@svvyx/workflows`; it may import
-`@svvyx/extensions` only where the generated-package import policy allows extension reference
-values. `@svvyx/workflows` provides reusable workflow assets and task-agent helpers;
-`@svvyx/extensions` provides workflow-task-safe extension reference ids. They are not public
-`@svvy/*` packages, reusable SDKs, or `execute_typescript` runtime facades. The generated
-`runTaskAgent` bridge call is narrow internal plumbing and exposes no Smithers runtime-control APIs.
+`runTaskAgent` bridge whose core contract is owned by `@svvy/core` and whose server-side transport,
+auth, idempotency, queueing, and pi-backed task-agent lifecycle are owned by `@svvy/runtime`.
+`docs/specs/workflow-library.spec.md` mirrors the author-facing workflow semantics only. Smithers
+workflow code running inside a handler-thread command-scoped environment can use generated
+`@svvyx/workflows` task-agent helpers; those helpers issue the narrow authenticated `runTaskAgent`
+handoff to runtime-owned bridge plumbing. Bridge contract types live in `@svvy/core`; generated
+`@svvyx/workflows` is the generated authoring import package for workspace `.smithers`
+TypeScript/TSX source. `@svvyx/extensions` provides generated workflow-task-safe extension reference
+values where import policy allows. Persistent app-global Workflows source under
+`~/.config/svvy/workflows/**` must not import `@svvyx/workflows`; it may import `@svvyx/extensions`
+only where the generated-package import policy allows extension reference values. Both generated
+packages are read-only authoring outputs, not public `@svvy/*` packages, reusable SDKs, runtime
+facades, or `execute_typescript` facades. The generated `runTaskAgent` bridge call is narrow
+internal plumbing and exposes no Smithers runtime-control APIs.
 `@svvy/runtime` owns the authenticated endpoint, token verification, queueing, task-attempt
 lifecycle, task-agent execution handoff, generated-package refresh scheduling, and workspace-link
 repair coordination/recovery; `@svvy/pi-adapter` owns pi session creation and turn delivery;

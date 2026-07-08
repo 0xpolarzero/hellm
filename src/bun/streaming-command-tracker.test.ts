@@ -5,12 +5,15 @@ import { tmpdir } from "node:os";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import * as Effect from "effect/Effect";
 import { nativeToolCommandMetadata } from "@svvy/extensions";
-import { createPromptExecutionContext } from "@svvy/core";
+import { createPromptExecutionContext } from "@svvy/runtime/prompt-execution-context";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
-import { runtimeCommandStatePortFromStore, runtimeTurnStatePortFromStore } from "@svvy/state";
+import {
+  runtimeCommandStatePortFromStore,
+  runtimeTurnStatePortFromStore,
+} from "@svvy/state/structured-session-adapters";
 import { createStreamingCommandTracker } from "./streaming-command-tracker";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";

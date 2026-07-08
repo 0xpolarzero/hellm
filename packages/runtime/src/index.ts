@@ -2,8 +2,11 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import type * as Crypto from "effect/Crypto";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import type * as ManagedRuntime from "effect/ManagedRuntime";
+import type * as Path from "effect/Path";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { boundarySchemaErrorDetails, RuntimeContractError } from "@svvy/core";
@@ -12,6 +15,7 @@ import type {
   AcquireDefaultWorkspaceInput,
   AcquireWorkspaceInput,
   AcquireWorkspaceResult,
+  ApplyCommittedSourceInvalidationEventInput,
   AnswerRuntimeApprovalInput,
   AnswerRuntimeApprovalResult,
   AnswerRequestInputInput,
@@ -31,18 +35,33 @@ import type {
   ReleaseWorkspaceInput,
   ReleaseWorkspaceResult,
   RuntimeApprovalsApiEffect,
+  RuntimeActorExtensionBindingStatePort,
   RuntimeCommandsApiEffect,
+  RuntimeApprovalStatePort,
+  RuntimeCommandStatePort,
   RuntimeEventError,
   RuntimeEvent,
   RuntimeEventSubscriptionClose,
   RuntimeEventsInput,
   RuntimeFacadeErrorContract,
+  RuntimeEpisodeStatePort,
+  RuntimeGeneratedPackageStatePort,
   RuntimeMessagesApiEffect,
+  RuntimePromptDefaultsStatePort,
   RuntimeQueuesApiEffect,
+  RuntimeQueueStatePort,
   RuntimeRequestInputApiEffect,
+  RuntimeRequestStatePort,
+  RuntimeSessionWaitStatePort,
   RuntimeSourceInvalidationApiEffect,
+  RuntimeSourceStatePort,
+  RuntimeSurfaceLifecycleStatePort,
+  RuntimeThreadStatePort,
+  RuntimeTurnStatePort,
+  RuntimeWorkspaceStatePort,
   RuntimeSurfacesApiEffect,
   RuntimeWorkspacesApiEffect,
+  SandboxPolicySource,
   OpenExtensionSourceEditInput,
   SaveExtensionSourceEditInput,
   SourceEditSaveResult,
@@ -50,8 +69,6 @@ import type {
   SourceInvalidationHint,
   SourceReconcileRequest,
   SourceReconcileResult,
-  RunExtensionDependencyActionInput,
-  RunExtensionDependencyActionResult,
   SetRequestInputTimerPausedInput,
   SetRequestInputTimerPausedResult,
   SteerQueuedMessageInput,
@@ -60,50 +77,88 @@ import type {
   WriteCommandStdinInput,
   WriteCommandStdinResult,
 } from "@svvy/core";
+import type { AppLogWritePort, StateCommandPostCommitNotificationPort } from "@svvy/core";
+import type { ExtensionSourceRootsPort, Extensions } from "@svvy/extensions";
 import {
-  decodeAcquireDefaultWorkspaceInputEffect,
-  decodeAcquireWorkspaceInputEffect,
-  decodeAcquireWorkspaceResultEffect,
-  decodeAnswerRequestInputInputEffect,
-  decodeAnswerRequestInputResultEffect,
-  decodeAnswerRuntimeApprovalInputEffect,
-  decodeAnswerRuntimeApprovalResultEffect,
-  decodeAbortPromptInputEffect,
-  decodeCancelCommandInputEffect,
-  decodeCancelCommandResultEffect,
-  decodeCloseSurfaceInputEffect,
-  decodeCloseSurfaceResultEffect,
-  decodeCreateOrchestratorSurfaceInputEffect,
-  decodeCreateSurfaceResultEffect,
-  decodeGeneratedPackagesRefreshResultEffect,
-  decodeOpenExtensionSourceEditInputEffect,
-  decodeOpenSurfaceInputEffect,
-  decodeOpenSurfaceResultEffect,
-  decodeRefreshGeneratedContextRequestEffect,
-  decodeRefreshGeneratedPackagesRequestEffect,
-  decodeReleaseWorkspaceInputEffect,
-  decodeReleaseWorkspaceResultEffect,
-  decodeRunExtensionDependencyActionInputEffect,
-  decodeRunExtensionDependencyActionResultEffect,
-  decodeRuntimeEventEffect,
-  decodeRuntimeEventSubscriptionCloseEffect,
-  decodeRuntimeEventsInputEffect,
-  decodeSaveExtensionSourceEditInputEffect,
-  decodeSetRequestInputTimerPausedInputEffect,
-  decodeSetRequestInputTimerPausedResultEffect,
-  decodeSourceEditSaveResultEffect,
-  decodeSourceEditSessionEffect,
-  decodeSourceInvalidationHintEffect,
-  decodeSourceReconcileRequestEffect,
-  decodeSourceReconcileResultEffect,
-  decodeSteerQueuedMessageInputEffect,
-  decodeSubmitMessageInputEffect,
-  decodeSubmitMessageResultEffect,
-  decodeWriteCommandStdinInputEffect,
-  decodeWriteCommandStdinResultEffect,
+  layer as sandboxLayer,
+  type HostProcessReferencePort,
+  type SandboxHelperCandidatesPort,
+} from "@svvy/sandbox";
+import {
+  decodeUnknownAcquireDefaultWorkspaceInputEffect,
+  decodeUnknownAcquireWorkspaceInputEffect,
+  decodeUnknownAcquireWorkspaceResultEffect,
+  decodeUnknownApplyCommittedSourceInvalidationEventInputEffect,
+  decodeUnknownAnswerRequestInputInputEffect,
+  decodeUnknownAnswerRequestInputResultEffect,
+  decodeUnknownAnswerRuntimeApprovalInputEffect,
+  decodeUnknownAnswerRuntimeApprovalResultEffect,
+  decodeUnknownAbortPromptInputEffect,
+  decodeUnknownCancelCommandInputEffect,
+  decodeUnknownCancelCommandResultEffect,
+  decodeUnknownCloseSurfaceInputEffect,
+  decodeUnknownCloseSurfaceResultEffect,
+  decodeUnknownCreateOrchestratorSurfaceInputEffect,
+  decodeUnknownCreateSurfaceResultEffect,
+  decodeUnknownGeneratedPackagesRefreshResultEffect,
+  decodeUnknownOpenExtensionSourceEditInputEffect,
+  decodeUnknownOpenSurfaceInputEffect,
+  decodeUnknownOpenSurfaceResultEffect,
+  decodeUnknownRefreshGeneratedContextRequestEffect,
+  decodeUnknownRefreshGeneratedPackagesRequestEffect,
+  decodeUnknownReleaseWorkspaceInputEffect,
+  decodeUnknownReleaseWorkspaceResultEffect,
+  decodeUnknownRuntimeEventEffect,
+  decodeUnknownRuntimeEventSubscriptionCloseEffect,
+  decodeUnknownRuntimeEventsInputEffect,
+  decodeUnknownSaveExtensionSourceEditInputEffect,
+  decodeUnknownSetRequestInputTimerPausedInputEffect,
+  decodeUnknownSetRequestInputTimerPausedResultEffect,
+  decodeUnknownSourceEditSaveResultEffect,
+  decodeUnknownSourceEditSessionEffect,
+  decodeUnknownSourceInvalidationHintEffect,
+  decodeUnknownSourceReconcileRequestEffect,
+  decodeUnknownSourceReconcileResultEffect,
+  decodeUnknownSteerQueuedMessageInputEffect,
+  decodeUnknownSubmitMessageInputEffect,
+  decodeUnknownSubmitMessageResultEffect,
+  decodeUnknownWriteCommandStdinInputEffect,
+  decodeUnknownWriteCommandStdinResultEffect,
 } from "@svvy/core";
-import { makeRuntimeService, type RuntimeLayerRequirements } from "./runtime-layer";
-import type { RuntimeLayerError } from "./runtime-layer-config";
+import { layerRuntimeEventBus } from "./runtime-event-bus";
+import { layerRuntimeApprovalWaitService } from "./runtime-approval-wait-service";
+import { makeRuntimeService } from "./runtime-layer";
+import type {
+  RuntimeGeneratedContextRefreshHostPort,
+  RuntimeGeneratedPackageRefreshHostPort,
+  RuntimeLayerCommandControlPort,
+  RuntimeLayerCommandStdinPort,
+  RuntimeLayerModelResolverPort,
+  RuntimeLayerPromptControlHostPort,
+  RuntimeLayerProviderAuthPort,
+  RuntimeLayerSurfaceQueueWakePort,
+  RuntimeSourceInvalidationScanPort,
+} from "./bootstrap";
+import {
+  layerRuntimeShutdownPreparation,
+  layerRuntimeStartupReadiness,
+  type RuntimeLayerConfigService,
+  type RuntimeLayerError,
+  type RuntimeShutdownPreparation,
+  type RuntimeStartupReadiness,
+} from "./runtime-layer-config";
+import { layerRuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
+import { layerRuntimeQueueWakeService } from "./runtime-queue-wake-service";
+import { layerRuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
+import { layerRuntimeGeneratedPackageRefreshService } from "./runtime-generated-package-refresh-service";
+import { layerRuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { layerRuntimeAcceptedNativeToolExecution } from "./accepted-native-tool-execution-service";
+import { layerRuntimeLaunchPolicyService } from "./runtime-launch-policy-service";
+import { layerStateCommandPostCommitNotificationPort } from "./state-command-post-commit-notification";
+import { layerRuntimeExecutionPlanExecutor } from "./runtime-effect-requests";
+import { layerRuntimeWorkspaceScopeService } from "./workspace-runtime-scope-service";
+import { layerRuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
+import { layerRuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
 
 interface RuntimeMessagesService extends RuntimeMessagesApiEffect {}
 
@@ -145,9 +200,86 @@ interface RuntimeService {
 
 export class Runtime extends Context.Service<Runtime, RuntimeService>()("@svvy/runtime/Runtime") {}
 
+const runtimeGeneratedPackageRefreshLayer = layerRuntimeGeneratedPackageRefreshService.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+  Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
+  Layer.provideMerge(runtimeGeneratedPackageRefreshLayer),
+);
+const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
+  Layer.provideMerge(layerRuntimeQueueWakeService),
+);
+const runtimeApprovalWaitLayer = layerRuntimeApprovalWaitService;
+const runtimeLaunchPolicyLayer = layerRuntimeLaunchPolicyService.pipe(Layer.provide(sandboxLayer));
+const runtimeSurfaceEventPublisherLayer = layerRuntimeSurfaceEventPublisher.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeInternalServicesLayer = Layer.mergeAll(
+  runtimeSourceInvalidationLayer,
+  runtimeRequestInputWaitLayer,
+  runtimeApprovalWaitLayer,
+  runtimeLaunchPolicyLayer,
+  runtimeSurfaceEventPublisherLayer,
+  layerRuntimeWorkspaceScopeService,
+  layerRuntimePromptDefaultsService,
+);
+
 export namespace Runtime {
-  export const layer: Layer.Layer<Runtime, RuntimeLayerError, RuntimeLayerRequirements> =
-    Layer.effect(Runtime, makeRuntimeService());
+  const runtimeServiceLayer = Layer.effect(Runtime, makeRuntimeService());
+  const runtimeAcceptedNativeToolExecutionLayer = layerRuntimeAcceptedNativeToolExecution;
+  const runtimeExecutionPlanExecutorLayer = layerRuntimeExecutionPlanExecutor;
+  const runtimeStartupReadinessLayer = layerRuntimeStartupReadiness;
+  const runtimeShutdownPreparationLayer = layerRuntimeShutdownPreparation;
+
+  export const layer: Layer.Layer<
+    | Runtime
+    | RuntimeStartupReadiness
+    | RuntimeShutdownPreparation
+    | StateCommandPostCommitNotificationPort,
+    RuntimeLayerError,
+    | RuntimeLayerConfigService
+    | RuntimeLayerPromptControlHostPort
+    | RuntimePromptDefaultsStatePort
+    | RuntimeLayerSurfaceQueueWakePort
+    | RuntimeLayerProviderAuthPort
+    | RuntimeLayerModelResolverPort
+    | AppLogWritePort
+    | RuntimeGeneratedContextRefreshHostPort
+    | RuntimeGeneratedPackageRefreshHostPort
+    | RuntimeSourceInvalidationScanPort
+    | RuntimeLayerCommandStdinPort
+    | RuntimeLayerCommandControlPort
+    | SandboxPolicySource
+    | SandboxHelperCandidatesPort
+    | HostProcessReferencePort
+    | RuntimeWorkspaceStatePort
+    | RuntimeSurfaceLifecycleStatePort
+    | RuntimeSourceStatePort
+    | RuntimeGeneratedPackageStatePort
+    | Extensions
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | ExtensionSourceRootsPort
+    | RuntimeActorExtensionBindingStatePort
+    | RuntimeQueueStatePort
+    | RuntimeRequestStatePort
+    | RuntimeApprovalStatePort
+    | RuntimeCommandStatePort
+    | RuntimeSessionWaitStatePort
+    | RuntimeThreadStatePort
+    | RuntimeTurnStatePort
+    | RuntimeEpisodeStatePort
+  > = Layer.mergeAll(
+    runtimeServiceLayer,
+    runtimeAcceptedNativeToolExecutionLayer,
+    runtimeExecutionPlanExecutorLayer,
+    runtimeStartupReadinessLayer,
+    runtimeShutdownPreparationLayer,
+    layerStateCommandPostCommitNotificationPort,
+  ).pipe(Layer.provide(runtimeInternalServicesLayer));
 }
 
 export const layer = Runtime.layer;
@@ -200,10 +332,6 @@ interface RuntimeRequestInputFacade {
 }
 
 interface RuntimeCommandsFacade {
-  runExtensionDependencyAction(
-    input: RunExtensionDependencyActionInput,
-    options?: RuntimeFacadeCallOptions,
-  ): Promise<RunExtensionDependencyActionResult>;
   writeStdin(
     input: WriteCommandStdinInput,
     options?: RuntimeFacadeCallOptions,
@@ -236,6 +364,10 @@ interface RuntimeSourceInvalidationFacade {
   hint(input: SourceInvalidationHint, options?: RuntimeFacadeCallOptions): Promise<void>;
   reconcile(
     input: SourceReconcileRequest,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<SourceReconcileResult>;
+  applyCommittedScanEvent(
+    input: ApplyCommittedSourceInvalidationEventInput,
     options?: RuntimeFacadeCallOptions,
   ): Promise<SourceReconcileResult>;
   refreshGeneratedContext(
@@ -336,7 +468,7 @@ async function asyncIterableFromRuntimeEventSubscription(input: {
     "runtime.events.closed",
     input.subscription.closed.pipe(
       Effect.flatMap((receipt) =>
-        decodeRuntimeEventSubscriptionCloseEffect(receipt).pipe(
+        decodeUnknownRuntimeEventSubscriptionCloseEffect(receipt).pipe(
           Effect.mapError(
             (cause) =>
               new RuntimeContractError({
@@ -478,6 +610,16 @@ function abortedFacadeError(operation: string): RuntimeFacadeError {
   );
 }
 
+function disposedFacadeError(operation: string): RuntimeFacadeError {
+  return new RuntimeFacadeError(
+    {
+      type: "runtime-facade-error",
+      reason: "disposed",
+    },
+    operation,
+  );
+}
+
 function unsupportedAbortPolicyError(operation: string): RuntimeFacadeError {
   return new RuntimeFacadeError(
     {
@@ -493,25 +635,12 @@ function unsupportedAbortPolicyError(operation: string): RuntimeFacadeError {
   );
 }
 
-function waitForAbort(operation: string, signal: AbortSignal): Promise<never> {
-  if (signal.aborted) {
-    return Promise.reject(abortedFacadeError(operation));
-  }
-
-  return new Promise((_, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      reject(abortedFacadeError(operation));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export function createRuntimeFacade(
   managedRuntime: ManagedRuntime.ManagedRuntime<Runtime, unknown>,
 ): RuntimeFacade {
   let closed = false;
   const activeEventSubscriptions = new Set<{ close(): Promise<void> }>();
+  const activeFacadeCalls = new Set<{ readonly dispose: () => void }>();
 
   const decodeBoundary = <A>(
     operation: string,
@@ -537,22 +666,15 @@ export function createRuntimeFacade(
     config?: { readonly allowRuntimeCancel?: boolean },
   ): Promise<A> => {
     if (closed) {
-      return Promise.reject(
-        new RuntimeFacadeError(
-          {
-            type: "runtime-facade-error",
-            reason: "disposed",
-          },
-          operation,
-        ),
-      );
+      return Promise.reject(disposedFacadeError(operation));
     }
 
     const abortPolicy = options?.abortPolicy ?? "cancel-wait-only";
     if (abortPolicy === "request-runtime-cancel" && config?.allowRuntimeCancel !== true) {
       return Promise.reject(unsupportedAbortPolicyError(operation));
     }
-    if (abortPolicy === "cancel-wait-only" && options?.signal?.aborted) {
+    const signal = options?.signal;
+    if (abortPolicy === "cancel-wait-only" && signal?.aborted) {
       return Promise.reject(abortedFacadeError(operation));
     }
 
@@ -568,11 +690,47 @@ export function createRuntimeFacade(
         throw runtimeFacadeErrorFromCause(operation, exit.cause);
       });
 
-    if (abortPolicy === "request-runtime-cancel" || !options?.signal) {
-      return runEffect;
-    }
+    let activeCall!: { readonly dispose: () => void };
+    let removeAbortListener: (() => void) | undefined;
+    let settled = false;
 
-    return Promise.race([runEffect, waitForAbort(operation, options.signal)]);
+    return new Promise<A>((resolve, reject) => {
+      const settle = (complete: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        removeAbortListener?.();
+        activeFacadeCalls.delete(activeCall);
+        complete();
+      };
+
+      activeCall = {
+        dispose: () => {
+          settle(() => reject(disposedFacadeError(operation)));
+        },
+      };
+      activeFacadeCalls.add(activeCall);
+
+      if (abortPolicy === "cancel-wait-only" && signal) {
+        const onAbort = () => {
+          settle(() => reject(abortedFacadeError(operation)));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        removeAbortListener = () => {
+          signal.removeEventListener("abort", onAbort);
+        };
+      }
+
+      runEffect.then(
+        (value) => {
+          settle(() => resolve(value));
+        },
+        (error: unknown) => {
+          settle(() => reject(error));
+        },
+      );
+    });
   };
 
   return {
@@ -583,14 +741,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.workspaces.acquire",
-              decodeAcquireWorkspaceInputEffect,
+              decodeUnknownAcquireWorkspaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.workspaces.acquire(decodedInput);
             return yield* decodeBoundary(
               "runtime.workspaces.acquire",
-              decodeAcquireWorkspaceResultEffect,
+              decodeUnknownAcquireWorkspaceResultEffect,
               result,
             );
           }),
@@ -602,14 +760,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.workspaces.acquireDefault",
-              decodeAcquireDefaultWorkspaceInputEffect,
+              decodeUnknownAcquireDefaultWorkspaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.workspaces.acquireDefault(decodedInput);
             return yield* decodeBoundary(
               "runtime.workspaces.acquireDefault",
-              decodeAcquireWorkspaceResultEffect,
+              decodeUnknownAcquireWorkspaceResultEffect,
               result,
             );
           }),
@@ -621,14 +779,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.workspaces.release",
-              decodeReleaseWorkspaceInputEffect,
+              decodeUnknownReleaseWorkspaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.workspaces.release(decodedInput);
             return yield* decodeBoundary(
               "runtime.workspaces.release",
-              decodeReleaseWorkspaceResultEffect,
+              decodeUnknownReleaseWorkspaceResultEffect,
               result,
             );
           }),
@@ -642,14 +800,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.surfaces.createOrchestrator",
-              decodeCreateOrchestratorSurfaceInputEffect,
+              decodeUnknownCreateOrchestratorSurfaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.surfaces.createOrchestrator(decodedInput);
             return yield* decodeBoundary(
               "runtime.surfaces.createOrchestrator",
-              decodeCreateSurfaceResultEffect,
+              decodeUnknownCreateSurfaceResultEffect,
               result,
             );
           }),
@@ -661,14 +819,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.surfaces.open",
-              decodeOpenSurfaceInputEffect,
+              decodeUnknownOpenSurfaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.surfaces.open(decodedInput);
             return yield* decodeBoundary(
               "runtime.surfaces.open",
-              decodeOpenSurfaceResultEffect,
+              decodeUnknownOpenSurfaceResultEffect,
               result,
             );
           }),
@@ -680,14 +838,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.surfaces.close",
-              decodeCloseSurfaceInputEffect,
+              decodeUnknownCloseSurfaceInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.surfaces.close(decodedInput);
             return yield* decodeBoundary(
               "runtime.surfaces.close",
-              decodeCloseSurfaceResultEffect,
+              decodeUnknownCloseSurfaceResultEffect,
               result,
             );
           }),
@@ -701,14 +859,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.messages.submit",
-              decodeSubmitMessageInputEffect,
+              decodeUnknownSubmitMessageInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.messages.submit(decodedInput);
             return yield* decodeBoundary(
               "runtime.messages.submit",
-              decodeSubmitMessageResultEffect,
+              decodeUnknownSubmitMessageResultEffect,
               result,
             );
           }),
@@ -720,7 +878,7 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.messages.abort",
-              decodeAbortPromptInputEffect,
+              decodeUnknownAbortPromptInputEffect,
               input,
             );
             const runtime = yield* Runtime;
@@ -737,7 +895,7 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.queues.steer",
-              decodeSteerQueuedMessageInputEffect,
+              decodeUnknownSteerQueuedMessageInputEffect,
               input,
             );
             const runtime = yield* Runtime;
@@ -753,14 +911,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.requestInput.answer",
-              decodeAnswerRequestInputInputEffect,
+              decodeUnknownAnswerRequestInputInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.requestInput.answer(decodedInput);
             return yield* decodeBoundary(
               "runtime.requestInput.answer",
-              decodeAnswerRequestInputResultEffect,
+              decodeUnknownAnswerRequestInputResultEffect,
               result,
             );
           }),
@@ -772,14 +930,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.requestInput.setTimerPaused",
-              decodeSetRequestInputTimerPausedInputEffect,
+              decodeUnknownSetRequestInputTimerPausedInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.requestInput.setTimerPaused(decodedInput);
             return yield* decodeBoundary(
               "runtime.requestInput.setTimerPaused",
-              decodeSetRequestInputTimerPausedResultEffect,
+              decodeUnknownSetRequestInputTimerPausedResultEffect,
               result,
             );
           }),
@@ -787,39 +945,20 @@ export function createRuntimeFacade(
         ),
     },
     commands: {
-      runExtensionDependencyAction: (input, options) =>
-        run(
-          "runtime.commands.runExtensionDependencyAction",
-          Effect.gen(function* () {
-            const decodedInput = yield* decodeBoundary(
-              "runtime.commands.runExtensionDependencyAction",
-              decodeRunExtensionDependencyActionInputEffect,
-              input,
-            );
-            const runtime = yield* Runtime;
-            const result = yield* runtime.commands.runExtensionDependencyAction(decodedInput);
-            return yield* decodeBoundary(
-              "runtime.commands.runExtensionDependencyAction",
-              decodeRunExtensionDependencyActionResultEffect,
-              result,
-            );
-          }),
-          options,
-        ),
       writeStdin: (input, options) =>
         run(
           "runtime.commands.writeStdin",
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.commands.writeStdin",
-              decodeWriteCommandStdinInputEffect,
+              decodeUnknownWriteCommandStdinInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.commands.writeStdin(decodedInput);
             return yield* decodeBoundary(
               "runtime.commands.writeStdin",
-              decodeWriteCommandStdinResultEffect,
+              decodeUnknownWriteCommandStdinResultEffect,
               result,
             );
           }),
@@ -831,14 +970,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.commands.cancel",
-              decodeCancelCommandInputEffect,
+              decodeUnknownCancelCommandInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.commands.cancel(decodedInput);
             return yield* decodeBoundary(
               "runtime.commands.cancel",
-              decodeCancelCommandResultEffect,
+              decodeUnknownCancelCommandResultEffect,
               result,
             );
           }),
@@ -853,14 +992,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.approvals.answer",
-              decodeAnswerRuntimeApprovalInputEffect,
+              decodeUnknownAnswerRuntimeApprovalInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.approvals.answer(decodedInput);
             return yield* decodeBoundary(
               "runtime.approvals.answer",
-              decodeAnswerRuntimeApprovalResultEffect,
+              decodeUnknownAnswerRuntimeApprovalResultEffect,
               result,
             );
           }),
@@ -874,14 +1013,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceEdits.open",
-              decodeOpenExtensionSourceEditInputEffect,
+              decodeUnknownOpenExtensionSourceEditInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.sourceEdits.open(decodedInput);
             return yield* decodeBoundary(
               "runtime.sourceEdits.open",
-              decodeSourceEditSessionEffect,
+              decodeUnknownSourceEditSessionEffect,
               result,
             );
           }),
@@ -893,14 +1032,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceEdits.save",
-              decodeSaveExtensionSourceEditInputEffect,
+              decodeUnknownSaveExtensionSourceEditInputEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.sourceEdits.save(decodedInput);
             return yield* decodeBoundary(
               "runtime.sourceEdits.save",
-              decodeSourceEditSaveResultEffect,
+              decodeUnknownSourceEditSaveResultEffect,
               result,
             );
           }),
@@ -914,7 +1053,7 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceInvalidation.hint",
-              decodeSourceInvalidationHintEffect,
+              decodeUnknownSourceInvalidationHintEffect,
               input,
             );
             const runtime = yield* Runtime;
@@ -928,14 +1067,33 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceInvalidation.reconcile",
-              decodeSourceReconcileRequestEffect,
+              decodeUnknownSourceReconcileRequestEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.sourceInvalidation.reconcile(decodedInput);
             return yield* decodeBoundary(
               "runtime.sourceInvalidation.reconcile",
-              decodeSourceReconcileResultEffect,
+              decodeUnknownSourceReconcileResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      applyCommittedScanEvent: (input, options) =>
+        run(
+          "runtime.sourceInvalidation.applyCommittedScanEvent",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.sourceInvalidation.applyCommittedScanEvent",
+              decodeUnknownApplyCommittedSourceInvalidationEventInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.sourceInvalidation.applyCommittedScanEvent(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.sourceInvalidation.applyCommittedScanEvent",
+              decodeUnknownSourceReconcileResultEffect,
               result,
             );
           }),
@@ -947,7 +1105,7 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceInvalidation.refreshGeneratedContext",
-              decodeRefreshGeneratedContextRequestEffect,
+              decodeUnknownRefreshGeneratedContextRequestEffect,
               input,
             );
             const runtime = yield* Runtime;
@@ -961,14 +1119,14 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceInvalidation.refreshGeneratedPackages",
-              decodeRefreshGeneratedPackagesRequestEffect,
+              decodeUnknownRefreshGeneratedPackagesRequestEffect,
               input,
             );
             const runtime = yield* Runtime;
             const result = yield* runtime.sourceInvalidation.refreshGeneratedPackages(decodedInput);
             return yield* decodeBoundary(
               "runtime.sourceInvalidation.refreshGeneratedPackages",
-              decodeGeneratedPackagesRefreshResultEffect,
+              decodeUnknownGeneratedPackagesRefreshResultEffect,
               result,
             );
           }),
@@ -982,14 +1140,18 @@ export function createRuntimeFacade(
           const decodedInput =
             input === undefined
               ? undefined
-              : yield* decodeBoundary("runtime.events", decodeRuntimeEventsInputEffect, input);
+              : yield* decodeBoundary(
+                  "runtime.events",
+                  decodeUnknownRuntimeEventsInputEffect,
+                  input,
+                );
           const runtime = yield* Runtime;
           const subscription = yield* runtime.events(decodedInput);
           return {
             ...subscription,
             stream: subscription.stream.pipe(
               Stream.mapEffect((event) =>
-                decodeBoundary("runtime.events", decodeRuntimeEventEffect, event),
+                decodeBoundary("runtime.events", decodeUnknownRuntimeEventEffect, event),
               ),
             ),
           };
@@ -1006,6 +1168,11 @@ export function createRuntimeFacade(
     },
     async close() {
       closed = true;
+      const activeCalls = [...activeFacadeCalls];
+      activeFacadeCalls.clear();
+      for (const activeCall of activeCalls) {
+        activeCall.dispose();
+      }
       const subscriptions = [...activeEventSubscriptions];
       activeEventSubscriptions.clear();
       await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));

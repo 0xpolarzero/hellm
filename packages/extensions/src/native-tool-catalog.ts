@@ -1,6 +1,12 @@
-import type { NativeToolSchema, NativeToolSchemaExtension } from "@svvy/core";
+import type {
+  NativeToolDeclaration,
+  NativeToolSchema,
+  NativeToolSchemaExtension,
+} from "@svvy/core";
 
-const emptyParameters = {
+type NativeToolParameters = NativeToolSchema["parameters"];
+
+const emptyParameters: NativeToolParameters = {
   type: "object",
   additionalProperties: false,
   properties: {},
@@ -64,7 +70,7 @@ const nativeToolDefinitionsByExtensionId: Record<string, NativeToolSchema[]> = {
       name: "execute_typescript",
       label: "Code Mode",
       description:
-        "Run a bounded TypeScript program against actor-local generated extension runtime facades. Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, or transforming structured extension results.",
+        "Run a bounded TypeScript program against actor-local execute_typescript facade declarations emitted by @svvy/extensions. Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, or transforming structured extension results; do not import @svvyx/workflows or @svvyx/extensions here.",
       parameters: objectParameters(
         {
           typescriptCode: { type: "string", minLength: 1 },
@@ -232,6 +238,15 @@ export function buildNativeToolSchemaJsonForExtension(
   return `${JSON.stringify(nativeToolSchemaForExtension(extension), null, 2)}\n`;
 }
 
+export function nativeToolDeclarationsForExtensions(
+  records: readonly NativeToolSchemaExtension[],
+): readonly NativeToolDeclaration[] {
+  return records
+    .filter((record) => record.interface === "native_tool")
+    .flatMap((record) => nativeToolSchemaForExtension(record).tools)
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
 function nativeToolSchemaForExtension(extension: NativeToolSchemaExtension) {
   const tools = nativeToolDefinitionsByExtensionId[extension.id];
   if (!tools) {
@@ -247,9 +262,9 @@ function nativeToolSchemaForExtension(extension: NativeToolSchemaExtension) {
 }
 
 function objectParameters(
-  properties: Record<string, unknown>,
+  properties: NativeToolParameters,
   required: string[],
-): Record<string, unknown> {
+): NativeToolParameters {
   return {
     type: "object",
     additionalProperties: false,

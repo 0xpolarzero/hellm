@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import {
   ExtensionError as CoreExtensionError,
+  type ExtensionError,
   type ExtensionHandlerResult,
   type ThreadGroupId,
   type StartHandlerThreadItem,
@@ -28,7 +29,7 @@ function normalizeOverrides(
   );
 }
 
-function normalizeInput(input: unknown): Effect.Effect<ThreadStartInput, unknown> {
+function normalizeInput(input: unknown): Effect.Effect<ThreadStartInput, unknown, never> {
   return Effect.gen(function* () {
     const decoded = yield* decodeThreadStartInputEffect(input);
     const threadGroupId = decoded.threadGroupId?.trim();
@@ -60,8 +61,14 @@ function resultSummary(input: ThreadStartInput): string {
     : `Accepted ${input.threads.length} handler thread start requests.`;
 }
 
-function historyModes(input: ThreadStartInput): readonly ("isolated" | "forked")[] {
-  return [...new Set(input.threads.map((thread) => thread.history ?? "isolated"))].toSorted();
+function threadStartError(message: string, cause?: unknown): ExtensionError {
+  return new CoreExtensionError({
+    extensionId: "thread-orchestration",
+    operation: "extensions.native-tools.thread-start.invoke",
+    reason: "invalid-input",
+    message,
+    ...(cause === undefined ? {} : { cause }),
+  });
 }
 
 export function createThreadStartHandler(): ExtensionHandler<ThreadStartHandlerInvocation> {
@@ -70,11 +77,15 @@ export function createThreadStartHandler(): ExtensionHandler<ThreadStartHandlerI
       Effect.gen(function* () {
         if (input.context.surfaceKind !== "orchestrator") {
           return yield* Effect.fail(
-            new Error("thread_start is only available on orchestrator surfaces."),
+            threadStartError("thread_start is only available on orchestrator surfaces."),
           );
         }
 
-        const normalized = yield* normalizeInput(input.arguments.value);
+        const normalized = yield* normalizeInput(input.arguments.value).pipe(
+          Effect.mapError((cause) =>
+            threadStartError(cause instanceof Error ? cause.message : String(cause), cause),
+          ),
+        );
         const summary = resultSummary(normalized);
         return {
           result: {
@@ -87,11 +98,6 @@ export function createThreadStartHandler(): ExtensionHandler<ThreadStartHandlerI
             details: {
               status: "succeeded",
               summary,
-              commandFacts: {
-                accepted: true,
-                requestedThreadCount: normalized.threads.length,
-                historyModes: historyModes(normalized),
-              },
             },
           },
           operations: [
@@ -111,18 +117,7 @@ export function createThreadStartHandler(): ExtensionHandler<ThreadStartHandlerI
             },
           ],
         } satisfies ExtensionHandlerResult;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CoreExtensionError({
-              extensionId: "thread-orchestration",
-              operation: "extensions.native-tools.thread-start.invoke",
-              reason: "invalid-input",
-              message: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
-        ),
-      ),
+      }),
   };
 }
 

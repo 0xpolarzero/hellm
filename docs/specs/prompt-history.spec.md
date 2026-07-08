@@ -392,7 +392,7 @@ Those require separate product specs.
 
 This feature is not trying to:
 
-- replace session resume with prompt recall
+- make prompt recall responsible for session resume behavior
 - merge all prompt history across all repositories by default
 - overload plain `Up` and `Down` with fuzzy or semantic history search
 - preserve in-progress edits to historical entries as durable state without an explicit send
@@ -421,7 +421,7 @@ This keeps the keyboard logic simple and avoids coupling the composer to session
 After `@svvy/runtime` accepts a non-empty user message into the durable surface queue, prompt history
 is recorded through the runtime-facing state port in the same queue-acceptance transaction.
 Renderer-local navigation state may select older/newer entries, but it does not own persistent
-history. `@svvy/state` returns `StateMutationResult.afterCommit`; `@svvy/runtime` publishes typed
+history. `@svvy/state` returns committed after-commit descriptors; `@svvy/runtime` publishes typed
 prompt-history/read-model invalidations; desktop refetches through the state read facade after those
 notifications. Refresh failures do not reject the accepted send.
 

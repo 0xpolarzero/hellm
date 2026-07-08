@@ -2,6 +2,7 @@ import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import {
+  AbsolutePath,
   AgentProfileId,
   CommandId,
   GeneratedContextFingerprint,
@@ -10,6 +11,8 @@ import {
   IsoDateTimeStringSchema,
   MessageId,
   ModelId,
+  NonNegativeSafeIntegerSchema,
+  PositiveSafeIntegerSchema,
   ProviderId,
   SurfacePiSessionId,
   ThreadId,
@@ -21,7 +24,7 @@ import {
 import {
   type NativeToolDeclaration,
   type NativeToolResult,
-  NativeToolContentSchema,
+  NativeToolResultSchema,
 } from "./native-tool-contracts";
 import {
   ActorKindSchema,
@@ -138,7 +141,7 @@ export const PiToolExecutionInputSchema = Schema.Struct({
   piToolCallId: ToolCallId,
   toolName: Schema.String,
   argumentsJson: Schema.String,
-  argumentsSnapshotSequence: Schema.optionalKey(Schema.Number),
+  argumentsSnapshotSequence: Schema.optionalKey(NonNegativeSafeIntegerSchema),
 });
 export type PiToolExecutionInput = typeof PiToolExecutionInputSchema.Type;
 
@@ -151,7 +154,7 @@ export const PiToolExecutionUpdateSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("arguments_snapshot"),
     commandId: CommandId,
-    sequence: Schema.Number,
+    sequence: NonNegativeSafeIntegerSchema,
     argumentsJson: Schema.String,
     occurredAt: IsoDateTimeStringSchema,
   }),
@@ -164,8 +167,12 @@ export const PiToolExecutionUpdateSchema = Schema.Union([
 ]);
 export type PiToolExecutionUpdate = typeof PiToolExecutionUpdateSchema.Type;
 
+export type PiToolExecutorInput = PiToolExecutionInput & {
+  readonly emit: (update: PiToolExecutionUpdate) => Effect.Effect<void, RuntimeToolExecutionError>;
+};
+
 export type PiToolExecutor = (
-  input: PiToolExecutionInput,
+  input: PiToolExecutorInput,
 ) => Effect.Effect<NativeToolResult, RuntimeToolExecutionError>;
 
 export type RunPiTurnInput = {
@@ -218,8 +225,8 @@ export const ModelInfoSchema = Schema.Struct({
   supportsReasoning: Schema.Boolean,
   supportedReasoning: Schema.Array(ReasoningEffortSchema),
   inputModalities: Schema.Array(InputModalitySchema),
-  contextWindow: Schema.optionalKey(Schema.Number),
-  maxOutputTokens: Schema.optionalKey(Schema.Number),
+  contextWindow: Schema.optionalKey(PositiveSafeIntegerSchema),
+  maxOutputTokens: Schema.optionalKey(PositiveSafeIntegerSchema),
   authStatus: ProviderAuthStatusSchema,
 });
 export type ModelInfo = typeof ModelInfoSchema.Type;
@@ -249,10 +256,11 @@ export type GenerateTitleResult = typeof GenerateTitleResultSchema.Type;
 
 export const PiRuntimePathsSnapshotSchema = Schema.Struct({
   workspaceId: WorkspaceId,
-  cwd: Schema.String,
-  agentDir: Schema.String,
-  sessionDir: Schema.String,
-  modelRegistryPath: Schema.String,
+  cwd: AbsolutePath,
+  agentDir: AbsolutePath,
+  sessionDir: AbsolutePath,
+  modelRegistryPath: AbsolutePath,
+  source: Schema.Literals(["packaged-app", "test-fixture"]),
 });
 export type PiRuntimePathsSnapshot = typeof PiRuntimePathsSnapshotSchema.Type;
 
@@ -320,10 +328,14 @@ export const PiRuntimeEventSchema = Schema.Union([
     type: Schema.Literal("pi.tool_execution.updated"),
     toolCallId: ToolCallId,
     toolName: Schema.String,
-    result: Schema.Struct({
-      content: Schema.Array(NativeToolContentSchema),
-      details: Schema.Json,
-    }),
+    result: NativeToolResultSchema,
+  }),
+  Schema.Struct({
+    ...PiRuntimeEventBaseSchema,
+    type: Schema.Literal("pi.tool_execution.updated"),
+    toolCallId: ToolCallId,
+    toolName: Schema.String,
+    update: PiToolExecutionUpdateSchema,
   }),
   Schema.Struct({
     ...PiRuntimeEventBaseSchema,
@@ -331,12 +343,7 @@ export const PiRuntimeEventSchema = Schema.Union([
     toolCallId: ToolCallId,
     toolName: Schema.String,
     status: Schema.Literals(["completed", "failed", "cancelled"]),
-    result: Schema.optionalKey(
-      Schema.Struct({
-        content: Schema.Array(NativeToolContentSchema),
-        details: Schema.Json,
-      }),
-    ),
+    result: Schema.optionalKey(NativeToolResultSchema),
     error: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({

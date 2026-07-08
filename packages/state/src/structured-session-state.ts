@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -20,14 +19,25 @@ import * as Layer from "effect/Layer";
 import {
   RUNTIME_TURN_DECISIONS,
   StateContractError,
-  decodeRequestUserInputAnswerQueuePayloadExit,
+  type ArtifactMaterializationStatus,
+  type ArtifactMetadataRecord,
+  decodeUnknownExtensionDependencyApprovalIdentityExit,
+  decodeUnknownRequestUserInputAnswerQueuePayloadExit,
+  type AbsolutePath,
+  type ActorKind,
   type AgentProfileId,
+  type ApplyRuntimeExtensionSnapshotContextImpactInput,
   type ComposerAttachment,
   type ComposerSnippetMention,
+  type CommandId,
+  type ExtensionDependencyApprovalIdentity,
   type ExtensionDependencyReadiness,
   type ExtensionId,
+  type ExtensionUsageState,
   type GeneratedPackageName,
+  type HandlerInheritedHistoryBlock,
   type JsonValue,
+  type DeletePiSessionReferenceInput,
   type MarkGeneratedPackageRefreshNeededInput,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
@@ -39,12 +49,20 @@ import {
   type OpenSurfaceInput,
   type OpenSurfaceResult,
   type ListProviderStatusesInput,
+  type GetPiSessionReferenceInput,
+  type PiSessionReference,
+  type PiSessionReferenceValidation,
   type ProviderAuthStatus,
   type ReadRuntimeSourceVersionInput,
   type ReadGeneratedPackageFactsInput,
   type ReadGeneratedPackageLinksNeedingRepairInput,
+  type MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  type MarkWorkspaceGeneratedPackageLinksRepairNeededResult,
   type RecordProviderAuthStatusInput,
+  type RecordObservedRuntimeSourceDeletionInput,
+  type RecordRuntimeSourceDiagnosticInput,
   type RecordRuntimeSourceDeleteInput,
+  type RecordRuntimeSourceScanInput,
   type RecordRuntimeSourceSaveInput,
   type RequestInputAnswerId,
   type RequestInputQuestionId,
@@ -59,8 +77,16 @@ import {
   type RecordGeneratedPackageFailureInput,
   type RecordGeneratedPackageWorkspaceLinkInput,
   type RuntimeSourceFactRecord,
+  type RuntimeSourceRootFingerprintFactRecord,
+  type RuntimeSourceScanFactRecord,
+  type RuntimeExtensionContextChangedSurface,
+  type RuntimeExtensionUsageProfileKey,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
+  type SurfacePiSessionId,
+  type SavePiSessionReferenceInput,
+  type ValidatePiSessionReferenceInput,
+  type WorkspaceId,
   type RuntimeTurnDecision,
   type StateRevision,
 } from "@svvy/core";
@@ -74,6 +100,81 @@ const DEFAULT_SIDEBAR_SECTION_SIZES = {
 const GLOBAL_PROVIDER_AUTH_WORKSPACE_KEY = "";
 const MIN_SIDEBAR_SECTION_SIZE_PX = 64;
 const MAX_SIDEBAR_SECTION_SIZE_PX = 1000;
+
+function runtimeSourceScopeKey(scope: RuntimeSourceScanFactRecord["scope"]): string {
+  return scope.kind === "workspace" ? `workspace:${scope.workspaceId}` : "app-global";
+}
+
+function extensionDependencyApprovalIdentityKey(
+  identity: ExtensionDependencyApprovalIdentity,
+): string {
+  return JSON.stringify({
+    kind: identity.kind,
+    packageManager: identity.packageManager,
+    source: identity.source,
+    name: identity.name,
+    version: identity.version,
+    integrity: identity.integrity,
+    resolution: identity.resolution,
+  });
+}
+
+function recoveryWorkScopeSql(scope: StructuredRecoveryWorkScope): {
+  scopeKind: "app" | "workspace";
+  workspaceId: string | null;
+} {
+  return scope.kind === "app"
+    ? { scopeKind: "app", workspaceId: null }
+    : { scopeKind: "workspace", workspaceId: scope.workspaceId };
+}
+
+function assertRecoveryWorkScopeMatchesKind(input: {
+  scope: StructuredRecoveryWorkScope;
+  kind: StructuredRecoveryWorkKind;
+}): void {
+  if (input.kind === "generated_package_refresh" && input.scope.kind !== "app") {
+    throw new Error("generated_package_refresh recovery work must be app-scoped.");
+  }
+  if (
+    input.kind === "workspace_generated_package_link_repair" &&
+    input.scope.kind !== "workspace"
+  ) {
+    throw new Error(
+      "workspace_generated_package_link_repair recovery work must be workspace-scoped.",
+    );
+  }
+}
+
+function assertRuntimeSourceScanScopeMatchesDomain(input: {
+  scope: RuntimeSourceScanFactRecord["scope"];
+  domain: RuntimeSourceScanFactRecord["domain"];
+}): void {
+  const isAppGlobalDomain = input.domain === "extensions" || input.domain === "workflows";
+  if (input.scope.kind === "app-global" && !isAppGlobalDomain) {
+    throw new Error(`app-global source scan cannot target ${input.domain}.`);
+  }
+  if (input.scope.kind === "workspace" && isAppGlobalDomain) {
+    throw new Error(`workspace source scan cannot target ${input.domain}.`);
+  }
+}
+
+function assertStructuredAppPreferenceApprovalMode(
+  value: string,
+): asserts value is StructuredAppPreferenceApprovalMode {
+  if (value === "auto-review" || value === "user" || value === "full-access") return;
+  throw new Error(`Invalid app preference approval mode ${value}.`);
+}
+
+function assertStructuredAppPreferenceAppearance(value: string): StructuredAppPreferenceAppearance {
+  if (value === "system" || value === "light" || value === "dark") return value;
+  throw new Error(`Invalid app preference appearance ${value}.`);
+}
+
+function runtimeSourceScanFallbackFingerprint(
+  domain: RuntimeSourceScanFactRecord["domain"],
+): string {
+  return `unresolved:${domain}`;
+}
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
 export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
@@ -167,6 +268,30 @@ export interface StructuredWorkspaceInput {
   label: string;
   cwd: string;
   artifactDir?: string;
+}
+
+export type StructuredAppPreferenceApprovalMode = "auto-review" | "user" | "full-access";
+export type StructuredAppPreferenceAppearance = "system" | "light" | "dark";
+
+export interface StructuredAppPreferencesRecord {
+  appearance: StructuredAppPreferenceAppearance;
+  externalEditor: string | null;
+  artifactDirectory: string;
+  approvalMode: StructuredAppPreferenceApprovalMode;
+  networkAccess: boolean;
+  ambientResources: JsonValue;
+  updatedAt: string;
+  stateRevision: StateRevision;
+}
+
+export interface StructuredAppPreferencesPatch {
+  appearance?: StructuredAppPreferenceAppearance;
+  externalEditor?: string | null;
+  artifactDirectory?: string;
+  approvalMode?: StructuredAppPreferenceApprovalMode;
+  networkAccess?: boolean;
+  ambientResources?: JsonValue;
+  updatedAt?: string;
 }
 
 export interface StructuredPiSessionRecord {
@@ -474,6 +599,10 @@ export interface StructuredRuntimeApprovalRequestRecord {
   patch: string | null;
   snippetArtifactId: string | null;
   typescriptCode: string | null;
+  context: {
+    reason: "sandbox_denial_escalation";
+    sandboxDenied: true;
+  } | null;
   status: StructuredRuntimeApprovalStatus;
   decisionReason: string | null;
   reviewer: "auto-review" | "user" | null;
@@ -499,6 +628,22 @@ export interface StructuredArtifactRecord {
   createdAt: string;
   deletedAt: string | null;
 }
+
+type RecordArtifactMetadataInput = {
+  workspaceSessionId: string;
+  threadId?: string | null;
+  workflowRunId?: string | null;
+  workflowTaskAttemptId?: string | null;
+  sourceCommandId: string;
+  kind: StructuredArtifactKind;
+  name: string;
+  storedPath: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  immutable: boolean;
+  materializationStatus: "ready";
+};
 
 export type StructuredEventSubjectKind =
   | "session"
@@ -577,9 +722,13 @@ export type StructuredRecoveryWorkOwnerScope =
   | { kind: "queue_item"; queuedItemId: string; surfacePiSessionId: string }
   | { kind: "title_job"; titleJobId: string };
 
+export type StructuredRecoveryWorkScope =
+  | { kind: "app" }
+  | { kind: "workspace"; workspaceId: string };
+
 export interface StructuredRecoveryWorkRecord {
   id: string;
-  workspaceId: string;
+  scope: StructuredRecoveryWorkScope;
   kind: StructuredRecoveryWorkKind;
   status: StructuredRecoveryWorkStatus;
   ownerScope: StructuredRecoveryWorkOwnerScope;
@@ -605,6 +754,14 @@ export type StructuredGeneratedPackageFactRecord = RuntimeGeneratedPackageFactRe
 export type StructuredGeneratedPackageWorkspaceLinkRecord =
   RuntimeGeneratedPackageWorkspaceLinkRecord;
 export type StructuredExtensionDependencyReadinessRecord = ExtensionDependencyReadiness;
+export type StructuredExtensionDependencyApprovalRecord = {
+  readonly dependency: ExtensionDependencyApprovalIdentity;
+  readonly approvedAt: string;
+  readonly approvedBy: "user";
+  readonly sourceCommandId: CommandId | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+};
 
 export interface StructuredSurfaceQueuedMessageRecord {
   id: string;
@@ -639,14 +796,8 @@ export interface StructuredSurfaceQueuedMessageRecord {
 
 export interface StructuredRuntimeHandlerThreadGeneratedContextBindingInput {
   aggregateCacheKey: string;
-  systemPrompt: string;
-  svvyxGuidance: string;
-  commandsDts: string;
-  nativeToolSchemasJson: string;
   generatedAgentContextFingerprint: string;
   generatedAgentContextRevision: number;
-  loadedExtensionIds: readonly string[];
-  availableExtensionIds: readonly string[];
   externalSourceHashes: readonly string[];
 }
 
@@ -656,18 +807,17 @@ export interface StructuredRuntimeHandlerThreadInitialQueueInput {
   orderingKey?: string | null;
   nextAttemptAt?: string | null;
   maxAttempts?: number;
-  messageJson: string;
-  payloadJson: string;
+  inheritedHistory?: HandlerInheritedHistoryBlock;
+  overrides?: Readonly<Record<ExtensionId, ExtensionUsageState>>;
 }
 
 export interface StructuredStartRuntimeHandlerThreadInput {
+  parentThreadId?: string | null;
   surfacePiSessionId: string;
   title: string;
   objective: string;
   historyMode: StructuredThreadHistoryMode;
   worktreeId?: string | null;
-  loadedExtensionIds: readonly string[];
-  availableExtensionIds: readonly string[];
   agentProfileJson?: string | null;
   generatedAgentContextBinding: StructuredRuntimeHandlerThreadGeneratedContextBindingInput;
   initialQueue: StructuredRuntimeHandlerThreadInitialQueueInput;
@@ -746,24 +896,59 @@ export interface StructuredThreadDetail {
   artifacts: StructuredArtifactRecord[];
 }
 
+interface ProviderAuthStatusWriteResult {
+  status: ProviderAuthStatus;
+  stateRevision: StateRevision;
+}
+
 export interface CreateStructuredSessionStateStoreOptions {
   databasePath?: string;
+  busyTimeoutMs?: number;
+  digest?: StateDigestHelper;
+  filesystemSetup?: "store" | "caller";
+  idFactory?: (prefix: string) => string;
   now?: () => string;
   workspace: StructuredWorkspaceInput;
 }
 
+export type StateDigestHelper = {
+  readonly sha256Hex: (data: string | Uint8Array) => string;
+};
+
 export interface StructuredSessionStateStore {
   readonly workspaceId: string;
   readonly databasePath: string;
+  getWorkspaceRecord(): StructuredWorkspaceRecord;
+  getCurrentTimestamp(): string;
+  getDigestHelper(): StateDigestHelper;
+  readCurrentStateRevision(): StateRevision;
+  readAppPreferences(): StructuredAppPreferencesRecord;
+  updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord;
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult;
   acquireDefaultWorkspace(input: AcquireDefaultWorkspaceInput): AcquireWorkspaceResult;
   releaseWorkspace(input: ReleaseWorkspaceInput): ReleaseWorkspaceResult;
   createOrchestratorSurface(input: CreateOrchestratorSurfaceInput): CreateSurfaceResult;
   openSurface(input: OpenSurfaceInput): OpenSurfaceResult;
   closeSurface(input: CloseSurfaceInput): CloseSurfaceResult;
+  getPiSessionReference(input: GetPiSessionReferenceInput): PiSessionReference | undefined;
+  savePiSessionReference(input: SavePiSessionReferenceInput): PiSessionReference;
+  deletePiSessionReference(input: DeletePiSessionReferenceInput): {
+    surfacePiSessionId: SurfacePiSessionId;
+  };
+  validatePiSessionReference(input: ValidatePiSessionReferenceInput): PiSessionReferenceValidation;
   readRuntimeSourceVersion(input: ReadRuntimeSourceVersionInput): RuntimeSourceFactRecord | null;
+  readRuntimeSourceRootFingerprint(input: {
+    sourceRoot: AbsolutePath;
+  }): RuntimeSourceRootFingerprintFactRecord | null;
   recordRuntimeSourceSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord;
   recordRuntimeSourceDelete(input: RecordRuntimeSourceDeleteInput): RuntimeSourceFactRecord;
+  recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord;
+  recordObservedRuntimeSourceDeletion(
+    input: RecordObservedRuntimeSourceDeletionInput,
+  ): RuntimeSourceScanFactRecord;
+  recordRuntimeSourceDiagnostic(
+    input: RecordRuntimeSourceDiagnosticInput,
+  ): RuntimeSourceScanFactRecord;
   upsertPiSession(pi: StructuredPiSessionRecord): void;
   upsertGeneratedAgentContextBinding(input: {
     surfacePiSessionId: string;
@@ -790,6 +975,9 @@ export interface StructuredSessionStateStore {
     loadedExtensionIds: string[];
     availableExtensionIds: string[];
   }): StructuredPiSessionRecord;
+  applySnapshotContextImpact(
+    input: ApplyRuntimeExtensionSnapshotContextImpactInput,
+  ): readonly RuntimeExtensionContextChangedSurface[];
   isSessionDeleted(sessionId: string): boolean;
   startTurn(input: {
     sessionId: string;
@@ -821,6 +1009,11 @@ export interface StructuredSessionStateStore {
     agentProfileJson?: string | null;
     generatedAgentContextFingerprint?: string | null;
   }): StructuredThreadRecord;
+  ensureHandlerThreadRunnable(input: {
+    workspaceSessionId: string;
+    surfacePiSessionId: string;
+    threadId: string;
+  }): { thread: StructuredThreadRecord; committed: boolean };
   startHandlerThreads(
     input: StructuredStartRuntimeHandlerThreadsInput,
   ): StructuredStartRuntimeHandlerThreadsResult;
@@ -920,6 +1113,19 @@ export interface StructuredSessionStateStore {
     summary: string;
     body: string;
   }): StructuredEpisodeRecord;
+  recordHandlerThreadEpisode(input: {
+    workspaceSessionId: string;
+    threadId: string;
+    threadGroupId: string;
+    sourceCommandId?: string | null;
+    kind?: StructuredEpisodeKind;
+    summary: string;
+    body?: string | null;
+    outcome?: unknown;
+    relatedCommandIds?: readonly string[];
+    relatedArtifactIds?: readonly string[];
+    relatedWorkflowRunIds?: readonly string[];
+  }): { episode: StructuredEpisodeRecord; thread: StructuredThreadRecord; concluded: boolean };
   createArtifact(input: {
     sessionId?: string | null;
     threadId?: string | null;
@@ -933,6 +1139,34 @@ export interface StructuredSessionStateStore {
     mimeType?: string;
     immutable?: boolean;
   }): StructuredArtifactRecord;
+  recordArtifactMetadata(input: {
+    workspaceSessionId: string;
+    threadId?: string | null;
+    workflowRunId?: string | null;
+    workflowTaskAttemptId?: string | null;
+    sourceCommandId: string;
+    kind: StructuredArtifactKind;
+    name: string;
+    storedPath: string;
+    mimeType: string;
+    byteSize: number;
+    sha256: string;
+    immutable: boolean;
+    materializationStatus: "ready";
+  }): ArtifactMetadataRecord;
+  markArtifactMetadataDeleted(input: {
+    workspaceSessionId?: string | null;
+    artifactId: string;
+  }): ArtifactMetadataRecord;
+  inspectArtifactMetadata(input: {
+    workspaceSessionId?: string | null;
+    artifactId: string;
+  }): ArtifactMetadataRecord;
+  listArtifactMetadata(input: {
+    workspaceSessionId: string;
+    threadId?: string | null;
+    limit?: number;
+  }): ArtifactMetadataRecord[];
   deleteArtifact(input: {
     sessionId?: string | null;
     artifactId: string;
@@ -1105,6 +1339,7 @@ export interface StructuredSessionStateStore {
     patch?: string | null;
     snippetArtifactId?: string | null;
     typescriptCode?: string | null;
+    context?: StructuredRuntimeApprovalRequestRecord["context"];
   }): StructuredRuntimeApprovalRequestRecord;
   resolveRuntimeApprovalRequest(input: {
     requestId: string;
@@ -1115,7 +1350,6 @@ export interface StructuredSessionStateStore {
   getRuntimeApprovalRequest(requestId: string): StructuredRuntimeApprovalRequestRecord;
   listOpenRuntimeApprovalRequests(): StructuredRuntimeApprovalRequestRecord[];
   answerRequestUserInput(input: {
-    sessionId: string;
     surfacePiSessionId: string;
     requestId: string;
     questionId: string;
@@ -1134,6 +1368,7 @@ export interface StructuredSessionStateStore {
     requestId: string;
   }): StructuredRequestUserInputRequestRecord;
   setRequestUserInputTimerPaused(input: {
+    surfacePiSessionId: string;
     requestId: string;
     paused: boolean;
   }): StructuredRequestUserInputRequestRecord;
@@ -1178,6 +1413,7 @@ export interface StructuredSessionStateStore {
     beforeId?: string | null;
   }): StructuredSurfaceQueuedMessageRecord[];
   ensureRecoveryWork(input: {
+    scope: StructuredRecoveryWorkScope;
     kind: StructuredRecoveryWorkKind;
     ownerScope: StructuredRecoveryWorkOwnerScope;
     idempotencyKey: string;
@@ -1197,6 +1433,9 @@ export interface StructuredSessionStateStore {
   recordWorkspaceLinkStatus(
     input: RecordGeneratedPackageWorkspaceLinkInput,
   ): StructuredGeneratedPackageWorkspaceLinkRecord;
+  markWorkspaceLinksRepairNeeded(
+    input: MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  ): MarkWorkspaceGeneratedPackageLinksRepairNeededResult;
   readLinksNeedingRepair(
     input?: ReadGeneratedPackageLinksNeedingRepairInput,
   ): StructuredGeneratedPackageWorkspaceLinkRecord[];
@@ -1213,15 +1452,26 @@ export interface StructuredSessionStateStore {
     extensionId: ExtensionId;
     requirementId: string;
   }): StructuredExtensionDependencyReadinessRecord | null;
+  readExtensionDependencyApproval(input: {
+    dependency: ExtensionDependencyApprovalIdentity;
+  }): boolean;
+  recordExtensionDependencyApproval(input: {
+    dependency: ExtensionDependencyApprovalIdentity;
+    approvedAt: string;
+    approvedBy: "user";
+    sourceCommandId?: CommandId | null;
+  }): StructuredExtensionDependencyApprovalRecord;
   recordExtensionDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): StructuredExtensionDependencyReadinessRecord;
   listProviderAuthStatuses(input: ListProviderStatusesInput): ProviderAuthStatus[];
-  recordProviderAuthStatus(input: RecordProviderAuthStatusInput): ProviderAuthStatus;
-  listRecoveryWork(): StructuredRecoveryWorkRecord[];
+  recordProviderAuthStatus(input: RecordProviderAuthStatusInput): ProviderAuthStatusWriteResult;
+  listRecoveryWork(input?: { scope?: StructuredRecoveryWorkScope }): StructuredRecoveryWorkRecord[];
   normalizeWorkspaceRecoveryState(input: { claimedBy: string }): string[];
   claimNextRecoveryWork(input: {
     claimedBy: string;
+    scope?: StructuredRecoveryWorkScope;
+    kinds?: readonly StructuredRecoveryWorkKind[];
     leaseMs?: number;
   }): StructuredRecoveryWorkRecord | null;
   completeRecoveryWork(input: {
@@ -1401,7 +1651,30 @@ type SurfaceLifecycleRow = {
   updated_at: string;
 };
 
+type PiSessionReferenceRow = {
+  surface_pi_session_id: string;
+  workspace_id: string;
+  workspace_session_id: string;
+  surface_kind: "orchestrator" | "handler" | "workflow-task";
+  actor_kind: ActorKind;
+  thread_id: string | null;
+  workflow_task_attempt_id: string | null;
+  adapter_kind: string;
+  adapter_version: string;
+  storage_locator: string;
+  pi_session_id: string | null;
+  reference_fingerprint: string;
+  metadata_json: string | null;
+  created_at: string;
+  updated_at: string;
+  last_validated_at: string | null;
+  deleted_at: string | null;
+};
+
 type RuntimeSourceFactRow = {
+  scope_kind: RuntimeSourceFactRecord["scope"]["kind"];
+  scope_workspace_id: string | null;
+  scope_key: string;
   source_kind: RuntimeSourceFactRecord["sourceKind"];
   source_id: string;
   path: string;
@@ -1412,6 +1685,43 @@ type RuntimeSourceFactRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+};
+
+type RuntimeSourceScanFactRow = {
+  scope_kind: RuntimeSourceScanFactRecord["scope"]["kind"];
+  scope_workspace_id: string | null;
+  scope_key: string;
+  domain: RuntimeSourceScanFactRecord["domain"];
+  source_fingerprint: string;
+  diagnostics_json: string;
+  last_observed_path: string | null;
+  last_observation_kind: RuntimeSourceScanFactRecord["lastObservationKind"];
+  observed_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type RuntimeSourceRootFingerprintFactRow = {
+  scope_kind: RuntimeSourceRootFingerprintFactRecord["scope"]["kind"];
+  scope_workspace_id: string | null;
+  scope_key: string;
+  domain: RuntimeSourceRootFingerprintFactRecord["domain"];
+  source_root: string;
+  root_fingerprint: string;
+  diagnostics_json: string;
+  observed_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type ExtensionDependencyApprovalRow = {
+  approval_key: string;
+  identity_json: string;
+  approved_at: string;
+  approved_by: "user";
+  source_command_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type ProviderAuthStatusRow = {
@@ -1710,6 +2020,7 @@ type RuntimeApprovalRequestRow = {
   patch_text: string | null;
   snippet_artifact_id: string | null;
   typescript_code: string | null;
+  context_json: string | null;
   status: StructuredRuntimeApprovalStatus;
   decision_reason: string | null;
   reviewer: "auto-review" | "user" | null;
@@ -1719,7 +2030,8 @@ type RuntimeApprovalRequestRow = {
 
 type RecoveryWorkRow = {
   id: string;
-  workspace_id: string;
+  scope_kind: "app" | "workspace";
+  workspace_id: string | null;
   kind: StructuredRecoveryWorkKind;
   status: StructuredRecoveryWorkStatus;
   owner_scope_json: string;
@@ -1755,8 +2067,11 @@ type ArtifactRow = {
   bytes: number;
   sha256: string;
   immutable: number;
+  materialization_status: ArtifactMaterializationStatus | null;
   created_at: string;
+  updated_at: string | null;
   deleted_at: string | null;
+  last_recovery_work_id: string | null;
 };
 
 type SurfaceQueuedMessageRow = {
@@ -1819,6 +2134,9 @@ function tryStructuredSessionStateOperation<A>(
 }
 
 function structuredSessionStateStoreError(operation: string, cause: unknown): StateContractError {
+  if (cause instanceof StateContractError) {
+    return cause;
+  }
   return new StateContractError({
     operation,
     reason: "transaction-failed",
@@ -1835,6 +2153,8 @@ function describeUnknownStructuredSessionStateCause(cause: unknown): string {
 
 class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   private readonly db: Database;
+  private readonly digest: StateDigestHelper | undefined;
+  private readonly idFactory: ((prefix: string) => string) | undefined;
   private readonly nowFn: () => string;
   private readonly workspace: StructuredWorkspaceRecord;
   readonly workspaceId: string;
@@ -1843,12 +2163,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   constructor(options: CreateStructuredSessionStateStoreOptions) {
     const databasePath = options.databasePath ?? MEMORY_DATABASE;
     this.databasePath = databasePath;
-    if (databasePath !== MEMORY_DATABASE) {
+    if (databasePath !== MEMORY_DATABASE && options.filesystemSetup !== "caller") {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
 
     this.db = new Database(databasePath);
-    this.nowFn = options.now ?? (() => new Date().toISOString());
+    applyBusyTimeout(this.db, options.busyTimeoutMs);
+    this.digest = options.digest;
+    this.idFactory = options.idFactory;
+    this.nowFn = options.now ?? createDeterministicClock();
     initializeSchema(this.db);
     this.workspaceId = options.workspace.id;
 
@@ -1869,10 +2192,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           artifactDir: options.workspace.artifactDir ?? defaultArtifactDirectory(),
         };
 
-    try {
-      mkdirSync(this.workspace.artifactDir, { recursive: true });
-    } catch {
-      // Some unit tests intentionally point at read-only fake workspace roots.
+    if (options.filesystemSetup !== "caller") {
+      try {
+        mkdirSync(this.workspace.artifactDir, { recursive: true });
+      } catch {
+        // Some unit tests intentionally point at read-only fake workspace roots.
+      }
     }
 
     if (!existingWorkspace) {
@@ -1893,6 +2218,89 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   close(): void {
     this.db.close();
+  }
+
+  getWorkspaceRecord(): StructuredWorkspaceRecord {
+    return { ...this.workspace };
+  }
+
+  getCurrentTimestamp(): string {
+    return this.now();
+  }
+
+  getDigestHelper(): StateDigestHelper {
+    if (!this.digest) {
+      throw new Error("Structured session state digest helper is required.");
+    }
+    return this.digest;
+  }
+
+  readAppPreferences(): StructuredAppPreferencesRecord {
+    return this.readAppPreferencesRow();
+  }
+
+  updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord {
+    const current = this.readAppPreferencesRow();
+    const nextUpdatedAt = input.updatedAt ?? this.now();
+    const stateRevision = this.db.transaction(() => {
+      const next = {
+        appearance: input.appearance ?? current.appearance,
+        externalEditor:
+          input.externalEditor === undefined ? current.externalEditor : input.externalEditor,
+        artifactDirectory: input.artifactDirectory ?? current.artifactDirectory,
+        approvalMode: input.approvalMode ?? current.approvalMode,
+        networkAccess: input.networkAccess ?? current.networkAccess,
+        ambientResources:
+          input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
+        updatedAt: nextUpdatedAt,
+        stateRevision: current.stateRevision,
+      } satisfies StructuredAppPreferencesRecord;
+      assertStructuredAppPreferenceApprovalMode(next.approvalMode);
+      this.db
+        .query(
+          `INSERT INTO app_preferences (
+             id,
+             appearance,
+             external_editor,
+             artifact_directory,
+             approval_mode,
+             network_access,
+             ambient_resources_json,
+             updated_at
+           )
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             appearance = excluded.appearance,
+             external_editor = excluded.external_editor,
+             artifact_directory = excluded.artifact_directory,
+             approval_mode = excluded.approval_mode,
+             network_access = excluded.network_access,
+             ambient_resources_json = excluded.ambient_resources_json,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          next.appearance,
+          next.externalEditor,
+          next.artifactDirectory,
+          next.approvalMode,
+          next.networkAccess ? 1 : 0,
+          JSON.stringify(next.ambientResources),
+          next.updatedAt,
+        );
+      return this.bumpStateRevision();
+    })();
+    return {
+      appearance: input.appearance ?? current.appearance,
+      externalEditor:
+        input.externalEditor === undefined ? current.externalEditor : input.externalEditor,
+      artifactDirectory: input.artifactDirectory ?? current.artifactDirectory,
+      approvalMode: input.approvalMode ?? current.approvalMode,
+      networkAccess: input.networkAccess ?? current.networkAccess,
+      ambientResources:
+        input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
+      updatedAt: nextUpdatedAt,
+      stateRevision,
+    };
   }
 
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult {
@@ -1947,7 +2355,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error(`Workspace ${input.workspaceId} is not managed by this state store.`);
     }
     const timestamp = this.now();
-    const sessionId = createId("session");
+    const sessionId = this.createId("session");
     const title = input.title?.trim() || "New orchestrator";
     const stateRevision = this.db.transaction(() => {
       this.upsertPiSession({
@@ -2030,6 +2438,159 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  getPiSessionReference(input: GetPiSessionReferenceInput): PiSessionReference | undefined {
+    const row = this.findPiSessionReferenceRow(input.surfacePiSessionId);
+    return row ? this.mapPiSessionReference(row) : undefined;
+  }
+
+  savePiSessionReference(input: SavePiSessionReferenceInput): PiSessionReference {
+    if (input.reference.surfacePiSessionId !== input.surfacePiSessionId) {
+      throw new Error(
+        `Pi session reference ${input.reference.surfacePiSessionId} does not match target ${input.surfacePiSessionId}.`,
+      );
+    }
+    const resolved = this.resolveSurfaceReferenceIdentity(input.surfacePiSessionId);
+    const timestamp = this.now();
+    return this.db.transaction(() => {
+      const existing = this.findPiSessionReferenceRow(input.surfacePiSessionId);
+      this.db
+        .query(
+          `INSERT INTO pi_session_reference (
+             surface_pi_session_id,
+             workspace_id,
+             workspace_session_id,
+             surface_kind,
+             actor_kind,
+             thread_id,
+             workflow_task_attempt_id,
+             adapter_kind,
+             adapter_version,
+             storage_locator,
+             pi_session_id,
+             reference_fingerprint,
+             metadata_json,
+             created_at,
+             updated_at,
+             last_validated_at,
+             deleted_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+           ON CONFLICT(surface_pi_session_id) DO UPDATE SET
+             workspace_id = excluded.workspace_id,
+             workspace_session_id = excluded.workspace_session_id,
+             surface_kind = excluded.surface_kind,
+             actor_kind = excluded.actor_kind,
+             thread_id = excluded.thread_id,
+             workflow_task_attempt_id = excluded.workflow_task_attempt_id,
+             adapter_kind = excluded.adapter_kind,
+             adapter_version = excluded.adapter_version,
+             storage_locator = excluded.storage_locator,
+             pi_session_id = excluded.pi_session_id,
+             reference_fingerprint = excluded.reference_fingerprint,
+             metadata_json = excluded.metadata_json,
+             updated_at = excluded.updated_at,
+             deleted_at = NULL`,
+        )
+        .run(
+          input.surfacePiSessionId,
+          this.workspace.id,
+          resolved.sessionId,
+          resolved.surfaceKind,
+          resolved.actorKind,
+          resolved.threadId,
+          resolved.workflowTaskAttemptId,
+          input.reference.adapterKind,
+          input.reference.adapterVersion,
+          input.reference.storageLocator,
+          input.reference.piSessionId ?? null,
+          input.reference.referenceFingerprint,
+          toJson(input.reference.metadata ?? null),
+          existing?.created_at ?? timestamp,
+          timestamp,
+          existing?.last_validated_at ?? null,
+        );
+      this.bumpStateRevision();
+      return this.mapPiSessionReference(
+        this.mustFindPiSessionReferenceRow(input.surfacePiSessionId),
+      );
+    })();
+  }
+
+  deletePiSessionReference(input: DeletePiSessionReferenceInput): {
+    surfacePiSessionId: SurfacePiSessionId;
+  } {
+    const timestamp = this.now();
+    const result = this.db.transaction(() => {
+      const existing = this.mustFindPiSessionReferenceRow(input.surfacePiSessionId);
+      this.db
+        .query(
+          `UPDATE pi_session_reference
+           SET deleted_at = ?,
+               updated_at = ?
+           WHERE surface_pi_session_id = ?`,
+        )
+        .run(timestamp, timestamp, existing.surface_pi_session_id);
+      this.bumpStateRevision();
+      return { surfacePiSessionId: existing.surface_pi_session_id as SurfacePiSessionId };
+    })();
+    return result;
+  }
+
+  validatePiSessionReference(input: ValidatePiSessionReferenceInput): PiSessionReferenceValidation {
+    const row = this.findPiSessionReferenceRow(input.surfacePiSessionId);
+    if (!row) {
+      return { valid: false, reason: "not-found" };
+    }
+    if (row.workspace_id !== input.workspaceId) {
+      return {
+        valid: false,
+        reason: "workspace-mismatch",
+        referenceFingerprint: row.reference_fingerprint,
+      };
+    }
+    if (row.surface_pi_session_id !== input.reference.surfacePiSessionId) {
+      return {
+        valid: false,
+        reason: "surface-mismatch",
+        referenceFingerprint: row.reference_fingerprint,
+      };
+    }
+    if (row.actor_kind !== input.actorKind) {
+      return {
+        valid: false,
+        reason: "actor-mismatch",
+        referenceFingerprint: row.reference_fingerprint,
+      };
+    }
+    if (
+      row.adapter_kind !== input.reference.adapterKind ||
+      row.adapter_version !== input.reference.adapterVersion ||
+      row.reference_fingerprint !== input.reference.referenceFingerprint
+    ) {
+      return {
+        valid: false,
+        reason: "adapter-version-mismatch",
+        referenceFingerprint: row.reference_fingerprint,
+      };
+    }
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE pi_session_reference
+         SET last_validated_at = ?,
+             updated_at = ?
+         WHERE surface_pi_session_id = ?`,
+      )
+      .run(timestamp, timestamp, row.surface_pi_session_id);
+    const reference = this.mapPiSessionReference(
+      this.mustFindPiSessionReferenceRow(input.surfacePiSessionId),
+    );
+    return {
+      valid: true,
+      reference,
+      referenceFingerprint: reference.referenceFingerprint,
+    };
+  }
+
   closeSurface(input: CloseSurfaceInput): CloseSurfaceResult {
     const resolved = this.resolveRuntimeSurfaceTarget(input.target);
     const timestamp = this.now();
@@ -2068,12 +2629,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   readRuntimeSourceVersion(input: ReadRuntimeSourceVersionInput): RuntimeSourceFactRecord | null {
-    return this.findRuntimeSourceFact(input.sourceKind, input.sourceId);
+    return this.findRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+  }
+
+  readRuntimeSourceRootFingerprint(input: {
+    sourceRoot: AbsolutePath;
+  }): RuntimeSourceRootFingerprintFactRecord | null {
+    const row = this.findRuntimeSourceRootFingerprintFact(input.sourceRoot);
+    return row ? this.mapRuntimeSourceRootFingerprintFact(row) : null;
   }
 
   recordRuntimeSourceSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord {
     return this.db.transaction(() => {
-      const existing = this.findRuntimeSourceFact(input.sourceKind, input.sourceId);
+      const existing = this.findRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
       if (
         input.previousSourceVersion !== undefined &&
         input.previousSourceVersion !== null &&
@@ -2088,6 +2656,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       this.db
         .query(
           `INSERT INTO runtime_source_fact (
+             scope_kind,
+             scope_workspace_id,
+             scope_key,
              source_kind,
              source_id,
              path,
@@ -2098,8 +2669,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              created_at,
              updated_at,
              deleted_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-           ON CONFLICT(source_kind, source_id) DO UPDATE SET
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+           ON CONFLICT(scope_key, source_kind, source_id) DO UPDATE SET
              path = excluded.path,
              source_version = excluded.source_version,
              fingerprint = excluded.fingerprint,
@@ -2109,6 +2680,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              deleted_at = NULL`,
         )
         .run(
+          input.scope.kind,
+          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+          runtimeSourceScopeKey(input.scope),
           input.sourceKind,
           input.sourceId,
           input.path,
@@ -2120,13 +2694,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.savedAt,
         );
       this.bumpStateRevision();
-      return this.mustFindRuntimeSourceFact(input.sourceKind, input.sourceId);
+      return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
     })();
   }
 
   recordRuntimeSourceDelete(input: RecordRuntimeSourceDeleteInput): RuntimeSourceFactRecord {
     return this.db.transaction(() => {
-      const existing = this.mustFindRuntimeSourceFact(input.sourceKind, input.sourceId);
+      const existing = this.mustFindRuntimeSourceFact(
+        input.scope,
+        input.sourceKind,
+        input.sourceId,
+      );
       if (
         input.expectedSourceVersion !== undefined &&
         input.expectedSourceVersion !== null &&
@@ -2142,17 +2720,178 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            SET source_command_id = ?,
                updated_at = ?,
                deleted_at = ?
-           WHERE source_kind = ? AND source_id = ?`,
+           WHERE scope_key = ? AND source_kind = ? AND source_id = ?`,
         )
         .run(
           input.sourceCommandId ?? existing.sourceCommandId,
           input.deletedAt,
           input.deletedAt,
+          runtimeSourceScopeKey(input.scope),
           input.sourceKind,
           input.sourceId,
         );
       this.bumpStateRevision();
-      return this.mustFindRuntimeSourceFact(input.sourceKind, input.sourceId);
+      return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+    })();
+  }
+
+  recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord {
+    assertRuntimeSourceScanScopeMatchesDomain(input);
+    return this.db.transaction(() => {
+      const scopeKey = runtimeSourceScopeKey(input.scope);
+      const existing = this.findRuntimeSourceScanFact(input.scope, input.domain);
+      this.db
+        .query(
+          `INSERT INTO runtime_source_scan_fact (
+             scope_kind,
+             scope_workspace_id,
+             scope_key,
+             domain,
+             source_fingerprint,
+             diagnostics_json,
+             last_observed_path,
+             last_observation_kind,
+             observed_at,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'scan', ?, ?, ?)
+           ON CONFLICT(scope_key, domain) DO UPDATE SET
+             scope_kind = excluded.scope_kind,
+             scope_workspace_id = excluded.scope_workspace_id,
+             source_fingerprint = excluded.source_fingerprint,
+             diagnostics_json = excluded.diagnostics_json,
+             last_observed_path = NULL,
+             last_observation_kind = 'scan',
+             observed_at = excluded.observed_at,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.scope.kind,
+          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+          scopeKey,
+          input.domain,
+          input.sourceFingerprint,
+          JSON.stringify(input.diagnostics),
+          input.scannedAt,
+          existing?.createdAt ?? input.scannedAt,
+          input.scannedAt,
+        );
+      for (const sourceRoot of input.sourceRoots ?? []) {
+        this.upsertRuntimeSourceRootFingerprintFact({
+          scope: input.scope,
+          domain: input.domain,
+          sourceRoot: sourceRoot.sourceRoot,
+          rootFingerprint: sourceRoot.rootFingerprint,
+          diagnostics: input.diagnostics,
+          observedAt: input.scannedAt,
+        });
+      }
+      this.bumpStateRevision();
+      return this.mustFindRuntimeSourceScanFact(input.scope, input.domain);
+    })();
+  }
+
+  recordObservedRuntimeSourceDeletion(
+    input: RecordObservedRuntimeSourceDeletionInput,
+  ): RuntimeSourceScanFactRecord {
+    assertRuntimeSourceScanScopeMatchesDomain(input);
+    return this.db.transaction(() => {
+      const scopeKey = runtimeSourceScopeKey(input.scope);
+      const existing = this.findRuntimeSourceScanFact(input.scope, input.domain);
+      const diagnostics = input.diagnostics;
+      const sourceFingerprint =
+        input.sourceFingerprint ?? runtimeSourceScanFallbackFingerprint(input.domain);
+      this.db
+        .query(
+          `INSERT INTO runtime_source_scan_fact (
+             scope_kind,
+             scope_workspace_id,
+             scope_key,
+             domain,
+             source_fingerprint,
+             diagnostics_json,
+             last_observed_path,
+             last_observation_kind,
+             observed_at,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'deletion', ?, ?, ?)
+           ON CONFLICT(scope_key, domain) DO UPDATE SET
+             scope_kind = excluded.scope_kind,
+             scope_workspace_id = excluded.scope_workspace_id,
+             source_fingerprint = excluded.source_fingerprint,
+             diagnostics_json = excluded.diagnostics_json,
+             last_observed_path = excluded.last_observed_path,
+             last_observation_kind = 'deletion',
+             observed_at = excluded.observed_at,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.scope.kind,
+          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+          scopeKey,
+          input.domain,
+          sourceFingerprint,
+          JSON.stringify(diagnostics),
+          input.path,
+          input.observedAt,
+          existing?.createdAt ?? input.observedAt,
+          input.observedAt,
+        );
+      this.bumpStateRevision();
+      return this.mustFindRuntimeSourceScanFact(input.scope, input.domain);
+    })();
+  }
+
+  recordRuntimeSourceDiagnostic(
+    input: RecordRuntimeSourceDiagnosticInput,
+  ): RuntimeSourceScanFactRecord {
+    assertRuntimeSourceScanScopeMatchesDomain(input);
+    return this.db.transaction(() => {
+      const scopeKey = runtimeSourceScopeKey(input.scope);
+      const existing = this.findRuntimeSourceScanFact(input.scope, input.domain);
+      const diagnostics = [...(existing?.diagnostics ?? []), input.diagnostic];
+      const sourceFingerprint =
+        input.sourceFingerprint ?? runtimeSourceScanFallbackFingerprint(input.domain);
+      this.db
+        .query(
+          `INSERT INTO runtime_source_scan_fact (
+             scope_kind,
+             scope_workspace_id,
+             scope_key,
+             domain,
+             source_fingerprint,
+             diagnostics_json,
+             last_observed_path,
+             last_observation_kind,
+             observed_at,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'diagnostic', ?, ?, ?)
+           ON CONFLICT(scope_key, domain) DO UPDATE SET
+             scope_kind = excluded.scope_kind,
+             scope_workspace_id = excluded.scope_workspace_id,
+             source_fingerprint = excluded.source_fingerprint,
+             diagnostics_json = excluded.diagnostics_json,
+             last_observed_path = excluded.last_observed_path,
+             last_observation_kind = 'diagnostic',
+             observed_at = excluded.observed_at,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.scope.kind,
+          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+          scopeKey,
+          input.domain,
+          sourceFingerprint,
+          JSON.stringify(diagnostics),
+          input.path ?? null,
+          input.observedAt,
+          existing?.createdAt ?? input.observedAt,
+          input.observedAt,
+        );
+      this.bumpStateRevision();
+      return this.mustFindRuntimeSourceScanFact(input.scope, input.domain);
     })();
   }
 
@@ -2348,30 +3087,203 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private resolveSurfaceReferenceIdentity(surfacePiSessionId: string): {
+    sessionId: string;
+    surfaceKind: SurfaceLifecycleRow["surface_kind"];
+    actorKind: ActorKind;
+    threadId: string | null;
+    workflowTaskAttemptId: string | null;
+  } {
+    const lifecycle = this.findSurfaceLifecycleRow(surfacePiSessionId);
+    if (lifecycle) {
+      return {
+        sessionId: lifecycle.session_id,
+        surfaceKind: lifecycle.surface_kind,
+        actorKind:
+          lifecycle.surface_kind === "workflow-task" ? "workflow-task" : lifecycle.surface_kind,
+        threadId: lifecycle.thread_id,
+        workflowTaskAttemptId: lifecycle.workflow_task_attempt_id,
+      };
+    }
+    const session = this.db
+      .query(`SELECT * FROM session WHERE orchestrator_pi_session_id = ? LIMIT 1`)
+      .get(surfacePiSessionId) as SessionRow | undefined;
+    if (session) {
+      return {
+        sessionId: session.session_id,
+        surfaceKind: "orchestrator",
+        actorKind: "orchestrator",
+        threadId: null,
+        workflowTaskAttemptId: null,
+      };
+    }
+    const thread = this.db
+      .query(`SELECT * FROM thread WHERE surface_pi_session_id = ? LIMIT 1`)
+      .get(surfacePiSessionId) as ThreadRow | undefined;
+    if (thread) {
+      return {
+        sessionId: thread.session_id,
+        surfaceKind: "handler",
+        actorKind: "handler",
+        threadId: thread.id,
+        workflowTaskAttemptId: null,
+      };
+    }
+    const attempt = this.db
+      .query(`SELECT * FROM workflow_task_attempt WHERE surface_pi_session_id = ? LIMIT 1`)
+      .get(surfacePiSessionId) as WorkflowTaskAttemptRow | undefined;
+    if (attempt) {
+      return {
+        sessionId: attempt.session_id,
+        surfaceKind: "workflow-task",
+        actorKind: "workflow-task",
+        threadId: attempt.thread_id,
+        workflowTaskAttemptId: attempt.id,
+      };
+    }
+    throw new Error(`Surface ${surfacePiSessionId} was not found for pi session reference.`);
+  }
+
+  private findPiSessionReferenceRow(surfacePiSessionId: string): PiSessionReferenceRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM pi_session_reference
+           WHERE surface_pi_session_id = ? AND deleted_at IS NULL
+           LIMIT 1`,
+        )
+        .get(surfacePiSessionId) as PiSessionReferenceRow | undefined) ?? null
+    );
+  }
+
+  private mustFindPiSessionReferenceRow(surfacePiSessionId: string): PiSessionReferenceRow {
+    const row = this.findPiSessionReferenceRow(surfacePiSessionId);
+    if (!row) {
+      throw new Error(`Pi session reference was not found: ${surfacePiSessionId}`);
+    }
+    return row;
+  }
+
   private findRuntimeSourceFact(
+    scope: RuntimeSourceFactRecord["scope"],
     sourceKind: RuntimeSourceFactRecord["sourceKind"],
     sourceId: string,
   ): RuntimeSourceFactRecord | null {
     const row =
       (this.db
-        .query(`SELECT * FROM runtime_source_fact WHERE source_kind = ? AND source_id = ?`)
-        .get(sourceKind, sourceId) as RuntimeSourceFactRow | undefined) ?? null;
+        .query(
+          `SELECT * FROM runtime_source_fact WHERE scope_key = ? AND source_kind = ? AND source_id = ?`,
+        )
+        .get(runtimeSourceScopeKey(scope), sourceKind, sourceId) as
+        | RuntimeSourceFactRow
+        | undefined) ?? null;
     return row ? this.mapRuntimeSourceFact(row) : null;
   }
 
   private mustFindRuntimeSourceFact(
+    scope: RuntimeSourceFactRecord["scope"],
     sourceKind: RuntimeSourceFactRecord["sourceKind"],
     sourceId: string,
   ): RuntimeSourceFactRecord {
-    const record = this.findRuntimeSourceFact(sourceKind, sourceId);
+    const record = this.findRuntimeSourceFact(scope, sourceKind, sourceId);
     if (!record) {
-      throw new Error(`Runtime source fact not found: ${sourceKind}:${sourceId}`);
+      throw new Error(
+        `Runtime source fact not found: ${runtimeSourceScopeKey(scope)}:${sourceKind}:${sourceId}`,
+      );
+    }
+    return record;
+  }
+
+  private findRuntimeSourceScanFact(
+    scope: RuntimeSourceScanFactRecord["scope"],
+    domain: RuntimeSourceScanFactRecord["domain"],
+  ): RuntimeSourceScanFactRecord | null {
+    const row =
+      (this.db
+        .query(`SELECT * FROM runtime_source_scan_fact WHERE scope_key = ? AND domain = ?`)
+        .get(runtimeSourceScopeKey(scope), domain) as RuntimeSourceScanFactRow | undefined) ?? null;
+    return row ? this.mapRuntimeSourceScanFact(row) : null;
+  }
+
+  private findRuntimeSourceRootFingerprintFact(
+    sourceRoot: AbsolutePath,
+  ): RuntimeSourceRootFingerprintFactRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM runtime_source_root_fingerprint_fact WHERE source_root = ?`)
+        .get(sourceRoot) as RuntimeSourceRootFingerprintFactRow | undefined) ?? null
+    );
+  }
+
+  private upsertRuntimeSourceRootFingerprintFact(input: {
+    scope: RuntimeSourceRootFingerprintFactRecord["scope"];
+    domain: RuntimeSourceRootFingerprintFactRecord["domain"];
+    sourceRoot: AbsolutePath;
+    rootFingerprint: string;
+    diagnostics: RuntimeSourceRootFingerprintFactRecord["diagnostics"];
+    observedAt: string;
+  }): void {
+    const scopeKey = runtimeSourceScopeKey(input.scope);
+    const existing = this.findRuntimeSourceRootFingerprintFact(input.sourceRoot);
+    this.db
+      .query(
+        `INSERT INTO runtime_source_root_fingerprint_fact (
+           scope_kind,
+           scope_workspace_id,
+           scope_key,
+           domain,
+           source_root,
+           root_fingerprint,
+           diagnostics_json,
+           observed_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_root) DO UPDATE SET
+           scope_kind = excluded.scope_kind,
+           scope_workspace_id = excluded.scope_workspace_id,
+           scope_key = excluded.scope_key,
+           domain = excluded.domain,
+           root_fingerprint = excluded.root_fingerprint,
+           diagnostics_json = excluded.diagnostics_json,
+           observed_at = excluded.observed_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.scope.kind,
+        input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+        scopeKey,
+        input.domain,
+        input.sourceRoot,
+        input.rootFingerprint,
+        JSON.stringify(input.diagnostics),
+        input.observedAt,
+        existing?.created_at ?? input.observedAt,
+        input.observedAt,
+      );
+  }
+
+  private mustFindRuntimeSourceScanFact(
+    scope: RuntimeSourceScanFactRecord["scope"],
+    domain: RuntimeSourceScanFactRecord["domain"],
+  ): RuntimeSourceScanFactRecord {
+    const record = this.findRuntimeSourceScanFact(scope, domain);
+    if (!record) {
+      throw new Error(
+        `Runtime source scan fact not found: ${runtimeSourceScopeKey(scope)}:${domain}`,
+      );
     }
     return record;
   }
 
   private mapRuntimeSourceFact(row: RuntimeSourceFactRow): RuntimeSourceFactRecord {
+    const scope =
+      row.scope_kind === "workspace"
+        ? { kind: "workspace" as const, workspaceId: row.scope_workspace_id as WorkspaceId }
+        : { kind: "app-global" as const };
     return {
+      scope,
+      scopeKey: row.scope_key,
       sourceKind: row.source_kind,
       sourceId: row.source_id,
       path: row.path as RuntimeSourceFactRecord["path"],
@@ -2382,6 +3294,46 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       createdAt: row.created_at as RuntimeSourceFactRecord["createdAt"],
       updatedAt: row.updated_at as RuntimeSourceFactRecord["updatedAt"],
       deletedAt: row.deleted_at as RuntimeSourceFactRecord["deletedAt"],
+    };
+  }
+
+  private mapRuntimeSourceScanFact(row: RuntimeSourceScanFactRow): RuntimeSourceScanFactRecord {
+    const scope =
+      row.scope_kind === "workspace"
+        ? { kind: "workspace" as const, workspaceId: row.scope_workspace_id as WorkspaceId }
+        : { kind: "app-global" as const };
+    return {
+      scope,
+      scopeKey: row.scope_key,
+      domain: row.domain,
+      sourceFingerprint: row.source_fingerprint,
+      diagnostics: fromJson<RuntimeSourceScanFactRecord["diagnostics"]>(row.diagnostics_json) ?? [],
+      lastObservedPath: row.last_observed_path as RuntimeSourceScanFactRecord["lastObservedPath"],
+      lastObservationKind: row.last_observation_kind,
+      observedAt: row.observed_at as RuntimeSourceScanFactRecord["observedAt"],
+      createdAt: row.created_at as RuntimeSourceScanFactRecord["createdAt"],
+      updatedAt: row.updated_at as RuntimeSourceScanFactRecord["updatedAt"],
+    };
+  }
+
+  private mapRuntimeSourceRootFingerprintFact(
+    row: RuntimeSourceRootFingerprintFactRow,
+  ): RuntimeSourceRootFingerprintFactRecord {
+    const scope =
+      row.scope_kind === "workspace"
+        ? { kind: "workspace" as const, workspaceId: row.scope_workspace_id as WorkspaceId }
+        : { kind: "app-global" as const };
+    return {
+      scope,
+      scopeKey: row.scope_key,
+      domain: row.domain,
+      sourceRoot: row.source_root as RuntimeSourceRootFingerprintFactRecord["sourceRoot"],
+      rootFingerprint: row.root_fingerprint,
+      diagnostics:
+        fromJson<RuntimeSourceRootFingerprintFactRecord["diagnostics"]>(row.diagnostics_json) ?? [],
+      observedAt: row.observed_at as RuntimeSourceRootFingerprintFactRecord["observedAt"],
+      createdAt: row.created_at as RuntimeSourceRootFingerprintFactRecord["createdAt"],
+      updatedAt: row.updated_at as RuntimeSourceRootFingerprintFactRecord["updatedAt"],
     };
   }
 
@@ -2433,6 +3385,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       | { revision: number }
       | undefined;
     return (row?.revision ?? 0) as StateRevision;
+  }
+
+  readCurrentStateRevision(): StateRevision {
+    return this.readStateRevision();
   }
 
   private bumpStateRevision(): StateRevision {
@@ -2711,7 +3667,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       );
     }
 
-    const id = createId("generated-context-binding");
+    const id = this.createId("generated-context-binding");
     this.db
       .query(
         `INSERT INTO generated_agent_context_binding (
@@ -2810,6 +3766,71 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       at: timestamp,
     });
     return this.mapPiSession(this.mustFindSessionRow(existing.session_id));
+  }
+
+  applySnapshotContextImpact(
+    input: ApplyRuntimeExtensionSnapshotContextImpactInput,
+  ): readonly RuntimeExtensionContextChangedSurface[] {
+    const affectedExtensionIds = new Set(input.affectedExtensionIds);
+    const affectedUsageProfiles = new Set<RuntimeExtensionUsageProfileKey>(
+      input.affectedUsageProfiles,
+    );
+    const removedUserExtensionIds = new Set(input.removedUserExtensionIds);
+    if (
+      affectedExtensionIds.size === 0 &&
+      affectedUsageProfiles.size === 0 &&
+      removedUserExtensionIds.size === 0
+    ) {
+      return [];
+    }
+
+    const applyImpact = this.db.transaction(() => {
+      const affected: RuntimeExtensionContextChangedSurface[] = [];
+      for (const snapshot of this.listSessionStates()) {
+        const piLoaded = snapshot.pi.loadedExtensionIds ?? [];
+        const piAvailable = snapshot.pi.availableExtensionIds ?? [];
+        const orchestratorProfileId = snapshot.pi.orchestratorAgentProfileId;
+        if (
+          structuredExtensionListsIntersect([piLoaded, piAvailable], affectedExtensionIds) ||
+          (orchestratorProfileId !== undefined &&
+            affectedUsageProfiles.has(structuredOrchestratorUsageProfileKey(orchestratorProfileId)))
+        ) {
+          const updated = this.updatePiSessionExtensionState({
+            sessionId: snapshot.pi.sessionId,
+            loadedExtensionIds: structuredDropExtensionIds(piLoaded, removedUserExtensionIds),
+            availableExtensionIds: structuredDropExtensionIds(piAvailable, removedUserExtensionIds),
+          });
+          affected.push(structuredExtensionContextChangedSurface(updated.sessionId));
+        }
+
+        for (const thread of snapshot.threads) {
+          if (
+            !structuredExtensionListsIntersect(
+              [thread.loadedExtensionIds, thread.availableExtensionIds],
+              affectedExtensionIds,
+            ) &&
+            !affectedUsageProfiles.has("handler:threadHandler")
+          ) {
+            continue;
+          }
+          const updated = this.updateThread({
+            threadId: thread.id,
+            loadedExtensionIds: structuredDropExtensionIds(
+              thread.loadedExtensionIds,
+              removedUserExtensionIds,
+            ),
+            availableExtensionIds: structuredDropExtensionIds(
+              thread.availableExtensionIds,
+              removedUserExtensionIds,
+            ),
+          });
+          affected.push(structuredExtensionContextChangedSurface(updated.surfacePiSessionId));
+        }
+      }
+      return affected;
+    });
+
+    return applyImpact();
   }
 
   isSessionDeleted(sessionId: string): boolean {
@@ -3138,7 +4159,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       }
     }
 
-    const turnId = createId("turn");
+    const turnId = this.createId("turn");
     this.db
       .query(
         `INSERT INTO turn (
@@ -3263,8 +4284,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }): StructuredThreadRecord {
     const turn = this.mustFindTurnRow(input.turnId);
     const parent = input.parentThreadId ? this.mustFindThreadRow(input.parentThreadId) : null;
+    if (parent && parent.session_id !== turn.session_id) {
+      throw new StateContractError({
+        operation: "structured-session.createThread",
+        reason: "conflict",
+        message: `Parent thread ${parent.id} belongs to session ${parent.session_id}, not ${turn.session_id}.`,
+      });
+    }
     const timestamp = this.now();
-    const threadId = createId("thread");
+    const threadId = this.createId("thread");
     const threadGroupId = input.threadGroupId?.trim() || parent?.thread_group_id || threadId;
     const surfacePiSessionId =
       input.surfacePiSessionId ?? parent?.surface_pi_session_id ?? turn.surface_pi_session_id;
@@ -3330,6 +4358,50 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     this.reconcileSessionWaitAfterRunnableChange(turn.session_id);
 
     return this.mustFindThreadRecord(threadId);
+  }
+
+  ensureHandlerThreadRunnable(input: {
+    workspaceSessionId: string;
+    surfacePiSessionId: string;
+    threadId: string;
+  }): { thread: StructuredThreadRecord; committed: boolean } {
+    const ensureRunnable = this.db.transaction((transactionInput: typeof input) => {
+      const thread = this.db
+        .query(`SELECT * FROM thread WHERE id = ?`)
+        .get(transactionInput.threadId) as ThreadRow | undefined;
+      if (!thread) {
+        throw new StateContractError({
+          operation: "structured-session.ensureHandlerThreadRunnable",
+          reason: "not-found",
+          message: `Handler thread ${transactionInput.threadId} was not found for surface ${transactionInput.surfacePiSessionId}.`,
+        });
+      }
+      if (
+        thread.session_id !== transactionInput.workspaceSessionId ||
+        thread.surface_pi_session_id !== transactionInput.surfacePiSessionId
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.ensureHandlerThreadRunnable",
+          reason: "conflict",
+          message: `Handler thread ${transactionInput.threadId} was not found for surface ${transactionInput.surfacePiSessionId}.`,
+        });
+      }
+
+      if (thread.status === "running-handler" && this.mapThreadWait(thread) === null) {
+        return { thread: this.mapThread(thread), committed: false };
+      }
+
+      return {
+        thread: this.updateThread({
+          threadId: transactionInput.threadId,
+          status: "running-handler",
+          wait: null,
+        }),
+        committed: true,
+      };
+    });
+
+    return ensureRunnable(input);
   }
 
   startHandlerThreads(
@@ -3425,14 +4497,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           const bindingInput = threadInput.generatedAgentContextBinding;
           const thread = this.createThread({
             turnId: transactionInput.orchestratorTurnId,
+            parentThreadId: threadInput.parentThreadId ?? null,
             threadGroupId,
             surfacePiSessionId: threadInput.surfacePiSessionId,
             title: threadInput.title,
             objective: threadInput.objective,
             historyMode: threadInput.historyMode,
             objectiveState: "active",
-            loadedExtensionIds: [...threadInput.loadedExtensionIds],
-            availableExtensionIds: [...threadInput.availableExtensionIds],
+            loadedExtensionIds: [],
+            availableExtensionIds: [],
             agentProfileJson: threadInput.agentProfileJson ?? null,
             generatedAgentContextFingerprint: bindingInput.generatedAgentContextFingerprint,
             ...(threadInput.worktreeId ? { worktree: threadInput.worktreeId } : {}),
@@ -3444,16 +4517,29 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
             ownerId: thread.id,
             actorKind: "handler",
             aggregateCacheKey: bindingInput.aggregateCacheKey,
-            systemPrompt: bindingInput.systemPrompt,
-            svvyxGuidance: bindingInput.svvyxGuidance,
-            commandsDts: bindingInput.commandsDts,
-            nativeToolSchemasJson: bindingInput.nativeToolSchemasJson,
+            systemPrompt: "",
+            svvyxGuidance: "",
+            commandsDts: "",
+            nativeToolSchemasJson: "[]",
             generatedAgentContextFingerprint: bindingInput.generatedAgentContextFingerprint,
             generatedAgentContextRevision: bindingInput.generatedAgentContextRevision,
-            loadedExtensionIds: [...bindingInput.loadedExtensionIds],
-            availableExtensionIds: [...bindingInput.availableExtensionIds],
+            loadedExtensionIds: [],
+            availableExtensionIds: [],
             externalSourceHashes: [...bindingInput.externalSourceHashes],
           });
+          const payload = {
+            kind: "initial_handler_start",
+            threadId: thread.id,
+            threadGroupId: thread.threadGroupId,
+            objective: thread.objective,
+            ...(thread.worktree ? { worktreeId: thread.worktree } : {}),
+            ...(threadInput.initialQueue.inheritedHistory
+              ? { inheritedHistory: threadInput.initialQueue.inheritedHistory }
+              : {}),
+            ...(threadInput.initialQueue.overrides
+              ? { overrides: threadInput.initialQueue.overrides }
+              : {}),
+          };
           const queuedMessage = this.enqueueSurfaceMessage({
             sessionId: transactionInput.workspaceSessionId,
             surfacePiSessionId: thread.surfacePiSessionId,
@@ -3461,8 +4547,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
             kind: "initial_handler_start",
             idempotencyKey: threadInput.initialQueue.idempotencyKey,
             sourceCommandId: transactionInput.sourceCommandId,
-            messageJson: threadInput.initialQueue.messageJson,
-            payloadJson: threadInput.initialQueue.payloadJson,
+            messageJson: "{}",
+            payloadJson: JSON.stringify(payload),
             ...(threadInput.initialQueue.priority
               ? { priority: threadInput.initialQueue.priority }
               : {}),
@@ -3924,7 +5010,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     const timestamp = this.now();
-    const commandId = createId("command");
+    const commandId = this.createId("command");
     const surfacePiSessionId =
       input.surfacePiSessionId ??
       workflowTaskAttempt?.surface_pi_session_id ??
@@ -4145,7 +5231,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const thread = this.mustFindThreadRow(input.threadId);
     const sessionId = thread.session_id;
 
-    const episodeId = createId("episode");
+    const episodeId = this.createId("episode");
     const timestamp = this.now();
     this.db
       .query(
@@ -4182,6 +5268,116 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return this.mustFindEpisodeRecord(episodeId);
+  }
+
+  recordHandlerThreadEpisode(input: {
+    workspaceSessionId: string;
+    threadId: string;
+    threadGroupId: string;
+    sourceCommandId?: string | null;
+    kind?: StructuredEpisodeKind;
+    summary: string;
+    body?: string | null;
+    outcome?: unknown;
+    relatedCommandIds?: readonly string[];
+    relatedArtifactIds?: readonly string[];
+    relatedWorkflowRunIds?: readonly string[];
+  }): { episode: StructuredEpisodeRecord; thread: StructuredThreadRecord; concluded: boolean } {
+    const recordEpisode = this.db.transaction((transactionInput: typeof input) => {
+      const thread = this.db
+        .query(`SELECT * FROM thread WHERE id = ?`)
+        .get(transactionInput.threadId) as ThreadRow | undefined;
+      if (!thread) {
+        throw new StateContractError({
+          operation: "runtime-episode.recordHandlerThreadEpisode",
+          reason: "not-found",
+          message: `Thread ${transactionInput.threadId} was not found.`,
+        });
+      }
+      if (thread.session_id !== transactionInput.workspaceSessionId) {
+        throw new StateContractError({
+          operation: "runtime-episode.recordHandlerThreadEpisode",
+          reason: "invalid-input",
+          message: `Thread ${transactionInput.threadId} was not found.`,
+        });
+      }
+      if (thread.thread_group_id !== transactionInput.threadGroupId) {
+        throw new StateContractError({
+          operation: "runtime-episode.recordHandlerThreadEpisode",
+          reason: "invalid-input",
+          message: `Thread ${transactionInput.threadId} does not belong to thread group ${transactionInput.threadGroupId}.`,
+        });
+      }
+
+      for (const commandId of transactionInput.relatedCommandIds ?? []) {
+        const command = this.db.query(`SELECT * FROM command WHERE id = ?`).get(commandId) as
+          | CommandRow
+          | undefined;
+        if (!command || command.session_id !== transactionInput.workspaceSessionId) {
+          throw new StateContractError({
+            operation: "runtime-episode.recordHandlerThreadEpisode",
+            reason: "invalid-input",
+            message: `thread_report related command is not durable or inspectable: ${commandId}`,
+          });
+        }
+      }
+      for (const artifactId of transactionInput.relatedArtifactIds ?? []) {
+        const artifact = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(artifactId) as
+          | ArtifactRow
+          | undefined;
+        if (!artifact || artifact.session_id !== transactionInput.workspaceSessionId) {
+          throw new StateContractError({
+            operation: "runtime-episode.recordHandlerThreadEpisode",
+            reason: "invalid-input",
+            message: `thread_report related artifact is not durable or inspectable: ${artifactId}`,
+          });
+        }
+      }
+      for (const workflowRunId of transactionInput.relatedWorkflowRunIds ?? []) {
+        const workflowRun = this.db
+          .query(`SELECT * FROM workflow_run WHERE id = ?`)
+          .get(workflowRunId) as WorkflowRunRow | undefined;
+        if (!workflowRun || workflowRun.session_id !== transactionInput.workspaceSessionId) {
+          throw new StateContractError({
+            operation: "runtime-episode.recordHandlerThreadEpisode",
+            reason: "invalid-input",
+            message: `thread_report related workflow run is not durable or inspectable: ${workflowRunId}`,
+          });
+        }
+      }
+
+      const episodeInput: {
+        threadId: string;
+        sourceCommandId: string | null;
+        kind?: StructuredEpisodeKind;
+        title: string;
+        summary: string;
+        body: string;
+      } = {
+        threadId: transactionInput.threadId,
+        sourceCommandId: transactionInput.sourceCommandId ?? null,
+        title: transactionInput.summary,
+        summary: transactionInput.summary,
+        body: transactionInput.body ?? "",
+      };
+      if (transactionInput.kind !== undefined) {
+        episodeInput.kind = transactionInput.kind;
+      }
+      const episode = this.createEpisode(episodeInput);
+      const concluded = Boolean(transactionInput.outcome);
+      const nextThread = concluded
+        ? this.updateThread({
+            threadId: transactionInput.threadId,
+            objectiveState: "concluded",
+            status: "completed",
+            wait: null,
+          })
+        : this.mapThread(thread);
+
+      return { episode, thread: nextThread, concluded };
+    });
+
+    return recordEpisode(input);
   }
 
   createArtifact(input: {
@@ -4239,7 +5435,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       );
     }
 
-    const artifactId = createId("artifact");
+    const artifactId = this.createId("artifact");
     const timestamp = this.now();
     const name = validateArtifactName(input.name?.trim() || basename(input.path ?? ""));
     const immutable = input.immutable === true;
@@ -4271,7 +5467,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         writeFileSync(path, input.content ?? "");
       }
       wroteArtifactFile = true;
-      const fileMetadata = readArtifactFileMetadata(path);
+      const fileMetadata = readArtifactFileMetadata(this.digest, path);
 
       this.db.transaction(() => {
         this.db
@@ -4290,9 +5486,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
                bytes,
                sha256,
                immutable,
+               materialization_status,
                created_at,
-               deleted_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               updated_at,
+               deleted_at,
+               last_recovery_work_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             artifactId,
@@ -4308,7 +5507,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
             fileMetadata.bytes,
             fileMetadata.sha256,
             immutable ? 1 : 0,
+            "ready",
             timestamp,
+            timestamp,
+            null,
             null,
           );
 
@@ -4339,6 +5541,210 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindArtifactRecord(artifactId);
   }
 
+  recordArtifactMetadata(input: RecordArtifactMetadataInput): ArtifactMetadataRecord {
+    const session = this.mustFindSessionRow(input.workspaceSessionId);
+    const sourceCommand = this.mustFindCommandRow(input.sourceCommandId);
+    const workflowRun =
+      input.workflowRunId != null ? this.mustFindWorkflowRunRow(input.workflowRunId) : null;
+    const workflowTaskAttempt =
+      input.workflowTaskAttemptId != null
+        ? this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId)
+        : sourceCommand.workflow_task_attempt_id
+          ? this.mustFindWorkflowTaskAttemptRow(sourceCommand.workflow_task_attempt_id)
+          : null;
+    const threadId =
+      input.threadId ??
+      workflowTaskAttempt?.thread_id ??
+      workflowRun?.thread_id ??
+      sourceCommand.thread_id ??
+      null;
+    const thread = threadId ? this.mustFindThreadRow(threadId) : null;
+    const workflowRunId =
+      input.workflowRunId ??
+      workflowTaskAttempt?.workflow_run_id ??
+      sourceCommand.workflow_run_id ??
+      workflowRun?.id ??
+      null;
+    const workflowTaskAttemptId = input.workflowTaskAttemptId ?? workflowTaskAttempt?.id ?? null;
+    const linkedSessionIds = [
+      session.session_id,
+      sourceCommand.session_id,
+      workflowRun?.session_id,
+      workflowTaskAttempt?.session_id,
+      thread?.session_id,
+    ].filter((value): value is string => value != null);
+    if (linkedSessionIds.some((sessionId) => sessionId !== input.workspaceSessionId)) {
+      throw new Error("INVALID_ARGUMENT: artifact metadata ownership links cross sessions.");
+    }
+    if (input.materializationStatus !== "ready") {
+      throw new Error(
+        "INVALID_ARGUMENT: artifact metadata creation requires ready materialization.",
+      );
+    }
+
+    const artifactId = this.createId("artifact");
+    const timestamp = this.now();
+    const name = validateArtifactName(input.name.trim());
+    const storedPath = validateArtifactStoredPath(this.workspace.artifactDir, input.storedPath);
+    const byteSize = validateArtifactByteSize(input.byteSize);
+    const sha256 = validateArtifactSha256(input.sha256);
+    const mimeType = normalizeArtifactMimeType(input.mimeType) ?? inferArtifactMimeType(name);
+    const immutable = input.immutable === true;
+
+    const activeName = this.db
+      .query(
+        `SELECT id FROM artifact
+         WHERE session_id = ? AND name = ? AND immutable = ? AND deleted_at IS NULL
+         LIMIT 1`,
+      )
+      .get(input.workspaceSessionId, name, immutable ? 1 : 0) as { id: string } | undefined;
+    if (activeName) {
+      throw new Error(`ARTIFACT_EXISTS: active artifact already owns ${name}`);
+    }
+    const activeStoredPath = this.db
+      .query(
+        `SELECT id FROM artifact
+         WHERE session_id = ? AND path = ? AND deleted_at IS NULL
+         LIMIT 1`,
+      )
+      .get(input.workspaceSessionId, storedPath) as { id: string } | undefined;
+    if (activeStoredPath) {
+      throw new Error(`ARTIFACT_EXISTS: active artifact already owns stored path ${storedPath}`);
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO artifact (
+             id,
+             session_id,
+             thread_id,
+             workflow_run_id,
+             workflow_task_attempt_id,
+             source_command_id,
+             kind,
+             name,
+             path,
+             mime_type,
+             bytes,
+             sha256,
+             immutable,
+             materialization_status,
+             created_at,
+             updated_at,
+             deleted_at,
+             last_recovery_work_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          artifactId,
+          input.workspaceSessionId,
+          threadId,
+          workflowRunId,
+          workflowTaskAttemptId,
+          input.sourceCommandId,
+          input.kind,
+          name,
+          storedPath,
+          mimeType,
+          byteSize,
+          sha256,
+          immutable ? 1 : 0,
+          "ready",
+          timestamp,
+          timestamp,
+          null,
+          null,
+        );
+
+      this.recordEvent({
+        sessionId: input.workspaceSessionId,
+        kind: "artifact.created",
+        subjectKind: "artifact",
+        subjectId: artifactId,
+        at: timestamp,
+      });
+    })();
+
+    return this.mustFindArtifactMetadataRecord(artifactId);
+  }
+
+  markArtifactMetadataDeleted(input: {
+    workspaceSessionId?: string | null;
+    artifactId: string;
+  }): ArtifactMetadataRecord {
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(input.artifactId) as
+      | ArtifactRow
+      | undefined;
+    if (!row || (input.workspaceSessionId && row.session_id !== input.workspaceSessionId)) {
+      throw new Error(`ARTIFACT_NOT_FOUND: ${input.artifactId}`);
+    }
+    if (row.deleted_at) {
+      return this.mapArtifactMetadata(row);
+    }
+
+    const timestamp = this.now();
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE artifact
+           SET deleted_at = ?,
+               updated_at = ?,
+               materialization_status = 'deleted'
+           WHERE id = ?`,
+        )
+        .run(timestamp, timestamp, input.artifactId);
+      this.recordEvent({
+        sessionId: row.session_id,
+        kind: "artifact.deleted",
+        subjectKind: "artifact",
+        subjectId: input.artifactId,
+        at: timestamp,
+      });
+    })();
+
+    return this.mustFindArtifactMetadataRecord(input.artifactId);
+  }
+
+  inspectArtifactMetadata(input: {
+    workspaceSessionId?: string | null;
+    artifactId: string;
+  }): ArtifactMetadataRecord {
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(input.artifactId) as
+      | ArtifactRow
+      | undefined;
+    if (!row || (input.workspaceSessionId && row.session_id !== input.workspaceSessionId)) {
+      throw new Error(`ARTIFACT_NOT_FOUND: ${input.artifactId}`);
+    }
+    return this.mapArtifactMetadata(row);
+  }
+
+  listArtifactMetadata(input: {
+    workspaceSessionId: string;
+    threadId?: string | null;
+    limit?: number;
+  }): ArtifactMetadataRecord[] {
+    const limit = input.limit ?? 20;
+    const rows = input.threadId
+      ? (this.db
+          .query(
+            `SELECT * FROM artifact
+             WHERE session_id = ? AND thread_id = ? AND deleted_at IS NULL
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?`,
+          )
+          .all(input.workspaceSessionId, input.threadId, limit) as ArtifactRow[])
+      : (this.db
+          .query(
+            `SELECT * FROM artifact
+             WHERE session_id = ? AND deleted_at IS NULL
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?`,
+          )
+          .all(input.workspaceSessionId, limit) as ArtifactRow[]);
+    return rows.map((row) => this.mapArtifactMetadata(row));
+  }
+
   deleteArtifact(input: {
     sessionId?: string | null;
     artifactId: string;
@@ -4367,8 +5773,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         }
       }
       this.db
-        .query(`UPDATE artifact SET deleted_at = ? WHERE id = ?`)
-        .run(timestamp, input.artifactId);
+        .query(
+          `UPDATE artifact
+           SET deleted_at = ?,
+               updated_at = ?,
+               materialization_status = 'deleted'
+           WHERE id = ?`,
+        )
+        .run(timestamp, timestamp, input.artifactId);
       this.recordEvent({
         sessionId: row.session_id,
         kind: "artifact.deleted",
@@ -4575,7 +5987,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       return this.mustFindWorkflowTaskAttemptRecord(existing.id);
     }
 
-    const workflowTaskAttemptId = createId("workflow-task-attempt");
+    const workflowTaskAttemptId = this.createId("workflow-task-attempt");
     this.db
       .query(
         `INSERT INTO workflow_task_attempt (
@@ -4758,7 +6170,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }): StructuredWorkflowRunRecord {
     const thread = this.mustFindThreadRow(input.threadId);
     this.mustFindCommandRow(input.commandId);
-    const workflowId = createId("workflow");
+    const workflowId = this.createId("workflow");
     const timestamp = this.now();
     this.db
       .query(
@@ -4920,7 +6332,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error("Request user input requires one to three questions.");
     }
 
-    const requestId = createId("rui");
+    const requestId = this.createId("rui");
     const timestamp = this.now();
     const timeout =
       input.timeout && input.variant === "blocking"
@@ -4967,9 +6379,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         );
 
       input.questions.forEach((question, questionIndex) => {
-        const questionId = createId("ruiq");
+        const questionId = this.createId("ruiq");
         const choices = (question.choices ?? []).map((choice, choiceIndex) => ({
-          optionId: createId("ruio"),
+          optionId: this.createId("ruio"),
           ordinal: choiceIndex + 1,
           label: choice.label,
           description: choice.description,
@@ -5010,7 +6422,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
                created_at
              ) VALUES (?, ?, ?, ?, 'default', NULL, NULL, ?)`,
           )
-          .run(createId("ruia"), requestId, questionId, toJson(question.defaultAnswer), timestamp);
+          .run(
+            this.createId("ruia"),
+            requestId,
+            questionId,
+            toJson(question.defaultAnswer),
+            timestamp,
+          );
       });
 
       this.recordEvent({
@@ -5047,6 +6465,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     patch?: string | null;
     snippetArtifactId?: string | null;
     typescriptCode?: string | null;
+    context?: StructuredRuntimeApprovalRequestRecord["context"];
   }): StructuredRuntimeApprovalRequestRecord {
     this.mustFindSessionRow(input.sessionId);
     if (input.turnId) {
@@ -5058,7 +6477,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     if (input.threadId) {
       this.mustFindThreadRow(input.threadId);
     }
-    const requestId = createId("apr");
+    const requestId = this.createId("apr");
     const timestamp = this.now();
     const insert = this.db.transaction(() => {
       this.db
@@ -5079,12 +6498,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              patch_text,
              snippet_artifact_id,
              typescript_code,
+             context_json,
              status,
              decision_reason,
              reviewer,
              created_at,
              completed_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL)`,
         )
         .run(
           requestId,
@@ -5102,6 +6522,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.patch ?? null,
           input.snippetArtifactId ?? null,
           input.typescriptCode ?? null,
+          toJson(input.context ?? null),
           timestamp,
         );
       this.recordEvent({
@@ -5176,7 +6597,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   answerRequestUserInput(input: {
-    sessionId: string;
     surfacePiSessionId: string;
     requestId: string;
     questionId: string;
@@ -5187,12 +6607,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     answer: StructuredRequestUserInputAnswerRecord;
     queuedMessage: StructuredSurfaceQueuedMessageRecord | null;
   } {
-    this.mustFindSessionRow(input.sessionId);
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
-    if (
-      request.sessionId !== input.sessionId ||
-      request.surfacePiSessionId !== input.surfacePiSessionId
-    ) {
+    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
       throw new Error("Request user input answer does not belong to the target surface.");
     }
     if (request.status !== "open") {
@@ -5221,7 +6637,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       originalAnswer,
       userAnswer,
     } satisfies RequestUserInputAnswerDeliveryPayload;
-    const answerId = createId("ruia");
+    const answerId = this.createId("ruia");
     const queuePayload = {
       kind: "request_user_input_answer",
       requestId: request.requestId as RequestInputRequestId,
@@ -5342,7 +6758,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
           )
           .run(
-            createId("ruia"),
+            this.createId("ruia"),
             request.requestId,
             question.questionId,
             toJson(question.defaultAnswer),
@@ -5412,10 +6828,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   setRequestUserInputTimerPaused(input: {
+    surfacePiSessionId: string;
     requestId: string;
     paused: boolean;
   }): StructuredRequestUserInputRequestRecord {
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
+    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
+      throw new StateContractError({
+        operation: "runtime-request-state.setRequestInputTimerPaused",
+        reason: "conflict",
+        message: "Request user input timer does not belong to the target surface.",
+      });
+    }
     if (request.status !== "open") {
       throw new Error("Request user input timer is no longer active.");
     }
@@ -5449,14 +6873,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ).toISOString(),
         };
 
-    this.db
-      .query(
-        `UPDATE request_user_input_request
-         SET timeout_json = ?
-         WHERE id = ?`,
-      )
-      .run(toJson(timeout), request.requestId);
-    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+    const updateTimer = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE request_user_input_request
+           SET timeout_json = ?
+           WHERE id = ?`,
+        )
+        .run(toJson(timeout), request.requestId);
+      return this.mustFindRequestUserInputRequestRecord(request.requestId);
+    });
+    return updateTimer();
   }
 
   getRequestUserInputRequest(requestId: string): StructuredRequestUserInputRequestRecord {
@@ -5486,7 +6913,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     if (input.workflowTaskAttemptId) {
       this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId);
     }
-    const id = createId("queued-message");
+    const id = this.createId("queued-message");
     const idempotencyKey = input.idempotencyKey?.trim() || `surface_queue:${id}`;
     const existing = this.db
       .query(
@@ -5901,7 +7328,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       if (existing.kind === "request_user_input_answer") {
         const rawPayload = fromJson<unknown>(existing.payload_json);
         const payload = rawPayload
-          ? Exit.match(decodeRequestUserInputAnswerQueuePayloadExit(rawPayload), {
+          ? Exit.match(decodeUnknownRequestUserInputAnswerQueuePayloadExit(rawPayload), {
               onFailure: (cause) => {
                 throw Cause.squash(cause);
               },
@@ -5995,6 +7422,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   ): StructuredGeneratedPackageFactRecord {
     const existing = this.findGeneratedPackageFactRow(input.status.packageName);
     const timestamp = this.now();
+    const generatedFileListDigest =
+      digestGeneratedPackageFileList(this.digest, input.status.generatedFiles) ??
+      existing?.generated_file_list_digest ??
+      null;
     this.upsertGeneratedPackageFact({
       packageName: input.status.packageName,
       status: "ready",
@@ -6002,10 +7433,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       manifestPath: input.status.manifestPath ?? existing?.manifest_path ?? null,
       sourceFingerprint: input.status.sourceFingerprint ?? existing?.source_fingerprint ?? null,
       outputFingerprint: input.status.outputFingerprint ?? existing?.output_fingerprint ?? null,
-      generatedFileListDigest:
-        digestGeneratedPackageFileList(input.status.generatedFiles) ??
-        existing?.generated_file_list_digest ??
-        null,
+      generatedFileListDigest,
       dependencies:
         input.status.dependencies ?? this.dependenciesFromGeneratedPackageFact(existing),
       diagnostics: input.status.diagnostics ?? [],
@@ -6023,6 +7451,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   ): StructuredGeneratedPackageFactRecord {
     const existing = this.findGeneratedPackageFactRow(input.status.packageName);
     const timestamp = this.now();
+    const generatedFileListDigest =
+      existing?.generated_file_list_digest ??
+      digestGeneratedPackageFileList(this.digest, input.status.generatedFiles) ??
+      null;
     this.upsertGeneratedPackageFact({
       packageName: input.status.packageName,
       status: "failed",
@@ -6030,10 +7462,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       manifestPath: existing?.manifest_path ?? input.status.manifestPath ?? null,
       sourceFingerprint: existing?.source_fingerprint ?? input.status.sourceFingerprint ?? null,
       outputFingerprint: existing?.output_fingerprint ?? input.status.outputFingerprint ?? null,
-      generatedFileListDigest:
-        existing?.generated_file_list_digest ??
-        digestGeneratedPackageFileList(input.status.generatedFiles) ??
-        null,
+      generatedFileListDigest,
       dependencies: this.dependenciesFromGeneratedPackageFact(existing),
       diagnostics: input.status.diagnostics ?? [],
       sourceCommandId: input.sourceCommandId ?? null,
@@ -6092,6 +7521,79 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       input.status.workspaceId,
       input.status.packageName,
     );
+  }
+
+  markWorkspaceLinksRepairNeeded(
+    input: MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  ): MarkWorkspaceGeneratedPackageLinksRepairNeededResult {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new Error(
+        `Workspace generated-package link repair target ${input.workspaceId} is not managed by this state store.`,
+      );
+    }
+
+    const packages = orderedUniqueGeneratedPackages(input.packages);
+    if (packages.length === 0) {
+      return { links: [], recoveryWorkIds: [] };
+    }
+
+    const result = this.db.transaction(() => {
+      const recoveryWork = this.ensureWorkspaceGeneratedPackageLinkRepairWork({
+        packages,
+        requestedAt: input.requestedAt,
+        maxAttempts: input.maxAttempts,
+        sourceCommandId: input.sourceCommandId ?? null,
+        reason: input.reason,
+      });
+      const timestamp = this.now();
+      const links = packages.map((packageName) => {
+        const existing = this.findGeneratedPackageWorkspaceLinkRow(this.workspace.id, packageName);
+        this.db
+          .query(
+            `INSERT INTO generated_package_workspace_link (
+               workspace_id,
+               package_name,
+               status,
+               link_path,
+               target_path,
+               diagnostics_json,
+               source_command_id,
+               last_recovery_work_id,
+               created_at,
+               updated_at
+             ) VALUES (?, ?, 'repair-needed', ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(workspace_id, package_name) DO UPDATE SET
+               status = excluded.status,
+               link_path = excluded.link_path,
+               target_path = excluded.target_path,
+               diagnostics_json = excluded.diagnostics_json,
+               source_command_id = excluded.source_command_id,
+               last_recovery_work_id = excluded.last_recovery_work_id,
+               updated_at = excluded.updated_at`,
+          )
+          .run(
+            this.workspace.id,
+            packageName,
+            existing?.link_path ?? null,
+            existing?.target_path ?? null,
+            toJson([]),
+            input.sourceCommandId ?? null,
+            recoveryWork.id,
+            existing?.created_at ?? timestamp,
+            timestamp,
+          );
+        return this.mustFindGeneratedPackageWorkspaceLink(this.workspace.id, packageName);
+      });
+
+      return {
+        links,
+        recoveryWorkIds: [
+          recoveryWork.id as MarkWorkspaceGeneratedPackageLinksRepairNeededResult["recoveryWorkIds"][number],
+        ],
+      };
+    })();
+
+    return result;
   }
 
   readLinksNeedingRepair(
@@ -6188,9 +7690,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return rows.map((row) => this.mapProviderAuthStatus(row));
   }
 
-  recordProviderAuthStatus(input: RecordProviderAuthStatusInput): ProviderAuthStatus {
+  recordProviderAuthStatus(input: RecordProviderAuthStatusInput): ProviderAuthStatusWriteResult {
     const workspaceKey = providerAuthWorkspaceKey(input.status.workspaceId);
-    const record = this.db.transaction(() => {
+    return this.db.transaction(() => {
       this.db
         .query(
           `INSERT INTO provider_auth_status (
@@ -6232,10 +7734,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.observedAt,
           input.observedAt,
         );
-      this.bumpStateRevision();
-      return this.mustFindProviderAuthStatus(input.status.providerId, workspaceKey);
+      const stateRevision = this.bumpStateRevision();
+      return {
+        status: this.mustFindProviderAuthStatus(input.status.providerId, workspaceKey),
+        stateRevision,
+      };
     })();
-    return record;
   }
 
   readExtensionDependencyReadiness(input: {
@@ -6244,6 +7748,50 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }): StructuredExtensionDependencyReadinessRecord | null {
     const row = this.findExtensionDependencyReadinessRow(input.extensionId, input.requirementId);
     return row ? this.mapExtensionDependencyReadiness(row) : null;
+  }
+
+  readExtensionDependencyApproval(input: {
+    dependency: ExtensionDependencyApprovalIdentity;
+  }): boolean {
+    return this.findExtensionDependencyApprovalRow(input.dependency) !== null;
+  }
+
+  recordExtensionDependencyApproval(input: {
+    dependency: ExtensionDependencyApprovalIdentity;
+    approvedAt: string;
+    approvedBy: "user";
+    sourceCommandId?: CommandId | null;
+  }): StructuredExtensionDependencyApprovalRecord {
+    const approvalKey = extensionDependencyApprovalIdentityKey(input.dependency);
+    const existing = this.findExtensionDependencyApprovalRow(input.dependency);
+    this.db
+      .query(
+        `INSERT INTO extension_dependency_approval (
+           approval_key,
+           identity_json,
+           approved_at,
+           approved_by,
+           source_command_id,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(approval_key) DO UPDATE SET
+           identity_json = excluded.identity_json,
+           approved_at = excluded.approved_at,
+           approved_by = excluded.approved_by,
+           source_command_id = excluded.source_command_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        approvalKey,
+        toJson(input.dependency),
+        input.approvedAt,
+        input.approvedBy,
+        input.sourceCommandId ?? null,
+        existing?.created_at ?? input.approvedAt,
+        input.approvedAt,
+      );
+    return this.mustFindExtensionDependencyApproval(input.dependency);
   }
 
   recordExtensionDependencyReadiness(
@@ -6295,6 +7843,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   ensureRecoveryWork(input: {
+    scope: StructuredRecoveryWorkScope;
     kind: StructuredRecoveryWorkKind;
     ownerScope: StructuredRecoveryWorkOwnerScope;
     idempotencyKey: string;
@@ -6305,24 +7854,27 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     maxAttempts: number;
     payloadJson?: JsonValue;
   }): StructuredRecoveryWorkRecord {
+    assertRecoveryWorkScopeMatchesKind(input);
+    const scope = recoveryWorkScopeSql(input.scope);
     const existing = this.db
       .query(
         `SELECT * FROM recovery_work
-         WHERE workspace_id = ? AND idempotency_key = ?
+         WHERE scope_kind = ? AND workspace_id IS ? AND idempotency_key = ?
            AND status NOT IN ('completed', 'failed', 'cancelled')
          LIMIT 1`,
       )
-      .get(this.workspace.id, input.idempotencyKey) as RecoveryWorkRow | undefined;
+      .get(scope.scopeKind, scope.workspaceId, input.idempotencyKey) as RecoveryWorkRow | undefined;
     if (existing) {
       return this.mapRecoveryWork(existing);
     }
 
     const timestamp = this.now();
-    const id = createId("recovery-work");
+    const id = this.createId("recovery-work");
     this.db
       .query(
         `INSERT INTO recovery_work (
            id,
+           scope_kind,
            workspace_id,
            kind,
            status,
@@ -6343,11 +7895,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            created_at,
            updated_at,
            completed_at
-         ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, NULL, 0, ?, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, NULL, 0, ?, NULL, ?, ?, NULL)`,
       )
       .run(
         id,
-        this.workspace.id,
+        scope.scopeKind,
+        scope.workspaceId,
         input.kind,
         JSON.stringify(input.ownerScope),
         input.idempotencyKey,
@@ -6363,16 +7916,103 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindRecoveryWorkRecord(id);
   }
 
-  listRecoveryWork(): StructuredRecoveryWorkRecord[] {
-    return (
-      this.db
-        .query(
+  private ensureWorkspaceGeneratedPackageLinkRepairWork(input: {
+    packages: readonly GeneratedPackageName[];
+    requestedAt: string;
+    maxAttempts: number;
+    sourceCommandId: string | null;
+    reason: MarkWorkspaceGeneratedPackageLinksRepairNeededInput["reason"];
+  }): StructuredRecoveryWorkRecord {
+    const scope = recoveryWorkScopeSql({
+      kind: "workspace",
+      workspaceId: this.workspace.id,
+    });
+    const idempotencyKey = `workspace_generated_package_link_repair:${this.workspace.id}:${input.packages.join(",")}`;
+    const existing = this.db
+      .query(
+        `SELECT * FROM recovery_work
+         WHERE scope_kind = ? AND workspace_id IS ? AND idempotency_key = ?
+           AND status NOT IN ('completed', 'failed', 'cancelled')
+         LIMIT 1`,
+      )
+      .get(scope.scopeKind, scope.workspaceId, idempotencyKey) as RecoveryWorkRow | undefined;
+    if (existing) {
+      return this.mapRecoveryWork(existing);
+    }
+
+    const timestamp = this.now();
+    const id = this.createId("recovery-work");
+    const payloadJson: JsonValue = {
+      refreshGeneratedPackages: {
+        scope: "workspace-link-repair",
+        workspaceId: this.workspace.id,
+        packages: [...input.packages],
+        reason: "link-repair",
+        sourceCommandId: input.sourceCommandId,
+        scheduledReason: input.reason,
+      },
+    };
+    this.db
+      .query(
+        `INSERT INTO recovery_work (
+           id,
+           scope_kind,
+           workspace_id,
+           kind,
+           status,
+           owner_scope_json,
+           idempotency_key,
+           ordering_key,
+           ordering_seq,
+           priority,
+           available_at,
+           attempts,
+           max_attempts,
+           claimed_by,
+           claimed_at,
+           claim_expires_at,
+           lease_version,
+           payload_json,
+           last_error,
+           created_at,
+           updated_at,
+           completed_at
+         ) VALUES (?, ?, ?, 'workspace_generated_package_link_repair', 'pending', ?, ?, ?, 0, 5, ?, 0, ?, NULL, NULL, NULL, 0, ?, NULL, ?, ?, NULL)`,
+      )
+      .run(
+        id,
+        scope.scopeKind,
+        scope.workspaceId,
+        JSON.stringify({ kind: "workspace" }),
+        idempotencyKey,
+        `workspace:${this.workspace.id}`,
+        input.requestedAt,
+        input.maxAttempts,
+        toJson(payloadJson),
+        timestamp,
+        timestamp,
+      );
+    return this.mustFindRecoveryWorkRecord(id);
+  }
+
+  listRecoveryWork(
+    input: { scope?: StructuredRecoveryWorkScope } = {},
+  ): StructuredRecoveryWorkRecord[] {
+    const scope = input.scope ? recoveryWorkScopeSql(input.scope) : null;
+    const query = scope
+      ? this.db.query(
           `SELECT * FROM recovery_work
-           WHERE workspace_id = ?
+           WHERE scope_kind = ? AND workspace_id IS ?
            ORDER BY priority ASC, available_at ASC, ordering_key ASC, ordering_seq ASC, created_at ASC`,
         )
-        .all(this.workspace.id) as RecoveryWorkRow[]
-    ).map((row) => this.mapRecoveryWork(row));
+      : this.db.query(
+          `SELECT * FROM recovery_work
+           ORDER BY priority ASC, available_at ASC, ordering_key ASC, ordering_seq ASC, created_at ASC`,
+        );
+    const rows = scope
+      ? (query.all(scope.scopeKind, scope.workspaceId) as RecoveryWorkRow[])
+      : (query.all() as RecoveryWorkRow[]);
+    return rows.map((row) => this.mapRecoveryWork(row));
   }
 
   normalizeWorkspaceRecoveryState(_input: { claimedBy: string }): string[] {
@@ -6395,6 +8035,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
                claim_expires_at = NULL,
                updated_at = ?
            WHERE workspace_id = ?
+             AND scope_kind = 'workspace'
              AND status = 'claimed'
              AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
         )
@@ -6418,6 +8059,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   claimNextRecoveryWork(input: {
     claimedBy: string;
+    scope?: StructuredRecoveryWorkScope;
+    kinds?: readonly StructuredRecoveryWorkKind[];
     leaseMs?: number;
   }): StructuredRecoveryWorkRecord | null {
     const timestamp = this.now();
@@ -6425,26 +8068,40 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       Date.parse(timestamp) + (input.leaseMs ?? 5 * 60_000),
     ).toISOString();
     const claim = this.db.transaction(() => {
+      const scope = input.scope ? recoveryWorkScopeSql(input.scope) : null;
+      const kinds = input.kinds ?? [];
+      const kindFilter =
+        kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(", ")})` : "";
+      const scopeFilter = scope ? "scope_kind = ? AND workspace_id IS ? AND " : "";
       const candidates = this.db
         .query(
           `SELECT * FROM recovery_work
-           WHERE workspace_id = ?
-             AND status = 'pending'
-             AND available_at <= ?
+           WHERE ${scopeFilter}status = 'pending'
+             AND available_at <= ?${kindFilter}
            ORDER BY priority ASC, available_at ASC, ordering_key ASC, ordering_seq ASC, created_at ASC
            LIMIT 50`,
         )
-        .all(this.workspace.id, timestamp) as RecoveryWorkRow[];
+        .all(
+          ...(scope ? [scope.scopeKind, scope.workspaceId] : []),
+          timestamp,
+          ...kinds,
+        ) as RecoveryWorkRow[];
       const active = this.db
         .query(
           `SELECT * FROM recovery_work
-           WHERE workspace_id = ? AND status = 'claimed'`,
+           WHERE status = 'claimed'`,
         )
-        .all(this.workspace.id) as RecoveryWorkRow[];
+        .all() as RecoveryWorkRow[];
       const row = candidates.find((candidate) =>
         isRecoveryOwnerAvailable(
           this.mapRecoveryWork(candidate),
-          active.map((entry) => this.mapRecoveryWork(entry)),
+          active
+            .filter(
+              (entry) =>
+                entry.scope_kind === candidate.scope_kind &&
+                entry.workspace_id === candidate.workspace_id,
+            )
+            .map((entry) => this.mapRecoveryWork(entry)),
         ),
       );
       if (!row) {
@@ -6607,6 +8264,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            )`,
         )
         .run(targetSessionId);
+      this.db
+        .query(`DELETE FROM pi_session_reference WHERE workspace_session_id = ?`)
+        .run(targetSessionId);
       for (const table of [
         "surface_composer_draft",
         "surface_message_queue",
@@ -6660,6 +8320,63 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private now(): string {
     return this.nowFn();
+  }
+
+  private readAppPreferencesRow(): StructuredAppPreferencesRecord {
+    const row = this.db.query(`SELECT * FROM app_preferences WHERE id = 1`).get() as
+      | {
+          appearance: string;
+          external_editor: string | null;
+          artifact_directory: string;
+          approval_mode: string;
+          network_access: number;
+          ambient_resources_json: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) {
+      return {
+        appearance: "system",
+        externalEditor: null,
+        artifactDirectory: defaultArtifactDirectory(),
+        approvalMode: "auto-review",
+        networkAccess: true,
+        ambientResources: {},
+        updatedAt: this.now(),
+        stateRevision: this.readStateRevision(),
+      };
+    }
+    assertStructuredAppPreferenceApprovalMode(row.approval_mode);
+    return {
+      appearance: assertStructuredAppPreferenceAppearance(row.appearance),
+      externalEditor: row.external_editor,
+      artifactDirectory: row.artifact_directory,
+      approvalMode: row.approval_mode,
+      networkAccess: row.network_access !== 0,
+      ambientResources: fromJson<JsonValue>(row.ambient_resources_json) ?? {},
+      updatedAt: row.updated_at,
+      stateRevision: this.readStateRevision(),
+    };
+  }
+
+  private createId(prefix: string): string {
+    if (this.idFactory) {
+      return this.idFactory(prefix);
+    }
+    this.db
+      .query(
+        `INSERT INTO local_id_sequence (prefix, value)
+           VALUES (?, 1)
+           ON CONFLICT(prefix) DO UPDATE SET value = value + 1`,
+      )
+      .run(prefix);
+    const row = this.db
+      .query(`SELECT value FROM local_id_sequence WHERE prefix = ?`)
+      .get(prefix) as { value: number } | null;
+    if (!row) {
+      throw new Error(`Failed to allocate local id for ${prefix}.`);
+    }
+    return `${prefix}-${row.value.toString(36)}`;
   }
 
   private ensureSessionRow(sessionId: string): SessionRow {
@@ -6975,6 +8692,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error(`Structured artifact not found: ${artifactId}`);
     }
     return this.mapArtifact(row);
+  }
+
+  private mustFindArtifactMetadataRecord(artifactId: string): ArtifactMetadataRecord {
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(artifactId) as
+      | ArtifactRow
+      | undefined;
+    if (!row) {
+      throw new Error(`Structured artifact not found: ${artifactId}`);
+    }
+    return this.mapArtifactMetadata(row);
   }
 
   private mustFindSessionWait(sessionId: string): StructuredSessionWaitState {
@@ -7312,7 +9039,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        createId("event"),
+        this.createId("event"),
         input.sessionId,
         at,
         input.kind,
@@ -7526,6 +9253,57 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     );
   }
 
+  private findExtensionDependencyApprovalRow(
+    dependency: ExtensionDependencyApprovalIdentity,
+  ): ExtensionDependencyApprovalRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM extension_dependency_approval WHERE approval_key = ?`)
+        .get(extensionDependencyApprovalIdentityKey(dependency)) as
+        | ExtensionDependencyApprovalRow
+        | undefined) ?? null
+    );
+  }
+
+  private mustFindExtensionDependencyApproval(
+    dependency: ExtensionDependencyApprovalIdentity,
+  ): StructuredExtensionDependencyApprovalRecord {
+    const row = this.findExtensionDependencyApprovalRow(dependency);
+    if (!row) {
+      throw new Error(
+        `Extension dependency approval not found: ${extensionDependencyApprovalIdentityKey(
+          dependency,
+        )}`,
+      );
+    }
+    return this.mapExtensionDependencyApproval(row);
+  }
+
+  private mapExtensionDependencyApproval(
+    row: ExtensionDependencyApprovalRow,
+  ): StructuredExtensionDependencyApprovalRecord {
+    if (row.approved_by !== "user") {
+      throw new Error(`Invalid extension dependency approval actor: ${row.approved_by}`);
+    }
+    const dependency = Exit.match(
+      decodeUnknownExtensionDependencyApprovalIdentityExit(fromJson<unknown>(row.identity_json)),
+      {
+        onFailure: (cause) => {
+          throw Cause.squash(cause);
+        },
+        onSuccess: (value) => value,
+      },
+    );
+    return {
+      dependency,
+      approvedAt: row.approved_at,
+      approvedBy: "user",
+      sourceCommandId: row.source_command_id as CommandId | null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   private mustFindExtensionDependencyReadiness(
     extensionId: ExtensionId,
     requirementId: string,
@@ -7644,6 +9422,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       attachments: fromJson<ComposerAttachment[]>(row.attachments_json) ?? [],
       snippetMentions: fromJson<ComposerSnippetMention[]>(row.snippet_mentions_json) ?? [],
       updatedAt: row.updated_at,
+    };
+  }
+
+  private mapPiSessionReference(row: PiSessionReferenceRow): PiSessionReference {
+    const metadata = fromJson<Record<string, JsonValue>>(row.metadata_json);
+    return {
+      surfacePiSessionId: row.surface_pi_session_id as SurfacePiSessionId,
+      referenceFingerprint: row.reference_fingerprint,
+      adapterKind: row.adapter_kind,
+      adapterVersion: row.adapter_version,
+      storageLocator: row.storage_locator,
+      ...(row.pi_session_id ? { piSessionId: row.pi_session_id } : {}),
+      ...(metadata ? { metadata } : {}),
     };
   }
 
@@ -7902,6 +9693,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       patch: row.patch_text,
       snippetArtifactId: row.snippet_artifact_id,
       typescriptCode: row.typescript_code,
+      context: fromJson<StructuredRuntimeApprovalRequestRecord["context"]>(row.context_json),
       status: row.status,
       decisionReason: row.decision_reason,
       reviewer: row.reviewer,
@@ -7932,6 +9724,36 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       if (!existsSync(row.path)) record.missingFile = true;
     }
     return record;
+  }
+
+  private mapArtifactMetadata(row: ArtifactRow): ArtifactMetadataRecord {
+    if (row.source_command_id === null) {
+      throw new Error(`INVALID_ARGUMENT: artifact metadata ${row.id} has no source command.`);
+    }
+    if (row.path === null) {
+      throw new Error(`INVALID_ARGUMENT: artifact metadata ${row.id} has no stored path.`);
+    }
+    return {
+      artifactId: row.id as ArtifactMetadataRecord["artifactId"],
+      workspaceSessionId: row.session_id as ArtifactMetadataRecord["workspaceSessionId"],
+      sourceCommandId: row.source_command_id as ArtifactMetadataRecord["sourceCommandId"],
+      threadId: row.thread_id as ArtifactMetadataRecord["threadId"],
+      workflowRunId: row.workflow_run_id as ArtifactMetadataRecord["workflowRunId"],
+      workflowTaskAttemptId:
+        row.workflow_task_attempt_id as ArtifactMetadataRecord["workflowTaskAttemptId"],
+      name: row.name,
+      storedPath: row.path as ArtifactMetadataRecord["storedPath"],
+      immutable: row.immutable === 1,
+      mimeType: row.mime_type || inferArtifactMimeType(row.name),
+      byteSize: row.bytes ?? 0,
+      sha256: row.sha256 || EMPTY_SHA256,
+      materializationStatus:
+        row.materialization_status ?? (row.deleted_at === null ? "ready" : "deleted"),
+      createdAt: row.created_at as ArtifactMetadataRecord["createdAt"],
+      updatedAt: (row.updated_at ?? row.created_at) as ArtifactMetadataRecord["updatedAt"],
+      deletedAt: (row.deleted_at ?? null) as ArtifactMetadataRecord["deletedAt"],
+      lastRecoveryWorkId: row.last_recovery_work_id as ArtifactMetadataRecord["lastRecoveryWorkId"],
+    };
   }
 
   private mapSurfaceQueuedMessage(
@@ -7972,7 +9794,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   private mapRecoveryWork(row: RecoveryWorkRow): StructuredRecoveryWorkRecord {
     return {
       id: row.id,
-      workspaceId: row.workspace_id,
+      scope:
+        row.scope_kind === "workspace" && row.workspace_id
+          ? { kind: "workspace", workspaceId: row.workspace_id }
+          : { kind: "app" },
       kind: row.kind,
       status: row.status,
       ownerScope: fromJson<StructuredRecoveryWorkOwnerScope>(row.owner_scope_json) ?? {
@@ -8026,6 +9851,22 @@ function initializeSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS state_revision (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       revision INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS local_id_sequence (
+      prefix TEXT PRIMARY KEY,
+      value INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS app_preferences (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      appearance TEXT NOT NULL DEFAULT 'system',
+      external_editor TEXT,
+      artifact_directory TEXT NOT NULL DEFAULT '~/.config/svvy/artifacts',
+      approval_mode TEXT NOT NULL,
+      network_access INTEGER NOT NULL,
+      ambient_resources_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS provider_auth_status (
@@ -8125,6 +9966,26 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS pi_session_reference (
+      surface_pi_session_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      workspace_session_id TEXT NOT NULL,
+      surface_kind TEXT NOT NULL,
+      actor_kind TEXT NOT NULL,
+      thread_id TEXT,
+      workflow_task_attempt_id TEXT,
+      adapter_kind TEXT NOT NULL,
+      adapter_version TEXT NOT NULL,
+      storage_locator TEXT NOT NULL,
+      pi_session_id TEXT,
+      reference_fingerprint TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_validated_at TEXT,
+      deleted_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS turn (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -8219,6 +10080,9 @@ function initializeSchema(db: Database): void {
     );
 
     CREATE TABLE IF NOT EXISTS runtime_source_fact (
+      scope_kind TEXT NOT NULL,
+      scope_workspace_id TEXT,
+      scope_key TEXT NOT NULL,
       source_kind TEXT NOT NULL,
       source_id TEXT NOT NULL,
       path TEXT NOT NULL,
@@ -8229,7 +10093,36 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
-      PRIMARY KEY(source_kind, source_id)
+      PRIMARY KEY(scope_key, source_kind, source_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS runtime_source_scan_fact (
+      scope_kind TEXT NOT NULL,
+      scope_workspace_id TEXT,
+      scope_key TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      source_fingerprint TEXT NOT NULL,
+      diagnostics_json TEXT NOT NULL,
+      last_observed_path TEXT,
+      last_observation_kind TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(scope_key, domain)
+    );
+
+    CREATE TABLE IF NOT EXISTS runtime_source_root_fingerprint_fact (
+      scope_kind TEXT NOT NULL,
+      scope_workspace_id TEXT,
+      scope_key TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      source_root TEXT NOT NULL,
+      root_fingerprint TEXT NOT NULL,
+      diagnostics_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(source_root)
     );
 
     CREATE TABLE IF NOT EXISTS extension_dependency_readiness (
@@ -8244,6 +10137,16 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY(extension_id, requirement_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_dependency_approval (
+      approval_key TEXT PRIMARY KEY,
+      identity_json TEXT NOT NULL,
+      approved_at TEXT NOT NULL,
+      approved_by TEXT NOT NULL,
+      source_command_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS command (
@@ -8402,6 +10305,7 @@ function initializeSchema(db: Database): void {
       patch_text TEXT,
       snippet_artifact_id TEXT,
       typescript_code TEXT,
+      context_json TEXT,
       status TEXT NOT NULL,
       decision_reason TEXT,
       reviewer TEXT,
@@ -8423,8 +10327,11 @@ function initializeSchema(db: Database): void {
       bytes INTEGER NOT NULL DEFAULT 0,
       sha256 TEXT NOT NULL DEFAULT '${EMPTY_SHA256}',
       immutable INTEGER NOT NULL DEFAULT 0,
+      materialization_status TEXT NOT NULL DEFAULT 'ready',
       created_at TEXT NOT NULL,
-      deleted_at TEXT
+      updated_at TEXT,
+      deleted_at TEXT,
+      last_recovery_work_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS surface_message_queue (
@@ -8470,7 +10377,8 @@ function initializeSchema(db: Database): void {
 
     CREATE TABLE IF NOT EXISTS recovery_work (
       id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
+      scope_kind TEXT NOT NULL,
+      workspace_id TEXT,
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
       owner_scope_json TEXT NOT NULL,
@@ -8489,7 +10397,11 @@ function initializeSchema(db: Database): void {
       last_error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      completed_at TEXT
+      completed_at TEXT,
+      CHECK (
+        (scope_kind = 'app' AND workspace_id IS NULL)
+        OR (scope_kind = 'workspace' AND workspace_id IS NOT NULL)
+      )
     );
 
     CREATE TABLE IF NOT EXISTS event (
@@ -8573,7 +10485,11 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "artifact", "bytes", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "artifact", "sha256", `TEXT NOT NULL DEFAULT '${EMPTY_SHA256}'`);
   ensureColumn(db, "artifact", "immutable", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "artifact", "materialization_status", "TEXT NOT NULL DEFAULT 'ready'");
+  ensureColumn(db, "artifact", "updated_at", "TEXT");
   ensureColumn(db, "artifact", "deleted_at", "TEXT");
+  ensureColumn(db, "artifact", "last_recovery_work_id", "TEXT");
+  db.exec(`UPDATE artifact SET updated_at = created_at WHERE updated_at IS NULL`);
   ensureColumn(db, "command", "arguments_json", "TEXT");
   db.exec(
     `UPDATE thread
@@ -8602,6 +10518,16 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "surface_message_queue", "next_attempt_at", "TEXT");
   ensureColumn(db, "surface_message_queue", "last_error_json", "TEXT");
   ensureColumn(db, "surface_composer_draft", "snippet_mentions_json", "TEXT");
+  ensureColumn(db, "runtime_approval_request", "context_json", "TEXT");
+  ensureColumn(db, "app_preferences", "appearance", "TEXT NOT NULL DEFAULT 'system'");
+  ensureColumn(db, "app_preferences", "external_editor", "TEXT");
+  ensureColumn(
+    db,
+    "app_preferences",
+    "artifact_directory",
+    "TEXT NOT NULL DEFAULT '~/.config/svvy/artifacts'",
+  );
+  ensureColumn(db, "app_preferences", "ambient_resources_json", "TEXT NOT NULL DEFAULT '{}'");
   db.exec(`INSERT INTO state_revision (id, revision) VALUES (1, 0) ON CONFLICT(id) DO NOTHING`);
   db.exec(
     `UPDATE surface_message_queue
@@ -8661,21 +10587,38 @@ function initializeSchema(db: Database): void {
      ON surface_lifecycle (session_id, surface_kind)`,
   );
   db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_pi_session_reference_session
+     ON pi_session_reference (workspace_session_id, surface_kind)
+     WHERE deleted_at IS NULL`,
+  );
+  db.exec(
     `CREATE INDEX IF NOT EXISTS idx_runtime_source_fact_updated
-     ON runtime_source_fact (source_kind, updated_at)`,
+     ON runtime_source_fact (scope_key, source_kind, updated_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_runtime_source_scan_fact_updated
+     ON runtime_source_scan_fact (scope_key, updated_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_runtime_source_root_fingerprint_fact_updated
+     ON runtime_source_root_fingerprint_fact (scope_key, domain, updated_at)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_extension_dependency_readiness_status
      ON extension_dependency_readiness (status, updated_at)`,
   );
   db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_extension_dependency_approval_updated
+     ON extension_dependency_approval (updated_at)`,
+  );
+  db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_work_active_idempotency
-     ON recovery_work (workspace_id, idempotency_key)
+     ON recovery_work (scope_kind, workspace_id, idempotency_key)
      WHERE status NOT IN ('completed', 'failed', 'cancelled')`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_recovery_work_claim
-     ON recovery_work (workspace_id, status, available_at, priority, ordering_key, ordering_seq, created_at)`,
+     ON recovery_work (scope_kind, workspace_id, status, available_at, priority, ordering_key, ordering_seq, created_at)`,
   );
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_run_smithers_run_id
@@ -8685,6 +10628,14 @@ function initializeSchema(db: Database): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_task_attempt_smithers_identity
      ON workflow_task_attempt (smithers_run_id, node_id, iteration, attempt)`,
   );
+}
+
+function applyBusyTimeout(db: Database, busyTimeoutMs: number | undefined): void {
+  if (busyTimeoutMs === undefined) return;
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs <= 0) {
+    throw new Error("SQLite busyTimeoutMs must be a positive safe integer.");
+  }
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
 }
 
 function ensureColumn(
@@ -8705,6 +10656,15 @@ function isRecoveryOwnerAvailable(
   activeClaims: StructuredRecoveryWorkRecord[],
 ): boolean {
   return !activeClaims.some((active) => recoveryOwnerConflicts(candidate, active));
+}
+
+function orderedUniqueGeneratedPackages(
+  packages: readonly GeneratedPackageName[],
+): readonly GeneratedPackageName[] {
+  const requested = new Set(packages);
+  return (["@svvyx/extensions", "@svvyx/workflows"] as const).filter((packageName) =>
+    requested.has(packageName),
+  );
 }
 
 function recoveryOwnerConflicts(
@@ -8791,8 +10751,10 @@ function setSidebarSectionState(
   state.archivedGroupSizePx = next.sizePx;
 }
 
-function createId(prefix: string): string {
-  return `${prefix}-${crypto.randomUUID()}`;
+function createDeterministicClock(): () => string {
+  let offsetMs = 0;
+  const startMs = Date.parse("2026-06-28T00:00:00.000Z");
+  return () => new Date(startMs + offsetMs++).toISOString();
 }
 
 function providerAuthWorkspaceKey(workspaceId: ListProviderStatusesInput["workspaceId"]): string {
@@ -8815,6 +10777,37 @@ function fromJson<T>(value: string | null | undefined): T | null {
 
 function normalizeStringList(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].toSorted();
+}
+
+function structuredExtensionListsIntersect(
+  lists: readonly (readonly string[] | undefined)[],
+  ids: ReadonlySet<ExtensionId>,
+): boolean {
+  if (ids.size === 0) return false;
+  return lists.some((list) => (list ?? []).some((id) => ids.has(id as ExtensionId)));
+}
+
+function structuredDropExtensionIds(
+  values: readonly string[] | undefined,
+  removed: ReadonlySet<ExtensionId>,
+): string[] {
+  if (!values || removed.size === 0) return values ? [...values] : [];
+  return values.filter((id) => !removed.has(id as ExtensionId));
+}
+
+function structuredOrchestratorUsageProfileKey(profileId: string): RuntimeExtensionUsageProfileKey {
+  return `orchestrator:${profileId}`;
+}
+
+function structuredExtensionContextChangedSurface(
+  surfacePiSessionId: string,
+): RuntimeExtensionContextChangedSurface {
+  return {
+    surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+    kind: "extension_context_changed",
+    label: "Extensions changed",
+    reason: "snapshot_loaded",
+  };
 }
 
 function resolveRequestUserInputOptionAnswer(
@@ -8914,6 +10907,18 @@ function resolveArtifactPath(input: {
   return artifactPath;
 }
 
+function validateArtifactStoredPath(artifactDir: string, storedPath: string): string {
+  if (!isAbsolute(storedPath)) {
+    throw new Error("INVALID_ARGUMENT: artifact storedPath must be absolute.");
+  }
+  const artifactRoot = resolve(artifactDir);
+  const resolvedStoredPath = resolve(storedPath);
+  if (!isPathInside(resolvedStoredPath, artifactRoot)) {
+    throw new Error("INVALID_ARGUMENT: artifact storedPath escapes artifact directory.");
+  }
+  return resolvedStoredPath;
+}
+
 function validateArtifactName(name: string): string {
   const normalized = normalize(name);
   if (
@@ -8931,6 +10936,21 @@ function validateArtifactName(name: string): string {
     throw new Error(`INVALID_ARGUMENT: invalid artifact filename ${JSON.stringify(name)}`);
   }
   return name;
+}
+
+function validateArtifactByteSize(byteSize: number): number {
+  if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+    throw new Error("INVALID_ARGUMENT: artifact byteSize must be a non-negative safe integer.");
+  }
+  return byteSize;
+}
+
+function validateArtifactSha256(sha256: string): string {
+  const normalized = sha256.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error("INVALID_ARGUMENT: artifact sha256 must be a lowercase hex SHA-256 digest.");
+  }
+  return normalized;
 }
 
 function hasAsciiControlCharacter(value: string): boolean {
@@ -8978,15 +10998,19 @@ function isStructuredArtifactError(error: unknown): boolean {
   );
 }
 
-function readArtifactFileMetadata(path: string): { bytes: number; sha256: string } {
+function readArtifactFileMetadata(
+  digest: StateDigestHelper | undefined,
+  path: string,
+): { bytes: number; sha256: string } {
   const content = readFileSync(path);
   return {
     bytes: content.byteLength,
-    sha256: createHash("sha256").update(content).digest("hex"),
+    sha256: requireStateDigestHelper(digest).sha256Hex(content),
   };
 }
 
 function digestGeneratedPackageFileList(
+  digest: StateDigestHelper | undefined,
   files:
     | ReadonlyArray<{
         relativePath: string;
@@ -9000,7 +11024,18 @@ function digestGeneratedPackageFileList(
     if (relativeCompare !== 0) return relativeCompare;
     return left.path.localeCompare(right.path);
   });
-  return createHash("sha256").update(JSON.stringify(stableFiles)).digest("hex");
+  return requireStateDigestHelper(digest).sha256Hex(JSON.stringify(stableFiles));
+}
+
+function requireStateDigestHelper(digest: StateDigestHelper | undefined): StateDigestHelper {
+  if (!digest) {
+    throw new StateContractError({
+      operation: "structured-session.digest",
+      reason: "transaction-failed",
+      message: "Structured session digest helper is required.",
+    });
+  }
+  return digest;
 }
 
 function normalizeArtifactMimeType(mimeType?: string): string | undefined {

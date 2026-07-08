@@ -2,15 +2,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeRequestStatePort,
-  StateContractError,
   type AnswerRequestInputInput,
   type AnswerRequestInputResult,
+  type PromptTarget,
   type CreateRuntimeRequestInputInput,
   type RuntimeRequestInputDetailsRecord,
+  type RuntimeRequestInputTimeoutRecord,
   type QueueItemId,
   type RequestInputAnswerId,
   type RequestInputOptionId,
   type RequestInputQuestionId,
+  type FiniteDurationMs,
+  type PositiveDurationMs,
   type RuntimeRequestInputRecord,
   type RuntimeRequestStatePortService,
   type SetRequestInputTimerPausedInput,
@@ -29,6 +32,46 @@ import {
   requestInputInvalidation,
   surfaceInvalidation,
 } from "./state-mutation-result";
+
+function assertSafeInteger(value: number, field: string): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError(`${field} must be a safe integer`);
+  }
+}
+
+function positiveDurationMs(value: number, field: string): PositiveDurationMs {
+  assertSafeInteger(value, field);
+  if (value <= 0) {
+    throw new RangeError(`${field} must be positive`);
+  }
+  return value as PositiveDurationMs;
+}
+
+function finiteDurationMs(value: number, field: string): FiniteDurationMs {
+  assertSafeInteger(value, field);
+  if (value < 0) {
+    throw new RangeError(`${field} must be non-negative`);
+  }
+  return value as FiniteDurationMs;
+}
+
+function mapRuntimeRequestInputTimeoutRecord(
+  timeout: StructuredRequestUserInputRequestRecord["timeout"],
+): RuntimeRequestInputTimeoutRecord | null {
+  return timeout
+    ? {
+        ...timeout,
+        durationMs: positiveDurationMs(timeout.durationMs, "request input timeout durationMs"),
+        remainingMsWhenPaused:
+          timeout.remainingMsWhenPaused === null
+            ? null
+            : finiteDurationMs(
+                timeout.remainingMsWhenPaused,
+                "request input timeout remainingMsWhenPaused",
+              ),
+      }
+    : null;
+}
 
 function mapRuntimeRequestInputRecord(
   request: StructuredRequestUserInputRequestRecord,
@@ -55,7 +98,7 @@ function mapRuntimeRequestInputDetailsRecord(
     toolItemId: request.toolItemId as RuntimeRequestInputDetailsRecord["toolItemId"],
     createdAt: request.createdAt,
     completedAt: request.completedAt,
-    timeout: request.timeout ? { ...request.timeout } : null,
+    timeout: mapRuntimeRequestInputTimeoutRecord(request.timeout),
     questions: request.questions.map((question) => ({
       questionId: question.questionId as RequestInputQuestionId,
       requestId: question.requestId as RuntimeRequestInputDetailsRecord["requestId"],
@@ -79,6 +122,22 @@ function mapRuntimeRequestInputDetailsRecord(
       queuedItemId: (answer.queuedItemId as QueueItemId | null) ?? null,
       createdAt: answer.createdAt,
     })),
+  };
+}
+
+function mapPromptTarget(request: StructuredRequestUserInputRequestRecord): PromptTarget {
+  if (request.threadId) {
+    return {
+      workspaceSessionId: request.sessionId as PromptTarget["workspaceSessionId"],
+      surface: "handler",
+      surfacePiSessionId: request.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
+      threadId: request.threadId as Extract<PromptTarget, { surface: "handler" }>["threadId"],
+    };
+  }
+  return {
+    workspaceSessionId: request.sessionId as PromptTarget["workspaceSessionId"],
+    surface: "orchestrator",
+    surfacePiSessionId: request.surfacePiSessionId as PromptTarget["surfacePiSessionId"],
   };
 }
 
@@ -147,9 +206,7 @@ export function runtimeRequestStatePortFromStructuredSessionState(
         ),
     answerRequestInput: (input: AnswerRequestInputInput) =>
       Effect.gen(function* () {
-        const request = yield* state.getRequestUserInputRequest(input.requestId);
         const answered = yield* state.answerRequestUserInput({
-          sessionId: request.sessionId,
           surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
           questionId: input.questionId,
@@ -169,7 +226,10 @@ export function runtimeRequestStatePortFromStructuredSessionState(
                 : { kind: "nonblocking-recorded", queuedItemId: null },
         };
         return mutationResult(
-          result,
+          {
+            answer: result,
+            target: mapPromptTarget(answered.request),
+          },
           requestInputInvalidations(
             state.workspaceId,
             mapRuntimeRequestInputDetailsRecord(answered.request),
@@ -192,22 +252,13 @@ export function runtimeRequestStatePortFromStructuredSessionState(
       ),
     setRequestInputTimerPaused: (input: SetRequestInputTimerPausedInput) =>
       Effect.gen(function* () {
-        const request = yield* state.getRequestUserInputRequest(input.requestId);
-        if (request.surfacePiSessionId !== input.surfacePiSessionId) {
-          return yield* Effect.fail(
-            new StateContractError({
-              operation: "runtime-request-state.setRequestInputTimerPaused",
-              reason: "conflict",
-              message: "Request user input timer does not belong to the target surface.",
-            }),
-          );
-        }
-        yield* state.setRequestUserInputTimerPaused({
+        const request = yield* state.setRequestUserInputTimerPaused({
+          surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
           paused: input.paused,
         });
         return mutationResult(
-          { requestId: input.requestId },
+          mapRuntimeRequestInputDetailsRecord(request),
           requestInputInvalidations(
             state.workspaceId,
             mapRuntimeRequestInputDetailsRecord(request),

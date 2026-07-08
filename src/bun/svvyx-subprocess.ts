@@ -43,7 +43,6 @@ type SvvyxSubprocessContext = {
   workflowModelCatalog?: readonly SvvyxWorkflowsModelChoice[] | null;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
-  workflowsWorkspaceCwds?: readonly string[] | null;
   workspaceCwd?: string;
 };
 
@@ -133,7 +132,6 @@ async function main(): Promise<number> {
           : undefined,
         sourceRoot: context.workflowsSourceRoot,
         workspaceCwd: context.workspaceCwd,
-        workspaceCwds: context.workflowsWorkspaceCwds ?? undefined,
       });
       output = result.output;
       commandFacts = result.commandFacts;
@@ -386,7 +384,6 @@ function pickWorkflowLogFacts(facts: Record<string, unknown>): Record<string, un
     "workflowBuildOk",
     "workflowDiagnosticCount",
     "workflowExportCount",
-    "workflowLinkedWorkspaceCount",
     "workflowSavedExportName",
     "workflowSavedKind",
     "workflowSourcePath",

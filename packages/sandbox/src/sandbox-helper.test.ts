@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type FileSystemSandboxPolicy,
   buildManagedWorkspaceWriteFileSystemPolicy,
   unrestrictedFileSystemPolicy,
 } from "./filesystem-sandbox-policy";
@@ -82,6 +83,50 @@ describe("sandbox helper", () => {
     expect(checkAccess(helper, policy, cwd, "write", join(allowedMetadataChild, "note")).ok).toBe(
       true,
     );
+  });
+
+  it("passes exact-path recursive flags to the packaged helper seam", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "svvy-helper-exact-"));
+    const helper = resolveTestSandboxHelperPath();
+    const exactFile = join(cwd, "generated", "manifest.json");
+    mkdirSync(join(cwd, "generated"), { recursive: true });
+    const policy: FileSystemSandboxPolicy = {
+      kind: "restricted",
+      entries: [
+        { path: cwd, access: "read" },
+        { path: exactFile, access: "write", recursive: false },
+      ],
+    };
+    const args = buildSandboxHelperArgs({
+      command: ["/usr/bin/true"],
+      cwd,
+      fileSystemPolicy: policy,
+      networkAccess: false,
+    });
+
+    expect(args).toContain("false");
+    expect(checkAccess(helper, policy, cwd, "write", exactFile).ok).toBe(true);
+    expect(checkAccess(helper, policy, cwd, "write", join(exactFile, "child")).ok).toBe(false);
+    expect(checkAccess(helper, policy, cwd, "write", join(cwd, "generated", "other.json")).ok).toBe(
+      false,
+    );
+  });
+
+  it("keeps exact read-only exclusions from blocking descendants in helper checks", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "svvy-helper-exact-none-"));
+    const helper = resolveTestSandboxHelperPath();
+    const blockedFile = join(cwd, "src", "blocked.ts");
+    mkdirSync(join(cwd, "src"), { recursive: true });
+    const policy: FileSystemSandboxPolicy = {
+      kind: "restricted",
+      entries: [
+        { path: cwd, access: "write" },
+        { path: blockedFile, access: "none", recursive: false },
+      ],
+    };
+
+    expect(checkAccess(helper, policy, cwd, "write", blockedFile).ok).toBe(false);
+    expect(checkAccess(helper, policy, cwd, "write", join(blockedFile, "child")).ok).toBe(true);
   });
 
   it("denies protected metadata writes through raw symlink paths", () => {
@@ -217,7 +262,7 @@ describe("sandbox helper", () => {
 
 function checkAccess(
   helper: string,
-  fileSystemPolicy: ReturnType<typeof buildManagedWorkspaceWriteFileSystemPolicy>,
+  fileSystemPolicy: FileSystemSandboxPolicy,
   cwd: string,
   access: "read" | "write",
   path: string,
