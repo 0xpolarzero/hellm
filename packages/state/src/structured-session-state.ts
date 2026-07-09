@@ -90,6 +90,29 @@ import {
   type RuntimeTurnDecision,
   type StateRevision,
 } from "@svvy/core";
+import type {
+  CloseWorkspacePaneCommandInput,
+  CreateManagedSnippetCommandInput,
+  DeleteManagedSnippetCommandInput,
+  DeleteOrchestratorProfileCommandInput,
+  PromoteProfileExtensionDefaultCommandInput,
+  RemoveExtensionEnvOverrideCommandInput,
+  ReorderOrchestratorProfilesCommandInput,
+  ResetActorExtensionDefaultsCommandInput,
+  SaveWorkspaceLayoutSnapshotCommandInput,
+  SelectWorkspaceLayoutSlotCommandInput,
+  SelectWorkspaceTabCommandInput,
+  SetExternalInstructionActorUsageCommandInput,
+  SetExtensionEnvOverrideCommandInput,
+  SetProfileExtensionUsageCommandInput,
+  SetSnippetEnabledCommandInput,
+  SetWorkspaceTabsCommandInput,
+  UpdateManagedSnippetCommandInput,
+  UpdateOrchestratorProfileCommandInput,
+  UpdateThreadHandlerProfileCommandInput,
+  UpdateWorkspacePaneCommandInput,
+  WorkspaceLayoutSlotId,
+} from "./state-command-schemas";
 
 const DEFAULT_SIDEBAR_SECTION_SIZES = {
   pinned: 150,
@@ -292,6 +315,71 @@ export interface StructuredAppPreferencesPatch {
   networkAccess?: boolean;
   ambientResources?: JsonValue;
   updatedAt?: string;
+}
+
+export interface StructuredMutationCommitRecord {
+  updatedAt: string;
+  stateRevision: StateRevision;
+}
+
+export interface StructuredWorkspaceTabRecord {
+  workspaceTabId: string;
+  workspaceId: string;
+  cwd: string;
+  openedAt: string;
+  activeLayoutId: WorkspaceLayoutSlotId;
+}
+
+export interface StructuredWorkspaceChromeLayoutRecord {
+  activeWorkspaceTabId: string | null;
+  tabs: StructuredWorkspaceTabRecord[];
+  knownWorkspaces: StructuredWorkspaceTabRecord[];
+  layouts: StructuredWorkspaceLayoutSlotRecord[];
+  stateRevision: StateRevision;
+}
+
+export interface StructuredWorkspaceLayoutSlotRecord {
+  workspaceId: string;
+  layoutId: WorkspaceLayoutSlotId;
+  initialized: boolean;
+  snapshotJson: JsonValue | null;
+  focusedPaneId: string | null;
+  panelMetadata: JsonValue[];
+  updatedAt: string;
+}
+
+export interface StructuredAgentProfileRecord {
+  profileId: string;
+  actor: "orchestrator" | "handler";
+  name: string;
+  providerId: string;
+  modelId: string;
+  reasoning: JsonValue | null;
+  followComposer: boolean;
+  extensionUsage: Record<string, ExtensionUsageState>;
+  extensionOrder: string[];
+  position: number;
+  updatedAt: string;
+}
+
+export interface StructuredExtensionEnvOverrideRecord {
+  extensionId: string;
+  envName: string;
+  value: string;
+  updatedAt: string;
+}
+
+export interface StructuredSnippetRecord {
+  id: string;
+  workspaceId: string;
+  source: "svvy" | "claude" | "pi" | "host";
+  title: string;
+  body: string;
+  metadata: JsonValue;
+  enabled: boolean;
+  path: string | null;
+  createdAt: string;
+  updatedAt: string | null;
 }
 
 export interface StructuredPiSessionRecord {
@@ -925,6 +1013,64 @@ export interface StructuredSessionStateStore {
   hasAppPreferencesRow(): boolean;
   readAppPreferences(): StructuredAppPreferencesRecord;
   updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord;
+  hasWorkspaceChromeLayoutRows(): boolean;
+  readWorkspaceChromeLayout(input?: {
+    workspaceId?: string;
+    layoutId?: WorkspaceLayoutSlotId;
+  }): StructuredWorkspaceChromeLayoutRecord;
+  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredMutationCommitRecord;
+  selectWorkspaceTab(input: SelectWorkspaceTabCommandInput): StructuredMutationCommitRecord;
+  selectWorkspaceLayoutSlot(
+    input: SelectWorkspaceLayoutSlotCommandInput,
+  ): StructuredMutationCommitRecord;
+  saveWorkspaceLayoutSnapshot(
+    input: SaveWorkspaceLayoutSnapshotCommandInput,
+  ): StructuredMutationCommitRecord;
+  updateWorkspacePane(input: UpdateWorkspacePaneCommandInput): StructuredMutationCommitRecord;
+  closeWorkspacePane(input: CloseWorkspacePaneCommandInput): StructuredMutationCommitRecord;
+  hasAgentProfileRows(): boolean;
+  listAgentProfiles(): StructuredAgentProfileRecord[];
+  updateOrchestratorProfile(
+    input: UpdateOrchestratorProfileCommandInput,
+  ): StructuredMutationCommitRecord;
+  updateThreadHandlerProfile(
+    input: UpdateThreadHandlerProfileCommandInput,
+  ): StructuredMutationCommitRecord;
+  deleteOrchestratorProfile(
+    input: DeleteOrchestratorProfileCommandInput,
+  ): StructuredMutationCommitRecord;
+  reorderOrchestratorProfiles(
+    input: ReorderOrchestratorProfilesCommandInput,
+  ): StructuredMutationCommitRecord;
+  setProfileExtensionUsage(
+    input: SetProfileExtensionUsageCommandInput,
+  ): StructuredMutationCommitRecord;
+  promoteProfileExtensionDefault(
+    input: PromoteProfileExtensionDefaultCommandInput,
+  ): StructuredMutationCommitRecord;
+  resetActorExtensionDefaults(input: {
+    actor: ResetActorExtensionDefaultsCommandInput["actor"];
+    reset: ResetActorExtensionDefaultsCommandInput["reset"];
+  }): StructuredMutationCommitRecord;
+  setExternalInstructionActorUsage(
+    input: SetExternalInstructionActorUsageCommandInput,
+  ): StructuredMutationCommitRecord;
+  hasExtensionEnvOverrideRows(): boolean;
+  listExtensionEnvOverrides(): StructuredExtensionEnvOverrideRecord[];
+  setExtensionEnvOverride(
+    input: SetExtensionEnvOverrideCommandInput,
+  ): StructuredMutationCommitRecord;
+  removeExtensionEnvOverride(
+    input: RemoveExtensionEnvOverrideCommandInput,
+  ): StructuredMutationCommitRecord;
+  hasSnippetRows(workspaceId?: string): boolean;
+  listSnippets(input?: { workspaceId?: string }): StructuredSnippetRecord[];
+  createManagedSnippet(input: CreateManagedSnippetCommandInput): StructuredSnippetRecord & {
+    stateRevision: StateRevision;
+  };
+  updateManagedSnippet(input: UpdateManagedSnippetCommandInput): StructuredMutationCommitRecord;
+  deleteManagedSnippet(input: DeleteManagedSnippetCommandInput): StructuredMutationCommitRecord;
+  setSnippetEnabled(input: SetSnippetEnabledCommandInput): StructuredMutationCommitRecord;
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult;
   acquireDefaultWorkspace(input: AcquireDefaultWorkspaceInput): AcquireWorkspaceResult;
   releaseWorkspace(input: ReleaseWorkspaceInput): ReleaseWorkspaceResult;
@@ -1838,6 +1984,68 @@ type WorkspaceSidebarStateRow = {
   updated_at: string;
 };
 
+type WorkspaceChromeStateRow = {
+  id: number;
+  active_workspace_tab_id: string | null;
+  updated_at: string;
+};
+
+type WorkspaceChromeTabRow = {
+  workspace_tab_id: string;
+  workspace_id: string;
+  cwd: string;
+  opened_at: string;
+  active_layout_id: WorkspaceLayoutSlotId;
+  tab_kind: "open" | "known";
+  position: number;
+  updated_at: string;
+};
+
+type WorkspaceLayoutSlotRow = {
+  workspace_id: string;
+  layout_id: WorkspaceLayoutSlotId;
+  initialized: number;
+  snapshot_json: string | null;
+  focused_pane_id: string | null;
+  panel_metadata_json: string;
+  updated_at: string;
+};
+
+type AgentProfileRow = {
+  profile_id: string;
+  actor: "orchestrator" | "handler";
+  name: string;
+  provider_id: string;
+  model_id: string;
+  reasoning_json: string | null;
+  follow_composer: number;
+  extension_usage_json: string;
+  extension_order_json: string;
+  position: number;
+  updated_at: string;
+};
+
+type ExtensionEnvOverrideRow = {
+  extension_id: string;
+  env_name: string;
+  value: string;
+  updated_at: string;
+};
+
+type SnippetRow = {
+  snippet_id: string;
+  workspace_id: string;
+  source: "svvy" | "claude" | "pi" | "host";
+  title: string;
+  body: string;
+  metadata_json: string;
+  enabled: number;
+  path: string | null;
+  created_at: string;
+  updated_at: string | null;
+  deleted_at: string | null;
+};
+
 type ComposerDraftRow = {
   session_id: string;
   surface_pi_session_id: string;
@@ -2396,6 +2604,481 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       updatedAt: nextUpdatedAt,
       stateRevision,
     };
+  }
+
+  hasWorkspaceChromeLayoutRows(): boolean {
+    const chrome = this.db
+      .query(`SELECT 1 AS found FROM workspace_chrome_state WHERE id = 1`)
+      .get() as { found: number } | undefined;
+    if (chrome) return true;
+    const tab = this.db.query(`SELECT 1 AS found FROM workspace_chrome_tab LIMIT 1`).get() as
+      | { found: number }
+      | undefined;
+    if (tab) return true;
+    const layout = this.db.query(`SELECT 1 AS found FROM workspace_layout_slot LIMIT 1`).get() as
+      | { found: number }
+      | undefined;
+    return Boolean(layout);
+  }
+
+  readWorkspaceChromeLayout(
+    input: {
+      workspaceId?: string;
+      layoutId?: WorkspaceLayoutSlotId;
+    } = {},
+  ): StructuredWorkspaceChromeLayoutRecord {
+    const state = this.db.query(`SELECT * FROM workspace_chrome_state WHERE id = 1`).get() as
+      | WorkspaceChromeStateRow
+      | undefined;
+    const tabs = this.queryWorkspaceChromeTabs("open");
+    const knownWorkspaces = this.queryWorkspaceChromeTabs("known");
+    const rows = this.db
+      .query(
+        `SELECT * FROM workspace_layout_slot
+         WHERE (?1 IS NULL OR workspace_id = ?1)
+           AND (?2 IS NULL OR layout_id = ?2)
+         ORDER BY workspace_id ASC, layout_id ASC`,
+      )
+      .all(input.workspaceId ?? null, input.layoutId ?? null) as WorkspaceLayoutSlotRow[];
+    const existingKeys = new Set(rows.map((row) => `${row.workspace_id}:${row.layout_id}`));
+    const workspaceIds = new Set<string>();
+    if (input.workspaceId) workspaceIds.add(input.workspaceId);
+    for (const tab of [...tabs, ...knownWorkspaces]) workspaceIds.add(tab.workspaceId);
+    if (workspaceIds.size === 0) workspaceIds.add(this.workspace.id);
+    const layoutIds: WorkspaceLayoutSlotId[] = input.layoutId ? [input.layoutId] : ["A", "B", "C"];
+    const defaultLayouts = [...workspaceIds].flatMap((workspaceId) =>
+      layoutIds
+        .filter((layoutId) => !existingKeys.has(`${workspaceId}:${layoutId}`))
+        .map((layoutId) => this.defaultWorkspaceLayoutSlot(workspaceId, layoutId)),
+    );
+    return {
+      activeWorkspaceTabId: state?.active_workspace_tab_id ?? null,
+      tabs,
+      knownWorkspaces,
+      layouts: [...rows.map((row) => this.mapWorkspaceLayoutSlot(row)), ...defaultLayouts],
+      stateRevision: this.readStateRevision(),
+    };
+  }
+
+  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db.query(`DELETE FROM workspace_chrome_tab`).run();
+      this.insertWorkspaceChromeTabs(input.tabs, "open", updatedAt);
+      this.insertWorkspaceChromeTabs(input.knownWorkspaces, "known", updatedAt);
+      this.db
+        .query(
+          `INSERT INTO workspace_chrome_state (id, active_workspace_tab_id, updated_at)
+           VALUES (1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             active_workspace_tab_id = excluded.active_workspace_tab_id,
+             updated_at = excluded.updated_at`,
+        )
+        .run(input.activeWorkspaceTabId, updatedAt);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  selectWorkspaceTab(input: SelectWorkspaceTabCommandInput): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO workspace_chrome_state (id, active_workspace_tab_id, updated_at)
+           VALUES (1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             active_workspace_tab_id = excluded.active_workspace_tab_id,
+             updated_at = excluded.updated_at`,
+        )
+        .run(input.workspaceTabId, updatedAt);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  selectWorkspaceLayoutSlot(
+    input: SelectWorkspaceLayoutSlotCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE workspace_chrome_tab
+           SET active_layout_id = ?, updated_at = ?
+           WHERE workspace_tab_id = ?`,
+        )
+        .run(input.layoutId, updatedAt, input.workspaceTabId);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  saveWorkspaceLayoutSnapshot(
+    input: SaveWorkspaceLayoutSnapshotCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.upsertWorkspaceLayoutSlot({
+        workspaceId: input.workspaceId,
+        layoutId: input.layoutId,
+        initialized: true,
+        snapshotJson: input.snapshotJson as JsonValue,
+        focusedPaneId: input.focusedPaneId ?? null,
+        panelMetadata: input.panelMetadata as unknown as JsonValue[],
+        updatedAt,
+      });
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  updateWorkspacePane(input: UpdateWorkspacePaneCommandInput): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      const current = this.findWorkspaceLayoutSlot(input.workspaceId, input.layoutId);
+      const currentMetadata = current
+        ? this.mapWorkspaceLayoutSlot(current).panelMetadata
+        : ([] as JsonValue[]);
+      const nextMetadata = currentMetadata.map((pane) => {
+        if (!pane || typeof pane !== "object" || Array.isArray(pane)) return pane;
+        const record = pane as Record<string, unknown>;
+        if (record.paneId !== input.paneId) return pane;
+        return { ...record, ...input.patch } as JsonValue;
+      });
+      const hasPane = nextMetadata.some(
+        (pane) =>
+          pane &&
+          typeof pane === "object" &&
+          !Array.isArray(pane) &&
+          (pane as Record<string, unknown>).paneId === input.paneId,
+      );
+      const panelMetadata = hasPane
+        ? nextMetadata
+        : [...nextMetadata, { paneId: input.paneId, kind: "static", target: input.patch }];
+      this.upsertWorkspaceLayoutSlot({
+        workspaceId: input.workspaceId,
+        layoutId: input.layoutId,
+        initialized: true,
+        snapshotJson: current ? fromJson<JsonValue>(current.snapshot_json) : null,
+        focusedPaneId: current?.focused_pane_id ?? null,
+        panelMetadata,
+        updatedAt,
+      });
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  closeWorkspacePane(input: CloseWorkspacePaneCommandInput): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      const current = this.findWorkspaceLayoutSlot(input.workspaceId, input.layoutId);
+      const panelMetadata = current
+        ? this.mapWorkspaceLayoutSlot(current).panelMetadata.filter(
+            (pane) =>
+              !(
+                pane &&
+                typeof pane === "object" &&
+                !Array.isArray(pane) &&
+                (pane as Record<string, unknown>).paneId === input.paneId
+              ),
+          )
+        : [];
+      this.upsertWorkspaceLayoutSlot({
+        workspaceId: input.workspaceId,
+        layoutId: input.layoutId,
+        initialized: true,
+        snapshotJson: current ? fromJson<JsonValue>(current.snapshot_json) : null,
+        focusedPaneId:
+          current?.focused_pane_id === input.paneId ? null : (current?.focused_pane_id ?? null),
+        panelMetadata,
+        updatedAt,
+      });
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  hasAgentProfileRows(): boolean {
+    const row = this.db.query(`SELECT 1 AS found FROM agent_profile LIMIT 1`).get() as
+      | { found: number }
+      | undefined;
+    return Boolean(row);
+  }
+
+  listAgentProfiles(): StructuredAgentProfileRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM agent_profile ORDER BY actor ASC, position ASC, profile_id ASC`)
+        .all() as AgentProfileRow[]
+    ).map((row) => this.mapAgentProfile(row));
+  }
+
+  updateOrchestratorProfile(
+    input: UpdateOrchestratorProfileCommandInput,
+  ): StructuredMutationCommitRecord {
+    return this.upsertAgentProfileCommand(
+      "orchestrator",
+      input.profile,
+      input.profile.followComposer,
+    );
+  }
+
+  updateThreadHandlerProfile(
+    input: UpdateThreadHandlerProfileCommandInput,
+  ): StructuredMutationCommitRecord {
+    return this.upsertAgentProfileCommand("handler", input.profile, false);
+  }
+
+  deleteOrchestratorProfile(
+    input: DeleteOrchestratorProfileCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(`DELETE FROM agent_profile WHERE actor = 'orchestrator' AND profile_id = ?`)
+        .run(input.profileId);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  reorderOrchestratorProfiles(
+    input: ReorderOrchestratorProfilesCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      input.profileIds.forEach((profileId, index) => {
+        this.db
+          .query(
+            `UPDATE agent_profile
+             SET position = ?, updated_at = ?
+             WHERE actor = 'orchestrator' AND profile_id = ?`,
+          )
+          .run(index, updatedAt, profileId);
+      });
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  setProfileExtensionUsage(
+    input: SetProfileExtensionUsageCommandInput,
+  ): StructuredMutationCommitRecord {
+    return this.updateAgentProfileUsage(
+      input.actor === "handler" ? "handler" : "orchestrator",
+      input.profileId,
+      {
+        [input.extensionId]: input.usage,
+      },
+    );
+  }
+
+  promoteProfileExtensionDefault(
+    input: PromoteProfileExtensionDefaultCommandInput,
+  ): StructuredMutationCommitRecord {
+    return this.updateAgentProfileUsage("orchestrator", input.profileId, {
+      [input.extensionId]: input.usage,
+    });
+  }
+
+  resetActorExtensionDefaults(input: {
+    actor: ResetActorExtensionDefaultsCommandInput["actor"];
+    reset: ResetActorExtensionDefaultsCommandInput["reset"];
+  }): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      const actor = input.actor === "workflow-task" ? "orchestrator" : input.actor;
+      if (input.reset === "usage" || input.reset === "usage-and-order") {
+        this.db
+          .query(
+            `UPDATE agent_profile SET extension_usage_json = '{}', updated_at = ? WHERE actor = ?`,
+          )
+          .run(updatedAt, actor);
+      }
+      if (input.reset === "order" || input.reset === "usage-and-order") {
+        this.db
+          .query(
+            `UPDATE agent_profile SET extension_order_json = '[]', updated_at = ? WHERE actor = ?`,
+          )
+          .run(updatedAt, actor);
+      }
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  setExternalInstructionActorUsage(
+    input: SetExternalInstructionActorUsageCommandInput,
+  ): StructuredMutationCommitRecord {
+    const usage = input.usage === "disabled" ? "unavailable" : input.usage;
+    return this.updateAgentProfileUsage(
+      input.actor === "handler" ? "handler" : "orchestrator",
+      input.profileId,
+      {
+        [input.sourceId]: usage,
+      },
+    );
+  }
+
+  hasExtensionEnvOverrideRows(): boolean {
+    const row = this.db.query(`SELECT 1 AS found FROM extension_env_override LIMIT 1`).get() as
+      | { found: number }
+      | undefined;
+    return Boolean(row);
+  }
+
+  listExtensionEnvOverrides(): StructuredExtensionEnvOverrideRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM extension_env_override ORDER BY extension_id ASC, env_name ASC`)
+        .all() as ExtensionEnvOverrideRow[]
+    ).map((row) => ({
+      extensionId: row.extension_id,
+      envName: row.env_name,
+      value: row.value,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  setExtensionEnvOverride(
+    input: SetExtensionEnvOverrideCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO extension_env_override (extension_id, env_name, value, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(extension_id, env_name) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at`,
+        )
+        .run(input.extensionId, input.envName, input.value, updatedAt);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  removeExtensionEnvOverride(
+    input: RemoveExtensionEnvOverrideCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(`DELETE FROM extension_env_override WHERE extension_id = ? AND env_name = ?`)
+        .run(input.extensionId, input.envName);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  hasSnippetRows(workspaceId?: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1 AS found FROM snippet
+         WHERE deleted_at IS NULL AND (?1 IS NULL OR workspace_id = ?1)
+         LIMIT 1`,
+      )
+      .get(workspaceId ?? null) as { found: number } | undefined;
+    return Boolean(row);
+  }
+
+  listSnippets(input: { workspaceId?: string } = {}): StructuredSnippetRecord[] {
+    return (
+      this.db
+        .query(
+          `SELECT * FROM snippet
+         WHERE deleted_at IS NULL AND (?1 IS NULL OR workspace_id = ?1)
+         ORDER BY source ASC, title ASC, snippet_id ASC`,
+        )
+        .all(input.workspaceId ?? null) as SnippetRow[]
+    ).map((row) => this.mapSnippet(row));
+  }
+
+  createManagedSnippet(input: CreateManagedSnippetCommandInput): StructuredSnippetRecord & {
+    stateRevision: StateRevision;
+  } {
+    const now = this.now();
+    const snippetId = this.createId("snippet");
+    const workspaceId = input.workspaceId ?? this.workspace.id;
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO snippet (
+             snippet_id, workspace_id, source, title, body, metadata_json,
+             enabled, path, created_at, updated_at, deleted_at
+           ) VALUES (?, ?, 'svvy', ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+        )
+        .run(
+          snippetId,
+          workspaceId,
+          input.title.trim(),
+          input.body,
+          JSON.stringify(input.metadata ?? {}),
+          input.enabled ? 1 : 0,
+          now,
+          now,
+        );
+      return this.bumpStateRevision();
+    })();
+    return { ...this.mustFindSnippet(snippetId), stateRevision };
+  }
+
+  updateManagedSnippet(input: UpdateManagedSnippetCommandInput): StructuredMutationCommitRecord {
+    const current = this.mustFindSnippet(input.snippetId);
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE snippet
+           SET title = ?, body = ?, metadata_json = ?, enabled = ?, updated_at = ?
+           WHERE snippet_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
+        )
+        .run(
+          input.patch.title ?? current.title,
+          input.patch.body ?? current.body,
+          JSON.stringify(input.patch.metadata ?? current.metadata ?? {}),
+          (input.patch.enabled ?? current.enabled) ? 1 : 0,
+          updatedAt,
+          input.snippetId,
+        );
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  deleteManagedSnippet(input: DeleteManagedSnippetCommandInput): StructuredMutationCommitRecord {
+    this.mustFindSnippet(input.snippetId);
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE snippet
+           SET deleted_at = ?, updated_at = ?
+           WHERE snippet_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
+        )
+        .run(updatedAt, updatedAt, input.snippetId);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  setSnippetEnabled(input: SetSnippetEnabledCommandInput): StructuredMutationCommitRecord {
+    this.mustFindSnippet(input.snippetId);
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE snippet
+           SET enabled = ?, updated_at = ?
+           WHERE snippet_id = ? AND deleted_at IS NULL`,
+        )
+        .run(input.enabled ? 1 : 0, updatedAt, input.snippetId);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
   }
 
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult {
@@ -8900,6 +9583,243 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private queryWorkspaceChromeTabs(
+    tabKind: WorkspaceChromeTabRow["tab_kind"],
+  ): StructuredWorkspaceTabRecord[] {
+    return (
+      this.db
+        .query(
+          `SELECT * FROM workspace_chrome_tab
+         WHERE tab_kind = ?
+         ORDER BY position ASC, workspace_tab_id ASC`,
+        )
+        .all(tabKind) as WorkspaceChromeTabRow[]
+    ).map((row) => ({
+      workspaceTabId: row.workspace_tab_id,
+      workspaceId: row.workspace_id,
+      cwd: row.cwd,
+      openedAt: row.opened_at,
+      activeLayoutId: row.active_layout_id,
+    }));
+  }
+
+  private insertWorkspaceChromeTabs(
+    tabs: readonly StructuredWorkspaceTabRecord[],
+    tabKind: WorkspaceChromeTabRow["tab_kind"],
+    updatedAt: string,
+  ): void {
+    tabs.forEach((tab, index) => {
+      this.db
+        .query(
+          `INSERT INTO workspace_chrome_tab (
+             workspace_tab_id, workspace_id, cwd, opened_at, active_layout_id,
+             tab_kind, position, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          tab.workspaceTabId,
+          tab.workspaceId,
+          tab.cwd,
+          tab.openedAt,
+          tab.activeLayoutId,
+          tabKind,
+          index,
+          updatedAt,
+        );
+    });
+  }
+
+  private defaultWorkspaceLayoutSlot(
+    workspaceId: string,
+    layoutId: WorkspaceLayoutSlotId,
+  ): StructuredWorkspaceLayoutSlotRecord {
+    return {
+      workspaceId,
+      layoutId,
+      initialized: false,
+      snapshotJson: null,
+      focusedPaneId: null,
+      panelMetadata: [],
+      updatedAt: this.now(),
+    };
+  }
+
+  private findWorkspaceLayoutSlot(
+    workspaceId: string,
+    layoutId: WorkspaceLayoutSlotId,
+  ): WorkspaceLayoutSlotRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM workspace_layout_slot WHERE workspace_id = ? AND layout_id = ?`)
+        .get(workspaceId, layoutId) as WorkspaceLayoutSlotRow | undefined) ?? null
+    );
+  }
+
+  private upsertWorkspaceLayoutSlot(input: StructuredWorkspaceLayoutSlotRecord): void {
+    this.db
+      .query(
+        `INSERT INTO workspace_layout_slot (
+           workspace_id, layout_id, initialized, snapshot_json, focused_pane_id,
+           panel_metadata_json, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, layout_id) DO UPDATE SET
+           initialized = excluded.initialized,
+           snapshot_json = excluded.snapshot_json,
+           focused_pane_id = excluded.focused_pane_id,
+           panel_metadata_json = excluded.panel_metadata_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.workspaceId,
+        input.layoutId,
+        input.initialized ? 1 : 0,
+        input.snapshotJson === null ? null : JSON.stringify(input.snapshotJson),
+        input.focusedPaneId,
+        JSON.stringify(input.panelMetadata),
+        input.updatedAt,
+      );
+  }
+
+  private mapWorkspaceLayoutSlot(row: WorkspaceLayoutSlotRow): StructuredWorkspaceLayoutSlotRecord {
+    return {
+      workspaceId: row.workspace_id,
+      layoutId: row.layout_id,
+      initialized: row.initialized !== 0,
+      snapshotJson: fromJson<JsonValue>(row.snapshot_json),
+      focusedPaneId: row.focused_pane_id,
+      panelMetadata: fromJson<JsonValue[]>(row.panel_metadata_json) ?? [],
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private upsertAgentProfileCommand(
+    actor: StructuredAgentProfileRecord["actor"],
+    profile:
+      | UpdateOrchestratorProfileCommandInput["profile"]
+      | UpdateThreadHandlerProfileCommandInput["profile"],
+    followComposer: boolean,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const position =
+      (
+        this.db
+          .query(`SELECT MAX(position) AS position FROM agent_profile WHERE actor = ?`)
+          .get(actor) as { position: number | null } | undefined
+      )?.position ?? -1;
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO agent_profile (
+             profile_id, actor, name, provider_id, model_id, reasoning_json,
+             follow_composer, extension_usage_json, extension_order_json, position, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(profile_id, actor) DO UPDATE SET
+             name = excluded.name,
+             provider_id = excluded.provider_id,
+             model_id = excluded.model_id,
+             reasoning_json = excluded.reasoning_json,
+             follow_composer = excluded.follow_composer,
+             extension_usage_json = excluded.extension_usage_json,
+             extension_order_json = excluded.extension_order_json,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          profile.profileId,
+          actor,
+          profile.name,
+          profile.providerId,
+          profile.modelId,
+          profile.reasoning === undefined ? null : JSON.stringify(profile.reasoning),
+          followComposer ? 1 : 0,
+          JSON.stringify(profile.extensionUsage),
+          JSON.stringify(profile.extensionOrder ?? []),
+          position + 1,
+          updatedAt,
+        );
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  private updateAgentProfileUsage(
+    actor: StructuredAgentProfileRecord["actor"],
+    profileId: string,
+    patch: Record<string, ExtensionUsageState>,
+  ): StructuredMutationCommitRecord {
+    const row = this.findAgentProfileRow(actor, profileId);
+    const updatedAt = this.now();
+    const currentUsage = row
+      ? (fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {})
+      : {};
+    const stateRevision = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO agent_profile (
+             profile_id, actor, name, provider_id, model_id, reasoning_json,
+             follow_composer, extension_usage_json, extension_order_json, position, updated_at
+           ) VALUES (?, ?, ?, '', '', NULL, 0, ?, '[]', 0, ?)
+           ON CONFLICT(profile_id, actor) DO UPDATE SET
+             extension_usage_json = excluded.extension_usage_json,
+             updated_at = excluded.updated_at`,
+        )
+        .run(profileId, actor, profileId, JSON.stringify({ ...currentUsage, ...patch }), updatedAt);
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  private findAgentProfileRow(
+    actor: StructuredAgentProfileRecord["actor"],
+    profileId: string,
+  ): AgentProfileRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM agent_profile WHERE actor = ? AND profile_id = ?`)
+        .get(actor, profileId) as AgentProfileRow | undefined) ?? null
+    );
+  }
+
+  private mapAgentProfile(row: AgentProfileRow): StructuredAgentProfileRecord {
+    return {
+      profileId: row.profile_id,
+      actor: row.actor,
+      name: row.name,
+      providerId: row.provider_id,
+      modelId: row.model_id,
+      reasoning: fromJson<JsonValue>(row.reasoning_json),
+      followComposer: row.follow_composer !== 0,
+      extensionUsage: fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {},
+      extensionOrder: fromJson<string[]>(row.extension_order_json) ?? [],
+      position: row.position,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mustFindSnippet(snippetId: string): StructuredSnippetRecord {
+    const row = this.db
+      .query(`SELECT * FROM snippet WHERE snippet_id = ? AND deleted_at IS NULL`)
+      .get(snippetId) as SnippetRow | undefined;
+    if (!row) {
+      throw new Error(`Snippet ${snippetId} was not found.`);
+    }
+    return this.mapSnippet(row);
+  }
+
+  private mapSnippet(row: SnippetRow): StructuredSnippetRecord {
+    return {
+      id: row.snippet_id,
+      workspaceId: row.workspace_id,
+      source: row.source,
+      title: row.title,
+      body: row.body,
+      metadata: fromJson<JsonValue>(row.metadata_json) ?? {},
+      enabled: row.enabled !== 0,
+      path: row.path,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   private createId(prefix: string): string {
     if (this.idFactory) {
       return this.idFactory(prefix);
@@ -10508,6 +11428,72 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS workspace_chrome_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      active_workspace_tab_id TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_chrome_tab (
+      workspace_tab_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      active_layout_id TEXT NOT NULL,
+      tab_kind TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_tab_id, tab_kind)
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_layout_slot (
+      workspace_id TEXT NOT NULL,
+      layout_id TEXT NOT NULL,
+      initialized INTEGER NOT NULL DEFAULT 0,
+      snapshot_json TEXT,
+      focused_pane_id TEXT,
+      panel_metadata_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, layout_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_profile (
+      profile_id TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      name TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      reasoning_json TEXT,
+      follow_composer INTEGER NOT NULL DEFAULT 0,
+      extension_usage_json TEXT NOT NULL DEFAULT '{}',
+      extension_order_json TEXT NOT NULL DEFAULT '[]',
+      position INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(profile_id, actor)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_env_override (
+      extension_id TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(extension_id, env_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS snippet (
+      snippet_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      path TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      deleted_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS surface_lifecycle (
       surface_pi_session_id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -11085,6 +12071,26 @@ function initializeSchema(db: Database): void {
     "TEXT NOT NULL DEFAULT '~/.config/svvy/artifacts'",
   );
   ensureColumn(db, "app_preferences", "ambient_resources_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "workspace_chrome_state", "active_workspace_tab_id", "TEXT");
+  ensureColumn(db, "workspace_chrome_state", "updated_at", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "workspace_chrome_tab", "active_layout_id", "TEXT NOT NULL DEFAULT 'A'");
+  ensureColumn(db, "workspace_chrome_tab", "tab_kind", "TEXT NOT NULL DEFAULT 'open'");
+  ensureColumn(db, "workspace_chrome_tab", "position", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "workspace_chrome_tab", "updated_at", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "workspace_layout_slot", "initialized", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "workspace_layout_slot", "snapshot_json", "TEXT");
+  ensureColumn(db, "workspace_layout_slot", "focused_pane_id", "TEXT");
+  ensureColumn(db, "workspace_layout_slot", "panel_metadata_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "agent_profile", "reasoning_json", "TEXT");
+  ensureColumn(db, "agent_profile", "follow_composer", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agent_profile", "extension_usage_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "agent_profile", "extension_order_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "agent_profile", "position", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "extension_env_override", "value", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "snippet", "enabled", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "snippet", "path", "TEXT");
+  ensureColumn(db, "snippet", "updated_at", "TEXT");
+  ensureColumn(db, "snippet", "deleted_at", "TEXT");
   db.exec(`INSERT INTO state_revision (id, revision) VALUES (1, 0) ON CONFLICT(id) DO NOTHING`);
   db.exec(
     `UPDATE surface_message_queue
@@ -11142,6 +12148,27 @@ function initializeSchema(db: Database): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_surface_lifecycle_session
      ON surface_lifecycle (session_id, surface_kind)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workspace_chrome_tab_kind_position
+     ON workspace_chrome_tab (tab_kind, position)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workspace_layout_slot_workspace
+     ON workspace_layout_slot (workspace_id, layout_id)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_agent_profile_actor_position
+     ON agent_profile (actor, position, profile_id)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_extension_env_override_extension
+     ON extension_env_override (extension_id, env_name)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_snippet_workspace_source
+     ON snippet (workspace_id, source, title)
+     WHERE deleted_at IS NULL`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_pi_session_reference_session

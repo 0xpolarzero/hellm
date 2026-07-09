@@ -9,12 +9,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   AbsolutePath,
+  type AgentProfileId,
   AppLogEntryId,
   type ArtifactId,
   type ByteCount,
   type CommandFactsPayload,
   type CommandId,
   type ComposerAttachment,
+  type ComposerSnippetMention,
   type AppLogEntry,
   type AppLogLevel,
   type IsoDateTimeString,
@@ -24,9 +26,11 @@ import {
   type AppLogSummary,
   type AppLogWritePort,
   type AppLogWritePortService,
+  type ExtensionId,
   type ExtensionStatePort,
   type JsonValue as JsonValueType,
   type MessageId,
+  type ModelId,
   type NonNegativeSafeInteger,
   type PiSessionReferencePort,
   type PositiveSafeInteger,
@@ -73,11 +77,16 @@ import {
   type StateMutationResult,
   type StateStoredError,
   type StateRevision,
+  type SnippetId,
   type SurfacePiSessionId,
+  type ThreadId,
   type TurnId,
+  type WorkflowTaskAttemptId,
+  type WorkspacePaneId,
   type WorkspaceSessionId,
   type WorkspaceSessionNavigationReadModel,
   type WorkspaceSessionNavigationSummary,
+  type WorkspaceTabId,
   type WorkspaceId as WorkspaceIdType,
 } from "@svvy/core";
 import {
@@ -91,7 +100,13 @@ import { layerAppLogWritePort } from "./app-log-write-port";
 import { mutationResult } from "./state-mutation-result";
 import { structuredSessionStatePortsLayerWithSandboxPolicyConfig } from "./structured-session-state-ports-layer";
 import { buildWorkspaceSessionNavigation } from "./session-navigation";
-import { buildStructuredCommandInspector } from "./structured-session-selectors";
+import {
+  buildStructuredCommandInspector,
+  buildStructuredHandlerThreadInspector,
+  buildStructuredWorkflowTaskAttemptInspector,
+  type StructuredHandlerThreadInspector,
+  type StructuredWorkflowTaskAttemptInspector,
+} from "./structured-session-selectors";
 import {
   createStructuredSessionStateStore,
   structuredSessionStateFromStore,
@@ -101,24 +116,67 @@ import {
   type StructuredRuntimeApprovalRequestRecord,
   type StructuredSessionSnapshot,
   type StructuredAppPreferencesRecord,
+  type StructuredGeneratedPackageFactRecord,
   type StructuredSurfaceQueuedMessageRecord,
   type StructuredSessionStateStore,
+  type StructuredAgentProfileRecord,
+  type StructuredSnippetRecord,
 } from "./structured-session-state";
 import type { StateLayerConfig } from "./state-layer-config";
 import type { WorkspaceStateRouter } from "./workspace-state-router";
 import {
+  decodeUnknownCloseWorkspacePaneCommandInputEffect,
   decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect,
+  decodeUnknownCreateManagedSnippetCommandInputEffect,
+  decodeUnknownDeleteManagedSnippetCommandInputEffect,
+  decodeUnknownDeleteOrchestratorProfileCommandInputEffect,
   decodeUnknownMarkAppLogReadCommandInputEffect,
   decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect,
+  decodeUnknownPromoteProfileExtensionDefaultCommandInputEffect,
   decodeUnknownRecordProviderAuthStatusCommandInputEffect,
+  decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
+  decodeUnknownReorderOrchestratorProfilesCommandInputEffect,
+  decodeUnknownResetActorExtensionDefaultsCommandInputEffect,
+  decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputEffect,
+  decodeUnknownSelectWorkspaceLayoutSlotCommandInputEffect,
+  decodeUnknownSelectWorkspaceTabCommandInputEffect,
+  decodeUnknownSetExternalInstructionActorUsageCommandInputEffect,
+  decodeUnknownSetExtensionEnvOverrideCommandInputEffect,
+  decodeUnknownSetProfileExtensionUsageCommandInputEffect,
+  decodeUnknownSetSnippetEnabledCommandInputEffect,
+  decodeUnknownSetWorkspaceTabsCommandInputEffect,
+  decodeUnknownUpdateManagedSnippetCommandInputEffect,
   decodeUnknownUpdateAppPreferencesCommandInputEffect,
+  decodeUnknownUpdateOrchestratorProfileCommandInputEffect,
+  decodeUnknownUpdateThreadHandlerProfileCommandInputEffect,
+  decodeUnknownUpdateWorkspacePaneCommandInputEffect,
   type AppPreferenceAppearance,
   type AppPreferenceApprovalMode,
+  type CloseWorkspacePaneCommandInput,
+  type CreateManagedSnippetCommandInput,
+  type DeleteManagedSnippetCommandInput,
+  type DeleteOrchestratorProfileCommandInput,
   type ClearWorkspaceAppLogUnreadCommandInput,
   type MarkAppLogReadCommandInput,
   type MarkVisibleAppLogRangeReadCommandInput,
+  type PromoteProfileExtensionDefaultCommandInput,
   type RecordProviderAuthStatusCommandInput,
+  type RemoveExtensionEnvOverrideCommandInput,
+  type ReorderOrchestratorProfilesCommandInput,
+  type ResetActorExtensionDefaultsCommandInput,
+  type SaveWorkspaceLayoutSnapshotCommandInput,
+  type SelectWorkspaceLayoutSlotCommandInput,
+  type SelectWorkspaceTabCommandInput,
+  type SetExternalInstructionActorUsageCommandInput,
+  type SetExtensionEnvOverrideCommandInput,
+  type SetProfileExtensionUsageCommandInput,
+  type SetSnippetEnabledCommandInput,
+  type SetWorkspaceTabsCommandInput,
+  type UpdateManagedSnippetCommandInput,
   type UpdateAppPreferencesCommandInput,
+  type UpdateOrchestratorProfileCommandInput,
+  type UpdateThreadHandlerProfileCommandInput,
+  type UpdateWorkspacePaneCommandInput,
 } from "./state-command-schemas";
 
 export interface StateFacadeCallOptions {
@@ -147,7 +205,14 @@ export type StateReadModelRequest =
   | SurfaceQueuedMessagesReadModelRequest
   | CommandInspectorReadModelRequest
   | RequestInputReadModelRequest
-  | ApprovalsReadModelRequest;
+  | ApprovalsReadModelRequest
+  | AgentsReadModelRequest
+  | ExtensionsReadModelRequest
+  | SnippetsReadModelRequest
+  | WorkflowsGeneratedReadModelRequest
+  | HandlerInspectorReadModelRequest
+  | WorkflowTaskAttemptInspectorReadModelRequest
+  | WorkspaceChromeLayoutReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
@@ -162,7 +227,14 @@ export type StateReadModelResult =
   | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
   | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
   | { kind: "requestInput"; value: RequestInputReadModel }
-  | { kind: "approvals"; value: ApprovalsReadModel };
+  | { kind: "approvals"; value: ApprovalsReadModel }
+  | { kind: "agents"; value: AgentsReadModel }
+  | { kind: "extensions"; value: ExtensionsReadModel }
+  | { kind: "snippets"; value: SnippetsReadModel }
+  | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
+  | { kind: "handlerInspector"; value: HandlerInspectorReadModel | null }
+  | { kind: "workflowTaskAttemptInspector"; value: WorkflowTaskAttemptInspectorReadModel | null }
+  | { kind: "workspaceChromeLayout"; value: WorkspaceChromeLayoutReadModel };
 
 export interface AppPreferencesReadModel {
   appearance: AppPreferenceAppearance;
@@ -235,6 +307,38 @@ export const StateReadModelRequestSchema = Schema.Union([
     surfacePiSessionId: Schema.optionalKey(Schema.String),
     requestId: Schema.optionalKey(Schema.String),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("agents"),
+    profileId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("extensions"),
+    extensionId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("snippets"),
+    workspaceId: Schema.optionalKey(Schema.String),
+    snippetId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workflowsGenerated"),
+    buildId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("handlerInspector"),
+    workspaceId: Schema.optionalKey(Schema.String),
+    threadId: Schema.String,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workflowTaskAttemptInspector"),
+    workspaceId: Schema.optionalKey(Schema.String),
+    workflowTaskAttemptId: Schema.String,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workspaceChromeLayout"),
+    workspaceId: Schema.optionalKey(Schema.String),
+    layoutId: Schema.optionalKey(Schema.Literals(["A", "B", "C"])),
+  }),
 ]);
 
 export const StateReadModelResultSchema = Schema.Union([
@@ -251,6 +355,16 @@ export const StateReadModelResultSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("commandInspector"), value: Schema.NullOr(Schema.Json) }),
   Schema.Struct({ kind: Schema.Literal("requestInput"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("approvals"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("agents"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("extensions"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("snippets"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("workflowsGenerated"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("handlerInspector"), value: Schema.NullOr(Schema.Json) }),
+  Schema.Struct({
+    kind: Schema.Literal("workflowTaskAttemptInspector"),
+    value: Schema.NullOr(Schema.Json),
+  }),
+  Schema.Struct({ kind: Schema.Literal("workspaceChromeLayout"), value: Schema.Json }),
 ]);
 
 export interface SessionNavigationReadModelRequest {
@@ -297,6 +411,45 @@ export interface ApprovalsReadModelRequest {
   workspaceId?: WorkspaceIdType;
   surfacePiSessionId?: SurfacePiSessionId;
   requestId?: RuntimeApprovalId;
+}
+
+export interface AgentsReadModelRequest {
+  kind: "agents";
+  profileId?: string;
+}
+
+export interface ExtensionsReadModelRequest {
+  kind: "extensions";
+  extensionId?: string;
+}
+
+export interface SnippetsReadModelRequest {
+  kind: "snippets";
+  workspaceId?: WorkspaceIdType;
+  snippetId?: string;
+}
+
+export interface WorkflowsGeneratedReadModelRequest {
+  kind: "workflowsGenerated";
+  buildId?: string;
+}
+
+export interface HandlerInspectorReadModelRequest {
+  kind: "handlerInspector";
+  workspaceId?: WorkspaceIdType;
+  threadId: string;
+}
+
+export interface WorkflowTaskAttemptInspectorReadModelRequest {
+  kind: "workflowTaskAttemptInspector";
+  workspaceId?: WorkspaceIdType;
+  workflowTaskAttemptId: string;
+}
+
+export interface WorkspaceChromeLayoutReadModelRequest {
+  kind: "workspaceChromeLayout";
+  workspaceId?: WorkspaceIdType;
+  layoutId?: WorkspaceLayoutSlotId;
 }
 
 export type SessionNavigationReadModel =
@@ -370,7 +523,7 @@ export interface SurfaceComposerReadModel {
   draft: {
     text: string;
     attachments: readonly ComposerAttachment[];
-    snippetMentions: readonly unknown[];
+    snippetMentions: readonly ComposerSnippetMention[];
     updatedAt: IsoDateTimeString | null;
   };
 }
@@ -479,6 +632,121 @@ export interface ApprovalReadModelRequestItem {
   summary: string;
 }
 
+export interface AgentsReadModel {
+  profiles: readonly AgentProfileReadModelRecord[];
+  generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
+}
+
+export interface AgentProfileReadModelRecord {
+  profileId: AgentProfileId | string;
+  actor: "orchestrator" | "handler" | "workflow-task";
+  name: string;
+  providerId: ProviderId | "";
+  modelId: ModelId | "";
+  reasoning: JsonValueType | null;
+  followComposer: boolean;
+  loadedExtensionIds: readonly ExtensionId[];
+  availableExtensionIds: readonly ExtensionId[];
+  generatedAgentContextFingerprint: string | null;
+  source: "surface-binding" | "handler-thread" | "workflow-task-attempt";
+}
+
+export interface GeneratedContextPreviewReadModelRecord {
+  ownerKind: "session" | "thread" | "workflow-task-attempt";
+  ownerId: WorkspaceSessionId | ThreadId | WorkflowTaskAttemptId | string;
+  surfacePiSessionId: SurfacePiSessionId;
+  actorKind: "orchestrator" | "handler" | "workflow-task";
+  generatedAgentContextFingerprint: string;
+  generatedAgentContextRevision: number;
+  loadedExtensionIds: readonly ExtensionId[];
+  availableExtensionIds: readonly ExtensionId[];
+  externalSourceHashes: readonly string[];
+}
+
+export interface ExtensionsReadModel {
+  records: readonly ExtensionReadModelRecord[];
+  dependencyReadiness: readonly unknown[];
+}
+
+export interface ExtensionReadModelRecord {
+  extensionId: ExtensionId;
+  readiness: "ready" | "not-ready" | "unknown";
+  loadedByProfileIds: readonly (AgentProfileId | string)[];
+  availableByProfileIds: readonly (AgentProfileId | string)[];
+  generatedPackageStatus: "ready" | "failed" | "refresh-needed" | "unknown";
+}
+
+export interface SnippetsReadModel {
+  managed: readonly SnippetReadModelRecord[];
+  discovered: readonly SnippetReadModelRecord[];
+  snippets: readonly SnippetReadModelRecord[];
+}
+
+export interface SnippetReadModelRecord {
+  id: SnippetId;
+  source: "svvy" | "claude" | "pi" | "host";
+  title: string;
+  body: string;
+  metadata: JsonValueType;
+  enabled: boolean;
+  path: string | null;
+  updatedAt: IsoDateTimeString | null;
+}
+
+export interface WorkflowsGeneratedReadModel {
+  packageName: "@svvyx/workflows";
+  facts: readonly StructuredGeneratedPackageFactRecord[];
+  exports: readonly WorkflowsGeneratedExportReadModelRecord[];
+}
+
+export interface WorkflowsGeneratedExportReadModelRecord {
+  namespace: "Agents" | "Components" | "Prompts" | "Workflows";
+  exportName: string;
+  qualifiedName: string;
+  kind: "agent" | "component" | "prompt" | "workflow";
+  generatedCode: string;
+  generatedPath: string | null;
+  sourcePath: string | null;
+  agentParameters: JsonValueType | null;
+}
+
+export type HandlerInspectorReadModel = StructuredHandlerThreadInspector;
+
+export type WorkflowTaskAttemptInspectorReadModel = StructuredWorkflowTaskAttemptInspector;
+
+export type WorkspaceLayoutSlotId = "A" | "B" | "C";
+
+export interface WorkspaceChromeLayoutReadModel {
+  activeWorkspaceTabId: WorkspaceTabId | null;
+  tabs: readonly WorkspaceTabReadModelRecord[];
+  knownWorkspaces: readonly WorkspaceTabReadModelRecord[];
+  layouts: readonly WorkspaceLayoutReadModelRecord[];
+}
+
+export interface WorkspaceTabReadModelRecord {
+  workspaceTabId: WorkspaceTabId;
+  workspaceId: WorkspaceIdType;
+  cwd: string;
+  openedAt: IsoDateTimeString;
+  activeLayoutId: WorkspaceLayoutSlotId;
+}
+
+export interface WorkspaceLayoutReadModelRecord {
+  workspaceId: WorkspaceIdType;
+  layoutId: WorkspaceLayoutSlotId;
+  initialized: boolean;
+  snapshotJson: JsonValueType | null;
+  focusedPaneId: WorkspacePaneId | null;
+  panelMetadata: readonly WorkspacePaneReadModelRecord[];
+}
+
+export interface WorkspacePaneReadModelRecord {
+  paneId: WorkspacePaneId;
+  kind: "surface" | "inspector" | "static";
+  target: JsonValueType;
+  localStateJson: JsonValueType | null;
+}
+
 export interface StateReadModelInvalidationRefetchRequest {
   descriptor: StateInvalidationDescriptor;
 }
@@ -536,10 +804,93 @@ export interface ProviderAuthStateCommands {
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
 }
 
+export interface WorkspaceChromeStateCommands {
+  setTabs(
+    input: SetWorkspaceTabsCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  selectTab(
+    input: SelectWorkspaceTabCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  selectLayoutSlot(
+    input: SelectWorkspaceLayoutSlotCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
+export interface WorkspaceLayoutStateCommands {
+  saveSnapshot(
+    input: SaveWorkspaceLayoutSnapshotCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  updatePane(
+    input: UpdateWorkspacePaneCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  closePane(
+    input: CloseWorkspacePaneCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
+export interface ExtensionEnvStateCommands {
+  setOverride(
+    input: SetExtensionEnvOverrideCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  removeOverride(
+    input: RemoveExtensionEnvOverrideCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
+export interface AgentProfileStateCommands {
+  updateOrchestrator(
+    input: UpdateOrchestratorProfileCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  updateThreadHandler(
+    input: UpdateThreadHandlerProfileCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  deleteOrchestrator(
+    input: DeleteOrchestratorProfileCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  reorderOrchestrators(
+    input: ReorderOrchestratorProfilesCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setProfileExtensionUsage(
+    input: SetProfileExtensionUsageCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  promoteExtensionDefault(
+    input: PromoteProfileExtensionDefaultCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  resetActorExtensionDefaults(
+    input: ResetActorExtensionDefaultsCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setExternalInstructionActorUsage(
+    input: SetExternalInstructionActorUsageCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
+export interface SnippetStateCommands {
+  createManaged(
+    input: CreateManagedSnippetCommandInput,
+  ): Effect.Effect<
+    StateMutationResult<StateCommandResult<{ snippetId: SnippetId }>>,
+    StateContractError
+  >;
+  updateManaged(
+    input: UpdateManagedSnippetCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  deleteManaged(
+    input: DeleteManagedSnippetCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setEnabled(
+    input: SetSnippetEnabledCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
 export interface StateCommandsService {
+  workspaceChrome: WorkspaceChromeStateCommands;
+  workspaceLayout: WorkspaceLayoutStateCommands;
   appLogs: AppLogReadStateCommands;
   appPreferences: AppPreferencesStateCommands;
   providerAuth: ProviderAuthStateCommands;
+  extensionEnv: ExtensionEnvStateCommands;
+  agentProfiles: AgentProfileStateCommands;
+  snippets: SnippetStateCommands;
 }
 
 export class StateCommands extends Context.Service<StateCommands, StateCommandsService>()(
@@ -565,6 +916,34 @@ export interface StateFacade {
 }
 
 export interface StateCommandsFacade {
+  workspaceChrome: {
+    setTabs(
+      input: SetWorkspaceTabsCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    selectTab(
+      input: SelectWorkspaceTabCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    selectLayoutSlot(
+      input: SelectWorkspaceLayoutSlotCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  workspaceLayout: {
+    saveSnapshot(
+      input: SaveWorkspaceLayoutSnapshotCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    updatePane(
+      input: UpdateWorkspacePaneCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    closePane(
+      input: CloseWorkspacePaneCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
   appLogs: {
     markRead(
       input: MarkAppLogReadCommandInput,
@@ -588,6 +967,68 @@ export interface StateCommandsFacade {
   providerAuth: {
     recordStatus(
       input: RecordProviderAuthStatusCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  extensionEnv: {
+    setOverride(
+      input: SetExtensionEnvOverrideCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    removeOverride(
+      input: RemoveExtensionEnvOverrideCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  agentProfiles: {
+    updateOrchestrator(
+      input: UpdateOrchestratorProfileCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    updateThreadHandler(
+      input: UpdateThreadHandlerProfileCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    deleteOrchestrator(
+      input: DeleteOrchestratorProfileCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    reorderOrchestrators(
+      input: ReorderOrchestratorProfilesCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setProfileExtensionUsage(
+      input: SetProfileExtensionUsageCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    promoteExtensionDefault(
+      input: PromoteProfileExtensionDefaultCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    resetActorExtensionDefaults(
+      input: ResetActorExtensionDefaultsCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setExternalInstructionActorUsage(
+      input: SetExternalInstructionActorUsageCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  snippets: {
+    createManaged(
+      input: CreateManagedSnippetCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult<{ snippetId: SnippetId }>>;
+    updateManaged(
+      input: UpdateManagedSnippetCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    deleteManaged(
+      input: DeleteManagedSnippetCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setEnabled(
+      input: SetSnippetEnabledCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
@@ -754,6 +1195,70 @@ export function createStateCommandsFacade(
     });
 
   return {
+    workspaceChrome: {
+      setTabs: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceChrome.setTabs",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceChrome.setTabs(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      selectTab: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceChrome.selectTab",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceChrome.selectTab(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      selectLayoutSlot: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceChrome.selectLayoutSlot",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceChrome.selectLayoutSlot(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    workspaceLayout: {
+      saveSnapshot: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceLayout.saveSnapshot",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceLayout.saveSnapshot(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      updatePane: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceLayout.updatePane",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceLayout.updatePane(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      closePane: (input, callOptions) =>
+        run(
+          "stateCommands.workspaceLayout.closePane",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.workspaceLayout.closePane(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
     appLogs: {
       markRead: (input, callOptions) =>
         run(
@@ -805,6 +1310,152 @@ export function createStateCommandsFacade(
           Effect.gen(function* () {
             const commands = yield* StateCommands;
             return yield* commands.providerAuth.recordStatus(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    extensionEnv: {
+      setOverride: (input, callOptions) =>
+        run(
+          "stateCommands.extensionEnv.setOverride",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.extensionEnv.setOverride(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      removeOverride: (input, callOptions) =>
+        run(
+          "stateCommands.extensionEnv.removeOverride",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.extensionEnv.removeOverride(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    agentProfiles: {
+      updateOrchestrator: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.updateOrchestrator",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.updateOrchestrator(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      updateThreadHandler: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.updateThreadHandler",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.updateThreadHandler(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      deleteOrchestrator: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.deleteOrchestrator",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.deleteOrchestrator(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      reorderOrchestrators: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.reorderOrchestrators",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.reorderOrchestrators(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      setProfileExtensionUsage: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.setProfileExtensionUsage",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.setProfileExtensionUsage(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      promoteExtensionDefault: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.promoteExtensionDefault",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.promoteExtensionDefault(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      resetActorExtensionDefaults: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.resetActorExtensionDefaults",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.resetActorExtensionDefaults(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      setExternalInstructionActorUsage: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.setExternalInstructionActorUsage",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.setExternalInstructionActorUsage(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    snippets: {
+      createManaged: (input, callOptions) =>
+        run(
+          "stateCommands.snippets.createManaged",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.snippets.createManaged(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      updateManaged: (input, callOptions) =>
+        run(
+          "stateCommands.snippets.updateManaged",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.snippets.updateManaged(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      deleteManaged: (input, callOptions) =>
+        run(
+          "stateCommands.snippets.deleteManaged",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.snippets.deleteManaged(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      setEnabled: (input, callOptions) =>
+        run(
+          "stateCommands.snippets.setEnabled",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.snippets.setEnabled(input);
           }),
           input.clientSubmission,
           callOptions,
@@ -862,7 +1513,10 @@ export function stateCommandsFromRouter(input: {
 }): StateCommands["Service"] {
   return stateCommandsFromState({
     appLogs: input.resolveAppLogs ?? appLogStateResolver(input.appLogs),
-    structuredSession: input.router.appGlobalStructuredSession,
+    structuredSession: (workspaceId) =>
+      workspaceId
+        ? input.router.resolveWorkspaceStructuredSession(workspaceId)
+        : Effect.succeed(input.router.appGlobalStructuredSession),
   });
 }
 
@@ -871,7 +1525,10 @@ const layerStateReadModels = Layer.effect(StateReadModels, makeStateReadModels()
 const makeStateCommands = Effect.fn("@svvy/state/makeStateCommands")(function* () {
   const appLogs = yield* AppLogState;
   const structuredSession = yield* StructuredSessionState;
-  return stateCommandsFromState({ appLogs: appLogStateResolver(appLogs), structuredSession });
+  return stateCommandsFromState({
+    appLogs: appLogStateResolver(appLogs),
+    structuredSession: () => Effect.succeed(structuredSession),
+  });
 });
 
 const layerStateCommands = Layer.effect(StateCommands, makeStateCommands());
@@ -1047,6 +1704,44 @@ function stateReadModelsFromState(state: {
               kind: "approvals",
               value: yield* buildApprovalsReadModel(structuredSession, request),
             };
+          case "agents":
+            return {
+              kind: "agents",
+              value: yield* buildAgentsReadModel(structuredSession, request),
+            };
+          case "extensions":
+            return {
+              kind: "extensions",
+              value: yield* buildExtensionsReadModel(structuredSession, request),
+            };
+          case "snippets":
+            return {
+              kind: "snippets",
+              value: yield* buildSnippetsReadModel(structuredSession, request),
+            };
+          case "workflowsGenerated":
+            return {
+              kind: "workflowsGenerated",
+              value: yield* buildWorkflowsGeneratedReadModel(structuredSession, request),
+            };
+          case "handlerInspector":
+            return {
+              kind: "handlerInspector",
+              value: yield* buildHandlerInspectorReadModel(structuredSession, request.threadId),
+            };
+          case "workflowTaskAttemptInspector":
+            return {
+              kind: "workflowTaskAttemptInspector",
+              value: yield* buildWorkflowTaskAttemptInspectorReadModel(
+                structuredSession,
+                request.workflowTaskAttemptId,
+              ),
+            };
+          case "workspaceChromeLayout":
+            return {
+              kind: "workspaceChromeLayout",
+              value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, request),
+            };
         }
       }),
     refetchInvalidation: (request) =>
@@ -1090,6 +1785,18 @@ function stateReadModelsFromState(state: {
                 value: yield* buildSessionNavigationReadModel(structuredSession),
               },
             ];
+          case "workspaceChromeLayout":
+            return [
+              {
+                kind: "workspaceChromeLayout",
+                value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, {
+                  kind: "workspaceChromeLayout",
+                  ...(request.descriptor.scope === "workspace"
+                    ? { workspaceId: request.descriptor.workspaceId }
+                    : {}),
+                }),
+              },
+            ];
           case "surface":
             return yield* refetchSurfaceInvalidation(
               structuredSession,
@@ -1121,6 +1828,67 @@ function stateReadModelsFromState(state: {
                 value: yield* buildApprovalsReadModel(structuredSession, { kind: "approvals" }),
               },
             ];
+          case "handlerThreadInspector":
+            return yield* Effect.all(
+              request.descriptor.invalidation.ids.map((threadId) =>
+                buildHandlerInspectorReadModel(structuredSession, threadId).pipe(
+                  Effect.map(
+                    (value): StateReadModelResult => ({ kind: "handlerInspector", value }),
+                  ),
+                ),
+              ),
+            );
+          case "workflowTaskAttemptInspector":
+            return yield* Effect.all(
+              request.descriptor.invalidation.ids.map((workflowTaskAttemptId) =>
+                buildWorkflowTaskAttemptInspectorReadModel(
+                  structuredSession,
+                  workflowTaskAttemptId,
+                ).pipe(
+                  Effect.map(
+                    (value): StateReadModelResult => ({
+                      kind: "workflowTaskAttemptInspector",
+                      value,
+                    }),
+                  ),
+                ),
+              ),
+            );
+          case "snippets":
+            return [
+              {
+                kind: "snippets",
+                value: yield* buildSnippetsReadModel(structuredSession, {
+                  kind: "snippets",
+                  ...(request.descriptor.scope === "workspace"
+                    ? { workspaceId: request.descriptor.workspaceId }
+                    : {}),
+                }),
+              },
+            ];
+          case "workflowsGenerated":
+            return [
+              {
+                kind: "workflowsGenerated",
+                value: yield* buildWorkflowsGeneratedReadModel(structuredSession, {
+                  kind: "workflowsGenerated",
+                }),
+              },
+            ];
+          case "agents":
+            return [
+              {
+                kind: "agents",
+                value: yield* buildAgentsReadModel(structuredSession, { kind: "agents" }),
+              },
+            ];
+          case "extensions":
+            return [
+              {
+                kind: "extensions",
+                value: yield* buildExtensionsReadModel(structuredSession, { kind: "extensions" }),
+              },
+            ];
           default:
             return [];
         }
@@ -1145,6 +1913,20 @@ function stateReadModelsFromState(state: {
               kind: "providerAuth",
               value: providerAuthReadModel(yield* structuredSession.listProviderAuthStatuses({})),
             },
+            {
+              kind: "agents",
+              value: yield* buildAgentsReadModel(structuredSession, { kind: "agents" }),
+            },
+            {
+              kind: "extensions",
+              value: yield* buildExtensionsReadModel(structuredSession, { kind: "extensions" }),
+            },
+            {
+              kind: "workflowsGenerated",
+              value: yield* buildWorkflowsGeneratedReadModel(structuredSession, {
+                kind: "workflowsGenerated",
+              }),
+            },
           ],
           workspaces: [
             { kind: "appLogs", value: logs },
@@ -1159,6 +1941,20 @@ function stateReadModelsFromState(state: {
             {
               kind: "approvals",
               value: yield* buildApprovalsReadModel(structuredSession, { kind: "approvals" }),
+            },
+            {
+              kind: "snippets",
+              value: yield* buildSnippetsReadModel(structuredSession, {
+                kind: "snippets",
+                ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+              }),
+            },
+            {
+              kind: "workspaceChromeLayout",
+              value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, {
+                kind: "workspaceChromeLayout",
+                ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+              }),
             },
           ],
           revision: Math.max(summary.latestSeq, currentStateRevision) as StateRevision,
@@ -1175,6 +1971,8 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "sessionNavigation":
     case "requestInput":
     case "approvals":
+    case "handlerInspector":
+    case "workflowTaskAttemptInspector":
       return request.workspaceId;
     default:
       return undefined;
@@ -1436,6 +2234,293 @@ function buildApprovalsReadModel(
         .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
     })),
   );
+}
+
+function buildAgentsReadModel(
+  state: StructuredSessionState["Service"],
+  request: AgentsReadModelRequest,
+): Effect.Effect<AgentsReadModel, StateContractError> {
+  return Effect.gen(function* () {
+    const snapshots = yield* state.listSessionStates();
+    const persistedProfiles = yield* state.listAgentProfiles();
+    const profiles = [
+      ...persistedProfiles.map(agentProfileRecordFromPersisted),
+      ...snapshots.flatMap(agentProfileRecordsFromSnapshot),
+    ].filter((profile) => (request.profileId ? profile.profileId === request.profileId : true));
+    const generatedContextPreviews = snapshots
+      .flatMap((snapshot) => snapshot.generatedAgentContextBindings)
+      .map((binding) => ({
+        ownerKind: binding.ownerKind,
+        ownerId: binding.ownerId,
+        surfacePiSessionId: binding.surfacePiSessionId as SurfacePiSessionId,
+        actorKind: binding.actorKind,
+        generatedAgentContextFingerprint: binding.generatedAgentContextFingerprint,
+        generatedAgentContextRevision: binding.generatedAgentContextRevision,
+        loadedExtensionIds: binding.loadedExtensionIds as ExtensionId[],
+        availableExtensionIds: binding.availableExtensionIds as ExtensionId[],
+        externalSourceHashes: binding.externalSourceHashes,
+      }));
+    return { profiles, generatedContextPreviews };
+  });
+}
+
+function buildExtensionsReadModel(
+  state: StructuredSessionState["Service"],
+  request: ExtensionsReadModelRequest,
+): Effect.Effect<ExtensionsReadModel, StateContractError> {
+  return Effect.gen(function* () {
+    const snapshots = yield* state.listSessionStates();
+    const facts = yield* state.readGeneratedPackageFacts({ packages: ["@svvyx/extensions"] });
+    const extensionPackage = facts[0] ?? null;
+    const persistedProfiles = yield* state.listAgentProfiles();
+    const usage = extensionUsageFromAgentRecords([
+      ...persistedProfiles.map(agentProfileRecordFromPersisted),
+      ...snapshots.flatMap(agentProfileRecordsFromSnapshot),
+    ]);
+    const records = [...usage.entries()]
+      .filter(([extensionId]) => (request.extensionId ? extensionId === request.extensionId : true))
+      .map(([extensionId, value]) => ({
+        extensionId: extensionId as ExtensionId,
+        readiness: extensionPackage?.status === "ready" ? ("ready" as const) : ("unknown" as const),
+        loadedByProfileIds: [...value.loadedByProfileIds],
+        availableByProfileIds: [...value.availableByProfileIds],
+        generatedPackageStatus: generatedPackageStatusForReadModel(extensionPackage?.status),
+      }))
+      .toSorted((left, right) => left.extensionId.localeCompare(right.extensionId));
+    return { records, dependencyReadiness: [] };
+  });
+}
+
+function buildSnippetsReadModel(
+  state: StructuredSessionState["Service"],
+  request: SnippetsReadModelRequest,
+): Effect.Effect<SnippetsReadModel, StateContractError> {
+  return state.listSnippets(request.workspaceId ? { workspaceId: request.workspaceId } : {}).pipe(
+    Effect.map((rows) => {
+      const snippets = rows.map(snippetReadModelRecord);
+      return {
+        managed: snippets.filter((snippet) => snippet.source === "svvy"),
+        discovered: snippets.filter((snippet) => snippet.source !== "svvy"),
+        snippets,
+      };
+    }),
+  );
+}
+
+function buildWorkflowsGeneratedReadModel(
+  state: StructuredSessionState["Service"],
+  request: WorkflowsGeneratedReadModelRequest,
+): Effect.Effect<WorkflowsGeneratedReadModel, StateContractError> {
+  return state.readGeneratedPackageFacts({ packages: ["@svvyx/workflows"] }).pipe(
+    Effect.map((facts) => ({
+      packageName: "@svvyx/workflows" as const,
+      facts: facts.filter((fact) => (request.buildId ? fact.buildId === request.buildId : true)),
+      exports: [],
+    })),
+  );
+}
+
+function buildHandlerInspectorReadModel(
+  state: StructuredSessionState["Service"],
+  threadId: string,
+): Effect.Effect<HandlerInspectorReadModel | null, StateContractError> {
+  return state.listSessionStates().pipe(
+    Effect.map((snapshots) => {
+      for (const snapshot of snapshots) {
+        const inspector = buildStructuredHandlerThreadInspector(snapshot, threadId);
+        if (inspector) return inspector;
+      }
+      return null;
+    }),
+  );
+}
+
+function buildWorkflowTaskAttemptInspectorReadModel(
+  state: StructuredSessionState["Service"],
+  workflowTaskAttemptId: string,
+): Effect.Effect<WorkflowTaskAttemptInspectorReadModel | null, StateContractError> {
+  return state.listSessionStates().pipe(
+    Effect.map((snapshots) => {
+      for (const snapshot of snapshots) {
+        const inspector = buildStructuredWorkflowTaskAttemptInspector(
+          snapshot,
+          workflowTaskAttemptId,
+        );
+        if (inspector) return inspector;
+      }
+      return null;
+    }),
+  );
+}
+
+function buildWorkspaceChromeLayoutReadModel(
+  state: StructuredSessionState["Service"],
+  request: WorkspaceChromeLayoutReadModelRequest,
+): Effect.Effect<WorkspaceChromeLayoutReadModel, StateContractError> {
+  return state.readWorkspaceChromeLayout(request).pipe(
+    Effect.map((record) => ({
+      activeWorkspaceTabId: record.activeWorkspaceTabId as WorkspaceTabId | null,
+      tabs: record.tabs.map(workspaceTabReadModelRecord),
+      knownWorkspaces: record.knownWorkspaces.map(workspaceTabReadModelRecord),
+      layouts: record.layouts.map((layout) => ({
+        workspaceId: layout.workspaceId as WorkspaceIdType,
+        layoutId: layout.layoutId,
+        initialized: layout.initialized,
+        snapshotJson: layout.snapshotJson as JsonValueType | null,
+        focusedPaneId: layout.focusedPaneId as WorkspacePaneId | null,
+        panelMetadata: layout.panelMetadata as unknown as WorkspacePaneReadModelRecord[],
+      })),
+    })),
+  );
+}
+
+function agentProfileRecordsFromSnapshot(
+  snapshot: StructuredSessionSnapshot,
+): AgentProfileReadModelRecord[] {
+  const records: AgentProfileReadModelRecord[] = [];
+  records.push({
+    profileId: snapshot.pi.orchestratorAgentProfileId ?? snapshot.session.id,
+    actor: "orchestrator",
+    name: snapshot.pi.title,
+    providerId: (snapshot.pi.provider ?? "") as ProviderId | "",
+    modelId: (snapshot.pi.model ?? "") as ModelId | "",
+    reasoning: snapshot.pi.reasoningEffort ? { effort: snapshot.pi.reasoningEffort } : null,
+    followComposer: Boolean(
+      parseJsonRecord(snapshot.pi.orchestratorAgentProfileJson ?? null).followComposer,
+    ),
+    loadedExtensionIds: (snapshot.pi.loadedExtensionIds ?? []) as ExtensionId[],
+    availableExtensionIds: (snapshot.pi.availableExtensionIds ?? []) as ExtensionId[],
+    generatedAgentContextFingerprint: snapshot.pi.generatedAgentContextFingerprint ?? null,
+    source: "surface-binding",
+  });
+
+  for (const thread of snapshot.threads) {
+    records.push({
+      profileId: "threadHandler" as AgentProfileId,
+      actor: "handler",
+      name: "Thread Handler",
+      providerId: (snapshot.pi.provider ?? "") as ProviderId | "",
+      modelId: (snapshot.pi.model ?? "") as ModelId | "",
+      reasoning: null,
+      followComposer: false,
+      loadedExtensionIds: thread.loadedExtensionIds as ExtensionId[],
+      availableExtensionIds: thread.availableExtensionIds as ExtensionId[],
+      generatedAgentContextFingerprint: thread.generatedAgentContextFingerprint ?? null,
+      source: "handler-thread",
+    });
+  }
+
+  for (const attempt of snapshot.workflowTaskAttempts) {
+    records.push({
+      profileId: (attempt.agentId ?? attempt.id) as AgentProfileId,
+      actor: "workflow-task",
+      name: attempt.title,
+      providerId: "" as ProviderId | "",
+      modelId: (attempt.agentModel ?? "") as ModelId | "",
+      reasoning: null,
+      followComposer: false,
+      loadedExtensionIds: [],
+      availableExtensionIds: [],
+      generatedAgentContextFingerprint: attempt.generatedAgentContextFingerprint ?? null,
+      source: "workflow-task-attempt",
+    });
+  }
+
+  return records;
+}
+
+function agentProfileRecordFromPersisted(
+  profile: StructuredAgentProfileRecord,
+): AgentProfileReadModelRecord {
+  const loadedExtensionIds = Object.entries(profile.extensionUsage)
+    .filter(([, usage]) => usage === "loaded")
+    .map(([extensionId]) => extensionId as ExtensionId);
+  const availableExtensionIds = Object.entries(profile.extensionUsage)
+    .filter(([, usage]) => usage === "available")
+    .map(([extensionId]) => extensionId as ExtensionId);
+  return {
+    profileId: profile.profileId,
+    actor: profile.actor,
+    name: profile.name,
+    providerId: profile.providerId as ProviderId | "",
+    modelId: profile.modelId as ModelId | "",
+    reasoning: profile.reasoning as JsonValueType | null,
+    followComposer: profile.followComposer,
+    loadedExtensionIds,
+    availableExtensionIds,
+    generatedAgentContextFingerprint: null,
+    source: profile.actor === "handler" ? "handler-thread" : "surface-binding",
+  };
+}
+
+function snippetReadModelRecord(row: StructuredSnippetRecord): SnippetReadModelRecord {
+  return {
+    id: row.id as SnippetId,
+    source: row.source,
+    title: row.title,
+    body: row.body,
+    metadata: row.metadata as JsonValueType,
+    enabled: row.enabled,
+    path: row.path,
+    updatedAt: (row.updatedAt ?? row.createdAt) as IsoDateTimeString,
+  };
+}
+
+function workspaceTabReadModelRecord(row: {
+  workspaceTabId: string;
+  workspaceId: string;
+  cwd: string;
+  openedAt: string;
+  activeLayoutId: WorkspaceLayoutSlotId;
+}): WorkspaceTabReadModelRecord {
+  return {
+    workspaceTabId: row.workspaceTabId as WorkspaceTabId,
+    workspaceId: row.workspaceId as WorkspaceIdType,
+    cwd: row.cwd,
+    openedAt: row.openedAt as IsoDateTimeString,
+    activeLayoutId: row.activeLayoutId,
+  };
+}
+
+function extensionUsageFromAgentRecords(records: readonly AgentProfileReadModelRecord[]) {
+  const usage = new Map<
+    string,
+    { loadedByProfileIds: Set<string>; availableByProfileIds: Set<string> }
+  >();
+  const ensure = (extensionId: string) => {
+    const existing = usage.get(extensionId);
+    if (existing) return existing;
+    const created = {
+      loadedByProfileIds: new Set<string>(),
+      availableByProfileIds: new Set<string>(),
+    };
+    usage.set(extensionId, created);
+    return created;
+  };
+  for (const record of records) {
+    for (const extensionId of record.loadedExtensionIds) {
+      ensure(extensionId).loadedByProfileIds.add(record.profileId);
+    }
+    for (const extensionId of record.availableExtensionIds) {
+      ensure(extensionId).availableByProfileIds.add(record.profileId);
+    }
+  }
+  return usage;
+}
+
+function generatedPackageStatusForReadModel(
+  status: StructuredGeneratedPackageFactRecord["status"] | undefined,
+): ExtensionReadModelRecord["generatedPackageStatus"] {
+  switch (status) {
+    case "ready":
+      return "ready";
+    case "failed":
+      return "failed";
+    case "refresh-needed":
+      return "refresh-needed";
+    default:
+      return "unknown";
+  }
 }
 
 function refetchSurfaceInvalidation(
@@ -1744,7 +2829,7 @@ function parseJsonRecord(value: string | null): Record<string, unknown> {
 
 function stateCommandsFromState(state: {
   appLogs: AppLogStateResolver;
-  structuredSession: StructuredSessionState["Service"];
+  structuredSession: StructuredSessionStateResolver;
 }): StateCommands["Service"] {
   const receipts = new Map<string, StateMutationResult<StateCommandResult>>();
 
@@ -1778,6 +2863,91 @@ function stateCommandsFromState(state: {
     });
 
   return StateCommands.of({
+    workspaceChrome: {
+      setTabs: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetWorkspaceTabsInput(commandInput);
+          const workspaceId =
+            decoded.tabs[0]?.workspaceId ?? decoded.knownWorkspaces[0]?.workspaceId;
+          const structuredSession = yield* state.structuredSession(undefined);
+          const subject = decoded.activeWorkspaceTabId ?? "workspace-tabs";
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceChrome.setTabs",
+            decoded,
+            subject,
+            () => structuredSession.setWorkspaceTabs(decoded),
+            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
+          );
+        }),
+      selectTab: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSelectWorkspaceTabInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceChrome.selectTab",
+            decoded,
+            decoded.workspaceTabId,
+            () => structuredSession.selectWorkspaceTab(decoded),
+            [],
+          );
+        }),
+      selectLayoutSlot: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSelectWorkspaceLayoutSlotInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceChrome.selectLayoutSlot",
+            decoded,
+            `${decoded.workspaceTabId}:${decoded.layoutId}`,
+            () => structuredSession.selectWorkspaceLayoutSlot(decoded),
+            [],
+          );
+        }),
+    },
+    workspaceLayout: {
+      saveSnapshot: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSaveWorkspaceLayoutSnapshotInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceLayout.saveSnapshot",
+            decoded,
+            `${decoded.workspaceId}:${decoded.layoutId}`,
+            () => structuredSession.saveWorkspaceLayoutSnapshot(decoded),
+            workspaceChromeLayoutInvalidations(decoded.workspaceId),
+          );
+        }),
+      updatePane: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeUpdateWorkspacePaneInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceLayout.updatePane",
+            decoded,
+            `${decoded.workspaceId}:${decoded.layoutId}:${decoded.paneId}`,
+            () => structuredSession.updateWorkspacePane(decoded),
+            workspaceChromeLayoutInvalidations(decoded.workspaceId),
+          );
+        }),
+      closePane: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeCloseWorkspacePaneInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.workspaceLayout.closePane",
+            decoded,
+            `${decoded.workspaceId}:${decoded.layoutId}:${decoded.paneId}`,
+            () => structuredSession.closeWorkspacePane(decoded),
+            workspaceChromeLayoutInvalidations(decoded.workspaceId),
+          );
+        }),
+    },
     appLogs: {
       markRead: (commandInput) =>
         Effect.gen(function* () {
@@ -1817,8 +2987,9 @@ function stateCommandsFromState(state: {
             const existing = receipts.get(clientRequestId);
             if (existing) return duplicateMutationResult(existing);
           }
-          const updatedAt = yield* state.structuredSession.getCurrentTimestamp();
-          const updated = yield* state.structuredSession.updateAppPreferences({
+          const structuredSession = yield* state.structuredSession(undefined);
+          const updatedAt = yield* structuredSession.getCurrentTimestamp();
+          const updated = yield* structuredSession.updateAppPreferences({
             ...decoded.patch,
             updatedAt,
           });
@@ -1844,7 +3015,8 @@ function stateCommandsFromState(state: {
             const existing = receipts.get(clientRequestId);
             if (existing) return duplicateMutationResult(existing);
           }
-          const record = yield* state.structuredSession.recordProviderAuthStatus({
+          const structuredSession = yield* state.structuredSession(decoded.status.workspaceId);
+          const record = yield* structuredSession.recordProviderAuthStatus({
             status: decoded.status,
             observedAt: decoded.observedAt,
             source: decoded.source,
@@ -1862,6 +3034,256 @@ function stateCommandsFromState(state: {
           return result;
         }),
     },
+    extensionEnv: {
+      setOverride: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetExtensionEnvOverrideInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.extensionEnv.setOverride",
+            decoded,
+            `${decoded.extensionId}:${decoded.envName}`,
+            () => structuredSession.setExtensionEnvOverride(decoded),
+            extensionEnvStateInvalidations(decoded.extensionId),
+          );
+        }),
+      removeOverride: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeRemoveExtensionEnvOverrideInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.extensionEnv.removeOverride",
+            decoded,
+            `${decoded.extensionId}:${decoded.envName}`,
+            () => structuredSession.removeExtensionEnvOverride(decoded),
+            extensionEnvStateInvalidations(decoded.extensionId),
+          );
+        }),
+    },
+    agentProfiles: {
+      updateOrchestrator: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeUpdateOrchestratorProfileInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.updateOrchestrator",
+            decoded,
+            decoded.profile.profileId,
+            () => structuredSession.updateOrchestratorProfile(decoded),
+            agentsStateInvalidations(decoded.profile.profileId),
+          );
+        }),
+      updateThreadHandler: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeUpdateThreadHandlerProfileInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.updateThreadHandler",
+            decoded,
+            decoded.profile.profileId,
+            () => structuredSession.updateThreadHandlerProfile(decoded),
+            agentsStateInvalidations(decoded.profile.profileId),
+          );
+        }),
+      deleteOrchestrator: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeDeleteOrchestratorProfileInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.deleteOrchestrator",
+            decoded,
+            decoded.profileId,
+            () => structuredSession.deleteOrchestratorProfile(decoded),
+            agentsStateInvalidations(decoded.profileId),
+          );
+        }),
+      reorderOrchestrators: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeReorderOrchestratorProfilesInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.reorderOrchestrators",
+            decoded,
+            decoded.profileIds.join(","),
+            () => structuredSession.reorderOrchestratorProfiles(decoded),
+            agentsStateInvalidations(),
+          );
+        }),
+      setProfileExtensionUsage: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetProfileExtensionUsageInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.setProfileExtensionUsage",
+            decoded,
+            `${decoded.actor}:${decoded.profileId}:${decoded.extensionId}`,
+            () => structuredSession.setProfileExtensionUsage(decoded),
+            agentsStateInvalidations(decoded.profileId),
+          );
+        }),
+      promoteExtensionDefault: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodePromoteProfileExtensionDefaultInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.promoteExtensionDefault",
+            decoded,
+            `${decoded.actor}:${decoded.profileId}:${decoded.extensionId}`,
+            () => structuredSession.promoteProfileExtensionDefault(decoded),
+            agentsStateInvalidations(decoded.profileId),
+          );
+        }),
+      resetActorExtensionDefaults: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeResetActorExtensionDefaultsInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.resetActorExtensionDefaults",
+            decoded,
+            `${decoded.actor}:${decoded.reset}`,
+            () => structuredSession.resetActorExtensionDefaults(decoded),
+            agentsStateInvalidations(),
+          );
+        }),
+      setExternalInstructionActorUsage: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetExternalInstructionActorUsageInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.setExternalInstructionActorUsage",
+            decoded,
+            `${decoded.actor}:${decoded.profileId}:${decoded.sourceId}`,
+            () => structuredSession.setExternalInstructionActorUsage(decoded),
+            agentsStateInvalidations(decoded.profileId),
+          );
+        }),
+    },
+    snippets: {
+      createManaged: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeCreateManagedSnippetInput(commandInput);
+          const workspaceId = (decoded.workspaceId ?? "workspace_state_root") as WorkspaceIdType;
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          const clientRequestId = decoded.clientSubmission?.clientRequestId;
+          const receiptKey = `stateCommands.snippets.createManaged:${workspaceId}:${decoded.title}:${clientRequestId ?? "single-shot"}`;
+          if (clientRequestId) {
+            const existing = receipts.get(receiptKey);
+            if (existing)
+              return duplicateMutationResult(existing) as StateMutationResult<
+                StateCommandResult<{ snippetId: SnippetId }>
+              >;
+          }
+          const created = yield* structuredSession.createManagedSnippet(decoded);
+          const value: StateCommandResult<{ snippetId: SnippetId }> = {
+            snippetId: created.id as SnippetId,
+            receipt: {
+              clientRequestId: clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: created.updatedAt as StateCommandReceipt["committedAt"],
+              stateRevision: created.stateRevision,
+            },
+          };
+          const result = mutationResult(
+            value,
+            snippetStateInvalidations(workspaceId, created.id as SnippetId),
+          );
+          if (clientRequestId) receipts.set(receiptKey, result);
+          return result;
+        }),
+      updateManaged: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeUpdateManagedSnippetInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.snippets.updateManaged",
+            decoded,
+            decoded.snippetId,
+            () => structuredSession.updateManagedSnippet(decoded),
+            snippetStateInvalidations(
+              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.snippetId,
+            ),
+          );
+        }),
+      deleteManaged: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeDeleteManagedSnippetInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.snippets.deleteManaged",
+            decoded,
+            decoded.snippetId,
+            () => structuredSession.deleteManagedSnippet(decoded),
+            snippetStateInvalidations(
+              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.snippetId,
+            ),
+          );
+        }),
+      setEnabled: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetSnippetEnabledInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.snippets.setEnabled",
+            decoded,
+            decoded.snippetId,
+            () => structuredSession.setSnippetEnabled(decoded),
+            snippetStateInvalidations(
+              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.snippetId,
+            ),
+          );
+        }),
+    },
+  });
+}
+
+function commitStructuredCommand<
+  Decoded extends { clientSubmission?: RuntimeClientSubmissionInput },
+>(
+  receipts: Map<string, StateMutationResult<StateCommandResult>>,
+  operation: string,
+  decoded: Decoded,
+  subject: string,
+  commit: () => Effect.Effect<
+    { updatedAt: string; stateRevision: StateRevision },
+    StateContractError
+  >,
+  afterCommit: readonly StateInvalidationDescriptor[],
+): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError> {
+  return Effect.gen(function* () {
+    const clientRequestId = decoded.clientSubmission?.clientRequestId;
+    const receiptKey = `${operation}:${subject}:${clientRequestId ?? "single-shot"}`;
+    if (clientRequestId) {
+      const existing = receipts.get(receiptKey);
+      if (existing) return duplicateMutationResult(existing);
+    }
+    const committed = yield* commit();
+    const value: StateCommandResult = {
+      receipt: {
+        clientRequestId: clientRequestId ?? null,
+        outcome: "applied",
+        committedAt: committed.updatedAt as StateCommandReceipt["committedAt"],
+        stateRevision: committed.stateRevision,
+      },
+    };
+    const result = mutationResult(value, afterCommit);
+    if (clientRequestId) receipts.set(receiptKey, result);
+    return result;
   });
 }
 
@@ -1879,16 +3301,17 @@ function appLogEntrySeq(entryId: AppLogEntryId): number {
   return match ? Number(match[1]) : 0;
 }
 
-function duplicateMutationResult(
-  result: StateMutationResult<StateCommandResult>,
-): StateMutationResult<StateCommandResult> {
+function duplicateMutationResult<T extends StateCommandResult>(
+  result: StateMutationResult<T>,
+): StateMutationResult<T> {
   return mutationResult(
     {
+      ...result.value,
       receipt: {
         ...result.value.receipt,
         outcome: "duplicate",
       },
-    },
+    } as T,
     [],
   );
 }
@@ -1912,6 +3335,37 @@ function providerAuthStateInvalidations(
   status: ProviderAuthStatus,
 ): readonly StateInvalidationDescriptor[] {
   return [{ scope: "app", invalidation: { model: "providerAuth", ids: [status.providerId] } }];
+}
+
+function workspaceChromeLayoutInvalidations(
+  workspaceId: WorkspaceIdType,
+): readonly StateInvalidationDescriptor[] {
+  return [{ scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } }];
+}
+
+function extensionEnvStateInvalidations(
+  extensionId: ExtensionId,
+): readonly StateInvalidationDescriptor[] {
+  return [{ scope: "app", invalidation: { model: "extensions", ids: [extensionId] } }];
+}
+
+function agentsStateInvalidations(
+  profileId?: AgentProfileId | string,
+): readonly StateInvalidationDescriptor[] {
+  return [
+    profileId
+      ? { scope: "app", invalidation: { model: "agents", ids: [profileId as AgentProfileId] } }
+      : { scope: "app", invalidation: { model: "agents" } },
+  ];
+}
+
+function snippetStateInvalidations(
+  workspaceId: WorkspaceIdType,
+  snippetId: SnippetId,
+): readonly StateInvalidationDescriptor[] {
+  return [
+    { scope: "workspace", workspaceId, invalidation: { model: "snippets", ids: [snippetId] } },
+  ];
 }
 
 function appPreferencesReadModel(record: StructuredAppPreferencesRecord): AppPreferencesReadModel {
@@ -2137,6 +3591,108 @@ const decodeUpdateAppPreferencesInput = (input: unknown) =>
 const decodeRecordProviderAuthStatusInput = (input: unknown) =>
   decodeUnknownRecordProviderAuthStatusCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.providerAuth.recordStatus")),
+  );
+
+const decodeSetWorkspaceTabsInput = (input: unknown) =>
+  decodeUnknownSetWorkspaceTabsCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceChrome.setTabs")),
+  );
+
+const decodeSelectWorkspaceTabInput = (input: unknown) =>
+  decodeUnknownSelectWorkspaceTabCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceChrome.selectTab")),
+  );
+
+const decodeSelectWorkspaceLayoutSlotInput = (input: unknown) =>
+  decodeUnknownSelectWorkspaceLayoutSlotCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceChrome.selectLayoutSlot")),
+  );
+
+const decodeSaveWorkspaceLayoutSnapshotInput = (input: unknown) =>
+  decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.saveSnapshot")),
+  );
+
+const decodeUpdateWorkspacePaneInput = (input: unknown) =>
+  decodeUnknownUpdateWorkspacePaneCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.updatePane")),
+  );
+
+const decodeCloseWorkspacePaneInput = (input: unknown) =>
+  decodeUnknownCloseWorkspacePaneCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.closePane")),
+  );
+
+const decodeSetExtensionEnvOverrideInput = (input: unknown) =>
+  decodeUnknownSetExtensionEnvOverrideCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.extensionEnv.setOverride")),
+  );
+
+const decodeRemoveExtensionEnvOverrideInput = (input: unknown) =>
+  decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.extensionEnv.removeOverride")),
+  );
+
+const decodeUpdateOrchestratorProfileInput = (input: unknown) =>
+  decodeUnknownUpdateOrchestratorProfileCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.updateOrchestrator")),
+  );
+
+const decodeUpdateThreadHandlerProfileInput = (input: unknown) =>
+  decodeUnknownUpdateThreadHandlerProfileCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.updateThreadHandler")),
+  );
+
+const decodeDeleteOrchestratorProfileInput = (input: unknown) =>
+  decodeUnknownDeleteOrchestratorProfileCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.deleteOrchestrator")),
+  );
+
+const decodeReorderOrchestratorProfilesInput = (input: unknown) =>
+  decodeUnknownReorderOrchestratorProfilesCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.reorderOrchestrators")),
+  );
+
+const decodeSetProfileExtensionUsageInput = (input: unknown) =>
+  decodeUnknownSetProfileExtensionUsageCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.setProfileExtensionUsage")),
+  );
+
+const decodePromoteProfileExtensionDefaultInput = (input: unknown) =>
+  decodeUnknownPromoteProfileExtensionDefaultCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.promoteExtensionDefault")),
+  );
+
+const decodeResetActorExtensionDefaultsInput = (input: unknown) =>
+  decodeUnknownResetActorExtensionDefaultsCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.resetActorExtensionDefaults")),
+  );
+
+const decodeSetExternalInstructionActorUsageInput = (input: unknown) =>
+  decodeUnknownSetExternalInstructionActorUsageCommandInputEffect(input).pipe(
+    Effect.mapError(
+      commandDecodeError("stateCommands.agentProfiles.setExternalInstructionActorUsage"),
+    ),
+  );
+
+const decodeCreateManagedSnippetInput = (input: unknown) =>
+  decodeUnknownCreateManagedSnippetCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.snippets.createManaged")),
+  );
+
+const decodeUpdateManagedSnippetInput = (input: unknown) =>
+  decodeUnknownUpdateManagedSnippetCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.snippets.updateManaged")),
+  );
+
+const decodeDeleteManagedSnippetInput = (input: unknown) =>
+  decodeUnknownDeleteManagedSnippetCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.snippets.deleteManaged")),
+  );
+
+const decodeSetSnippetEnabledInput = (input: unknown) =>
+  decodeUnknownSetSnippetEnabledCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.snippets.setEnabled")),
   );
 
 function commandDecodeError(operation: string) {

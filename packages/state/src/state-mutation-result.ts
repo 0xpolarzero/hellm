@@ -36,6 +36,24 @@ export function sessionNavigationInvalidation(workspaceId: string): StateInvalid
   };
 }
 
+export function workspaceChromeLayoutInvalidation(
+  workspaceId: string,
+): StateInvalidationDescriptor {
+  return {
+    scope: "workspace",
+    workspaceId: workspaceId as WorkspaceId,
+    invalidation: { model: "workspaceChromeLayout" },
+  };
+}
+
+export function agentsInvalidation(): StateInvalidationDescriptor {
+  return { scope: "app", invalidation: { model: "agents" } };
+}
+
+export function extensionsInvalidation(): StateInvalidationDescriptor {
+  return { scope: "app", invalidation: { model: "extensions" } };
+}
+
 export function surfaceAndSessionNavigationInvalidations(
   workspaceId: string,
   surfacePiSessionId: string,

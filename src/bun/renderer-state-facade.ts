@@ -11,9 +11,14 @@ export interface RendererStateFacade {
 }
 
 export interface RendererStateCommandsFacade {
+  readonly workspaceChrome: BootstrapStateCommandsFacade["workspaceChrome"];
+  readonly workspaceLayout: BootstrapStateCommandsFacade["workspaceLayout"];
   readonly appLogs: BootstrapStateCommandsFacade["appLogs"];
   readonly appPreferences: BootstrapStateCommandsFacade["appPreferences"];
   readonly providerAuth: BootstrapStateCommandsFacade["providerAuth"];
+  readonly extensionEnv: BootstrapStateCommandsFacade["extensionEnv"];
+  readonly agentProfiles: BootstrapStateCommandsFacade["agentProfiles"];
+  readonly snippets: BootstrapStateCommandsFacade["snippets"];
 }
 
 export function narrowRendererStateFacade(state: BootstrapStateFacade): RendererStateFacade {
@@ -30,8 +35,13 @@ export function narrowRendererStateCommandsFacade(
   commands: BootstrapStateCommandsFacade,
 ): RendererStateCommandsFacade {
   return {
+    workspaceChrome: commands.workspaceChrome,
+    workspaceLayout: commands.workspaceLayout,
     appLogs: commands.appLogs,
     appPreferences: commands.appPreferences,
     providerAuth: commands.providerAuth,
+    extensionEnv: commands.extensionEnv,
+    agentProfiles: commands.agentProfiles,
+    snippets: commands.snippets,
   };
 }

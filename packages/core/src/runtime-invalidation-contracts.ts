@@ -17,6 +17,7 @@ import {
 
 export const WorkspaceReadModelInvalidationSchema = Schema.Union([
   Schema.Struct({ model: Schema.Literal("sessionNavigation") }),
+  Schema.Struct({ model: Schema.Literal("workspaceChromeLayout") }),
   Schema.Struct({ model: Schema.Literal("surface"), ids: Schema.Array(SurfacePiSessionId) }),
   Schema.Struct({ model: Schema.Literal("commandInspector"), ids: Schema.Array(CommandId) }),
   Schema.Struct({ model: Schema.Literal("handlerThreadInspector"), ids: Schema.Array(ThreadId) }),

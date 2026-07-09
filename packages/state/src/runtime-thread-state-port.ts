@@ -14,6 +14,7 @@ import {
 import {
   commandInspectorInvalidation,
   dedupeInvalidations,
+  agentsInvalidation,
   handlerThreadInspectorInvalidation,
   mutationResult,
   sessionNavigationInvalidation,
@@ -73,6 +74,7 @@ function startHandlerThreadsInvalidations(
   return dedupeInvalidations([
     sessionNavigationInvalidation(workspaceId),
     commandInspectorInvalidation(workspaceId, input.sourceCommandId),
+    agentsInvalidation(),
     ...result.threads.flatMap((thread) => [
       surfaceInvalidation(workspaceId, thread.surfacePiSessionId),
       handlerThreadInspectorInvalidation(workspaceId, thread.threadId),

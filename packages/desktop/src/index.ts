@@ -24,9 +24,14 @@ export interface RendererStateFacade {
 }
 
 export interface RendererStateCommandsFacade {
+  readonly workspaceChrome: BootstrapStateCommandsFacade["workspaceChrome"];
+  readonly workspaceLayout: BootstrapStateCommandsFacade["workspaceLayout"];
   readonly appLogs: BootstrapStateCommandsFacade["appLogs"];
   readonly appPreferences: BootstrapStateCommandsFacade["appPreferences"];
   readonly providerAuth: BootstrapStateCommandsFacade["providerAuth"];
+  readonly extensionEnv: BootstrapStateCommandsFacade["extensionEnv"];
+  readonly agentProfiles: BootstrapStateCommandsFacade["agentProfiles"];
+  readonly snippets: BootstrapStateCommandsFacade["snippets"];
 }
 
 export interface DesktopNotificationBridge {

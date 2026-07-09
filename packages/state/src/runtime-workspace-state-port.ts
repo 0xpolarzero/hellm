@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { RuntimeWorkspaceStatePort, type RuntimeWorkspaceStatePortService } from "@svvy/core";
-import { mutationResult, sessionNavigationInvalidation } from "./state-mutation-result";
+import {
+  dedupeInvalidations,
+  mutationResult,
+  sessionNavigationInvalidation,
+  workspaceChromeLayoutInvalidation,
+} from "./state-mutation-result";
 import {
   StructuredSessionState,
   structuredSessionStateFromStore,
@@ -17,7 +22,13 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
         .acquireWorkspace(input)
         .pipe(
           Effect.map((result) =>
-            mutationResult(result, [sessionNavigationInvalidation(result.workspaceId)]),
+            mutationResult(
+              result,
+              dedupeInvalidations([
+                sessionNavigationInvalidation(result.workspaceId),
+                workspaceChromeLayoutInvalidation(result.workspaceId),
+              ]),
+            ),
           ),
         ),
     acquireDefaultWorkspace: (input) =>
@@ -25,7 +36,13 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
         .acquireDefaultWorkspace(input)
         .pipe(
           Effect.map((result) =>
-            mutationResult(result, [sessionNavigationInvalidation(result.workspaceId)]),
+            mutationResult(
+              result,
+              dedupeInvalidations([
+                sessionNavigationInvalidation(result.workspaceId),
+                workspaceChromeLayoutInvalidation(result.workspaceId),
+              ]),
+            ),
           ),
         ),
     releaseWorkspace: (input) =>
@@ -33,7 +50,13 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
         .releaseWorkspace(input)
         .pipe(
           Effect.map((result) =>
-            mutationResult(result, [sessionNavigationInvalidation(result.workspaceId)]),
+            mutationResult(
+              result,
+              dedupeInvalidations([
+                sessionNavigationInvalidation(result.workspaceId),
+                workspaceChromeLayoutInvalidation(result.workspaceId),
+              ]),
+            ),
           ),
         ),
   };

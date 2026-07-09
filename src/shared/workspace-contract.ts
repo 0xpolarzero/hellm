@@ -67,10 +67,15 @@ import type {
   RuntimeClientSubmissionMetadata,
   StateStoredError,
   StateRevision,
+  SnippetId,
   SurfacePiSessionId,
+  ThreadId,
   TurnId,
   ComposerAttachment,
+  WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspacePaneId,
+  WorkspaceTabId,
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 
@@ -170,6 +175,45 @@ export interface ApprovalsReadModelRequest {
   requestId?: RuntimeApprovalId;
 }
 
+export interface AgentsReadModelRequest {
+  kind: "agents";
+  profileId?: AgentProfileId;
+}
+
+export interface ExtensionsReadModelRequest {
+  kind: "extensions";
+  extensionId?: string;
+}
+
+export interface SnippetsStateReadModelRequest {
+  kind: "snippets";
+  workspaceId?: WorkspaceId;
+  snippetId?: string;
+}
+
+export interface WorkflowsGeneratedReadModelRequest {
+  kind: "workflowsGenerated";
+  buildId?: string;
+}
+
+export interface HandlerInspectorReadModelRequest {
+  kind: "handlerInspector";
+  workspaceId?: WorkspaceId;
+  threadId: ThreadId;
+}
+
+export interface WorkflowTaskAttemptInspectorReadModelRequest {
+  kind: "workflowTaskAttemptInspector";
+  workspaceId?: WorkspaceId;
+  workflowTaskAttemptId: WorkflowTaskAttemptId;
+}
+
+export interface WorkspaceChromeLayoutReadModelRequest {
+  kind: "workspaceChromeLayout";
+  workspaceId?: WorkspaceId;
+  layoutId?: "A" | "B" | "C";
+}
+
 export type SessionNavigationReadModel =
   CoreWorkspaceSessionNavigationReadModel<WorkspaceSessionSummary>;
 
@@ -208,7 +252,7 @@ export interface SurfaceComposerReadModel {
   draft: {
     text: string;
     attachments: readonly ComposerAttachment[];
-    snippetMentions: readonly unknown[];
+    snippetMentions: readonly ComposerSnippetMention[];
     updatedAt: string | null;
   };
 }
@@ -267,6 +311,115 @@ export interface ApprovalsReadModel {
   requests: readonly WorkspaceRuntimeApprovalRequest[];
 }
 
+export interface AgentsReadModel {
+  profiles: readonly AgentProfileReadModelRecord[];
+  generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
+}
+
+export interface AgentProfileReadModelRecord {
+  profileId: string;
+  actor: "orchestrator" | "handler" | "workflow-task";
+  name: string;
+  providerId: string;
+  modelId: string;
+  reasoning: JsonValue | null;
+  followComposer: boolean;
+  loadedExtensionIds: readonly string[];
+  availableExtensionIds: readonly string[];
+  generatedAgentContextFingerprint: string | null;
+  source: "surface-binding" | "handler-thread" | "workflow-task-attempt";
+}
+
+export interface GeneratedContextPreviewReadModelRecord {
+  ownerKind: "session" | "thread" | "workflow-task-attempt";
+  ownerId: string;
+  surfacePiSessionId: SurfacePiSessionId;
+  actorKind: "orchestrator" | "handler" | "workflow-task";
+  generatedAgentContextFingerprint: string;
+  generatedAgentContextRevision: number;
+  loadedExtensionIds: readonly string[];
+  availableExtensionIds: readonly string[];
+  externalSourceHashes: readonly string[];
+}
+
+export interface ExtensionsReadModel {
+  records: readonly ExtensionReadModelRecord[];
+  dependencyReadiness: readonly unknown[];
+}
+
+export interface ExtensionReadModelRecord {
+  extensionId: string;
+  readiness: "ready" | "not-ready" | "unknown";
+  loadedByProfileIds: readonly string[];
+  availableByProfileIds: readonly string[];
+  generatedPackageStatus: "ready" | "failed" | "refresh-needed" | "unknown";
+}
+
+export interface StateSnippetsReadModel {
+  managed: readonly SnippetReadModelRecord[];
+  discovered: readonly SnippetReadModelRecord[];
+  snippets: readonly SnippetReadModelRecord[];
+}
+
+export interface SnippetReadModelRecord {
+  id: SnippetId;
+  source: "svvy" | "claude" | "pi" | "host";
+  title: string;
+  body: string;
+  metadata: JsonValue;
+  enabled: boolean;
+  path: string | null;
+  updatedAt: string | null;
+}
+
+export interface WorkflowsGeneratedReadModel {
+  packageName: "@svvyx/workflows";
+  facts: readonly unknown[];
+  exports: readonly WorkflowsGeneratedExportReadModelRecord[];
+}
+
+export interface WorkflowsGeneratedExportReadModelRecord {
+  namespace: WorkspaceWorkflowsGeneratedNamespace;
+  exportName: string;
+  qualifiedName: string;
+  kind: WorkspaceWorkflowsGeneratedKind;
+  generatedCode: string;
+  generatedPath: string | null;
+  sourcePath: string | null;
+  agentParameters: JsonValue | null;
+}
+
+export interface WorkspaceChromeLayoutReadModel {
+  activeWorkspaceTabId: WorkspaceTabId | null;
+  tabs: readonly WorkspaceTabReadModelRecord[];
+  knownWorkspaces: readonly WorkspaceTabReadModelRecord[];
+  layouts: readonly WorkspaceLayoutReadModelRecord[];
+}
+
+export interface WorkspaceTabReadModelRecord {
+  workspaceTabId: WorkspaceTabId;
+  workspaceId: WorkspaceId;
+  cwd: string;
+  openedAt: string;
+  activeLayoutId: WorkspaceLayoutSlotId;
+}
+
+export interface WorkspaceLayoutReadModelRecord {
+  workspaceId: WorkspaceId;
+  layoutId: WorkspaceLayoutSlotId;
+  initialized: boolean;
+  snapshotJson: JsonValue | null;
+  focusedPaneId: WorkspacePaneId | null;
+  panelMetadata: readonly WorkspacePaneReadModelRecord[];
+}
+
+export interface WorkspacePaneReadModelRecord {
+  paneId: WorkspacePaneId;
+  kind: "surface" | "inspector" | "static";
+  target: JsonValue;
+  localStateJson: JsonValue | null;
+}
+
 export type StateReadModelRequest =
   | AppLogReadModelRequest
   | AppPreferencesReadModelRequest
@@ -278,7 +431,14 @@ export type StateReadModelRequest =
   | SurfaceQueuedMessagesReadModelRequest
   | CommandInspectorReadModelRequest
   | RequestInputReadModelRequest
-  | ApprovalsReadModelRequest;
+  | ApprovalsReadModelRequest
+  | AgentsReadModelRequest
+  | ExtensionsReadModelRequest
+  | SnippetsStateReadModelRequest
+  | WorkflowsGeneratedReadModelRequest
+  | HandlerInspectorReadModelRequest
+  | WorkflowTaskAttemptInspectorReadModelRequest
+  | WorkspaceChromeLayoutReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
@@ -293,7 +453,14 @@ export type StateReadModelResult =
   | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
   | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
   | { kind: "requestInput"; value: RequestInputReadModel }
-  | { kind: "approvals"; value: ApprovalsReadModel };
+  | { kind: "approvals"; value: ApprovalsReadModel }
+  | { kind: "agents"; value: AgentsReadModel }
+  | { kind: "extensions"; value: ExtensionsReadModel }
+  | { kind: "snippets"; value: StateSnippetsReadModel }
+  | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
+  | { kind: "handlerInspector"; value: WorkspaceHandlerThreadInspector | null }
+  | { kind: "workflowTaskAttemptInspector"; value: WorkspaceWorkflowTaskAttemptInspector | null }
+  | { kind: "workspaceChromeLayout"; value: WorkspaceChromeLayoutReadModel };
 
 export interface StateReadModelRefetchRequest {
   requests: readonly StateReadModelRequest[];

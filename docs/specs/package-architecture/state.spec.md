@@ -622,6 +622,21 @@ type StateReadModelRequest =
       workspaceId?: WorkspaceId;
       surfacePiSessionId?: SurfacePiSessionId;
       requestId?: RuntimeApprovalId;
+    }
+  | { kind: "agents"; profileId?: AgentProfileId }
+  | { kind: "extensions"; extensionId?: ExtensionId }
+  | { kind: "snippets"; workspaceId?: WorkspaceId; snippetId?: SnippetId }
+  | { kind: "workflowsGenerated"; buildId?: GeneratedPackageBuildId }
+  | { kind: "handlerInspector"; workspaceId?: WorkspaceId; threadId: ThreadId }
+  | {
+      kind: "workflowTaskAttemptInspector";
+      workspaceId?: WorkspaceId;
+      workflowTaskAttemptId: WorkflowTaskAttemptId;
+    }
+  | {
+      kind: "workspaceChromeLayout";
+      workspaceId?: WorkspaceId;
+      layoutId?: "A" | "B" | "C";
     };
 
 type StateReadModelResult =
@@ -637,7 +652,17 @@ type StateReadModelResult =
   | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
   | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
   | { kind: "requestInput"; value: RequestInputReadModel }
-  | { kind: "approvals"; value: ApprovalsReadModel };
+  | { kind: "approvals"; value: ApprovalsReadModel }
+  | { kind: "agents"; value: AgentsReadModel }
+  | { kind: "extensions"; value: ExtensionsReadModel }
+  | { kind: "snippets"; value: SnippetsReadModel }
+  | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
+  | { kind: "handlerInspector"; value: HandlerInspectorReadModel | null }
+  | {
+      kind: "workflowTaskAttemptInspector";
+      value: WorkflowTaskAttemptInspectorReadModel | null;
+    }
+  | { kind: "workspaceChromeLayout"; value: WorkspaceChromeLayoutReadModel };
 
 type SettingsReadModel = {
   preferences: {
@@ -785,6 +810,38 @@ type ApprovalsReadModel = {
   }[];
 };
 
+type AgentsReadModel = {
+  profiles: readonly AgentProfileReadModelRecord[];
+  generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
+};
+
+type ExtensionsReadModel = {
+  records: readonly ExtensionReadModelRecord[];
+  dependencyReadiness: readonly JsonValue[];
+};
+
+type SnippetsReadModel = {
+  managed: readonly SnippetReadModelRecord[];
+  discovered: readonly SnippetReadModelRecord[];
+  snippets: readonly SnippetReadModelRecord[];
+};
+
+type WorkflowsGeneratedReadModel = {
+  packageName: "@svvyx/workflows";
+  facts: readonly StructuredGeneratedPackageFactRecord[];
+  exports: readonly WorkflowsGeneratedExportReadModelRecord[];
+};
+
+type HandlerInspectorReadModel = StructuredHandlerThreadInspector;
+type WorkflowTaskAttemptInspectorReadModel = StructuredWorkflowTaskAttemptInspector;
+
+type WorkspaceChromeLayoutReadModel = {
+  activeWorkspaceTabId: WorkspaceTabId | null;
+  tabs: readonly WorkspaceTabReadModelRecord[];
+  knownWorkspaces: readonly WorkspaceTabReadModelRecord[];
+  layouts: readonly WorkspaceLayoutReadModelRecord[];
+};
+
 type StateReadModelRebaselineRequest = {
   workspaceId?: WorkspaceId;
   target?: RuntimeSurfaceTarget;
@@ -828,6 +885,18 @@ state-owned facade contracts named in this table.
 | `commandInspector` | `packages/state/src/state-facade.ts` ports the catalog `getCommandInspector` path by calling `buildStructuredCommandInspector(...)` from `packages/state/src/structured-session-selectors.ts` over the routed structured-session snapshots, then narrows to the already-authored `CommandInspectorReadModel`. | Workspace `{ model: "commandInspector", ids }` refetches one `commandInspector` result per command id. | `CommandInspectorReadModelRequest`, `CommandInspectorReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` compares against `buildStructuredCommandInspector(...)` on the same fixture snapshot; `packages/package-boundaries.test.ts` root-export ledger. |
 | `requestInput` | `packages/state/src/state-facade.ts` ports the catalog `buildWorkspaceRequestUserInputRequests()` mapping over `StructuredSessionState.listSessionStates()` and returns open/completed surface-local clarification requests/questions. | Workspace `{ model: "requestInput", ids }` refetches `requestInput`; request-input state-port commits also invalidate `surface` and `commandInspector` where applicable. | `RequestInputReadModelRequest`, `RequestInputReadModel`, `RequestInputReadModelRequestItem`, `WorkspaceRequestInputDelivery` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` fixture parity assertion and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
 | `approvals` | `packages/state/src/state-facade.ts` ports the catalog `buildWorkspaceRuntimeApprovalRequests()` mapping over `StructuredSessionState.listSessionStates()` and returns pending runtime approval requests. | Workspace `{ model: "runtimeApprovals", ids }` refetches `approvals`; runtime approval state-port commits also invalidate `surface`, `sessionNavigation`, and `commandInspector` where applicable. | `ApprovalsReadModelRequest`, `ApprovalsReadModel`, `ApprovalReadModelRequestItem` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` fixture parity assertion, invalidation refetch, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
+
+Second-half Increment 6 read-model rows:
+
+| Kind | Builder source | Invalidation mapping | Root exports | Tests |
+| --- | --- | --- | --- | --- |
+| `agents` | `packages/state/src/state-facade.ts` builds profile inventory and generated-context preview/binding metadata from routed structured-session snapshots and generated-context binding records consumed by the Agents pane. | App `{ model: "agents", ids? }` refetches `agents`; app rebaseline includes `agents`. | `AgentsReadModelRequest`, `AgentsReadModel`, `AgentProfileReadModelRecord`, `GeneratedContextPreviewReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` second-half fixture assertions and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
+| `extensions` | `packages/state/src/state-facade.ts` builds extension inventory/readiness from profile extension usage plus generated `@svvyx/extensions` package facts. | App `{ model: "extensions", ids? }` refetches `extensions`; app rebaseline includes `extensions`. | `ExtensionsReadModelRequest`, `ExtensionsReadModel`, `ExtensionReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` generated-package parity fixture assertion and `extensionEnv` descriptor test; `packages/package-boundaries.test.ts` root-export ledger. |
+| `snippets` | `packages/state/src/state-facade.ts` reads state-owned `snippet` rows seeded once from the legacy managed snippet file store and then maintained by `StateCommands.snippets`; managed svvy snippets are durable DB rows and discovered snippet rows use the same read-model DTO when committed by source reconciliation. | Workspace `{ model: "snippets", ids? }` refetches `snippets`; workspace rebaseline includes `snippets`. | `SnippetsReadModelRequest`, `SnippetsReadModel`, `SnippetReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` non-empty row fixture, rebaseline coverage, and `snippets.createManaged` descriptor/idempotency test; `packages/package-boundaries.test.ts` root-export ledger. |
+| `workflowsGenerated` | `packages/state/src/state-facade.ts` builds generated Workflows package facts from `StructuredSessionState.readGeneratedPackageFacts({ packages: ["@svvyx/workflows"] })`; generated export rows remain the state-owned facade shape consumed by the Workflows pane. | App `{ model: "workflowsGenerated", ids? }` refetches `workflowsGenerated`; app rebaseline includes `workflowsGenerated`. | `WorkflowsGeneratedReadModelRequest`, `WorkflowsGeneratedReadModel`, `WorkflowsGeneratedExportReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` generated-package fact fixture assertion and app rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
+| `handlerInspector` | `packages/state/src/state-facade.ts` ports the catalog handler-thread inspector by calling `buildStructuredHandlerThreadInspector(...)` from `packages/state/src/structured-session-selectors.ts` over routed structured-session snapshots. | Workspace `{ model: "handlerThreadInspector", ids }` refetches one `handlerInspector` result per thread id. | `HandlerInspectorReadModelRequest`, `HandlerInspectorReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` handler-thread selector fixture assertion; `packages/package-boundaries.test.ts` root-export ledger. |
+| `workflowTaskAttemptInspector` | `packages/state/src/state-facade.ts` ports the workflow task-attempt inspector by calling `buildStructuredWorkflowTaskAttemptInspector(...)` from `packages/state/src/structured-session-selectors.ts` over routed structured-session snapshots. | Workspace `{ model: "workflowTaskAttemptInspector", ids }` refetches one `workflowTaskAttemptInspector` result per attempt id. | `WorkflowTaskAttemptInspectorReadModelRequest`, `WorkflowTaskAttemptInspectorReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` workflow-task selector fixture assertion; `packages/package-boundaries.test.ts` root-export ledger. |
+| `workspaceChromeLayout` | `packages/state/src/state-facade.ts` reads `workspace_chrome_state`, `workspace_chrome_tab`, and `workspace_layout_slot` rows seeded once from the legacy app workspace-tabs file store and then maintained by `StateCommands.workspaceChrome` / `StateCommands.workspaceLayout`, providing the stable panel-binding read model required by Increment 7. | Workspace `{ model: "workspaceChromeLayout" }` refetches `workspaceChromeLayout`; workspace rebaseline includes `workspaceChromeLayout`. | `WorkspaceChromeLayoutReadModelRequest`, `WorkspaceChromeLayoutReadModel`, `WorkspaceLayoutReadModelRecord`, `WorkspacePaneReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` non-empty layout fixture assertion, invalidation refetch, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
 
 `refetchInvalidation(...)` maps committed read-model invalidation descriptors to affected facade
 read requests, and `rebaseline(...)` returns the authoritative baseline for the requested
@@ -1027,14 +1096,6 @@ type StateCommandsFacade = {
     ): Promise<StateCommandResult>;
   };
   providerAuth: {
-    upsertCredential(
-      input: UpsertProviderCredentialCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    removeCredential(
-      input: RemoveProviderCredentialCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
     recordStatus(
       input: RecordProviderAuthStatusInput,
       options?: StateFacadeCallOptions,
@@ -1047,14 +1108,6 @@ type StateCommandsFacade = {
     ): Promise<StateCommandResult>;
     removeOverride(
       input: RemoveExtensionEnvOverrideCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    setSecretValue(
-      input: SetExtensionSecretValueCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    removeSecretValue(
-      input: RemoveExtensionSecretValueCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
@@ -1288,22 +1341,6 @@ type UpdateAppPreferencesCommandInput = {
   clientSubmission?: StateCommandClientSubmission;
 };
 
-type UpsertProviderCredentialCommandInput = {
-  providerId: ProviderId;
-  workspaceId?: WorkspaceId;
-  credentialKind: "api-key" | "oauth-token";
-  secretValue: string;
-  redactedAccountLabel?: string;
-  expiresAt?: IsoDateTimeString;
-  clientSubmission?: StateCommandClientSubmission;
-};
-
-type RemoveProviderCredentialCommandInput = {
-  providerId: ProviderId;
-  workspaceId?: WorkspaceId;
-  clientSubmission?: StateCommandClientSubmission;
-};
-
 type RecordProviderAuthStatusInput = {
   status: {
     providerId: ProviderId;
@@ -1327,19 +1364,6 @@ type SetExtensionEnvOverrideCommandInput = {
 };
 
 type RemoveExtensionEnvOverrideCommandInput = {
-  extensionId: ExtensionId;
-  envName: ExtensionEnvName;
-  clientSubmission?: StateCommandClientSubmission;
-};
-
-type SetExtensionSecretValueCommandInput = {
-  extensionId: ExtensionId;
-  envName: ExtensionEnvName;
-  secretValue: string;
-  clientSubmission?: StateCommandClientSubmission;
-};
-
-type RemoveExtensionSecretValueCommandInput = {
   extensionId: ExtensionId;
   envName: ExtensionEnvName;
   clientSubmission?: StateCommandClientSubmission;
@@ -1443,30 +1467,13 @@ type SetSnippetEnabledCommandInput = {
 };
 ```
 
-Snippets using `Redacted.Redacted<T>` assume `import type * as Redacted from "effect/Redacted"`.
 Secret-bearing local types stay process-local. Persisted state, RPC contracts, generated package
 files, read models, diagnostics, and app logs expose only presence, non-secret labels, extension
-env names, or fingerprints.
-
-Promise/RPC command facades that accept provider or extension secrets accept raw user-entered
-`secretValue: string` only at the trusted user-entry boundary and immediately wrap it into
-`Redacted.Redacted<string>` before it reaches Effect-local services, logs, diagnostics, persistence
-adapters, or generated declarations. Internal state services may use `Redacted.Redacted<string>` for
-in-process secret handling; public state facades must not require callers to construct Effect
-`Redacted` values.
-`UpsertProviderCredentialCommandInputSchema` and
-`SetExtensionSecretValueCommandInputSchema` are the only state-owned secret-intake schemas. They are
-accepted only at approved state command facade ingress. Package-boundary tests must forbid
-runtime, extensions, pi-adapter, sandbox, generated packages, renderer/shared modules, browser-tool
-bridges, headless bridges, and generic app-entry modules from importing or decoding these
-secret-intake schemas directly; app/bootstrap and the approved state command facade are the only
-trusted intake edges. Repository, read-model, app-log, runtime-event, command-fact, artifact,
-transcript, generated-package, and all other state command schemas must not contain `secretValue` or
-`Redacted` fields. Boundary tests classify exactly these two schemas as the complete state-owned
-secret-intake allowlist.
-`RemoveProviderCredentialCommandInputSchema` and
-`RemoveExtensionSecretValueCommandInputSchema` are state-owned secret-removal contracts and must not
-contain `secretValue` or `Redacted` fields.
+env names, or fingerprints. Provider credential writes/removals and extension secret value
+writes/removals are not `StateCommandsFacade` methods in this surface; trusted user-entry paths for
+secret material use `SecretStoreMutationPort` and then commit only redacted status/reference facts
+through the state-owned ports that explicitly name those facts. The `extensionEnv` state command
+group is scoped to non-secret app-level overrides keyed by `(extensionId, envName)`.
 
 Public command patch contracts are named schemas, not `Partial<...>` aliases. Patch schema fields
 use `Schema.optionalKey(...)` so omitted means “leave unchanged” and `undefined` is not accepted as
@@ -1507,6 +1514,16 @@ receives only commit-scoped facts that cannot be fetched before the write, such 
 | `agentProfiles`   | Persist orchestrator profile rows, singleton handler profile, orchestrator/handler extension usage, DB-backed external-instruction actor usage/order, and workflow-task actor defaults for newly created workflow task-agent attempts that are not tied to one `.agent.json` source file.                                                                                                  | `@svvy/state` agent/profile and external-instruction usage tables | Workflow-agent `.agent.json` row edits, extension source edits, generated actor-context rendering.                         |
 | `snippets`        | Persist managed svvy snippets and enablement state for managed/discovered snippets.                                                                                                                                                                                                                                                                                                        | `@svvy/state` snippet tables                                      | Editing read-only host snippet files, watching snippet source roots, expanding snippets into prompt text during send.      |
 | `appLogs`         | Persist app-log read cursors, visible-range read marking, and workspace/app unread clearing.                                                                                                                                                                                                                                                                                               | `@svvy/state` app-log read-state tables                           | Deleting log rows, rewriting payloads, publishing live bridge messages directly, or inferring command/session state.       |
+
+Increment 6 command-group rows:
+
+| Group | Command path port | After-commit descriptors | Renderer-safe facade row | Tests |
+| --- | --- | --- | --- | --- |
+| `workspaceChrome` | `packages/state/src/state-facade.ts` validates `SetWorkspaceTabsCommandInput`, `SelectWorkspaceTabCommandInput`, and `SelectWorkspaceLayoutSlotCommandInput` through `state-command-schemas.ts` and routes them through `StateCommands.workspaceChrome`. | Workspace `{ model: "workspaceChromeLayout" }` descriptors for tab/layout mutations. | `RendererStateCommandsFacade.workspaceChrome` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts` representative idempotent receipt/descriptor/facade-routing test; `src/bun/renderer-state-facade.test.ts`; `packages/package-boundaries.test.ts`. |
+| `workspaceLayout` | `packages/state/src/state-facade.ts` validates `SaveWorkspaceLayoutSnapshotCommandInput`, `UpdateWorkspacePaneCommandInput`, and `CloseWorkspacePaneCommandInput` through `state-command-schemas.ts` and routes them through `StateCommands.workspaceLayout`. | Workspace `{ model: "workspaceChromeLayout" }` descriptors for layout snapshot/pane mutations. | `RendererStateCommandsFacade.workspaceLayout` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `packages/package-boundaries.test.ts`. |
+| `extensionEnv` | `packages/state/src/state-facade.ts` validates non-secret env override command inputs through `state-command-schemas.ts` and routes them through `StateCommands.extensionEnv`; secret values stay behind `SecretStoreMutationPort` and are never read-model payloads. | App `{ model: "extensions", ids: [extensionId] }` descriptors. | `RendererStateCommandsFacade.extensionEnv` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
+| `agentProfiles` | `packages/state/src/state-facade.ts` validates orchestrator/thread-handler profile, extension usage/default, order, and external-instruction usage command inputs through `state-command-schemas.ts` and routes them through `StateCommands.agentProfiles`. | App `{ model: "agents", ids? }` descriptors. | `RendererStateCommandsFacade.agentProfiles` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
+| `snippets` | `packages/state/src/state-facade.ts` validates managed snippet create/update/delete/enablement command inputs through `state-command-schemas.ts` and routes them through `StateCommands.snippets`; `createManaged` returns the committed `snippetId` plus receipt. | Workspace `{ model: "snippets", ids: [snippetId] }` descriptors. | `RendererStateCommandsFacade.snippets` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
 
 File-backed source commands are excluded by construction. Workflow-agent `.agent.json` edits,
 including that workflow agent's provider, model, reasoning, instruction text, extension usage

@@ -319,9 +319,14 @@ describe("app runtime bootstrap", () => {
 
     try {
       expect(Object.keys(bootstrap.rendererStateCommands)).toEqual([
+        "workspaceChrome",
+        "workspaceLayout",
         "appLogs",
         "appPreferences",
         "providerAuth",
+        "extensionEnv",
+        "agentProfiles",
+        "snippets",
       ]);
       expect("close" in bootstrap.rendererStateCommands).toBe(false);
     } finally {

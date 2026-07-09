@@ -91,6 +91,7 @@ import {
 } from "./source-watch-inputs";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
+import type { AppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 
 type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
   readonly sourceRoots: ExtensionSourceRoots;
@@ -180,6 +181,7 @@ type WorkspaceRuntimeRegistryOptions = {
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
   listRecoverableWorkspaces?: () => readonly WorkspaceInfoResponse[];
+  appWorkspaceTabsStore?: AppWorkspaceTabsStore;
   runtimeDependencies?: Partial<RuntimeProviderAuthDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
   sandboxHostSupport: PackagedSandboxHostSupportServices;
@@ -1176,6 +1178,26 @@ export class WorkspaceRuntimeRegistry {
         hasStateRows: () =>
           appGlobal.catalog.workspaceStateRouterRegistration().store.hasAppPreferencesRow(),
         read: () => appGlobal.agentSettingsStore.getState().appPreferences,
+      },
+      workspaceChromeSeed: {
+        hasStateRows: () =>
+          appGlobal.catalog.workspaceStateRouterRegistration().store.hasWorkspaceChromeLayoutRows(),
+        read: () => this.options.appWorkspaceTabsStore?.getState?.() ?? null,
+      },
+      agentSettingsSeed: {
+        hasAgentProfileRows: () =>
+          appGlobal.catalog.workspaceStateRouterRegistration().store.hasAgentProfileRows(),
+        hasExtensionEnvRows: () =>
+          appGlobal.catalog.workspaceStateRouterRegistration().store.hasExtensionEnvOverrideRows(),
+        read: () => appGlobal.agentSettingsStore.getState(),
+      },
+      snippetsSeed: {
+        hasStateRows: () =>
+          appGlobal.catalog
+            .workspaceStateRouterRegistration()
+            .store.hasSnippetRows(appGlobal.workspaceId),
+        readManaged: () => appGlobal.catalog.getSnippets().managed,
+        workspaceId: appGlobal.workspaceId as WorkspaceId,
       },
     });
   }

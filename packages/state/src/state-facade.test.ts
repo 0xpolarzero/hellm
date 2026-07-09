@@ -19,13 +19,23 @@ import {
 import type {
   AppLogEntryId,
   CommandId,
+  AgentProfileId,
+  ExtensionId,
+  ExtensionEnvName,
+  GeneratedPackageBuildId,
+  ModelId,
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
   RuntimeOwnerId,
   ProviderId,
+  SnippetId,
   StateCommandPostCommitNotificationInput,
   StateRevision,
+  ThreadId,
+  WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspacePaneId,
+  WorkspaceTabId,
 } from "@svvy/core";
 import {
   StateFacadeError,
@@ -361,6 +371,167 @@ describe("State app-log facade slice", () => {
     }
   });
 
+  it("routes second-half StateCommands groups with idempotent receipts and descriptors", async () => {
+    const workspaceId = rootWorkspaceId;
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
+
+    try {
+      const commands = createStateCommandsFacade(managedRuntime);
+      const tab = {
+        workspaceTabId: "workspace-tab-command-facade" as WorkspaceTabId,
+        workspaceId,
+        cwd: "/tmp/svvy-state-command-facade" as typeof AbsolutePath.Type,
+        openedAt: iso("2026-06-21T12:00:00.000Z"),
+        activeLayoutId: "A" as const,
+      };
+      const cases = [
+        {
+          operation: "stateCommands.workspaceChrome.setTabs",
+          clientRequestId: "workspace-chrome-command",
+          run: () =>
+            commands.workspaceChrome.setTabs({
+              activeWorkspaceTabId: tab.workspaceTabId,
+              tabs: [tab],
+              knownWorkspaces: [tab],
+              clientSubmission: {
+                clientRequestId: "workspace-chrome-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
+          ],
+        },
+        {
+          operation: "stateCommands.workspaceLayout.saveSnapshot",
+          clientRequestId: "workspace-layout-command",
+          run: () =>
+            commands.workspaceLayout.saveSnapshot({
+              workspaceId,
+              layoutId: "A",
+              snapshotJson: { dockview: true },
+              focusedPaneId: "pane-command-facade" as WorkspacePaneId,
+              panelMetadata: [
+                {
+                  paneId: "pane-command-facade" as WorkspacePaneId,
+                  kind: "agents",
+                  localStateJson: { selected: "profile-default" },
+                },
+              ],
+              clientSubmission: {
+                clientRequestId: "workspace-layout-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
+          ],
+        },
+        {
+          operation: "stateCommands.extensionEnv.setOverride",
+          clientRequestId: "extension-env-command",
+          run: () =>
+            commands.extensionEnv.setOverride({
+              extensionId: "shell" as ExtensionId,
+              envName: "SVVY_TEST_ENV" as ExtensionEnvName,
+              value: "enabled",
+              clientSubmission: {
+                clientRequestId: "extension-env-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [{ scope: "app", invalidation: { model: "extensions", ids: ["shell"] } }],
+        },
+        {
+          operation: "stateCommands.agentProfiles.updateOrchestrator",
+          clientRequestId: "agent-profile-command",
+          run: () =>
+            commands.agentProfiles.updateOrchestrator({
+              profile: {
+                profileId: "agent-profile-command" as AgentProfileId,
+                name: "Command profile",
+                providerId: openaiProviderId,
+                modelId: "gpt-5" as ModelId,
+                extensionUsage: { ["shell" as ExtensionId]: "loaded" },
+                followComposer: true,
+              },
+              clientSubmission: {
+                clientRequestId: "agent-profile-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            {
+              scope: "app",
+              invalidation: { model: "agents", ids: ["agent-profile-command"] },
+            },
+          ],
+        },
+        {
+          operation: "stateCommands.snippets.createManaged",
+          clientRequestId: "snippet-command",
+          run: () =>
+            commands.snippets.createManaged({
+              workspaceId,
+              title: "Reusable prompt",
+              body: "Summarize this file.",
+              metadata: { source: "test" },
+              enabled: true,
+              clientSubmission: {
+                clientRequestId: "snippet-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            {
+              scope: "workspace",
+              workspaceId,
+              invalidation: { model: "snippets", ids: ["$createdSnippetId"] },
+            },
+          ],
+        },
+      ] as const;
+
+      for (const [index, entry] of cases.entries()) {
+        const first = await entry.run();
+        const duplicate = await entry.run();
+        expect(first.receipt).toMatchObject({
+          clientRequestId: entry.clientRequestId,
+          outcome: "applied",
+        });
+        expect(duplicate.receipt).toMatchObject({
+          clientRequestId: entry.clientRequestId,
+          outcome: "duplicate",
+        });
+        expect(published).toHaveLength(index + 1);
+        const expectedDescriptors = entry.descriptors.map((descriptor) =>
+          descriptor.invalidation.model === "snippets" && "snippetId" in first
+            ? {
+                ...descriptor,
+                invalidation: {
+                  ...descriptor.invalidation,
+                  ids: [first.snippetId],
+                },
+              }
+            : descriptor,
+        );
+        expect(published[index]).toMatchObject({
+          operation: entry.operation,
+          descriptors: expectedDescriptors,
+          clientSubmission: {
+            clientRequestId: entry.clientRequestId,
+            source: "test",
+          },
+        });
+      }
+
+      commands.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
   it("does not resolve state command facade calls before post-commit publication accepts descriptors", async () => {
     let acceptPublication!: () => void;
     const publicationAccepted = new Promise<void>((resolve) => {
@@ -463,6 +634,9 @@ describe("State app-log facade slice", () => {
         "appPreferences",
         "settings",
         "providerAuth",
+        "agents",
+        "extensions",
+        "workflowsGenerated",
       ]);
       state.close();
     } finally {
@@ -1018,6 +1192,179 @@ describe("State read-model kind expansion", () => {
         arguments: { cmd: "printf ok" },
         facts: { exitCode: 0 },
       });
+      const handlerThread = store.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: "handler-surface-state-facade" as string,
+        title: "Review docs",
+        objective: "Inspect state facade read models.",
+        loadedExtensionIds: ["shell"],
+        availableExtensionIds: ["smithers"],
+        agentProfileJson: JSON.stringify({
+          profileId: "handler-profile-state-facade",
+          name: "Handler profile",
+          providerId: "openai",
+          modelId: "gpt-5",
+        }),
+        generatedAgentContextFingerprint: "handler-context-fingerprint",
+      });
+      store.upsertGeneratedAgentContextBinding({
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        ownerKind: "thread",
+        ownerId: handlerThread.id,
+        actorKind: "handler",
+        aggregateCacheKey: "handler-context-cache",
+        systemPrompt: "Handle the delegated task.",
+        svvyxGuidance: "Use svvyx carefully.",
+        commandsDts: "declare const handler: true;",
+        nativeToolSchemasJson: '{"shell":true}',
+        generatedAgentContextFingerprint: "handler-context-fingerprint",
+        generatedAgentContextRevision: 3,
+        loadedExtensionIds: ["shell"],
+        availableExtensionIds: ["smithers"],
+        externalSourceHashes: ["AGENTS.md:fixture"],
+      });
+      const handlerTurn = store.startTurn({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        requestSummary: "Run generated workflow",
+      });
+      const workflowCommand = store.createCommand({
+        turnId: handlerTurn.id,
+        threadId: handlerThread.id,
+        toolName: "exec_command",
+        executor: "handler",
+        visibility: "surface",
+        title: "Run workflow",
+        summary: "Launch a generated workflow.",
+      });
+      const workflowRun = store.recordWorkflow({
+        threadId: handlerThread.id,
+        commandId: workflowCommand.id,
+        smithersRunId: "smithers-read-model-fixture",
+        workflowName: "read_model_fixture",
+        workflowSource: "saved",
+        entryPath: ".svvy/workflows/read-model-fixture.tsx",
+        savedEntryId: "read_model_fixture",
+        status: "running",
+        summary: "Generated workflow is running.",
+      });
+      const workflowTaskAttempt = store.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: workflowRun.smithersRunId,
+        nodeId: "review",
+        iteration: 0,
+        attempt: 1,
+        surfacePiSessionId: "workflow-task-surface-state-facade",
+        title: "Review task",
+        summary: "Workflow task is running.",
+        kind: "agent",
+        status: "running",
+        smithersState: "running",
+        agentId: "workflow-reviewer",
+        agentModel: "gpt-5",
+        agentEngine: "openai",
+        generatedAgentContextFingerprint: "workflow-task-context-fingerprint",
+        generatedAgentContextBinding: {
+          aggregateCacheKey: "workflow-task-context-cache",
+          systemPrompt: "Run the Smithers task agent.",
+          svvyxGuidance: "Use the task bridge.",
+          commandsDts: "declare const workflowTask: true;",
+          nativeToolSchemasJson: '{"workflow":true}',
+          generatedAgentContextRevision: 4,
+          loadedExtensionIds: ["smithers"],
+          availableExtensionIds: ["shell"],
+          externalSourceHashes: ["WORKFLOW.md:fixture"],
+        },
+      });
+      store.replaceWorkflowTaskMessages({
+        workflowTaskAttemptId: workflowTaskAttempt.id,
+        messages: [
+          {
+            id: "workflow-task-message-user-fixture",
+            role: "user",
+            source: "prompt",
+            text: "Review the generated workflow output.",
+            createdAt: "2026-06-21T12:00:01.000Z",
+          },
+          {
+            id: "workflow-task-message-assistant-fixture",
+            role: "assistant",
+            source: "responseText",
+            text: "The workflow output is ready.",
+            createdAt: "2026-06-21T12:00:02.000Z",
+          },
+        ],
+      });
+      const fixtureTab = {
+        workspaceTabId: "workspace-tab-read-model-fixture" as WorkspaceTabId,
+        workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        cwd: "/tmp/svvy-state-facade-read-models" as typeof AbsolutePath.Type,
+        openedAt: iso("2026-06-21T12:00:00.000Z"),
+        activeLayoutId: "B" as const,
+      };
+      store.setWorkspaceTabs({
+        activeWorkspaceTabId: fixtureTab.workspaceTabId,
+        tabs: [fixtureTab],
+        knownWorkspaces: [fixtureTab],
+      });
+      store.saveWorkspaceLayoutSnapshot({
+        workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        layoutId: "B",
+        snapshotJson: { dockview: { activeGroup: "primary" } },
+        focusedPaneId: "pane-read-model-fixture" as WorkspacePaneId,
+        panelMetadata: [
+          {
+            paneId: "pane-read-model-fixture" as WorkspacePaneId,
+            kind: "surface",
+            surfacePiSessionId: created.surfacePiSessionId,
+            localStateJson: { selectedTab: "transcript" },
+          },
+        ],
+      });
+      const managedSnippet = store.createManagedSnippet({
+        workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        title: "Review fixture",
+        body: "Review $1",
+        metadata: { description: "Review helper", argumentHint: "file" },
+        enabled: true,
+      });
+      store.recordGeneratedPackageBuild({
+        status: {
+          packageName: "@svvyx/workflows",
+          action: "written",
+          refreshScope: "app-global-build",
+          buildId: "generated-package-build-read-model-workflows" as GeneratedPackageBuildId,
+          manifestPath: "/tmp/generated-workflows/package.json" as typeof AbsolutePath.Type,
+          sourceFingerprint: "workflow-source-fingerprint",
+          outputFingerprint: "workflow-output-fingerprint",
+          generatedFiles: [
+            {
+              relativePath: "index.ts",
+              path: "/tmp/generated-workflows/index.ts" as typeof AbsolutePath.Type,
+            },
+          ],
+        },
+        sourceCommandId: workflowCommand.id as CommandId,
+      });
+      store.recordGeneratedPackageBuild({
+        status: {
+          packageName: "@svvyx/extensions",
+          action: "written",
+          refreshScope: "app-global-build",
+          buildId: "generated-package-build-read-model-extensions" as GeneratedPackageBuildId,
+          manifestPath: "/tmp/generated-extensions/package.json" as typeof AbsolutePath.Type,
+          sourceFingerprint: "extension-source-fingerprint",
+          outputFingerprint: "extension-output-fingerprint",
+          generatedFiles: [
+            {
+              relativePath: "index.ts",
+              path: "/tmp/generated-extensions/index.ts" as typeof AbsolutePath.Type,
+            },
+          ],
+        },
+        sourceCommandId: workflowCommand.id as CommandId,
+      });
       store.recordLifecycleEvent({
         sessionId: created.workspaceSessionId,
         kind: "command.output",
@@ -1140,6 +1487,197 @@ describe("State read-model kind expansion", () => {
         value: { requests: [{ requestId: approval.requestId, summary: "Run command: printf ok" }] },
       });
 
+      const agents = await runTestEffect(readModels.fetch({ kind: "agents" }));
+      expect(agents.kind).toBe("agents");
+      if (agents.kind !== "agents") throw new Error("Expected agents read model.");
+      expect(agents.value.profiles).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ actor: "orchestrator", profileId: created.workspaceSessionId }),
+          expect.objectContaining({ actor: "handler", profileId: "threadHandler" }),
+          expect.objectContaining({ actor: "workflow-task", profileId: "workflow-reviewer" }),
+        ]),
+      );
+      expect(agents.value.generatedContextPreviews).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ownerKind: "thread",
+            ownerId: handlerThread.id,
+            actorKind: "handler",
+            generatedAgentContextFingerprint: "handler-context-fingerprint",
+          }),
+          expect.objectContaining({
+            ownerKind: "workflow-task-attempt",
+            ownerId: workflowTaskAttempt.id,
+            actorKind: "workflow-task",
+            generatedAgentContextFingerprint: "workflow-task-context-fingerprint",
+          }),
+        ]),
+      );
+
+      const extensions = await runTestEffect(readModels.fetch({ kind: "extensions" }));
+      expect(extensions).toMatchObject({
+        kind: "extensions",
+        value: {
+          records: [
+            {
+              extensionId: "shell",
+              readiness: "ready",
+              loadedByProfileIds: ["threadHandler"],
+            },
+            {
+              extensionId: "smithers",
+              readiness: "ready",
+              availableByProfileIds: ["threadHandler"],
+            },
+          ],
+        },
+      });
+
+      const snippets = await runTestEffect(
+        readModels.fetch({
+          kind: "snippets",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(snippets).toEqual({
+        kind: "snippets",
+        value: {
+          managed: [
+            {
+              id: managedSnippet.id as SnippetId,
+              source: "svvy",
+              title: "Review fixture",
+              body: "Review $1",
+              metadata: { description: "Review helper", argumentHint: "file" },
+              enabled: true,
+              path: null,
+              updatedAt: managedSnippet.updatedAt,
+            },
+          ],
+          discovered: [],
+          snippets: [
+            {
+              id: managedSnippet.id as SnippetId,
+              source: "svvy",
+              title: "Review fixture",
+              body: "Review $1",
+              metadata: { description: "Review helper", argumentHint: "file" },
+              enabled: true,
+              path: null,
+              updatedAt: managedSnippet.updatedAt,
+            },
+          ],
+        },
+      });
+
+      const workflowsGenerated = await runTestEffect(
+        readModels.fetch({ kind: "workflowsGenerated" }),
+      );
+      expect(workflowsGenerated).toMatchObject({
+        kind: "workflowsGenerated",
+        value: {
+          packageName: "@svvyx/workflows",
+          facts: [
+            {
+              packageName: "@svvyx/workflows",
+              status: "ready",
+              buildId: "generated-package-build-read-model-workflows",
+            },
+          ],
+          exports: [],
+        },
+      });
+
+      const handlerInspector = await runTestEffect(
+        readModels.fetch({
+          kind: "handlerInspector",
+          threadId: handlerThread.id as ThreadId,
+        }),
+      );
+      expect(handlerInspector).toMatchObject({
+        kind: "handlerInspector",
+        value: {
+          threadId: handlerThread.id,
+          title: "Review docs",
+          workflowRuns: [{ workflowRunId: workflowRun.id, workflowName: "read_model_fixture" }],
+        },
+      });
+
+      const workflowTaskInspector = await runTestEffect(
+        readModels.fetch({
+          kind: "workflowTaskAttemptInspector",
+          workflowTaskAttemptId: workflowTaskAttempt.id as WorkflowTaskAttemptId,
+        }),
+      );
+      expect(workflowTaskInspector).toMatchObject({
+        kind: "workflowTaskAttemptInspector",
+        value: {
+          workflowTaskAttemptId: workflowTaskAttempt.id,
+          title: "Review task",
+          transcript: [
+            { role: "user", text: "Review the generated workflow output." },
+            { role: "assistant", text: "The workflow output is ready." },
+          ],
+        },
+      });
+
+      const workspaceChromeLayout = await runTestEffect(
+        readModels.fetch({
+          kind: "workspaceChromeLayout",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(workspaceChromeLayout).toMatchObject({
+        kind: "workspaceChromeLayout",
+        value: {
+          activeWorkspaceTabId: "workspace-tab-read-model-fixture",
+          tabs: [
+            {
+              workspaceTabId: "workspace-tab-read-model-fixture",
+              workspaceId: "workspace_state_facade_read_models",
+              activeLayoutId: "B",
+            },
+          ],
+          knownWorkspaces: [
+            {
+              workspaceTabId: "workspace-tab-read-model-fixture",
+              workspaceId: "workspace_state_facade_read_models",
+              cwd: "/tmp/svvy-state-facade-read-models",
+              activeLayoutId: "B",
+            },
+          ],
+        },
+      });
+      if (workspaceChromeLayout.kind !== "workspaceChromeLayout") {
+        throw new Error("Expected workspaceChromeLayout read model.");
+      }
+      expect(workspaceChromeLayout.value.layouts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            workspaceId: "workspace_state_facade_read_models",
+            layoutId: "B",
+            initialized: true,
+            focusedPaneId: "pane-read-model-fixture",
+            snapshotJson: { dockview: { activeGroup: "primary" } },
+            panelMetadata: expect.arrayContaining([
+              expect.objectContaining({
+                paneId: "pane-read-model-fixture",
+                kind: "surface",
+                surfacePiSessionId: created.surfacePiSessionId,
+              }),
+            ]),
+          }),
+          expect.objectContaining({
+            workspaceId: "workspace_state_facade_read_models",
+            layoutId: "A",
+          }),
+          expect.objectContaining({
+            workspaceId: "workspace_state_facade_read_models",
+            layoutId: "C",
+          }),
+        ]),
+      );
+
       const refetched = await runTestEffect(
         readModels.refetchInvalidation({
           descriptor: {
@@ -1151,6 +1689,17 @@ describe("State read-model kind expansion", () => {
       );
       expect(refetched.map((result) => result.kind)).toEqual(["approvals"]);
 
+      const secondHalfRefetched = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: {
+            scope: "workspace",
+            workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+            invalidation: { model: "workspaceChromeLayout" },
+          },
+        }),
+      );
+      expect(secondHalfRefetched.map((result) => result.kind)).toEqual(["workspaceChromeLayout"]);
+
       const baseline = await runTestEffect(
         readModels.rebaseline({
           workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
@@ -1160,6 +1709,12 @@ describe("State read-model kind expansion", () => {
       expect(baseline.workspaces.map((result) => result.kind)).toContain("sessionNavigation");
       expect(baseline.workspaces.map((result) => result.kind)).toContain("requestInput");
       expect(baseline.workspaces.map((result) => result.kind)).toContain("approvals");
+      expect(baseline.app.map((result) => result.kind)).toEqual(
+        expect.arrayContaining(["agents", "extensions", "workflowsGenerated"]),
+      );
+      expect(baseline.workspaces.map((result) => result.kind)).toEqual(
+        expect.arrayContaining(["snippets", "workspaceChromeLayout"]),
+      );
     } finally {
       store.close();
     }

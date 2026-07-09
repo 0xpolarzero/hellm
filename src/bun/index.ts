@@ -980,6 +980,7 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
     ensureUsableProviderAuth,
     getProviderAuthUnavailableMessage,
   },
+  appWorkspaceTabsStore,
   listRecoverableWorkspaces: () => appWorkspaceTabsStore.getState()?.knownWorkspaces ?? [],
   onAppLogUpdate: (workspaceId, payload) => {
     try {

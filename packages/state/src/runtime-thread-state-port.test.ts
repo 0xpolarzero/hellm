@@ -287,6 +287,10 @@ describe("RuntimeThreadStatePort", () => {
               },
             },
             {
+              scope: "app",
+              invalidation: { model: "agents" },
+            },
+            {
               scope: "workspace",
               workspaceId,
               invalidation: { model: "surface", ids: [firstThread.surfacePiSessionId] },

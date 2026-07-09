@@ -7,6 +7,8 @@ import {
   type RuntimeWorkflowTaskStatePortService,
 } from "@svvy/core";
 import {
+  agentsInvalidation,
+  dedupeInvalidations,
   mutationResult,
   sessionNavigationInvalidation,
   surfaceAndSessionNavigationInvalidations,
@@ -29,10 +31,17 @@ export function runtimeWorkflowTaskStatePortFromStructuredSessionState(
           Effect.map((receipt) =>
             mutationResult(
               receipt as RuntimeWorkflowTaskAgentStartReceipt,
-              surfaceAndSessionNavigationInvalidations(
-                state.workspaceId,
-                receipt.target.surfacePiSessionId,
-              ),
+              dedupeInvalidations([
+                ...surfaceAndSessionNavigationInvalidations(
+                  state.workspaceId,
+                  receipt.target.surfacePiSessionId,
+                ),
+                workflowTaskAttemptInspectorInvalidation(
+                  state.workspaceId,
+                  receipt.target.workflowTaskAttemptId,
+                ),
+                agentsInvalidation(),
+              ]),
             ),
           ),
         ),

@@ -21,10 +21,15 @@ import {
   type AppLogWritePortService,
   type BuildLaunchPolicyInput,
   type ExtensionStatePortService,
+  type ExtensionEnvName,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
+  IsoDateTimeStringSchema,
   type JsonValue,
+  type AgentProfileId,
+  type ExtensionId,
+  type ModelId,
   type ProviderId,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeClientRequestId,
@@ -36,6 +41,7 @@ import {
   type SourceInvalidationHint,
   type SourceReconcileRequest,
   type WorkspaceId,
+  type WorkspaceTabId,
   type PiRuntimePathsSnapshot,
 } from "@svvy/core";
 import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
@@ -91,7 +97,9 @@ import {
   StateReadModels,
   type StateAppLogsFacade,
 } from "@svvy/state";
-import type { AppPreferences } from "../shared/agent-settings";
+import type { AgentSettingsState, AppPreferences } from "../shared/agent-settings";
+import type { AppWorkspaceTabsState } from "../shared/workspace-contract";
+import type { ManagedSnippet } from "../shared/snippets";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
 import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
@@ -192,6 +200,20 @@ export interface AppRuntimeBootstrapInput {
   readonly appPreferencesSeed?: {
     hasStateRows(): boolean;
     read(): AppPreferences;
+  };
+  readonly workspaceChromeSeed?: {
+    hasStateRows(): boolean;
+    read(): AppWorkspaceTabsState | null;
+  };
+  readonly agentSettingsSeed?: {
+    hasAgentProfileRows(): boolean;
+    hasExtensionEnvRows(): boolean;
+    read(): AgentSettingsState;
+  };
+  readonly snippetsSeed?: {
+    hasStateRows(): boolean;
+    readManaged(): readonly ManagedSnippet[];
+    workspaceId: WorkspaceId;
   };
 }
 
@@ -443,6 +465,18 @@ export async function createAppRuntimeBootstrap(
       seed: input.appPreferencesSeed,
       stateCommands,
     });
+    await seedWorkspaceChromeStateRows({
+      seed: input.workspaceChromeSeed,
+      stateCommands,
+    });
+    await seedAgentSettingsStateRows({
+      seed: input.agentSettingsSeed,
+      stateCommands,
+    });
+    await seedSnippetStateRows({
+      seed: input.snippetsSeed,
+      stateCommands,
+    });
     lifecycle.markReady();
     const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
       managedRuntime.runPromise(effect);
@@ -620,6 +654,126 @@ function stateExternalEditorFromAppPreferences(preferences: AppPreferences): str
     return preferences.customExternalEditorCommand || "custom";
   }
   return preferences.preferredExternalEditor;
+}
+
+async function seedWorkspaceChromeStateRows(input: {
+  readonly seed: AppRuntimeBootstrapInput["workspaceChromeSeed"];
+  readonly stateCommands: StateCommandsFacade;
+}): Promise<void> {
+  if (!input.seed || input.seed.hasStateRows()) {
+    return;
+  }
+  const state = input.seed.read();
+  if (!state) return;
+  await input.stateCommands.workspaceChrome.setTabs({
+    activeWorkspaceTabId: state.activeWorkspaceTabId as WorkspaceTabId | null,
+    tabs: state.tabs.map((tab) => ({
+      workspaceTabId: tab.workspaceTabId as WorkspaceTabId,
+      workspaceId: tab.workspaceId as WorkspaceId,
+      cwd: tab.cwd as AbsolutePath,
+      openedAt: tab.openedAt as typeof IsoDateTimeStringSchema.Type,
+      activeLayoutId: tab.activeLayoutId ?? "A",
+    })),
+    knownWorkspaces: state.knownWorkspaces.map((tab) => ({
+      workspaceTabId: tab.workspaceTabId as WorkspaceTabId,
+      workspaceId: tab.workspaceId as WorkspaceId,
+      cwd: tab.cwd as AbsolutePath,
+      openedAt: tab.openedAt as typeof IsoDateTimeStringSchema.Type,
+      activeLayoutId: tab.activeLayoutId ?? "A",
+    })),
+    clientSubmission: {
+      clientRequestId: "bootstrap-workspace-chrome-seed" as RuntimeClientRequestId,
+      source: "app-bootstrap" as RuntimeClientSubmissionSource,
+    },
+  });
+}
+
+async function seedAgentSettingsStateRows(input: {
+  readonly seed: AppRuntimeBootstrapInput["agentSettingsSeed"];
+  readonly stateCommands: StateCommandsFacade;
+}): Promise<void> {
+  if (!input.seed) return;
+  const settings = input.seed.read();
+  if (!input.seed.hasAgentProfileRows()) {
+    for (const profile of settings.agents.orchestrators) {
+      await input.stateCommands.agentProfiles.updateOrchestrator({
+        profile: {
+          profileId: profile.id as AgentProfileId,
+          name: profile.name,
+          providerId: profile.provider as ProviderId,
+          modelId: profile.model as ModelId,
+          extensionUsage: Object.fromEntries(
+            Object.entries(profile.extensionUsage).map(([extensionId, usage]) => [
+              extensionId as ExtensionId,
+              usage,
+            ]),
+          ),
+          extensionOrder: profile.extensionOrder?.map((extensionId) => extensionId as ExtensionId),
+          followComposer: profile.updateFromComposer,
+        },
+        clientSubmission: {
+          clientRequestId: `bootstrap-agent-profile-${profile.id}` as RuntimeClientRequestId,
+          source: "app-bootstrap" as RuntimeClientSubmissionSource,
+        },
+      });
+    }
+    await input.stateCommands.agentProfiles.updateThreadHandler({
+      profile: {
+        profileId: settings.agents.special.threadHandler.id as AgentProfileId,
+        name: settings.agents.special.threadHandler.name,
+        providerId: settings.agents.special.threadHandler.provider as ProviderId,
+        modelId: settings.agents.special.threadHandler.model as ModelId,
+        extensionUsage: Object.fromEntries(
+          Object.entries(settings.agents.special.threadHandler.extensionUsage).map(
+            ([extensionId, usage]) => [extensionId as ExtensionId, usage],
+          ),
+        ),
+        extensionOrder: settings.agents.special.threadHandler.extensionOrder?.map(
+          (extensionId) => extensionId as ExtensionId,
+        ),
+      },
+      clientSubmission: {
+        clientRequestId: "bootstrap-agent-profile-thread-handler" as RuntimeClientRequestId,
+        source: "app-bootstrap" as RuntimeClientSubmissionSource,
+      },
+    });
+  }
+  if (!input.seed.hasExtensionEnvRows()) {
+    for (const [extensionId, values] of Object.entries(settings.extensionEnv.nonSecretOverrides)) {
+      for (const [envName, value] of Object.entries(values)) {
+        await input.stateCommands.extensionEnv.setOverride({
+          extensionId: extensionId as ExtensionId,
+          envName: envName as ExtensionEnvName,
+          value,
+          clientSubmission: {
+            clientRequestId:
+              `bootstrap-extension-env-${extensionId}-${envName}` as RuntimeClientRequestId,
+            source: "app-bootstrap" as RuntimeClientSubmissionSource,
+          },
+        });
+      }
+    }
+  }
+}
+
+async function seedSnippetStateRows(input: {
+  readonly seed: AppRuntimeBootstrapInput["snippetsSeed"];
+  readonly stateCommands: StateCommandsFacade;
+}): Promise<void> {
+  if (!input.seed || input.seed.hasStateRows()) return;
+  for (const snippet of input.seed.readManaged()) {
+    await input.stateCommands.snippets.createManaged({
+      workspaceId: input.seed.workspaceId,
+      title: snippet.title,
+      body: snippet.body,
+      metadata: snippet.metadata as unknown as JsonValue,
+      enabled: snippet.enabled,
+      clientSubmission: {
+        clientRequestId: `bootstrap-snippet-${snippet.id}` as RuntimeClientRequestId,
+        source: "app-bootstrap" as RuntimeClientSubmissionSource,
+      },
+    });
+  }
 }
 
 function createGeneratedPackageStatePort(input: {

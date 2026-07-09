@@ -63,6 +63,48 @@ describe("retired desktop integration RPC paths", () => {
 
     expect(violations).toEqual([]);
   });
+
+  it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const legacyChannels = [
+      { channel: "getAgentSettings", retirementIncrement: "Increment 8" },
+      { channel: "updateAgentProfile", retirementIncrement: "Increment 10" },
+      { channel: "deleteAgentProfile", retirementIncrement: "Increment 10" },
+      { channel: "reorderOrchestratorAgents", retirementIncrement: "Increment 10" },
+      { channel: "setAgentProfileExtensionUsage", retirementIncrement: "Increment 10" },
+      { channel: "setExtensionEnvSecret", retirementIncrement: "Increment 10" },
+      { channel: "removeExtensionEnvSecret", retirementIncrement: "Increment 10" },
+      { channel: "setExtensionEnvOverride", retirementIncrement: "Increment 10" },
+      { channel: "removeExtensionEnvOverride", retirementIncrement: "Increment 10" },
+      { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
+      { channel: "getWorkflowsGenerated", retirementIncrement: "Increment 8" },
+      { channel: "getSnippets", retirementIncrement: "Increment 8" },
+      { channel: "createManagedSnippet", retirementIncrement: "Increment 10" },
+      { channel: "updateManagedSnippet", retirementIncrement: "Increment 10" },
+      { channel: "deleteManagedSnippet", retirementIncrement: "Increment 10" },
+      { channel: "setSnippetEnabled", retirementIncrement: "Increment 10" },
+      { channel: "openSnippetExternalSourceInEditor", retirementIncrement: "Increment 10" },
+      { channel: "listSessions", retirementIncrement: "Increment 8" },
+      { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
+      { channel: "getHandlerThreadInspector", retirementIncrement: "Increment 8" },
+      { channel: "getWorkflowTaskAttemptInspector", retirementIncrement: "Increment 8" },
+    ] as const;
+
+    expect(
+      legacyChannels.every((entry) => entry.retirementIncrement.startsWith("Increment ")),
+    ).toBe(true);
+    for (const { channel } of legacyChannels) {
+      expect(sharedContractSource).toContain(`${channel}: {`);
+      expect(chatRuntimeSource).toContain(`rpcClient.request.${channel}`);
+      expect(backendSource).toContain(`${channel}:`);
+    }
+  });
 });
 
 function listSourceFiles(root: string): string[] {

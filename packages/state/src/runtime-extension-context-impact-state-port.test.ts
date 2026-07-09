@@ -127,6 +127,14 @@ describe("RuntimeExtensionContextImpactStatePort", () => {
           ]);
           expect(result.afterCommit).toEqual([
             {
+              scope: "app",
+              invalidation: { model: "agents" },
+            },
+            {
+              scope: "app",
+              invalidation: { model: "extensions" },
+            },
+            {
               scope: "workspace",
               workspaceId,
               invalidation: { model: "surface", ids: ["session-a" as SurfacePiSessionId] },

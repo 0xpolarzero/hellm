@@ -15,7 +15,9 @@ import {
   structuredSessionStateFromStore,
 } from "./structured-session-state";
 import {
+  agentsInvalidation,
   dedupeInvalidations,
+  extensionsInvalidation,
   mutationResult,
   sessionNavigationInvalidation,
   surfaceInvalidation,
@@ -103,12 +105,14 @@ function extensionContextChangedInvalidations(
   workspaceId: string,
   surfaces: readonly RuntimeExtensionContextChangedSurface[],
 ) {
-  return dedupeInvalidations(
-    surfaces.flatMap((surface) => [
+  return dedupeInvalidations([
+    agentsInvalidation(),
+    extensionsInvalidation(),
+    ...surfaces.flatMap((surface) => [
       surfaceInvalidation(workspaceId, surface.surfacePiSessionId),
       sessionNavigationInvalidation(workspaceId),
     ]),
-  );
+  ]);
 }
 
 function extensionContextChangedSurface(
