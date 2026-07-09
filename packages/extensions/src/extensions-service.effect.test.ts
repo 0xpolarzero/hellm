@@ -980,6 +980,29 @@ describe("@svvy/extensions Effect service", () => {
       }),
   );
 
+  it.effect("repairs interrupted generated package promotion before refresh", () =>
+    Effect.gen(function* () {
+      const writtenFiles = new Map<string, string>([
+        ["/generated/package.previous/package.json", "old package"],
+        ["/generated/package.previous/index.ts", "old index"],
+      ]);
+      const service = yield* provideGeneratedPackagePlatform(makeExtensions(), writtenFiles, {
+        extensionsPackageRoot: "/generated/package" as AbsolutePath,
+      });
+
+      yield* service.generatedPackages.refresh({
+        packages: ["@svvyx/extensions"],
+      });
+
+      assert.strictEqual(writtenFiles.has("/generated/package.previous/package.json"), false);
+      assert.strictEqual(writtenFiles.has("/generated/package.previous/index.ts"), false);
+      assert.include(
+        writtenFiles.get("/generated/package/package.json") ?? "",
+        "@svvyx/extensions",
+      );
+    }),
+  );
+
   it.effect("rejects unknown generated package refresh inputs at the service boundary", () =>
     Effect.gen(function* () {
       const service = yield* provideGeneratedPackagePlatform(makeExtensions(), new Map());
@@ -1254,6 +1277,40 @@ describe("@svvy/extensions Effect service", () => {
         requiredParentPath: "/repo/.smithers/node_modules/@svvyx" as AbsolutePath,
         overwritePolicy: "symlink-only",
       });
+    }),
+  );
+
+  it.effect("repairs interrupted generated package promotion before workspace-link planning", () =>
+    Effect.gen(function* () {
+      const writtenFiles = new Map<string, string>([
+        ["/generated/extensions-package.previous/package.json", "old package"],
+        ["/generated/extensions-package.previous/index.ts", "old index"],
+      ]);
+      const service = yield* provideGeneratedPackagePlatform(makeExtensions(), writtenFiles, {
+        extensionsPackageRoot: "/generated/extensions-package" as AbsolutePath,
+        workspacePackageLinks: new Map([
+          [
+            "workspace_extensions_service_link_01:@svvyx/extensions",
+            "/repo/.smithers/node_modules/@svvyx/extensions" as AbsolutePath,
+          ],
+        ]),
+      });
+
+      const plan = yield* service.generatedPackages.planWorkspaceLink({
+        workspaceId: "workspace_extensions_service_link_01" as WorkspaceId,
+        packageName: "@svvyx/extensions",
+      });
+
+      assert.strictEqual(plan.targetPath, "/generated/extensions-package");
+      assert.strictEqual(
+        writtenFiles.get("/generated/extensions-package/package.json"),
+        "old package",
+      );
+      assert.strictEqual(writtenFiles.get("/generated/extensions-package/index.ts"), "old index");
+      assert.strictEqual(
+        writtenFiles.has("/generated/extensions-package.previous/package.json"),
+        false,
+      );
     }),
   );
 

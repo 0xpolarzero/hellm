@@ -872,6 +872,14 @@ desktop, and state do not independently repair generated-package facts. Product 
 the repaired facts only after the `@svvy/state` commit succeeds. If state facts point at
 missing or mismatched generated output, read models report the package as needing refresh and runtime
 schedules `generated_package_refresh` recovery.
+Generated-package promotion uses a deterministic sibling backup path derived from the generated
+package root, `<generatedPackageRoot>.previous`. Before staging a replacement and before planning a
+workspace link, `@svvy/extensions` repairs interrupted promotion for each generated package root: if
+the live root is missing and the deterministic backup exists, the backup is renamed back into the
+live root; if both live root and backup exist, the live root remains authoritative and the stale
+backup is removed. Partial or leftover staged temp roots are never treated as active generated
+package roots. State facts that still point at the previous ready manifest therefore continue to
+resolve to active files after process restart or later refresh/link entry.
 
 ## Dependency Rules
 

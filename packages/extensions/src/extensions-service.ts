@@ -50,6 +50,7 @@ import {
 } from "./source-edit-sessions";
 import { GeneratedPackageRootPort } from "./generated-package-root-port";
 import { WorkspaceSourceLinkPort } from "./workspace-source-link-port";
+import { repairInterruptedGeneratedPackagePromotion } from "./generated-package-writer";
 import {
   BUILTIN_EXTENSIONS,
   type ExtensionExternalInstructionSource,
@@ -247,6 +248,7 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
             ),
           planWorkspaceLink: (input) =>
             planGeneratedPackageWorkspaceLink(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(WorkspaceSourceLinkPort, workspaceSourceLink),
               Effect.provideService(GeneratedPackageRootPort, generatedPackageRoot),
               Effect.provideService(Path.Path, path),
@@ -407,6 +409,7 @@ function refreshGeneratedPackages(
   return Effect.gen(function* () {
     const sourceRoots = yield* (yield* ExtensionSourceRootsPort).roots();
     const generatedPackageRoots = yield* (yield* GeneratedPackageRootPort).roots();
+    yield* repairGeneratedPackageRoots(generatedPackageRoots);
     const extensionsRefresh = mustRefreshExtensions
       ? yield* refreshGeneratedExtensionsPackageFiles({
           generatedPackagePath: generatedPackageRoots.extensionsPackageRoot,
@@ -489,7 +492,7 @@ function planGeneratedPackageWorkspaceLink(
 ): Effect.Effect<
   GeneratedPackageWorkspaceLinkRepairPlan,
   ExtensionError,
-  WorkspaceSourceLinkPort | GeneratedPackageRootPort | Path.Path
+  WorkspaceSourceLinkPort | GeneratedPackageRootPort | FileSystem.FileSystem | Path.Path
 > {
   const operation = "extensions.generated-packages.plan-workspace-link";
   const unknownPackage = findUnknownGeneratedPackage([input.packageName]);
@@ -499,6 +502,7 @@ function planGeneratedPackageWorkspaceLink(
   return Effect.gen(function* () {
     const linkPath = yield* (yield* WorkspaceSourceLinkPort).generatedPackageLinkPath(input);
     const roots = yield* (yield* GeneratedPackageRootPort).roots();
+    yield* repairGeneratedPackageRoots(roots);
     const path = yield* Path.Path;
     const targetPath =
       input.packageName === GENERATED_WORKFLOWS_PACKAGE_NAME
@@ -523,5 +527,22 @@ function planGeneratedPackageWorkspaceLink(
           cause,
         }),
     ),
+  );
+}
+
+function repairGeneratedPackageRoots(roots: {
+  readonly extensionsPackageRoot: AbsolutePath;
+  readonly workflowsPackageRoot: AbsolutePath;
+}): Effect.Effect<void, unknown, FileSystem.FileSystem> {
+  return Effect.all(
+    [
+      repairInterruptedGeneratedPackagePromotion({
+        generatedPackagePath: roots.extensionsPackageRoot,
+      }),
+      repairInterruptedGeneratedPackagePromotion({
+        generatedPackagePath: roots.workflowsPackageRoot,
+      }),
+    ],
+    { discard: true },
   );
 }

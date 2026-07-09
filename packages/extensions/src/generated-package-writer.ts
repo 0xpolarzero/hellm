@@ -8,6 +8,28 @@ export interface GeneratedPackageWriteFile {
   readonly contents: string;
 }
 
+function interruptedPromotionBackupPath(generatedPackagePath: AbsolutePath): AbsolutePath {
+  return `${generatedPackagePath}.previous` as AbsolutePath;
+}
+
+export const repairInterruptedGeneratedPackagePromotion = Effect.fn(
+  "@svvy/extensions/repairInterruptedGeneratedPackagePromotion",
+)(function* (input: { readonly generatedPackagePath: AbsolutePath }) {
+  const fs = yield* FileSystem.FileSystem;
+  const backupPath = interruptedPromotionBackupPath(input.generatedPackagePath);
+  const liveExists = yield* fs.exists(input.generatedPackagePath);
+  const backupExists = yield* fs.exists(backupPath);
+
+  if (liveExists && backupExists) {
+    yield* fs.remove(backupPath, { recursive: true, force: true });
+    return;
+  }
+
+  if (!liveExists && backupExists) {
+    yield* fs.rename(backupPath, input.generatedPackagePath);
+  }
+});
+
 export const replaceGeneratedPackageDirectory = Effect.fn(
   "@svvy/extensions/replaceGeneratedPackageDirectory",
 )(function* (input: {
@@ -19,12 +41,15 @@ export const replaceGeneratedPackageDirectory = Effect.fn(
   const parentPath = path.dirname(input.generatedPackagePath);
   const packageName = path.basename(input.generatedPackagePath);
   yield* fs.makeDirectory(parentPath, { recursive: true });
+  yield* repairInterruptedGeneratedPackagePromotion({
+    generatedPackagePath: input.generatedPackagePath,
+  });
 
   const tempPath = yield* fs.makeTempDirectory({
     directory: parentPath,
     prefix: `.svvy-${packageName}-`,
   });
-  const backupPath = `${tempPath}.previous`;
+  const backupPath = interruptedPromotionBackupPath(input.generatedPackagePath);
   let tempMoved = false;
   let backupCreated = false;
   const removeTempIfPresent = fs

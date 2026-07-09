@@ -23,6 +23,7 @@ import {
   type GeneratedExtensionExportDiscoveryServices,
   type GeneratedExtensionExportDiscoveryHost,
 } from "./generated-extensions-package";
+import { repairInterruptedGeneratedPackagePromotion } from "./generated-package-writer";
 
 describe("generated extensions package", () => {
   it("renders the exact @svvyx/extensions package manifest", () => {
@@ -440,6 +441,66 @@ describe("generated extensions package", () => {
         null,
       );
       assert.strictEqual(services.hasStagedPath(), false);
+    }),
+  );
+
+  it.effect("repairs an interrupted promotion by restoring the deterministic backup", () =>
+    Effect.gen(function* () {
+      const services = fakeGeneratedPackageWriteServices({
+        initialFiles: {
+          "/generated/@svvyx/extensions.previous/package.json": "old package",
+          "/generated/@svvyx/extensions.previous/index.ts": "old index",
+        },
+      });
+
+      yield* runGeneratedPackageWrite(
+        repairInterruptedGeneratedPackagePromotion({
+          generatedPackagePath: "/generated/@svvyx/extensions" as AbsolutePath,
+        }),
+        services,
+      );
+
+      assert.strictEqual(
+        services.readFile("/generated/@svvyx/extensions/package.json"),
+        "old package",
+      );
+      assert.strictEqual(services.readFile("/generated/@svvyx/extensions/index.ts"), "old index");
+      assert.strictEqual(
+        services.readFile("/generated/@svvyx/extensions.previous/package.json"),
+        null,
+      );
+    }),
+  );
+
+  it.effect("repairs an interrupted promotion while ignoring partial staged crash debris", () =>
+    Effect.gen(function* () {
+      const services = fakeGeneratedPackageWriteServices({
+        initialFiles: {
+          "/generated/@svvyx/extensions.previous/package.json": "old package",
+          "/generated/@svvyx/extensions.previous/index.ts": "old index",
+          "/generated/@svvyx/.svvy-extensions-1/package.json": "partial staged package",
+        },
+      });
+
+      yield* runGeneratedPackageWrite(
+        repairInterruptedGeneratedPackagePromotion({
+          generatedPackagePath: "/generated/@svvyx/extensions" as AbsolutePath,
+        }),
+        services,
+      );
+
+      assert.strictEqual(
+        services.readFile("/generated/@svvyx/extensions/package.json"),
+        "old package",
+      );
+      assert.strictEqual(
+        services.readFile("/generated/@svvyx/.svvy-extensions-1/package.json"),
+        "partial staged package",
+      );
+      assert.strictEqual(
+        services.readFile("/generated/@svvyx/extensions.previous/package.json"),
+        null,
+      );
     }),
   );
 
