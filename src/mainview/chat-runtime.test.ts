@@ -8,6 +8,7 @@ import {
   type TextContent,
 } from "@mariozechner/pi-ai";
 import type { ChatStorage, CustomProvider } from "./chat-storage";
+import type { RuntimeSubmittedMessage } from "@svvy/core";
 import {
   composerAttachmentPromptText,
   parseComposerAttachmentTextSignature,
@@ -102,9 +103,13 @@ type PromptHandlerResult = {
 };
 
 type PromptHandler = (
-  request: SendPromptRequest,
+  request: NormalizedPromptRequest,
   harness: FakeRpcHarness,
 ) => Promise<PromptHandlerResult> | PromptHandlerResult;
+
+type NormalizedPromptRequest = SendPromptRequest & {
+  message: RuntimeSubmittedMessage;
+};
 
 type SurfaceRecord = {
   snapshot: ConversationSurfaceSnapshot;
@@ -119,7 +124,7 @@ type FakeRpcHarness = {
   client: ChatRuntimeRpcClient;
   openedTargets: PromptTarget[];
   closeRequests: PromptTarget[];
-  promptRequests: SendPromptRequest[];
+  promptRequests: NormalizedPromptRequest[];
   rendererTelemetryRequests: Array<WorkspaceScoped<RendererTelemetryRequest>>;
   modelUpdates: Array<{ target: PromptTarget; model: string }>;
   thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }>;
@@ -185,7 +190,7 @@ function userMessage(text: string): AgentMessage {
   };
 }
 
-function submittedUserMessage(message: SendPromptRequest["message"]): Message {
+function submittedUserMessage(message: RuntimeSubmittedMessage): Message {
   const content: Array<TextContent | ImageContent> = [];
   const text = message.text.trim();
   if (text) {
@@ -228,20 +233,10 @@ function submittedUserMessage(message: SendPromptRequest["message"]): Message {
     role: "user",
     timestamp: Date.now(),
     content: content.length > 0 ? content : [{ type: "text", text: "" }],
-    ...(message.snippetProvenance?.length
-      ? {
-          svvyMetadata: {
-            snippetProvenance: message.snippetProvenance.map((item) => ({
-              ...item,
-              arguments: [...item.arguments],
-            })),
-          },
-        }
-      : {}),
   };
 }
 
-function submittedMessageFromAgentMessage(message: Message): SendPromptRequest["message"] {
+function submittedMessageFromAgentMessage(message: Message): { text: string } {
   const text =
     typeof message.content === "string"
       ? message.content
@@ -251,11 +246,7 @@ function submittedMessageFromAgentMessage(message: Message): SendPromptRequest["
             .join("")
             .trim()
         : "";
-  return {
-    text,
-    snippetProvenance: (message as { svvyMetadata?: { snippetProvenance?: unknown } }).svvyMetadata
-      ?.snippetProvenance as SendPromptRequest["message"]["snippetProvenance"],
-  };
+  return { text };
 }
 
 function assistantMessage(
@@ -772,7 +763,7 @@ function createFakeRpc(input: {
   let archivedGroupCollapsed = true;
   const openedTargets: PromptTarget[] = [];
   const closeRequests: PromptTarget[] = [];
-  const promptRequests: SendPromptRequest[] = [];
+  const promptRequests: NormalizedPromptRequest[] = [];
   const rendererTelemetryRequests: Array<WorkspaceScoped<RendererTelemetryRequest>> = [];
   const modelUpdates: Array<{ target: PromptTarget; model: string }> = [];
   const thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }> = [];
@@ -1784,8 +1775,16 @@ function createFakeRpc(input: {
         },
         sendPrompt: async (request) => {
           const record = getSurfaceRecord(request.target.surfacePiSessionId);
-          const pendingUserMessage = submittedUserMessage(request.message);
-          if (request.delivery === "queue-only" || record.snapshot.promptStatus === "streaming") {
+          const runtimeMessage: RuntimeSubmittedMessage = {
+            text: request.text,
+            ...(request.attachments ? { attachments: request.attachments } : {}),
+          };
+          const normalizedRequest: NormalizedPromptRequest = {
+            ...structuredClone(request),
+            message: structuredClone(runtimeMessage),
+          };
+          const pendingUserMessage = submittedUserMessage(runtimeMessage);
+          if (record.snapshot.promptStatus === "streaming") {
             record.snapshot = {
               ...record.snapshot,
               composerDraft: {
@@ -1820,12 +1819,18 @@ function createFakeRpc(input: {
             });
             return {
               target: cloneTarget(request.target),
-              queued: true,
-              snapshot: structuredClone(record.snapshot),
+              queuedMessageId: record.snapshot.queuedMessages.at(-1)?.id ?? "queued-test",
+              status: "queued",
+              receipt: {
+                clientRequestId: request.clientRequestId,
+                outcome: "accepted",
+                acceptedAt: "2026-04-10T10:12:00.000Z",
+                stateRevision: 1,
+              },
             };
           }
 
-          promptRequests.push(structuredClone(request));
+          promptRequests.push(normalizedRequest);
           pendingPromptSurfaces.add(request.target.surfacePiSessionId);
           record.snapshot = {
             ...record.snapshot,
@@ -1858,7 +1863,7 @@ function createFakeRpc(input: {
             await Bun.sleep(0);
             const promptHandler =
               promptHandlers.get(request.target.surfacePiSessionId) ?? defaultPromptHandler;
-            const result = await promptHandler(structuredClone(request), harness);
+            const result = await promptHandler(structuredClone(normalizedRequest), harness);
             const cancelled = cancelledPromptSurfaces.has(request.target.surfacePiSessionId);
             pendingPromptSurfaces.delete(request.target.surfacePiSessionId);
             if (cancelled) {
@@ -1919,8 +1924,8 @@ function createFakeRpc(input: {
               record.snapshot = { ...record.snapshot, queuedMessages: remainingQueued };
               void harness.client.request.sendPrompt({
                 ...request,
-                message: { text: nextQueued.text },
-                delivery: "enqueue-and-run",
+                text: nextQueued.text,
+                clientRequestId: `${request.clientRequestId}:queued:${nextQueued.id}`,
               });
             }
           })().catch((error) => {
@@ -1930,7 +1935,14 @@ function createFakeRpc(input: {
 
           return {
             target: cloneTarget(request.target),
-            snapshot: structuredClone(record.snapshot),
+            queuedMessageId: `queued-active-${promptRequests.length}`,
+            status: "queued",
+            receipt: {
+              clientRequestId: request.clientRequestId,
+              outcome: "accepted",
+              acceptedAt: "2026-04-10T10:12:00.000Z",
+              stateRevision: 1,
+            },
           };
         },
         recordRendererTelemetry: async (request) => {
@@ -1955,8 +1967,10 @@ function createFakeRpc(input: {
           };
           return await harness.client.request.sendPrompt({
             workspaceId,
+            panelId: "primary",
             target,
-            message: submittedMessageFromAgentMessage(message),
+            ...submittedMessageFromAgentMessage(message),
+            clientRequestId: "edit-committed-message",
           });
         },
         updateComposerDraft: async ({ target, draft }) => {
@@ -3301,21 +3315,7 @@ describe("createChatRuntime", () => {
       text: "Please Review docs/prd.md.",
     });
     expect(firstBlock).not.toHaveProperty("textSignature");
-    expect(user).toMatchObject({
-      svvyMetadata: {
-        snippetProvenance: [
-          {
-            mentionId: "mention-1",
-            snippetId: "snippet-review",
-            source: "svvy",
-            title: "Review Plan",
-            contentHash: "fnv1a32:example",
-            arguments: ["docs/prd.md"],
-            resolvedText: "Review docs/prd.md.",
-          },
-        ],
-      },
-    });
+    expect(user).not.toHaveProperty("svvyMetadata");
 
     runtime.dispose();
   });
@@ -3386,25 +3386,10 @@ describe("createChatRuntime", () => {
 
     const request = harness.promptRequests[0];
     const user = request ? submittedUserMessage(request.message) : undefined;
-    expect(request?.clientSubmission).toEqual({
-      correlationId: "composer-submit-proxy",
-      source: "composer",
-    });
-    expect(user).toMatchObject({
-      svvyMetadata: {
-        snippetProvenance: [
-          {
-            mentionId: "mention-1",
-            snippetId: "snippet-review",
-            source: "svvy",
-            title: "Review",
-            contentHash: "fnv1a32:example",
-            arguments: ["docs/prd.md"],
-            resolvedText: "Review docs/prd.md.",
-          },
-        ],
-      },
-    });
+    expect(request?.panelId).toBe("primary");
+    expect(request?.text).toBe("Please Review docs/prd.md.");
+    expect(request?.clientRequestId).toMatch(/^desktop-submit:/);
+    expect(user).not.toHaveProperty("svvyMetadata");
 
     runtime.dispose();
   });
@@ -3557,21 +3542,7 @@ describe("createChatRuntime", () => {
 
     const [promptRequest] = harness.promptRequests;
     expect(promptRequest?.message.text).toBe("Revised request");
-    expect(submittedUserMessage(promptRequest!.message)).toMatchObject({
-      svvyMetadata: {
-        snippetProvenance: [
-          {
-            mentionId: "mention-edit",
-            snippetId: "snippet-edit",
-            source: "svvy",
-            title: "Edit Snippet",
-            contentHash: "fnv1a32:edit",
-            arguments: ["target"],
-            resolvedText: "Revised request",
-          },
-        ],
-      },
-    });
+    expect(submittedUserMessage(promptRequest!.message)).not.toHaveProperty("svvyMetadata");
 
     runtime.dispose();
   });

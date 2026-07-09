@@ -4057,6 +4057,12 @@ describe("package boundaries", () => {
         parseOptions: "strictBoundaryParseOptions",
       },
       {
+        name: "DesktopBridgeErrorContract",
+        file: "packages/core/src/desktop-bridge-error-contract.ts",
+        schema: "DesktopBridgeErrorContractSchema",
+        parseOptions: "strictBoundaryParseOptions",
+      },
+      {
         name: "RuntimeContractError",
         file: "packages/core/src/errors.ts",
         schema: "RuntimeContractError",
@@ -8757,7 +8763,6 @@ describe("package boundaries", () => {
       "src/bun/index.ts -> runtime.catalog.reorderQueuedSurfaceMessage",
       "src/bun/index.ts -> runtimeOperations.messages.abort",
       "src/bun/index.ts -> runtimeOperations.messages.abort",
-      "src/bun/index.ts -> runtimeOperations.messages.submit",
       "src/bun/index.ts -> runtimeOperations.queues.steer",
     ]);
   });

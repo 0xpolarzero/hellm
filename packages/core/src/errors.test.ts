@@ -16,8 +16,119 @@ import {
   PiAdapterError,
   RuntimeContractError,
 } from "./errors";
+import {
+  decodeUnknownDesktopBridgeErrorContractExit,
+  decodeUnknownDesktopSubmitPromptRequestExit,
+  decodeUnknownDesktopWriteCommandStdinRequestExit,
+  encodeDesktopBridgeErrorContractExit,
+  normalizeDesktopBridgeErrorContract,
+} from "./desktop-bridge-error-contract";
 
 describe("@svvy/core errors", () => {
+  it("decodes every desktop bridge error reason and rejects unknown reasons", () => {
+    const reasons = [
+      "invalid-input",
+      "invalid-panel-binding",
+      "state-facade-failed",
+      "runtime-facade-failed",
+      "renderer-disconnected",
+      "desktop-shutdown",
+    ] as const;
+
+    for (const reason of reasons) {
+      const decoded = decodeUnknownDesktopBridgeErrorContractExit({
+        operation: "desktop.test",
+        reason,
+        message: reason,
+      });
+      expect(Exit.isSuccess(decoded)).toBe(true);
+      if (Exit.isSuccess(decoded)) {
+        expect(decoded.value.reason).toBe(reason);
+      }
+    }
+
+    expect(
+      Exit.isFailure(
+        decodeUnknownDesktopBridgeErrorContractExit({
+          operation: "desktop.test",
+          reason: "stack-leaked",
+          message: "not allowed",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("round trips desktop bridge errors without leaking raw stacks", () => {
+    const error = new Error("host failure");
+    error.stack = "secret stack";
+    const normalized = normalizeDesktopBridgeErrorContract({
+      operation: "desktop.rpc",
+      reason: "runtime-facade-failed",
+      message: "Runtime call failed.",
+      cause: error,
+    });
+
+    expect(JSON.stringify(normalized)).not.toContain("secret stack");
+    const encoded = encodeDesktopBridgeErrorContractExit(normalized);
+    expect(Exit.isSuccess(encoded)).toBe(true);
+    if (Exit.isSuccess(encoded)) {
+      expect(JSON.stringify(encoded.value)).not.toContain("secret stack");
+    }
+  });
+
+  it("strictly decodes desktop submit and command stdin bridge requests", () => {
+    const target = {
+      workspaceSessionId: "session-desktop-bridge",
+      surface: "orchestrator",
+      surfacePiSessionId: "surface-desktop-bridge",
+    };
+
+    expect(
+      Exit.isSuccess(
+        decodeUnknownDesktopSubmitPromptRequestExit({
+          panelId: "primary",
+          target,
+          text: "Hello",
+          attachments: [],
+          clientRequestId: "client-request-1",
+        }),
+      ),
+    ).toBe(true);
+
+    for (const forbiddenField of [
+      "messages",
+      "systemPrompt",
+      "toolDeclarations",
+      "generatedContext",
+      "panelSnapshot",
+    ]) {
+      expect(
+        Exit.isFailure(
+          decodeUnknownDesktopSubmitPromptRequestExit({
+            panelId: "primary",
+            target,
+            text: "Hello",
+            clientRequestId: "client-request-1",
+            [forbiddenField]: {},
+          }),
+        ),
+      ).toBe(true);
+    }
+
+    expect(
+      Exit.isSuccess(
+        decodeUnknownDesktopWriteCommandStdinRequestExit({
+          commandId: "command-desktop-bridge",
+          text: "yes\n",
+          clientSubmission: {
+            source: "command-inspector",
+            clientRequestId: "stdin-request-1",
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("decodes every public runtime contract error reason", () => {
     const reasons = [
       "invalid-input",

@@ -3,6 +3,7 @@ export * from "./artifact-contracts";
 export * from "./boundary-parse-options";
 export * from "./composer-contracts";
 export * from "./context-budget-contracts";
+export * from "./desktop-bridge-error-contract";
 export * from "./errors";
 export * from "./extension-contracts";
 export * from "./extension-state-ports";

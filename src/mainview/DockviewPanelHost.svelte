@@ -412,7 +412,7 @@
       if (sendInput.editMessageTimestamp !== undefined) {
         await controller.editCommittedUserMessage(sendInput.editMessageTimestamp, sendInput);
       } else {
-        await controller.sendPrompt(sendInput);
+        await controller.sendPrompt(sendInput, panelId);
       }
 	      runtime.recordRendererTelemetry({
 	        eventName: "surface_composer.send.dispatched",

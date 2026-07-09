@@ -15,7 +15,6 @@ import type {
   MimeType,
   RuntimeAttachmentId,
   RuntimeSubmittedAttachment,
-  RuntimeSubmittedMessage,
   WorkspaceId,
   WorkspaceRelativePath,
 } from "@svvy/core";
@@ -384,8 +383,10 @@ function buildUserMessage(input: ComposerPromptSubmission): Message {
   return message;
 }
 
-function buildRuntimeSubmittedMessage(input: ComposerPromptSubmission): RuntimeSubmittedMessage {
-  const attachments: RuntimeSubmittedAttachment[] = input.attachments.map((attachment) => {
+function buildRuntimeSubmittedAttachments(
+  input: readonly ComposerAttachment[],
+): RuntimeSubmittedAttachment[] {
+  return input.map((attachment) => {
     const common = {
       ...(attachment.id !== undefined ? { id: attachment.id as RuntimeAttachmentId } : {}),
       ...(attachment.name !== undefined ? { name: attachment.name as AttachmentDisplayName } : {}),
@@ -409,13 +410,6 @@ function buildRuntimeSubmittedMessage(input: ComposerPromptSubmission): RuntimeS
     }
     return { ...common, kind: "file" };
   });
-  return {
-    text: input.text.trim(),
-    attachments,
-    ...(input.snippetProvenance?.length
-      ? { snippetProvenance: structuredClone(input.snippetProvenance) }
-      : {}),
-  };
 }
 
 function serializableComposerAttachment(input: ComposerAttachment): ComposerAttachment {
@@ -491,6 +485,12 @@ function serializableComposerSubmission(input: ComposerPromptSubmission): Compos
       ? { clientSubmission: serializableClientSubmission(input.clientSubmission) }
       : {}),
   };
+}
+
+function createDesktopClientRequestId(): string {
+  return `desktop-submit:${
+    globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }`;
 }
 
 function serializableComposerDraft(
@@ -582,7 +582,7 @@ export interface ChatSurfaceController {
   queuedPrompts: QueuedPrompt[];
   composerDraft: ComposerDraft;
   ownerPaneIds: string[];
-  sendPrompt: (input: ComposerPromptSubmission) => Promise<void>;
+  sendPrompt: (input: ComposerPromptSubmission, panelId?: string) => Promise<void>;
   updateComposerDraft: (
     draft: Pick<ComposerDraft, "text" | "attachments" | "snippetMentions">,
   ) => Promise<void>;
@@ -1463,17 +1463,24 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     }
   }
 
-  async sendPrompt(input: ComposerPromptSubmission): Promise<void> {
+  async sendPrompt(input: ComposerPromptSubmission, panelId?: string): Promise<void> {
     const submission = serializableComposerSubmission(input);
     if (!submission.text && submission.attachments.length === 0) {
       return;
     }
+    const requestPanelId = panelId ?? this.panelIds.values().next().value;
+    if (typeof requestPanelId !== "string" || !requestPanelId) {
+      throw new Error("Expected an attached panel before sending a prompt.");
+    }
 
     try {
       const response = await this.rpcClient.request.sendPrompt({
+        panelId: requestPanelId,
         target: this.target,
-        message: buildRuntimeSubmittedMessage(submission),
-        clientSubmission: submission.clientSubmission,
+        text: submission.text,
+        attachments: buildRuntimeSubmittedAttachments(submission.attachments),
+        clientRequestId:
+          submission.clientSubmission?.clientRequestId ?? createDesktopClientRequestId(),
         workspaceId: this.workspaceId,
       });
       this.target = normalizePromptTarget(response.target);
@@ -1481,16 +1488,12 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       await this.persistPromptHistoryEntry(submission.text);
       this.invalidatePendingDraftPersistence();
       this.rendererOwnsDraft = false;
-      if (response.snapshot) {
-        this.applySnapshot(response.snapshot);
-      } else {
-        this.composerDraft = {
-          text: "",
-          attachments: [],
-          snippetMentions: [],
-          updatedAt: new Date().toISOString(),
-        };
-      }
+      this.composerDraft = {
+        text: "",
+        attachments: [],
+        snippetMentions: [],
+        updatedAt: new Date().toISOString(),
+      };
     } catch (error) {
       setSurfaceAgentStreamState(this.agent, {
         isStreaming: false,

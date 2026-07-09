@@ -63,7 +63,7 @@ import type {
   RuntimeApprovalId,
   RuntimeMessageDelivery,
   RuntimeSurfaceTarget,
-  RuntimeSubmittedMessage,
+  RuntimeSubmittedAttachment,
   RuntimeClientSubmissionMetadata,
   StateStoredError,
   StateRevision,
@@ -895,17 +895,29 @@ export interface RendererTelemetryResponse {
   ok: true;
 }
 
-export interface SendPromptRequest {
+export interface DesktopSubmitPromptRequest {
+  panelId: string;
   target: PromptTarget;
-  message: RuntimeSubmittedMessage;
-  delivery?: RuntimeMessageDelivery;
-  clientSubmission?: PromptClientSubmissionMetadata;
+  text: string;
+  attachments?: RuntimeSubmittedAttachment[];
+  clientRequestId: string;
 }
 
+export type SendPromptRequest = DesktopSubmitPromptRequest;
 export interface SendPromptResponse {
+  queuedMessageId: string;
   target: PromptTarget;
-  queued?: boolean;
-  queuedMessageId?: string;
+  status: "queued";
+  receipt: {
+    clientRequestId: string | null;
+    outcome: "accepted" | "duplicate";
+    acceptedAt: string;
+    stateRevision: number;
+  };
+}
+
+export interface EditCommittedUserMessageResponse {
+  target: PromptTarget;
   snapshot?: ConversationSurfaceSnapshot;
 }
 
@@ -1382,11 +1394,13 @@ export interface WorkspaceCommandInspector {
   traceChildren: WorkspaceCommandInspectorChild[];
 }
 
-export interface WriteCommandStdinRequest {
+export interface DesktopWriteCommandStdinRequest {
   commandId: string;
   text: string;
   clientSubmission?: RuntimeClientSubmissionMetadata;
 }
+
+export type WriteCommandStdinRequest = DesktopWriteCommandStdinRequest;
 
 export type WriteCommandStdinResponse =
   | {
@@ -2456,7 +2470,7 @@ export interface ChatRPCSchema {
       };
       editCommittedUserMessage: {
         params: WorkspaceScoped<EditCommittedUserMessageRequest>;
-        response: SendPromptResponse;
+        response: EditCommittedUserMessageResponse;
       };
       deleteQueuedSurfaceMessage: {
         params: WorkspaceScoped<QueuedSurfaceMessageRequest>;

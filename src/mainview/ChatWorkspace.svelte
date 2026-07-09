@@ -1024,7 +1024,7 @@
         return false;
       }
 
-      await surface.sendPrompt(input);
+      await surface.sendPrompt(input, panelId);
       promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
       return true;
     } finally {

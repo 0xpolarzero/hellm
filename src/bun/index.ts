@@ -13,7 +13,6 @@ import type {
   AbortPromptInput,
   AbsolutePath,
   AppLogEntryId,
-  CommandId,
   JsonValue,
   ProviderAuthHealth,
   ProviderAuthStatus,
@@ -26,7 +25,6 @@ import type {
   RuntimeClientSubmissionSource,
   RequestUserInputAnswer,
   SteerQueuedMessageInput,
-  SubmitMessageInput,
   SurfacePiSessionId,
   WorkspaceId,
 } from "@svvy/core";
@@ -51,6 +49,7 @@ import type {
   ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
+  EditCommittedUserMessageResponse,
   SendPromptResponse,
   SwitchWorkspaceBranchResponse,
 } from "../shared/workspace-contract";
@@ -111,6 +110,11 @@ import {
   getWorkspaceRuntimeOperationsForRequest,
   stripWorkspaceId,
 } from "./workspace-rpc-routing";
+import {
+  normalizeDesktopBridgeHandlers,
+  submitPromptFromDesktop,
+  writeCommandStdinFromDesktop,
+} from "./desktop-bridge-requests";
 import {
   assertExtensionEnvOverrideTarget,
   assertExtensionEnvSecretTarget,
@@ -1237,7 +1241,7 @@ function addWorkspaceBranch<T extends { cwd: string }>(info: T): T & { branch?: 
 
 const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   maxRequestTime: getRpcRequestTimeoutMs(),
-  handlers: {
+  handlers: normalizeDesktopBridgeHandlers({
     requests: {
       getDefaults: async () => {
         return getDefaultAgentSettings();
@@ -2368,16 +2372,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       writeCommandStdin: async (input) => {
         const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        return await runtimeOperations.commands.writeStdin({
-          commandId: input.commandId as CommandId,
-          text: input.text,
-          ...(input.clientSubmission
-            ? {
-                clientSubmission: decodePromptClientSubmissionToRuntimeInput(
-                  input.clientSubmission,
-                ),
-              }
-            : {}),
+        return await writeCommandStdinFromDesktop({
+          operation: "desktop.writeCommandStdin",
+          payload: stripWorkspaceId(input),
+          runtimeCommands: runtimeOperations.commands,
         });
       },
       listHandlerThreads: async (input) => {
@@ -2615,17 +2613,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
         const runtimeOperations = getWorkspaceRuntimeOperations(payload);
-        const result = await runtimeOperations.messages.submit({
-          target: payload.target as SubmitMessageInput["target"],
-          message: payload.message,
-          delivery: payload.delivery,
-          clientSubmission: decodePromptClientSubmissionToRuntimeInput(payload.clientSubmission),
+        return await submitPromptFromDesktop({
+          operation: "desktop.sendPrompt",
+          payload: stripWorkspaceId(payload),
+          workspaceId: payload.workspaceId as WorkspaceId,
+          fetchStateReadModel: fetchRendererStateReadModel,
+          runtimeMessages: runtimeOperations.messages,
         });
-        return {
-          target: result.target,
-          queued: result.status === "queued",
-          queuedMessageId: result.queuedMessageId,
-        };
       },
       recordRendererTelemetry: async (payload) => {
         const runtime = getWorkspaceRuntime(payload);
@@ -2662,7 +2656,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const runtime = getWorkspaceRuntime(input);
         return await runtime.catalog.updateComposerDraft(input);
       },
-      editCommittedUserMessage: async (payload): Promise<SendPromptResponse> => {
+      editCommittedUserMessage: async (payload): Promise<EditCommittedUserMessageResponse> => {
         const runtime = getWorkspaceRuntime(payload);
         const session = await runtime.catalog.editCommittedUserMessage({
           target: payload.target,
@@ -2996,7 +2990,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return { ok: true };
       },
     },
-  },
+  }),
 });
 
 const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
