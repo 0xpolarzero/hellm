@@ -180,6 +180,8 @@ type PiLiveSessionEntry = {
 type PiLiveActiveTurn = {
   readonly turnId: TurnId;
   readonly agentSession?: AgentSession;
+  readonly close?: (abort: boolean) => Effect.Effect<void, PiAdapterError>;
+  readonly closing?: boolean;
 };
 
 type LiveRegistrationDecision =
@@ -389,10 +391,14 @@ function runTurn(
     const queue = yield* Queue.bounded<PiRuntimeEvent, PiAdapterError>(256);
     yield* Scope.addFinalizer(
       turnScope,
-      clearActiveTurn(liveSessions, input.session.surfacePiSessionId, input.turnId, false).pipe(
-        Effect.ignore,
-      ),
+      terminalizeActiveTurn(
+        liveSessions,
+        input.session.surfacePiSessionId,
+        input.turnId,
+        true,
+      ).pipe(Effect.ignore),
     );
+    const runningToolControllers = new Set<AbortController>();
 
     const managedSession = yield* Effect.tryPromise({
       try: () =>
@@ -411,6 +417,7 @@ function runTurn(
             liveSessions,
             input.session.surfacePiSessionId,
             input.turnId,
+            runningToolControllers,
           ),
           emitToolExecutionUpdate: runTurnToolExecutionUpdate(runtimeContext, queue, input.session),
           syncAuthStorage: (authStorage) => {
@@ -454,7 +461,14 @@ function runTurn(
       );
     }
 
-    return yield* openTurnStream(input, managedSession, runtimeContext, liveSessions, queue);
+    return yield* openTurnStream(
+      input,
+      managedSession,
+      runtimeContext,
+      liveSessions,
+      queue,
+      runningToolControllers,
+    );
   });
 }
 
@@ -505,16 +519,11 @@ function interruptTurn(
         }),
       );
     }
-    yield* Effect.tryPromise({
-      try: () => activeTurn.agentSession!.abort(),
-      catch: (cause) =>
-        new PiAdapterError({
-          operation: "pi-adapter.turns.interrupt",
-          reason: "turn-failed",
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-    });
+    if (activeTurn.close) {
+      yield* activeTurn.close(true);
+      return;
+    }
+    yield* terminalizeActiveTurn(liveSessions, input.surfacePiSessionId, input.turnId, true);
   });
 }
 
@@ -550,11 +559,32 @@ function openTurnStream(
   runtimeContext: Context.Context<never>,
   liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
   queue: Queue.Queue<PiRuntimeEvent, PiAdapterError>,
+  runningToolControllers: Set<AbortController>,
 ): Effect.Effect<PiAdapterTurnStream, PiAdapterError> {
   return Effect.gen(function* () {
     const closed = yield* Deferred.make<void, PiAdapterError>();
     let settled = false;
+    let closeStarted = false;
+    let terminalQueued = false;
     let unsubscribe: (() => void) | undefined;
+    let offerChain: Promise<void> = Promise.resolve();
+
+    const queueRuntimeEvents = (
+      events: readonly PiRuntimeEvent[],
+      options: { readonly allowAfterClose?: boolean } = {},
+    ): void => {
+      if (events.length === 0 || (closeStarted && !options.allowAfterClose)) {
+        return;
+      }
+      if (events.some((event) => event.type === "pi.turn.finished")) {
+        terminalQueued = true;
+      }
+      const offerEvents = async () => {
+        await offerPiRuntimeEvents(runtimeContext, queue, events);
+      };
+      offerChain = offerChain.then(offerEvents, offerEvents);
+      void offerChain.catch(() => undefined);
+    };
 
     const closeTurn = (abort: boolean): Effect.Effect<void, PiAdapterError> =>
       Effect.gen(function* () {
@@ -562,7 +592,18 @@ function openTurnStream(
           return;
         }
         settled = true;
+        closeStarted = true;
         unsubscribe?.();
+        if (abort) {
+          yield* markActiveTurnClosing(
+            liveSessions,
+            input.session.surfacePiSessionId,
+            input.turnId,
+          );
+        }
+        for (const controller of runningToolControllers) {
+          controller.abort();
+        }
         if (abort) {
           yield* Effect.tryPromise({
             try: () => managedSession.session.abort(),
@@ -575,10 +616,39 @@ function openTurnStream(
               }),
           });
         }
+        if (abort) {
+          if (!terminalQueued) {
+            terminalQueued = true;
+            const terminalOffered = Queue.offerUnsafe(queue, {
+              session: input.session,
+              turnId: input.turnId,
+              surfacePiSessionId: input.surfacePiSessionId,
+              type: "pi.turn.finished",
+              status: "cancelled",
+              stopReason: "interrupted",
+            });
+            if (!terminalOffered) {
+              yield* Queue.shutdown(queue);
+            }
+          }
+        } else {
+          yield* Effect.tryPromise({
+            try: () => offerChain,
+            catch: (cause) =>
+              cause instanceof PiAdapterError
+                ? cause
+                : new PiAdapterError({
+                    operation: "pi-adapter.turns.close",
+                    reason: "turn-failed",
+                    message: cause instanceof Error ? cause.message : String(cause),
+                    cause,
+                  }),
+          });
+        }
         yield* clearActiveTurn(liveSessions, input.session.surfacePiSessionId, input.turnId, true);
-        yield* Queue.shutdown(queue).pipe(Effect.ignore);
         yield* Deferred.succeed(closed, undefined).pipe(Effect.ignore);
       });
+    yield* installActiveTurnClose(liveSessions, input, closeTurn);
 
     unsubscribe = managedSession.session.subscribe((event) => {
       try {
@@ -588,7 +658,7 @@ function openTurnStream(
           surfacePiSessionId: input.surfacePiSessionId,
           event,
         });
-        void offerPiRuntimeEvents(runtimeContext, queue, runtimeEvents);
+        queueRuntimeEvents(runtimeEvents);
       } catch (cause) {
         void Effect.runPromiseWith(runtimeContext)(
           Queue.fail(
@@ -630,11 +700,11 @@ function openTurnStream(
       );
 
     const stream = Stream.fromQueue(queue).pipe(
-      Stream.ensuring(closeTurn(true).pipe(Effect.ignore)),
+      Stream.ensuring(closeTurn(true).pipe(Effect.andThen(Queue.shutdown(queue)), Effect.ignore)),
     );
     return {
       stream,
-      close: () => closeTurn(true),
+      close: () => closeTurn(true).pipe(Effect.andThen(Queue.shutdown(queue))),
       closed: Deferred.await(closed),
     };
   });
@@ -658,6 +728,7 @@ function runTurnToolEffect(
   liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
   surfacePiSessionId: SurfacePiSessionId,
   turnId: TurnId,
+  runningToolControllers: Set<AbortController>,
 ) {
   return async (
     effect: Effect.Effect<NativeToolResult, RuntimeToolExecutionError>,
@@ -678,11 +749,50 @@ function runTurnToolEffect(
       }
       return yield* effect;
     });
-    const exit = await Effect.runPromiseExitWith(runtimeContext)(guardedEffect);
-    if (Exit.isSuccess(exit)) {
-      return exit.value;
+    const controller = new AbortController();
+    runningToolControllers.add(controller);
+    const runExit = Effect.runPromiseExitWith(runtimeContext);
+    try {
+      const exit = await runExit(guardedEffect, { signal: controller.signal });
+      if (Exit.isFailure(exit)) {
+        throw piAdapterErrorFromCause("pi-adapter.turns.tool", "tool-execution-failed", exit.cause);
+      }
+      if (controller.signal.aborted) {
+        throw new PiAdapterError({
+          operation: "pi-adapter.turns.tool",
+          reason: "turn-not-active",
+          message: `Pi turn ${turnId} was interrupted for session ${surfacePiSessionId}.`,
+        });
+      }
+      const activeExit = await runExit(isActiveTurn(liveSessions, surfacePiSessionId, turnId));
+      if (Exit.isSuccess(activeExit) && activeExit.value) {
+        if (controller.signal.aborted) {
+          throw new PiAdapterError({
+            operation: "pi-adapter.turns.tool",
+            reason: "turn-not-active",
+            message: `Pi turn ${turnId} was interrupted for session ${surfacePiSessionId}.`,
+          });
+        }
+        return exit.value;
+      }
+      throw new PiAdapterError({
+        operation: "pi-adapter.turns.tool",
+        reason: "turn-not-active",
+        message: `Pi turn ${turnId} is not active for session ${surfacePiSessionId}.`,
+      });
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        throw new PiAdapterError({
+          operation: "pi-adapter.turns.tool",
+          reason: "turn-not-active",
+          message: `Pi turn ${turnId} was interrupted for session ${surfacePiSessionId}.`,
+          cause,
+        });
+      }
+      throw cause;
+    } finally {
+      runningToolControllers.delete(controller);
     }
-    throw piAdapterErrorFromCause("pi-adapter.turns.tool", "tool-execution-failed", exit.cause);
   };
 }
 
@@ -1188,6 +1298,77 @@ function installActiveTurnAgentSession(
   });
 }
 
+function installActiveTurnClose(
+  liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
+  input: RunPiTurnInput,
+  close: (abort: boolean) => Effect.Effect<void, PiAdapterError>,
+): Effect.Effect<void> {
+  return Ref.update(liveSessions, (current) => {
+    const liveEntry = current.get(input.session.surfacePiSessionId);
+    if (!liveEntry || liveEntry.activeTurn?.turnId !== input.turnId) {
+      return current;
+    }
+    const next = new Map(current);
+    next.set(input.session.surfacePiSessionId, {
+      ...liveEntry,
+      activeTurn: { ...liveEntry.activeTurn, close },
+    });
+    return next;
+  });
+}
+
+function markActiveTurnClosing(
+  liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
+  surfacePiSessionId: SurfacePiSessionId,
+  turnId: TurnId,
+): Effect.Effect<void> {
+  return Ref.update(liveSessions, (current) => {
+    const liveEntry = current.get(surfacePiSessionId);
+    if (!liveEntry || liveEntry.activeTurn?.turnId !== turnId) {
+      return current;
+    }
+    const next = new Map(current);
+    next.set(surfacePiSessionId, {
+      ...liveEntry,
+      activeTurn: { ...liveEntry.activeTurn, closing: true },
+    });
+    return next;
+  });
+}
+
+function terminalizeActiveTurn(
+  liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
+  surfacePiSessionId: SurfacePiSessionId,
+  turnId: TurnId,
+  abort: boolean,
+): Effect.Effect<void, PiAdapterError> {
+  return Effect.gen(function* () {
+    const activeTurn = yield* Ref.get(liveSessions).pipe(
+      Effect.map((current) => current.get(surfacePiSessionId)?.activeTurn),
+    );
+    if (activeTurn?.turnId !== turnId) {
+      return;
+    }
+    if (activeTurn.close) {
+      yield* activeTurn.close(abort);
+      return;
+    }
+    if (abort) {
+      yield* Effect.tryPromise({
+        try: () => activeTurn.agentSession?.abort() ?? Promise.resolve(),
+        catch: (cause) =>
+          new PiAdapterError({
+            operation: "pi-adapter.turns.close",
+            reason: "turn-failed",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+    }
+    yield* clearActiveTurn(liveSessions, surfacePiSessionId, turnId, true);
+  });
+}
+
 function clearActiveTurn(
   liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
   surfacePiSessionId: SurfacePiSessionId,
@@ -1226,7 +1407,10 @@ function isActiveTurn(
   turnId: TurnId,
 ): Effect.Effect<boolean> {
   return Ref.get(liveSessions).pipe(
-    Effect.map((current) => current.get(surfacePiSessionId)?.activeTurn?.turnId === turnId),
+    Effect.map((current) => {
+      const activeTurn = current.get(surfacePiSessionId)?.activeTurn;
+      return activeTurn?.turnId === turnId && activeTurn.closing !== true;
+    }),
   );
 }
 

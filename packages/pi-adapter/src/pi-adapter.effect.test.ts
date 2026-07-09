@@ -5,8 +5,10 @@ import {
   PiSessionReferencePort,
   ProviderAuthPort,
   ProviderAuthStatusStatePort,
+  type NativeToolResult,
   type PiRuntimePathsSnapshot,
   type PiRuntimePathsPortService,
+  type PiRuntimeEvent,
   type PiSessionReference,
   type PiSessionReferenceValidation,
   type PiSessionReferencePortService,
@@ -14,8 +16,10 @@ import {
   type ProviderCredentialSnapshot,
   type ProviderAuthStatusStatePortService,
   type RunPiTurnInput,
+  RuntimeToolExecutionError,
 } from "@svvy/core";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { PiAdapter, layer } from "./index";
@@ -468,6 +472,433 @@ describe("PiAdapter", () => {
     );
   });
 
+  it.effect("interrupt terminalizes a hung prompt turn exactly once", () => {
+    const services = testPiAdapterServices();
+    let abortCalls = 0;
+    let disposeCalls = 0;
+    let resolvePrompt: (() => void) | undefined;
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async () =>
+      testManagedAgentSession({
+        onAbort: async () => {
+          abortCalls += 1;
+        },
+        onDispose: () => {
+          disposeCalls += 1;
+        },
+        onPrompt: () =>
+          new Promise<void>((resolve) => {
+            resolvePrompt = resolve;
+          }),
+      }),
+    );
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+
+          const turn = yield* adapter.turns.run(
+            testRunTurnInput({ turnId: "turn_hung_prompt" as never }),
+          );
+          const terminalFiber = yield* turn.stream.pipe(
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+
+          yield* adapter.turns.interrupt({
+            surfacePiSessionId,
+            turnId: "turn_hung_prompt" as never,
+          });
+          const events = Array.from(yield* Fiber.join(terminalFiber));
+
+          assert.deepStrictEqual(events, [
+            {
+              session: { surfacePiSessionId },
+              turnId: "turn_hung_prompt" as never,
+              surfacePiSessionId,
+              type: "pi.turn.finished",
+              status: "cancelled",
+              stopReason: "interrupted",
+            },
+          ]);
+          assert.strictEqual(abortCalls, 1);
+
+          resolvePrompt?.();
+          yield* Effect.promise(() => Promise.resolve());
+          const secondInterrupt = yield* Effect.exit(
+            adapter.turns.interrupt({
+              surfacePiSessionId,
+              turnId: "turn_hung_prompt" as never,
+            }),
+          );
+          assert.strictEqual(secondInterrupt._tag, "Failure");
+          if (secondInterrupt._tag === "Failure") {
+            const failure = secondInterrupt.cause.reasons.find(
+              (reason) => reason._tag === "Fail",
+            )?.error;
+            assert.ok(failure instanceof PiAdapterError);
+            assert.strictEqual(failure.reason, "turn-already-terminal");
+          }
+          assert.strictEqual(abortCalls, 1);
+          assert.strictEqual(disposeCalls, 1);
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
+  it.effect("drains pending subscription offers before prompt close shuts the turn queue", () => {
+    const services = testPiAdapterServices();
+    let listener: ((event: unknown) => void) | undefined;
+    let resolvePrompt: (() => void) | undefined;
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async () =>
+      testManagedAgentSession({
+        onSubscribe: (nextListener) => {
+          listener = nextListener;
+        },
+        onPrompt: () =>
+          new Promise<void>((resolve) => {
+            resolvePrompt = resolve;
+          }),
+      }),
+    );
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+
+          const turn = yield* adapter.turns.run(
+            testRunTurnInput({ turnId: "turn_offer_drain" as never }),
+          );
+          assert.ok(listener);
+
+          for (let index = 0; index < 256; index += 1) {
+            listener!({
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "text_delta",
+                contentIndex: index,
+                partial: { id: `msg_${index}` },
+                delta: `${index}`,
+              },
+            });
+          }
+          listener!({ type: "turn_end", stopReason: "stop" });
+          resolvePrompt?.();
+
+          const events = Array.from(
+            yield* turn.stream.pipe(Stream.take(257), Stream.runCollect),
+          ) as PiRuntimeEvent[];
+          const terminalEvents = events.filter((event) => event.type === "pi.turn.finished");
+
+          assert.strictEqual(events.length, 257);
+          assert.deepStrictEqual(terminalEvents, [
+            {
+              session: { surfacePiSessionId },
+              turnId: "turn_offer_drain" as never,
+              surfacePiSessionId,
+              type: "pi.turn.finished",
+              status: "completed",
+              stopReason: "stop",
+            },
+          ]);
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
+  it.effect("interrupt settles when the turn queue is saturated without a consumer", () => {
+    const services = testPiAdapterServices();
+    let listener: ((event: unknown) => void) | undefined;
+    let abortCalls = 0;
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async () =>
+      testManagedAgentSession({
+        onSubscribe: (nextListener) => {
+          listener = nextListener;
+        },
+        onAbort: async () => {
+          abortCalls += 1;
+        },
+        promptSettles: false,
+      }),
+    );
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+
+          yield* adapter.turns.run(
+            testRunTurnInput({ turnId: "turn_saturated_interrupt" as never }),
+          );
+          assert.ok(listener);
+
+          for (let index = 0; index < 300; index += 1) {
+            listener!({
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "text_delta",
+                contentIndex: index,
+                partial: { id: `msg_${index}` },
+                delta: `${index}`,
+              },
+            });
+          }
+          yield* flushPromiseTurns(300);
+
+          const result = yield* adapter.turns
+            .interrupt({
+              surfacePiSessionId,
+              turnId: "turn_saturated_interrupt" as never,
+            })
+            .pipe(
+              Effect.as("settled" as const),
+              Effect.timeoutOrElse({
+                duration: 100,
+                orElse: () => Effect.succeed("timed-out" as const),
+              }),
+            );
+
+          assert.strictEqual(result, "settled");
+          assert.strictEqual(abortCalls, 1);
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
+  it.effect("interrupts in-flight custom tool effects before they return to pi", () => {
+    const services = testPiAdapterServices();
+    let runToolEffect:
+      | Parameters<
+          Parameters<typeof setPiManagedAgentSessionFactoryForTests>[0]
+        >[0]["runToolEffect"]
+      | undefined;
+    const toolResults: unknown[] = [];
+    const toolErrors: unknown[] = [];
+    let toolStarted = false;
+    let toolInterrupted = false;
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async (input) => {
+      runToolEffect = input.runToolEffect;
+      return testManagedAgentSession({ promptSettles: false });
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+
+          yield* adapter.turns.run(testRunTurnInput({ turnId: "turn_tool_cancel" as never }));
+          assert.ok(runToolEffect);
+
+          const toolPromise = runToolEffect!(
+            Effect.tryPromise({
+              try: (signal) => {
+                toolStarted = true;
+                signal.addEventListener("abort", () => {
+                  toolInterrupted = true;
+                });
+                return new Promise<never>(() => {});
+              },
+              catch: (cause) =>
+                new RuntimeToolExecutionError({
+                  turnId: "turn_tool_cancel" as never,
+                  surfacePiSessionId,
+                  piToolCallId: "tool_call_cancel" as never,
+                  toolName: "example_tool",
+                  reason: "cancelled",
+                  message: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+            }),
+          ).then(
+            (result) => {
+              toolResults.push(result);
+            },
+            (error) => {
+              toolErrors.push(error);
+            },
+          );
+          yield* Effect.promise(() => Promise.resolve());
+          assert.strictEqual(toolStarted, true);
+
+          yield* adapter.turns.interrupt({
+            surfacePiSessionId,
+            turnId: "turn_tool_cancel" as never,
+          });
+          yield* Effect.promise(() => toolPromise);
+
+          assert.strictEqual(toolInterrupted, true);
+          assert.deepStrictEqual(toolResults, []);
+          assert.strictEqual(toolErrors.length, 1);
+          assert.ok(toolErrors[0] instanceof PiAdapterError);
+          assert.strictEqual((toolErrors[0] as PiAdapterError).reason, "turn-not-active");
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
+  it.effect("rejects tool success that races with turn abort", () => {
+    const services = testPiAdapterServices();
+    let runToolEffect:
+      | Parameters<
+          Parameters<typeof setPiManagedAgentSessionFactoryForTests>[0]
+        >[0]["runToolEffect"]
+      | undefined;
+    let resolveAbort: (() => void) | undefined;
+    const toolResults: unknown[] = [];
+    const toolErrors: unknown[] = [];
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async (input) => {
+      runToolEffect = input.runToolEffect;
+      return testManagedAgentSession({
+        promptSettles: false,
+        onAbort: () =>
+          new Promise<void>((resolve) => {
+            resolveAbort = resolve;
+          }),
+      });
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+
+          yield* adapter.turns.run(
+            testRunTurnInput({ turnId: "turn_tool_abort_success" as never }),
+          );
+          assert.ok(runToolEffect);
+
+          const toolPromise = runToolEffect!(
+            Effect.tryPromise({
+              try: (signal) =>
+                new Promise<NativeToolResult>((resolve) => {
+                  signal.addEventListener("abort", () => {
+                    resolve({ content: [{ type: "text", text: "late success" }] });
+                  });
+                }),
+              catch: (cause) =>
+                new RuntimeToolExecutionError({
+                  turnId: "turn_tool_abort_success" as never,
+                  surfacePiSessionId,
+                  piToolCallId: "tool_call_abort_success" as never,
+                  toolName: "example_tool",
+                  reason: "cancelled",
+                  message: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+            }),
+          ).then(
+            (result) => {
+              toolResults.push(result);
+            },
+            (error) => {
+              toolErrors.push(error);
+            },
+          );
+          yield* Effect.promise(() => Promise.resolve());
+
+          const interruptFiber = yield* adapter.turns
+            .interrupt({
+              surfacePiSessionId,
+              turnId: "turn_tool_abort_success" as never,
+            })
+            .pipe(Effect.forkScoped);
+          yield* flushPromiseTurns(5);
+          yield* Effect.promise(() => toolPromise);
+
+          assert.deepStrictEqual(toolResults, []);
+          assert.strictEqual(toolErrors.length, 1);
+          assert.ok(toolErrors[0] instanceof PiAdapterError);
+          assert.strictEqual((toolErrors[0] as PiAdapterError).reason, "turn-not-active");
+
+          resolveAbort?.();
+          yield* Fiber.join(interruptFiber);
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
   it.effect("streams executor-emitted structured tool updates through the turn queue", () => {
     const services = testPiAdapterServices();
     let emitToolExecutionUpdate:
@@ -894,15 +1325,23 @@ function testManagedAgentSession(
   options: {
     readonly promptCalls?: Array<{ readonly text: string; readonly options: unknown }>;
     readonly promptSettles?: boolean;
+    readonly onPrompt?: (text: string, promptOptions: unknown) => Promise<void>;
+    readonly onSubscribe?: (listener: (event: unknown) => void) => void;
     readonly onAbort?: () => Promise<void>;
     readonly onDispose?: () => void;
   } = {},
 ): CreatePiManagedAgentSessionResult {
   return {
     session: {
-      subscribe: () => () => {},
+      subscribe: (listener: (event: unknown) => void) => {
+        options.onSubscribe?.(listener);
+        return () => {};
+      },
       prompt: (text: string, promptOptions: unknown) => {
         options.promptCalls?.push({ text, options: promptOptions });
+        if (options.onPrompt) {
+          return options.onPrompt(text, promptOptions);
+        }
         return options.promptSettles === false ? new Promise<void>(() => {}) : Promise.resolve();
       },
       abort: () => options.onAbort?.() ?? Promise.resolve(),
@@ -912,6 +1351,14 @@ function testManagedAgentSession(
     modelRegistry: {} as never,
     activeModel: {} as never,
   };
+}
+
+function flushPromiseTurns(count: number): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    for (let index = 0; index < count; index += 1) {
+      yield* Effect.promise(() => Promise.resolve());
+    }
+  });
 }
 
 function testReference(): PiSessionReference {

@@ -45,8 +45,10 @@ const packageOwnedNativeToolModules = [
   join(projectRoot, "src", "bun", "thread-start-tool.ts"),
 ];
 const runtimeServiceAdapterModule = join(projectRoot, "src", "bun", "runtime-service-adapter.ts");
+const appRuntimeBootstrapModule = join(projectRoot, "src", "bun", "app-runtime-bootstrap.ts");
 const sessionCatalogModule = join(projectRoot, "src", "bun", "session-catalog.ts");
 const expectedSandboxAppImports = [
+  "src/bun/app-runtime-bootstrap.ts -> @svvy/sandbox",
   "src/bun/runtime-service-adapter.ts -> @svvy/sandbox",
   // Pure path-access check over runtime-acquired launch facts; not launch-policy construction.
   "src/bun/svvy-direct-tools.ts -> @svvy/sandbox",
@@ -3429,7 +3431,10 @@ describe("package boundaries", () => {
               specifier === "effect/Layer" ||
               specifier === "effect/Scope"
             ) {
-              return display(file) !== "src/bun/runtime-service-adapter.ts";
+              return ![
+                "src/bun/app-runtime-bootstrap.ts",
+                "src/bun/runtime-service-adapter.ts",
+              ].includes(display(file));
             }
             return !allowedEffectEdgeImports.has(specifier);
           })
@@ -4510,7 +4515,7 @@ describe("package boundaries", () => {
           "effect/ManagedRuntime",
           "ManagedRuntime.ManagedRuntime",
           ["context", "dispose", "runPromise"],
-          ["src/bun/runtime-service-adapter.ts"],
+          ["src/bun/app-runtime-bootstrap.ts", "src/bun/runtime-service-adapter.ts"],
         ],
         [
           "effect/ManagedRuntime",
@@ -6903,6 +6908,7 @@ describe("package boundaries", () => {
 
     expect([...new Set(matches)].toSorted()).toEqual([
       "packages/pi-adapter/src/native-tools.ts",
+      "packages/pi-adapter/src/pi-adapter.effect.test.ts",
       "packages/pi-adapter/src/pi-adapter.ts",
       "packages/pi-adapter/src/session.ts",
     ]);
@@ -7292,6 +7298,9 @@ describe("package boundaries", () => {
 
   it("production public package subpath imports stay in the approved consumer matrix", () => {
     const approvedProductionPublicSubpathImports = [
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/accepted-native-tool-execution",
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/bootstrap",
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/state/structured-session-adapters",
       "src/bun/execute-typescript-tool.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/extension-tools.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/index.ts -> @svvy/runtime/bootstrap",
@@ -7351,7 +7360,7 @@ describe("package boundaries", () => {
     expect(actualDirectStateStoreImports).toEqual(expectedDirectStateStoreImports);
   });
 
-  it("Bun production code imports structured-session adapters only at the catalog bootstrap edge", () => {
+  it("Bun production code imports structured-session adapters only at named bootstrap edges", () => {
     const actualStructuredSessionAdapterImports = listTypeScriptFiles(
       join(projectRoot, "src", "bun"),
     )
@@ -7364,6 +7373,7 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actualStructuredSessionAdapterImports).toEqual([
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/state/structured-session-adapters",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
     ]);
   });
@@ -7446,14 +7456,20 @@ describe("package boundaries", () => {
       .map(display)
       .toSorted();
 
-    expect(routerRegistrationSeamOwners).toEqual(["src/bun/session-catalog.ts"]);
+    expect(routerRegistrationSeamOwners).toEqual([
+      "src/bun/app-runtime-bootstrap.ts",
+      "src/bun/session-catalog.ts",
+    ]);
 
     const routerRegistrationCallSites = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => /\.\s*workspaceStateRouterRegistration\s*\(/.test(readSource(file)))
       .map(display)
       .toSorted();
 
-    expect(routerRegistrationCallSites).toEqual(["src/bun/session-catalog.test.ts"]);
+    expect(routerRegistrationCallSites).toEqual([
+      "src/bun/app-runtime-bootstrap.ts",
+      "src/bun/session-catalog.test.ts",
+    ]);
   });
 
   it("extension context impact store adapter stays inside the catalog bootstrap edge", () => {
@@ -8287,11 +8303,15 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("app bootstrap creates Effect runtime facades only through the runtime service adapter", () => {
+  it("app bootstrap creates Effect runtime facades only at the transitional runtime bootstrap owners", () => {
     const appRuntimeBootstrapPattern =
       /\b(?:createRuntimeFacade|ManagedRuntime\.make)\b|["']effect\/ManagedRuntime["']/;
+    const transitionalRuntimeBootstrapOwners = new Set([
+      appRuntimeBootstrapModule,
+      runtimeServiceAdapterModule,
+    ]);
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
-      .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
       .filter((file) => !isTestFile(file))
       .filter((file) => appRuntimeBootstrapPattern.test(readSource(file)))
       .map(display);
@@ -8299,7 +8319,11 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("production code creates the app-owned ManagedRuntime only at the runtime service adapter", () => {
+  it("production code creates the app-owned ManagedRuntime only at the transitional bootstrap owners", () => {
+    const transitionalRuntimeBootstrapOwners = new Set([
+      appRuntimeBootstrapModule,
+      runtimeServiceAdapterModule,
+    ]);
     const productionRoots = [
       ...implementationPackageRoots,
       ...edgePackageRoots,
@@ -8311,12 +8335,12 @@ describe("package boundaries", () => {
       .flatMap((root) => listTypeScriptFiles(root))
       .filter((file) => !isTestFile(file));
     const managedRuntimeMakeViolations = productionFiles
-      .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
       .filter((file) => /\bManagedRuntime\.make\b/.test(readSource(file)))
       .map(display)
       .toSorted();
     const managedRuntimeValueImportViolations = productionFiles
-      .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
       .filter((file) =>
         /\bimport\s+(?!type\b)[^;]*["']effect\/ManagedRuntime["']/.test(readSource(file)),
       )
@@ -8332,6 +8356,22 @@ describe("package boundaries", () => {
     expect(runtimeRootSource).not.toMatch(
       /\bimport\s+(?!type\b)[^;]*["']effect\/ManagedRuntime["']/,
     );
+  });
+
+  it("transitional app runtime bootstrap construction retires at the increment 3 cutover", () => {
+    const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .flatMap((file) =>
+        readManualEffectRuntimeReads(file)
+          .filter((name) => name === "ManagedRuntime.make")
+          .map((name) => `${display(file)} -> ${name}`),
+      )
+      .toSorted();
+
+    expect(actual).toEqual([
+      "src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make",
+      "src/bun/runtime-service-adapter.ts -> ManagedRuntime.make",
+    ]);
   });
 
   it("workspace runtime registry does not construct or run Effect runtimes directly", () => {
@@ -8900,6 +8940,9 @@ describe("package boundaries", () => {
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromiseExit",
       "packages/state/src/state-facade.ts -> managedRuntime.runPromiseExit",
+      "src/bun/app-runtime-bootstrap.ts -> managedRuntime.context",
+      "src/bun/app-runtime-bootstrap.ts -> managedRuntime.dispose",
+      "src/bun/app-runtime-bootstrap.ts -> managedRuntime.runPromise",
       "src/bun/runtime-service-adapter.ts -> managedRuntime.context",
       "src/bun/runtime-service-adapter.ts -> managedRuntime.dispose",
       "src/bun/runtime-service-adapter.ts -> managedRuntime.runPromise",
@@ -9294,6 +9337,7 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/bootstrap",
       "src/bun/index.ts -> @svvy/runtime/bootstrap",
       "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
       "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
@@ -9495,7 +9539,7 @@ describe("package boundaries", () => {
     ]);
   });
 
-  it("restricted state structured-session subpaths are consumed only by session-catalog production bootstrap", () => {
+  it("restricted state structured-session subpaths are consumed only by named production bootstrap edges", () => {
     const restrictedSubpaths = new Set([
       "@svvy/state/structured-session-state",
       "@svvy/state/structured-session-adapters",
@@ -9519,6 +9563,7 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/state/structured-session-adapters",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-projections",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
@@ -9621,13 +9666,14 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("Bun app bootstrap keeps Effect layer and ManagedRuntime construction in the runtime service adapter", () => {
+  it("Bun app bootstrap keeps Effect layer and ManagedRuntime construction in transitional bootstrap owners", () => {
     const forbiddenPatterns = [
       { pattern: /\bLayer\./g, name: "Layer.*" },
       { pattern: /\bManagedRuntime\.make\b/g, name: "ManagedRuntime.make" },
     ];
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => file !== appRuntimeBootstrapModule)
       .filter((file) => !isTestFile(file))
       .flatMap((file) => {
         const source = readSource(file);
@@ -9662,6 +9708,7 @@ describe("package boundaries", () => {
 
   it("app-side manual Effect runtime execution stays limited to the named bootstrap exception set", () => {
     const steadyStateBootstrapRuntimeReads = new Map<string, string[]>([
+      ["src/bun/app-runtime-bootstrap.ts", ["ManagedRuntime.make"]],
       ["src/bun/index.ts", ["Effect.runSync"]],
       ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise", "ManagedRuntime.make"]],
     ]);
@@ -9712,7 +9759,10 @@ describe("package boundaries", () => {
       )
       .toSorted();
 
-    expect(actual).toEqual(["src/bun/runtime-service-adapter.ts -> ManagedRuntime.make"]);
+    expect(actual).toEqual([
+      "src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make",
+      "src/bun/runtime-service-adapter.ts -> ManagedRuntime.make",
+    ]);
   });
 
   it("app-side Bun tests that manually run Effect stay in the named harness ledger", () => {

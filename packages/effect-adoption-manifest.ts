@@ -121,7 +121,10 @@ export const adoptedEffectRuntimeModuleExports = [
   { module: "effect/ManagedRuntime", members: ["make"] },
   { module: "effect/Option", members: ["getOrElse", "isNone", "some"] },
   { module: "effect/Path", members: ["Path"] },
-  { module: "effect/Queue", members: ["bounded", "dropping", "fail", "offer", "shutdown"] },
+  {
+    module: "effect/Queue",
+    members: ["bounded", "dropping", "fail", "offer", "offerUnsafe", "shutdown"],
+  },
   { module: "effect/Redacted", members: ["make", "value"] },
   { module: "effect/Ref", members: ["get", "getAndSet", "make", "modify", "update"] },
   { module: "effect/Schedule", members: ["exponential", "modifyDelay"] },
@@ -194,7 +197,7 @@ export const adoptedEffectInstanceMemberPolicies = [
     module: "effect/ManagedRuntime",
     receiver: "ManagedRuntime.ManagedRuntime",
     members: ["context", "dispose", "runPromise"],
-    allowedSourceGlobs: ["src/bun/runtime-service-adapter.ts"],
+    allowedSourceGlobs: ["src/bun/app-runtime-bootstrap.ts", "src/bun/runtime-service-adapter.ts"],
     productReason:
       "App bootstrap uses ManagedRuntime.context to acquire the app-composed layer context before exposing facades, ManagedRuntime.runPromise to run runtime-internal app-edge operations that are intentionally not exposed on the public Promise facade, and ManagedRuntime.dispose to release the single app runtime during shutdown.",
   },

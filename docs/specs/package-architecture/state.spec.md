@@ -87,11 +87,12 @@ helpers, and package-private selector/storage modules remain package-private imp
 not public `@svvy/state` subpaths. Product app bootstrap composes `@svvy/state` root layer inputs,
 named state-backed port layers, approved read facades, approved command facades, and the restricted
 wiring subpaths above. Boundary-tested app/bootstrap composition edges include
-`src/bun/session-catalog.ts` for structured-session wiring/adapters and
-`src/bun/workspace-runtime-registry.ts` for generated-package maintenance; those files may import
-only the exact restricted state subpaths named here for their approved composition reason. No other
-production file may treat concrete stores, raw adapters, or package-private implementation modules
-as package architecture.
+`src/bun/session-catalog.ts` for structured-session wiring/adapters,
+`src/bun/app-runtime-bootstrap.ts` for the app-composed workspace-state router registration and
+port-layer wiring, and `src/bun/workspace-runtime-registry.ts` for generated-package maintenance;
+those files may import only the exact restricted state subpaths named here for their approved
+composition reason. No other production file may treat concrete stores, raw adapters, or
+package-private implementation modules as package architecture.
 Repo-local tests may import package-private implementation modules only through boundary-test
 allowlists that do not become product API.
 
