@@ -98,6 +98,49 @@ function createRegistry() {
 const packageName = "@svvyx/extensions" as GeneratedPackageName;
 
 describe("workspace state router", () => {
+  it("adds and removes workspace stores dynamically without rebuilding port objects", async () => {
+    const { registry, cleanup } = createRegistry();
+    const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
+    const workspace = makeStore(registry, "workspace_dynamic", "dynamic");
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: appGlobal.store,
+      workspaceStores: [],
+    });
+    const surfaceLifecycle = router.surfaceLifecycle;
+
+    try {
+      await expect(
+        runTestEffect(
+          surfaceLifecycle.createOrchestratorSurface({
+            workspaceId: "workspace_dynamic" as WorkspaceId,
+            title: "Before registration",
+          }),
+        ),
+      ).rejects.toMatchObject({ reason: "not-found" });
+
+      router.registerWorkspaceState({ store: workspace.store });
+      const surface = await runTestEffect(
+        surfaceLifecycle.createOrchestratorSurface({
+          workspaceId: "workspace_dynamic" as WorkspaceId,
+          title: "After registration",
+        }),
+      );
+      expect(workspace.store.getSessionState(surface.value.workspaceSessionId)).toBeDefined();
+
+      expect(router.unregisterWorkspaceState("workspace_dynamic" as WorkspaceId)).toBe(true);
+      await expect(
+        runTestEffect(
+          surfaceLifecycle.openSurface({
+            workspaceId: "workspace_dynamic" as WorkspaceId,
+            target: surface.value.target,
+          }),
+        ),
+      ).rejects.toMatchObject({ reason: "not-found" });
+    } finally {
+      cleanup();
+    }
+  });
+
   it("dispatches explicit-workspace writes to the owning store and carries committed scope", async () => {
     const { registry, cleanup } = createRegistry();
     const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");

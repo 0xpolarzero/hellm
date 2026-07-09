@@ -656,7 +656,9 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
     "@svvy/state/generated-package-maintenance",
     [
       "MarkPersistedWorkspaceGeneratedPackageLinksRepairNeededInput",
+      "RecordPersistedWorkspaceGeneratedPackageLinkStatusInput",
       "markPersistedWorkspaceGeneratedPackageLinksRepairNeeded",
+      "recordPersistedWorkspaceGeneratedPackageLinkStatus",
     ],
   ],
   [
@@ -3431,10 +3433,7 @@ describe("package boundaries", () => {
               specifier === "effect/Layer" ||
               specifier === "effect/Scope"
             ) {
-              return ![
-                "src/bun/app-runtime-bootstrap.ts",
-                "src/bun/runtime-service-adapter.ts",
-              ].includes(display(file));
+              return !["src/bun/app-runtime-bootstrap.ts"].includes(display(file));
             }
             return !allowedEffectEdgeImports.has(specifier);
           })
@@ -4515,7 +4514,7 @@ describe("package boundaries", () => {
           "effect/ManagedRuntime",
           "ManagedRuntime.ManagedRuntime",
           ["context", "dispose", "runPromise"],
-          ["src/bun/app-runtime-bootstrap.ts", "src/bun/runtime-service-adapter.ts"],
+          ["src/bun/app-runtime-bootstrap.ts"],
         ],
         [
           "effect/ManagedRuntime",
@@ -7306,7 +7305,6 @@ describe("package boundaries", () => {
       "src/bun/index.ts -> @svvy/runtime/bootstrap",
       "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
       "src/bun/request-user-input-tool.ts -> @svvy/runtime/prompt-execution-context",
-      "src/bun/runtime-service-adapter.ts -> @svvy/runtime/accepted-native-tool-execution",
       "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
       "src/bun/runtime-state-tools.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/session-catalog.ts -> @svvy/pi-adapter/messages",
@@ -7459,6 +7457,7 @@ describe("package boundaries", () => {
     expect(routerRegistrationSeamOwners).toEqual([
       "src/bun/app-runtime-bootstrap.ts",
       "src/bun/session-catalog.ts",
+      "src/bun/workspace-runtime-registry.ts",
     ]);
 
     const routerRegistrationCallSites = listTypeScriptFiles(join(projectRoot, "src", "bun"))
@@ -7469,6 +7468,7 @@ describe("package boundaries", () => {
     expect(routerRegistrationCallSites).toEqual([
       "src/bun/app-runtime-bootstrap.ts",
       "src/bun/session-catalog.test.ts",
+      "src/bun/workspace-runtime-registry.ts",
     ]);
   });
 
@@ -7988,6 +7988,7 @@ describe("package boundaries", () => {
     const runtimeGeneratedPackageRefreshServiceSource = readSource(
       join(packageRoot, "runtime", "src", "runtime-generated-package-refresh-service.ts"),
     );
+    const adapterSource = readSource(runtimeServiceAdapterModule);
     expect(runtimeLayerSource).toContain("sourceInvalidation.refreshGeneratedPackages");
     expect(runtimeLayerSource).toContain("RuntimeGeneratedPackageRefreshHostPort");
     expect(runtimeLayerSource).toContain("RuntimeSourceInvalidationService");
@@ -8004,14 +8005,16 @@ describe("package boundaries", () => {
     expect(runtimeSourceInvalidationServiceSource).toContain(
       "RuntimeGeneratedPackageRefreshService",
     );
-    const adapterSource = readSource(runtimeServiceAdapterModule);
-    expect(adapterSource).toContain(
-      "Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, port.generatedPackageRefreshHost)",
+    const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
+    expect(appRuntimeBootstrapSource).toContain(
+      "Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, input.generatedPackageRefresh)",
     );
-    expect(adapterSource).not.toContain("RuntimeGeneratedPackageRefreshHostPort.of");
-    expect(adapterSource).toContain("internal: {");
-    expect(adapterSource).toContain("runtime.sourceInvalidation.refreshGeneratedPackages(input)");
-    expect(adapterSource).not.toContain(
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeGeneratedPackageRefreshHostPort.of");
+    expect(appRuntimeBootstrapSource).toContain("internal: {");
+    expect(appRuntimeBootstrapSource).toContain(
+      "runtime.sourceInvalidation.refreshGeneratedPackages(request)",
+    );
+    expect(appRuntimeBootstrapSource).not.toContain(
       "facade.sourceInvalidation.refreshGeneratedPackages(input)",
     );
     expect(adapterSource).not.toContain("port.sourceInvalidation.refreshGeneratedPackages");
@@ -8107,13 +8110,14 @@ describe("package boundaries", () => {
     const registrySource = readSource(
       join(projectRoot, "src", "bun", "workspace-runtime-registry.ts"),
     );
+    const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
     const adapterSource = readSource(runtimeServiceAdapterModule);
 
     expect(runtimeSource).toContain("applyGeneratedPackageWorkspaceLinkRepairPlan(");
     expect(runtimeSource).toContain("host.workspaceLinkFileHost");
     expect(registrySource).toContain("workspaceLinkFileHost:");
-    expect(adapterSource).toContain("RuntimeGeneratedPackageRefreshHostPortService");
-    expect(adapterSource).not.toContain(
+    expect(appRuntimeBootstrapSource).toContain("RuntimeGeneratedPackageRefreshHostPortService");
+    expect(appRuntimeBootstrapSource).not.toContain(
       "createRuntimeGeneratedPackageRefreshHostAtRuntimeBoundary",
     );
     expect(registrySource).not.toContain(
@@ -8165,6 +8169,7 @@ describe("package boundaries", () => {
       /\b(?:runtime\.)?catalog\.(?:resolvePromptDefaultsForTarget|sendPrompt|cancelPrompt|deleteQueuedSurfaceMessage|steerQueuedSurfaceMessage)\b/;
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => file !== runtimeServiceAdapterModule)
+      .filter((file) => display(file) !== "src/bun/workspace-runtime-registry.ts")
       .filter((file) => !isTestFile(file))
       .filter((file) => catalogRuntimeOperationPattern.test(readSource(file)))
       .map(display);
@@ -8189,7 +8194,7 @@ describe("package boundaries", () => {
     expect(requestInputWaitServiceSource).toContain("RuntimeQueueWakeService");
     expect(requestInputWaitServiceSource).toContain('reason: "request-input-answer-queued"');
 
-    const adapterSource = readSource(runtimeServiceAdapterModule);
+    const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
     const runtimeStructuralPortTags = [
       "RuntimeLayerPromptControlHostPort",
       "RuntimePromptDefaultsStatePort",
@@ -8204,8 +8209,8 @@ describe("package boundaries", () => {
       "RuntimeSourceInvalidationScanPort",
     ];
     for (const tag of runtimeStructuralPortTags) {
-      expect(adapterSource).toMatch(new RegExp(`Layer\\.succeed\\(\\s*${tag},`));
-      expect(adapterSource).not.toContain(`${tag}.of`);
+      expect(appRuntimeBootstrapSource).toMatch(new RegExp(`Layer\\.succeed\\(\\s*${tag},`));
+      expect(appRuntimeBootstrapSource).not.toContain(`${tag}.of`);
     }
     expect(runtimeLayerSource).toMatch(
       /ensureUsableProviderAuth\(\s*provider:\s*string,\s*\):\s*Effect\.Effect<string \| undefined, RuntimeContractError>/,
@@ -8216,9 +8221,9 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).not.toContain(
       "try: () => input.providerAuth.ensureUsableProviderAuth(resolved.provider)",
     );
-    expect(adapterSource).toContain("wakeRuntimeSurfaceQueue");
-    expect(adapterSource).not.toContain("afterRuntimeSurfaceMessageQueued");
-    expect(adapterSource).not.toContain("afterRuntimeSurfaceMessageSteered");
+    expect(appRuntimeBootstrapSource).toContain("wakeRuntimeSurfaceQueue");
+    expect(appRuntimeBootstrapSource).not.toContain("afterRuntimeSurfaceMessageQueued");
+    expect(appRuntimeBootstrapSource).not.toContain("afterRuntimeSurfaceMessageSteered");
   });
 
   it("runtime request-input queued answer wake targets come from committed answer context without rereading request input", () => {
@@ -8274,21 +8279,16 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).toContain("answerRuntimeRequestInput(input)");
     expect(runtimeLayerSource).toContain("setRuntimeRequestInputTimerPaused(input)");
     expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
-    const adapterSource = readSource(runtimeServiceAdapterModule);
-    expect(adapterSource).not.toContain("RuntimeLayerRequestInputPostCommitPort.of");
-    expect(adapterSource).not.toContain("RuntimeLayerApprovalPostCommitPort.of");
-    expect(adapterSource).not.toContain("Layer.succeed(RuntimeApprovalWaitService");
-    expect(adapterSource).not.toContain("getRuntimeApprovalWaitService");
-    expect(adapterSource).toContain("Layer.succeed(RuntimeQueueStatePort");
-    expect(adapterSource).toContain("Layer.succeed(RuntimeRequestStatePort");
-    expect(adapterSource).toContain("Layer.succeed(RuntimeApprovalStatePort");
-    expect(adapterSource).toContain("Layer.succeed(RuntimeCommandStatePort");
-    expect(adapterSource).toContain("Layer.succeed(RuntimeSessionWaitStatePort");
-    expect(adapterSource).not.toContain("RuntimeEventBus");
-    expect(adapterSource).not.toContain("makeRuntimeEventBus");
-    expect(adapterSource).not.toContain("RuntimeLayerEventsPort");
-    expect(adapterSource).not.toContain("RuntimeEventBusHandle");
-    expect(adapterSource).not.toContain("createRuntimeEventBusHandle");
+    const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerRequestInputPostCommitPort.of");
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerApprovalPostCommitPort.of");
+    expect(appRuntimeBootstrapSource).not.toContain("Layer.succeed(RuntimeApprovalWaitService");
+    expect(appRuntimeBootstrapSource).not.toContain("getRuntimeApprovalWaitService");
+    expect(appRuntimeBootstrapSource).toContain("workspaceStateLayer");
+    expect(appRuntimeBootstrapSource).toContain("Layer.succeed(RuntimeLayerSurfaceQueueWakePort");
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerEventsPort");
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeEventBusHandle");
+    expect(appRuntimeBootstrapSource).not.toContain("createRuntimeEventBusHandle");
   });
 
   it("app pi prompt materialization stays at explicit catalog and pi-adapter edges", () => {
@@ -8303,15 +8303,12 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("app bootstrap creates Effect runtime facades only at the transitional runtime bootstrap owners", () => {
+  it("app bootstrap creates Effect runtime facades only at the app runtime bootstrap owner", () => {
     const appRuntimeBootstrapPattern =
       /\b(?:createRuntimeFacade|ManagedRuntime\.make)\b|["']effect\/ManagedRuntime["']/;
-    const transitionalRuntimeBootstrapOwners = new Set([
-      appRuntimeBootstrapModule,
-      runtimeServiceAdapterModule,
-    ]);
+    const runtimeBootstrapOwners = new Set([appRuntimeBootstrapModule]);
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
-      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
+      .filter((file) => !runtimeBootstrapOwners.has(file))
       .filter((file) => !isTestFile(file))
       .filter((file) => appRuntimeBootstrapPattern.test(readSource(file)))
       .map(display);
@@ -8319,11 +8316,8 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("production code creates the app-owned ManagedRuntime only at the transitional bootstrap owners", () => {
-    const transitionalRuntimeBootstrapOwners = new Set([
-      appRuntimeBootstrapModule,
-      runtimeServiceAdapterModule,
-    ]);
+  it("production code creates the app-owned ManagedRuntime only at the app runtime bootstrap owner", () => {
+    const runtimeBootstrapOwners = new Set([appRuntimeBootstrapModule]);
     const productionRoots = [
       ...implementationPackageRoots,
       ...edgePackageRoots,
@@ -8335,12 +8329,12 @@ describe("package boundaries", () => {
       .flatMap((root) => listTypeScriptFiles(root))
       .filter((file) => !isTestFile(file));
     const managedRuntimeMakeViolations = productionFiles
-      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
+      .filter((file) => !runtimeBootstrapOwners.has(file))
       .filter((file) => /\bManagedRuntime\.make\b/.test(readSource(file)))
       .map(display)
       .toSorted();
     const managedRuntimeValueImportViolations = productionFiles
-      .filter((file) => !transitionalRuntimeBootstrapOwners.has(file))
+      .filter((file) => !runtimeBootstrapOwners.has(file))
       .filter((file) =>
         /\bimport\s+(?!type\b)[^;]*["']effect\/ManagedRuntime["']/.test(readSource(file)),
       )
@@ -8358,7 +8352,7 @@ describe("package boundaries", () => {
     );
   });
 
-  it("transitional app runtime bootstrap construction retires at the increment 3 cutover", () => {
+  it("app runtime bootstrap construction is the single production ManagedRuntime owner", () => {
     const actual = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
       .flatMap((file) =>
@@ -8368,10 +8362,7 @@ describe("package boundaries", () => {
       )
       .toSorted();
 
-    expect(actual).toEqual([
-      "src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make",
-      "src/bun/runtime-service-adapter.ts -> ManagedRuntime.make",
-    ]);
+    expect(actual).toEqual(["src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make"]);
   });
 
   it("workspace runtime registry does not construct or run Effect runtimes directly", () => {
@@ -8451,56 +8442,14 @@ describe("package boundaries", () => {
     expect(unexpectedRuntimeFacadeUsers).toEqual([]);
   });
 
-  it("runtime service adapter waits for Effect runtime readiness before exposing the facade", () => {
+  it("runtime service adapter does not construct or expose runtime facades after the cutover", () => {
     const source = readSource(runtimeServiceAdapterModule);
-    const adapterStart = source.indexOf("export async function createCatalogBackedRuntime(");
-    const managedRuntimeStart = source.indexOf(
-      "const managedRuntime = ManagedRuntime.make(",
-      adapterStart,
-    );
-    const managedRuntimeMakeStart = source.indexOf("ManagedRuntime.make", managedRuntimeStart);
-    const runtimeRootLayer = source.indexOf("Runtime.layer", managedRuntimeStart);
-    const runtimeServiceLift = source.indexOf("Layer.succeed(Runtime", managedRuntimeStart);
-    const contextAwait = source.indexOf("await managedRuntime.context();", managedRuntimeStart);
-    const startupReadinessAwait = source.indexOf(
-      "await awaitRuntimeStartupReadiness(managedRuntime);",
-      contextAwait,
-    );
-    const facadeCreation = source.indexOf(
-      "const facade = createRuntimeFacade(managedRuntime);",
-      startupReadinessAwait,
-    );
-    const facadeInvocation = source.indexOf("createRuntimeFacade(managedRuntime)", facadeCreation);
-    const facadeCallIndexes = readRuntimeFacadeCallIndexes(runtimeServiceAdapterModule);
-    const shutdownPreparation = source.indexOf(
-      'await prepareRuntimeShutdown(managedRuntime, { reason: "app-shutdown" });',
-      facadeCreation,
-    );
-
-    expect(adapterStart).toBeGreaterThanOrEqual(0);
-    expect(managedRuntimeStart).toBeGreaterThan(adapterStart);
-    expect(runtimeRootLayer).toBeGreaterThan(managedRuntimeStart);
-    expect(runtimeRootLayer).toBeLessThan(contextAwait);
-    expect(runtimeServiceLift).toBe(-1);
-    expect(contextAwait).toBeGreaterThan(managedRuntimeStart);
-    expect(startupReadinessAwait).toBeGreaterThan(contextAwait);
-    expect(facadeCreation).toBeGreaterThan(startupReadinessAwait);
-    expect(facadeInvocation).toBeGreaterThanOrEqual(facadeCreation);
-    expect(facadeCallIndexes).toEqual([facadeInvocation]);
-    expect(facadeCallIndexes.every((index) => index > startupReadinessAwait)).toBe(true);
-    expect(shutdownPreparation).toBeGreaterThan(facadeCreation);
-    expect(
-      Array.from(source.matchAll(/\bManagedRuntime\.make\b/g), (match) => match.index),
-    ).toEqual([managedRuntimeMakeStart]);
-    expect(source).not.toContain("managedRuntime.runPromise(Runtime)");
-    expect(source).not.toMatch(/\bservice:\s*RuntimeService\b/);
-    expect(source).not.toMatch(/\bconst\s+service\s*=/);
-    expect(source).toMatch(
-      /\bimport\s+\{\s*createRuntimeFacade,\s*Runtime\s*\}\s+from\s+["']@svvy\/runtime["'];/,
-    );
-    expect(source).not.toMatch(/\bRuntimeLayer\s*\(/);
-    expect(source).not.toMatch(/\bRuntime\.layer\s*\(/);
-    expect(source).not.toMatch(/\bLayer\.succeed\(\s*Runtime\s*,/);
+    expect(source).not.toContain("createCatalogBackedRuntime");
+    expect(source).not.toContain("createRuntimeServiceAdapter");
+    expect(source).not.toContain("ManagedRuntime.make");
+    expect(source).not.toContain("createRuntimeFacade");
+    expect(source).not.toContain("Runtime.layer");
+    expect(readRuntimeFacadeCallIndexes(runtimeServiceAdapterModule)).toEqual([]);
   });
 
   it("@svvy/runtime root keeps ManagedRuntime as a facade type only", () => {
@@ -8943,9 +8892,6 @@ describe("package boundaries", () => {
       "src/bun/app-runtime-bootstrap.ts -> managedRuntime.context",
       "src/bun/app-runtime-bootstrap.ts -> managedRuntime.dispose",
       "src/bun/app-runtime-bootstrap.ts -> managedRuntime.runPromise",
-      "src/bun/runtime-service-adapter.ts -> managedRuntime.context",
-      "src/bun/runtime-service-adapter.ts -> managedRuntime.dispose",
-      "src/bun/runtime-service-adapter.ts -> managedRuntime.runPromise",
     ]);
     expect(policyEntries).toEqual(actual);
   });
@@ -9666,13 +9612,12 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("Bun app bootstrap keeps Effect layer and ManagedRuntime construction in transitional bootstrap owners", () => {
+  it("Bun app bootstrap keeps Effect layer and ManagedRuntime construction in the app runtime bootstrap owner", () => {
     const forbiddenPatterns = [
       { pattern: /\bLayer\./g, name: "Layer.*" },
       { pattern: /\bManagedRuntime\.make\b/g, name: "ManagedRuntime.make" },
     ];
     const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
-      .filter((file) => file !== runtimeServiceAdapterModule)
       .filter((file) => file !== appRuntimeBootstrapModule)
       .filter((file) => !isTestFile(file))
       .flatMap((file) => {
@@ -9710,9 +9655,9 @@ describe("package boundaries", () => {
     const steadyStateBootstrapRuntimeReads = new Map<string, string[]>([
       ["src/bun/app-runtime-bootstrap.ts", ["ManagedRuntime.make"]],
       ["src/bun/index.ts", ["Effect.runSync"]],
-      ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise", "ManagedRuntime.make"]],
     ]);
     const sessionCatalogRunnerExceptionReads = new Map<string, string[]>([
+      ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
       ["src/bun/session-catalog.ts", ["Effect.runSync"]],
     ]);
     const allowedManualRuntimeReads = new Map<string, string[]>([
@@ -9745,7 +9690,10 @@ describe("package boundaries", () => {
       actualManualRuntimeReads: [...allowedManualRuntimeReads.entries()].toSorted(),
       sessionCatalogManualRunners: ["Effect.runSync"],
       sessionCatalogRunPromiseReads: [],
-      sessionCatalogRunnerExceptionReads: [["src/bun/session-catalog.ts", ["Effect.runSync"]]],
+      sessionCatalogRunnerExceptionReads: [
+        ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
+        ["src/bun/session-catalog.ts", ["Effect.runSync"]],
+      ],
     });
   });
 
@@ -9759,10 +9707,7 @@ describe("package boundaries", () => {
       )
       .toSorted();
 
-    expect(actual).toEqual([
-      "src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make",
-      "src/bun/runtime-service-adapter.ts -> ManagedRuntime.make",
-    ]);
+    expect(actual).toEqual(["src/bun/app-runtime-bootstrap.ts -> ManagedRuntime.make"]);
   });
 
   it("app-side Bun tests that manually run Effect stay in the named harness ledger", () => {
@@ -9788,6 +9733,8 @@ describe("package boundaries", () => {
       "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
       "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
       "src/bun/request-user-input-tool.test.ts -> Effect.runSync",
+      "src/bun/runtime-service-adapter.test.ts -> Effect.runSync",
+      "src/bun/runtime-service-adapter.test.ts -> Effect.runSync",
       "src/bun/runtime-state-tools.test.ts -> Effect.runSync",
       "src/bun/session-catalog.test.ts -> Effect.runPromise",
       "src/bun/session-catalog.test.ts -> Effect.runSync",

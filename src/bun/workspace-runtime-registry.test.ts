@@ -15,8 +15,17 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import type { CommandId, RecoveryWorkId, RuntimeEvent, WorkspaceId } from "@svvy/core";
-import { WorkspaceRuntimeRegistry } from "./workspace-runtime-registry";
+import type {
+  CommandId,
+  RecoveryWorkId,
+  RuntimeApprovalId,
+  RuntimeClientSubmissionSource,
+  RuntimeClientRequestId,
+  RuntimeEvent,
+  SubmitMessageInput,
+  WorkspaceId,
+} from "@svvy/core";
+import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
 import {
   getWorkspaceRuntimeForRequest,
   getWorkspaceRuntimeOperationsForRequest,
@@ -27,6 +36,7 @@ import { getDefaultWorkspaceCwd } from "./workspace-context";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import type { AppLogUpdateMessage } from "../shared/workspace-contract";
 import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
+import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
 
 const tempDirs: string[] = [];
 const registries: WorkspaceRuntimeRegistry[] = [];
@@ -449,6 +459,239 @@ describe("WorkspaceRuntimeRegistry", () => {
     }
   });
 
+  it("records acquired workspace link repair status in the owning workspace store", async () => {
+    const firstCwd = tempWorkspace("runtime-generated-link-owner-a");
+    const secondCwd = tempWorkspace("runtime-generated-link-owner-b");
+    const agentDir = tempWorkspace("generated-link-owner-agent-dir");
+    const generatedExtensionsPackagePath = tempWorkspace("generated-link-owner-extensions-package");
+    mkdirSync(join(secondCwd, ".smithers"), { recursive: true });
+    const registry = createRegistry(firstCwd, agentDir, {
+      workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
+    });
+    const first = await registry.acquireWorkspace(firstCwd);
+    const second = await registry.acquireWorkspace(secondCwd);
+
+    expect(readGeneratedPackageWorkspaceLinks(second.cwd, agentDir)).toContainEqual({
+      workspace_id: second.workspaceId,
+      package_name: "@svvyx/extensions",
+      status: "linked",
+      source_command_id: null,
+    });
+    expect(
+      readGeneratedPackageWorkspaceLinks(first.cwd, agentDir).some(
+        (row) => row.workspace_id === second.workspaceId,
+      ),
+    ).toBeFalse();
+  });
+
+  it("scopes workspace-routed event subscriptions to that workspace plus app events", async () => {
+    const firstCwd = tempWorkspace("runtime-events-workspace-a");
+    const secondCwd = tempWorkspace("runtime-events-workspace-b");
+    const agentDir = tempWorkspace("runtime-events-agent-dir");
+    const generatedExtensionsPackagePath = tempWorkspace("runtime-events-extensions-package");
+    mkdirSync(join(secondCwd, ".smithers"), { recursive: true });
+    const registry = createRegistry(firstCwd, agentDir, {
+      workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
+    });
+    const first = await registry.acquireWorkspace(firstCwd);
+    const second = await registry.acquireWorkspace(secondCwd);
+    const runtimeEvents = await collectRuntimeEvents(
+      registry.getRuntimeEventSubscription(first.workspaceId),
+    );
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: first.workspaceId,
+    });
+    try {
+      await runtimeOperations.sourceInvalidation.applyCommittedScanEvent({
+        scope: { kind: "workspace", workspaceId: second.workspaceId as WorkspaceId },
+        event: {
+          domains: ["external_instructions"],
+          reason: "test-workspace-b-invalidation",
+          sourceFingerprints: {
+            extensions: "extensions-fingerprint",
+            workflows: "workflows-fingerprint",
+            external_instructions: "external-instructions-fingerprint",
+            host_snippets: "host-snippets-fingerprint",
+          },
+          afterCommit: [
+            {
+              scope: "workspace",
+              workspaceId: second.workspaceId as WorkspaceId,
+              invalidation: { model: "sessionNavigation" },
+            },
+          ],
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(
+        runtimeEvents.events.some(
+          (event) => "workspaceId" in event && event.workspaceId === second.workspaceId,
+        ),
+      ).toBeFalse();
+
+      await runtimeOperations.sourceInvalidation.refreshGeneratedPackages({
+        scope: "app-global",
+        packages: ["@svvyx/extensions"],
+        reason: "explicit-build",
+        sourceCommandId: "cmd_runtime_events_app_01" as CommandId,
+      });
+      await waitFor(() =>
+        runtimeEvents.events.some(
+          (event) =>
+            event.type === "app_read_model.changed" && event.invalidation.model === "extensions",
+        ),
+      );
+      expect(
+        runtimeEvents.events.some(
+          (event) => "workspaceId" in event && event.workspaceId === second.workspaceId,
+        ),
+      ).toBeFalse();
+    } finally {
+      await runtimeEvents.close();
+    }
+  });
+
+  it("rejects late bootstrap callbacks during shutdown without recreating the app runtime", async () => {
+    const cwd = tempWorkspace("runtime-shutdown-no-recreate");
+    const registry = createRegistry(cwd);
+    const runtime = await registry.acquireWorkspace(cwd);
+
+    const closePromise = registry.closeSourceInvalidationCoordinator();
+    try {
+      await expect(registry.getRuntimeEventSubscription(runtime.workspaceId)).rejects.toMatchObject(
+        {
+          reason: "runtime-shutdown",
+          operation: "workspace-runtime-registry.getAppRuntimeBootstrap",
+        },
+      );
+      await closePromise;
+      await expect(registry.getAppRuntimeOperations(runtime.workspaceId)).rejects.toMatchObject({
+        reason: "runtime-shutdown",
+        operation: "workspace-runtime-registry.getAppRuntimeBootstrap",
+      });
+    } finally {
+      registries.splice(registries.indexOf(registry), 1);
+      await closePromise.catch(() => {});
+    }
+  });
+
+  it("routes queue submit, steer, approval answer, and command stdin through the single facade", async () => {
+    const firstCwd = tempWorkspace("runtime-facade-routing-a");
+    const secondCwd = tempWorkspace("runtime-facade-routing-b");
+    const registry = createRegistry(firstCwd);
+    const first = await registry.acquireWorkspace(firstCwd);
+    const second = await registry.acquireWorkspace(secondCwd);
+    const secondSession = await second.catalog.createSession(
+      { title: "Second routing session" },
+      {
+        provider: "openai",
+        model: "gpt-4o",
+        thinkingLevel: "medium",
+      },
+    );
+    const secondTarget = secondSession.target as SubmitMessageInput["target"];
+    const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
+      workspaceId: first.workspaceId,
+    });
+
+    const submitted = await runtimeOperations.messages.submit({
+      target: secondTarget,
+      message: { text: "queue this in workspace B" },
+      delivery: "queue-only",
+      clientSubmission: {
+        source: "desktop" as RuntimeClientSubmissionSource,
+        clientRequestId: "runtime-routing-submit" as RuntimeClientRequestId,
+      },
+    });
+    expect(submitted.target).toEqual(secondTarget);
+    expect(
+      workspaceStateStore(second).getSurfaceQueuedMessage({
+        id: submitted.queuedMessageId,
+      }).surfacePiSessionId,
+    ).toBe(secondTarget.surfacePiSessionId);
+
+    await expect(
+      runtimeOperations.queues.steer({
+        target: secondTarget,
+        queuedMessageId: submitted.queuedMessageId,
+      }),
+    ).resolves.toBeUndefined();
+    expect(["steering", "dispatching"]).toContain(
+      workspaceStateStore(second).getSurfaceQueuedMessage({
+        id: submitted.queuedMessageId,
+      }).status,
+    );
+
+    const secondStore = workspaceStateStore(second);
+    const turn = secondStore.startTurn({
+      sessionId: secondTarget.workspaceSessionId,
+      surfacePiSessionId: secondTarget.surfacePiSessionId,
+      requestSummary: "Run command.",
+    });
+    const command = secondStore.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: secondTarget.surfacePiSessionId,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Run command",
+      summary: "Run command.",
+      status: "running",
+    });
+    const approval = secondStore.createRuntimeApprovalRequest({
+      sessionId: secondTarget.workspaceSessionId,
+      surfacePiSessionId: secondTarget.surfacePiSessionId,
+      turnId: turn.id,
+      commandId: command.id as CommandId,
+      toolCallId: "tool_call_runtime_routing_approval",
+      toolName: "exec_command",
+      approvalMode: "user",
+      cwd: second.cwd,
+      command: "bun test",
+      commandFamily: "bun",
+    });
+    await expect(
+      runtimeOperations.approvals.answer({
+        approvalId: approval.requestId as RuntimeApprovalId,
+        decision: "approved",
+        reason: "routing test",
+      }),
+    ).resolves.toMatchObject({
+      approvalId: approval.requestId,
+      commandId: command.id as CommandId,
+      status: "approved",
+    });
+    expect(workspaceStateStore(second).getRuntimeApprovalRequest(approval.requestId).status).toBe(
+      "approved",
+    );
+
+    const stdinWrites: string[] = [];
+    const secondCommandStdin = (second as unknown as { commandStdin: LiveCommandStdinRegistry })
+      .commandStdin;
+    secondCommandStdin.register({
+      commandId: command.id,
+      sessionId: "live-command-routing",
+      writeStdin: (text) => {
+        stdinWrites.push(text);
+        return { status: "accepted", acceptedBytes: text.length };
+      },
+      cancel: () => ({ status: "cancelled" }),
+    });
+    await expect(
+      runtimeOperations.commands.writeStdin({
+        commandId: command.id as CommandId,
+        text: "exit\n",
+      }),
+    ).resolves.toEqual({
+      commandId: command.id as CommandId,
+      status: "accepted",
+      acceptedBytes: 5,
+    });
+    expect(stdinWrites).toEqual(["exit\n"]);
+    expect(workspaceStateStore(first).findCommandById(command.id)).toBeNull();
+  });
+
   it("routes file-backed extension source invalidation through runtime generated-package refresh", async () => {
     const cwd = tempWorkspace("runtime-source-invalidation-refresh");
     const agentParent = tempWorkspace("source-invalidation-agent-parent");
@@ -679,7 +922,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(Object.hasOwn(first, "runtimeFacade")).toBeFalse();
     expect(Object.hasOwn(second, "runtimeFacade")).toBeFalse();
     expect(targetedOperations).toBe(registry.getRuntimeOperations(first.workspaceId));
-    expect(targetedOperations).not.toBe(registry.getRuntimeOperations(second.workspaceId));
+    expect(targetedOperations).toBe(registry.getRuntimeOperations(second.workspaceId));
     await targeted.catalog.createSession(
       { title: "Targeted A" },
       {
@@ -703,7 +946,9 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     expect(source).toContain("runtimeLayerConfig: RuntimeLayerConfig;");
     expect(source).toContain("this.options.runtimeLayerConfig");
-    expect(source).toContain("createCatalogBackedRuntime(");
+    expect(source).toContain("getAppRuntimeBootstrap()");
+    expect(source).toContain("facade.workspaces.acquire(");
+    expect(source).toContain("facade.workspaces.release(");
     expect(source).toContain("sourceDebounceMs");
     expect(source).toContain("sourceMaxCoalescingLatencyMs");
     expect(source).toContain("appSourceReconcileIntervalMs");
@@ -748,6 +993,10 @@ function tempWorkspace(name: string): string {
   return dir;
 }
 
+function workspaceStateStore(runtime: WorkspaceRuntime) {
+  return runtime.catalog["workspaceStateRouterRegistration"]().store;
+}
+
 async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -781,4 +1030,34 @@ async function collectRuntimeEvents(
       await pump.catch(() => {});
     },
   };
+}
+
+function readGeneratedPackageWorkspaceLinks(
+  cwd: string,
+  agentDir: string,
+): Array<{
+  workspace_id: string;
+  package_name: string;
+  status: string;
+  source_command_id: string | null;
+}> {
+  const db = new Database(join(getSvvySessionDir(cwd, agentDir), STRUCTURED_SESSION_DB_FILENAME), {
+    readonly: true,
+  });
+  try {
+    return db
+      .query(
+        `SELECT workspace_id, package_name, status, source_command_id
+         FROM generated_package_workspace_link
+         ORDER BY package_name ASC`,
+      )
+      .all() as Array<{
+      workspace_id: string;
+      package_name: string;
+      status: string;
+      source_command_id: string | null;
+    }>;
+  } finally {
+    db.close();
+  }
 }

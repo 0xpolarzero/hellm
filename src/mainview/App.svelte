@@ -55,7 +55,13 @@
 			(activeWorkspaceTabId ? restoreErrorsByWorkspaceTabId[activeWorkspaceTabId] ?? null : null),
 	);
 	const workspaceTabItems = $derived<WorkspaceTabStripItem[]>(
-		tabs.map((tab) => ({ workspace: tab.workspace, counts: tab.counts })),
+		tabs.map((tab) => ({
+			workspace: tab.workspace,
+			counts:
+				tab.workspace.workspaceTabId === activeWorkspaceTabId
+					? { ...tab.counts, unread: 0 }
+					: tab.counts,
+		})),
 	);
 
 	function summarizeWorkspace(runtime: ChatRuntime): WorkspaceTabCounts {

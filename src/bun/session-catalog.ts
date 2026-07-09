@@ -5386,10 +5386,14 @@ export class WorkspaceSessionCatalog {
         },
       });
     } catch (error) {
+      const automaticStartupRepair =
+        input.scope === "workspace-link-repair" && input.reason === "startup-recovery";
       this.emitAppLog({
-        level: "error",
+        level: automaticStartupRepair ? "info" : "error",
         source: "workflow.library",
-        message: "Workflows build/link recovery failed.",
+        message: automaticStartupRepair
+          ? "Workflows build/link startup recovery deferred."
+          : "Workflows build/link recovery failed.",
         error,
         details: {
           recoveryWorkId: "recoveryWorkId" in input ? input.recoveryWorkId : undefined,

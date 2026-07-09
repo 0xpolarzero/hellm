@@ -70,6 +70,8 @@ export interface WorkspaceStateRouterInput {
 }
 
 export interface WorkspaceStateRouter {
+  registerWorkspaceState(registration: WorkspaceStateRegistration): void;
+  unregisterWorkspaceState(workspaceId: WorkspaceId): boolean;
   readonly workspace: RuntimeWorkspaceStatePortService;
   readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
   readonly promptDefaults: RuntimePromptDefaultsStatePortService;
@@ -232,27 +234,47 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
   };
 
   const appGlobal = registerOnce(input.appGlobalStore);
-  const workspaceRegs = input.workspaceStores.map((registration) =>
-    registerOnce(registration.store),
-  );
-  const defaultRegistration = input.workspaceStores.find(
-    (registration) => registration.isDefaultWorkspace,
-  );
-  const defaultWorkspace = defaultRegistration
-    ? registerOnce(defaultRegistration.store)
-    : undefined;
-
+  const workspaceRegistrations = new Map<
+    string,
+    { readonly registered: RegisteredStore; readonly isDefaultWorkspace: boolean }
+  >();
   const allStores: RegisteredStore[] = [];
-  for (const registered of workspaceRegs) {
-    if (!allStores.includes(registered)) allStores.push(registered);
-  }
-  if (!allStores.includes(appGlobal)) allStores.push(appGlobal);
-
   const byWorkspaceId = new Map<string, RegisteredStore>();
-  for (const registered of allStores) {
-    if (!byWorkspaceId.has(registered.workspaceId)) {
-      byWorkspaceId.set(registered.workspaceId, registered);
+  let defaultWorkspace: RegisteredStore | undefined;
+
+  const rebuildIndexes = () => {
+    allStores.length = 0;
+    byWorkspaceId.clear();
+    defaultWorkspace = undefined;
+
+    for (const registration of workspaceRegistrations.values()) {
+      if (!allStores.includes(registration.registered)) {
+        allStores.push(registration.registered);
+      }
+      if (registration.isDefaultWorkspace && !defaultWorkspace) {
+        defaultWorkspace = registration.registered;
+      }
     }
+    if (!allStores.includes(appGlobal)) allStores.push(appGlobal);
+
+    for (const registered of allStores) {
+      if (!byWorkspaceId.has(registered.workspaceId)) {
+        byWorkspaceId.set(registered.workspaceId, registered);
+      }
+    }
+  };
+
+  const registerWorkspaceState = (registration: WorkspaceStateRegistration): void => {
+    const registered = registerOnce(registration.store);
+    workspaceRegistrations.set(registered.workspaceId, {
+      registered,
+      isDefaultWorkspace: registration.isDefaultWorkspace === true,
+    });
+    rebuildIndexes();
+  };
+
+  for (const registration of input.workspaceStores) {
+    registerWorkspaceState(registration);
   }
 
   const resolveWorkspace = (
@@ -833,6 +855,12 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
   };
 
   return {
+    registerWorkspaceState,
+    unregisterWorkspaceState: (workspaceId) => {
+      const deleted = workspaceRegistrations.delete(workspaceId);
+      if (deleted) rebuildIndexes();
+      return deleted;
+    },
     workspace,
     surfaceLifecycle,
     promptDefaults,

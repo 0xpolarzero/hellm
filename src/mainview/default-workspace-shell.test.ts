@@ -769,7 +769,8 @@ describe("default workspace renderer shell", () => {
     expect(directToolsSource).toContain("svvyx-workflows-save");
     expect(workspaceRegistrySource).toContain("recordWorkflowsGeneratedPackageLog");
     expect(workspaceRegistrySource).toContain("for (const runtime of this.runtimes.values())");
-    expect(workspaceRegistrySource).toContain("createGeneratedPackageRefreshBoundaryHost(catalog");
+    expect(workspaceRegistrySource).toContain("createGeneratedPackageRefreshBoundaryHost(");
+    expect(workspaceRegistrySource).toContain("appGlobal.catalog");
     expect(workspaceRegistrySource).toContain("generatedPackageLinkPath");
     expect(workspaceRegistrySource).toContain("workspaceLinkFileHost");
     expect(workflowsPaneSource).not.toContain("svvyx workflows run");

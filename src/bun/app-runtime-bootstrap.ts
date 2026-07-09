@@ -7,7 +7,9 @@ import {
   ExtensionError as CoreExtensionError,
   ExtensionStatePort,
   RuntimeContractError,
+  RuntimeGeneratedPackageStatePort,
   RuntimePromptDefaultsStatePort,
+  StateContractError,
   SandboxPolicySource,
   type AbsolutePath,
   type AppLogWritePortService,
@@ -16,6 +18,7 @@ import {
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
+  type RuntimeGeneratedPackageStatePortService,
   type PromptTarget,
   type RefreshGeneratedContextRequest,
   type SandboxLaunchFacts,
@@ -72,6 +75,7 @@ import {
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
 import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
+import { AppLifecycleCoordinator } from "./app-lifecycle-coordinator";
 import type { PackagedSandboxHostSupportServices } from "./runtime-service-adapter";
 
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
@@ -132,6 +136,10 @@ export interface AppRuntimeBootstrapInput {
     refresh(input: RefreshGeneratedContextRequest): Promise<void>;
   };
   readonly generatedPackageRefresh: RuntimeGeneratedPackageRefreshHostPortService;
+  readonly generatedPackageStatePort?: Pick<
+    RuntimeGeneratedPackageStatePortService,
+    "markWorkspaceLinksRepairNeeded" | "recordWorkspaceLinkStatus"
+  >;
   readonly sourceInvalidation: {
     readonly appGlobalCoordinator: AppRuntimeBootstrapSourceInvalidationCoordinator;
     listAcquiredWorkspaceIds(): Promise<readonly WorkspaceId[]> | readonly WorkspaceId[];
@@ -169,6 +177,10 @@ export interface AppRuntimeBootstrap {
       readonly runLoadExtension: RunAcceptedLoadExtension;
       readonly runRequestUserInput: RunAcceptedRequestUserInput;
     };
+    readonly workspaceStates: {
+      register(input: AppRuntimeBootstrapWorkspaceStateInput): void;
+      unregister(workspaceId: WorkspaceId): boolean;
+    };
   };
   dispose(): Promise<void>;
 }
@@ -180,7 +192,12 @@ export async function createAppRuntimeBootstrap(
     appGlobalStore: workspaceStateRegistration(input.appGlobalState).store,
     workspaceStores: input.workspaceStates.map(workspaceStateRegistration),
   });
+  const lifecycle = new AppLifecycleCoordinator();
   const workspaceStateLayer = layerWorkspaceStateRouter(workspaceRouter);
+  const generatedPackageStatePort = createGeneratedPackageStatePort({
+    routerPort: workspaceRouter.generatedPackage,
+    unopenedWorkspaceFallback: input.generatedPackageStatePort,
+  });
   const sandboxHostSupport = input.sandboxHostSupport;
   const extensionPackageLayer = Layer.mergeAll(
     layerRuntimeBunPlatform,
@@ -266,6 +283,7 @@ export async function createAppRuntimeBootstrap(
     Layer.succeed(AppLogWritePort, input.appLogWritePort),
     Layer.succeed(RuntimeGeneratedContextRefreshHostPort, input.generatedContextRefresh),
     Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, input.generatedPackageRefresh),
+    Layer.succeed(RuntimeGeneratedPackageStatePort, generatedPackageStatePort),
     Layer.succeed(RuntimeSourceInvalidationScanPort, createSourceInvalidationScanPort(input)),
     Layer.succeed(RuntimeLayerCommandStdinPort, input.commandRegistry),
     Layer.succeed(RuntimeLayerCommandControlPort, input.commandRegistry),
@@ -282,6 +300,7 @@ export async function createAppRuntimeBootstrap(
     runtimeServiceAcquired = true;
     const readiness = await awaitRuntimeStartupReadiness(managedRuntime);
     const facade = createRuntimeFacade(managedRuntime);
+    lifecycle.markReady();
     const acquireDirectToolLaunch = (
       request: Omit<BuildLaunchPolicyInput, "launchKind"> & {
         readonly toolName: "exec_command" | "apply_patch" | "execute_typescript";
@@ -311,17 +330,29 @@ export async function createAppRuntimeBootstrap(
           runLoadExtension: (request) => runAcceptedLoadExtension(managedRuntime, request),
           runRequestUserInput: (request) => runAcceptedRequestUserInput(managedRuntime, request),
         },
+        workspaceStates: {
+          register: (request) => {
+            lifecycle.assertAccepting("app-runtime-bootstrap.workspaceStates.register");
+            workspaceRouter.registerWorkspaceState(workspaceStateRegistration(request));
+          },
+          unregister: (workspaceId) => {
+            lifecycle.assertAccepting("app-runtime-bootstrap.workspaceStates.unregister");
+            return workspaceRouter.unregisterWorkspaceState(workspaceId);
+          },
+        },
       },
-      dispose: async () => {
-        try {
-          await prepareShutdown(managedRuntime, "app-shutdown");
-          await facade.close();
-        } finally {
-          await disposeManagedRuntime(managedRuntime);
-        }
-      },
+      dispose: () =>
+        lifecycle
+          .shutdown(
+            "app-shutdown",
+            () => facade.close(),
+            () => prepareShutdown(managedRuntime, "app-shutdown"),
+            () => disposeManagedRuntime(managedRuntime),
+          )
+          .then(() => undefined),
     };
   } catch (cause) {
+    lifecycle.markStartupFailed(cause);
     try {
       if (runtimeServiceAcquired) {
         await prepareShutdown(managedRuntime, "startup-failure");
@@ -331,6 +362,43 @@ export async function createAppRuntimeBootstrap(
     }
     throw cause;
   }
+}
+
+function createGeneratedPackageStatePort(input: {
+  readonly routerPort: RuntimeGeneratedPackageStatePortService;
+  readonly unopenedWorkspaceFallback?:
+    | Pick<
+        RuntimeGeneratedPackageStatePortService,
+        "markWorkspaceLinksRepairNeeded" | "recordWorkspaceLinkStatus"
+      >
+    | undefined;
+}): RuntimeGeneratedPackageStatePortService {
+  if (!input.unopenedWorkspaceFallback) {
+    return input.routerPort;
+  }
+  return {
+    ...input.routerPort,
+    recordWorkspaceLinkStatus: (request) =>
+      input.routerPort.recordWorkspaceLinkStatus(request).pipe(
+        Effect.matchEffect({
+          onFailure: (error: StateContractError) =>
+            error.reason === "not-found"
+              ? input.unopenedWorkspaceFallback!.recordWorkspaceLinkStatus(request)
+              : Effect.fail(error),
+          onSuccess: (result) => Effect.succeed(result),
+        }),
+      ),
+    markWorkspaceLinksRepairNeeded: (request) =>
+      input.routerPort.markWorkspaceLinksRepairNeeded(request).pipe(
+        Effect.matchEffect({
+          onFailure: (error: StateContractError) =>
+            error.reason === "not-found"
+              ? input.unopenedWorkspaceFallback!.markWorkspaceLinksRepairNeeded(request)
+              : Effect.fail(error),
+          onSuccess: (result) => Effect.succeed(result),
+        }),
+      ),
+  };
 }
 
 function workspaceStateRegistration(

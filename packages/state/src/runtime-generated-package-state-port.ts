@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import {
   RuntimeGeneratedPackageStatePort,
   type MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
+  type RecordGeneratedPackageWorkspaceLinkInput,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
@@ -20,6 +21,11 @@ import {
 export type MarkPersistedWorkspaceGeneratedPackageLinksRepairNeededInput = {
   readonly store: CreateStructuredSessionStateStoreOptions;
   readonly request: MarkWorkspaceGeneratedPackageLinksRepairNeededInput;
+};
+
+export type RecordPersistedWorkspaceGeneratedPackageLinkStatusInput = {
+  readonly store: CreateStructuredSessionStateStoreOptions;
+  readonly request: RecordGeneratedPackageWorkspaceLinkInput;
 };
 
 function generatedPackageInvalidationsForPackage(
@@ -105,6 +111,19 @@ export const markPersistedWorkspaceGeneratedPackageLinksRepairNeeded = Effect.fn
   const store = createStructuredSessionStateStore(input.store);
   try {
     return yield* runtimeGeneratedPackageStatePortFromStore(store).markWorkspaceLinksRepairNeeded(
+      input.request,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+export const recordPersistedWorkspaceGeneratedPackageLinkStatus = Effect.fn(
+  "@svvy/state/recordPersistedWorkspaceGeneratedPackageLinkStatus",
+)(function* (input: RecordPersistedWorkspaceGeneratedPackageLinkStatusInput) {
+  const store = createStructuredSessionStateStore(input.store);
+  try {
+    return yield* runtimeGeneratedPackageStatePortFromStore(store).recordWorkspaceLinkStatus(
       input.request,
     );
   } finally {
