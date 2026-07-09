@@ -77,6 +77,16 @@ const stateLayerWithNotifications = (published: StateCommandPostCommitNotificati
     ),
   );
 
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for condition.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 describe("State app-log facade slice", () => {
   it("adapts app-bootstrap app logs and the write port over one state-owned store", async () => {
     const appLogs = createStateAppLogsFacade({
@@ -340,6 +350,76 @@ describe("State app-log facade slice", () => {
       expect(refetched.map((readModel) => readModel.kind)).toEqual(["appLogs", "appLogSummary"]);
       commands.close();
       state.close();
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("does not resolve state command facade calls before post-commit publication accepts descriptors", async () => {
+    let acceptPublication!: () => void;
+    const publicationAccepted = new Promise<void>((resolve) => {
+      acceptPublication = resolve;
+    });
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(
+      Layer.merge(
+        stateLayer(),
+        Layer.succeed(
+          StateCommandPostCommitNotificationPort,
+          StateCommandPostCommitNotificationPort.of({
+            notifyCommittedStateCommand: (input) =>
+              Effect.promise(async () => {
+                published.push(input);
+                await publicationAccepted;
+                return {
+                  receipt: input.receipt,
+                  acceptedDescriptorCount: input.descriptors.length,
+                  rebaselineRequired: false,
+                };
+              }),
+          }),
+        ),
+      ),
+    );
+
+    try {
+      await managedRuntime.runPromise(
+        Effect.gen(function* () {
+          const appLogWritePort = yield* AppLogWritePort;
+          yield* appLogWritePort.append({
+            level: "info",
+            source: "app.lifecycle",
+            message: "pending publication",
+            occurredAt: iso("2026-06-21T12:00:00.000Z"),
+          });
+        }),
+      );
+
+      const commands = createStateCommandsFacade(managedRuntime);
+      let resolved = false;
+      const command = commands.appLogs.clearWorkspaceUnread({
+        readAt: iso("2026-06-21T12:02:00.000Z"),
+        clientSubmission: {
+          clientRequestId: "clear-global-unread-delayed" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+      void command.then(() => {
+        resolved = true;
+      });
+
+      await waitFor(() => published.length === 1);
+      expect(resolved).toBe(false);
+
+      acceptPublication();
+      const result = await command;
+
+      expect(resolved).toBe(true);
+      expect(result.receipt).toMatchObject({
+        clientRequestId: "clear-global-unread-delayed",
+        outcome: "applied",
+      });
+      commands.close();
     } finally {
       await managedRuntime.dispose();
     }

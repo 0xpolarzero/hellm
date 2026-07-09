@@ -24,8 +24,11 @@ import {
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
+  type JsonValue,
   type ProviderId,
   type RuntimeGeneratedPackageStatePortService,
+  type RuntimeClientRequestId,
+  type RuntimeClientSubmissionSource,
   type RefreshGeneratedContextRequest,
   type RunTaskAgentResult,
   type SandboxLaunchFacts,
@@ -77,15 +80,33 @@ import {
 import {
   createWorkspaceStateRouter,
   layerWorkspaceStateRouter,
+  stateCommandsFromRouter,
+  stateReadModelsFromRouter,
   type WorkspaceStateRegistration,
 } from "@svvy/state/structured-session-adapters";
+import {
+  createStateCommandsFacade,
+  createStateFacade,
+  StateCommands,
+  StateReadModels,
+  type StateAppLogsFacade,
+} from "@svvy/state";
+import type { AppPreferences } from "../shared/agent-settings";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
 import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
 import { AppLifecycleCoordinator } from "./app-lifecycle-coordinator";
 import type { PackagedSandboxHostSupportServices } from "./runtime-service-adapter";
+import {
+  narrowRendererStateCommandsFacade,
+  narrowRendererStateFacade,
+  type RendererStateCommandsFacade,
+  type RendererStateFacade,
+} from "./renderer-state-facade";
 
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
+type StateFacade = ReturnType<typeof createStateFacade>;
+type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
 
 function usableProviderAuthSnapshot(input: {
   readonly providerId: ProviderId;
@@ -127,6 +148,13 @@ export interface AppRuntimeBootstrapInput {
     input: GeneratedPackageWorkspaceLinkRepairInput,
   ) => Promise<AbsolutePath>;
   readonly sandboxPolicySource: SandboxPolicySourceService;
+  readonly appLogs: Pick<
+    StateAppLogsFacade,
+    "append" | "query" | "summary" | "markSeen" | "subscribe"
+  >;
+  readonly resolveWorkspaceAppLogs?: (
+    workspaceId: WorkspaceId,
+  ) => Promise<Pick<StateAppLogsFacade, "append" | "query" | "summary" | "markSeen" | "subscribe">>;
   readonly appLogWritePort: AppLogWritePortService;
   readonly sandboxHostSupport: PackagedSandboxHostSupportServices;
   readonly runtimeLayerConfig: RuntimeLayerConfig;
@@ -161,10 +189,18 @@ export interface AppRuntimeBootstrapInput {
       readonly sourceCommandId: string;
     }): Promise<boolean> | boolean;
   };
+  readonly appPreferencesSeed?: {
+    hasStateRows(): boolean;
+    read(): AppPreferences;
+  };
 }
 
 export interface AppRuntimeBootstrap {
   readonly facade: RuntimeFacade;
+  readonly state: StateFacade;
+  readonly stateCommands: StateCommandsFacade;
+  readonly rendererState: RendererStateFacade;
+  readonly rendererStateCommands: RendererStateCommandsFacade;
   readonly readiness: RuntimeStartupReadinessReceipt;
   readonly internal: {
     readonly launchFacts: {
@@ -211,6 +247,43 @@ export async function createAppRuntimeBootstrap(
   });
   const lifecycle = new AppLifecycleCoordinator();
   const workspaceStateLayer = layerWorkspaceStateRouter(workspaceRouter);
+  const appLogState = appLogStateServiceFromFacade(input.appLogs);
+  const resolveAppLogState = (
+    workspaceId: WorkspaceId | undefined,
+  ): Effect.Effect<typeof appLogState, StateContractError> => {
+    if (!workspaceId || !input.resolveWorkspaceAppLogs) {
+      return Effect.succeed(appLogState);
+    }
+    return Effect.tryPromise({
+      try: async () =>
+        appLogStateServiceFromFacade(await input.resolveWorkspaceAppLogs!(workspaceId)),
+      catch: (cause) =>
+        new StateContractError({
+          operation: "app-runtime-bootstrap.resolveWorkspaceAppLogs",
+          reason: "not-found",
+          message: `App runtime bootstrap could not resolve app logs for workspace ${workspaceId}.`,
+          cause,
+        }),
+    });
+  };
+  const stateFacadeServicesLayer = Layer.mergeAll(
+    Layer.succeed(
+      StateReadModels,
+      stateReadModelsFromRouter({
+        router: workspaceRouter,
+        appLogs: appLogState,
+        resolveAppLogs: resolveAppLogState,
+      }),
+    ),
+    Layer.succeed(
+      StateCommands,
+      stateCommandsFromRouter({
+        router: workspaceRouter,
+        appLogs: appLogState,
+        resolveAppLogs: resolveAppLogState,
+      }),
+    ),
+  );
   const generatedPackageStatePort = createGeneratedPackageStatePort({
     routerPort: workspaceRouter.generatedPackage,
     unopenedWorkspaceFallback: input.generatedPackageStatePort,
@@ -350,9 +423,11 @@ export async function createAppRuntimeBootstrap(
   );
   const runtimeLayerConfig = createRuntimeLayerConfigLayer(input.runtimeLayerConfig);
   const managedRuntime = ManagedRuntime.make(
-    Layer.mergeAll(Runtime.layer.pipe(Layer.provide(runtimeLayerConfig)), runtimeLayerConfig).pipe(
-      Layer.provide(runtimeHostLayer),
-    ),
+    Layer.mergeAll(
+      Runtime.layer.pipe(Layer.provide(runtimeLayerConfig)),
+      runtimeLayerConfig,
+      stateFacadeServicesLayer,
+    ).pipe(Layer.provide(runtimeHostLayer)),
   );
   let runtimeServiceAcquired = false;
   try {
@@ -360,6 +435,14 @@ export async function createAppRuntimeBootstrap(
     runtimeServiceAcquired = true;
     const readiness = await awaitRuntimeStartupReadiness(managedRuntime);
     const facade = createRuntimeFacade(managedRuntime);
+    const state = createStateFacade(managedRuntime);
+    const stateCommands = createStateCommandsFacade(managedRuntime);
+    const rendererState = narrowRendererStateFacade(state);
+    const rendererStateCommands = narrowRendererStateCommandsFacade(stateCommands);
+    await seedAppPreferencesStateRows({
+      seed: input.appPreferencesSeed,
+      stateCommands,
+    });
     lifecycle.markReady();
     const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
       managedRuntime.runPromise(effect);
@@ -370,6 +453,10 @@ export async function createAppRuntimeBootstrap(
     ) => acquireAcceptedDirectToolLaunch(managedRuntime, request);
     return {
       facade,
+      state,
+      stateCommands,
+      rendererState,
+      rendererStateCommands,
       readiness,
       internal: {
         launchFacts: {
@@ -416,7 +503,11 @@ export async function createAppRuntimeBootstrap(
         lifecycle
           .shutdown(
             "app-shutdown",
-            () => facade.close(),
+            async () => {
+              stateCommands.close();
+              state.close();
+              facade.close();
+            },
             () => prepareShutdown(managedRuntime, "app-shutdown"),
             () => disposeManagedRuntime(managedRuntime),
           )
@@ -433,6 +524,102 @@ export async function createAppRuntimeBootstrap(
     }
     throw cause;
   }
+}
+
+function appLogStateServiceFromFacade(
+  appLogs: AppRuntimeBootstrapInput["appLogs"],
+): Parameters<typeof stateReadModelsFromRouter>[0]["appLogs"] {
+  return {
+    append: (entry) =>
+      Effect.try({
+        try: () => appLogs.append(entry),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.append",
+            reason: "transaction-failed",
+            message: cause instanceof Error ? cause.message : "App log append failed.",
+            cause,
+          }),
+      }),
+    query: (query) =>
+      Effect.try({
+        try: () => appLogs.query(query),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.query",
+            reason: "transaction-failed",
+            message: cause instanceof Error ? cause.message : "App log query failed.",
+            cause,
+          }),
+      }),
+    summary: () =>
+      Effect.try({
+        try: () => appLogs.summary(),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.summary",
+            reason: "transaction-failed",
+            message: cause instanceof Error ? cause.message : "App log summary failed.",
+            cause,
+          }),
+      }),
+    markSeen: (throughSeq) =>
+      Effect.try({
+        try: () => appLogs.markSeen(throughSeq),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.markSeen",
+            reason: "transaction-failed",
+            message: cause instanceof Error ? cause.message : "App log mark seen failed.",
+            cause,
+          }),
+      }),
+    subscribe: (listener) =>
+      Effect.try({
+        try: () => appLogs.subscribe(listener),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.subscribe",
+            reason: "transaction-failed",
+            message: cause instanceof Error ? cause.message : "App log subscribe failed.",
+            cause,
+          }),
+      }),
+  };
+}
+
+async function seedAppPreferencesStateRows(input: {
+  readonly seed: AppRuntimeBootstrapInput["appPreferencesSeed"];
+  readonly stateCommands: StateCommandsFacade;
+}): Promise<void> {
+  if (!input.seed || input.seed.hasStateRows()) {
+    return;
+  }
+  const preferences = input.seed.read();
+  await input.stateCommands.appPreferences.update({
+    patch: {
+      appearance: preferences.appAppearance,
+      externalEditor: stateExternalEditorFromAppPreferences(preferences),
+      artifactDirectory: preferences.artifactDirectory as AbsolutePath,
+      approvalMode: preferences.approvalMode,
+      networkAccess: preferences.networkAccess,
+      ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
+    },
+    clientSubmission: {
+      clientRequestId: "bootstrap-app-preferences-seed" as RuntimeClientRequestId,
+      source: "app-bootstrap" as RuntimeClientSubmissionSource,
+    },
+  });
+}
+
+function stateExternalEditorFromAppPreferences(preferences: AppPreferences): string | null {
+  if (preferences.preferredExternalEditor === "system") {
+    return null;
+  }
+  if (preferences.preferredExternalEditor === "custom") {
+    return preferences.customExternalEditorCommand || "custom";
+  }
+  return preferences.preferredExternalEditor;
 }
 
 function createGeneratedPackageStatePort(input: {

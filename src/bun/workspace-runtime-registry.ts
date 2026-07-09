@@ -55,6 +55,7 @@ import {
   recordPersistedWorkspaceGeneratedPackageLinkStatus,
 } from "@svvy/state/generated-package-maintenance";
 import { createAgentSettingsStore } from "./agent-settings-store";
+import type { AgentSettingsStore } from "./agent-settings-store";
 import {
   getSvvySessionDir,
   getSvvyAgentDir,
@@ -89,6 +90,7 @@ import {
   buildWorkspaceSourceWatchInputs,
 } from "./source-watch-inputs";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
+import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
 
 type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
   readonly sourceRoots: ExtensionSourceRoots;
@@ -108,6 +110,15 @@ type RuntimeSourceInvalidationReactionInput =
       readonly scope: { readonly kind: "workspace"; readonly workspaceId: WorkspaceId };
       readonly event: RuntimeSourceInvalidationEvent;
     };
+
+type StateOwnedAppPreferencesRecord = {
+  readonly appearance: AppPreferences["appAppearance"];
+  readonly externalEditor: string | null;
+  readonly artifactDirectory: string;
+  readonly approvalMode: AppPreferences["approvalMode"];
+  readonly networkAccess: boolean;
+  readonly ambientResources: unknown;
+};
 export type WorkspaceRuntimeOperations = Pick<
   RuntimeFacade,
   | "approvals"
@@ -211,6 +222,7 @@ type AppGlobalHostRecord = {
   workspaceId: string;
   cwd: string;
   catalog: WorkspaceSessionCatalog;
+  agentSettingsStore: AgentSettingsStore;
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   appLogs: StateAppLogsFacade;
   sourceStatePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
@@ -941,6 +953,28 @@ export class WorkspaceRuntimeRegistry {
     return (await this.getAppRuntimeBootstrap()).facade;
   }
 
+  async getRendererStateFacade(): Promise<AppRuntimeBootstrap["rendererState"]> {
+    return (await this.getAppRuntimeBootstrap()).rendererState;
+  }
+
+  async getStateCommandsFacade(): Promise<AppRuntimeBootstrap["stateCommands"]> {
+    return (await this.getAppRuntimeBootstrap()).stateCommands;
+  }
+
+  async hydrateStateOwnedAppPreferencesFromStateRows(): Promise<AppPreferences> {
+    const appGlobal = await this.getAppGlobalHostRecord();
+    const record = appGlobal.catalog.workspaceStateRouterRegistration().store.readAppPreferences();
+    const preferences = appPreferencesFromStructuredRecord(
+      record,
+      appGlobal.agentSettingsStore.getState().appPreferences,
+    );
+    appGlobal.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
+    for (const runtime of this.runtimes.values()) {
+      runtime.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
+    }
+    return preferences;
+  }
+
   private async getAppRuntimeBootstrap(): Promise<AppRuntimeBootstrap> {
     if (this.appRuntimeBootstrapState !== "accepting") {
       throw appRuntimeBootstrapUnavailableError(
@@ -953,6 +987,7 @@ export class WorkspaceRuntimeRegistry {
     }
     const runtime = await this.appRuntimeBootstrap;
     this.resolvedAppRuntimeBootstrap = runtime;
+    await this.hydrateStateOwnedAppPreferencesFromStateRows();
     return runtime;
   }
 
@@ -1013,6 +1048,11 @@ export class WorkspaceRuntimeRegistry {
       commandStdin,
       this.options.runtimeLayerConfig,
     );
+    const agentSettingsStore = createAgentSettingsStore({
+      cwd,
+      agentDir: this.agentDir,
+      workflowsSourceRoot: this.options.workflowsSourceRoot,
+    });
     const appLogs = this.acquireAppLogFacade(cwd);
     const appLog = createAppLogger({
       appLogs,
@@ -1037,6 +1077,7 @@ export class WorkspaceRuntimeRegistry {
       workspaceId,
       cwd,
       catalog,
+      agentSettingsStore,
       commandStdin,
       appLogs,
       sourceStatePort: catalog.getRuntimeSourceStatePort(),
@@ -1071,6 +1112,20 @@ export class WorkspaceRuntimeRegistry {
       extensionStatePort: generatedPackageBoundaryHost.extensionStatePort,
       generatedPackageLinkPath: generatedPackageBoundaryHost.generatedPackageLinkPath,
       sandboxPolicySource: this.createSandboxPolicySource(),
+      appLogs: appGlobal.appLogs,
+      resolveWorkspaceAppLogs: async (workspaceId) => {
+        const runtime =
+          this.runtimes.get(workspaceId) ??
+          (appGlobal.workspaceId === workspaceId ? appGlobal : undefined);
+        if (!runtime) {
+          throw new RuntimeContractError({
+            operation: "workspace-runtime-registry.resolveWorkspaceAppLogs",
+            reason: "target-not-found",
+            message: `Workspace runtime registry could not resolve app logs for ${workspaceId}.`,
+          });
+        }
+        return runtime.appLogs;
+      },
       appLogWritePort: appGlobal.appLogs.writePort,
       sandboxHostSupport: this.options.sandboxHostSupport,
       runtimeLayerConfig: this.options.runtimeLayerConfig,
@@ -1116,6 +1171,11 @@ export class WorkspaceRuntimeRegistry {
           ];
           return catalogs.some((catalog) => catalog.verifyRunTaskAgentBridgeBearerLineage(request));
         },
+      },
+      appPreferencesSeed: {
+        hasStateRows: () =>
+          appGlobal.catalog.workspaceStateRouterRegistration().store.hasAppPreferencesRow(),
+        read: () => appGlobal.agentSettingsStore.getState().appPreferences,
       },
     });
   }
@@ -1600,6 +1660,37 @@ function pickWorkflowGeneratedPackageFacts(
     }
   }
   return details;
+}
+
+function appPreferencesFromStructuredRecord(
+  record: StateOwnedAppPreferencesRecord,
+  fallback: AppPreferences = DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+): AppPreferences {
+  const externalEditor = record.externalEditor;
+  const knownEditors = new Set(["system", "code", "cursor", "zed", "sublime"]);
+  return {
+    ...fallback,
+    appAppearance: record.appearance,
+    preferredExternalEditor:
+      externalEditor && knownEditors.has(externalEditor)
+        ? (externalEditor as AppPreferences["preferredExternalEditor"])
+        : externalEditor
+          ? "custom"
+          : "system",
+    customExternalEditorCommand:
+      externalEditor && !knownEditors.has(externalEditor)
+        ? externalEditor
+        : fallback.customExternalEditorCommand,
+    artifactDirectory: record.artifactDirectory,
+    approvalMode: record.approvalMode,
+    networkAccess: record.networkAccess,
+    ambientAgentResources:
+      typeof record.ambientResources === "object" &&
+      record.ambientResources !== null &&
+      !Array.isArray(record.ambientResources)
+        ? (record.ambientResources as unknown as AppPreferences["ambientAgentResources"])
+        : fallback.ambientAgentResources,
+  };
 }
 
 function formatTitleGenerationLogMessage(event: TitleGenerationLogEvent): string {

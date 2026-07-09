@@ -504,15 +504,16 @@ export function createStateAppLogsFacade(
 const makeStateReadModels = Effect.fn("@svvy/state/makeStateReadModels")(function* () {
   const appLogs = yield* AppLogState;
   const structuredSession = yield* StructuredSessionState;
-  return stateReadModelsFromState({ appLogs, structuredSession });
+  return stateReadModelsFromState({ appLogs: appLogStateResolver(appLogs), structuredSession });
 });
 
 export function stateReadModelsFromRouter(input: {
   router: WorkspaceStateRouter;
   appLogs: AppLogState["Service"];
+  resolveAppLogs?: AppLogStateResolver;
 }): StateReadModels["Service"] {
   return stateReadModelsFromState({
-    appLogs: input.appLogs,
+    appLogs: input.resolveAppLogs ?? appLogStateResolver(input.appLogs),
     structuredSession: input.router.appGlobalStructuredSession,
   });
 }
@@ -520,9 +521,10 @@ export function stateReadModelsFromRouter(input: {
 export function stateCommandsFromRouter(input: {
   router: WorkspaceStateRouter;
   appLogs: AppLogState["Service"];
+  resolveAppLogs?: AppLogStateResolver;
 }): StateCommands["Service"] {
   return stateCommandsFromState({
-    appLogs: input.appLogs,
+    appLogs: input.resolveAppLogs ?? appLogStateResolver(input.appLogs),
     structuredSession: input.router.appGlobalStructuredSession,
   });
 }
@@ -532,7 +534,7 @@ const layerStateReadModels = Layer.effect(StateReadModels, makeStateReadModels()
 const makeStateCommands = Effect.fn("@svvy/state/makeStateCommands")(function* () {
   const appLogs = yield* AppLogState;
   const structuredSession = yield* StructuredSessionState;
-  return stateCommandsFromState({ appLogs, structuredSession });
+  return stateCommandsFromState({ appLogs: appLogStateResolver(appLogs), structuredSession });
 });
 
 const layerStateCommands = Layer.effect(StateCommands, makeStateCommands());
@@ -623,18 +625,30 @@ function stateLayerOpenError(operation: string, cause: unknown): StateContractEr
   });
 }
 
+type AppLogStateResolver = (
+  workspaceId: WorkspaceIdType | undefined,
+) => Effect.Effect<AppLogState["Service"], StateContractError>;
+
+function appLogStateResolver(appLogs: AppLogState["Service"]): AppLogStateResolver {
+  return () => Effect.succeed(appLogs);
+}
+
 function stateReadModelsFromState(state: {
-  appLogs: AppLogState["Service"];
+  appLogs: AppLogStateResolver;
   structuredSession: StructuredSessionState["Service"];
 }): StateReadModels["Service"] {
   return StateReadModels.of({
     fetch: (request) =>
       Effect.gen(function* () {
         switch (request.kind) {
-          case "appLogs":
-            return { kind: "appLogs", value: yield* state.appLogs.query(request.query) };
-          case "appLogSummary":
-            return { kind: "appLogSummary", value: yield* state.appLogs.summary() };
+          case "appLogs": {
+            const appLogs = yield* state.appLogs(request.workspaceId);
+            return { kind: "appLogs", value: yield* appLogs.query(request.query) };
+          }
+          case "appLogSummary": {
+            const appLogs = yield* state.appLogs(request.workspaceId);
+            return { kind: "appLogSummary", value: yield* appLogs.summary() };
+          }
           case "appPreferences": {
             const record = yield* state.structuredSession.readAppPreferences();
             const preferences = appPreferencesReadModel(record);
@@ -657,10 +671,10 @@ function stateReadModelsFromState(state: {
       Effect.gen(function* () {
         switch (request.descriptor.invalidation.model) {
           case "appLogs": {
-            const [logs, summary] = yield* Effect.all([
-              state.appLogs.query(),
-              state.appLogs.summary(),
-            ]);
+            const appLogs = yield* state.appLogs(
+              request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : undefined,
+            );
+            const [logs, summary] = yield* Effect.all([appLogs.query(), appLogs.summary()]);
             return [
               { kind: "appLogs", value: logs },
               { kind: "appLogSummary", value: summary },
@@ -688,11 +702,12 @@ function stateReadModelsFromState(state: {
             return [];
         }
       }),
-    rebaseline: () =>
+    rebaseline: (request) =>
       Effect.gen(function* () {
+        const appLogs = yield* state.appLogs(request.workspaceId);
         const [logs, summary, currentStateRevision] = yield* Effect.all([
-          state.appLogs.query(),
-          state.appLogs.summary(),
+          appLogs.query(),
+          appLogs.summary(),
           state.structuredSession.readCurrentStateRevision(),
         ]);
         const record = yield* state.structuredSession.readAppPreferences();
@@ -717,7 +732,7 @@ function stateReadModelsFromState(state: {
 }
 
 function stateCommandsFromState(state: {
-  appLogs: AppLogState["Service"];
+  appLogs: AppLogStateResolver;
   structuredSession: StructuredSessionState["Service"];
 }): StateCommands["Service"] {
   const receipts = new Map<string, StateMutationResult<StateCommandResult>>();
@@ -756,15 +771,15 @@ function stateCommandsFromState(state: {
       markRead: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeMarkAppLogReadInput(commandInput);
-          return yield* runCommand(decoded, () =>
-            markAppLogEntriesRead(state.appLogs, decoded.entryIds),
-          );
+          const appLogs = yield* state.appLogs(decoded.workspaceId);
+          return yield* runCommand(decoded, () => markAppLogEntriesRead(appLogs, decoded.entryIds));
         }),
       markVisibleRangeRead: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeMarkVisibleAppLogRangeReadInput(commandInput);
+          const appLogs = yield* state.appLogs(decoded.workspaceId);
           return yield* runCommand(decoded, () =>
-            markAppLogEntriesRead(state.appLogs, [
+            markAppLogEntriesRead(appLogs, [
               decoded.newestVisibleEntryId,
               decoded.oldestVisibleEntryId,
             ]),
@@ -773,10 +788,11 @@ function stateCommandsFromState(state: {
       clearWorkspaceUnread: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeClearWorkspaceAppLogUnreadInput(commandInput);
+          const appLogs = yield* state.appLogs(decoded.workspaceId);
           return yield* runCommand(decoded, () =>
             Effect.gen(function* () {
-              const summary = yield* state.appLogs.summary();
-              return yield* state.appLogs.markSeen(summary.latestSeq);
+              const summary = yield* appLogs.summary();
+              return yield* appLogs.markSeen(summary.latestSeq);
             }),
           );
         }),

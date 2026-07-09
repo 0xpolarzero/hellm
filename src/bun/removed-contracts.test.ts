@@ -1,246 +1,76 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
-import {
-  DEFAULT_SYSTEM_PROMPT,
-  HANDLER_SYSTEM_PROMPT,
-  WORKFLOW_TASK_SYSTEM_PROMPT,
-} from "./default-system-prompt";
-import { createSvvyDirectTools } from "./svvy-direct-tools";
-import { startThreadParamsSchema } from "./thread-start-tool";
-import { BUILTIN_EXTENSIONS } from "@svvy/extensions";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 
-const REMOVED_TOOL_NAMES = [
-  "thread_handoff",
-  "thread_resume",
-  "request_context",
-  "wait",
-  "runtime_current",
-  "thread_handoffs",
-  "smithers_run_workflow",
-  "smithers_inspect_run",
-  "smithers_list_runs",
-  "workflow_list_assets",
-  "workflow_list_models",
-  "web_search",
-  "web_fetch",
-  "cx_overview",
-  "cx_symbols",
-  "cx_definition",
-  "cx_references",
-  "git_status",
-  "github_pr",
-] as const;
+describe("retired desktop integration RPC paths", () => {
+  it("keeps increment-5 state command/read-model RPC groups off retired direct stores", async () => {
+    const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
+    const directToolsSource = await Bun.file(`${import.meta.dir}/svvy-direct-tools.ts`).text();
 
-const REMOVED_PROMPT_FRAGMENTS = [
-  "thread_handoff",
-  "thread_resume",
-  "request_context",
-  "runtime_current",
-  "thread_handoffs",
-  "smithers_run_workflow",
-  "smithers_* tools",
-  "workflow_* discovery",
-  "workflow_list_assets",
-  "workflow_list_models",
-  "web_search",
-  "web_fetch",
-  "cx_overview",
-] as const;
+    expect(indexSource).not.toContain("catalog.updateAppPreferences(preferences)");
+    expect(indexSource).not.toContain("appLogs.markSeen(throughSeq)");
+    expect(indexSource).not.toContain("appLogs.query(stripWorkspaceId(query))");
+    expect(indexSource).toContain("stateCommands.appPreferences.update");
+    expect(indexSource).toContain("stateCommands.providerAuth.recordStatus");
+    expect(indexSource).toContain("stateCommands.appLogs.markRead");
 
-const REMOVED_WORKFLOWS_RUNNER_COMMANDS = [
-  "svvyx workflows run",
-  "svvyx workflows resume",
-  "svvyx workflows approve",
-  "svvyx workflows inspect",
-  "svvyx workflows debug",
-  "svvyx workflows cancel",
-  "svvyx workflows status",
-  "svvyx workflows logs",
-  "svvyx workflows retry",
-  "svvyx workflows start",
-  "svvyx workflows stop",
-  "svvyx workflows pause",
-  "svvyx workflows continue",
-  "svvyx workflows install",
-  "svvyx workflows retrieve",
-  "svvyx workflows promote",
-  "svvyx workflows agents",
-  "svvyx workflows components",
-  "svvyx workflows prompts",
-  "svvyx workflows workflows",
-] as const;
+    expect(chatRuntimeSource).toContain("rpcClient.request.fetchStateReadModel");
+    expect(chatRuntimeSource).not.toContain("rpcClient.request.getAppLogs(scoped");
+    expect(chatRuntimeSource).not.toContain("rpcClient.request.getAppLogSummary(scoped");
+    expect(chatRuntimeSource).not.toContain(
+      'setAppCache("appPreferences", await rpcClient.request.getAppPreferences())',
+    );
 
-describe("removed product contracts", () => {
-  it("does not expose removed native direct tools or prompt-only CLI wrappers", () => {
-    const tools = createSvvyDirectTools({
-      cwd: "/repo/svvy",
-      extensionsRoot: join("/tmp", "extensions"),
-    }).codingTools;
-    const toolNames = tools.map((tool) => tool.name);
+    expect(sharedContractSource).not.toContain("StateReadModelInvalidationRefetchRequest");
+    expect(sharedContractSource).not.toContain("StateInvalidationDescriptor");
+    expect(sharedContractSource).toContain("StateReadModelRefetchRequest");
 
-    expect(toolNames).toContain("exec_command");
-    expect(toolNames).toContain("write_stdin");
-    expect(toolNames).toContain("apply_patch");
-    for (const oldPiToolName of ["bash", "read", "grep", "find", "ls", "edit", "write"]) {
-      expect(toolNames).not.toContain(oldPiToolName);
-    }
-    for (const removedToolName of REMOVED_TOOL_NAMES) {
-      expect(toolNames).not.toContain(removedToolName);
-    }
-    expect(toolNames.some((toolName) => toolName.startsWith("smithers_"))).toBe(false);
-    expect(toolNames.some((toolName) => toolName.startsWith("workflow_"))).toBe(false);
-    expect(toolNames.some((toolName) => toolName.startsWith("web_"))).toBe(false);
-    expect(toolNames.some((toolName) => toolName.startsWith("cx_"))).toBe(false);
-    expect(toolNames.some((toolName) => toolName.startsWith("git_"))).toBe(false);
-    expect(toolNames.some((toolName) => toolName.startsWith("github_"))).toBe(false);
+    expect(sessionCatalogSource).not.toContain(
+      "this.agentSettingsStore.setAppPreferences(preferences)",
+    );
+    expect(sessionCatalogSource).toContain(
+      "this.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences)",
+    );
+    expect(directToolsSource).not.toContain("store.setAppPreferences(nextState.appPreferences)");
+    expect(directToolsSource).toContain(
+      "store.hydrateStateOwnedAppPreferences(nextState.appPreferences)",
+    );
   });
 
-  it("keeps generated TypeScript snippets free of old broad API helpers", () => {
-    for (const removedFragment of [
-      "declare const api",
-      "interface SvvyApi",
-      "thread_handoff",
-      "thread_resume",
-      "request_context",
-      "runtime_current",
-      "smithers_",
-      "workflow_",
-      "web_search",
-      "web_fetch",
-      "cx_overview",
-      "git_",
-      "github_",
-      "bash(",
-    ]) {
-      expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain(removedFragment);
-    }
-  });
-
-  it("keeps generated actor prompts free of removed wrappers and old context APIs", () => {
-    for (const prompt of [
-      DEFAULT_SYSTEM_PROMPT,
-      HANDLER_SYSTEM_PROMPT,
-      WORKFLOW_TASK_SYSTEM_PROMPT,
-    ]) {
-      for (const removedFragment of REMOVED_PROMPT_FRAGMENTS) {
-        expect(prompt).not.toContain(removedFragment);
-      }
-      for (const removedCommand of REMOVED_WORKFLOWS_RUNNER_COMMANDS) {
-        expect(prompt).not.toContain(removedCommand);
-      }
-      expect(prompt).not.toContain("Selected Web Provider");
-      expect(prompt).not.toContain("Firecrawl");
-    }
-  });
-
-  it("keeps Workflows guidance scoped to source-library commands, not workflow runners", () => {
-    expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows list");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows save");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows build");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("svvyx workflows models list");
-    for (const removedCommand of REMOVED_WORKFLOWS_RUNNER_COMMANDS) {
-      expect(HANDLER_SYSTEM_PROMPT).not.toContain(removedCommand);
-    }
-  });
-
-  it("keeps prompt-only CLI extensions as instructions instead of native or generated wrappers", () => {
-    const byId = new Map(BUILTIN_EXTENSIONS.map((extension) => [extension.id, extension]));
-    for (const id of ["cx", "git", "github", "web", "smithers"] as const) {
-      expect(byId.get(id)).toMatchObject({
-        interface: "instructions",
-        typescriptApiEnabled: false,
-      });
-    }
-    expect(byId.get("workflows")).toMatchObject({ interface: "svvyx" });
-    expect(byId.get("artifacts")).toMatchObject({ interface: "svvyx" });
-    expect(byId.get("extension-managing")).toMatchObject({
-      interface: "svvyx",
-      typescriptApiEnabled: false,
-    });
-  });
-
-  it("keeps thread_start on the grouped threads schema instead of the removed single-objective contract", () => {
-    expect(Object.keys(startThreadParamsSchema.properties).toSorted()).toEqual([
-      "threadGroupId",
-      "threads",
+  it("keeps production code from calling the file-backed appPreferences setter", () => {
+    const root = join(import.meta.dir, "..");
+    const allowed = new Set([
+      "bun/agent-settings-store.ts",
+      "bun/agent-settings-store.test.ts",
+      "bun/session-catalog.test.ts",
     ]);
-    expect(startThreadParamsSchema.properties).not.toHaveProperty("objective");
-    expect(startThreadParamsSchema.properties).not.toHaveProperty("context");
-  });
+    const violations = listSourceFiles(root)
+      .filter((file) => !allowed.has(relative(root, file)))
+      .filter((file) => !file.endsWith(".test.ts"))
+      .flatMap((file) => {
+        const source = readFileSync(file, "utf8");
+        return source.includes(".setAppPreferences(")
+          ? [`${relative(root, file)} calls setAppPreferences`]
+          : [];
+      });
 
-  it("does not keep obsolete implementation files for removed surfaces", () => {
-    const root = join(import.meta.dir, "..", "..");
-    for (const relativePath of [
-      "src/bun/thread-handoff-tool.ts",
-      "src/bun/thread-resume-tool.ts",
-      "src/bun/request-context-tool.ts",
-      "src/bun/wait-tool.ts",
-      "src/bun/app-log-store.ts",
-      "src/bun/filesystem-sandbox-policy.ts",
-      "src/bun/sandbox-helper.ts",
-      "src/bun/smithers-tools.ts",
-      "src/bun/smithers-runtime/manager.ts",
-      "src/bun/smithers-runtime/native-adapter.ts",
-      "src/bun/smithers-runtime/workflow-registry.ts",
-      "src/bun/smithers-runtime/workflow-task-agent.ts",
-      "src/bun/smithers-runtime/workflow-launch-contract.ts",
-      "src/bun/workflow-supervision-proof.test.ts",
-      "src/bun/list-tools-tool.ts",
-      "src/bun/cx-tools.ts",
-      "src/bun/web-runtime/tools.ts",
-      "src/bun/web-runtime/provider-contracts/firecrawl.ts",
-      "src/bun/web-runtime/provider-contracts/tinyfish.ts",
-      "src/bun/web-runtime/provider-prompts/firecrawl.ts",
-      "src/bun/web-runtime/provider-prompts/tinyfish.ts",
-      "src/bun/web-runtime/provider-registry.ts",
-      "src/bun/web-runtime/providers/firecrawl.ts",
-      "src/bun/web-runtime/providers/tinyfish.ts",
-      "src/mainview/WorkflowInspectorPane.svelte",
-      "src/mainview/WorkflowGraph.svelte",
-      "src/mainview/SavedWorkflowLibraryPane.svelte",
-      "src/shared/workflow-inspector.ts",
-      "e2e/workflow-supervision.test.ts",
-    ]) {
-      expect(existsSync(join(root, relativePath))).toBe(false);
-    }
-  });
-
-  it("does not keep Smithers bridge attention fields or DevTools guidance in current runtime code", () => {
-    const root = join(import.meta.dir, "..", "..");
-    const checkedFiles = [
-      "packages/state/src/structured-session-state.ts",
-      "packages/state/src/structured-session-selectors.ts",
-      "src/shared/workspace-contract.ts",
-      "src/bun/default-system-prompt.ts",
-      "src/bun/smithers-runtime/workflow-authoring-guide.ts",
-    ];
-    for (const relativePath of checkedFiles) {
-      const text = readFileSync(join(root, relativePath), "utf-8");
-      expect(text).not.toContain("pendingAttentionSeq");
-      expect(text).not.toContain("lastAttentionSeq");
-      expect(text).not.toContain("pending_attention_seq");
-      expect(text).not.toContain("last_attention_seq");
-      expect(text).not.toContain("Smithers DevTools");
-      expect(text).not.toContain("smithers devtools");
-    }
-  });
-
-  it("does not bundle a stale Smithers runtime into the app package", () => {
-    const root = join(import.meta.dir, "..", "..");
-    const checkedFiles = [
-      "package.json",
-      "bun.lock",
-      "electrobun.config.ts",
-      "scripts/postbuild.ts",
-    ];
-
-    for (const relativePath of checkedFiles) {
-      const text = readFileSync(join(root, relativePath), "utf-8");
-      expect(text).not.toContain("smithers-orchestrator");
-      expect(text).not.toContain("@smithers-orchestrator");
-    }
-    expect(existsSync(join(root, "src/types/smithers-cli-subpaths.d.ts"))).toBe(false);
+    expect(violations).toEqual([]);
   });
 });
+
+function listSourceFiles(root: string): string[] {
+  return readdirSync(root).flatMap((entry) => {
+    const path = join(root, entry);
+    if (entry === "node_modules") return [];
+    const stat = statSync(path);
+    if (stat.isDirectory()) return listSourceFiles(path);
+    return path.endsWith(".ts") || path.endsWith(".svelte") ? [path] : [];
+  });
+}

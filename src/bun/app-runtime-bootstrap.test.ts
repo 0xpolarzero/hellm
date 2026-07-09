@@ -8,14 +8,15 @@ import {
   IsoDateTimeStringSchema,
   type AbsolutePath,
   type AppLogEntryId,
-  type AppLogWritePortService,
   type CommandId,
   type CreateOrchestratorSurfaceInput,
   type IsoDateTimeString,
   type PromptTarget,
+  type RuntimeEvent,
   type RuntimeClientRequestId,
   type RuntimeClientSubmissionId,
   type RuntimeClientSubmissionSource,
+  type RuntimeEventSequence,
   type SandboxPolicySnapshot,
   type SandboxPolicySourceService,
   type SourceInvalidationHint,
@@ -38,12 +39,14 @@ import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
+import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
 import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runtime-bootstrap";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 
 const tempDirs: string[] = [];
 const openStores: StructuredSessionStateStore[] = [];
+const openAppLogs: StateAppLogsFacade[] = [];
 
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
@@ -83,6 +86,9 @@ function makeStore(input: { id: string; label: string }): {
 }
 
 afterEach(() => {
+  while (openAppLogs.length > 0) {
+    openAppLogs.pop()?.close();
+  }
   while (openStores.length > 0) {
     openStores.pop()?.close();
   }
@@ -210,6 +216,119 @@ describe("app runtime bootstrap", () => {
     }
   });
 
+  it("routes workspace-scoped app-log read models and commands to workspace app logs", async () => {
+    const harness = createBootstrapHarness();
+    harness.appLogs.append({
+      level: "warn",
+      source: "app.lifecycle",
+      message: "app global only",
+    });
+    harness.workspaceAAppLogs.append({
+      level: "error",
+      source: "workspace",
+      message: "workspace a only",
+    });
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+
+    try {
+      const logs = await bootstrap.rendererState.readModels.fetch({
+        kind: "appLogs",
+        workspaceId: harness.workspaceAId,
+        query: { limit: 10 },
+      });
+      expect(logs.kind).toBe("appLogs");
+      if (logs.kind !== "appLogs") throw new Error("Expected appLogs read model.");
+      expect(logs.value.entries.map((entry) => entry.message)).toEqual(["workspace a only"]);
+
+      await bootstrap.stateCommands.appLogs.markRead({
+        workspaceId: harness.workspaceAId,
+        entryIds: ["app-log-1" as AppLogEntryId],
+        readAt: "2026-05-01T09:01:00.000Z" as typeof IsoDateTimeStringSchema.Type,
+        clientSubmission: {
+          clientRequestId: "workspace-a-app-log-mark-read" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+
+      const workspaceSummary = await bootstrap.rendererState.readModels.fetch({
+        kind: "appLogSummary",
+        workspaceId: harness.workspaceAId,
+      });
+      const appSummary = await bootstrap.rendererState.readModels.fetch({ kind: "appLogSummary" });
+      expect(workspaceSummary.kind).toBe("appLogSummary");
+      expect(appSummary.kind).toBe("appLogSummary");
+      if (workspaceSummary.kind !== "appLogSummary" || appSummary.kind !== "appLogSummary") {
+        throw new Error("Expected appLogSummary read models.");
+      }
+      expect(workspaceSummary.value.seenSeq).toBe(1);
+      expect(appSummary.value.seenSeq).toBe(0);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
+  it("publishes routed state commands through the real runtime event path before returning receipts", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    const subscription = await bootstrap.facade.events({
+      afterSequence: 0 as RuntimeEventSequence,
+    });
+
+    try {
+      const events: RuntimeEvent[] = [];
+      const eventReader = (async () => {
+        for await (const event of subscription) {
+          events.push(event);
+          if (event.type === "app_read_model.changed") {
+            return event;
+          }
+        }
+        throw new Error("Runtime event stream closed before app preferences publication.");
+      })();
+
+      const command = bootstrap.stateCommands.appPreferences.update({
+        patch: {
+          approvalMode: "user",
+        },
+        clientSubmission: {
+          clientRequestId: "app-preferences-real-publication" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
+
+      const result = await command;
+      const event = await eventReader;
+      expect(result.receipt).toMatchObject({
+        clientRequestId: "app-preferences-real-publication",
+        outcome: "applied",
+      });
+      if (event.type !== "app_read_model.changed") {
+        throw new Error("Expected app_read_model.changed event.");
+      }
+      expect(event.invalidation).toEqual({ model: "appPreferences" });
+      expect(events).toHaveLength(1);
+    } finally {
+      await subscription.close();
+      await bootstrap.dispose();
+    }
+  });
+
+  it("hydrates renderer-safe command groups without state facade lifecycle", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+
+    try {
+      expect(Object.keys(bootstrap.rendererStateCommands)).toEqual([
+        "appLogs",
+        "appPreferences",
+        "providerAuth",
+      ]);
+      expect("close" in bootstrap.rendererStateCommands).toBe(false);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
   it("prepares startup-failure shutdown before disposing the acquired runtime", async () => {
     const harness = createBootstrapHarness();
     const listSessionStates = harness.appGlobal.store.listSessionStates.bind(
@@ -245,6 +364,12 @@ function createBootstrapHarness() {
     coreTypeContractPackageRoot: mkdtempTracked("generated-core") as AbsolutePath,
   };
   const sourceCalls: string[] = [];
+  const appLogs = createStateAppLogsFacade({ now: deterministicClock() });
+  const workspaceAAppLogs = createStateAppLogsFacade({ now: deterministicClock() });
+  const workspaceBAppLogs = createStateAppLogsFacade({ now: deterministicClock() });
+  openAppLogs.push(appLogs);
+  openAppLogs.push(workspaceAAppLogs);
+  openAppLogs.push(workspaceBAppLogs);
   const storesBySession = new Map<string, WorkspaceId>();
   const commandRegistry = createLiveCommandStdinRegistry();
   commandRegistry.register({
@@ -293,7 +418,13 @@ function createBootstrapHarness() {
         packageName === "@svvyx/workflows" ? "workflows" : "extensions",
       ) as AbsolutePath,
     sandboxPolicySource: testSandboxPolicySource(),
-    appLogWritePort: testAppLogWritePort(),
+    appLogs,
+    resolveWorkspaceAppLogs: async (workspaceId: WorkspaceId) => {
+      if (workspaceId === workspaceAId) return workspaceAAppLogs;
+      if (workspaceId === workspaceBId) return workspaceBAppLogs;
+      throw new Error(`Unknown workspace app logs ${workspaceId}`);
+    },
+    appLogWritePort: appLogs.writePort,
     sandboxHostSupport: createTestSandboxHostSupport(),
     runtimeLayerConfig: defaultRuntimeLayerConfig,
     commandRegistry,
@@ -345,10 +476,13 @@ function createBootstrapHarness() {
   return {
     input,
     appGlobal,
+    appLogs,
     workspaceA,
     workspaceAId,
+    workspaceAAppLogs,
     workspaceB,
     workspaceBId,
+    workspaceBAppLogs,
     sourceCalls,
   };
 }
@@ -415,16 +549,6 @@ function savePiReference(
       metadata: { storage: "opaque" },
     },
   });
-}
-
-function testAppLogWritePort(): AppLogWritePortService {
-  return {
-    append: () =>
-      Effect.succeed({
-        value: { appLogEntryId: "app_log_app_runtime_bootstrap_test" as AppLogEntryId },
-        afterCommit: [],
-      }),
-  };
 }
 
 function testSandboxPolicySource(): SandboxPolicySourceService {

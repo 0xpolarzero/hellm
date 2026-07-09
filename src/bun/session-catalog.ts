@@ -910,7 +910,7 @@ export class WorkspaceSessionCatalog {
   }
 
   updateAppPreferences(preferences: AppPreferences): AgentSettingsState {
-    const next = this.agentSettingsStore.setAppPreferences(preferences);
+    const next = this.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
     void this.emitOpenSurfacePromptBindingUpdates();
     return next;
   }

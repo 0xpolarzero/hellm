@@ -48,10 +48,15 @@ import type {
   AppLogReadModel,
   AppLogSummary,
   AppLogUpdateMessage,
+  JsonValue,
+  ProviderAuthStatus,
+  ProviderId,
   RuntimeMessageDelivery,
   RuntimeSubmittedMessage,
   RuntimeClientSubmissionMetadata,
+  StateRevision,
   ComposerAttachment,
+  WorkspaceId,
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 
@@ -64,6 +69,73 @@ export type {
   AppLogSummary,
   AppLogUpdateMessage,
 } from "@svvy/core";
+
+export type AppLogReadModelRequest =
+  | {
+      kind: "appLogs";
+      workspaceId?: WorkspaceId;
+      query?: AppLogQuery;
+    }
+  | {
+      kind: "appLogSummary";
+      workspaceId?: WorkspaceId;
+    };
+
+export interface AppPreferencesReadModel {
+  appearance: AppPreferences["appAppearance"];
+  externalEditor: string | null;
+  artifactDirectory: string;
+  approvalMode: AppPreferences["approvalMode"];
+  networkAccess: boolean;
+  ambientResources: JsonValue;
+  updatedAt: string;
+  revision: StateRevision;
+}
+
+export interface SettingsReadModel {
+  preferences: AppPreferencesReadModel;
+}
+
+export interface AppPreferencesReadModelRequest {
+  kind: "appPreferences" | "settings";
+}
+
+export interface ProviderAuthReadModel {
+  providers: readonly ProviderAuthStatus[];
+  usableModelProviders: readonly ProviderId[];
+}
+
+export interface ProviderAuthReadModelRequest {
+  kind: "providerAuth";
+  workspaceId?: WorkspaceId;
+}
+
+export type StateReadModelRequest =
+  | AppLogReadModelRequest
+  | AppPreferencesReadModelRequest
+  | ProviderAuthReadModelRequest;
+
+export type StateReadModelResult =
+  | { kind: "appLogs"; value: AppLogReadModel }
+  | { kind: "appLogSummary"; value: AppLogSummary }
+  | { kind: "appPreferences"; value: AppPreferencesReadModel }
+  | { kind: "settings"; value: SettingsReadModel }
+  | { kind: "providerAuth"; value: ProviderAuthReadModel };
+
+export interface StateReadModelRefetchRequest {
+  requests: readonly StateReadModelRequest[];
+}
+
+export interface StateReadModelBaseline {
+  app: readonly StateReadModelResult[];
+  workspaces: readonly StateReadModelResult[];
+  revision: StateRevision;
+}
+
+export interface StateReadModelRebaselineRequest {
+  workspaceId?: WorkspaceId;
+  reason: "renderer-startup" | "event-sequence-gap" | "manual-refresh" | "runtime-restart";
+}
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export type PromptSurfaceKind = "orchestrator" | "handler";
@@ -1612,6 +1684,18 @@ export interface ChatRPCSchema {
       getAppPreferences: {
         params: undefined;
         response: AppPreferences;
+      };
+      fetchStateReadModel: {
+        params: StateReadModelRequest;
+        response: StateReadModelResult;
+      };
+      refetchStateReadModels: {
+        params: StateReadModelRefetchRequest;
+        response: readonly StateReadModelResult[];
+      };
+      rebaselineStateReadModels: {
+        params: StateReadModelRebaselineRequest;
+        response: StateReadModelBaseline;
       };
       getGeneratedAgentContext: {
         params: WorkspaceScopedRequest;

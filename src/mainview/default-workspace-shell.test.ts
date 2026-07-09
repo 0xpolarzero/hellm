@@ -220,7 +220,7 @@ describe("default workspace renderer shell", () => {
     );
     expect(runtimeSource).toContain("rpcClient.request.getSnippets(scoped())");
     expect(runtimeSource).toContain("rpcClient.request.listSessions(scoped())");
-    expect(runtimeSource).toContain("rpcClient.request.getAppPreferences()");
+    expect(runtimeSource).toContain('fetchStateReadModel({ kind: "appPreferences" })');
     expect(runtimeSource).not.toContain("getAppPreferences(scoped");
     expect(runtimeSource).not.toContain("getAppWorkspaceTabs(scoped");
     expect(runtimeSource).not.toContain("setAppWorkspaceTabs(scoped");
@@ -251,9 +251,7 @@ describe("default workspace renderer shell", () => {
     expect(routingSource).toContain("return registry.getRuntime(input.workspaceId);");
     expect(routingSource).not.toContain("getActiveRuntime");
     expect(routingSource).not.toContain("process.cwd");
-    expect(bunIndexSource).toContain(
-      "getWorkspaceRuntime(query).appLogs.query(stripWorkspaceId(query))",
-    );
+    expect(bunIndexSource).toContain('fetchRendererStateReadModel({\n          kind: "appLogs"');
     expect(bunIndexSource).not.toContain("workspaceRuntimeRegistry.getActiveRuntime()");
   });
 

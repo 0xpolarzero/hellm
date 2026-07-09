@@ -60,6 +60,7 @@ export type AgentSettingsStore = {
   setExtensionEnv(settings: ExtensionEnvSettings): AgentSettingsState;
   setRequestUserInput(settings: RequestUserInputSettings): AgentSettingsState;
   setAppPreferences(preferences: AppPreferences): AgentSettingsState;
+  hydrateStateOwnedAppPreferences(preferences: AppPreferences): AgentSettingsState;
 };
 
 export function createAgentSettingsStore(input: {
@@ -69,6 +70,7 @@ export function createAgentSettingsStore(input: {
 }): AgentSettingsStore {
   const settingsPath = join(input.agentDir, "agent-settings.json");
   const workflowsSourceRoot = input.workflowsSourceRoot ?? getWorkflowsSourceRoot();
+  let stateOwnedAppPreferencesOverlay: AppPreferences | null = null;
 
   const readState = (): AgentSettingsState => {
     const normalized = existsSync(settingsPath)
@@ -83,6 +85,12 @@ export function createAgentSettingsStore(input: {
         workflowsSourceRoot,
         normalized.workflowAgents,
       ),
+      appPreferences: stateOwnedAppPreferencesOverlay
+        ? normalizeAppPreferences({
+            ...normalized.appPreferences,
+            ...stateOwnedAppPreferencesOverlay,
+          })
+        : normalized.appPreferences,
     };
   };
 
@@ -220,6 +228,10 @@ export function createAgentSettingsStore(input: {
       const state = readState();
       state.appPreferences = normalizeAppPreferences(preferences);
       return writeState(state);
+    },
+    hydrateStateOwnedAppPreferences: (preferences) => {
+      stateOwnedAppPreferencesOverlay = normalizeAppPreferences(preferences);
+      return readState();
     },
   };
 }

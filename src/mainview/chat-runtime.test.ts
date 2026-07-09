@@ -52,9 +52,12 @@ import {
 } from "../shared/agent-settings";
 import type {
   ExtensionUsageState,
+  JsonValue,
+  ProviderId,
   QueueItemId,
   RequestInputQuestionId,
   RequestInputRequestId,
+  StateRevision,
 } from "@svvy/core";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
@@ -1088,6 +1091,79 @@ function createFakeRpc(input: {
             })
           ).appPreferences;
         },
+        fetchStateReadModel: async (request) => {
+          switch (request.kind) {
+            case "appPreferences": {
+              const preferences = (
+                await harness.client.request.getAgentSettings({
+                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+                })
+              ).appPreferences;
+              return {
+                kind: "appPreferences",
+                value: {
+                  appearance: preferences.appAppearance,
+                  externalEditor:
+                    preferences.preferredExternalEditor === "system"
+                      ? null
+                      : preferences.preferredExternalEditor,
+                  artifactDirectory: preferences.artifactDirectory,
+                  approvalMode: preferences.approvalMode,
+                  networkAccess: preferences.networkAccess,
+                  ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
+                  updatedAt: new Date(0).toISOString(),
+                  revision: 0 as StateRevision,
+                },
+              };
+            }
+            case "settings": {
+              const appPreferences = await harness.client.request.fetchStateReadModel({
+                kind: "appPreferences",
+              });
+              if (appPreferences.kind !== "appPreferences") {
+                throw new Error("Expected appPreferences.");
+              }
+              return {
+                kind: "settings",
+                value: { preferences: appPreferences.value },
+              };
+            }
+            case "appLogs":
+              return {
+                kind: "appLogs",
+                value: await harness.client.request.getAppLogs({
+                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+                  ...request.query,
+                }),
+              };
+            case "appLogSummary":
+              return {
+                kind: "appLogSummary",
+                value: await harness.client.request.getAppLogSummary({
+                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+                }),
+              };
+            case "providerAuth":
+              return {
+                kind: "providerAuth",
+                value: {
+                  providers: [
+                    {
+                      providerId: "openai" as ProviderId,
+                      health: "usable",
+                    },
+                  ],
+                  usableModelProviders: ["openai" as ProviderId],
+                },
+              };
+          }
+        },
+        refetchStateReadModels: async () => [],
+        rebaselineStateReadModels: async () => ({
+          app: [],
+          workspaces: [],
+          revision: 0 as StateRevision,
+        }),
         revertExtensionChange: async () => ({
           extensions: [],
           reversibleChanges: [],

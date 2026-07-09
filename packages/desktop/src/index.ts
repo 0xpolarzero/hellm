@@ -12,6 +12,7 @@ import type { createStateCommandsFacade, createStateFacade } from "@svvy/state";
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
 type RuntimeCommandsFacade = RuntimeFacade["commands"];
 type BootstrapStateFacade = ReturnType<typeof createStateFacade>;
+type BootstrapStateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
 
 export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;
 
@@ -22,7 +23,11 @@ export interface RendererStateFacade {
   >;
 }
 
-export type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
+export interface RendererStateCommandsFacade {
+  readonly appLogs: BootstrapStateCommandsFacade["appLogs"];
+  readonly appPreferences: BootstrapStateCommandsFacade["appPreferences"];
+  readonly providerAuth: BootstrapStateCommandsFacade["providerAuth"];
+}
 
 export interface DesktopNotificationBridge {
   start(): Promise<void>;
@@ -34,7 +39,7 @@ export interface CreateDesktopAppInput {
   readonly state: RendererStateFacade;
   readonly commands: {
     readonly runtime: RuntimeCommandsFacade;
-    readonly state: StateCommandsFacade;
+    readonly state: RendererStateCommandsFacade;
   };
   readonly notifications: DesktopNotificationBridge;
   readonly host: DesktopHostAdapter;

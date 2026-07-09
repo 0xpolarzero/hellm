@@ -544,8 +544,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopWindowAdapter",
       "DesktopWindowHandle",
       "DesktopWindowId",
+      "RendererStateCommandsFacade",
       "RendererStateFacade",
-      "StateCommandsFacade",
       "createDesktopApp",
     ],
   ],
@@ -2985,9 +2985,10 @@ describe("package boundaries", () => {
     expect(source).toContain("export interface RendererStateFacade");
     expect(source).toContain('BootstrapStateFacade["readModels"]');
     expect(source).toContain('"fetch" | "refetchInvalidation" | "rebaseline"');
-    expect(source).toContain(
-      "export type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;",
-    );
+    expect(source).toContain("export interface RendererStateCommandsFacade");
+    expect(source).toContain('BootstrapStateCommandsFacade["appLogs"]');
+    expect(source).toContain('BootstrapStateCommandsFacade["appPreferences"]');
+    expect(source).toContain('BootstrapStateCommandsFacade["providerAuth"]');
     expect(source).toContain(
       'export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;',
     );
@@ -2997,6 +2998,7 @@ describe("package boundaries", () => {
     );
     expect(source).not.toContain('BootstrapStateFacade["commands"]');
     expect(source).not.toContain('BootstrapStateFacade["close"]');
+    expect(source).not.toContain("readonly state: StateCommandsFacade;");
     expect(source).toContain('readonly kind: "read-model-changed";');
     expect(source).toContain('readonly kind: "surface-stream-patch";');
     expect(source).toContain("readonly sequence: RuntimeEventSequence;");
@@ -5144,6 +5146,7 @@ describe("package boundaries", () => {
           "ManagedRuntime.make",
           "ManagedRuntime.make",
           "ManagedRuntime.make",
+          "ManagedRuntime.make",
         ],
       ],
     ]);
@@ -7051,8 +7054,9 @@ describe("package boundaries", () => {
 
     expect(source).toContain('type RuntimeCommandsFacade = RuntimeFacade["commands"];');
     expect(source).toContain(
-      "commands: {\n    runtime: RuntimeCommandsFacade;\n    state: StateCommandsFacade;\n  };",
+      "commands: {\n    runtime: RuntimeCommandsFacade;\n    state: RendererStateCommandsFacade;\n  };",
     );
+    expect(source).toContain("type RendererStateCommandsFacade = {");
     expect(source).toContain(
       'exposeRendererApi(input: {\n    runtime: DesktopRuntimeActionsFacade;\n    state: RendererStateFacade;\n    commands: CreateDesktopAppInput["commands"];\n  })',
     );

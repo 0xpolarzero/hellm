@@ -144,13 +144,18 @@ type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
 type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;
 type RuntimeCommandsFacade = RuntimeFacade["commands"];
 type BootstrapStateFacade = ReturnType<typeof createStateFacade>;
+type BootstrapStateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
 type RendererStateFacade = {
   readModels: Pick<
     BootstrapStateFacade["readModels"],
     "fetch" | "refetchInvalidation" | "rebaseline"
   >;
 };
-type StateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
+type RendererStateCommandsFacade = {
+  appLogs: BootstrapStateCommandsFacade["appLogs"];
+  appPreferences: BootstrapStateCommandsFacade["appPreferences"];
+  providerAuth: BootstrapStateCommandsFacade["providerAuth"];
+};
 
 type DesktopNotificationBridge = {
   start(): Promise<void>;
@@ -162,7 +167,7 @@ type CreateDesktopAppInput = {
   state: RendererStateFacade;
   commands: {
     runtime: RuntimeCommandsFacade;
-    state: StateCommandsFacade;
+    state: RendererStateCommandsFacade;
   };
   notifications: DesktopNotificationBridge;
   host: DesktopHostAdapter;
@@ -355,10 +360,11 @@ const runtime = createRuntimeFacade(managedRuntime);
 const state = createStateFacade(managedRuntime);
 const stateCommands = createStateCommandsFacade(managedRuntime);
 const rendererState = narrowRendererStateFacade(state);
+const rendererStateCommands = narrowRendererStateCommandsFacade(stateCommands);
 
 const commands = {
   runtime: runtime.commands,
-  state: stateCommands,
+  state: rendererStateCommands,
 };
 
 const desktopHost = createElectrobunDesktopHostAdapter({
@@ -480,7 +486,9 @@ return command-specific committed output plus `StateCommandReceipt` only; render
 affected read models after app/bootstrap-prepared renderer-safe invalidations through the read facade.
 They are not the
 renderer-facing state read facade, and they do not expose SQL, transactions, repositories,
-file-backed source edits, generated-package refresh, or generic state mutation.
+file-backed source edits, generated-package refresh, generic state mutation, facade lifecycle, or
+`close()`. App/bootstrap narrows the bootstrap-owned `StateCommandsFacade` to
+`RendererStateCommandsFacade` before passing commands to `@svvy/desktop` or any renderer bridge.
 State command facades commit through `@svvy/state`; package-private state ports return after-commit
 descriptors only to runtime-owned event publication paths. App/bootstrap bridge adapters do not
 publish public runtime/app events directly or manually forward state descriptors. The bootstrap-created

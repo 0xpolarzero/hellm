@@ -292,6 +292,7 @@ function createSnapshotAgentSettingsStore(
     setExtensionEnv: (extensionEnv) => setState({ ...state, extensionEnv }),
     setRequestUserInput: (requestUserInput) => setState({ ...state, requestUserInput }),
     setAppPreferences: (appPreferences) => setState({ ...state, appPreferences }),
+    hydrateStateOwnedAppPreferences: (appPreferences) => setState({ ...state, appPreferences }),
   };
 }
 

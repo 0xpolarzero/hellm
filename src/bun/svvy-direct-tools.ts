@@ -1426,7 +1426,7 @@ function replaySvvyxSubprocessAgentSettings(
   const current = store.getState();
   store.setExtensionEnv(nextState.extensionEnv);
   store.setRequestUserInput(nextState.requestUserInput);
-  store.setAppPreferences(nextState.appPreferences);
+  store.hydrateStateOwnedAppPreferences(nextState.appPreferences);
   store.setAgentProfile(nextState.agents.special.threadHandler);
   for (const profile of nextState.agents.orchestrators) {
     store.setAgentProfile(profile);

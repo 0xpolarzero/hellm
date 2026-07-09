@@ -8,17 +8,27 @@ import {
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import { IsoDateTimeStringSchema } from "@svvy/core";
 import type {
   AbortPromptInput,
+  AbsolutePath,
+  AppLogEntryId,
   CommandId,
+  JsonValue,
+  ProviderAuthHealth,
+  ProviderAuthStatus,
+  ProviderId,
   RequestInputOptionId,
   RequestInputQuestionId,
   RequestInputRequestId,
   RuntimeApprovalId,
+  RuntimeClientRequestId,
+  RuntimeClientSubmissionSource,
   RequestUserInputAnswer,
   SteerQueuedMessageInput,
   SubmitMessageInput,
   SurfacePiSessionId,
+  WorkspaceId,
 } from "@svvy/core";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -52,8 +62,10 @@ import {
 } from "../shared/shortcut-registry";
 import {
   DEFAULT_AGENT_SETTINGS,
+  DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_WORKFLOW_AGENT_SETTINGS,
+  type AppPreferences,
   type AgentDefaults,
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
@@ -109,6 +121,12 @@ import {
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
+import type {
+  AppPreferencesReadModel,
+  ProviderAuthReadModel,
+  StateReadModelRequest,
+  StateReadModelResult,
+} from "@svvy/state";
 
 const DEV_SERVER_PORT = 5173;
 
@@ -1052,6 +1070,162 @@ function getWorkspaceRuntimeOperations(
   return getWorkspaceRuntimeOperationsForRequest(workspaceRuntimeRegistry, input);
 }
 
+function nowIso(): typeof IsoDateTimeStringSchema.Type {
+  return new Date().toISOString() as typeof IsoDateTimeStringSchema.Type;
+}
+
+function rpcClientSubmission(operation: string) {
+  return {
+    clientRequestId: `${operation}:${randomUUID()}` as RuntimeClientRequestId,
+    source: "renderer-rpc" as RuntimeClientSubmissionSource,
+  };
+}
+
+async function fetchRendererStateReadModel(
+  request: StateReadModelRequest,
+): Promise<StateReadModelResult> {
+  if (request.kind === "providerAuth") {
+    await syncProviderAuthStatusesWithState({ refreshOAuth: true, source: "startup_scan" });
+  }
+  const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+  return rendererState.readModels.fetch(request);
+}
+
+function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
+  result: StateReadModelResult,
+  kind: Kind,
+): Extract<StateReadModelResult, { kind: Kind }> {
+  if (result.kind !== kind) {
+    throw new Error(`Expected state read model ${kind}; received ${result.kind}.`);
+  }
+  return result as Extract<StateReadModelResult, { kind: Kind }>;
+}
+
+function appPreferencesFromReadModel(
+  readModel: AppPreferencesReadModel,
+  fallback: AppPreferences = DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+): AppPreferences {
+  const externalEditor = readModel.externalEditor;
+  const knownEditors = new Set(["system", "code", "cursor", "zed", "sublime"]);
+  return {
+    ...fallback,
+    appAppearance: readModel.appearance,
+    preferredExternalEditor:
+      externalEditor && knownEditors.has(externalEditor)
+        ? (externalEditor as AppPreferences["preferredExternalEditor"])
+        : externalEditor
+          ? "custom"
+          : "system",
+    customExternalEditorCommand:
+      externalEditor && !knownEditors.has(externalEditor)
+        ? externalEditor
+        : fallback.customExternalEditorCommand,
+    artifactDirectory: readModel.artifactDirectory,
+    approvalMode: readModel.approvalMode,
+    networkAccess: readModel.networkAccess,
+    ambientAgentResources:
+      typeof readModel.ambientResources === "object" &&
+      readModel.ambientResources !== null &&
+      !Array.isArray(readModel.ambientResources)
+        ? (readModel.ambientResources as unknown as AppPreferences["ambientAgentResources"])
+        : fallback.ambientAgentResources,
+  };
+}
+
+function appPreferencesPatch(preferences: AppPreferences) {
+  return {
+    appearance: preferences.appAppearance,
+    externalEditor:
+      preferences.preferredExternalEditor === "system"
+        ? null
+        : preferences.preferredExternalEditor === "custom"
+          ? preferences.customExternalEditorCommand || "custom"
+          : preferences.preferredExternalEditor,
+    artifactDirectory: preferences.artifactDirectory as AbsolutePath,
+    approvalMode: preferences.approvalMode,
+    networkAccess: preferences.networkAccess,
+    ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
+  };
+}
+
+function providerHealthFromInfo(info: ProviderAuthInfo): ProviderAuthHealth {
+  switch (info.authHealth) {
+    case "available":
+      return "usable";
+    case "oauth-expired":
+      return "expired";
+    case "oauth-refresh-failed":
+      return "refresh_failed";
+    case "missing":
+      return "missing";
+  }
+}
+
+function providerInfoFromStatus(
+  status: ProviderAuthStatus,
+  fallback: ProviderAuthInfo | undefined,
+): ProviderAuthInfo {
+  const authHealth =
+    status.health === "usable"
+      ? "available"
+      : status.health === "expired"
+        ? "oauth-expired"
+        : status.health === "refresh_failed"
+          ? "oauth-refresh-failed"
+          : "missing";
+  return {
+    provider: status.providerId,
+    hasKey: status.health !== "missing",
+    keyType: fallback?.keyType ?? (status.health === "missing" ? "none" : "apikey"),
+    supportsOAuth: fallback?.supportsOAuth ?? supportsOAuth(status.providerId),
+    authHealth,
+    expiresAt: status.expiresAt ?? fallback?.expiresAt ?? null,
+    ...(status.issue
+      ? { authError: status.issue }
+      : fallback?.authError
+        ? { authError: fallback.authError }
+        : {}),
+    ...(fallback?.authFailedAt ? { authFailedAt: fallback.authFailedAt } : {}),
+  };
+}
+
+async function syncProviderAuthStatusesWithState(input: {
+  refreshOAuth: boolean;
+  source: "startup_scan" | "user_action";
+}): Promise<ProviderAuthInfo[]> {
+  const summaries = await listProviderAuthSummaries({ refreshOAuth: input.refreshOAuth });
+  const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+  const observedAt = nowIso();
+  await Promise.all(
+    summaries.map((summary) =>
+      stateCommands.providerAuth.recordStatus({
+        status: {
+          providerId: summary.provider as ProviderId,
+          health: providerHealthFromInfo(summary),
+          ...(summary.expiresAt
+            ? { expiresAt: summary.expiresAt as typeof IsoDateTimeStringSchema.Type }
+            : {}),
+          ...(summary.authError ? { issue: summary.authError } : {}),
+        },
+        observedAt,
+        source: input.source,
+        clientSubmission: rpcClientSubmission(`provider-auth:${summary.provider}`),
+      }),
+    ),
+  );
+  return summaries;
+}
+
+function providerAuthInfosFromReadModel(
+  readModel: ProviderAuthReadModel,
+  fallbacks: readonly ProviderAuthInfo[],
+): ProviderAuthInfo[] {
+  const byProvider = new Map(fallbacks.map((info) => [info.provider, info]));
+  return readModel.providers.map((status) =>
+    providerInfoFromStatus(status, byProvider.get(status.providerId)),
+  );
+}
+
 function addWorkspaceBranch<T extends { cwd: string }>(info: T): T & { branch?: string } {
   const branch = getWorkspaceBranch(info.cwd);
   return {
@@ -1615,8 +1789,23 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
       },
       getAppPreferences: async () => {
-        return (await workspaceRuntimeRegistry.getDefaultWorkspace()).agentSettingsStore.getState()
-          .appPreferences;
+        const result = requireStateReadModel(
+          await fetchRendererStateReadModel({ kind: "appPreferences" }),
+          "appPreferences",
+        );
+        const fallback = (
+          await workspaceRuntimeRegistry.getDefaultWorkspace()
+        ).agentSettingsStore.getState().appPreferences;
+        return appPreferencesFromReadModel(result.value, fallback);
+      },
+      fetchStateReadModel: fetchRendererStateReadModel,
+      refetchStateReadModels: async (request) =>
+        Promise.all(
+          request.requests.map((readModelRequest) => fetchRendererStateReadModel(readModelRequest)),
+        ),
+      rebaselineStateReadModels: async (request) => {
+        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+        return rendererState.readModels.rebaseline(request);
       },
       getGeneratedAgentContext: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextState();
@@ -1920,8 +2109,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           appAppearance: preferences.appAppearance,
           preferredExternalEditor: preferences.preferredExternalEditor,
         });
+        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+        await stateCommands.appPreferences.update({
+          patch: appPreferencesPatch(preferences),
+          clientSubmission: rpcClientSubmission("app-preferences:update"),
+        });
+        const statePreferences =
+          await workspaceRuntimeRegistry.hydrateStateOwnedAppPreferencesFromStateRows();
         const defaultRuntime = await workspaceRuntimeRegistry.getDefaultWorkspace();
-        const next = defaultRuntime.catalog.updateAppPreferences(preferences);
         for (const workspace of workspaceRuntimeRegistry.listOpenWorkspaces()) {
           if (workspace.workspaceId === defaultRuntime.workspaceId) {
             continue;
@@ -1930,7 +2125,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             .getRuntime(workspace.workspaceId)
             .catalog.notifyAppPreferencesChanged();
         }
-        return next;
+        await defaultRuntime.catalog.notifyAppPreferencesChanged();
+        return {
+          ...defaultRuntime.agentSettingsStore.getState(),
+          appPreferences: statePreferences,
+        };
       },
       updateRequestUserInputSettings: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2022,11 +2221,35 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
       },
       getAppLogs: (query) => {
-        return getWorkspaceRuntime(query).appLogs.query(stripWorkspaceId(query));
+        getWorkspaceRuntime(query);
+        return fetchRendererStateReadModel({
+          kind: "appLogs",
+          workspaceId: query.workspaceId as WorkspaceId,
+          query: stripWorkspaceId(query),
+        }).then((result) => requireStateReadModel(result, "appLogs").value);
       },
-      getAppLogSummary: (input) => getWorkspaceRuntime(input).appLogs.summary(),
-      markAppLogsSeen: ({ workspaceId, throughSeq }) =>
-        workspaceRuntimeRegistry.getRuntime(workspaceId).appLogs.markSeen(throughSeq),
+      getAppLogSummary: (input) => {
+        getWorkspaceRuntime(input);
+        return fetchRendererStateReadModel({
+          kind: "appLogSummary",
+          workspaceId: input.workspaceId as WorkspaceId,
+        }).then((result) => requireStateReadModel(result, "appLogSummary").value);
+      },
+      markAppLogsSeen: async ({ workspaceId, throughSeq }) => {
+        workspaceRuntimeRegistry.getRuntime(workspaceId);
+        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+        await stateCommands.appLogs.markRead({
+          workspaceId: workspaceId as WorkspaceId,
+          entryIds: [`app-log-${throughSeq}` as AppLogEntryId],
+          readAt: nowIso(),
+          clientSubmission: rpcClientSubmission("app-logs:mark-seen"),
+        });
+        const result = await fetchRendererStateReadModel({
+          kind: "appLogSummary",
+          workspaceId: workspaceId as WorkspaceId,
+        });
+        return requireStateReadModel(result, "appLogSummary").value;
+      },
       writeClipboardText: ({ text }) => {
         Utils.clipboardWriteText(text);
         return { ok: true };
@@ -2700,8 +2923,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         }
         return result;
       },
-      listProviderAuths: async (): Promise<ProviderAuthInfo[]> =>
-        listProviderAuthSummaries({ refreshOAuth: true }),
+      listProviderAuths: async (): Promise<ProviderAuthInfo[]> => {
+        const fallbacks = await syncProviderAuthStatusesWithState({
+          refreshOAuth: true,
+          source: "startup_scan",
+        });
+        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+        const result = requireStateReadModel(
+          await rendererState.readModels.fetch({ kind: "providerAuth" }),
+          "providerAuth",
+        );
+        return providerAuthInfosFromReadModel(result.value, fallbacks);
+      },
       setProviderApiKey: async ({
         providerId,
         apiKey,
@@ -2720,6 +2953,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             providerId,
             keyType: "apikey",
           });
+        await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
         return { ok: true };
       },
       startOAuth: async ({
@@ -2733,6 +2967,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           workspaceRuntimeRegistry
             .getActiveRuntimeOrNull()
             ?.appLog.info("auth.provider", "Provider OAuth started.", { providerId });
+          await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
           return { ok: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2756,6 +2991,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         workspaceRuntimeRegistry
           .getActiveRuntimeOrNull()
           ?.appLog.info("auth.provider", "Provider auth removed.", { providerId });
+        await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
         return { ok: true };
       },
     },

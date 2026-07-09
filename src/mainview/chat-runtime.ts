@@ -16,6 +16,7 @@ import type {
   RuntimeAttachmentId,
   RuntimeSubmittedAttachment,
   RuntimeSubmittedMessage,
+  WorkspaceId,
   WorkspaceRelativePath,
 } from "@svvy/core";
 import {
@@ -64,6 +65,7 @@ import {
   type AgentContextPreviewRequest,
   type AgentContextPreviewResponse,
   type AgentModelChoicesResponse,
+  type AppPreferencesReadModel,
   type RequestUserInputAnswerResponse,
   type AddExtensionInstructionFileRequest,
   type BuildExtensionRequest,
@@ -88,6 +90,7 @@ import {
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
   type SetExtensionTypescriptApiRequest,
+  type StateReadModelResult,
   type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
   type WriteCommandStdinRequest,
@@ -115,6 +118,7 @@ import { createChatStorage, type ChatStorage } from "./chat-storage";
 import {
   type AgentSettingsState,
   type AppPreferences,
+  DEFAULT_AGENT_SETTINGS_STATE,
   type ReasoningEffort,
   type AgentProfileSettings,
   type AgentProfileId,
@@ -227,6 +231,47 @@ function workspaceReadModelCache(workspaceId: string): WorkspaceReadModelCache {
 
 function cloneOrNull<T>(value: T | null): T | null {
   return value ? structuredClone(value) : null;
+}
+
+function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
+  result: StateReadModelResult,
+  kind: Kind,
+): Extract<StateReadModelResult, { kind: Kind }> {
+  if (result.kind !== kind) {
+    throw new Error(`Expected state read model ${kind}; received ${result.kind}.`);
+  }
+  return result as Extract<StateReadModelResult, { kind: Kind }>;
+}
+
+function appPreferencesFromStateReadModel(
+  readModel: AppPreferencesReadModel,
+  fallback: AppPreferences,
+): AppPreferences {
+  const externalEditor = readModel.externalEditor;
+  const knownEditors = new Set(["system", "code", "cursor", "zed", "sublime"]);
+  return {
+    ...fallback,
+    appAppearance: readModel.appearance,
+    preferredExternalEditor:
+      externalEditor && knownEditors.has(externalEditor)
+        ? (externalEditor as AppPreferences["preferredExternalEditor"])
+        : externalEditor
+          ? "custom"
+          : "system",
+    customExternalEditorCommand:
+      externalEditor && !knownEditors.has(externalEditor)
+        ? externalEditor
+        : fallback.customExternalEditorCommand,
+    artifactDirectory: readModel.artifactDirectory,
+    approvalMode: readModel.approvalMode,
+    networkAccess: readModel.networkAccess,
+    ambientAgentResources:
+      typeof readModel.ambientResources === "object" &&
+      readModel.ambientResources !== null &&
+      !Array.isArray(readModel.ambientResources)
+        ? (readModel.ambientResources as unknown as AppPreferences["ambientAgentResources"])
+        : fallback.ambientAgentResources,
+  };
 }
 
 function notifyReadModelCachesChanged(workspaceId?: string): void {
@@ -588,6 +633,9 @@ export interface ChatRuntimeRpcClient {
     getAgentModelChoices: typeof rpc.request.getAgentModelChoices;
     getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
     getAppPreferences: typeof rpc.request.getAppPreferences;
+    fetchStateReadModel: typeof rpc.request.fetchStateReadModel;
+    refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
+    rebaselineStateReadModels: typeof rpc.request.rebaselineStateReadModels;
     revertExtensionChange: typeof rpc.request.revertExtensionChange;
     saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
     renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
@@ -1839,13 +1887,26 @@ export async function createChatRuntime(
     setAppCache("agentSettings", await rpcClient.request.getAgentSettings(scoped()))!;
 
   const refreshAppPreferences = async (): Promise<AppPreferences> =>
-    setAppCache("appPreferences", await rpcClient.request.getAppPreferences())!;
+    setAppCache(
+      "appPreferences",
+      appPreferencesFromStateReadModel(
+        requireStateReadModel(
+          await rpcClient.request.fetchStateReadModel({ kind: "appPreferences" }),
+          "appPreferences",
+        ).value,
+        appReadModelCache.agentSettings?.appPreferences ??
+          appReadModelCache.appPreferences ??
+          DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+      ),
+    )!;
 
   const refreshAgentModelChoices = async (): Promise<AgentModelChoicesResponse> =>
     setAppCache("agentModelChoices", await rpcClient.request.getAgentModelChoices(scoped()))!;
 
-  const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> =>
-    setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
+  const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> => {
+    await rpcClient.request.fetchStateReadModel({ kind: "providerAuth" });
+    return setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
+  };
 
   const refreshExtensionsInventory = async (): Promise<ExtensionsInventoryReadModel> =>
     setWorkspaceCache(
@@ -1868,7 +1929,14 @@ export async function createChatRuntime(
     setWorkspaceCache("snippets", await rpcClient.request.getSnippets(scoped()))!;
 
   const refreshAppLogs = async (query?: AppLogQuery): Promise<AppLogReadModel> => {
-    const backendReadModel = await rpcClient.request.getAppLogs(scoped(query ?? {}));
+    const backendReadModel = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "appLogs",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        query,
+      }),
+      "appLogs",
+    ).value;
     backendAppLogSummary = backendReadModel.summary;
     appLogSummary = summarizeRendererAppLogs(
       backendAppLogSummary,
@@ -3073,7 +3141,13 @@ export async function createChatRuntime(
     },
     getAppLogs: refreshAppLogs,
     getAppLogSummary: async () => {
-      backendAppLogSummary = await rpcClient.request.getAppLogSummary(scoped());
+      backendAppLogSummary = requireStateReadModel(
+        await rpcClient.request.fetchStateReadModel({
+          kind: "appLogSummary",
+          workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        }),
+        "appLogSummary",
+      ).value;
       appLogSummary = summarizeRendererAppLogs(
         backendAppLogSummary,
         rendererTelemetryEntries,
@@ -3410,7 +3484,7 @@ export async function createChatRuntime(
     updateAppPreferences: async (preferences) => {
       const state = await rpcClient.request.updateAppPreferences(preferences);
       setAppCache("agentSettings", state);
-      const nextPreferences = setAppCache("appPreferences", state.appPreferences)!;
+      const nextPreferences = await refreshAppPreferences();
       void refreshAgentModelChoices().catch(() => undefined);
       void refreshExtensionsInventory().catch(() => undefined);
       void refreshExternalInstructionSources().catch(() => undefined);

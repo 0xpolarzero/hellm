@@ -938,6 +938,32 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect((await second.catalog.listSessions()).sessions).toEqual([]);
   });
 
+  it("hydrates state-owned appPreferences into the store used by tool approval and network decisions", async () => {
+    const cwd = tempWorkspace("state-owned-preferences");
+    const registry = createRegistry(cwd);
+    const runtime = await registry.acquireWorkspace(cwd);
+
+    expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(true);
+    expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("auto-review");
+
+    const stateCommands = await registry.getStateCommandsFacade();
+    await stateCommands.appPreferences.update({
+      patch: {
+        approvalMode: "user",
+        networkAccess: false,
+      },
+      clientSubmission: {
+        clientRequestId: "state-owned-preferences-tool-decisions" as RuntimeClientRequestId,
+        source: "test" as RuntimeClientSubmissionSource,
+      },
+    });
+    await registry.hydrateStateOwnedAppPreferencesFromStateRows();
+
+    expect(registry.getRuntime(runtime.workspaceId)).toBe(runtime);
+    expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("user");
+    expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(false);
+  });
+
   it("passes the decoded runtime layer config into workspace catalogs and runtime adapter creation", () => {
     const source = readFileSync(
       new URL("./workspace-runtime-registry.ts", import.meta.url),

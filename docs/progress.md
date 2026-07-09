@@ -516,6 +516,13 @@ true })`, and broad sleep/polling helpers in unit tests.
           `StateFacadeErrorContract` failures, support post-admission abort/interruption mapping, and
           never expose runtime mutations, repositories, SQL handles, generic transactions, raw causes,
           SQLite errors, or invalidation descriptors as caller-facing payloads.
+      - [ ] App/bootstrap constructs `createStateFacade(managedRuntime)`,
+            `createStateCommandsFacade(managedRuntime)`, and a renderer-narrowed state facade over
+            the routed app-global/workspace state graph; renderer RPC reads for `appLogs`,
+            `appLogSummary`, `appPreferences`, `settings`, and `providerAuth` use that read facade,
+            and app-log read-state, app-preference, and provider-auth status mutations use
+            `StateCommandsFacade` so command promises resolve only after the runtime-owned
+            post-commit notification port accepts committed descriptors.
     - [ ] State access uses the package-appropriate narrow boundary only: runtime, extensions,
           pi-adapter, sandbox, and generated packages consume core-owned state ports; desktop,
           browser-tool, headless, and non-bootstrap app code consume approved state read/command

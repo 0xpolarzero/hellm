@@ -922,6 +922,7 @@ export interface StructuredSessionStateStore {
   getCurrentTimestamp(): string;
   getDigestHelper(): StateDigestHelper;
   readCurrentStateRevision(): StateRevision;
+  hasAppPreferencesRow(): boolean;
   readAppPreferences(): StructuredAppPreferencesRecord;
   updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord;
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult;
@@ -2324,6 +2325,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   readAppPreferences(): StructuredAppPreferencesRecord {
     return this.readAppPreferencesRow();
+  }
+
+  hasAppPreferencesRow(): boolean {
+    const row = this.db.query(`SELECT 1 AS found FROM app_preferences WHERE id = 1`).get() as
+      | { found: number }
+      | undefined;
+    return Boolean(row);
   }
 
   updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord {
