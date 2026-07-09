@@ -2,32 +2,40 @@ import { getModel } from "@mariozechner/pi-ai";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Redacted from "effect/Redacted";
 import {
   AppLogWritePort,
   ExtensionError as CoreExtensionError,
   ExtensionStatePort,
+  PiAdapterError,
+  PiRuntimePathsPort,
+  ProviderAuthPort,
+  ProviderAuthPortError,
   RuntimeContractError,
   RuntimeGeneratedPackageStatePort,
   RuntimePromptDefaultsStatePort,
   StateContractError,
   SandboxPolicySource,
   type AbsolutePath,
+  type AuthenticatedRunTaskAgentInput,
   type AppLogWritePortService,
   type BuildLaunchPolicyInput,
   type ExtensionStatePortService,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
+  type ProviderId,
   type RuntimeGeneratedPackageStatePortService,
-  type PromptTarget,
   type RefreshGeneratedContextRequest,
+  type RunTaskAgentResult,
   type SandboxLaunchFacts,
   type SandboxPolicySourceService,
   type SourceInvalidationHint,
   type SourceReconcileRequest,
-  type TurnId,
   type WorkspaceId,
+  type PiRuntimePathsSnapshot,
 } from "@svvy/core";
+import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import {
   layer as extensionsLayer,
@@ -54,10 +62,9 @@ import {
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerSurfaceQueueWakePort,
   RuntimeSourceInvalidationScanPort,
+  RuntimeWorkflowTaskAgentBridgeBearerVerifier,
   type RuntimeGeneratedPackageRefreshHostPortService,
   type RuntimeLayerCommandControlPortService,
   type RuntimeLayerCommandStdinPortService,
@@ -80,23 +87,23 @@ import type { PackagedSandboxHostSupportServices } from "./runtime-service-adapt
 
 type RuntimeFacade = ReturnType<typeof createRuntimeFacade>;
 
+function usableProviderAuthSnapshot(input: {
+  readonly providerId: ProviderId;
+  readonly workspaceId?: WorkspaceId;
+  readonly accessToken: string;
+}) {
+  return {
+    providerId: input.providerId,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    health: "usable" as const,
+    accessToken: Redacted.make(input.accessToken),
+    credentialFingerprint: `runtime:${input.providerId}`,
+  };
+}
+
 export type AppRuntimeBootstrapWorkspaceStateInput =
   | WorkspaceStateRegistration
   | { workspaceStateRouterRegistration(): WorkspaceStateRegistration };
-
-export interface AppRuntimeBootstrapWorkspaceExecutor {
-  cancelActivePrompt(input: {
-    readonly target: PromptTarget;
-    readonly turnId: TurnId;
-  }): Promise<void>;
-  cancelPrompt(target: PromptTarget): Promise<void>;
-  wakeRuntimeSurfaceQueue(input: {
-    readonly target: PromptTarget;
-    readonly reason: Parameters<
-      import("@svvy/runtime/bootstrap").RuntimeLayerSurfaceQueueWakePortService["wakeSurfaceQueue"]
-    >[0]["reason"];
-  }): Promise<void>;
-}
 
 export interface AppRuntimeBootstrapSourceInvalidationCoordinator {
   classifyHint(input: SourceInvalidationHint): Promise<"scan" | "scan-parent-domain" | "ignore">;
@@ -129,8 +136,8 @@ export interface AppRuntimeBootstrapInput {
     ensureUsableProviderAuth(provider: string): Promise<string | undefined>;
     getProviderAuthUnavailableMessage(provider: string): string;
   };
-  readonly workspaceExecutors: {
-    resolvePromptTarget(target: PromptTarget): Promise<AppRuntimeBootstrapWorkspaceExecutor>;
+  readonly piRuntimePaths: {
+    resolve(workspaceId: WorkspaceId): Promise<PiRuntimePathsSnapshot>;
   };
   readonly generatedContextRefresh: {
     refresh(input: RefreshGeneratedContextRequest): Promise<void>;
@@ -146,6 +153,13 @@ export interface AppRuntimeBootstrapInput {
     resolveWorkspaceCoordinator(
       workspaceId: WorkspaceId,
     ): Promise<AppRuntimeBootstrapSourceInvalidationCoordinator>;
+  };
+  readonly workflowTaskAgentBridge?: {
+    verifyBearerLineage(input: {
+      readonly bearerToken: string;
+      readonly workspaceSessionId: string;
+      readonly sourceCommandId: string;
+    }): Promise<boolean> | boolean;
   };
 }
 
@@ -176,6 +190,9 @@ export interface AppRuntimeBootstrap {
       readonly requestDirectToolApproval: RuntimeApprovalBoundary;
       readonly runLoadExtension: RunAcceptedLoadExtension;
       readonly runRequestUserInput: RunAcceptedRequestUserInput;
+    };
+    readonly workflowTaskAgentBridge: {
+      runTaskAgent(input: AuthenticatedRunTaskAgentInput): Promise<RunTaskAgentResult>;
     };
     readonly workspaceStates: {
       register(input: AppRuntimeBootstrapWorkspaceStateInput): void;
@@ -226,40 +243,13 @@ export async function createAppRuntimeBootstrap(
   );
   const runtimeHostLayer = Layer.mergeAll(
     extensionsLayer.pipe(Layer.provide(extensionPackageLayer)),
+    PiAdapterLayer,
     layerRuntimeBunPlatform,
     Layer.succeed(SandboxPolicySource, input.sandboxPolicySource),
     Layer.succeed(SandboxHelperCandidatesPort, sandboxHostSupport.helperCandidates),
     Layer.succeed(HostProcessReferencePort, sandboxHostSupport.hostProcess),
     layerExtensionSourceRootsPort(input.sourceRoots),
-    Layer.succeed(RuntimeLayerPromptControlHostPort, {
-      cancelActivePrompt: (request) =>
-        Effect.tryPromise({
-          try: async () => {
-            const executor = await input.workspaceExecutors.resolvePromptTarget(request.target);
-            await executor.cancelActivePrompt(request);
-          },
-          catch: (cause) => runtimeBootstrapError("runtime.messages.abort.active", cause),
-        }),
-      cancelPrompt: (target) =>
-        Effect.tryPromise({
-          try: async () => {
-            const executor = await input.workspaceExecutors.resolvePromptTarget(target);
-            await executor.cancelPrompt(target);
-          },
-          catch: (cause) => runtimeBootstrapError("runtime.messages.abort", cause),
-        }),
-    }),
     Layer.succeed(RuntimePromptDefaultsStatePort, workspaceRouter.promptDefaults),
-    Layer.succeed(RuntimeLayerSurfaceQueueWakePort, {
-      wakeSurfaceQueue: (request) =>
-        Effect.tryPromise({
-          try: async () => {
-            const executor = await input.workspaceExecutors.resolvePromptTarget(request.target);
-            await executor.wakeRuntimeSurfaceQueue(request);
-          },
-          catch: (cause) => runtimeBootstrapError("runtime.queueWake.wakeSurface", cause),
-        }),
-    }),
     workspaceStateLayer,
     Layer.succeed(RuntimeLayerProviderAuthPort, {
       ensureUsableProviderAuth: (provider) =>
@@ -268,6 +258,68 @@ export async function createAppRuntimeBootstrap(
           catch: (cause) => runtimeBootstrapError("runtime.messages.submit.providerAuth", cause),
         }),
       getProviderAuthUnavailableMessage: input.providerAuth.getProviderAuthUnavailableMessage,
+    }),
+    Layer.succeed(ProviderAuthPort, {
+      getProviderAuthSnapshot: ({ providerId, workspaceId }) =>
+        Effect.tryPromise({
+          try: async () => {
+            const accessToken = await input.providerAuth.ensureUsableProviderAuth(providerId);
+            if (!accessToken) {
+              return {
+                providerId,
+                ...(workspaceId ? { workspaceId } : {}),
+                health: "missing" as const,
+                issue: input.providerAuth.getProviderAuthUnavailableMessage(providerId),
+              };
+            }
+            return usableProviderAuthSnapshot({ providerId, workspaceId, accessToken });
+          },
+          catch: (cause) =>
+            new ProviderAuthPortError({
+              operation: "runtime.pi.providerAuth.getProviderAuthSnapshot",
+              reason: "state-conflict",
+              message:
+                cause instanceof Error ? cause.message : "Provider auth snapshot lookup failed.",
+              cause,
+            }),
+        }),
+      refreshProviderCredentialSnapshot: ({ providerId, workspaceId }) =>
+        Effect.tryPromise({
+          try: async () => {
+            const accessToken = await input.providerAuth.ensureUsableProviderAuth(providerId);
+            if (!accessToken) {
+              return {
+                providerId,
+                ...(workspaceId ? { workspaceId } : {}),
+                health: "missing" as const,
+                issue: input.providerAuth.getProviderAuthUnavailableMessage(providerId),
+              };
+            }
+            return usableProviderAuthSnapshot({ providerId, workspaceId, accessToken });
+          },
+          catch: (cause) =>
+            new ProviderAuthPortError({
+              operation: "runtime.pi.providerAuth.refreshProviderCredentialSnapshot",
+              reason: "state-conflict",
+              message:
+                cause instanceof Error ? cause.message : "Provider auth snapshot refresh failed.",
+              cause,
+            }),
+        }),
+    }),
+    Layer.succeed(PiRuntimePathsPort, {
+      resolve: ({ workspaceId }) =>
+        Effect.tryPromise({
+          try: () => input.piRuntimePaths.resolve(workspaceId),
+          catch: (cause) =>
+            new PiAdapterError({
+              operation: "runtime.pi.paths.resolve",
+              reason: "runtime-paths-failed",
+              message:
+                cause instanceof Error ? cause.message : "Pi runtime paths could not be resolved.",
+              cause,
+            }),
+        }),
     }),
     Layer.succeed(RuntimeLayerModelResolverPort, {
       resolveModelId: ({ provider, model }) =>
@@ -287,6 +339,14 @@ export async function createAppRuntimeBootstrap(
     Layer.succeed(RuntimeSourceInvalidationScanPort, createSourceInvalidationScanPort(input)),
     Layer.succeed(RuntimeLayerCommandStdinPort, input.commandRegistry),
     Layer.succeed(RuntimeLayerCommandControlPort, input.commandRegistry),
+    Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
+      verify: (request) =>
+        Effect.tryPromise({
+          try: async () =>
+            Boolean(await input.workflowTaskAgentBridge?.verifyBearerLineage(request)),
+          catch: (cause) => runtimeBootstrapError("runtime.workflowTaskAgentBridge.verify", cause),
+        }).pipe(Effect.catch(() => Effect.succeed(false))),
+    }),
   );
   const runtimeLayerConfig = createRuntimeLayerConfigLayer(input.runtimeLayerConfig);
   const managedRuntime = ManagedRuntime.make(
@@ -301,6 +361,8 @@ export async function createAppRuntimeBootstrap(
     const readiness = await awaitRuntimeStartupReadiness(managedRuntime);
     const facade = createRuntimeFacade(managedRuntime);
     lifecycle.markReady();
+    const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
+      managedRuntime.runPromise(effect);
     const acquireDirectToolLaunch = (
       request: Omit<BuildLaunchPolicyInput, "launchKind"> & {
         readonly toolName: "exec_command" | "apply_patch" | "execute_typescript";
@@ -317,7 +379,7 @@ export async function createAppRuntimeBootstrap(
         },
         sourceInvalidation: {
           refreshGeneratedPackages: (request) =>
-            managedRuntime.runPromise(
+            runRuntimePromise(
               Effect.gen(function* () {
                 const runtime = yield* Runtime;
                 return yield* runtime.sourceInvalidation.refreshGeneratedPackages(request);
@@ -329,6 +391,15 @@ export async function createAppRuntimeBootstrap(
             requestAcceptedDirectToolApproval(managedRuntime, request),
           runLoadExtension: (request) => runAcceptedLoadExtension(managedRuntime, request),
           runRequestUserInput: (request) => runAcceptedRequestUserInput(managedRuntime, request),
+        },
+        workflowTaskAgentBridge: {
+          runTaskAgent: (request) =>
+            runRuntimePromise(
+              Effect.gen(function* () {
+                const runtime = yield* Runtime;
+                return yield* runtime.workflowTaskAgentBridge.runTaskAgent(request);
+              }) as Effect.Effect<RunTaskAgentResult, unknown, never>,
+            ),
         },
         workspaceStates: {
           register: (request) => {

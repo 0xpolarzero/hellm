@@ -6,6 +6,8 @@ import {
   RuntimeCommandStatePort,
   RuntimeEpisodeStatePort,
   RuntimeGeneratedPackageStatePort,
+  PiSessionReferencePort,
+  PiSessionReferencePortError,
   RuntimePromptDefaultsStatePort,
   RuntimeQueueStatePort,
   RuntimeRequestStatePort,
@@ -14,9 +16,11 @@ import {
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
+  RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
   StateContractError,
   type PromptTarget,
+  type RuntimeSurfaceTarget,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimeApprovalRecord,
   type RuntimeApprovalStatePortService,
@@ -34,7 +38,9 @@ import {
   type RuntimeSurfaceMessageRecord,
   type RuntimeThreadStatePortService,
   type RuntimeTurnStatePortService,
+  type RuntimeWorkflowTaskStatePortService,
   type RuntimeWorkspaceStatePortService,
+  type PiSessionReferencePortService,
   type SourceInvalidationScope,
   type StateMutationResult,
   type WorkspaceId,
@@ -45,6 +51,7 @@ import { runtimeCommandStatePortFromStructuredSessionState } from "./runtime-com
 import { runtimeEpisodeStatePortFromStructuredSessionState } from "./runtime-episode-state-port";
 import { runtimeGeneratedPackageStatePortFromStructuredSessionState } from "./runtime-generated-package-state-port";
 import { runtimePromptDefaultsStatePortFromStructuredSessionState } from "./runtime-prompt-defaults-state-port";
+import { piSessionReferencePortFromStructuredSessionState } from "./pi-session-reference-port";
 import { runtimeQueueStatePortFromStructuredSessionState } from "./runtime-queue-state-port";
 import { runtimeRequestStatePortFromStructuredSessionState } from "./runtime-request-state-port";
 import { runtimeSessionWaitStatePortFromStructuredSessionState } from "./runtime-session-wait-state-port";
@@ -52,6 +59,7 @@ import { runtimeSourceStatePortFromStructuredSessionState } from "./runtime-sour
 import { runtimeSurfaceLifecycleStatePortFromStructuredSessionState } from "./runtime-surface-lifecycle-state-port";
 import { runtimeThreadStatePortFromStructuredSessionState } from "./runtime-thread-state-port";
 import { runtimeTurnStatePortFromStructuredSessionState } from "./runtime-turn-state-port";
+import { runtimeWorkflowTaskStatePortFromStructuredSessionState } from "./runtime-workflow-task-state-port";
 import { runtimeWorkspaceStatePortFromStructuredSessionState } from "./runtime-workspace-state-port";
 import {
   structuredSessionStateFromStore,
@@ -85,7 +93,9 @@ export interface WorkspaceStateRouter {
   readonly sessionWait: RuntimeSessionWaitStatePortService;
   readonly thread: RuntimeThreadStatePortService;
   readonly turn: RuntimeTurnStatePortService;
+  readonly workflowTask: RuntimeWorkflowTaskStatePortService;
   readonly episode: RuntimeEpisodeStatePortService;
+  readonly piSessionReference: PiSessionReferencePortService;
   readonly appGlobalStructuredSession: StructuredSessionState["Service"];
   readonly resolveWorkspaceStructuredSession: (
     workspaceId: WorkspaceId,
@@ -111,7 +121,9 @@ interface RegisteredStore {
     readonly sessionWait: RuntimeSessionWaitStatePortService;
     readonly thread: RuntimeThreadStatePortService;
     readonly turn: RuntimeTurnStatePortService;
+    readonly workflowTask: RuntimeWorkflowTaskStatePortService;
     readonly episode: RuntimeEpisodeStatePortService;
+    readonly piSessionReference: PiSessionReferencePortService;
   };
 }
 
@@ -139,7 +151,9 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
       sessionWait: runtimeSessionWaitStatePortFromStructuredSessionState(structuredSession),
       thread: runtimeThreadStatePortFromStructuredSessionState(structuredSession),
       turn: runtimeTurnStatePortFromStructuredSessionState(structuredSession),
+      workflowTask: runtimeWorkflowTaskStatePortFromStructuredSessionState(structuredSession),
       episode: runtimeEpisodeStatePortFromStructuredSessionState(structuredSession),
+      piSessionReference: piSessionReferencePortFromStructuredSessionState(structuredSession),
     },
   };
 }
@@ -341,10 +355,36 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       sessionProbe(target.workspaceSessionId),
     ]);
 
+  const locateRuntimeSurfaceTarget = (
+    operation: string,
+    target: RuntimeSurfaceTarget,
+  ): Effect.Effect<RegisteredStore, StateContractError> =>
+    locate(operation, `no store owns runtime surface ${target.surfacePiSessionId}`, [
+      surfaceProbe(target.surfacePiSessionId),
+      sessionProbe(target.workspaceSessionId),
+    ]);
+
   const via = <A>(
     resolve: Effect.Effect<RegisteredStore, StateContractError>,
     run: (registered: RegisteredStore) => Effect.Effect<A, StateContractError>,
   ): Effect.Effect<A, StateContractError> => resolve.pipe(Effect.flatMap(run));
+
+  const viaPiReference = <A>(
+    resolve: Effect.Effect<RegisteredStore, StateContractError>,
+    run: (registered: RegisteredStore) => Effect.Effect<A, PiSessionReferencePortError>,
+  ): Effect.Effect<A, PiSessionReferencePortError> =>
+    resolve.pipe(
+      Effect.mapError(
+        (cause) =>
+          new PiSessionReferencePortError({
+            operation: "workspace-state-router.piSessionReference.resolve",
+            reason: cause.reason === "invalid-input" ? "invalid-input" : "state-conflict",
+            message: cause.message,
+            cause,
+          }),
+      ),
+      Effect.flatMap(run),
+    );
 
   const fanOutList = <A>(
     run: (registered: RegisteredStore) => Effect.Effect<readonly A[], StateContractError>,
@@ -484,7 +524,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
 
   const actorExtensionBinding: RuntimeActorExtensionBindingStatePortService = {
     readRuntimePromptBinding: (request) =>
-      via(locatePromptTarget("readRuntimePromptBinding", request.target), (registered) =>
+      via(locateRuntimeSurfaceTarget("readRuntimePromptBinding", request.target), (registered) =>
         registered.ports.actorExtensionBinding.readRuntimePromptBinding(request),
       ),
     updateActorExtensionBinding: (request) =>
@@ -829,6 +869,14 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
         ]),
         (registered) => registered.ports.turn.startTurn(input_),
       ),
+    queueTopLevelTitleGeneration: (input_) =>
+      via(
+        locate("queueTopLevelTitleGeneration", `no store owns session ${input_.sessionId}`, [
+          sessionProbe(input_.sessionId),
+          surfaceProbe(input_.surfacePiSessionId),
+        ]),
+        (registered) => registered.ports.turn.queueTopLevelTitleGeneration(input_),
+      ),
     setTurnDecision: (input_) =>
       via(
         locate("setTurnDecision", `no store owns turn ${input_.turnId}`, [
@@ -843,6 +891,36 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       ),
   };
 
+  const workflowTask: RuntimeWorkflowTaskStatePortService = {
+    acceptWorkflowTaskAgentStart: (input_) =>
+      via(
+        locate(
+          "acceptWorkflowTaskAgentStart",
+          `no store owns session ${input_.workspaceSessionId}`,
+          [sessionProbe(input_.workspaceSessionId)],
+        ),
+        (registered) => registered.ports.workflowTask.acceptWorkflowTaskAgentStart(input_),
+      ),
+    getWorkflowTaskAgentAttemptTerminal: (input_) =>
+      via(
+        locate(
+          "getWorkflowTaskAgentAttemptTerminal",
+          `no store owns session ${input_.workspaceSessionId}`,
+          [sessionProbe(input_.workspaceSessionId)],
+        ),
+        (registered) => registered.ports.workflowTask.getWorkflowTaskAgentAttemptTerminal(input_),
+      ),
+    settleWorkflowTaskAgentAttempt: (input_) =>
+      via(
+        locate(
+          "settleWorkflowTaskAgentAttempt",
+          `no store owns workflow task attempt ${input_.workflowTaskAttemptId}`,
+          [attemptProbe(input_.workflowTaskAttemptId)],
+        ),
+        (registered) => registered.ports.workflowTask.settleWorkflowTaskAgentAttempt(input_),
+      ),
+  };
+
   const episode: RuntimeEpisodeStatePortService = {
     recordHandlerThreadEpisode: (input_) =>
       via(
@@ -851,6 +929,41 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
           threadProbe(input_.threadId),
         ]),
         (registered) => registered.ports.episode.recordHandlerThreadEpisode(input_),
+      ),
+  };
+
+  const piSessionReference: PiSessionReferencePortService = {
+    getPiSessionReference: (input_) =>
+      viaPiReference(
+        locate(
+          "getPiSessionReference",
+          `no store owns pi session reference ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.piSessionReference.getPiSessionReference(input_),
+      ),
+    savePiSessionReference: (input_) =>
+      viaPiReference(
+        locate(
+          "savePiSessionReference",
+          `no store owns pi session reference ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId), sessionProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.piSessionReference.savePiSessionReference(input_),
+      ),
+    deletePiSessionReference: (input_) =>
+      viaPiReference(
+        locate(
+          "deletePiSessionReference",
+          `no store owns pi session reference ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.piSessionReference.deletePiSessionReference(input_),
+      ),
+    validatePiSessionReference: (input_) =>
+      viaPiReference(
+        resolveWorkspace("validatePiSessionReference", input_.workspaceId),
+        (registered) => registered.ports.piSessionReference.validatePiSessionReference(input_),
       ),
   };
 
@@ -874,7 +987,9 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     sessionWait,
     thread,
     turn,
+    workflowTask,
     episode,
+    piSessionReference,
     appGlobalStructuredSession: appGlobal.structuredSession,
     resolveWorkspaceStructuredSession: (workspaceId) =>
       resolveWorkspace("resolveWorkspaceStructuredSession", workspaceId).pipe(
@@ -899,7 +1014,9 @@ export function layerWorkspaceStateRouter(
   | RuntimeSessionWaitStatePort
   | RuntimeThreadStatePort
   | RuntimeTurnStatePort
+  | RuntimeWorkflowTaskStatePort
   | RuntimeEpisodeStatePort
+  | PiSessionReferencePort
 > {
   return Layer.mergeAll(
     Layer.succeed(RuntimeWorkspaceStatePort, router.workspace),
@@ -915,6 +1032,8 @@ export function layerWorkspaceStateRouter(
     Layer.succeed(RuntimeSessionWaitStatePort, router.sessionWait),
     Layer.succeed(RuntimeThreadStatePort, router.thread),
     Layer.succeed(RuntimeTurnStatePort, router.turn),
+    Layer.succeed(RuntimeWorkflowTaskStatePort, router.workflowTask),
     Layer.succeed(RuntimeEpisodeStatePort, router.episode),
+    Layer.succeed(PiSessionReferencePort, router.piSessionReference),
   );
 }

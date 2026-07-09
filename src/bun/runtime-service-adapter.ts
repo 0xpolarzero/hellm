@@ -20,6 +20,8 @@ import {
   type SandboxLaunchFacts,
   type IsoDateTimeString,
   type WorkspaceId,
+  type AuthenticatedRunTaskAgentInput,
+  type RunTaskAgentResult,
 } from "@svvy/core";
 import {
   type HostProcessReferencePortService,
@@ -98,6 +100,7 @@ export function createRuntimeBackedWorkspaceSessionCatalog(
     ) => Promise<GeneratedPackagesRefreshResult>;
     runAcceptedLoadExtension?: RunAcceptedLoadExtension;
     runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
+    runTaskAgent?: (input: AuthenticatedRunTaskAgentInput) => Promise<RunTaskAgentResult>;
     requestDirectToolApproval?: RuntimeApprovalBoundary;
   },
   approvalBoundary?: RuntimeApprovalBoundary,

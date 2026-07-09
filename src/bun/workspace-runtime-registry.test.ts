@@ -617,7 +617,7 @@ describe("WorkspaceRuntimeRegistry", () => {
         queuedMessageId: submitted.queuedMessageId,
       }),
     ).resolves.toBeUndefined();
-    expect(["steering", "dispatching"]).toContain(
+    expect(["queued", "steering", "dispatching"]).toContain(
       workspaceStateStore(second).getSurfaceQueuedMessage({
         id: submitted.queuedMessageId,
       }).status,

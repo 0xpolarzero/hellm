@@ -1785,8 +1785,6 @@ services, or a replacement for generated native-tool/schema contracts.
   implementation tags; runtime bootstrap host ports are public only through the
   `@svvy/runtime/bootstrap` app-composition subpath named by `runtime.spec.md`. The approved
   package-local and runtime-bootstrap host/config tags are:
-  - `@svvy/runtime/RuntimeLayerPromptControlHostPort`
-  - `@svvy/runtime/RuntimeLayerSurfaceQueueWakePort`
   - `@svvy/runtime/RuntimeLayerProviderAuthPort`
   - `@svvy/runtime/RuntimeLayerModelResolverPort`
   - `@svvy/runtime/RuntimeLayerCommandStdinPort`
@@ -1816,23 +1814,10 @@ services, or a replacement for generated native-tool/schema contracts.
   The runtime tags in this list are allowed on the public `@svvy/runtime/bootstrap` subpath only as
   app-edge composition ports. They adapt primitive host capabilities into `Runtime.layer`; they are
   not renderer APIs, facade groups, extension APIs, generated-package APIs, state facades, or owners
-  of runtime semantics. `RuntimeLayerPromptControlHostPort` service shape is exactly:
-
-  ```ts
-  type RuntimeLayerPromptControlHostPortService = {
-    cancelActivePrompt(input: {
-      target: PromptTarget;
-      turnId: TurnId;
-    }): Effect.Effect<void, RuntimeContractError>;
-    cancelPrompt(target: PromptTarget): Effect.Effect<void, RuntimeContractError>;
-  };
-  ```
-
-  Runtime queue wakeup semantics are package-private runtime behavior even though
-  `RuntimeLayerSurfaceQueueWakePort` is a public bootstrap composition tag. The internal wake
-  service and host seam use `Effect.Effect<void, RuntimeContractError>` rather than `Promise`;
-  app/bootstrap Promise work is wrapped only at the layer edge. App/bootstrap provides the primitive
-  wake adapter; `RuntimeQueueWakeService` owns when and why the wake is called.
+  of runtime semantics. Prompt cancellation, prompt dispatch, and surface queue wake/drain are not
+  public bootstrap host ports; they stay package-private runtime behavior owned by retained surface
+  scopes, `RuntimeQueueWakeService`, `RuntimeSurfaceQueueDispatcherService`, and
+  `RuntimePromptExecutionService`.
 
 - Service methods are normally accessed by yielding the service in `Effect.gen`. Use
   `Service.use(...)` only in the non-domain edge cases listed above and only when the resulting

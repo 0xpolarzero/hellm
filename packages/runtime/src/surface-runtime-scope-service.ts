@@ -1,0 +1,387 @@
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import {
+  type PiAdapterError,
+  PiRuntimePathsPort,
+  PiSessionReferencePort,
+  type PiRuntimeEvent,
+  ProviderAuthPort,
+  RuntimeContractError,
+  type ActorKind,
+  type CreatePiSessionInput,
+  type OpenPiSessionInput,
+  type PiSessionRef,
+  type RuntimeSurfaceTarget,
+  type RunPiTurnInput,
+  type SurfacePiSessionId,
+  type WorkspaceId,
+} from "@svvy/core";
+import { PiAdapter } from "@svvy/pi-adapter";
+
+export interface RuntimePiTurnStream {
+  readonly stream: Stream.Stream<PiRuntimeEvent, PiAdapterError>;
+  close(): Effect.Effect<void, PiAdapterError>;
+  readonly closed: Effect.Effect<void, PiAdapterError>;
+}
+
+export type RuntimeSurfacePromptInterruptReason =
+  | "user-abort"
+  | "surface-close"
+  | "runtime-shutdown"
+  | "recovery-cancel";
+
+export interface RuntimeSurfaceRuntimeServiceService {
+  readonly surfacePiSessionId: SurfacePiSessionId;
+  readonly session: PiSessionRef;
+  withPromptLock<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>;
+  runPiTurn(input: RunPiTurnInput): Effect.Effect<RuntimePiTurnStream, RuntimeContractError>;
+  interruptActivePrompt(input: {
+    readonly turnId?: string | null;
+    readonly reason: RuntimeSurfacePromptInterruptReason;
+  }): Effect.Effect<void, RuntimeContractError>;
+  isPromptActive(): boolean;
+  activePromptDone(): Effect.Effect<void, RuntimeContractError> | null;
+  installActivePrompt(input: {
+    readonly turnId: string;
+    readonly done: Effect.Effect<void, RuntimeContractError>;
+  }): Effect.Effect<void>;
+  clearActivePrompt(input: { readonly turnId: string }): Effect.Effect<void>;
+}
+
+export class RuntimeSurfaceRuntimeService extends Context.Service<
+  RuntimeSurfaceRuntimeService,
+  RuntimeSurfaceRuntimeServiceService
+>()("@svvy/runtime/RuntimeSurfaceRuntimeService") {}
+
+export interface RuntimeSurfaceScopeServiceService {
+  create(
+    input: CreatePiSessionInput,
+  ): Effect.Effect<RuntimeSurfaceRuntimeServiceService, RuntimeContractError>;
+  open(
+    input: OpenPiSessionInput,
+  ): Effect.Effect<RuntimeSurfaceRuntimeServiceService, RuntimeContractError>;
+  retainOpen(input: {
+    readonly workspaceId: WorkspaceId;
+    readonly target: RuntimeSurfaceTarget;
+  }): Effect.Effect<RuntimeSurfaceRuntimeServiceService, RuntimeContractError>;
+  release(input: { readonly surfacePiSessionId: SurfacePiSessionId }): Effect.Effect<void>;
+  interrupt(input: {
+    readonly surfacePiSessionId: SurfacePiSessionId;
+    readonly turnId?: string | null;
+    readonly reason: RuntimeSurfacePromptInterruptReason;
+  }): Effect.Effect<void, RuntimeContractError>;
+  snapshot(): Effect.Effect<readonly SurfaceScopeSnapshotEntry[]>;
+}
+
+export type SurfaceScopeSnapshotEntry = {
+  readonly surfacePiSessionId: SurfacePiSessionId;
+  readonly retainCount: number;
+  readonly activeTurnId: string | null;
+};
+
+export class RuntimeSurfaceScopeService extends Context.Service<
+  RuntimeSurfaceScopeService,
+  RuntimeSurfaceScopeServiceService
+>()("@svvy/runtime/RuntimeSurfaceScopeService") {}
+
+type SurfaceEntry = {
+  readonly service: RuntimeSurfaceRuntimeServiceService;
+  readonly scope: Scope.Closeable;
+  readonly actorKind: ActorKind;
+  readonly workspaceId: WorkspaceId;
+  readonly retainCount: number;
+  readonly activeTurnId: string | null;
+  readonly activePromptDone: Effect.Effect<void, RuntimeContractError> | null;
+};
+
+export const layerRuntimeSurfaceScopeService = Layer.effect(
+  RuntimeSurfaceScopeService,
+  Effect.gen(function* () {
+    const adapter = yield* PiAdapter;
+    const providerAuth = yield* ProviderAuthPort;
+    const runtimePaths = yield* PiRuntimePathsPort;
+    const references = yield* PiSessionReferencePort;
+    const entries = yield* Ref.make(new Map<SurfacePiSessionId, SurfaceEntry>());
+    const closing = new Map<SurfacePiSessionId, Deferred.Deferred<void>>();
+
+    const makeRuntimeSurface = (input: {
+      readonly session: PiSessionRef;
+      readonly scope: Scope.Closeable;
+    }): Effect.Effect<RuntimeSurfaceRuntimeServiceService> =>
+      Effect.gen(function* () {
+        const promptLock = yield* Semaphore.make(1);
+        let activeTurnId: string | null = null;
+        let activePromptDone: Effect.Effect<void, RuntimeContractError> | null = null;
+
+        const service: RuntimeSurfaceRuntimeServiceService = RuntimeSurfaceRuntimeService.of({
+          surfacePiSessionId: input.session.surfacePiSessionId,
+          session: input.session,
+          withPromptLock: (effect) => promptLock.withPermit(effect),
+          runPiTurn: (turnInput) =>
+            adapter.turns.run(turnInput).pipe(
+              Effect.provideService(Scope.Scope, input.scope),
+              Effect.provideService(ProviderAuthPort, providerAuth),
+              Effect.provideService(PiSessionReferencePort, references),
+              Effect.mapError((cause) => runtimePiAdapterError("runtime.surface.runPiTurn", cause)),
+            ),
+          interruptActivePrompt: ({ turnId }) =>
+            Effect.gen(function* () {
+              const entry = yield* Ref.get(entries).pipe(
+                Effect.map((current) => current.get(input.session.surfacePiSessionId)),
+              );
+              const resolvedTurnId = turnId ?? entry?.activeTurnId;
+              if (!resolvedTurnId) {
+                return;
+              }
+              yield* adapter.turns
+                .interrupt({
+                  surfacePiSessionId: input.session.surfacePiSessionId,
+                  turnId: resolvedTurnId as never,
+                })
+                .pipe(
+                  Effect.provideService(PiSessionReferencePort, references),
+                  Effect.catchTag("PiAdapterError", () => Effect.void),
+                  Effect.mapError((cause) =>
+                    runtimePiAdapterError("runtime.surface.interruptActivePrompt", cause),
+                  ),
+                );
+            }),
+          isPromptActive: () => activeTurnId !== null,
+          activePromptDone: () => activePromptDone,
+          installActivePrompt: ({ turnId, done }) =>
+            Effect.sync(() => {
+              activeTurnId = turnId;
+              activePromptDone = done;
+            }).pipe(
+              Effect.andThen(
+                Ref.update(entries, (current) => {
+                  const next = new Map(current);
+                  const existing = next.get(input.session.surfacePiSessionId);
+                  if (!existing) return current;
+                  next.set(input.session.surfacePiSessionId, {
+                    ...existing,
+                    activeTurnId: turnId,
+                    activePromptDone: done,
+                  });
+                  return next;
+                }),
+              ),
+            ),
+          clearActivePrompt: ({ turnId }) =>
+            Effect.sync(() => {
+              if (activeTurnId === turnId) {
+                activeTurnId = null;
+                activePromptDone = null;
+              }
+            }).pipe(
+              Effect.andThen(
+                Ref.update(entries, (current) => {
+                  const next = new Map(current);
+                  const existing = next.get(input.session.surfacePiSessionId);
+                  if (!existing || existing.activeTurnId !== turnId) return current;
+                  next.set(input.session.surfacePiSessionId, {
+                    ...existing,
+                    activeTurnId: null,
+                    activePromptDone: null,
+                  });
+                  return next;
+                }),
+              ),
+            ),
+        });
+        return service;
+      });
+
+    const retainExisting = (surfacePiSessionId: SurfacePiSessionId) =>
+      Ref.modify(entries, (current) => {
+        const existing = current.get(surfacePiSessionId);
+        if (!existing) return [null, current] as const;
+        const next = new Map(current);
+        next.set(surfacePiSessionId, {
+          ...existing,
+          retainCount: existing.retainCount + 1,
+        });
+        return [existing.service, next] as const;
+      });
+
+    const register = (input: {
+      readonly workspaceId: WorkspaceId;
+      readonly actorKind: ActorKind;
+      readonly session: PiSessionRef;
+      readonly scope: Scope.Closeable;
+    }) =>
+      Effect.gen(function* () {
+        const service = yield* makeRuntimeSurface(input);
+        yield* Ref.update(entries, (current) => {
+          const next = new Map(current);
+          next.set(input.session.surfacePiSessionId, {
+            service,
+            scope: input.scope,
+            actorKind: input.actorKind,
+            workspaceId: input.workspaceId,
+            retainCount: 1,
+            activeTurnId: null,
+            activePromptDone: null,
+          });
+          return next;
+        });
+        return service;
+      });
+
+    const openWith = (input: {
+      readonly surfacePiSessionId: SurfacePiSessionId;
+      readonly workspaceId: WorkspaceId;
+      readonly actorKind: ActorKind;
+      readonly open: (scope: Scope.Closeable) => Effect.Effect<PiSessionRef, unknown>;
+    }) =>
+      Effect.gen(function* () {
+        const closingPromise = closing.get(input.surfacePiSessionId);
+        if (closingPromise) {
+          yield* Deferred.await(closingPromise);
+        }
+        const existing = yield* retainExisting(input.surfacePiSessionId);
+        if (existing) return existing;
+        const scope = yield* Scope.make("sequential");
+        const session = yield* input
+          .open(scope)
+          .pipe(
+            Effect.catch((cause: unknown) =>
+              Scope.close(scope, Exit.void).pipe(
+                Effect.andThen(
+                  Effect.fail(runtimePiAdapterError("runtime.surface.acquire", cause)),
+                ),
+              ),
+            ),
+          );
+        return yield* register({
+          workspaceId: input.workspaceId,
+          actorKind: input.actorKind,
+          session,
+          scope,
+        });
+      });
+
+    return RuntimeSurfaceScopeService.of({
+      create: (input) =>
+        openWith({
+          surfacePiSessionId: input.surfacePiSessionId,
+          workspaceId: input.workspaceId,
+          actorKind: input.actorKind,
+          open: (scope) =>
+            adapter.sessions
+              .create(input)
+              .pipe(
+                Effect.provideService(Scope.Scope, scope),
+                Effect.provideService(ProviderAuthPort, providerAuth),
+                Effect.provideService(PiRuntimePathsPort, runtimePaths),
+                Effect.provideService(PiSessionReferencePort, references),
+              ),
+        }),
+      open: (input) =>
+        openWith({
+          surfacePiSessionId: input.surfacePiSessionId,
+          workspaceId: input.workspaceId,
+          actorKind: input.actorKind,
+          open: (scope) =>
+            adapter.sessions
+              .open(input)
+              .pipe(
+                Effect.provideService(Scope.Scope, scope),
+                Effect.provideService(ProviderAuthPort, providerAuth),
+                Effect.provideService(PiRuntimePathsPort, runtimePaths),
+                Effect.provideService(PiSessionReferencePort, references),
+              ),
+        }),
+      retainOpen: ({ workspaceId, target }) =>
+        openWith({
+          surfacePiSessionId: target.surfacePiSessionId,
+          workspaceId,
+          actorKind: target.surface,
+          open: (scope) =>
+            adapter.sessions
+              .open({
+                workspaceId,
+                surfacePiSessionId: target.surfacePiSessionId,
+                actorKind: target.surface,
+              })
+              .pipe(
+                Effect.provideService(Scope.Scope, scope),
+                Effect.provideService(ProviderAuthPort, providerAuth),
+                Effect.provideService(PiRuntimePathsPort, runtimePaths),
+                Effect.provideService(PiSessionReferencePort, references),
+              ),
+        }),
+      release: ({ surfacePiSessionId }) =>
+        Effect.gen(function* () {
+          const released = yield* Ref.modify(entries, (current) => {
+            const existing = current.get(surfacePiSessionId);
+            if (!existing) return [null, current] as const;
+            if (existing.retainCount > 1 || existing.activeTurnId) {
+              const next = new Map(current);
+              next.set(surfacePiSessionId, {
+                ...existing,
+                retainCount: Math.max(1, existing.retainCount - 1),
+              });
+              return [null, next] as const;
+            }
+            const next = new Map(current);
+            next.delete(surfacePiSessionId);
+            return [existing, next] as const;
+          });
+          if (!released) return;
+          const closingDeferred = yield* Deferred.make<void>();
+          closing.set(surfacePiSessionId, closingDeferred);
+          yield* adapter.sessions.close({ session: released.service.session }).pipe(
+            Effect.ignore,
+            Effect.andThen(Scope.close(released.scope, Exit.void).pipe(Effect.ignore)),
+            Effect.ensuring(
+              Effect.sync(() => {
+                closing.delete(surfacePiSessionId);
+              }).pipe(Effect.andThen(Deferred.succeed(closingDeferred, undefined))),
+            ),
+          );
+        }),
+      interrupt: ({ surfacePiSessionId, turnId, reason }) =>
+        Effect.gen(function* () {
+          const entry = yield* Ref.get(entries).pipe(
+            Effect.map((current) => current.get(surfacePiSessionId)),
+          );
+          if (!entry) return;
+          yield* entry.service.interruptActivePrompt({
+            ...(turnId === undefined ? {} : { turnId }),
+            reason,
+          });
+        }),
+      snapshot: () =>
+        Ref.get(entries).pipe(
+          Effect.map((current) =>
+            Array.from(current.values()).map((entry) => ({
+              surfacePiSessionId: entry.service.surfacePiSessionId,
+              retainCount: entry.retainCount,
+              activeTurnId: entry.activeTurnId,
+            })),
+          ),
+        ),
+    });
+  }),
+);
+
+function runtimePiAdapterError(operation: string, cause: unknown): RuntimeContractError {
+  if (cause instanceof RuntimeContractError) {
+    return cause;
+  }
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return new RuntimeContractError({
+    operation,
+    reason: "target-not-ready",
+    message,
+    cause,
+  });
+}

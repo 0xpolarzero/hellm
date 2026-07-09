@@ -2444,30 +2444,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           target: payload.target,
           messageTimestamp: payload.messageTimestamp,
           message: payload.message,
-          onEvent: (event) => {
-            if (event.type === "start") {
-              recordDevBrowserToolsEvent("prompt.started", {
-                surfacePiSessionId: payload.target.surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-            } else if (event.type === "done") {
-              recordDevBrowserToolsEvent("prompt.finished", {
-                reason: event.reason,
-                surfacePiSessionId: payload.target.surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-            } else if (event.type === "error") {
-              recordDevBrowserToolsEvent("prompt.failed", {
-                reason: event.reason,
-                error: event.error.errorMessage ?? "",
-                surfacePiSessionId: payload.target.surfacePiSessionId,
-                workspaceSessionId: payload.target.workspaceSessionId,
-                threadId: payload.target.threadId ?? null,
-              });
-            }
-          },
         });
         runtime.appLog.info("prompt", "Committed user message edited.", {
           workspaceSessionId: payload.target.workspaceSessionId,

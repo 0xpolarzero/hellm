@@ -19,6 +19,25 @@ export function runtimeTurnStatePortFromStructuredSessionState(
           surfaceAndSessionNavigationInvalidations(state.workspaceId, record.surfacePiSessionId),
         ),
       ),
+    queueTopLevelTitleGeneration: (input) =>
+      state.queueTitleGeneration(input.sessionId).pipe(
+        Effect.map((queued) =>
+          mutationResult(
+            {
+              queued: queued !== null,
+              sessionId: input.sessionId,
+              surfacePiSessionId: input.surfacePiSessionId,
+              title: queued?.title ?? "",
+            },
+            queued
+              ? surfaceAndSessionNavigationInvalidations(
+                  state.workspaceId,
+                  input.surfacePiSessionId,
+                )
+              : [],
+          ),
+        ),
+      ),
     setTurnDecision: (input) =>
       Effect.map(state.setTurnDecision(input), (record) =>
         mutationResult(

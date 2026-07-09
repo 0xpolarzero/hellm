@@ -328,6 +328,11 @@ const turnAudit: PortRoutingAudit<RuntimeTurnStatePortService> = {
     inputFields: ["turnId"],
     committedRecords: ["turn"],
   },
+  queueTopLevelTitleGeneration: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId", "sessionId"],
+    committedRecords: ["pi_session_reference", "session"],
+  },
 };
 
 const episodeAudit: PortRoutingAudit<RuntimeEpisodeStatePortService> = {
@@ -448,8 +453,8 @@ describe("workspace state router routing-identity audit", () => {
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(64);
-      expect(auditRows.length).toBe(64);
+      expect(totalMethods).toBe(65);
+      expect(auditRows.length).toBe(65);
     } finally {
       cleanup();
     }

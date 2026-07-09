@@ -21,6 +21,7 @@ export { layerRuntimeSourceStatePort } from "./runtime-source-state-port";
 export { layerRuntimeSurfaceLifecycleStatePort } from "./runtime-surface-lifecycle-state-port";
 export { layerRuntimeThreadStatePort } from "./runtime-thread-state-port";
 export { layerRuntimeTurnStatePort } from "./runtime-turn-state-port";
+export { layerRuntimeWorkflowTaskStatePort } from "./runtime-workflow-task-state-port";
 export { layerRuntimeWorkspaceStatePort } from "./runtime-workspace-state-port";
 export {
   layerSandboxPolicySource,

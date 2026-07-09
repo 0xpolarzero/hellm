@@ -23,8 +23,12 @@ import {
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
+  RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
   RuntimePromptDefaultsStatePort,
+  PiRuntimePathsPort,
+  PiSessionReferencePort,
+  ProviderAuthPort,
   runtimeClientSubmissionLogDetails,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
@@ -55,11 +59,14 @@ import {
   type RuntimeCommandStatePortService,
   type RuntimeEventsInput,
   type RuntimeQueueStatePortService,
+  type RuntimePromptBindingRecord,
   type RuntimeSessionWaitStatePortService,
   type RuntimeSourceFactRecord,
   type RuntimeSourceStatePortService,
   type RuntimeSurfaceTarget,
+  type SurfaceStreamGenerationId,
   type RuntimeSurfaceLifecycleStatePortService,
+  type RuntimeActorExtensionBindingStatePortService,
   type RuntimeWorkspaceStatePortService,
   type OpenExtensionSourceEditInput,
   type SaveExtensionSourceEditInput,
@@ -74,11 +81,11 @@ import {
   type SteerQueuedMessageInput,
   type SubmitMessageInput,
   type SubmitMessageResult,
-  type TurnId,
   type WriteCommandStdinInput,
   type WriteCommandStdinResult,
   type WorkspaceId,
 } from "@svvy/core";
+import type { PiAdapter } from "@svvy/pi-adapter";
 import {
   ExtensionSourceRootsPort,
   Extensions,
@@ -101,12 +108,6 @@ import {
   RuntimePromptDefaultsService,
   type RuntimePromptDefaultsServiceService,
 } from "./runtime-prompt-defaults-service";
-import { RuntimeLayerSurfaceQueueWakePort } from "./runtime-surface-queue-wake-port";
-
-export {
-  RuntimeLayerSurfaceQueueWakePort,
-  type RuntimeLayerSurfaceQueueWakePortService,
-} from "./runtime-surface-queue-wake-port";
 import {
   RuntimeMessageSubmissionPostCommitLane,
   submitRuntimeMessage,
@@ -133,6 +134,11 @@ import {
   RuntimeWorkspaceScopeService,
   type RuntimeWorkspaceScopeServiceService,
 } from "./workspace-runtime-scope-service";
+import {
+  RuntimeSurfaceScopeService,
+  type RuntimeSurfaceScopeServiceService,
+} from "./surface-runtime-scope-service";
+import { RuntimeWorkflowTaskAgentBridgeService } from "./workflow-task-agent-bridge-service";
 import type { RuntimeLayerConfigService } from "./runtime-layer-config";
 
 export { RuntimeGeneratedContextRefreshHostPort } from "./runtime-generated-context-refresh-service";
@@ -141,23 +147,6 @@ export { RuntimeGeneratedPackageRefreshHostPort } from "./runtime-generated-pack
 export type { RuntimeGeneratedPackageRefreshHostPortService } from "./runtime-generated-package-refresh-service";
 export { RuntimeSourceInvalidationScanPort } from "./runtime-source-invalidation-service";
 export type { RuntimeSourceInvalidationScanPortService } from "./runtime-source-invalidation-service";
-
-export interface RuntimeLayerPromptControlHostPortService {
-  cancelActivePrompt(input: {
-    readonly target: PromptTarget;
-    readonly turnId: TurnId;
-  }): Effect.Effect<void, RuntimeContractError>;
-  cancelPrompt(target: PromptTarget): Effect.Effect<void, RuntimeContractError>;
-}
-
-export interface RuntimeLayerPromptControlHostPort {
-  readonly _tag: "RuntimeLayerPromptControlHostPort";
-}
-
-export const RuntimeLayerPromptControlHostPort = Context.Service<
-  RuntimeLayerPromptControlHostPort,
-  RuntimeLayerPromptControlHostPortService
->("@svvy/runtime/RuntimeLayerPromptControlHostPort");
 
 export interface RuntimeLayerProviderAuthPortService {
   ensureUsableProviderAuth(
@@ -221,9 +210,11 @@ export const RuntimeLayerCommandControlPort = Context.Service<
 
 export type RuntimeLayerRequirements =
   | RuntimeLayerConfigService
-  | RuntimeLayerPromptControlHostPort
   | RuntimePromptDefaultsStatePort
-  | RuntimeLayerSurfaceQueueWakePort
+  | PiAdapter
+  | ProviderAuthPort
+  | PiRuntimePathsPort
+  | PiSessionReferencePort
   | RuntimeLayerProviderAuthPort
   | RuntimeLayerModelResolverPort
   | AppLogWritePort
@@ -252,11 +243,11 @@ export type RuntimeLayerRequirements =
   | RuntimeSessionWaitStatePort
   | RuntimeThreadStatePort
   | RuntimeTurnStatePort
+  | RuntimeWorkflowTaskStatePort
   | RuntimeEpisodeStatePort;
 
 export function makeRuntimeService() {
   return Effect.gen(function* () {
-    const promptControlHost = yield* RuntimeLayerPromptControlHostPort;
     const promptDefaults = yield* RuntimePromptDefaultsService;
     const queueWake = yield* RuntimeQueueWakeService;
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
@@ -271,7 +262,9 @@ export function makeRuntimeService() {
     const commandControl = yield* RuntimeLayerCommandControlPort;
     const workspaceState = yield* RuntimeWorkspaceStatePort;
     const workspaceScopes = yield* RuntimeWorkspaceScopeService;
+    const surfaceScopes = yield* RuntimeSurfaceScopeService;
     const surfaceLifecycleState = yield* RuntimeSurfaceLifecycleStatePort;
+    const actorBindingState = yield* RuntimeActorExtensionBindingStatePort;
     const sourceState = yield* RuntimeSourceStatePort;
     const extensions = yield* Extensions;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -283,6 +276,7 @@ export function makeRuntimeService() {
     const approvalState = yield* RuntimeApprovalStatePort;
     const commandState = yield* RuntimeCommandStatePort;
     const sessionWaitState = yield* RuntimeSessionWaitStatePort;
+    const workflowTaskAgentBridge = yield* RuntimeWorkflowTaskAgentBridgeService;
 
     return {
       workspaces: {
@@ -313,6 +307,9 @@ export function makeRuntimeService() {
           createOrchestratorSurface({
             input,
             surfaceLifecycleState,
+            surfaceScopes,
+            promptDefaults,
+            actorBindingState,
             eventBus,
             surfaceEvents,
           }),
@@ -320,6 +317,7 @@ export function makeRuntimeService() {
           openSurface({
             input,
             surfaceLifecycleState,
+            surfaceScopes,
             eventBus,
             surfaceEvents,
           }),
@@ -327,6 +325,7 @@ export function makeRuntimeService() {
           closeSurface({
             input,
             surfaceLifecycleState,
+            surfaceScopes,
             eventBus,
             surfaceEvents,
             requestInputWaitService,
@@ -351,7 +350,7 @@ export function makeRuntimeService() {
         abort: (input: AbortPromptInput) =>
           abortPrompt({
             input,
-            promptControlHost,
+            surfaceScopes,
             queueState,
             appLog,
             eventBus,
@@ -457,6 +456,7 @@ export function makeRuntimeService() {
         refreshGeneratedPackages: (input: InternalRefreshGeneratedPackagesRequest) =>
           sourceInvalidation.refreshGeneratedPackages(input),
       },
+      workflowTaskAgentBridge,
       events: (input?: RuntimeEventsInput) => eventBus.subscribe(input),
     };
   });
@@ -530,6 +530,9 @@ function releaseWorkspace(input: {
 function createOrchestratorSurface(input: {
   readonly input: CreateOrchestratorSurfaceInput;
   readonly surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
+  readonly promptDefaults: RuntimePromptDefaultsServiceService;
+  readonly actorBindingState: RuntimeActorExtensionBindingStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
 }): Effect.Effect<CreateSurfaceResult, RuntimeContractError> {
@@ -539,6 +542,63 @@ function createOrchestratorSurface(input: {
       operation,
       effect: input.surfaceLifecycleState.createOrchestratorSurface(input.input),
       eventBus: input.eventBus,
+    });
+    const defaults = yield* input.promptDefaults
+      .resolve({ target: result.target as PromptTarget })
+      .pipe(
+        Effect.catch((error) =>
+          error.reason === "stale-state"
+            ? Effect.succeed({
+                provider: "openai",
+                model: "gpt-4o",
+                reasoningEffort: "medium" as const,
+              })
+            : Effect.fail(error),
+        ),
+      );
+    yield* input.actorBindingState
+      .setActorExtensionBinding({
+        target: result.target as PromptTarget,
+        loadedExtensionIds: [],
+        availableExtensionIds: [],
+        reason: "source-refresh",
+      })
+      .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+    const binding = yield* input.actorBindingState
+      .readRuntimePromptBinding({ target: result.target as PromptTarget })
+      .pipe(
+        Effect.catch((cause) =>
+          cause.reason === "not-found"
+            ? Effect.succeed({
+                target: result.target as PromptTarget,
+                generatedAgentContextBindingId: `${result.surfacePiSessionId}:initial`,
+                generatedAgentContextFingerprint:
+                  `${result.surfacePiSessionId}:initial` as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
+                generatedAgentContextRevision: 0,
+                systemPrompt: "",
+                loadedExtensionIds: [],
+                availableExtensionIds: [],
+                externalSourceHashes: [],
+                updateExtensionContextBeforeNextTurn: true,
+              } satisfies RuntimePromptBindingRecord)
+            : Effect.fail(cause),
+        ),
+        Effect.mapError((cause) => runtimeStateError(operation, cause)),
+      );
+    yield* input.surfaceScopes.create({
+      workspaceId: input.input.workspaceId,
+      workspaceSessionId: result.workspaceSessionId,
+      surfacePiSessionId: result.surfacePiSessionId,
+      actorKind: "orchestrator",
+      ...(input.input.profileId ? { agentProfileId: input.input.profileId } : {}),
+      generatedContextFingerprint: binding.generatedAgentContextFingerprint,
+      model: {
+        providerId: defaults.provider as never,
+        modelId: defaults.model as never,
+      },
+      reasoning: {
+        effort: defaults.reasoningEffort,
+      },
     });
     yield* publishSurfaceChanged({
       operation,
@@ -554,6 +614,7 @@ function createOrchestratorSurface(input: {
 function openSurface(input: {
   readonly input: OpenSurfaceInput;
   readonly surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
 }): Effect.Effect<OpenSurfaceResult, RuntimeContractError> {
@@ -564,6 +625,23 @@ function openSurface(input: {
       effect: input.surfaceLifecycleState.openSurface(input.input),
       eventBus: input.eventBus,
     });
+    yield* input.surfaceScopes.open({
+      workspaceId: input.input.workspaceId,
+      surfacePiSessionId: result.surfacePiSessionId,
+      actorKind: result.target.surface,
+    });
+    yield* input.surfaceEvents
+      .resetSurfaceStream({
+        workspaceId: input.input.workspaceId,
+        target: result.target,
+        streamGenerationId: surfaceReopenStreamGenerationId(result.surfacePiSessionId),
+        reason: "surface_reopened",
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runtimeAdapterError("runtime.surfaces.open.resetSurfaceStream", cause),
+        ),
+      );
     yield* publishSurfaceChanged({
       operation,
       workspaceId: input.input.workspaceId,
@@ -575,9 +653,14 @@ function openSurface(input: {
   });
 }
 
+function surfaceReopenStreamGenerationId(surfacePiSessionId: string): SurfaceStreamGenerationId {
+  return `surface-reopened:${surfacePiSessionId}` as SurfaceStreamGenerationId;
+}
+
 function closeSurface(input: {
   readonly input: CloseSurfaceInput;
   readonly surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
   readonly requestInputWaitService: RuntimeRequestInputWaitService["Service"];
@@ -605,6 +688,13 @@ function closeSurface(input: {
       sessionWaitState: input.sessionWaitState,
       eventBus: input.eventBus,
       approvalWaitService: input.approvalWaitService,
+    });
+    yield* input.surfaceScopes.interrupt({
+      surfacePiSessionId: result.target.surfacePiSessionId,
+      reason: "surface-close",
+    });
+    yield* input.surfaceScopes.release({
+      surfacePiSessionId: result.target.surfacePiSessionId,
     });
     yield* publishSurfaceChanged({
       operation,
@@ -847,7 +937,7 @@ function cancelCommand(input: {
 
 function abortPrompt(input: {
   readonly input: AbortPromptInput;
-  readonly promptControlHost: RuntimeLayerPromptControlHostPortService;
+  readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
   readonly queueState: RuntimeQueueStatePortService;
   readonly appLog: AppLogWritePortService;
   readonly eventBus: RuntimeEventBus["Service"];
@@ -911,9 +1001,10 @@ function abortPrompt(input: {
           }),
         ),
         Effect.andThen(
-          input.promptControlHost.cancelActivePrompt({
-            target,
+          input.surfaceScopes.interrupt({
+            surfacePiSessionId: target.surfacePiSessionId,
             turnId,
+            reason: "user-abort",
           }),
         ),
         Effect.mapError((cause: unknown) => runtimeAdapterError("runtime.messages.abort", cause)),
@@ -938,7 +1029,12 @@ function abortPrompt(input: {
           approvalWaitService: input.approvalWaitService,
         }),
       ),
-      Effect.andThen(input.promptControlHost.cancelPrompt(target)),
+      Effect.andThen(
+        input.surfaceScopes.interrupt({
+          surfacePiSessionId: target.surfacePiSessionId,
+          reason: "user-abort",
+        }),
+      ),
       Effect.mapError((cause: unknown) => runtimeAdapterError("runtime.messages.abort", cause)),
       Effect.andThen(recordCancellation),
     );

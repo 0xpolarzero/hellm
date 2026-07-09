@@ -54,6 +54,37 @@ export function runtimeActorExtensionBindingStatePortFromStructuredSessionState(
           });
         }
 
+        const target = input.target;
+        if (target.surface === "workflow-task") {
+          const attempt = snapshot.workflowTaskAttempts.find(
+            (candidate) => candidate.id === target.workflowTaskAttemptId,
+          );
+          if (!attempt || attempt.surfacePiSessionId !== target.surfacePiSessionId) {
+            return yield* Effect.fail(
+              new StateContractError({
+                operation: "runtime-actor-extension-binding.readRuntimePromptBinding",
+                reason: "not-found",
+                message: `Workflow task attempt ${target.workflowTaskAttemptId} was not found for surface ${target.surfacePiSessionId}.`,
+              }),
+            );
+          }
+          const fingerprint = attempt.generatedAgentContextFingerprint;
+          if (!fingerprint) {
+            return yield* Effect.fail(unboundPromptBindingError(input));
+          }
+          const binding = yield* readBindingByFingerprint({
+            state,
+            input,
+            fingerprint,
+          });
+          if (binding.actorKind !== "workflow-task") {
+            return yield* Effect.fail(actorMismatchError(input, binding.actorKind));
+          }
+          return toRuntimePromptBindingRecord(input, binding, {
+            updateExtensionContextBeforeNextTurn: true,
+          });
+        }
+
         const thread = getStructuredThread(snapshot, input.target.threadId);
         if (!thread || thread.surfacePiSessionId !== input.target.surfacePiSessionId) {
           return yield* Effect.fail(

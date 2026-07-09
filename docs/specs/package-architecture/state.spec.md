@@ -383,6 +383,7 @@ The public named state-backed port layers are exactly:
 - `layerRuntimeSessionWaitStatePort`
 - `layerRuntimeSourceStatePort`
 - `layerRuntimeThreadStatePort`
+- `layerRuntimeWorkflowTaskStatePort`
 - `layerExtensionStatePort`
 - `layerSandboxPolicySource`
 - `layerSandboxPolicySourceWithConfig(config)`
@@ -1702,6 +1703,40 @@ fibers. Those live resources are runtime-owned scoped services under `Runtime.la
 may validate stored pi/session references through core-owned reference facts, but it must not return
 live handles.
 
+RuntimeWorkflowTaskStatePort:
+
+- Caller: @svvy/runtime workflow task-agent `runTaskAgent` bridge admission.
+- Methods: acceptWorkflowTaskAgentStart, getWorkflowTaskAgentAttemptTerminal,
+  settleWorkflowTaskAgentAttempt.
+- Rule: this port validates source command/session lineage, records or reuses the durable workflow
+  task-attempt surface keyed by `WorkflowTaskAttemptId`, writes the idempotent
+  `workflow_task_agent_start` queue row, and returns committed invalidation descriptors. It does not
+  authenticate bridge bearer tokens, acquire live pi sessions, run prompts, publish runtime events,
+  refresh generated context, or inspect generated packages.
+
+The exact workflow task-agent state port is:
+
+```ts
+type RuntimeWorkflowTaskStatePort = {
+  acceptWorkflowTaskAgentStart(
+    input: AcceptRuntimeWorkflowTaskAgentStartInput,
+  ): Effect.Effect<
+    StateMutationResult<RuntimeWorkflowTaskAgentStartReceipt>,
+    StateContractError
+  >;
+  getWorkflowTaskAgentAttemptTerminal(input: {
+    workspaceSessionId: WorkspaceSessionId;
+    idempotencyKey: string;
+  }): Effect.Effect<RuntimeWorkflowTaskAgentTerminalReceipt | null, StateContractError>;
+  settleWorkflowTaskAgentAttempt(
+    input: SettleRuntimeWorkflowTaskAgentAttemptInput,
+  ): Effect.Effect<
+    StateMutationResult<RuntimeWorkflowTaskAgentTerminalReceipt>,
+    StateContractError
+  >;
+};
+```
+
 RuntimePromptDefaultsStatePort:
 
 - Caller: @svvy/runtime prompt submission through `RuntimePromptDefaultsService`.
@@ -1752,7 +1787,7 @@ RuntimeTurnStatePort:
 
 - Caller: `@svvy/runtime` turn execution after a queue row has been durably claimed through
   `RuntimeQueueStatePort`.
-- Methods: startTurn, setTurnDecision, finishTurn.
+- Methods: startTurn, setTurnDecision, finishTurn, queueTopLevelTitleGeneration.
 - Rule: active-turn writes are serialized by surface and prompt-lock ownership. `startTurn(...)`
   records turn state for the already claimed queue item but does not claim queue rows, choose queue
   ordering, wake lanes, or enqueue follow-up work. Queue row delivery/failure/retry settlement
@@ -1773,6 +1808,11 @@ type RuntimeTurnStatePort = {
   finishTurn(
     input: FinishRuntimeTurnInput,
   ): Effect.Effect<StateMutationResult<RuntimeTurnRecord>, StateContractError>;
+
+  queueTopLevelTitleGeneration(input: {
+    sessionId: WorkspaceSessionId;
+    surfacePiSessionId: SurfacePiSessionId;
+  }): Effect.Effect<StateMutationResult<RuntimeTitleGenerationQueueReceipt>, StateContractError>;
 };
 ```
 

@@ -6,7 +6,6 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import {
   IsoDateTimeStringSchema,
-  RuntimeContractError,
   type AbsolutePath,
   type AppLogEntryId,
   type AppLogWritePortService,
@@ -39,11 +38,7 @@ import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
-import {
-  createAppRuntimeBootstrap,
-  type AppRuntimeBootstrap,
-  type AppRuntimeBootstrapWorkspaceExecutor,
-} from "./app-runtime-bootstrap";
+import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runtime-bootstrap";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 
@@ -167,12 +162,6 @@ describe("app runtime bootstrap", () => {
         reason: "test cancel active",
       });
 
-      expect(harness.executorCalls).toEqual([
-        `wake:${harness.workspaceBId}:message-submitted`,
-        `cancelPrompt:${harness.workspaceAId}`,
-        `cancelActive:${harness.workspaceBId}:turn-bootstrap-test`,
-      ]);
-
       pendingApproval = bootstrap.internal.acceptedNativeTools.requestDirectToolApproval({
         approvalMode: "user",
         cwd: harness.workspaceB.cwd,
@@ -255,7 +244,6 @@ function createBootstrapHarness() {
     workflowsPackageRoot: mkdtempTracked("generated-workflows") as AbsolutePath,
     coreTypeContractPackageRoot: mkdtempTracked("generated-core") as AbsolutePath,
   };
-  const executorCalls: string[] = [];
   const sourceCalls: string[] = [];
   const storesBySession = new Map<string, WorkspaceId>();
   const commandRegistry = createLiveCommandStdinRegistry();
@@ -265,34 +253,6 @@ function createBootstrapHarness() {
     writeStdin: (text) => ({ status: "accepted", acceptedBytes: Buffer.byteLength(text) }),
     cancel: () => ({ status: "cancelled" }),
   });
-
-  const workspaceExecutors = {
-    resolvePromptTarget: async (target: PromptTarget) => {
-      const workspaceId = storesBySession.get(target.workspaceSessionId);
-      if (!workspaceId) {
-        throw new RuntimeContractError({
-          operation: "app-runtime-bootstrap.resolvePromptTarget",
-          reason: "target-not-found",
-          message: `No workspace executor owns ${target.workspaceSessionId}.`,
-        });
-      }
-      return {
-        cancelActivePrompt: async (
-          input: Parameters<AppRuntimeBootstrapWorkspaceExecutor["cancelActivePrompt"]>[0],
-        ) => {
-          executorCalls.push(`cancelActive:${workspaceId}:${input.turnId}`);
-        },
-        cancelPrompt: async () => {
-          executorCalls.push(`cancelPrompt:${workspaceId}`);
-        },
-        wakeRuntimeSurfaceQueue: async (
-          input: Parameters<AppRuntimeBootstrapWorkspaceExecutor["wakeRuntimeSurfaceQueue"]>[0],
-        ) => {
-          executorCalls.push(`wake:${workspaceId}:${input.reason}`);
-        },
-      } satisfies AppRuntimeBootstrapWorkspaceExecutor;
-    },
-  };
 
   const sourceCoordinator = (label: string) => ({
     classifyHint: async (input: SourceInvalidationHint) => {
@@ -341,7 +301,20 @@ function createBootstrapHarness() {
       ensureUsableProviderAuth: async () => "test-api-key",
       getProviderAuthUnavailableMessage: (provider: string) => `${provider} auth unavailable.`,
     },
-    workspaceExecutors,
+    piRuntimePaths: {
+      resolve: async (workspaceId: WorkspaceId) => ({
+        workspaceId,
+        cwd: join(tmpdir(), "svvy-app-bootstrap-workspaces", workspaceId) as AbsolutePath,
+        agentDir: join(tmpdir(), "svvy-app-bootstrap-agent") as AbsolutePath,
+        sessionDir: join(tmpdir(), "svvy-app-bootstrap-sessions", workspaceId) as AbsolutePath,
+        modelRegistryPath: join(
+          tmpdir(),
+          "svvy-app-bootstrap-agent",
+          "model-registry.json",
+        ) as AbsolutePath,
+        source: "test-fixture",
+      }),
+    },
     generatedContextRefresh: {
       refresh: async () => {},
     },
@@ -376,7 +349,6 @@ function createBootstrapHarness() {
     workspaceAId,
     workspaceB,
     workspaceBId,
-    executorCalls,
     sourceCalls,
   };
 }

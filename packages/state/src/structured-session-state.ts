@@ -1237,6 +1237,89 @@ export interface StructuredSessionStateStore {
     iteration: number;
     attempt: number;
   }): StructuredWorkflowTaskAttemptRecord | null;
+  acceptWorkflowTaskAgentStart(input: {
+    workspaceSessionId: string;
+    sourceCommandId: string;
+    idempotencyKey: string;
+    agent: {
+      id: string;
+      label: string;
+      provider: string;
+      model: string;
+      reasoning: { effort: string };
+      instructions: string;
+      overrides?: Record<string, "loaded" | "available" | "unavailable">;
+    };
+    taskIdentity: {
+      runId: string;
+      nodeId: string;
+      iteration: number;
+      attempt: number;
+    };
+    smithersContext?: unknown;
+    promptSource: unknown;
+  }): {
+    workspaceId: string;
+    target: {
+      workspaceSessionId: string;
+      surface: "workflow-task";
+      surfacePiSessionId: string;
+      workflowTaskAttemptId: string;
+      workflowRunId: string;
+      threadId: string;
+    };
+    queuedMessage: StructuredSurfaceQueuedMessageRecord;
+    accepted: "created" | "existing";
+  };
+  getWorkflowTaskAgentAttemptTerminal(input: {
+    workspaceSessionId: string;
+    idempotencyKey: string;
+  }):
+    | {
+        status: "in-flight";
+        workspaceId: string;
+        target: {
+          workspaceSessionId: string;
+          surface: "workflow-task";
+          surfacePiSessionId: string;
+          workflowTaskAttemptId: string;
+          workflowRunId: string;
+          threadId: string;
+        };
+        queuedMessage: StructuredSurfaceQueuedMessageRecord;
+      }
+    | {
+        status: "completed";
+        result: { text: string; usage?: unknown; output?: unknown };
+      }
+    | {
+        status: "failed";
+        error: string;
+      }
+    | {
+        status: "conflict";
+        error: string;
+      }
+    | null;
+  settleWorkflowTaskAgentAttempt(input: {
+    workflowTaskAttemptId: string;
+    idempotencyKey: string;
+    status: "completed" | "failed" | "cancelled";
+    result?: { text: string; usage?: unknown; output?: unknown };
+    error?: string;
+  }):
+    | {
+        status: "completed";
+        result: { text: string; usage?: unknown; output?: unknown };
+      }
+    | {
+        status: "failed";
+        error: string;
+      }
+    | {
+        status: "conflict";
+        error: string;
+      };
   recordWorkflow(input: {
     threadId: string;
     commandId: string;
@@ -6155,6 +6238,387 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapWorkflowTaskAttempt(row) : null;
   }
 
+  acceptWorkflowTaskAgentStart(input: {
+    workspaceSessionId: string;
+    sourceCommandId: string;
+    idempotencyKey: string;
+    agent: {
+      id: string;
+      label: string;
+      provider: string;
+      model: string;
+      reasoning: { effort: string };
+      instructions: string;
+      overrides?: Record<string, "loaded" | "available" | "unavailable">;
+    };
+    taskIdentity: {
+      runId: string;
+      nodeId: string;
+      iteration: number;
+      attempt: number;
+    };
+    smithersContext?: unknown;
+    promptSource: unknown;
+  }): {
+    workspaceId: string;
+    target: {
+      workspaceSessionId: string;
+      surface: "workflow-task";
+      surfacePiSessionId: string;
+      workflowTaskAttemptId: string;
+      workflowRunId: string;
+      threadId: string;
+    };
+    queuedMessage: StructuredSurfaceQueuedMessageRecord;
+    accepted: "created" | "existing";
+  } {
+    return this.db.transaction((transactionInput: typeof input) => {
+      const sourceCommand = this.mustFindCommandRow(transactionInput.sourceCommandId);
+      if (sourceCommand.session_id !== transactionInput.workspaceSessionId) {
+        throw new StateContractError({
+          operation: "structured-session.acceptWorkflowTaskAgentStart",
+          reason: "invalid-input",
+          message: `Smithers source command ${transactionInput.sourceCommandId} is not owned by workspace session ${transactionInput.workspaceSessionId}.`,
+        });
+      }
+      if (!sourceCommand.thread_id) {
+        throw new StateContractError({
+          operation: "structured-session.acceptWorkflowTaskAgentStart",
+          reason: "invalid-input",
+          message: "Smithers task-agent bridge requires a handler-thread source command.",
+        });
+      }
+      if (
+        sourceCommand.status === "succeeded" ||
+        sourceCommand.status === "failed" ||
+        sourceCommand.status === "cancelled"
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.acceptWorkflowTaskAgentStart",
+          reason: "conflict",
+          message: "Smithers source command is already terminal.",
+        });
+      }
+
+      const existingQueue = this.db
+        .query(
+          `SELECT * FROM surface_message_queue
+           WHERE idempotency_key = ?
+             AND kind = 'workflow_task_agent_start'
+             AND status != 'cancelled'
+           LIMIT 1`,
+        )
+        .get(transactionInput.idempotencyKey) as SurfaceQueuedMessageRow | undefined;
+      if (existingQueue?.workflow_task_attempt_id) {
+        const attempt = this.mustFindWorkflowTaskAttemptRow(existingQueue.workflow_task_attempt_id);
+        return {
+          workspaceId: this.workspace.id,
+          target: workflowTaskTarget({
+            workspaceSessionId: transactionInput.workspaceSessionId,
+            attempt,
+          }),
+          queuedMessage: this.mapSurfaceQueuedMessage(existingQueue),
+          accepted: "existing" as const,
+        };
+      }
+
+      let workflowRun = this.findWorkflowRunRowBySmithersRunId(transactionInput.taskIdentity.runId);
+      if (!workflowRun) {
+        const recorded = this.recordWorkflow({
+          threadId: sourceCommand.thread_id,
+          commandId: transactionInput.sourceCommandId,
+          smithersRunId: transactionInput.taskIdentity.runId,
+          workflowName: "Smithers workflow",
+          workflowSource: "artifact",
+          status: "running",
+          smithersStatus: "running",
+          summary: `Smithers run ${transactionInput.taskIdentity.runId}`,
+        });
+        workflowRun = this.mustFindWorkflowRunRow(recorded.id);
+      }
+      if (workflowRun.session_id !== transactionInput.workspaceSessionId) {
+        throw new StateContractError({
+          operation: "structured-session.acceptWorkflowTaskAgentStart",
+          reason: "invalid-input",
+          message: `Smithers run ${transactionInput.taskIdentity.runId} is not owned by workspace session ${transactionInput.workspaceSessionId}.`,
+        });
+      }
+      if (workflowRun.thread_id !== sourceCommand.thread_id) {
+        throw new StateContractError({
+          operation: "structured-session.acceptWorkflowTaskAgentStart",
+          reason: "invalid-input",
+          message: `Smithers run ${transactionInput.taskIdentity.runId} is not owned by the source command handler thread.`,
+        });
+      }
+
+      const existingAttempt = this.findWorkflowTaskAttemptRowByIdentity({
+        smithersRunId: transactionInput.taskIdentity.runId,
+        nodeId: transactionInput.taskIdentity.nodeId,
+        iteration: transactionInput.taskIdentity.iteration,
+        attempt: transactionInput.taskIdentity.attempt,
+      });
+      const surfacePiSessionId =
+        existingAttempt?.surface_pi_session_id ?? this.createId("workflow-task-surface");
+      const attempt = this.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: transactionInput.taskIdentity.runId,
+        nodeId: transactionInput.taskIdentity.nodeId,
+        iteration: transactionInput.taskIdentity.iteration,
+        attempt: transactionInput.taskIdentity.attempt,
+        surfacePiSessionId,
+        title: transactionInput.agent.label,
+        summary: `Workflow task agent ${transactionInput.agent.label}`,
+        kind: "agent",
+        status: "running",
+        smithersState: "running",
+        prompt:
+          typeof (transactionInput.promptSource as { prompt?: unknown }).prompt === "string"
+            ? (transactionInput.promptSource as { prompt: string }).prompt
+            : null,
+        agentId: transactionInput.agent.id,
+        agentModel: transactionInput.agent.model,
+        agentEngine: transactionInput.agent.provider,
+        meta: {
+          bridgeRequestIdempotencyKey: transactionInput.idempotencyKey,
+          taskIdentity: transactionInput.taskIdentity,
+          smithersContext: transactionInput.smithersContext ?? null,
+          agentOverrides: transactionInput.agent.overrides ?? null,
+        },
+      });
+      const attemptSurfacePiSessionId = attempt.surfacePiSessionId ?? surfacePiSessionId;
+      this.upsertSurfaceLifecycle({
+        surfacePiSessionId: attemptSurfacePiSessionId,
+        sessionId: transactionInput.workspaceSessionId,
+        surfaceKind: "workflow-task",
+        threadId: sourceCommand.thread_id,
+        workflowTaskAttemptId: attempt.id,
+        status: "open",
+        openedAt: this.now(),
+        closedAt: null,
+        closeReason: null,
+      });
+
+      const payload = {
+        kind: "workflow_task_agent_start",
+        workflowTaskAttemptId: attempt.id,
+        taskIdentity: transactionInput.taskIdentity,
+        smithersContext: transactionInput.smithersContext,
+        agent: transactionInput.agent,
+        promptSource: transactionInput.promptSource,
+      };
+      const queuedMessage = this.enqueueSurfaceMessage({
+        sessionId: transactionInput.workspaceSessionId,
+        surfacePiSessionId: attemptSurfacePiSessionId,
+        threadId: sourceCommand.thread_id,
+        workflowTaskAttemptId: attempt.id,
+        kind: "workflow_task_agent_start",
+        idempotencyKey: transactionInput.idempotencyKey,
+        priority: "runtime",
+        orderingKey: `workflow-task-attempt:${attempt.id}`,
+        sourceCommandId: transactionInput.sourceCommandId,
+        messageJson: JSON.stringify(
+          workflowTaskPromptSourceToSubmittedMessage(transactionInput.promptSource),
+        ),
+        payloadJson: JSON.stringify(payload),
+      });
+
+      return {
+        workspaceId: this.workspace.id,
+        target: {
+          workspaceSessionId: transactionInput.workspaceSessionId,
+          surface: "workflow-task" as const,
+          surfacePiSessionId: attemptSurfacePiSessionId,
+          workflowTaskAttemptId: attempt.id,
+          workflowRunId: workflowRun.id,
+          threadId: sourceCommand.thread_id,
+        },
+        queuedMessage,
+        accepted: existingAttempt ? ("existing" as const) : ("created" as const),
+      };
+    })(input);
+  }
+
+  getWorkflowTaskAgentAttemptTerminal(input: {
+    workspaceSessionId: string;
+    idempotencyKey: string;
+  }):
+    | {
+        status: "in-flight";
+        workspaceId: string;
+        target: {
+          workspaceSessionId: string;
+          surface: "workflow-task";
+          surfacePiSessionId: string;
+          workflowTaskAttemptId: string;
+          workflowRunId: string;
+          threadId: string;
+        };
+        queuedMessage: StructuredSurfaceQueuedMessageRecord;
+      }
+    | {
+        status: "completed";
+        result: { text: string; usage?: unknown; output?: unknown };
+      }
+    | {
+        status: "failed";
+        error: string;
+      }
+    | {
+        status: "conflict";
+        error: string;
+      }
+    | null {
+    const queue = this.findWorkflowTaskQueueRowByIdempotencyKey(input.idempotencyKey);
+    if (!queue?.workflow_task_attempt_id) {
+      return null;
+    }
+    const attempt = this.mustFindWorkflowTaskAttemptRow(queue.workflow_task_attempt_id);
+    if (attempt.session_id !== input.workspaceSessionId) {
+      return {
+        status: "conflict",
+        error: `Workflow task-agent idempotency key is not owned by workspace session ${input.workspaceSessionId}.`,
+      };
+    }
+    const meta = fromJson<Record<string, unknown>>(attempt.meta_json) ?? {};
+    if (meta.bridgeRequestIdempotencyKey !== input.idempotencyKey) {
+      return {
+        status: "conflict",
+        error: "Workflow task-agent idempotency key does not match the durable attempt.",
+      };
+    }
+    if (attempt.status === "completed") {
+      return {
+        status: "completed",
+        result: workflowTaskAgentTerminalResultFromAttempt(attempt),
+      };
+    }
+    if (attempt.status === "failed" || attempt.status === "cancelled") {
+      return {
+        status: "failed",
+        error: attempt.error ?? `Workflow task-agent attempt ${attempt.status}.`,
+      };
+    }
+    return {
+      status: "in-flight",
+      workspaceId: this.workspace.id,
+      target: workflowTaskTarget({
+        workspaceSessionId: input.workspaceSessionId,
+        attempt,
+      }),
+      queuedMessage: this.mapSurfaceQueuedMessage(queue),
+    };
+  }
+
+  settleWorkflowTaskAgentAttempt(input: {
+    workflowTaskAttemptId: string;
+    idempotencyKey: string;
+    status: "completed" | "failed" | "cancelled";
+    result?: { text: string; usage?: unknown; output?: unknown };
+    error?: string;
+  }):
+    | {
+        status: "completed";
+        result: { text: string; usage?: unknown; output?: unknown };
+      }
+    | {
+        status: "failed";
+        error: string;
+      }
+    | {
+        status: "conflict";
+        error: string;
+      } {
+    return this.db.transaction((transactionInput: typeof input) => {
+      const attempt = this.mustFindWorkflowTaskAttemptRow(transactionInput.workflowTaskAttemptId);
+      const meta = fromJson<Record<string, unknown>>(attempt.meta_json) ?? {};
+      if (meta.bridgeRequestIdempotencyKey !== transactionInput.idempotencyKey) {
+        return {
+          status: "conflict" as const,
+          error:
+            "Workflow task-agent settlement idempotency key does not match the durable attempt.",
+        };
+      }
+      if (attempt.status === "completed") {
+        return {
+          status: "completed" as const,
+          result: workflowTaskAgentTerminalResultFromAttempt(attempt),
+        };
+      }
+      if (attempt.status === "failed" || attempt.status === "cancelled") {
+        return {
+          status: "failed" as const,
+          error: attempt.error ?? `Workflow task-agent attempt ${attempt.status}.`,
+        };
+      }
+
+      if (transactionInput.status === "completed" && !transactionInput.result) {
+        return {
+          status: "conflict" as const,
+          error: "Completed workflow task-agent settlement requires a result.",
+        };
+      }
+      const nextMeta = {
+        ...meta,
+        bridgeResult:
+          transactionInput.status === "completed"
+            ? {
+                text: transactionInput.result?.text ?? "",
+                ...(transactionInput.result?.usage === undefined
+                  ? {}
+                  : { usage: transactionInput.result.usage }),
+                ...(transactionInput.result?.output === undefined
+                  ? {}
+                  : { output: transactionInput.result.output }),
+              }
+            : null,
+      };
+      const updated = this.upsertWorkflowTaskAttempt({
+        workflowRunId: attempt.workflow_run_id,
+        smithersRunId: attempt.smithers_run_id,
+        nodeId: attempt.node_id,
+        iteration: attempt.iteration,
+        attempt: attempt.attempt,
+        surfacePiSessionId: attempt.surface_pi_session_id,
+        title: attempt.title,
+        summary:
+          transactionInput.status === "completed"
+            ? "Task-agent attempt completed."
+            : "Task-agent attempt failed.",
+        kind: attempt.kind,
+        status: transactionInput.status,
+        smithersState: transactionInput.status,
+        responseText:
+          transactionInput.status === "completed"
+            ? (transactionInput.result?.text ?? "")
+            : attempt.response_text,
+        error:
+          transactionInput.status === "completed"
+            ? null
+            : (transactionInput.error ?? `Workflow task-agent attempt ${transactionInput.status}.`),
+        cached: Boolean(attempt.cached),
+        jjPointer: attempt.jj_pointer,
+        jjCwd: attempt.jj_cwd,
+        heartbeatAt: attempt.heartbeat_at,
+        agentId: attempt.agent_id,
+        agentModel: attempt.agent_model,
+        agentEngine: attempt.agent_engine,
+        agentResume: attempt.agent_resume,
+        generatedAgentContextFingerprint: attempt.generated_agent_context_fingerprint,
+        meta: nextMeta,
+      });
+      if (updated.status === "completed") {
+        return {
+          status: "completed" as const,
+          result: workflowTaskAgentTerminalResultFromRecord(updated),
+        };
+      }
+      return {
+        status: "failed" as const,
+        error: updated.error ?? `Workflow task-agent attempt ${updated.status}.`,
+      };
+    })(input);
+  }
+
   recordWorkflow(input: {
     threadId: string;
     commandId: string;
@@ -8603,6 +9067,22 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row;
   }
 
+  private findWorkflowTaskQueueRowByIdempotencyKey(
+    idempotencyKey: string,
+  ): SurfaceQueuedMessageRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM surface_message_queue
+           WHERE idempotency_key = ?
+             AND kind = 'workflow_task_agent_start'
+             AND status != 'cancelled'
+           LIMIT 1`,
+        )
+        .get(idempotencyKey) as SurfaceQueuedMessageRow | undefined) ?? null
+    );
+  }
+
   private mustFindGeneratedAgentContextBindingRow(id: string): GeneratedAgentContextBindingRow {
     const row = this.db
       .query(`SELECT * FROM generated_agent_context_binding WHERE id = ?`)
@@ -10923,6 +11403,95 @@ function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {
     status === "failed" ||
     status === "cancelled"
   );
+}
+
+function workflowTaskTarget(input: {
+  workspaceSessionId: string;
+  attempt: WorkflowTaskAttemptRow;
+}): {
+  workspaceSessionId: string;
+  surface: "workflow-task";
+  surfacePiSessionId: string;
+  workflowTaskAttemptId: string;
+  workflowRunId: string;
+  threadId: string;
+} {
+  const surfacePiSessionId = input.attempt.surface_pi_session_id;
+  if (!surfacePiSessionId) {
+    throw new StateContractError({
+      operation: "structured-session.acceptWorkflowTaskAgentStart",
+      reason: "conflict",
+      message: `Workflow task attempt ${input.attempt.id} has no surface pi session id.`,
+    });
+  }
+  return {
+    workspaceSessionId: input.workspaceSessionId,
+    surface: "workflow-task",
+    surfacePiSessionId,
+    workflowTaskAttemptId: input.attempt.id,
+    workflowRunId: input.attempt.workflow_run_id,
+    threadId: input.attempt.thread_id,
+  };
+}
+
+function workflowTaskAgentTerminalResultFromAttempt(attempt: WorkflowTaskAttemptRow): {
+  text: string;
+  usage?: unknown;
+  output?: unknown;
+} {
+  const meta = fromJson<Record<string, unknown>>(attempt.meta_json) ?? {};
+  const bridgeResult =
+    meta.bridgeResult && typeof meta.bridgeResult === "object"
+      ? (meta.bridgeResult as { text?: unknown; usage?: unknown; output?: unknown })
+      : null;
+  const result = {
+    text:
+      typeof bridgeResult?.text === "string" ? bridgeResult.text : (attempt.response_text ?? ""),
+  } as { text: string; usage?: unknown; output?: unknown };
+  if (bridgeResult && "usage" in bridgeResult) {
+    result.usage = bridgeResult.usage;
+  }
+  if (bridgeResult && "output" in bridgeResult) {
+    result.output = bridgeResult.output;
+  }
+  return result;
+}
+
+function workflowTaskAgentTerminalResultFromRecord(attempt: StructuredWorkflowTaskAttemptRecord): {
+  text: string;
+  usage?: unknown;
+  output?: unknown;
+} {
+  const bridgeResult =
+    attempt.meta?.bridgeResult && typeof attempt.meta.bridgeResult === "object"
+      ? (attempt.meta.bridgeResult as { text?: unknown; usage?: unknown; output?: unknown })
+      : null;
+  const result = {
+    text: typeof bridgeResult?.text === "string" ? bridgeResult.text : (attempt.responseText ?? ""),
+  } as { text: string; usage?: unknown; output?: unknown };
+  if (bridgeResult && "usage" in bridgeResult) {
+    result.usage = bridgeResult.usage;
+  }
+  if (bridgeResult && "output" in bridgeResult) {
+    result.output = bridgeResult.output;
+  }
+  return result;
+}
+
+function workflowTaskPromptSourceToSubmittedMessage(promptSource: unknown): { text: string } {
+  if (
+    promptSource &&
+    typeof promptSource === "object" &&
+    (promptSource as { kind?: unknown }).kind === "messages" &&
+    Array.isArray((promptSource as { messages?: unknown }).messages)
+  ) {
+    return {
+      text: (promptSource as { messages: Array<{ role: string; text: string }> }).messages
+        .map((message) => `${message.role}: ${message.text}`)
+        .join("\n\n"),
+    };
+  }
+  return { text: String((promptSource as { prompt?: unknown })?.prompt ?? "") };
 }
 
 function isTerminalWorkflowTaskAttemptStatus(status: StructuredWorkflowTaskAttemptStatus): boolean {

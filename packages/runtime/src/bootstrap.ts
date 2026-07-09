@@ -37,9 +37,7 @@ export {
   RuntimeGeneratedContextRefreshHostPort,
   RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerSurfaceQueueWakePort,
   RuntimeSourceInvalidationScanPort,
 } from "./runtime-layer";
 export type {
@@ -48,7 +46,6 @@ export type {
   RuntimeGeneratedContextRefreshHostPortService,
   RuntimeGeneratedPackageRefreshHostPortService,
   RuntimeLayerModelResolverPortService,
-  RuntimeLayerPromptControlHostPortService,
   RuntimeLayerProviderAuthPortService,
   RuntimeSourceInvalidationScanPortService,
 } from "./runtime-layer";
@@ -60,7 +57,6 @@ export type {
   SourceInvalidationHost as RuntimeSourceInvalidationHost,
   SourceWatchInput as RuntimeSourceWatchInput,
 } from "./source-invalidation-coordinator";
-export type {
-  RuntimeLayerSurfaceQueueWakePortService,
-  RuntimeSurfaceQueueWakeReason,
-} from "./runtime-surface-queue-wake-port";
+export type { RuntimeSurfaceQueueWakeReason } from "./runtime-surface-queue-wake-port";
+export { RuntimeWorkflowTaskAgentBridgeBearerVerifier } from "./workflow-task-agent-bridge-service";
+export type { RuntimeWorkflowTaskAgentBridgeBearerVerifierService } from "./workflow-task-agent-bridge-service";

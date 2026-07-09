@@ -21,8 +21,13 @@ export interface SurfaceQueuePreparedTurn<TPrepared = undefined> {
   prepared: TPrepared;
 }
 
+type SurfaceQueueHostResult<A> =
+  | A
+  | Promise<A>
+  | Effect.Effect<A, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort>;
+
 export interface SurfaceQueueStartedPrompt {
-  promptDone: Promise<void>;
+  promptDone: SurfaceQueueHostResult<unknown>;
   continueAfterPrompt(): boolean;
 }
 
@@ -34,25 +39,31 @@ export interface SurfaceQueueDispatchHost<
   TPrepared = undefined,
 > {
   isClosed(): boolean;
-  resolveTarget(target: TTarget): TTarget | Promise<TTarget>;
-  retainSurface(target: TTarget): Promise<TSurface>;
-  releaseSurface(input: { target: TTarget; surface: TSurface }): Promise<void>;
+  resolveTarget(target: TTarget): SurfaceQueueHostResult<TTarget>;
+  retainSurface(target: TTarget): SurfaceQueueHostResult<TSurface>;
+  releaseSurface(input: { target: TTarget; surface: TSurface }): SurfaceQueueHostResult<void>;
   isSurfaceActive(input: { target: TTarget; surface: TSurface }): boolean;
-  activePromptDone(input: { target: TTarget; surface: TSurface }): Promise<void> | null;
+  activePromptDone(input: {
+    target: TTarget;
+    surface: TSurface;
+  }): SurfaceQueueHostResult<void> | null;
   continueAfterActivePrompt(input: { target: TTarget; surface: TSurface }): boolean;
-  refreshBeforeDispatch(input: { target: TTarget; surface: TSurface }): Promise<TSurface>;
+  refreshBeforeDispatch(input: {
+    target: TTarget;
+    surface: TSurface;
+  }): SurfaceQueueHostResult<TSurface>;
   materializeQueuedMessage(input: {
     target: TTarget;
     surface: TSurface;
     queued: RuntimeSurfaceMessageRecord;
-  }): Promise<SurfaceQueueMaterializedMessage<TMessage, TMetadata>>;
+  }): SurfaceQueueHostResult<SurfaceQueueMaterializedMessage<TMessage, TMetadata>>;
   prepareTurn(input: {
     target: TTarget;
     surface: TSurface;
     queued: RuntimeSurfaceMessageRecord;
     message: TMessage;
     metadata: TMetadata | undefined;
-  }): Promise<SurfaceQueuePreparedTurn<TPrepared>>;
+  }): SurfaceQueueHostResult<SurfaceQueuePreparedTurn<TPrepared>>;
   startPrompt(input: {
     target: TTarget;
     surface: TSurface;
@@ -61,8 +72,8 @@ export interface SurfaceQueueDispatchHost<
     prepared: TPrepared;
     message: TMessage;
     metadata: TMetadata | undefined;
-  }): Promise<SurfaceQueueStartedPrompt>;
-  notifyQueueUpdated(input: { target: TTarget }): Promise<void>;
+  }): SurfaceQueueHostResult<SurfaceQueueStartedPrompt>;
+  notifyQueueUpdated(input: { target: TTarget }): SurfaceQueueHostResult<void>;
 }
 
 export interface SurfaceQueueDispatcher<TTarget> {
@@ -88,24 +99,44 @@ export function createSurfaceQueueDispatcher<
 }): SurfaceQueueDispatcher<TTarget> {
   const { claimOwnerId, host, leaseDurationMs } = input;
 
-  const runHost = <A>(
+  const hostResultToEffect = <A>(
     operation: string,
-    run: () => A | Promise<A>,
-  ): Effect.Effect<A, RuntimeContractError> =>
-    Effect.tryPromise({
-      try: async () => run(),
+    result: SurfaceQueueHostResult<A>,
+  ): Effect.Effect<A, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort> => {
+    if (Effect.isEffect(result)) {
+      return result.pipe(
+        Effect.mapError((error) =>
+          error instanceof RuntimeContractError
+            ? error
+            : runtimeQueueDispatchError(operation, error),
+        ),
+      );
+    }
+    return Effect.tryPromise({
+      try: async () => result,
       catch: (error) => runtimeQueueDispatchError(operation, error),
     });
-
-  const releaseSurface = (target: TTarget, surface: TSurface): Promise<void> => {
-    return host.releaseSurface({ target, surface });
   };
+
+  const runHost = <A>(
+    operation: string,
+    run: () => SurfaceQueueHostResult<A>,
+  ): Effect.Effect<A, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort> =>
+    Effect.try({
+      try: run,
+      catch: (error) => runtimeQueueDispatchError(operation, error),
+    }).pipe(Effect.flatMap((result) => hostResultToEffect(operation, result)));
+
+  const releaseSurface = (target: TTarget, surface: TSurface) =>
+    runHost("runtime.queue.dispatch.releaseSurface", () =>
+      host.releaseSurface({ target, surface }),
+    );
 
   const failQueuedDelivery = (
     target: TTarget,
     queued: RuntimeSurfaceMessageRecord,
     error: RuntimeContractError,
-  ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort> =>
+  ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort> =>
     Effect.gen(function* () {
       const queue = yield* RuntimeQueueStatePort;
 
@@ -131,7 +162,7 @@ export function createSurfaceQueueDispatcher<
     target: TTarget,
     queued: RuntimeSurfaceMessageRecord,
     error: RuntimeContractError,
-  ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort> =>
+  ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort | RuntimeTurnStatePort> =>
     Effect.gen(function* () {
       const queue = yield* RuntimeQueueStatePort;
       yield* queue
@@ -178,9 +209,10 @@ export function createSurfaceQueueDispatcher<
         if (host.isSurfaceActive({ target: currentTarget, surface })) {
           const activePromptDone = host.activePromptDone({ target: currentTarget, surface });
           if (options.awaitPrompt && activePromptDone) {
-            yield* runHost("runtime.queue.dispatch.awaitActivePrompt", () =>
-              activePromptDone.catch(() => undefined),
-            );
+            yield* hostResultToEffect(
+              "runtime.queue.dispatch.awaitActivePrompt",
+              activePromptDone,
+            ).pipe(Effect.catch(() => Effect.void));
             return host.continueAfterActivePrompt({
               target: currentTarget,
               surface,
@@ -276,16 +308,20 @@ export function createSurfaceQueueDispatcher<
           ),
         );
 
-        const promptDoneWithRelease = started.promptDone.finally(async () => {
-          await releaseSurface(currentTarget, surface);
-        });
-        void promptDoneWithRelease.catch(() => undefined);
+        const promptDoneWithRelease = hostResultToEffect(
+          "runtime.queue.dispatch.awaitStartedPrompt",
+          started.promptDone,
+        ).pipe(Effect.ensuring(releaseSurface(currentTarget, surface).pipe(Effect.ignore)));
         releaseTransferred = true;
 
         if (options.awaitPrompt) {
-          yield* runHost("runtime.queue.dispatch.awaitStartedPrompt", () => promptDoneWithRelease);
+          yield* promptDoneWithRelease;
           return started.continueAfterPrompt();
         }
+        yield* promptDoneWithRelease.pipe(
+          Effect.catch(() => Effect.void),
+          Effect.forkDetach,
+        );
         return true;
       }).pipe(
         Effect.ensuring(
@@ -293,9 +329,7 @@ export function createSurfaceQueueDispatcher<
             if (releaseTransferred || retainedSurface === null) {
               return;
             }
-            yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-              releaseSurface(currentTarget, retainedSurface as TSurface),
-            ).pipe(Effect.ignore);
+            yield* releaseSurface(currentTarget, retainedSurface as TSurface).pipe(Effect.ignore);
           }),
         ),
       );

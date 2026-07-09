@@ -48,6 +48,9 @@ import type {
   RuntimeGeneratedPackageStatePort,
   RuntimeMessagesApiEffect,
   RuntimePromptDefaultsStatePort,
+  PiRuntimePathsPort,
+  PiSessionReferencePort,
+  ProviderAuthPort,
   RuntimeQueuesApiEffect,
   RuntimeQueueStatePort,
   RuntimeRequestInputApiEffect,
@@ -58,6 +61,7 @@ import type {
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
+  RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
   RuntimeSurfacesApiEffect,
   RuntimeWorkspacesApiEffect,
@@ -76,7 +80,10 @@ import type {
   SubmitMessageResult,
   WriteCommandStdinInput,
   WriteCommandStdinResult,
+  AuthenticatedRunTaskAgentInput,
+  RunTaskAgentResult,
 } from "@svvy/core";
+import type { PiAdapter } from "@svvy/pi-adapter";
 import type { AppLogWritePort, StateCommandPostCommitNotificationPort } from "@svvy/core";
 import type { ExtensionSourceRootsPort, Extensions } from "@svvy/extensions";
 import {
@@ -134,9 +141,7 @@ import type {
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerSurfaceQueueWakePort,
   RuntimeSourceInvalidationScanPort,
 } from "./bootstrap";
 import {
@@ -159,6 +164,13 @@ import { layerRuntimeExecutionPlanExecutor } from "./runtime-effect-requests";
 import { layerRuntimeWorkspaceScopeService } from "./workspace-runtime-scope-service";
 import { layerRuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import { layerRuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
+import { layerRuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
+import { layerRuntimePromptExecutionService } from "./runtime-prompt-execution-service";
+import { layerRuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
+import {
+  layerRuntimeWorkflowTaskAgentBridgeService,
+  RuntimeWorkflowTaskAgentBridgeBearerVerifier,
+} from "./workflow-task-agent-bridge-service";
 
 interface RuntimeMessagesService extends RuntimeMessagesApiEffect {}
 
@@ -193,6 +205,11 @@ interface RuntimeService {
   readonly approvals: RuntimeApprovalsApiEffect;
   readonly sourceEdits: RuntimeSourceEditsService;
   readonly sourceInvalidation: RuntimeSourceInvalidationService;
+  readonly workflowTaskAgentBridge: {
+    runTaskAgent(
+      input: AuthenticatedRunTaskAgentInput,
+    ): Effect.Effect<RunTaskAgentResult, RuntimeContractError>;
+  };
   events(
     input?: RuntimeEventsInput,
   ): Effect.Effect<RuntimeEventSubscriptionEffect, RuntimeEventError>;
@@ -208,13 +225,34 @@ const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pip
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(runtimeGeneratedPackageRefreshLayer),
 );
-const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
-  Layer.provideMerge(layerRuntimeQueueWakeService),
-);
 const runtimeApprovalWaitLayer = layerRuntimeApprovalWaitService;
 const runtimeLaunchPolicyLayer = layerRuntimeLaunchPolicyService.pipe(Layer.provide(sandboxLayer));
 const runtimeSurfaceEventPublisherLayer = layerRuntimeSurfaceEventPublisher.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimePromptExecutionLayer = layerRuntimePromptExecutionService.pipe(
+  Layer.provideMerge(runtimeSurfaceEventPublisherLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeSurfaceScopeLayer = layerRuntimeSurfaceScopeService;
+const runtimeSurfaceQueueDispatcherLayer = layerRuntimeSurfaceQueueDispatcherService.pipe(
+  Layer.provideMerge(runtimeSurfaceScopeLayer),
+  Layer.provideMerge(runtimePromptExecutionLayer),
+  Layer.provideMerge(runtimeSourceInvalidationLayer),
+  Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
+  Layer.provideMerge(layerRuntimePromptDefaultsService),
+);
+const runtimeWorkflowTaskAgentBridgeLayer = layerRuntimeWorkflowTaskAgentBridgeService.pipe(
+  Layer.provideMerge(runtimeSurfaceQueueDispatcherLayer),
+  Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
+  Layer.provideMerge(runtimeSurfaceScopeLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeQueueWakeLayer = layerRuntimeQueueWakeService.pipe(
+  Layer.provideMerge(runtimeSurfaceQueueDispatcherLayer),
+);
+const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
+  Layer.provideMerge(runtimeQueueWakeLayer),
 );
 const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeSourceInvalidationLayer,
@@ -222,6 +260,11 @@ const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeApprovalWaitLayer,
   runtimeLaunchPolicyLayer,
   runtimeSurfaceEventPublisherLayer,
+  runtimeSurfaceScopeLayer,
+  runtimePromptExecutionLayer,
+  runtimeSurfaceQueueDispatcherLayer,
+  runtimeWorkflowTaskAgentBridgeLayer,
+  runtimeQueueWakeLayer,
   layerRuntimeWorkspaceScopeService,
   layerRuntimePromptDefaultsService,
 );
@@ -240,9 +283,11 @@ export namespace Runtime {
     | StateCommandPostCommitNotificationPort,
     RuntimeLayerError,
     | RuntimeLayerConfigService
-    | RuntimeLayerPromptControlHostPort
     | RuntimePromptDefaultsStatePort
-    | RuntimeLayerSurfaceQueueWakePort
+    | PiAdapter
+    | ProviderAuthPort
+    | PiRuntimePathsPort
+    | PiSessionReferencePort
     | RuntimeLayerProviderAuthPort
     | RuntimeLayerModelResolverPort
     | AppLogWritePort
@@ -271,7 +316,9 @@ export namespace Runtime {
     | RuntimeSessionWaitStatePort
     | RuntimeThreadStatePort
     | RuntimeTurnStatePort
+    | RuntimeWorkflowTaskStatePort
     | RuntimeEpisodeStatePort
+    | RuntimeWorkflowTaskAgentBridgeBearerVerifier
   > = Layer.mergeAll(
     runtimeServiceLayer,
     runtimeAcceptedNativeToolExecutionLayer,

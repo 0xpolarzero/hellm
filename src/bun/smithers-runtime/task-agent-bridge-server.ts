@@ -32,10 +32,7 @@ export interface RunTaskAgentBridgeServer {
 
 export class RunTaskAgentBridgeError extends Error {
   constructor(
-    readonly code: Extract<
-      RunTaskAgentErrorCode,
-      "source_command_not_found" | "source_command_not_handler_owned" | "source_command_terminal"
-    >,
+    readonly code: RunTaskAgentErrorCode,
     message: string,
     readonly status = 409,
   ) {
@@ -47,7 +44,7 @@ export class RunTaskAgentBridgeError extends Error {
 export function createRunTaskAgentBridgeServer(input: {
   authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
   maxRequestBytes?: number;
-  runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
+  runTaskAgent: (request: RunTaskAgentInput, bearerToken: string) => Promise<RunTaskAgentResult>;
 }): RunTaskAgentBridgeServer {
   const token = randomBytes(32).toString("base64url");
   let server: ReturnType<typeof Bun.serve> | null = null;
@@ -76,7 +73,7 @@ function startBridgeServer(
   input: {
     authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
     maxRequestBytes?: number;
-    runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
+    runTaskAgent: (request: RunTaskAgentInput, bearerToken: string) => Promise<RunTaskAgentResult>;
   },
   token: string,
 ): ReturnType<typeof Bun.serve> {
@@ -111,9 +108,10 @@ export async function handleRunTaskAgentRequest(input: {
   authorize?: (request: RunTaskAgentInput, bearerToken: string) => boolean;
   maxRequestBytes?: number;
   token: string;
-  runTaskAgent: (request: RunTaskAgentInput) => Promise<RunTaskAgentResult>;
+  runTaskAgent: (request: RunTaskAgentInput, bearerToken: string) => Promise<RunTaskAgentResult>;
 }): Promise<Response> {
   let bridgeRequest: RunTaskAgentInput | null = null;
+  let bearerToken: string | null = null;
   try {
     const url = new URL(input.request.url);
     if (input.request.method !== "POST" || url.pathname !== "/runTaskAgent") {
@@ -123,7 +121,7 @@ export async function handleRunTaskAgentRequest(input: {
         "Workflow task-agent bridge supports only POST /runTaskAgent.",
       );
     }
-    const bearerToken = readBearerToken(input.request.headers.get("authorization") ?? "");
+    bearerToken = readBearerToken(input.request.headers.get("authorization") ?? "");
     if (bearerToken === null) {
       return bridgeErrorResponse(
         401,
@@ -160,7 +158,7 @@ export async function handleRunTaskAgentRequest(input: {
 
   try {
     const result = requireDecoded(
-      decodeUnknownRunTaskAgentResultExit(await input.runTaskAgent(bridgeRequest)),
+      decodeUnknownRunTaskAgentResultExit(await input.runTaskAgent(bridgeRequest, bearerToken)),
     );
     return jsonResponse(200, result);
   } catch (error) {

@@ -105,9 +105,7 @@ import type {
   RuntimeLayerConfigService,
   RuntimeLayerError,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerSurfaceQueueWakePort,
   RuntimeShutdownPreparation,
   RuntimeSourceInvalidationScanPort,
   RuntimeStartupReadiness,
@@ -200,9 +198,7 @@ export namespace Runtime {
     | StateCommandPostCommitNotificationPort,
     RuntimeLayerError,
     | RuntimeLayerConfigService
-    | RuntimeLayerPromptControlHostPort
     | RuntimePromptDefaultsStatePort
-    | RuntimeLayerSurfaceQueueWakePort
     | RuntimeLayerProviderAuthPort
     | RuntimeLayerModelResolverPort
     | AppLogWritePort
@@ -503,59 +499,41 @@ App/bootstrap does not provide a workspace registry, route resolver, callback ta
 runtime implementation, and it is never authoritative for workspace, queue, prompt, event, recovery,
 generated-package, or command policy.
 
-Runtime post-commit and prompt-control semantics are owned by runtime services and the narrow live
-prompt cancellation control signal named by this spec. Runtime post-commit lanes are runtime-owned
-services: they publish committed invalidation descriptors through the runtime event bus, wake
-runtime queue dispatchers, resolve runtime wait registries, and acquire workspace/surface child
-scopes through runtime-owned package-private scope-manager services implemented only with
-manifest-adopted Effect primitives. App/bootstrap may provide primitive host capability ports as
-named dependencies of runtime-owned services, but those ports are not public semantic callback
-surfaces and are not exported from `@svvy/runtime/bootstrap` unless this spec names the exact tag,
-service shape, layer helper, and boundary test. Examples include process launch, provider credential
-resolution, packaged path resolution, filesystem edge access, renderer fanout adapters, and command
-stdin process handles. The semantic-looking public bootstrap host ports are limited to the
-explicitly listed app-edge ports: `RuntimeLayerPromptControlHostPort`,
-`RuntimeLayerSurfaceQueueWakePort`, `RuntimeLayerCommandStdinPort`,
-`RuntimeLayerCommandControlPort`, `RuntimeLayerProviderAuthPort`,
-`RuntimeLayerModelResolverPort`, `RuntimeGeneratedContextRefreshHostPort`,
-`RuntimeGeneratedPackageRefreshHostPort`, and `RuntimeSourceInvalidationScanPort`. The prompt
-control host-port shape is exactly `RuntimeLayerPromptControlHostPort`, with
-`cancelActivePrompt({ target, turnId })` and `cancelPrompt(target)` only. It does not resolve
-defaults, queue work, publish events, materialize prompts, return live pi handles, or receive
-queued-row payloads.
+Runtime post-commit, prompt dispatch, surface queue wake, and active prompt interruption semantics
+are owned by runtime services. Runtime post-commit lanes publish committed invalidation descriptors
+through the runtime event bus, wake runtime queue dispatchers, resolve runtime wait registries, and
+acquire workspace/surface child scopes through runtime-owned package-private scope-manager services
+implemented only with manifest-adopted Effect primitives. App/bootstrap may provide primitive host
+capability ports as named dependencies of runtime-owned services, but those ports are not public
+semantic callback surfaces and are not exported from `@svvy/runtime/bootstrap` unless this spec
+names the exact tag, service shape, layer helper, and boundary test. Examples include process
+launch, provider credential resolution, packaged path resolution, filesystem edge access, renderer
+fanout adapters, and command stdin process handles. The semantic-looking public bootstrap host
+ports are limited to the explicitly listed app-edge ports: `RuntimeLayerCommandStdinPort`,
+`RuntimeLayerCommandControlPort`, `RuntimeLayerProviderAuthPort`, `RuntimeLayerModelResolverPort`,
+`RuntimeGeneratedContextRefreshHostPort`, `RuntimeGeneratedPackageRefreshHostPort`, and
+`RuntimeSourceInvalidationScanPort`.
 
-```ts
-type RuntimeLayerPromptControlHostPortService = {
-  cancelActivePrompt(input: {
-    target: PromptTarget;
-    turnId: TurnId;
-  }): Effect.Effect<void, RuntimeContractError>;
-  cancelPrompt(target: PromptTarget): Effect.Effect<void, RuntimeContractError>;
-};
-```
+Runtime active-turn cancellation is implemented by retained `RuntimeSurfaceRuntimeService` scopes
+and the `@svvy/pi-adapter` turn interrupt path. App/bootstrap does not provide a prompt-control host
+port, catalog callback, live pi handle, or cancellation delegate. Renderer, desktop, headless,
+extension, generated-package, and agent-facing code can only request cancellation through the
+runtime facade; runtime records the state facts and interrupts the retained surface scope.
 
-`RuntimeLayerPromptControlHostPort` is exported only from `@svvy/runtime/bootstrap` as an app-edge
-composition port for prompt cancellation over the app-owned pi/runtime surface. It is not exported
-from `@svvy/core`, is not a runtime root public API, and is not available to renderer, desktop,
-headless, extension, generated-package, or agent-facing code.
-
-App/bootstrap provides `RuntimeLayerSurfaceQueueWakePort` as a primitive wake adapter, but surface
-queue wakeup decisions originate inside runtime. Runtime owns wakeup semantics as the
-package-private `RuntimeQueueWakeService.wakeSurface({ target, reason })`, where `reason` is a
-closed runtime value such as `"message-submitted"` or `"queue-steered"`. The service may call the
-bootstrap port to wake the addressed app surface worker after runtime has committed the relevant
-state facts. The bootstrap port must not receive queued-row payloads,
-dispatch results, pi session handles, callback functions, mutable state-port results, or broad
-catalog access from app/bootstrap. Public bootstrap must not export callbacks named after semantic
-runtime lifecycle events such as `afterRuntimeSurfaceMessageQueued`,
+Surface queue wakeup decisions also stay inside runtime. `RuntimeQueueWakeService.wakeSurface({
+target, reason })` accepts the closed wake reason and calls the package-private
+`RuntimeSurfaceQueueDispatcherService.acceptWakeHint(...)`; that service owns the drain loop and
+uses `RuntimeSurfaceScopeService` to retain/release the addressed live surface while
+`RuntimePromptExecutionService` owns prompt execution. App/bootstrap does not receive queued-row
+payloads, dispatch results, pi session handles, callback functions, mutable state-port results, or
+broad catalog access for wake/dispatch. Public bootstrap must not export callbacks named after
+semantic runtime lifecycle events such as `afterRuntimeSurfaceMessageQueued`,
 `afterRuntimeSurfaceMessageSteered`, `afterRequestInputAnswered`, `afterRequestInputTimerPaused`,
 or `afterApprovalCommitted`. Those names describe runtime behavior and therefore belong inside
 `@svvy/runtime`, backed by core-owned state ports, runtime-owned queues/wait registries, and
-package-private child scopes. A runtime-owned package-private service may still use a
-committed-state method name such as `afterApprovalCommitted(...)`; the rejected shape is an
-app/bootstrap, catalog, renderer, or host callback that owns semantic runtime behavior.
+package-private child scopes.
 
-The public bootstrap wake-port shape is exact:
+The runtime wake reason shape is exact:
 
 ```ts
 type RuntimeSurfaceQueueWakeReason =
@@ -564,16 +542,10 @@ type RuntimeSurfaceQueueWakeReason =
   | "queue-steered"
   | "runtime-queue-inserted";
 
-type RuntimeLayerSurfaceQueueWakePortService = {
-  wakeSurfaceQueue(input: {
-    target: PromptTarget;
-    reason: RuntimeSurfaceQueueWakeReason;
-  }): Effect.Effect<void, RuntimeContractError>;
-};
 ```
 
-No other public bootstrap method may wake, drain, claim, materialize, inspect, or reorder surface
-queue rows. Adding a new wake reason requires the same change to update the reason union,
+No public bootstrap method may wake, drain, claim, materialize, inspect, or reorder surface queue
+rows. Adding a new wake reason requires the same change to update the reason union,
 `RuntimeQueueWakeService` callsites, runtime tests, and package-boundary assertions.
 
 Runtime-owned semantic lanes are package-private services. They are not public facade groups,
@@ -885,9 +857,7 @@ App-bootstrap-only helpers live under `@svvy/runtime/bootstrap`: `RuntimeLayerCo
 `decodeUnknownRuntimeLayerErrorExit`, `encodeRuntimeLayerErrorEffect`,
 `encodeRuntimeLayerErrorExit`, `RuntimeStartupPhase`, `RuntimeStartupReadiness`,
 `RuntimeStartupReadinessReceipt`, `RuntimeStartupDegradedPhase`, `RuntimeStartupError`,
-`RuntimeStartupErrorSchema`, `RuntimeLayerPromptControlHostPort`,
-`RuntimeLayerPromptControlHostPortService`, `RuntimeLayerSurfaceQueueWakePort`,
-`RuntimeLayerSurfaceQueueWakePortService`, `RuntimeLayerCommandStdinPort`,
+`RuntimeStartupErrorSchema`, `RuntimeLayerCommandStdinPort`,
 `RuntimeLayerCommandStdinPortService`, `RuntimeLayerCommandControlPort`,
 `RuntimeLayerCommandControlPortService`, `RuntimeLayerProviderAuthPort`,
 `RuntimeLayerProviderAuthPortService`, `RuntimeLayerModelResolverPort`,
@@ -898,6 +868,8 @@ App-bootstrap-only helpers live under `@svvy/runtime/bootstrap`: `RuntimeLayerCo
 `RuntimeSourceInvalidationDirectoryEntry`, `RuntimeSourceInvalidationDomain`,
 `RuntimeSourceInvalidationEvent`, `RuntimeSourceInvalidationHost`, `RuntimeSourceWatchInput`,
 `RuntimeSurfaceQueueWakeReason`,
+`RuntimeWorkflowTaskAgentBridgeBearerVerifier`,
+`RuntimeWorkflowTaskAgentBridgeBearerVerifierService`,
 `RuntimeShutdownPreparation`, `RuntimePrepareShutdownReason`,
 `RuntimePrepareShutdownRequest`, `RuntimePrepareShutdownResult`,
 `createRuntimeLayerConfigLayer(...)`, `awaitRuntimeStartupReadiness(...)`,
@@ -908,9 +880,9 @@ implementation-module exports only for runtime package implementation and coloca
 not exported from the package root or `@svvy/runtime/bootstrap`, and app/bootstrap consumers must not
 import them as public composition contracts. These host ports are primitive app-edge adapters that
 let `Runtime.layer` call the already owned app/pi/host infrastructure while runtime retains product
-semantics. `RuntimeLayerPromptControlHostPort`
-is limited to live prompt cancellation over the app-owned pi surface. `RuntimeLayerSurfaceQueueWakePort`
-only wakes an addressed surface worker after runtime has committed queue/state facts.
+semantics. Active prompt cancellation and queue wake/drain are runtime-owned through retained
+surface scopes, `PiAdapter.turns.interrupt(...)`, `RuntimeQueueWakeService`, and
+`RuntimeSurfaceQueueDispatcherService`.
 `RuntimeLayerCommandStdinPort` and `RuntimeLayerCommandControlPort` adapt host process stdin and
 control primitives behind runtime command authority. The generated-context, generated-package, and
 source-scan ports adapt existing app-edge source/build machinery while runtime owns scheduling,
@@ -3235,7 +3207,7 @@ Runtime event bus rules:
 | Generated-package refresh worker              | `@svvy/runtime` generated package worker                                                             | scoped fiber plus command/recovery rows                                                                                                                                                                                                                          | `layer-acquired`                                                         | `Runtime.layer` acquisition; source invalidation, explicit build, and recovery rows wake/claim work inside that worker                                                   | app/workspace scope close                                                                                                          | yes                    | keeps prior ready output on build failure; scope close interrupts active build and records recovery where needed                                              | generated package refresh completed receipts                                               |
 | Workspace link-repair worker                  | `@svvy/runtime` workspace generated-link repair                                                      | scoped fiber plus workspace link plan                                                                                                                                                                                                                            | `keyedOwnerScoped`                                                       | workspace acquisition, app-global generated-package facts commit, or generated-package link-repair recovery wake                                                         | workspace/app scope close                                                                                                          | yes                    | unopened workspaces receive recovery rows; acquired workspaces retry through recovery                                                                         | link repair completed/recovery receipts                                                    |
 | Command sessions/subprocess handles           | `@svvy/runtime` command/session service                                                              | pipe-backed child process handles, bounded stdin queue, stdout/stderr pump fibers, terminal observer fiber, output batcher state                                                                                                                                 | `operationScoped`                                                        | accepted command plan launch                                                                                                                                             | process exit after output flush, cancel/timeout after stdin close and process stop/kill, app shutdown after terminal/recovery fact | no                     | stdin closes deterministically; output terminal facts/recovery remain durable                                                                                 | command terminalized, output ordering, closed-stdin receipts                               |
-| Workflow task-agent bridge operation registry | app/bootstrap loopback transport plus `@svvy/runtime` bridge service                                 | bootstrap-owned `POST /runTaskAgent` binding plus runtime-owned token lineage map and operation registry                                                                                                                                                         | `appBootstrapScoped` + `layer-acquired`                                  | app bootstrap creates transport; runtime acquisition creates operation service                                                                                           | app shutdown/restart                                                                                                               | yes                    | restart invalidates tokens; in-flight attempts settle/recover through state                                                                                   | bridge accepted/rejected/finalized receipts                                                |
+| Workflow task-agent bridge operation registry | app/bootstrap loopback transport plus `RuntimeWorkflowTaskAgentBridgeService` and `RuntimeWorkflowTaskAgentBridgeBearerVerifier` | bootstrap-owned `POST /runTaskAgent` binding plus runtime-owned bearer-lineage verifier and authenticated operation service, idempotency keying, queue admission, task-attempt surface lifecycle, generated-context binding, command facts, and pi-adapter delivery handoff | `appBootstrapScoped` + `layer-acquired`                                  | app bootstrap creates command-scoped transport and provides the verifier; `Runtime.layer` creates the package-private bridge service                                      | app shutdown/restart                                                                                                               | yes                    | restart invalidates tokens; forged bearer lineage is rejected before durable writes; in-flight attempts settle/recover through state                            | bridge accepted/rejected/finalized receipts                                                |
 | Facade event subscriptions                    | runtime facade adapter                                                                               | scoped stream subscription                                                                                                                                                                                                                                       | `bridgeSubscriptionScoped`                                               | `events(...)` facade call                                                                                                                                                | unsubscribe, iterator return/throw, runtime close                                                                                  | no                     | captured `Exit` closes subscription; gaps require rebaseline                                                                                                  | subscription attached/closed tests                                                         |
 | Bridge `AsyncIterable` scopes                 | browser/headless bridge adapter                                                                      | adapter fiber over runtime stream                                                                                                                                                                                                                                | `bridgeSubscriptionScoped`                                               | browser/headless subscription call                                                                                                                                       | caller abort/return, runtime close                                                                                                 | no                     | captured `Exit` closes iterator; stale cursors rejected                                                                                                       | iterator close, abort, rebaseline tests                                                    |
 

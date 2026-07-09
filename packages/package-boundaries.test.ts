@@ -380,6 +380,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeSurfaceLifecycleStatePort",
       "layerRuntimeThreadStatePort",
       "layerRuntimeTurnStatePort",
+      "layerRuntimeWorkflowTaskStatePort",
       "layerRuntimeWorkspaceStatePort",
       "layerSandboxPolicySource",
       "layerSandboxPolicySourceWithConfig",
@@ -614,19 +615,17 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "RuntimeGeneratedContextRefreshHostPort",
       "RuntimeGeneratedPackageRefreshHostPort",
       "RuntimeLayerModelResolverPort",
-      "RuntimeLayerPromptControlHostPort",
       "RuntimeLayerProviderAuthPort",
-      "RuntimeLayerSurfaceQueueWakePort",
       "RuntimeSourceInvalidationScanPort",
       "RuntimeSurfaceQueueWakeReason",
+      "RuntimeWorkflowTaskAgentBridgeBearerVerifier",
+      "RuntimeWorkflowTaskAgentBridgeBearerVerifierService",
       "RuntimeLayerCommandControlPortService",
       "RuntimeLayerCommandStdinPortService",
       "RuntimeGeneratedContextRefreshHostPortService",
       "RuntimeGeneratedPackageRefreshHostPortService",
       "RuntimeLayerModelResolverPortService",
-      "RuntimeLayerPromptControlHostPortService",
       "RuntimeLayerProviderAuthPortService",
-      "RuntimeLayerSurfaceQueueWakePortService",
       "RuntimeSourceInvalidationScanPortService",
       "RuntimeGeneratedPackageWorkspaceLinkFileHost",
       "RuntimeSourceInvalidationDirectoryEntry",
@@ -724,6 +723,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runtimeThreadStatePortFromStructuredSessionState",
       "runtimeTurnStatePortFromStore",
       "runtimeTurnStatePortFromStructuredSessionState",
+      "runtimeWorkflowTaskStatePortFromStore",
+      "runtimeWorkflowTaskStatePortFromStructuredSessionState",
       "runtimeWorkspaceStatePortFromStore",
       "runtimeWorkspaceStatePortFromStructuredSessionState",
       "stateCommandsFromRouter",
@@ -875,24 +876,22 @@ const runtimeBootstrapSpecApprovedSymbols = [
   "RuntimePrepareShutdownResult",
   "RuntimeStartupDegradedPhase",
   "RuntimeStartupReadinessReceipt",
-  "RuntimeLayerPromptControlHostPort",
-  "RuntimeLayerPromptControlHostPortService",
   "RuntimeLayerCommandControlPort",
   "RuntimeLayerCommandStdinPort",
   "RuntimeGeneratedContextRefreshHostPort",
   "RuntimeGeneratedPackageRefreshHostPort",
   "RuntimeLayerModelResolverPort",
   "RuntimeLayerProviderAuthPort",
-  "RuntimeLayerSurfaceQueueWakePort",
   "RuntimeSourceInvalidationScanPort",
   "RuntimeSurfaceQueueWakeReason",
+  "RuntimeWorkflowTaskAgentBridgeBearerVerifier",
+  "RuntimeWorkflowTaskAgentBridgeBearerVerifierService",
   "RuntimeLayerCommandControlPortService",
   "RuntimeLayerCommandStdinPortService",
   "RuntimeGeneratedContextRefreshHostPortService",
   "RuntimeGeneratedPackageRefreshHostPortService",
   "RuntimeLayerModelResolverPortService",
   "RuntimeLayerProviderAuthPortService",
-  "RuntimeLayerSurfaceQueueWakePortService",
   "RuntimeSourceInvalidationScanPortService",
   "RuntimeGeneratedPackageWorkspaceLinkFileHost",
   "RuntimeSourceInvalidationDirectoryEntry",
@@ -3164,6 +3163,7 @@ describe("package boundaries", () => {
           "RuntimeSurfaceLifecycleStatePort",
           "RuntimeThreadStatePort",
           "RuntimeTurnStatePort",
+          "RuntimeWorkflowTaskStatePort",
           "RuntimeWorkspaceStatePort",
         ],
       },
@@ -3234,14 +3234,8 @@ describe("package boundaries", () => {
           "RuntimeLayerCommandControlPort",
           "RuntimeLayerCommandStdinPort",
           "RuntimeLayerModelResolverPort",
-          "RuntimeLayerPromptControlHostPort",
           "RuntimeLayerProviderAuthPort",
         ],
-      },
-      {
-        packageName: "runtime",
-        file: "runtime-surface-queue-wake-port.ts",
-        names: ["RuntimeLayerSurfaceQueueWakePort"],
       },
       {
         packageName: "runtime",
@@ -3607,6 +3601,7 @@ describe("package boundaries", () => {
           "packages/state/src/runtime-surface-lifecycle-state-port.ts -> layerRuntimeSurfaceLifecycleStatePort",
           "packages/state/src/runtime-thread-state-port.ts -> layerRuntimeThreadStatePort",
           "packages/state/src/runtime-turn-state-port.ts -> layerRuntimeTurnStatePort",
+          "packages/state/src/runtime-workflow-task-state-port.ts -> layerRuntimeWorkflowTaskStatePort",
           "packages/state/src/runtime-workspace-state-port.ts -> layerRuntimeWorkspaceStatePort",
           "packages/state/src/sandbox-policy-source.ts -> layerSandboxPolicySource",
           "packages/state/src/state-facade.ts -> StateCommands",
@@ -3684,9 +3679,19 @@ describe("package boundaries", () => {
           "packages/runtime/src/runtime-effect-requests.ts -> layerRuntimeExecutionPlanExecutor",
           "packages/runtime/src/runtime-request-input-wait-service.ts -> RuntimeRequestInputWaitService",
           "packages/runtime/src/runtime-request-input-wait-service.ts -> layerRuntimeRequestInputWaitService",
+          "packages/runtime/src/runtime-prompt-execution-service.ts -> RuntimePromptExecutionService",
+          "packages/runtime/src/runtime-prompt-execution-service.ts -> layerRuntimePromptExecutionService",
+          "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts -> RuntimeSurfaceQueueDispatcherService",
+          "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts -> layerRuntimeSurfaceQueueDispatcherService",
           "packages/runtime/src/runtime-surface-event-publisher.ts -> RuntimeSurfaceEventPublisher",
           "packages/runtime/src/runtime-surface-event-publisher.ts -> layerRuntimeSurfaceEventPublisher",
+          "packages/runtime/src/workflow-task-agent-bridge-service.ts -> RuntimeWorkflowTaskAgentBridgeService",
+          "packages/runtime/src/workflow-task-agent-bridge-service.ts -> RuntimeWorkflowTaskAgentBridgeBearerVerifier",
+          "packages/runtime/src/workflow-task-agent-bridge-service.ts -> layerRuntimeWorkflowTaskAgentBridgeService",
           "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeSourceInvalidationScanPort",
+          "packages/runtime/src/surface-runtime-scope-service.ts -> RuntimeSurfaceRuntimeService",
+          "packages/runtime/src/surface-runtime-scope-service.ts -> RuntimeSurfaceScopeService",
+          "packages/runtime/src/surface-runtime-scope-service.ts -> layerRuntimeSurfaceScopeService",
           "packages/runtime/src/workspace-runtime-scope-service.ts -> RuntimeWorkspaceScopeService",
           "packages/runtime/src/workspace-runtime-scope-service.ts -> layerRuntimeWorkspaceScopeService",
           "packages/runtime/src/runtime-layer-config.ts -> layerRuntimeShutdownPreparation",
@@ -3761,6 +3766,7 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeSurfaceLifecycleStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeThreadStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeTurnStatePort",
+      "packages/core/src/runtime-state-ports.ts -> RuntimeWorkflowTaskStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeWorkspaceStatePort",
       "packages/core/src/sandbox-policy-contracts.ts -> SandboxPolicySource",
       "packages/state/src/sandbox-policy-source.ts -> SandboxPolicySourceConfigPort",
@@ -3780,9 +3786,7 @@ describe("package boundaries", () => {
       "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedContextRefreshHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedPackageRefreshHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerModelResolverPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerPromptControlHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeLayerProviderAuthPort",
-      "packages/runtime/src/runtime-surface-queue-wake-port.ts -> RuntimeLayerSurfaceQueueWakePort",
       "packages/runtime/src/runtime-queue-wake-service.ts -> RuntimeQueueWakeService",
       "packages/runtime/src/runtime-queue-wake-service.ts -> layerRuntimeQueueWakeService",
       "packages/runtime/src/runtime-prompt-defaults-service.ts -> RuntimePromptDefaultsService",
@@ -4445,7 +4449,12 @@ describe("package boundaries", () => {
           "adopted-source-gated",
           ["packages/extensions/src/generated-package-writer.ts"],
         ],
-        ["effect/Redacted", "make", "adopted-source-gated", ["src/bun/session-catalog.ts"]],
+        [
+          "effect/Redacted",
+          "make",
+          "adopted-source-gated",
+          ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
+        ],
         [
           "effect/Redacted",
           "value",
@@ -4634,6 +4643,7 @@ describe("package boundaries", () => {
           [
             "packages/runtime/src/runtime-event-bus.ts",
             "packages/runtime/src/runtime-surface-event-publisher.ts",
+            "packages/runtime/src/surface-runtime-scope-service.ts",
           ],
         ],
       ],
@@ -4751,7 +4761,7 @@ describe("package boundaries", () => {
         "packages/pi-adapter/src/pi-adapter.ts",
       ],
       queueFailCauseCalls: [],
-      redactedMakeCalls: ["src/bun/session-catalog.ts"],
+      redactedMakeCalls: ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
       redactedValueCalls: [
         "packages/pi-adapter/src/pi-adapter.ts",
         "packages/pi-adapter/src/pi-adapter.ts",
@@ -6642,7 +6652,7 @@ describe("package boundaries", () => {
     );
   });
 
-  it("runtime and core specs define the narrow prompt-control and prompt-context public seams", () => {
+  it("runtime and core specs define runtime-owned prompt dispatch and prompt-context seams", () => {
     const runtimeSource = readSource(join(packageArchitectureSpecRoot, "runtime.spec.md"));
     const coreSource = readSource(join(packageArchitectureSpecRoot, "core.spec.md"));
     const effectSource = readSource(join(packageArchitectureSpecRoot, "effect-v4.spec.md"));
@@ -6650,16 +6660,11 @@ describe("package boundaries", () => {
       join(packageArchitectureSpecRoot, "package-architecture.spec.md"),
     );
 
-    expect(runtimeSource).toContain(
-      "`RuntimeLayerPromptControlHostPort` is exported only from `@svvy/runtime/bootstrap`",
-    );
-    expect(runtimeSource).toContain("RuntimeLayerPromptControlHostPortService");
-    expect(runtimeSource).toContain("cancelActivePrompt(input: {");
-    expect(runtimeSource).toContain("}): Effect.Effect<void, RuntimeContractError>;");
-    expect(runtimeSource).toContain("| RuntimeLayerPromptControlHostPort");
-    expect(runtimeSource).toContain(
-      "App/bootstrap provides `RuntimeLayerSurfaceQueueWakePort` as a primitive wake adapter",
-    );
+    expect(runtimeSource).toContain("RuntimeSurfaceQueueDispatcherService");
+    expect(runtimeSource).toContain("acceptWakeHint(...)");
+    expect(runtimeSource).toContain("RuntimeSurfaceScopeService");
+    expect(runtimeSource).not.toContain("RuntimeLayerPromptControlHostPort");
+    expect(runtimeSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
     expect(runtimeSource).toContain(
       "`message-submitted` is emitted only after a committed prompt-bearing surface queue row",
     );
@@ -6668,14 +6673,6 @@ describe("package boundaries", () => {
     expect(runtimeSource).toContain('| "request-input-answer-queued"');
     expect(runtimeSource).toContain('| "queue-steered"');
     expect(runtimeSource).toContain('| "runtime-queue-inserted"');
-    expect(runtimeSource).toContain("type RuntimeLayerSurfaceQueueWakePortService = {");
-    expect(runtimeSource).toContain("wakeSurfaceQueue(input: {");
-    expect(runtimeSource).toContain("target: PromptTarget;");
-    expect(runtimeSource).toContain("reason: RuntimeSurfaceQueueWakeReason;");
-    expect(runtimeSource).toContain("}): Effect.Effect<void, RuntimeContractError>;");
-    expect(runtimeSource).toContain(
-      "No other public bootstrap method may wake, drain, claim, materialize, inspect, or reorder surface",
-    );
     expect(runtimeSource).toContain(
       "It exposes package-private `acceptWakeHint(...)` and\n  `drain(...)` effects.",
     );
@@ -6704,13 +6701,12 @@ describe("package boundaries", () => {
     expect(effectSource).toContain(
       "The runtime tags in this list are allowed on the public `@svvy/runtime/bootstrap` subpath only as",
     );
-    expect(effectSource).toContain(
-      "`RuntimeLayerSurfaceQueueWakePort` is a public bootstrap composition tag",
-    );
+    expect(effectSource).not.toContain("RuntimeLayerPromptControlHostPort");
+    expect(effectSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
 
-    expect(packageArchitectureSource).toContain("createRuntimePromptControlHostLayer");
-    expect(packageArchitectureSource).toContain("RuntimeLayerPromptControlHostPort");
-    expect(packageArchitectureSource).toContain("RuntimePromptControlHostLayer");
+    expect(packageArchitectureSource).not.toContain("createRuntimePromptControlHostLayer");
+    expect(packageArchitectureSource).not.toContain("RuntimeLayerPromptControlHostPort");
+    expect(packageArchitectureSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
     expect(packageArchitectureSource).toContain(
       "resolves any renderer-local placement such as `panelId` through authoritative state-backed",
     );
@@ -6729,8 +6725,8 @@ describe("package boundaries", () => {
 
     expect(bootstrapSymbols.toSorted()).toEqual(specApproved);
     expect(actualBootstrapSymbols.toSorted()).toEqual(specApproved);
-    expect(specApproved).toContain("RuntimeLayerPromptControlHostPort");
-    expect(specApproved).toContain("RuntimeLayerSurfaceQueueWakePort");
+    expect(specApproved).not.toContain("RuntimeLayerPromptControlHostPort");
+    expect(specApproved).not.toContain("RuntimeLayerSurfaceQueueWakePort");
     expect(specApproved).toContain("RuntimeGeneratedPackageWorkspaceLinkFileHost");
     expect(specApproved).toContain("RuntimeSourceInvalidationHost");
     expect(specApproved).toContain("RuntimeSourceWatchInput");
@@ -6753,9 +6749,8 @@ describe("package boundaries", () => {
     expect(actualBootstrapSymbols).not.toContain("SurfaceQueueDispatcher");
     expect(actualBootstrapSymbols).not.toContain("RuntimeSurfaceQueueDispatcherService");
     expect(actualBootstrapSymbols).not.toContain("wakeRuntimeSurfaceQueue");
-    expect(runtimeSpecSource).toContain(
-      "App/bootstrap provides `RuntimeLayerSurfaceQueueWakePort` as a primitive wake adapter",
-    );
+    expect(runtimeSpecSource).toContain("RuntimeSurfaceQueueDispatcherService");
+    expect(runtimeSpecSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
     expect(runtimeSpecSource.replace(/\s+/g, " ")).toContain(
       "accepted-tool operation helpers, source coordinators, queue dispatchers, generated-package repair executors, event-bus internals, wait registries, runtime scope services, `RuntimeWorkspaceScopeService`, or `layerRuntimeWorkspaceScopeService`",
     );
@@ -8177,13 +8172,42 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("session catalog cannot own the deleted prompt dispatch loop or stream producer seams", () => {
+    const catalogSource = readSource(join(projectRoot, "src", "bun", "session-catalog.ts"));
+    const deletedCatalogSeams = [
+      "emitSurfaceStreamPatch",
+      "runAgentPrompt",
+      "runSurfaceQueue",
+      "sendPrompt(",
+      "cancelPrompt(",
+      "cancelActivePrompt(",
+      "createRuntimeSurfaceQueueDispatcher",
+      "session.prompt(",
+    ];
+    for (const seam of deletedCatalogSeams) {
+      expect(catalogSource).not.toContain(seam);
+    }
+
+    const streamPatchProducers = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+      .filter((file) => !isTestFile(file))
+      .filter((file) => readSource(file).includes('type: "surface.stream"'))
+      .map(display);
+
+    expect(streamPatchProducers).toEqual(["src/bun/workspace-runtime-registry.ts"]);
+  });
+
   it("runtime prompt post-commit lanes use runtime queue wake service over primitive surface queue wake ports", () => {
     const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
+    const runtimeQueueWakeSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-queue-wake-service.ts"),
+    );
     expect(runtimeLayerSource).toContain("RuntimeQueueWakeService");
     expect(runtimeLayerSource).toContain("wakeSurface({");
     expect(runtimeLayerSource).toContain('reason: "message-submitted"');
     expect(runtimeLayerSource).toContain('reason: "queue-steered"');
     expect(runtimeLayerSource).not.toContain("wakeSurfaceQueue({");
+    expect(runtimeQueueWakeSource).toContain("RuntimeSurfaceQueueDispatcherService");
+    expect(runtimeQueueWakeSource).toContain("acceptWakeHint({");
     expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
     expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageQueued");
     expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageSteered");
@@ -8196,9 +8220,7 @@ describe("package boundaries", () => {
 
     const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
     const runtimeStructuralPortTags = [
-      "RuntimeLayerPromptControlHostPort",
       "RuntimePromptDefaultsStatePort",
-      "RuntimeLayerSurfaceQueueWakePort",
       "RuntimeLayerProviderAuthPort",
       "RuntimeLayerModelResolverPort",
       "AppLogWritePort",
@@ -8212,6 +8234,8 @@ describe("package boundaries", () => {
       expect(appRuntimeBootstrapSource).toMatch(new RegExp(`Layer\\.succeed\\(\\s*${tag},`));
       expect(appRuntimeBootstrapSource).not.toContain(`${tag}.of`);
     }
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerPromptControlHostPort");
+    expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
     expect(runtimeLayerSource).toMatch(
       /ensureUsableProviderAuth\(\s*provider:\s*string,\s*\):\s*Effect\.Effect<string \| undefined, RuntimeContractError>/,
     );
@@ -8221,7 +8245,7 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).not.toContain(
       "try: () => input.providerAuth.ensureUsableProviderAuth(resolved.provider)",
     );
-    expect(appRuntimeBootstrapSource).toContain("wakeRuntimeSurfaceQueue");
+    expect(appRuntimeBootstrapSource).not.toContain("wakeRuntimeSurfaceQueue");
     expect(appRuntimeBootstrapSource).not.toContain("afterRuntimeSurfaceMessageQueued");
     expect(appRuntimeBootstrapSource).not.toContain("afterRuntimeSurfaceMessageSteered");
   });
@@ -8285,7 +8309,9 @@ describe("package boundaries", () => {
     expect(appRuntimeBootstrapSource).not.toContain("Layer.succeed(RuntimeApprovalWaitService");
     expect(appRuntimeBootstrapSource).not.toContain("getRuntimeApprovalWaitService");
     expect(appRuntimeBootstrapSource).toContain("workspaceStateLayer");
-    expect(appRuntimeBootstrapSource).toContain("Layer.succeed(RuntimeLayerSurfaceQueueWakePort");
+    expect(appRuntimeBootstrapSource).not.toContain(
+      "Layer.succeed(RuntimeLayerSurfaceQueueWakePort",
+    );
     expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerEventsPort");
     expect(appRuntimeBootstrapSource).not.toContain("RuntimeEventBusHandle");
     expect(appRuntimeBootstrapSource).not.toContain("createRuntimeEventBusHandle");
@@ -8682,7 +8708,8 @@ describe("package boundaries", () => {
     expect(source).toContain("| StateCommandPostCommitNotificationPort");
     expect(source).not.toContain("RuntimeLayerRequirements");
     expect(source).toContain("| RuntimeLayerConfigService");
-    expect(source).toContain("| RuntimeLayerPromptControlHostPort");
+    expect(source).not.toContain("| RuntimeLayerPromptControlHostPort");
+    expect(source).not.toContain("| RuntimeLayerSurfaceQueueWakePort");
     expect(source).toContain("| RuntimeWorkspaceStatePort");
     expect(source).toContain("| SandboxPolicySource");
     expect(source).toContain("| SandboxHelperCandidatesPort");
@@ -9737,7 +9764,6 @@ describe("package boundaries", () => {
       "src/bun/runtime-service-adapter.test.ts -> Effect.runSync",
       "src/bun/runtime-state-tools.test.ts -> Effect.runSync",
       "src/bun/session-catalog.test.ts -> Effect.runPromise",
-      "src/bun/session-catalog.test.ts -> Effect.runSync",
       "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",
       "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",
       "src/bun/streaming-command-tracker.test.ts -> Effect.runSync",

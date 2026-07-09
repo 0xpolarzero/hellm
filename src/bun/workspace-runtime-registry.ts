@@ -31,6 +31,8 @@ import {
   type ExtensionStatePortService,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type IsoDateTimeString,
+  type PromptTarget,
+  type RuntimeEvent,
   type RefreshGeneratedContextRequest,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeSourceStatePortService,
@@ -40,6 +42,7 @@ import {
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import type {
   AppLogUpdateMessage,
+  SurfaceStreamPatch,
   SurfaceSyncMessage,
   WorkspaceInfoResponse,
   WorkspaceKind,
@@ -80,11 +83,7 @@ import {
   type RuntimeProviderAuthDependencies,
   type RuntimeGeneratedPackageRefreshBoundaryHost,
 } from "./runtime-service-adapter";
-import {
-  createAppRuntimeBootstrap,
-  type AppRuntimeBootstrap,
-  type AppRuntimeBootstrapWorkspaceExecutor,
-} from "./app-runtime-bootstrap";
+import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runtime-bootstrap";
 import {
   buildAppGlobalSourceWatchInputs,
   buildWorkspaceSourceWatchInputs,
@@ -99,6 +98,7 @@ type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBound
 };
 
 type RuntimeFacade = AppRuntimeBootstrap["facade"];
+type RuntimeEventSubscription = Awaited<ReturnType<RuntimeFacade["events"]>>;
 type RuntimeSourceInvalidationReactionInput =
   | {
       readonly scope: { readonly kind: "app-global" };
@@ -204,6 +204,7 @@ type RuntimeRecord = WorkspaceRuntime & {
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle;
   unsubscribeAppLog: () => void;
+  unsubscribeRuntimeEvents: () => void;
 };
 
 type AppGlobalHostRecord = {
@@ -215,6 +216,120 @@ type AppGlobalHostRecord = {
   sourceStatePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
   dispose(): Promise<void>;
 };
+
+const RUNTIME_STREAM_ZERO_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
+};
+
+function isPromptTarget(
+  target: Extract<RuntimeEvent, { readonly target: unknown }>["target"],
+): target is PromptTarget {
+  return target.surface === "orchestrator" || target.surface === "handler";
+}
+
+function rendererStreamPatchesFromRuntimeEvent(input: {
+  readonly event: Extract<RuntimeEvent, { readonly type: "surface.stream" }>;
+  readonly startedBlocks: Set<string>;
+}): SurfaceStreamPatch[] {
+  const patch = input.event.patch;
+  const sequence = Number(input.event.streamSequence) * 2;
+  const blockKey = (kind: "text" | "thinking", contentIndex: number) =>
+    `${input.event.target.surfacePiSessionId}:${input.event.streamGenerationId}:${kind}:${contentIndex}`;
+  switch (patch.type) {
+    case "assistant_message_started":
+      for (const key of Array.from(input.startedBlocks)) {
+        if (key.startsWith(`${input.event.target.surfacePiSessionId}:`)) {
+          input.startedBlocks.delete(key);
+        }
+      }
+      return [
+        {
+          type: "start",
+          sequence,
+          message: {
+            role: "assistant",
+            content: [],
+            api: "runtime",
+            provider: "runtime",
+            model: "runtime",
+            usage: RUNTIME_STREAM_ZERO_USAGE,
+            stopReason: "stop",
+            timestamp: Date.parse(patch.createdAt) || Date.now(),
+          },
+        } as SurfaceStreamPatch,
+      ];
+    case "assistant_text_delta": {
+      const key = blockKey("text", patch.contentIndex);
+      const patches: SurfaceStreamPatch[] = [];
+      if (!input.startedBlocks.has(key)) {
+        input.startedBlocks.add(key);
+        patches.push({
+          type: "text_start",
+          sequence: sequence - 1,
+          contentIndex: patch.contentIndex,
+        });
+      }
+      patches.push({
+        type: "text_delta",
+        sequence,
+        contentIndex: patch.contentIndex,
+        delta: patch.delta,
+      });
+      return patches;
+    }
+    case "assistant_thinking_delta": {
+      const key = blockKey("thinking", patch.contentIndex);
+      const patches: SurfaceStreamPatch[] = [];
+      if (!input.startedBlocks.has(key)) {
+        input.startedBlocks.add(key);
+        patches.push({
+          type: "thinking_start",
+          sequence: sequence - 1,
+          contentIndex: patch.contentIndex,
+        });
+      }
+      patches.push({
+        type: "thinking_delta",
+        sequence,
+        contentIndex: patch.contentIndex,
+        delta: patch.delta,
+      });
+      return patches;
+    }
+    case "assistant_message_finished":
+      return [
+        {
+          type: "clear",
+          sequence,
+          reason: patch.status === "completed" ? "done" : "error",
+        },
+      ];
+    case "stream_reset":
+      return [
+        {
+          type: "clear",
+          sequence,
+          reason: "error",
+        },
+      ];
+    case "active_command":
+    case "prompt_status":
+    case "tool_arguments_snapshot":
+    case "user_message_committed":
+      return [];
+  }
+}
 
 export class WorkspaceRuntimeRegistry {
   private readonly runtimes = new Map<string, RuntimeRecord>();
@@ -305,6 +420,92 @@ export class WorkspaceRuntimeRegistry {
 
   ready(): Promise<void> {
     return this.startupReady;
+  }
+
+  private async startRuntimeEventForwarder(input: {
+    readonly workspaceId: string;
+    readonly runtime: AppRuntimeBootstrap;
+  }): Promise<() => void> {
+    let stopped = false;
+    const startedBlocks = new Set<string>();
+    const subscription = await input.runtime.facade.events({
+      workspaceId: input.workspaceId as WorkspaceId,
+      includeAppEvents: true,
+    });
+    const stop = () => {
+      stopped = true;
+      void subscription.close().catch((error) => {
+        this.options.forwardBridgeLog?.(
+          "warn",
+          "Runtime event subscription did not close cleanly.",
+          "runtime.events",
+          { workspaceId: input.workspaceId },
+          error,
+        );
+      });
+    };
+    void this.forwardRuntimeEvents({
+      workspaceId: input.workspaceId,
+      subscription,
+      startedBlocks,
+      isStopped: () => stopped,
+    });
+    return stop;
+  }
+
+  private async forwardRuntimeEvents(input: {
+    readonly workspaceId: string;
+    readonly subscription: RuntimeEventSubscription;
+    readonly startedBlocks: Set<string>;
+    readonly isStopped: () => boolean;
+  }): Promise<void> {
+    try {
+      for await (const event of input.subscription) {
+        if (input.isStopped()) {
+          break;
+        }
+        this.forwardRuntimeEventToRenderer({
+          workspaceId: input.workspaceId,
+          event,
+          startedBlocks: input.startedBlocks,
+        });
+      }
+    } catch (error) {
+      if (!input.isStopped()) {
+        this.options.forwardBridgeLog?.(
+          "warn",
+          "Runtime event subscription stopped unexpectedly.",
+          "runtime.events",
+          { workspaceId: input.workspaceId },
+          error,
+        );
+      }
+    }
+  }
+
+  private forwardRuntimeEventToRenderer(input: {
+    readonly workspaceId: string;
+    readonly event: RuntimeEvent;
+    readonly startedBlocks: Set<string>;
+  }): void {
+    if (input.event.type !== "surface.stream") {
+      return;
+    }
+    if (!isPromptTarget(input.event.target)) {
+      return;
+    }
+    const patches = rendererStreamPatchesFromRuntimeEvent({
+      event: input.event,
+      startedBlocks: input.startedBlocks,
+    });
+    for (const patch of patches) {
+      this.options.onSurfaceSync?.(input.workspaceId, {
+        workspaceId: input.workspaceId,
+        reason: "stream.patch",
+        target: input.event.target,
+        streamPatch: patch,
+      });
+    }
   }
 
   openWorkspace(cwd: string, options: OpenWorkspaceOptions = {}): Promise<WorkspaceRuntime> {
@@ -509,6 +710,10 @@ export class WorkspaceRuntimeRegistry {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.requestDirectToolApproval(request);
         },
+        runTaskAgent: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return runtime.internal.workflowTaskAgentBridge.runTaskAgent(request);
+        },
       },
       undefined,
       undefined,
@@ -651,6 +856,10 @@ export class WorkspaceRuntimeRegistry {
         this.openingWorkspaceCwds.delete(requestedWorkspaceId);
       }
     }
+    const unsubscribeRuntimeEvents = await this.startRuntimeEventForwarder({
+      workspaceId,
+      runtime: appRuntime,
+    });
     const runtime: RuntimeRecord = {
       workspaceId,
       cwd,
@@ -666,6 +875,7 @@ export class WorkspaceRuntimeRegistry {
       appLog,
       sourceInvalidationCoordinator,
       unsubscribeAppLog,
+      unsubscribeRuntimeEvents,
       getInfo: () => ({
         workspaceId,
         cwd,
@@ -679,6 +889,7 @@ export class WorkspaceRuntimeRegistry {
           cwd,
         });
         unsubscribeAppLog();
+        unsubscribeRuntimeEvents();
         catalog.setWorkspaceSyncListener(null);
         catalog.setSurfaceSyncListener(null);
         catalog.setTitleGenerationLogListener(null);
@@ -792,6 +1003,10 @@ export class WorkspaceRuntimeRegistry {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.requestDirectToolApproval(request);
         },
+        runTaskAgent: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return runtime.internal.workflowTaskAgentBridge.runTaskAgent(request);
+        },
       },
       undefined,
       undefined,
@@ -861,8 +1076,8 @@ export class WorkspaceRuntimeRegistry {
       runtimeLayerConfig: this.options.runtimeLayerConfig,
       commandRegistry: this.createAppCommandRegistry(appGlobal.commandStdin),
       providerAuth: this.runtimeDependencies(),
-      workspaceExecutors: {
-        resolvePromptTarget: async (target) => this.resolvePromptTargetExecutor(target),
+      piRuntimePaths: {
+        resolve: async (workspaceId) => this.resolvePiRuntimePaths(workspaceId),
       },
       generatedContextRefresh: {
         refresh: (input) => this.refreshGeneratedContext(input),
@@ -892,29 +1107,38 @@ export class WorkspaceRuntimeRegistry {
           return runtime.sourceInvalidationCoordinator;
         },
       },
+      workflowTaskAgentBridge: {
+        verifyBearerLineage: async (request) => {
+          const appGlobalRecord = await this.getAppGlobalHostRecord();
+          const catalogs = [
+            appGlobalRecord.catalog,
+            ...Array.from(this.runtimes.values(), (runtime) => runtime.catalog),
+          ];
+          return catalogs.some((catalog) => catalog.verifyRunTaskAgentBridgeBearerLineage(request));
+        },
+      },
     });
   }
 
-  private resolvePromptTargetExecutor(target: {
-    readonly workspaceSessionId: string;
-    readonly surfacePiSessionId: string;
-  }): AppRuntimeBootstrapWorkspaceExecutor {
-    const runtime = this.findRuntimeForPromptTarget(target);
+  private async resolvePiRuntimePaths(workspaceId: WorkspaceId) {
+    const appGlobal = await this.getAppGlobalHostRecord();
+    const runtime =
+      this.runtimes.get(workspaceId) ?? (appGlobal.workspaceId === workspaceId ? appGlobal : null);
     if (!runtime) {
       throw new RuntimeContractError({
-        operation: "app-runtime-bootstrap.resolvePromptTarget",
+        operation: "runtime.pi.paths.resolve",
         reason: "target-not-found",
-        message: `No open workspace owns surface ${target.surfacePiSessionId}.`,
+        message: `Pi runtime paths require an open workspace host record for ${workspaceId}.`,
       });
     }
+    const sessionDir = getSvvySessionDir(runtime.cwd, this.agentDir);
     return {
-      cancelActivePrompt: (input) =>
-        runtime.catalog.cancelActivePrompt({
-          ...input,
-          target: input.target,
-        }),
-      cancelPrompt: (promptTarget) => runtime.catalog.cancelPrompt(promptTarget),
-      wakeRuntimeSurfaceQueue: (input) => runtime.catalog.wakeRuntimeSurfaceQueue(input),
+      workspaceId,
+      cwd: runtime.cwd as AbsolutePath,
+      agentDir: this.agentDir as AbsolutePath,
+      sessionDir: sessionDir as AbsolutePath,
+      modelRegistryPath: join(this.agentDir, "model-registry.json") as AbsolutePath,
+      source: "packaged-app" as const,
     };
   }
 
@@ -981,29 +1205,6 @@ export class WorkspaceRuntimeRegistry {
   private findRuntimeByCwd(cwd: string): RuntimeRecord | null {
     const canonical = canonicalizeWorkspaceCwd(cwd);
     return Array.from(this.runtimes.values()).find((runtime) => runtime.cwd === canonical) ?? null;
-  }
-
-  private findRuntimeForPromptTarget(target: {
-    readonly workspaceSessionId: string;
-    readonly surfacePiSessionId: string;
-  }): RuntimeRecord | null {
-    for (const runtime of this.runtimes.values()) {
-      const store = runtime.catalog.workspaceStateRouterRegistration().store;
-      try {
-        store.getSessionState(target.workspaceSessionId);
-        return runtime;
-      } catch {
-        try {
-          const reference = store.getPiSessionReference({
-            surfacePiSessionId: target.surfacePiSessionId as never,
-          });
-          if (reference) return runtime;
-        } catch {
-          // Continue probing open workspace stores.
-        }
-      }
-    }
-    return null;
   }
 
   private async handleSourceInvalidationEvent(

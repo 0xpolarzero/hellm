@@ -164,6 +164,16 @@ function createTurnState() {
           finishedAt: "2026-04-18T09:01:00.000Z",
         });
       }),
+    queueTopLevelTitleGeneration: ({ sessionId, surfacePiSessionId }) =>
+      Effect.sync(() => {
+        calls.push(`queueTopLevelTitleGeneration:${sessionId}:${surfacePiSessionId}`);
+        return stateMutation({
+          queued: true,
+          sessionId,
+          surfacePiSessionId,
+          title: "",
+        });
+      }),
   };
   return { turnStatePort, calls };
 }

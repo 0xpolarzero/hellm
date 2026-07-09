@@ -66,7 +66,7 @@ import {
   RuntimeQueueWakeService,
 } from "./runtime-queue-wake-service";
 import { layerStateCommandPostCommitNotificationPort } from "./state-command-post-commit-notification";
-import { RuntimeLayerSurfaceQueueWakePort } from "./runtime-surface-queue-wake-port";
+import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
 
 const workspaceId = "workspace_runtime_service_layers" as WorkspaceId;
 const target = {
@@ -191,7 +191,7 @@ describe("runtime promoted service layers", () => {
     ),
   );
 
-  it.effect("wakes surface queues through the host wake port", () => {
+  it.effect("wakes surface queues through the runtime dispatcher service", () => {
     const calls: unknown[] = [];
 
     return Effect.gen(function* () {
@@ -202,11 +202,20 @@ describe("runtime promoted service layers", () => {
       assert.deepStrictEqual(calls, [{ target, reason: "message-submitted" }]);
     }).pipe(
       Effect.provide(layerRuntimeQueueWakeService),
-      Effect.provideService(RuntimeLayerSurfaceQueueWakePort, {
-        wakeSurfaceQueue: (input) => {
-          calls.push(input);
+      Effect.provideService(RuntimeSurfaceQueueDispatcherService, {
+        acceptWakeHint: (input) => {
+          calls.push({ target: input.target, reason: input.reason });
           return Effect.void;
         },
+        drain: () => Effect.succeed(false),
+        drainForQueueItem: () =>
+          Effect.fail(
+            new RuntimeContractError({
+              operation: "test.runtimeSurfaceQueueDispatcher.drainForQueueItem",
+              reason: "target-not-ready",
+              message: "unused",
+            }),
+          ),
       }),
     );
   });

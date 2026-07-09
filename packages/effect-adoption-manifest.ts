@@ -73,6 +73,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "as",
       "asVoid",
       "catch",
+      "catchTag",
       "catchCause",
       "context",
       "clockWith",
@@ -83,9 +84,11 @@ export const adoptedEffectRuntimeModuleExports = [
       "flatMap",
       "fn",
       "forEach",
+      "forkDetach",
       "forkIn",
       "gen",
       "ignore",
+      "isEffect",
       "map",
       "mapError",
       "matchEffect",
@@ -187,6 +190,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "fromQueue",
       "map",
       "mapEffect",
+      "runForEach",
       "toAsyncIterableEffect",
     ],
   },
@@ -383,9 +387,10 @@ export const adoptedEffectInstanceMemberPolicies = [
     allowedSourceGlobs: [
       "packages/runtime/src/runtime-event-bus.ts",
       "packages/runtime/src/runtime-surface-event-publisher.ts",
+      "packages/runtime/src/surface-runtime-scope-service.ts",
     ],
     productReason:
-      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, and the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus.",
+      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus, and retained runtime surface scopes use one prompt permit per live surface so queue dispatch and user cancellation cannot race active pi turns.",
   },
 ] as const satisfies readonly AdoptedEffectInstanceMemberPolicy[];
 
@@ -627,9 +632,9 @@ export const auditedEffectInstalledExportMemberPolicies = [
     module: "effect/Redacted",
     member: "make",
     adoptionState: "adopted-source-gated",
-    allowedSourceGlobs: ["src/bun/session-catalog.ts"],
+    allowedSourceGlobs: ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
     productReason:
-      "The app title-helper provider-auth edge wraps raw provider credentials immediately after trusted host credential intake and before handing them to typed provider-auth snapshots.",
+      "Trusted app provider-auth edges wrap raw provider credentials immediately after host credential intake and before handing them to typed provider-auth snapshots for the title-helper legacy path and runtime-owned pi-adapter sessions.",
   },
   {
     module: "effect/Redacted",

@@ -176,6 +176,9 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       refreshGeneratedContext: () => Effect.die("unused"),
       refreshGeneratedPackages: () => Effect.die("unused"),
     },
+    workflowTaskAgentBridge: {
+      runTaskAgent: () => Effect.die("unused"),
+    },
     ...restOverrides,
   };
 }

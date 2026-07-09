@@ -88,6 +88,10 @@ export {
   runtimeTurnStatePortFromStructuredSessionState,
 } from "./runtime-turn-state-port";
 export {
+  runtimeWorkflowTaskStatePortFromStore,
+  runtimeWorkflowTaskStatePortFromStructuredSessionState,
+} from "./runtime-workflow-task-state-port";
+export {
   runtimeWorkspaceStatePortFromStore,
   runtimeWorkspaceStatePortFromStructuredSessionState,
 } from "./runtime-workspace-state-port";

@@ -3762,6 +3762,10 @@ describe("createChatRuntime", () => {
       sessions: [createSummary("session-1", "Streaming Handler", "worker running")],
       surfaces: [
         createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("Main session")],
+        }),
+        createSurfaceSnapshot({
           target: threadTarget,
           messages: [userMessage("Inspect the repo")],
         }),
@@ -3871,6 +3875,10 @@ describe("createChatRuntime", () => {
       sessions: [createSummary("session-1", "Streaming Handler", "worker ready")],
       surfaces: [
         createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("Main ready")],
+        }),
+        createSurfaceSnapshot({
           target: threadTarget,
           messages: [assistantMessage("Previous turn")],
           streamSequence: 9,
@@ -3932,6 +3940,10 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Streaming Handler", "worker ready")],
       surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("Main ready")],
+        }),
         createSurfaceSnapshot({
           target: threadTarget,
           messages: [assistantMessage("Previous turn")],

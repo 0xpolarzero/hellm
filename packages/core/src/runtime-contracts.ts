@@ -1565,6 +1565,7 @@ export const RefreshGeneratedContextReasonSchema = Schema.Literals([
   "profile-settings-changed",
   "load-extension",
   "startup-recovery",
+  "workflow-task-agent-start",
 ]);
 
 export const RefreshGeneratedContextRequestSchema = Schema.Union([

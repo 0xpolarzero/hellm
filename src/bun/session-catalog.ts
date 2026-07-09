@@ -12,8 +12,6 @@ import {
   getProviders,
   getSupportedThinkingLevels,
   type AssistantMessage,
-  type AssistantMessageEvent,
-  type ImageContent,
   type Message,
 } from "@mariozechner/pi-ai";
 import {
@@ -24,26 +22,21 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import {
   unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap,
-  decodeUnknownRequestUserInputAnswerDeliveryPayloadExit,
   decodeUnknownRequestUserInputAnswerQueuePayloadExit,
   unsafeDecodeRuntimeClientSubmissionInputSyncForTestsAndBootstrap,
-  isRuntimePromptTelemetrySummary,
   normalizeRuntimeClientSubmissionMetadata,
-  RuntimeQueueStatePort,
-  RuntimeTurnStatePort,
   type RuntimeClientSubmissionInput,
+  RuntimeContractError,
   RuntimeToolExecutionError,
   runtimeClientSubmissionLogDetails,
+  type AuthenticatedRunTaskAgentInput,
   type RunTaskAgentInput,
   type RunTaskAgentResult,
   summarizeRuntimePromptMessagesForTelemetry,
   type NativeToolResult,
   type PiToolExecutor,
-  type CancelRuntimeSurfaceMessageInput,
   type EnqueueRuntimeSurfaceMessageInput,
-  type FinishRuntimeTurnInput,
   type GetRuntimeSurfaceMessageInput,
-  type MarkRuntimeSurfaceMessageDeliveredInput,
   type MarkRuntimeSurfaceMessageQueuedInput,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimeApprovalStatePortService,
@@ -55,18 +48,13 @@ import {
   type RuntimeRequestStatePortService,
   type RuntimeSessionWaitStatePortService,
   type RuntimeSourceStatePortService,
-  type RuntimeSubmittedMessage,
   type RuntimeSurfaceLifecycleStatePortService,
   type RuntimeSurfaceMessageRecord,
   type RuntimeThreadStatePortService,
-  type RuntimeTurnRecord,
   type RuntimeTurnStatePortService,
   type RuntimeWorkspaceStatePortService,
-  type SetRuntimeTurnDecisionInput,
-  type StartRuntimeTurnInput,
   type AgentProfileId as CoreAgentProfileId,
   type StateContractError,
-  type RequestUserInputAnswerDeliveryPayload,
   type RequestUserInputAnswerQueuePayload,
   type RuntimePromptTelemetryMessage,
   type RuntimeRecoveryStatePortService,
@@ -77,7 +65,6 @@ import {
   type InternalRefreshGeneratedPackagesRequest,
   type BuildLaunchPolicyInput,
   type SandboxLaunchFacts,
-  type PromptExecutionExternalInstructionSource,
   type RefreshGeneratedContextRequest,
   ProviderAuthPort,
   ProviderAuthPortError,
@@ -85,7 +72,6 @@ import {
   type AbsolutePath,
   type ProviderAuthPortService,
   type PiRuntimePathsPortService,
-  type PromptExecutionContext,
   type SurfacePiSessionId,
   type TitleJobId,
   type TurnId,
@@ -105,8 +91,6 @@ import type {
   PromptClientSubmissionMetadata,
   QueuedSurfaceMessage,
   SetExtensionContextAutoUpdateRequest,
-  SurfaceStreamPatch,
-  SurfaceStreamPatchInput,
   SurfaceMutationResponse,
   SurfaceSyncMessage,
   UpdateComposerDraftRequest,
@@ -151,21 +135,12 @@ import {
   projectWorkspaceSessionSummary,
   projectWorkspaceSessionSummaryFromInfo,
 } from "./session-projection";
-import {
-  defaultRuntimeLayerConfig,
-  type RuntimeLayerConfig,
-  type RuntimeSurfaceQueueWakeReason,
-} from "@svvy/runtime/bootstrap";
-import { createRuntimeSurfaceQueueDispatcher as createRuntimeSurfaceQueueDispatcherWithPolicy } from "../../packages/runtime/src/surface-queue-dispatcher";
-import {
-  createPromptExecutionContext as createRuntimePromptExecutionContext,
-  type PromptExecutionRuntimeHandle,
-} from "@svvy/runtime/prompt-execution-context";
+import { defaultRuntimeLayerConfig, type RuntimeLayerConfig } from "@svvy/runtime/bootstrap";
+import { type PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import {
   createStructuredSessionStateStore,
   StructuredSessionState,
   type StructuredSessionSnapshot,
-  type StructuredWaitState,
   type StructuredSessionStateStore,
   type StructuredSurfaceQueuedMessageRecord,
   structuredSessionStateFromStore,
@@ -217,16 +192,10 @@ import {
 } from "./request-user-input-tool";
 import { getCredential, resolveApiKey, resolveAuthState } from "./auth-store";
 import { getOAuthRefreshError, refreshIfNeeded, supportsOAuth } from "./oauth-login";
-import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
-import {
-  buildPiUserMessageFromRuntimeSubmittedMessage,
-  runtimeSubmittedMessagePromptText,
-} from "@svvy/pi-adapter/messages";
+import { runtimeSubmittedMessagePromptText } from "@svvy/pi-adapter/messages";
 import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import { createPiManagedAgentSession } from "@svvy/pi-adapter/session";
 import { countPromptTokens } from "./token-count";
-import { createStreamingCommandTracker } from "./streaming-command-tracker";
-import { createOrderedRuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadReportTool, type ThreadReportNotificationRequest } from "./thread-report-tool";
 import {
@@ -293,21 +262,6 @@ import {
   type RunTaskAgentBridgeServer,
 } from "./smithers-runtime/task-agent-bridge-server";
 
-const ZERO_USAGE: AssistantMessage["usage"] = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
-
 export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
 
 function deleteSessionFileLikePi(sessionPath: string): void {
@@ -365,12 +319,6 @@ export function summarizePromptMessagesForTelemetry(messages: readonly Message[]
   );
 }
 
-function isPromptTelemetrySummary(
-  value: unknown,
-): value is ReturnType<typeof summarizePromptMessagesForTelemetry> {
-  return isRuntimePromptTelemetrySummary(value);
-}
-
 type ManagedActorKind = SvvyActorKind | "namer";
 
 interface ManagedSession {
@@ -413,19 +361,6 @@ export interface SessionDefaults {
   agentProfileSettings?: AgentProfileSettings;
 }
 
-export interface SendAgentPromptOptions {
-  provider: string;
-  model: string;
-  thinkingLevel: ThinkingLevel;
-  target: PromptTarget;
-  messages: Message[];
-  onEvent?: (event: AssistantMessageEvent) => void;
-  queueOnly?: boolean;
-  queuedMessageId?: string | null;
-  clientSubmission?: PromptClientSubmissionMetadata;
-  promptTelemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
-}
-
 export interface SendAgentPromptResult {
   target: PromptTarget;
   queued?: boolean;
@@ -434,30 +369,10 @@ export interface SendAgentPromptResult {
   snapshot?: ConversationSurfaceSnapshot;
 }
 
-interface PreparedPromptExecutionTurn {
-  startTurnInput: StartRuntimeTurnInput;
-  seed: {
-    workspaceSessionId: string;
-    surfacePiSessionId: string;
-    threadId: string | null;
-    surfaceKind: PromptExecutionContext["surfaceKind"];
-    rootThreadId: PromptExecutionContext["rootThreadId"];
-    rootEpisodeKind: PromptExecutionContext["rootEpisodeKind"];
-    threadWasTerminalAtStart: boolean;
-    loadedExtensionIds: readonly string[];
-    availableExtensionIds: readonly string[];
-    externalInstructionSources: readonly PromptExecutionExternalInstructionSource[];
-    generatedAgentContextFingerprint: string;
-    generatedAgentContextRevision: string;
-    queueItemId: string | null;
-  };
-}
-
 export interface EditCommittedUserMessageOptions {
   target: PromptTarget;
   messageTimestamp: string | number;
   message: Message;
-  onEvent?: (event: AssistantMessageEvent) => void;
 }
 
 interface ThreadReportNotificationQueuePayload {
@@ -486,12 +401,6 @@ interface ThreadFollowupQueuePayload {
   sourceCommandId: string;
   message: string;
   activate: boolean;
-}
-
-interface UserPromptQueuePayload {
-  source?: "catalog-submit" | "runtime-submit";
-  clientSubmission?: PromptClientSubmissionMetadata;
-  telemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
 }
 
 interface CreateManagedSessionOptions {
@@ -544,12 +453,6 @@ interface CreateManagedSessionOptions {
   workflowsSourceRoot?: string;
 }
 
-interface VisibleStreamState {
-  partial: AssistantMessage;
-  activeTextIndex: number | null;
-  activeThinkingIndex: number | null;
-}
-
 type WorkspaceSessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
 
 function messageTimestampMs(timestamp: string | number): number {
@@ -558,10 +461,6 @@ function messageTimestampMs(timestamp: string | number): number {
   if (Number.isFinite(numericTimestamp)) return numericTimestamp;
   const parsedTimestamp = Date.parse(timestamp);
   return Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0;
-}
-
-function queuedMessagePiTimestampMs(queued: RuntimeSurfaceMessageRecord): number {
-  return messageTimestampMs(queued.createdAt);
 }
 
 export type TitleGenerationLogEvent =
@@ -603,6 +502,7 @@ type WorkspaceRecoveryOptions = {
     input: InternalRefreshGeneratedPackagesRequest,
   ) => Promise<GeneratedPackagesRefreshResult>;
   runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
+  runTaskAgent?: (input: AuthenticatedRunTaskAgentInput) => Promise<RunTaskAgentResult>;
   runAcceptedLoadExtension?: RunAcceptedLoadExtension;
   requestDirectToolApproval?: RuntimeApprovalBoundary;
 };
@@ -686,7 +586,6 @@ export class WorkspaceSessionCatalog {
   private readonly requestUserInputRuntime = new RequestUserInputRuntime();
   private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
-  private focusedSurfacePiSessionId: string | null = null;
   private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
   private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
   private titleGenerationLogListener: ((event: TitleGenerationLogEvent) => void) | null = null;
@@ -775,7 +674,7 @@ export class WorkspaceSessionCatalog {
           workspaceSessionId: request.workspaceSessionId,
         }),
       maxRequestBytes: this.runtimeLayerConfig.workflowTaskAgentBridgeMaxRequestBytes,
-      runTaskAgent: (request) => this.runRunTaskAgentInput(request),
+      runTaskAgent: (request, bearerToken) => this.runRunTaskAgentInput(request, bearerToken),
     });
     this.requestUserInputRuntime.setSettings(this.agentSettingsStore.getState().requestUserInput);
     this.generatedAgentContextStore = createGeneratedAgentContextStore({
@@ -795,9 +694,7 @@ export class WorkspaceSessionCatalog {
         recoverSurfaceTurn: async (surfacePiSessionId) => {
           this.recoverInterruptedSurfaceTurn(surfacePiSessionId);
         },
-        drainSurfaceQueue: async (target) => {
-          await this.runSurfaceQueue(target);
-        },
+        drainSurfaceQueue: async () => {},
         generateTitle: async (owner) => {
           if (owner.sessionId) {
             await this.runQueuedTitleGeneration(owner.sessionId);
@@ -967,17 +864,6 @@ export class WorkspaceSessionCatalog {
     return Effect.runSync(effect);
   }
 
-  private runRuntimeQueueEffect<A>(
-    effect: Effect.Effect<A, unknown, RuntimeQueueStatePort | RuntimeTurnStatePort>,
-  ): Promise<A> {
-    return this.runCatalogEffect(
-      effect.pipe(
-        Effect.provideService(RuntimeTurnStatePort, this.runtimeTurnStatePort),
-        Effect.provideService(RuntimeQueueStatePort, this.runtimeQueueStatePort),
-      ),
-    );
-  }
-
   private enqueueRuntimeSurfaceMessage(
     input: EnqueueRuntimeSurfaceMessageInput,
   ): RuntimeSurfaceMessageRecord {
@@ -998,44 +884,12 @@ export class WorkspaceSessionCatalog {
     return this.structuredSessionStore.getSurfaceQueuedMessage(input);
   }
 
-  private markRuntimeSurfaceMessageQueued(
-    input: MarkRuntimeSurfaceMessageQueuedInput,
-  ): RuntimeSurfaceMessageRecord {
-    return this.structuredSessionStore.markSurfaceMessageQueued(input);
-  }
-
   private async markRuntimeSurfaceMessageQueuedAsync(
     input: MarkRuntimeSurfaceMessageQueuedInput,
   ): Promise<RuntimeSurfaceMessageRecord> {
     return (
       await this.runRuntimeStateAsync(this.runtimeQueueStatePort.markSurfaceMessageQueued(input))
     ).value;
-  }
-
-  private markRuntimeSurfaceMessageDelivered(
-    input: MarkRuntimeSurfaceMessageDeliveredInput,
-  ): RuntimeSurfaceMessageRecord {
-    return this.structuredSessionStore.markSurfaceMessageDelivered(input);
-  }
-
-  private cancelRuntimeSurfaceMessage(
-    input: CancelRuntimeSurfaceMessageInput,
-  ): RuntimeSurfaceMessageRecord {
-    return this.structuredSessionStore.cancelSurfaceMessage(input);
-  }
-
-  private startRuntimeTurnAsync(input: StartRuntimeTurnInput): Promise<RuntimeTurnRecord> {
-    return this.runRuntimeStateAsync(this.runtimeTurnStatePort.startTurn(input)).then(
-      (result) => result.value,
-    );
-  }
-
-  private setRuntimeTurnDecision(input: SetRuntimeTurnDecisionInput): RuntimeTurnRecord {
-    return this.structuredSessionStore.setTurnDecision(input);
-  }
-
-  private finishRuntimeTurn(input: FinishRuntimeTurnInput): RuntimeTurnRecord {
-    return this.structuredSessionStore.finishTurn(input);
   }
 
   getDefaultGeneratedAgentContextState(): GeneratedAgentContextState {
@@ -1598,7 +1452,7 @@ export class WorkspaceSessionCatalog {
     surfacePiSessionId?: string | null;
   }): Promise<WorkspaceMutationResponse> {
     const sessionId = input.sessionId;
-    this.focusedSurfacePiSessionId = input.surfacePiSessionId ?? null;
+    void input.surfacePiSessionId;
     if (!sessionId) {
       return { ok: true };
     }
@@ -1692,13 +1546,9 @@ export class WorkspaceSessionCatalog {
   async openSurface(target: PromptTarget): Promise<ConversationSurfaceSnapshot> {
     this.assertValidPromptTarget(target);
     const session = await this.retainManagedSurface(target);
-    const snapshot = await this.buildSurfaceSnapshot(session, target, {
+    return await this.buildSurfaceSnapshot(session, target, {
       refreshExternalSources: true,
     });
-    if (!session.activePrompt && snapshot.queuedMessages.length > 0) {
-      this.wakeSurfaceQueue(target);
-    }
-    return snapshot;
   }
 
   async closeSurface(target: PromptTarget): Promise<WorkspaceMutationResponse> {
@@ -1875,70 +1725,6 @@ export class WorkspaceSessionCatalog {
     return { ok: true };
   }
 
-  async sendPrompt(options: SendAgentPromptOptions): Promise<SendAgentPromptResult> {
-    this.assertValidPromptTarget(options.target);
-    const session = await this.ensureManagedSurfaceForPrompt(options);
-    const queued = await this.enqueuePendingSurfacePrompt(options);
-    return this.afterSurfacePromptEnqueued({ options, session, queued });
-  }
-
-  private async afterSurfacePromptEnqueued(input: {
-    options: SendAgentPromptOptions;
-    session: ManagedSession;
-    queued: RuntimeSurfaceMessageRecord;
-  }): Promise<SendAgentPromptResult> {
-    const { options, session, queued } = input;
-    const payload = this.parseUserPromptQueuePayload(queued);
-    this.emitPromptQueueLog("Prompt queued for surface delivery.", {
-      target: options.target,
-      queuedMessageId: queued.id,
-      queueStatus: queued.status,
-      queueKind: queued.kind,
-      provider: options.provider,
-      model: options.model,
-      telemetry:
-        payload?.telemetry ??
-        options.promptTelemetry ??
-        summarizePromptMessagesForTelemetry(options.messages),
-      clientSubmission: payload?.clientSubmission ?? options.clientSubmission,
-    });
-    this.structuredSessionStore.setComposerDraft({
-      sessionId: options.target.workspaceSessionId,
-      surfacePiSessionId: options.target.surfacePiSessionId,
-      threadId: options.target.threadId ?? null,
-      text: "",
-      attachments: [],
-      snippetMentions: [],
-    });
-    const started = options.queueOnly
-      ? false
-      : await this.drainNextQueuedSurfacePrompt(options.target, {
-          awaitPrompt: false,
-        });
-    const snapshot = await this.buildSurfaceSnapshot(session, options.target);
-    if (!started) {
-      await this.emitSurfaceSync({
-        session,
-        reason: "surface.updated",
-        target: options.target,
-      });
-      await this.emitWorkspaceSync("structured.updated");
-      if (!options.queueOnly) {
-        this.wakeSurfaceQueue(options.target);
-      }
-    } else if (!session.activePrompt) {
-      this.wakeSurfaceQueue(options.target);
-    }
-
-    return {
-      target: structuredClone(options.target),
-      queued: true,
-      queuedMessageId: queued.id,
-      dispatched: started,
-      snapshot,
-    };
-  }
-
   async updateComposerDraft(
     input: UpdateComposerDraftRequest,
   ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
@@ -1958,66 +1744,8 @@ export class WorkspaceSessionCatalog {
   async editCommittedUserMessage(
     options: EditCommittedUserMessageOptions,
   ): Promise<SendAgentPromptResult> {
-    this.assertValidPromptTarget(options.target);
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildAggregateForTarget(options.target, {
-      externalInstructionSources: externalContextSources,
-    });
-    const session = await this.loadManagedSurface(
-      options.target.surfacePiSessionId,
-      getActorKindForTarget(options.target),
-      aggregate.outputs.prompt,
-      externalContextSources,
-      aggregate,
-    );
-    if (session.activePrompt) {
-      throw new Error("Wait for the current turn to finish before editing an earlier message.");
-    }
-
-    const targetTimestamp = String(options.messageTimestamp);
-    const userEntry = session.session.sessionManager.getBranch().find((entry) => {
-      return (
-        entry.type === "message" &&
-        entry.message.role === "user" &&
-        String(entry.message.timestamp) === targetTimestamp
-      );
-    });
-    if (!userEntry || userEntry.type !== "message") {
-      throw new Error("Unable to edit: user message was not found in the active conversation.");
-    }
-
-    if (userEntry.parentId === null) {
-      session.session.sessionManager.resetLeaf();
-    } else {
-      session.session.sessionManager.branch(userEntry.parentId);
-    }
-    session.session.agent.state.messages =
-      session.session.sessionManager.buildSessionContext().messages;
-    session.pendingUserMessage = null;
-    session.activeStreamMessage = null;
-    session.activeStreamSequence = 0;
-
-    for (const queued of this.structuredSessionStore.listQueuedSurfaceMessages({
-      surfacePiSessionId: options.target.surfacePiSessionId,
-    })) {
-      if (queued.status === "queued" || queued.status === "steering") {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-      }
-    }
-
-    this.syncManagedState(session);
-    if (options.target.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(session);
-    }
-
-    return this.sendPrompt({
-      target: options.target,
-      provider: session.provider,
-      model: session.model,
-      thinkingLevel: session.thinkingLevel,
-      messages: [...convertToLlmMessages(session.session.agent.state.messages), options.message],
-      onEvent: options.onEvent,
-    });
+    void options;
+    throw new Error("Committed-message edit dispatch is runtime-owned and unavailable here.");
   }
 
   async refreshQueuedSurfaceMutation(input: {
@@ -2113,17 +1841,7 @@ export class WorkspaceSessionCatalog {
       position: "front",
     });
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
-    this.wakeSurfaceQueue(input.target);
     return { ok: true, target: structuredClone(input.target), snapshot };
-  }
-
-  async wakeRuntimeSurfaceQueue(input: {
-    target: PromptTarget;
-    reason: RuntimeSurfaceQueueWakeReason;
-  }): Promise<void> {
-    this.assertValidPromptTarget(input.target);
-    await this.emitQueuedSurfaceUpdate(input.target);
-    this.wakeSurfaceQueue(input.target);
   }
 
   async answerRequestUserInput(
@@ -2149,7 +1867,6 @@ export class WorkspaceSessionCatalog {
       return { ok: true, target: structuredClone(target) };
     }
     const snapshot = await this.emitQueuedSurfaceUpdate(target);
-    this.wakeSurfaceQueue(target);
     return { ok: true, target: structuredClone(target), snapshot };
   }
 
@@ -2171,7 +1888,6 @@ export class WorkspaceSessionCatalog {
       return { ok: true, target: structuredClone(target) };
     }
     const snapshot = await this.emitQueuedSurfaceUpdate(target);
-    this.wakeSurfaceQueue(target);
     return { ok: true, target: structuredClone(target), snapshot };
   }
 
@@ -2284,77 +2000,8 @@ export class WorkspaceSessionCatalog {
     return true;
   }
 
-  async cancelPrompt(target: PromptTarget): Promise<void> {
-    this.assertValidPromptTarget(target);
-    const session = this.managedSurfaces.get(target.surfacePiSessionId);
-    const queuedCancelled = this.cancelLiveQueuedSurfaceMessages(target);
-    if (session) {
-      session.session.clearQueue();
-    }
-    await this.cancelActivePrompt({ target, restorePiQueuedMessages: false });
-    if (queuedCancelled > 0) {
-      await this.emitQueuedSurfaceUpdate(target);
-      await this.emitWorkspaceSync("structured.updated");
-    }
-  }
-
-  async cancelActivePrompt(input: {
-    target: PromptTarget;
-    turnId?: string;
-    restorePiQueuedMessages?: boolean;
-  }): Promise<void> {
-    const { target } = input;
-    this.assertValidPromptTarget(target);
-    const session = this.managedSurfaces.get(target.surfacePiSessionId);
-    if (!session?.activePrompt) {
-      return;
-    }
-    if (input.turnId && session.pendingUserMessage?.turnId !== input.turnId) {
-      throw new Error(`Active turn ${input.turnId} does not belong to target.`);
-    }
-
-    session.abortRequested = true;
-    if (input.restorePiQueuedMessages !== false) {
-      this.restorePiQueuedMessagesToSurface(session, target);
-    }
-    await this.emitQueuedSurfaceUpdate(target);
-    await this.emitWorkspaceSync("structured.updated");
-    await session.session.abort();
-  }
-
-  private cancelLiveQueuedSurfaceMessages(target: PromptTarget): number {
-    let cancelled = 0;
-    for (const queued of this.structuredSessionStore.listQueuedSurfaceMessages({
-      surfacePiSessionId: target.surfacePiSessionId,
-    })) {
-      if (
-        queued.sessionId === target.workspaceSessionId &&
-        (queued.status === "queued" ||
-          queued.status === "steering" ||
-          queued.status === "dispatching")
-      ) {
-        this.structuredSessionStore.cancelSurfaceMessage({ id: queued.id });
-        cancelled += 1;
-      }
-    }
-    return cancelled;
-  }
-
   private async abortManagedSurfaceForDelete(session: ManagedSession): Promise<void> {
-    if (!session.activePrompt) {
-      return;
-    }
-
-    const target = this.resolvePromptTargetForSurfacePiSessionId(session.sessionId);
-    const activePromptDone = session.activePromptDone;
-    session.abortRequested = true;
-    this.restorePiQueuedMessagesToSurface(session, target);
-    await this.emitQueuedSurfaceUpdate(target);
-    await this.emitWorkspaceSync("structured.updated");
-    await session.session.abort();
-    await activePromptDone?.catch((error) => {
-      console.error("Failed to settle prompt before deleting session:", error);
-    });
+    void session;
   }
 
   async setSurfaceModel(
@@ -2575,24 +2222,6 @@ export class WorkspaceSessionCatalog {
     return true;
   }
 
-  private async ensureManagedSurfaceForPrompt(
-    options: SendAgentPromptOptions,
-  ): Promise<ManagedSession> {
-    const actorKind = getActorKindForTarget(options.target);
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildAggregateForTarget(options.target, {
-      externalInstructionSources: externalContextSources,
-    });
-    const session = await this.loadManagedSurface(
-      options.target.surfacePiSessionId,
-      actorKind,
-      aggregate.outputs.prompt,
-      externalContextSources,
-      aggregate,
-    );
-    return this.prepareManagedSession(session, options);
-  }
-
   private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildAggregateForTarget(target, {
@@ -2687,55 +2316,6 @@ export class WorkspaceSessionCatalog {
 
     session.retainCount = Math.max(0, session.retainCount - 1);
     await this.disposeManagedSurfaceIfUnused(session, options);
-  }
-
-  private async prepareManagedSession(
-    session: ManagedSession,
-    options: Pick<
-      SendAgentPromptOptions,
-      "provider" | "model" | "thinkingLevel" | "messages" | "target"
-    >,
-  ): Promise<ManagedSession> {
-    const actorKind = getActorKindForTarget(options.target);
-    if (
-      session.actorKind !== actorKind ||
-      session.provider !== options.provider ||
-      session.model !== options.model ||
-      session.recreateOnNextPrompt
-    ) {
-      const actorChanged = session.actorKind !== actorKind;
-      const externalContextSources = actorChanged
-        ? await this.buildCurrentExternalContextSources()
-        : session.externalContextSources;
-      const aggregate = actorChanged
-        ? this.buildAggregateForTarget(options.target, {
-            externalInstructionSources: externalContextSources,
-          })
-        : null;
-      const recreated = await this.recreateManagedSurface(session, {
-        actorKind,
-        provider: options.provider,
-        model: options.model,
-        thinkingLevel: options.thinkingLevel,
-        ...(aggregate
-          ? {
-              systemPrompt: aggregate.outputs.prompt,
-              generatedAgentContextAggregateKey: aggregate.cacheKey,
-              generatedAgentContextAggregate: aggregate.outputs,
-            }
-          : {}),
-        externalContextSources,
-      });
-      this.syncGeneratedAgentContextBindingForTarget(options.target, recreated);
-      return recreated;
-    }
-
-    if (session.thinkingLevel !== options.thinkingLevel) {
-      session.thinkingLevel = options.thinkingLevel;
-      session.session.setThinkingLevel(options.thinkingLevel);
-    }
-
-    return session;
   }
 
   private async recreateManagedSurface(
@@ -2842,43 +2422,6 @@ export class WorkspaceSessionCatalog {
     nextSession.retainCount = session.retainCount;
     this.managedSurfaces.set(nextSession.sessionId, nextSession);
     return nextSession;
-  }
-
-  private async refreshManagedSurfacePromptBinding(
-    session: ManagedSession,
-    target: PromptTarget,
-  ): Promise<ManagedSession> {
-    const previousBinding = {
-      systemPrompt: session.systemPrompt,
-      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
-      loadedExtensionIds: [...session.loadedExtensionIds],
-      availableExtensionIds: [...session.availableExtensionIds],
-      externalSourceHashes: [...session.externalSourceHashes],
-    };
-    const extensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
-      includeManagedLoadedExtensions: false,
-    });
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildAggregateForTarget(target, {
-      extensionState,
-      externalInstructionSources: externalContextSources,
-    });
-    const refreshed = await this.recreateManagedSurface(session, {
-      actorKind: getActorKindForTarget(target),
-      systemPrompt: aggregate.outputs.prompt,
-      generatedAgentContextAggregateKey: aggregate.cacheKey,
-      generatedAgentContextAggregate: aggregate.outputs,
-      generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalContextSources,
-    });
-    refreshed.recreateOnNextPrompt = false;
-    this.syncManagedState(refreshed);
-    this.syncGeneratedAgentContextBindingForTarget(target, refreshed);
-    this.recordAgentContextUpdatedEvent(target, previousBinding, refreshed);
-    this.persistManagedSessionSnapshot(refreshed);
-    return refreshed;
   }
 
   private async refreshGeneratedContextForLoadExtension(
@@ -3319,77 +2862,6 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private buildInitialHandlerQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
-    const snapshot = this.getStructuredSnapshot(message.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === message.threadId) ?? null;
-    if (!thread) {
-      throw new Error(`Queued initial handler start ${message.id} has no handler thread.`);
-    }
-    const payload = parseInitialHandlerStartQueuePayload(message);
-    return buildInitialHandlerThreadPrompt(thread, payload?.parentSessionFile ?? null);
-  }
-
-  private buildThreadFollowupQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
-    const payload = this.parseThreadFollowupQueuePayload(message);
-    if (!payload) {
-      throw new Error(`Queued thread follow-up ${message.id} has malformed payload.`);
-    }
-    return payload.message;
-  }
-
-  private buildReportRequestQueuedPrompt(message: StructuredSurfaceQueuedMessageRecord): string {
-    const payload = this.parseReportRequestQueuePayload(message);
-    if (!payload) {
-      throw new Error(`Queued report request ${message.id} has malformed payload.`);
-    }
-    return [
-      "System event: The orchestrator requested an explicit thread_report update.",
-      `Report request: ${payload.request}`,
-      "Respond by calling thread_report with an intermediate update unless the objective is ready to conclude.",
-    ].join("\n");
-  }
-
-  private buildRequestUserInputAnswerQueuedPrompt(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): string {
-    if (!this.parseRequestUserInputAnswerQueuePayload(message)) {
-      throw new Error(`Queued request_user_input answer ${message.id} has malformed payload.`);
-    }
-    const payload = this.parseRequestUserInputAnswerDeliveryPayload(message.messageJson);
-    if (!payload) {
-      throw new Error(`Queued request_user_input answer ${message.id} has malformed message.`);
-    }
-    return JSON.stringify(payload, null, 2);
-  }
-
-  private parseRequestUserInputAnswerDeliveryPayload(
-    messageJson: string,
-  ): RequestUserInputAnswerDeliveryPayload | null {
-    try {
-      return Exit.match(
-        decodeUnknownRequestUserInputAnswerDeliveryPayloadExit(JSON.parse(messageJson)),
-        {
-          onFailure: () => null,
-          onSuccess: (value) => value,
-        },
-      );
-    } catch {
-      return null;
-    }
-  }
-
-  private buildThreadReportNotificationQueuedPrompt(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): string {
-    const payload = this.parseThreadReportNotificationQueuePayload(message);
-    if (!payload) {
-      throw new Error(`Queued thread report notification ${message.id} has malformed payload.`);
-    }
-    const snapshot = this.getStructuredSnapshot(message.sessionId);
-    const thread = snapshot?.threads.find((entry) => entry.id === payload.threadId) ?? null;
-    return buildOrchestratorThreadReportPrompt(thread, payload.summary, payload.outcome);
-  }
-
   private getQueuedMessageText(messageJson: string): string {
     try {
       const parsed = JSON.parse(messageJson) as unknown;
@@ -3404,53 +2876,6 @@ export class WorkspaceSessionCatalog {
         return "";
       }
     }
-  }
-
-  private parseQueuedRuntimeSubmittedMessage(
-    queued: RuntimeSurfaceMessageRecord,
-  ): RuntimeSubmittedMessage {
-    try {
-      return unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap(
-        JSON.parse(queued.messageJson),
-      );
-    } catch (error) {
-      throw new Error(`Queued runtime submitted message ${queued.id} is malformed.`, {
-        cause: error,
-      });
-    }
-  }
-
-  private parseQueuedPiUserMessage(queued: RuntimeSurfaceMessageRecord): Message {
-    try {
-      const message = JSON.parse(queued.messageJson) as Message;
-      if (message.role !== "user") {
-        throw new Error(`Queued surface message ${queued.id} is not a user message.`);
-      }
-      return message;
-    } catch (error) {
-      throw new Error(`Queued surface message ${queued.id} could not be parsed.`, {
-        cause: error,
-      });
-    }
-  }
-
-  private materializeQueuedUserMessage(queued: RuntimeSurfaceMessageRecord): Message {
-    const payload = this.parseUserPromptQueuePayload(queued);
-    if (payload?.source === "runtime-submit") {
-      return buildPiUserMessageFromRuntimeSubmittedMessage(
-        this.parseQueuedRuntimeSubmittedMessage(queued),
-        {
-          timestamp: queuedMessagePiTimestampMs(queued),
-        },
-      );
-    }
-    return this.parseQueuedPiUserMessage(queued);
-  }
-
-  private materializeQueuedUserPromptPayload(
-    queued: RuntimeSurfaceMessageRecord,
-  ): UserPromptQueuePayload | null {
-    return this.parseUserPromptQueuePayload(queued);
   }
 
   private assertQueuedMessageBelongsToSurface(
@@ -3519,31 +2944,6 @@ export class WorkspaceSessionCatalog {
       });
     } catch (error) {
       console.error("Failed to emit surface sync payload:", error);
-    }
-  }
-
-  private emitSurfaceStreamPatch(input: {
-    session: ManagedSession;
-    target: PromptTarget;
-    patch: SurfaceStreamPatchInput;
-  }): void {
-    if (!this.surfaceSyncListener) {
-      return;
-    }
-
-    input.session.activeStreamSequence += 1;
-    try {
-      this.surfaceSyncListener({
-        workspaceId: this.workspaceId,
-        reason: "stream.patch",
-        target: structuredClone(input.target),
-        streamPatch: {
-          ...structuredClone(input.patch),
-          sequence: input.session.activeStreamSequence,
-        } as SurfaceStreamPatch,
-      });
-    } catch (error) {
-      console.error("Failed to emit surface stream patch:", error);
     }
   }
 
@@ -3705,7 +3105,7 @@ export class WorkspaceSessionCatalog {
           "Prompt acceptance could not be proven after workspace restart; recovery did not silently resend it.",
       },
     });
-    this.finishRuntimeTurn({
+    this.structuredSessionStore.finishTurn({
       turnId: turn.id,
       status: turn.status === "waiting" ? "waiting" : "failed",
     });
@@ -4412,101 +3812,6 @@ export class WorkspaceSessionCatalog {
     return false;
   }
 
-  private setPendingUserMessage(
-    session: ManagedSession,
-    promptContext: PromptExecutionContext | null,
-    message: Message | null,
-  ): void {
-    session.pendingUserMessage =
-      promptContext?.turnId && message
-        ? { turnId: promptContext.turnId, message: structuredClone(message) }
-        : null;
-  }
-
-  private async enqueuePendingSurfacePrompt(
-    options: SendAgentPromptOptions,
-  ): Promise<RuntimeSurfaceMessageRecord> {
-    const message = getLatestUserMessage(options.messages);
-    if (!message) {
-      throw new Error("No user message to queue.");
-    }
-    const text = flattenUserMessageContent(message.content).trim();
-    if (!text) {
-      throw new Error("No user message to queue.");
-    }
-
-    const clientSubmission = normalizePromptClientSubmissionMetadata(options.clientSubmission);
-    const telemetry = summarizePromptMessagesForTelemetry(options.messages);
-    const queuePayload: UserPromptQueuePayload = {
-      source: "catalog-submit",
-      ...(clientSubmission ? { clientSubmission } : {}),
-      telemetry,
-    };
-    const queued = await this.enqueueRuntimeSurfaceMessageAsync({
-      sessionId: options.target.workspaceSessionId,
-      surfacePiSessionId: options.target.surfacePiSessionId,
-      threadId: options.target.threadId ?? null,
-      messageJson: JSON.stringify(message),
-      payloadJson: JSON.stringify(queuePayload),
-    });
-    return queued;
-  }
-
-  private parseUserPromptQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): UserPromptQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      const payload = JSON.parse(message.payloadJson) as Partial<UserPromptQueuePayload>;
-      return {
-        source:
-          payload.source === "catalog-submit" || payload.source === "runtime-submit"
-            ? payload.source
-            : undefined,
-        clientSubmission: normalizePromptClientSubmissionMetadata(payload.clientSubmission),
-        telemetry: isPromptTelemetrySummary(payload.telemetry) ? payload.telemetry : undefined,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private emitPromptQueueLog(
-    message: string,
-    input: {
-      target: PromptTarget;
-      queuedMessageId: string;
-      queueKind: string;
-      queueStatus: string;
-      provider: string;
-      model: string;
-      telemetry?: ReturnType<typeof summarizePromptMessagesForTelemetry>;
-      clientSubmission?: PromptClientSubmissionMetadata;
-      reason?: string;
-    },
-  ): void {
-    this.emitAppLog({
-      level: "info",
-      source: "prompt",
-      message,
-      details: {
-        queuedMessageId: input.queuedMessageId,
-        queueKind: input.queueKind,
-        queueStatus: input.queueStatus,
-        model: input.model,
-        provider: input.provider,
-        ...(input.reason ? { reason: input.reason } : {}),
-        ...input.telemetry,
-        ...promptClientSubmissionLogDetails(input.clientSubmission),
-        workspaceSessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId,
-      },
-    });
-  }
-
   private async queueThreadReportNotification(
     request: ThreadReportNotificationRequest,
   ): Promise<void> {
@@ -4531,60 +3836,6 @@ export class WorkspaceSessionCatalog {
     });
 
     void this.emitQueuedSurfaceUpdate(orchestratorTarget);
-    this.wakeSurfaceQueue(orchestratorTarget);
-  }
-
-  private restorePiQueuedMessagesToSurface(session: ManagedSession, target: PromptTarget): void {
-    const cleared = session.session.clearQueue();
-    const texts = [...cleared.steering, ...cleared.followUp]
-      .map((text) => text.trim())
-      .filter(Boolean);
-    const steeringRows = this.structuredSessionStore
-      .listQueuedSurfaceMessages({ surfacePiSessionId: target.surfacePiSessionId })
-      .filter((message) => message.status === "steering");
-    for (const text of texts.toReversed()) {
-      const existingSteeringIndex = steeringRows.findIndex(
-        (message) => this.getQueuedMessageText(message.messageJson) === text,
-      );
-      if (existingSteeringIndex >= 0) {
-        const [existingSteering] = steeringRows.splice(existingSteeringIndex, 1);
-        if (existingSteering) {
-          this.markRuntimeSurfaceMessageQueued({
-            id: existingSteering.id,
-            position: "front",
-          });
-          continue;
-        }
-      }
-      const message = createSyntheticUserMessage(text);
-      this.enqueueRuntimeSurfaceMessage({
-        sessionId: target.workspaceSessionId,
-        surfacePiSessionId: target.surfacePiSessionId,
-        threadId: target.threadId ?? null,
-        messageJson: JSON.stringify(message),
-        position: "front",
-      });
-    }
-    for (const existingSteering of steeringRows.toReversed()) {
-      this.markRuntimeSurfaceMessageQueued({
-        id: existingSteering.id,
-        position: "front",
-      });
-    }
-  }
-
-  private clearPendingUserMessage(
-    session: ManagedSession,
-    promptContext: PromptExecutionContext | null,
-  ): boolean {
-    if (!session.pendingUserMessage) {
-      return false;
-    }
-    if (promptContext && session.pendingUserMessage.turnId !== promptContext.turnId) {
-      return false;
-    }
-    session.pendingUserMessage = null;
-    return true;
   }
 
   private getStructuredSnapshot(sessionId: string): StructuredSessionSnapshot | null {
@@ -4697,104 +3948,6 @@ export class WorkspaceSessionCatalog {
     }
 
     return summarizePromptForTurn(sourceText, 72);
-  }
-
-  private preparePromptExecutionTurn(
-    session: ManagedSession,
-    options: SendAgentPromptOptions,
-  ): PreparedPromptExecutionTurn | null {
-    const promptText = getLatestUserPromptText(options.messages);
-    if (!promptText) {
-      return null;
-    }
-
-    try {
-      const target = options.target;
-      const structuredSessionId = target.workspaceSessionId;
-      if (structuredSessionId === session.sessionId) {
-        this.syncStructuredPiSessionFromOrchestratorSession(session);
-      }
-      let preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
-      let targetThread =
-        target?.surface === "handler" && target.threadId
-          ? (preTurnSnapshot?.threads.find((thread) => thread.id === target.threadId) ?? null)
-          : null;
-      if (
-        preTurnSnapshot &&
-        targetThread &&
-        shouldResumeThreadUserWaitOnPromptEntry({
-          thread: targetThread,
-          sessionWait: preTurnSnapshot.session.wait,
-        })
-      ) {
-        const resumedThreadId = targetThread.id;
-        this.structuredSessionStore.updateThread({
-          threadId: resumedThreadId,
-          status: "running-handler",
-          wait: null,
-        });
-        preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
-        targetThread =
-          preTurnSnapshot?.threads.find((thread) => thread.id === resumedThreadId) ?? null;
-      }
-      const requestSummary = summarizePromptForTurn(promptText);
-      const rootThreadId =
-        target?.surface === "handler" && target.threadId ? target.threadId : null;
-
-      return {
-        startTurnInput: {
-          sessionId: structuredSessionId,
-          surfacePiSessionId: session.sessionId,
-          threadId: target?.surface === "handler" ? (target.threadId ?? null) : null,
-          requestSummary,
-        },
-        seed: {
-          workspaceSessionId: structuredSessionId,
-          surfacePiSessionId: session.sessionId,
-          threadId: rootThreadId,
-          surfaceKind: target?.surface === "handler" ? "handler" : "orchestrator",
-          rootThreadId,
-          rootEpisodeKind: inferRootEpisodeKind(promptText),
-          threadWasTerminalAtStart: targetThread
-            ? isTerminalThreadStatus(targetThread.status)
-            : false,
-          loadedExtensionIds: targetThread?.loadedExtensionIds ?? session.loadedExtensionIds,
-          availableExtensionIds:
-            targetThread?.availableExtensionIds ?? session.availableExtensionIds,
-          externalInstructionSources: promptExecutionExternalInstructionSources(
-            session.externalContextSources,
-          ),
-          generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
-          generatedAgentContextRevision: String(session.generatedAgentContextRevision),
-          queueItemId: options.queuedMessageId ?? null,
-        },
-      };
-    } catch (error) {
-      console.error("Failed to prepare prompt execution state:", error);
-      return null;
-    }
-  }
-
-  private createPromptExecutionContextFromTurn(
-    turn: RuntimeTurnRecord,
-    prepared: PreparedPromptExecutionTurn,
-  ): PromptExecutionContext {
-    return createRuntimePromptExecutionContext({
-      workspaceSessionId: prepared.seed.workspaceSessionId,
-      turnId: turn.id,
-      surfacePiSessionId: prepared.seed.surfacePiSessionId,
-      threadId: prepared.seed.threadId,
-      surfaceKind: prepared.seed.surfaceKind,
-      rootThreadId: prepared.seed.rootThreadId,
-      rootEpisodeKind: prepared.seed.rootEpisodeKind,
-      threadWasTerminalAtStart: prepared.seed.threadWasTerminalAtStart,
-      loadedExtensionIds: prepared.seed.loadedExtensionIds,
-      availableExtensionIds: prepared.seed.availableExtensionIds,
-      externalInstructionSources: prepared.seed.externalInstructionSources,
-      generatedAgentContextFingerprint: prepared.seed.generatedAgentContextFingerprint,
-      generatedAgentContextRevision: prepared.seed.generatedAgentContextRevision,
-      queueItemId: prepared.seed.queueItemId,
-    });
   }
 
   private async getSessionFileForId(
@@ -4977,7 +4130,6 @@ export class WorkspaceSessionCatalog {
         payloadJson: JSON.stringify(payload),
       });
       await this.emitQueuedSurfaceUpdate(target);
-      this.wakeSurfaceQueue(target);
       const refreshed = this.requireStructuredSnapshot(
         input.runtime.workspaceSessionId,
       ).threads.find((entry) => entry.id === thread.id);
@@ -5030,7 +4182,6 @@ export class WorkspaceSessionCatalog {
       threadId: thread.id,
     };
     await this.emitQueuedSurfaceUpdate(target);
-    this.wakeSurfaceQueue(target);
     return {
       threadId: thread.id,
       surfacePiSessionId: thread.surfacePiSessionId,
@@ -5064,50 +4215,6 @@ export class WorkspaceSessionCatalog {
         requestedAt: new Date().toISOString(),
       } satisfies InitialHandlerStartQueuePayload),
     });
-    this.wakeSurfaceQueue({
-      workspaceSessionId: input.sessionId,
-      surface: "handler",
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-    });
-  }
-
-  private startTopLevelTitleGeneration(
-    session: ManagedSession,
-    promptContext: PromptExecutionContext | null,
-  ): void {
-    if (!promptContext || promptContext.surfaceKind !== "orchestrator") {
-      return;
-    }
-    const snapshot = this.getStructuredSnapshot(promptContext.workspaceSessionId);
-    if (!snapshot || snapshot.turns.length !== 1) {
-      return;
-    }
-    const queued = this.structuredSessionStore.queueTitleGeneration(
-      promptContext.workspaceSessionId,
-    );
-    if (!queued) {
-      return;
-    }
-    this.emitTitleGenerationLog({
-      level: "info",
-      status: "queued",
-      sessionId: promptContext.workspaceSessionId,
-    });
-    this.syncPiSessionTitle(session, queued.title);
-    void this.emitWorkspaceSync("structured.updated");
-    this.recoveryCoordinator.enqueue({
-      kind: "title_generation",
-      ownerScope: {
-        kind: "title_job",
-        titleJobId: `session:${promptContext.workspaceSessionId}` as TitleJobId,
-      },
-      idempotencyKey: `title_generation:session:${promptContext.workspaceSessionId}`,
-      orderingKey: `surface:${promptContext.surfacePiSessionId}`,
-      priority: 70,
-      payloadJson: { sessionId: promptContext.workspaceSessionId },
-    });
-    this.recoveryCoordinator.wake();
   }
 
   private async runQueuedTitleGeneration(sessionId: string): Promise<void> {
@@ -5448,1099 +4555,40 @@ export class WorkspaceSessionCatalog {
     );
   }
 
-  private async runRunTaskAgentInput(request: RunTaskAgentInput): Promise<RunTaskAgentResult> {
-    const snapshot = this.requireStructuredSnapshot(request.workspaceSessionId);
-    const sourceCommand =
-      snapshot.commands.find((command) => command.id === request.sourceCommandId) ?? null;
-    if (!sourceCommand) {
+  verifyRunTaskAgentBridgeBearerLineage(input: {
+    bearerToken: string;
+    sourceCommandId: string;
+    workspaceSessionId: string;
+  }): boolean {
+    return this.isValidRunTaskAgentBridgeToken(input);
+  }
+
+  private async runRunTaskAgentInput(
+    request: RunTaskAgentInput,
+    bearerToken: string,
+  ): Promise<RunTaskAgentResult> {
+    if (!this.recoveryOptions.runTaskAgent) {
       throw new RunTaskAgentBridgeError(
-        "source_command_not_found",
-        `Smithers source command not found: ${request.sourceCommandId}`,
-        404,
+        "task_attempt_failed",
+        "Workflow task-agent execution is unavailable before app runtime bootstrap.",
+        503,
       );
     }
-    if (!sourceCommand.threadId) {
-      throw new RunTaskAgentBridgeError(
-        "source_command_not_handler_owned",
-        "Smithers task-agent bridge requires a handler-thread source command.",
-        403,
-      );
-    }
-    if (
-      sourceCommand.status === "succeeded" ||
-      sourceCommand.status === "failed" ||
-      sourceCommand.status === "cancelled"
-    ) {
-      throw new RunTaskAgentBridgeError(
-        "source_command_terminal",
-        "Smithers source command is already terminal.",
-        409,
-      );
-    }
-
-    const taskIdentity = request.taskIdentity;
-    const workflowRun =
-      this.structuredSessionStore.findWorkflowRunBySmithersRunId(taskIdentity.runId) ??
-      this.structuredSessionStore.recordWorkflow({
-        threadId: sourceCommand.threadId,
-        commandId: sourceCommand.id,
-        smithersRunId: taskIdentity.runId,
-        workflowName: taskIdentity.runId,
-        workflowSource: "artifact",
-        status: "running",
-        summary: `Smithers workflow ${taskIdentity.runId} is running.`,
-      });
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const extensionState = resolveActorExtensionState({
-      actor: "workflow-task",
-      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
-      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
-      profileExtensionUsage: request.agent.overrides ?? {},
-    });
-    const aggregate = this.buildPromptAggregateFromLibrary("workflow-task", {
-      ...extensionState,
-      externalInstructionSources: externalContextSources,
-      customInstructions: request.agent.instructions,
-    });
-    const fingerprint = createGeneratedAgentContextFingerprint({
-      systemPrompt: aggregate.outputs.prompt,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalContextSources,
-    });
-    const existingAttempt = this.structuredSessionStore.findWorkflowTaskAttemptBySmithersIdentity({
-      smithersRunId: taskIdentity.runId,
-      nodeId: taskIdentity.nodeId,
-      iteration: taskIdentity.iteration,
-      attempt: taskIdentity.attempt,
-    });
-    const surfacePiSessionId =
-      existingAttempt?.surfacePiSessionId ?? (await this.createWorkflowTaskSurfaceSession(request));
-    const prompt = buildWorkflowTaskAgentPrompt(request);
-    const attempt = this.structuredSessionStore.upsertWorkflowTaskAttempt({
-      workflowRunId: workflowRun.id,
-      smithersRunId: taskIdentity.runId,
-      nodeId: taskIdentity.nodeId,
-      iteration: taskIdentity.iteration,
-      attempt: taskIdentity.attempt,
-      surfacePiSessionId,
-      title: request.agent.label ?? request.agent.id,
-      summary: `Run ${request.agent.label ?? request.agent.id} for ${taskIdentity.nodeId}.`,
-      kind: "agent",
-      status: "running",
-      smithersState: "running",
-      prompt,
-      agentId: request.agent.id,
-      agentModel: request.agent.model,
-      agentEngine: request.agent.provider,
-      generatedAgentContextFingerprint: fingerprint,
-      generatedAgentContextBinding: {
-        aggregateCacheKey: aggregate.cacheKey,
-        systemPrompt: aggregate.outputs.prompt,
-        svvyxGuidance: aggregate.outputs.svvyxGuidance,
-        commandsDts: aggregate.outputs.commandsDts,
-        nativeToolSchemasJson: aggregate.outputs.nativeToolSchemasJson,
-        generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
-        loadedExtensionIds: extensionState.loadedExtensionIds,
-        availableExtensionIds: extensionState.availableExtensionIds,
-        externalSourceHashes: externalSourceHashes(externalContextSources).toSorted(),
-      },
-      meta: {
-        rootDir: request.smithersContext?.rootDir ?? null,
-        sourceCommandId: request.sourceCommandId,
-      },
-    });
-
-    this.structuredSessionStore.replaceWorkflowTaskMessages({
-      workflowTaskAttemptId: attempt.id,
-      messages: workflowTaskMessagesFromRequest(request, prompt),
-    });
-
-    const session = await this.createManagedSurfaceRecord({
-      sessionManager: await this.openWorkflowTaskSurfaceSession(surfacePiSessionId),
-      actorKind: "workflow-task",
-      provider: request.agent.provider,
-      model: request.agent.model,
-      thinkingLevel: request.agent.reasoning.effort as ThinkingLevel,
-      systemPrompt: aggregate.outputs.prompt,
-      generatedAgentContextAggregateKey: aggregate.cacheKey,
-      generatedAgentContextAggregate: aggregate.outputs,
-      generatedAgentContextFingerprint: fingerprint,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalContextSources,
-      agentProfileId: request.agent.id,
-    });
-    const turn = await this.startRuntimeTurnAsync({
-      sessionId: request.workspaceSessionId,
-      surfacePiSessionId,
-      threadId: sourceCommand.threadId,
-      requestSummary: summarizePromptForTurn(prompt),
-    });
-    const promptContext = createRuntimePromptExecutionContext({
-      workspaceSessionId: request.workspaceSessionId,
-      turnId: turn.id,
-      workflowTaskAttemptId: attempt.id,
-      workflowRunId: workflowRun.id,
-      surfacePiSessionId,
-      surfaceKind: "workflow-task",
-      threadId: sourceCommand.threadId,
-      rootThreadId: sourceCommand.threadId,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalInstructionSources: externalContextSources,
-      generatedAgentContextFingerprint: fingerprint,
-      generatedAgentContextRevision: String(this.generatedAgentContextStore.getState().revision),
-    });
-
     try {
-      const message = await this.runWorkflowTaskAgentPrompt(session, prompt, promptContext);
-      const text = extractAssistantText(message).trim();
-      if (!text) {
-        throw new Error("Workflow task agent finished without text output.");
-      }
-      this.structuredSessionStore.upsertWorkflowTaskAttempt({
-        workflowRunId: workflowRun.id,
-        smithersRunId: taskIdentity.runId,
-        nodeId: taskIdentity.nodeId,
-        iteration: taskIdentity.iteration,
-        attempt: taskIdentity.attempt,
-        surfacePiSessionId,
-        summary: `Completed ${taskIdentity.nodeId}.`,
-        kind: "agent",
-        status: "completed",
-        smithersState: "succeeded",
-        responseText: text,
-      });
-      this.structuredSessionStore.replaceWorkflowTaskMessages({
-        workflowTaskAttemptId: attempt.id,
-        messages: [
-          ...workflowTaskMessagesFromRequest(request, prompt),
-          {
-            id: `workflow-task-message-${randomUUID()}`,
-            role: "assistant",
-            source: "responseText",
-            text,
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      });
-      const usage = RunTaskAgentBridgeUsage(message.usage);
-      return { text, ...(usage ? { usage } : {}) };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.structuredSessionStore.upsertWorkflowTaskAttempt({
-        workflowRunId: workflowRun.id,
-        smithersRunId: taskIdentity.runId,
-        nodeId: taskIdentity.nodeId,
-        iteration: taskIdentity.iteration,
-        attempt: taskIdentity.attempt,
-        surfacePiSessionId,
-        summary: `Failed ${taskIdentity.nodeId}: ${message}`,
-        kind: "agent",
-        status: "failed",
-        smithersState: "failed",
-        error: message,
-      });
-      throw error;
-    } finally {
-      await this.emitWorkspaceSync("structured.updated");
-    }
-  }
-
-  private async runWorkflowTaskAgentPrompt(
-    session: ManagedSession,
-    prompt: string,
-    promptContext: PromptExecutionContext,
-  ): Promise<AssistantMessage> {
-    session.promptExecutionRuntime.current = promptContext;
-    const stateWriteLane = createOrderedRuntimeStateWriteLane({
-      runState: this.runRuntimeStateAsync.bind(this),
-      onError: ({ label, error }) =>
-        this.emitAppLog({
-          level: "warning",
-          source: "prompt",
-          message: `Runtime state write failed during ${label}.`,
-          details: { errorMessage: error instanceof Error ? error.message : String(error) },
-        }),
-    });
-    const streamingCommandTracker = createStreamingCommandTracker({
-      commandState: this.runtimeCommandStatePort,
-      promptContext,
-      stateWrites: stateWriteLane,
-    });
-    const toolCommandTracker = createToolExecutionCommandTracker({
-      commandState: this.runtimeCommandStatePort,
-      promptContext,
-      stateWrites: stateWriteLane,
-      turnState: this.runtimeTurnStatePort,
-      onAppLog: this.emitAppLog.bind(this),
-      onReusedStreamingToolCall: (toolCallId) =>
-        streamingCommandTracker.releaseToolCall(toolCallId),
-    });
-    const unsubscribe = session.session.subscribe((event) => {
-      if (event.type === "message_update") {
-        forwardToolcallEventToStreamingTracker(
-          streamingCommandTracker,
-          event.assistantMessageEvent,
-        );
-        return;
-      }
-      if (event.type === "tool_execution_start") {
-        toolCommandTracker.handleToolExecutionStart({
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.args,
-        });
-        return;
-      }
-      if (event.type === "tool_execution_end") {
-        toolCommandTracker.handleToolExecutionEnd({
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          result: event.result,
-          isError: event.isError,
-        });
-      }
-    });
-    try {
-      syncAuthStorage(session.authStorage);
-      const promptStartMessageCount = session.session.agent.state.messages.length;
-      await session.session.prompt(prompt, { expandPromptTemplates: false });
-      const message =
-        getLatestAssistantMessage(
-          session.session.agent.state.messages.slice(promptStartMessageCount),
-        ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
-      if (!message) {
-        throw new Error("The pi session finished without producing an assistant message.");
-      }
-      if (message.stopReason === "error" || message.stopReason === "aborted") {
-        throw new Error(
-          message.errorMessage || `Workflow task agent stopped: ${message.stopReason}`,
-        );
-      }
-      return message;
-    } finally {
-      unsubscribe();
-      streamingCommandTracker.finishDanglingStreamingCommands({
-        status: "failed",
-        error: "Workflow task prompt ended before streamed command execution settled.",
-      });
-      toolCommandTracker.finishDanglingCommands({
-        status: "failed",
-        error: "Workflow task prompt ended before command execution settled.",
-      });
-      await stateWriteLane.drain();
-      session.promptExecutionRuntime.current = null;
-    }
-  }
-
-  private async createWorkflowTaskSurfaceSession(request: RunTaskAgentInput): Promise<string> {
-    const sessionManager = SessionManager.create(this.cwd, this.workflowTaskSurfaceDir);
-    sessionManager.newSession();
-    sessionManager.appendSessionInfo(
-      `${request.agent.label ?? request.agent.id}: ${request.taskIdentity.nodeId}`,
-    );
-    persistSessionManagerSnapshot(sessionManager);
-    return sessionManager.getSessionId();
-  }
-
-  private async openWorkflowTaskSurfaceSession(
-    surfacePiSessionId: string,
-  ): Promise<SessionManager> {
-    const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
-    return SessionManager.open(sessionFile!, dirname(sessionFile!));
-  }
-
-  private async runAgentPrompt(
-    session: ManagedSession,
-    options: SendAgentPromptOptions,
-    promptContext: PromptExecutionContext | null,
-  ): Promise<void> {
-    session.promptExecutionRuntime.current = promptContext;
-    const stateWriteLane = promptContext
-      ? createOrderedRuntimeStateWriteLane({
-          runState: this.runRuntimeStateAsync.bind(this),
-          onError: ({ label, error }) =>
-            this.emitAppLog({
-              level: "warning",
-              source: "prompt",
-              message: `Runtime state write failed during ${label}.`,
-              details: { errorMessage: error instanceof Error ? error.message : String(error) },
-            }),
-        })
-      : null;
-    const streamingCommandTracker = promptContext
-      ? createStreamingCommandTracker({
-          commandState: this.runtimeCommandStatePort,
-          promptContext,
-          stateWrites: stateWriteLane!,
-        })
-      : null;
-    const toolCommandTracker = promptContext
-      ? createToolExecutionCommandTracker({
-          commandState: this.runtimeCommandStatePort,
-          promptContext,
-          stateWrites: stateWriteLane!,
-          turnState: this.runtimeTurnStatePort,
-          onAppLog: this.emitAppLog.bind(this),
-          onReusedStreamingToolCall: (toolCallId) =>
-            streamingCommandTracker?.releaseToolCall(toolCallId),
-        })
-      : null;
-    const onEvent = options.onEvent ?? (() => {});
-    const promptStartMessageCount = session.session.agent.state.messages.length;
-    const displayUserMessage = getLatestUserMessage(options.messages);
-    let queuedMessageDelivered = false;
-    const getQueuedMessageDeliveryText = (queued: StructuredSurfaceQueuedMessageRecord): string => {
-      if (queued.kind === "thread_report_notification") {
-        return this.buildThreadReportNotificationQueuedPrompt(queued);
-      }
-      if (queued.kind === "thread_followup") {
-        return this.buildThreadFollowupQueuedPrompt(queued);
-      }
-      if (queued.kind === "report_request") {
-        return this.buildReportRequestQueuedPrompt(queued);
-      }
-      if (queued.kind === "request_user_input_answer") {
-        return this.buildRequestUserInputAnswerQueuedPrompt(queued);
-      }
-      return this.getQueuedMessageText(queued.messageJson);
-    };
-    const markSteeringMessageDelivered = (message: Message): boolean => {
-      const text = flattenUserMessageContent(message.content).trim();
-      if (!text) {
-        return false;
-      }
-      const steering = this.structuredSessionStore
-        .listQueuedSurfaceMessages({ surfacePiSessionId: options.target.surfacePiSessionId })
-        .find(
-          (queued) => queued.status === "steering" && getQueuedMessageDeliveryText(queued) === text,
-        );
-      if (!steering) {
-        return false;
-      }
-      this.markRuntimeSurfaceMessageDelivered({ id: steering.id });
-      return true;
-    };
-    const clearPendingIfUserMessageCommitted = (): boolean => {
-      if (!session.pendingUserMessage) {
-        return false;
-      }
-      const turnMessages = session.session.agent.state.messages.slice(promptStartMessageCount);
-      if (!turnMessages.some((message) => message.role === "user")) {
-        return false;
-      }
-      if (promptContext?.queueItemId && !queuedMessageDelivered) {
-        this.markRuntimeSurfaceMessageDelivered({
-          id: promptContext.queueItemId,
-        });
-        queuedMessageDelivered = true;
-      }
-      return this.clearPendingUserMessage(session, promptContext);
-    };
-    const publishPromptEvent = (event: AssistantMessageEvent): void => {
-      onEvent(event);
-      clearPendingIfUserMessageCommitted();
-      if (event.type === "start") {
-        session.activeStreamSequence = 0;
-        session.activeStreamMessage = structuredClone(event.partial);
-        this.emitSurfaceStreamPatch({
-          session,
-          target: options.target,
-          patch: { type: "start", message: event.partial },
-        });
-      } else if (
-        event.type === "text_start" ||
-        event.type === "text_delta" ||
-        event.type === "text_end" ||
-        event.type === "thinking_start" ||
-        event.type === "thinking_delta" ||
-        event.type === "thinking_end" ||
-        event.type === "toolcall_start" ||
-        event.type === "toolcall_delta" ||
-        event.type === "toolcall_end"
-      ) {
-        session.activeStreamMessage = structuredClone(event.partial);
-        forwardToolcallEventToStreamingTracker(streamingCommandTracker, event);
-        const patch = surfaceStreamPatchFromAssistantEvent(event);
-        if (patch) {
-          this.emitSurfaceStreamPatch({
-            session,
-            target: options.target,
-            patch,
-          });
-        }
-      } else if (event.type === "done" || event.type === "error") {
-        session.activeStreamMessage = null;
-        this.emitSurfaceStreamPatch({
-          session,
-          target: options.target,
-          patch: { type: "clear", reason: event.type },
-        });
-      }
-    };
-    try {
-      const streamState = createVisibleStreamState(options.provider, options.model);
-      publishPromptEvent({ type: "start", partial: streamState.partial });
-      const unsubscribe = session.session.subscribe((event) => {
-        if (event.type === "message_end" && event.message.role === "user") {
-          if (displayUserMessage?.role === "user") {
-            Object.assign(event.message, structuredClone(displayUserMessage));
-          }
-          replaceLatestCommittedUserMessage(session, promptStartMessageCount, displayUserMessage);
-          const deliveredSteering = markSteeringMessageDelivered(event.message as Message);
-          if (clearPendingIfUserMessageCommitted()) {
-            void this.emitSurfaceSync({
-              session,
-              reason: "surface.updated",
-              target: options.target,
-            });
-          }
-          if (deliveredSteering) {
-            void this.emitSurfaceSync({
-              session,
-              reason: "surface.updated",
-              target: options.target,
-            });
-          }
-          return;
-        }
-
-        if (event.type === "message_update") {
-          applyVisibleAssistantEvent(streamState, event.assistantMessageEvent, publishPromptEvent);
-          return;
-        }
-
-        if (event.type === "tool_execution_start") {
-          toolCommandTracker?.handleToolExecutionStart({
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            args: event.args,
-          });
-          return;
-        }
-
-        if (event.type === "tool_execution_end") {
-          toolCommandTracker?.handleToolExecutionEnd({
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            result: event.result,
-            isError: event.isError,
-          });
-        }
-      });
-
-      try {
-        syncAuthStorage(session.authStorage);
-
-        const promptText = getLatestUserPromptText(options.messages);
-        if (!promptText) {
-          throw new Error("No user message to send.");
-        }
-
-        const promptImages = getLatestUserImages(options.messages);
-        await session.session.prompt(promptText, {
-          expandPromptTemplates: false,
-          images: promptImages.length > 0 ? promptImages : undefined,
-        });
-        replaceLatestCommittedUserMessage(session, promptStartMessageCount, displayUserMessage);
-        clearPendingIfUserMessageCommitted();
-        finishOpenVisibleBlocks(streamState, publishPromptEvent);
-
-        const emittedMessage =
-          getLatestAssistantMessage(
-            session.session.agent.state.messages.slice(promptStartMessageCount),
-          ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
-
-        if (!emittedMessage) {
-          throw new Error("The pi session finished without producing an assistant message.");
-        }
-
-        const visibleMessage = finalizeVisibleAssistantMessage(
-          streamState,
-          emittedMessage,
-          options.provider,
-          options.model,
-        );
-        replaceLatestCommittedAssistantMessage(session, promptStartMessageCount, visibleMessage);
-
-        if (visibleMessage.stopReason === "error" || visibleMessage.stopReason === "aborted") {
-          publishPromptEvent({
-            type: "error",
-            reason: visibleMessage.stopReason,
-            error: visibleMessage,
-          });
-        } else {
-          publishPromptEvent({
-            type: "done",
-            reason: visibleMessage.stopReason === "toolUse" ? "stop" : visibleMessage.stopReason,
-            message: visibleMessage,
-          });
-        }
-
-        session.provider = options.provider;
-        session.model = options.model;
-        session.thinkingLevel = options.thinkingLevel;
-        session.recreateOnNextPrompt = false;
-        this.syncManagedExtensionStateFromPromptContext(session, promptContext);
-        this.completePromptExecution(promptContext, visibleMessage);
-      } catch (error) {
-        const reason = session.abortRequested ? "aborted" : "error";
-        const finishStatus = reason === "aborted" ? ("cancelled" as const) : ("failed" as const);
-        const finishError = error instanceof Error ? error.message : "pi prompt failed.";
-        streamingCommandTracker?.finishDanglingStreamingCommands({
-          status: finishStatus,
-          error: finishError,
-        });
-        toolCommandTracker?.finishDanglingCommands({
-          status: finishStatus,
-          error: finishError,
-        });
-        await stateWriteLane?.drain();
-        finishOpenVisibleBlocks(streamState, publishPromptEvent);
-        const failure = finalizeVisibleAssistantMessage(
-          streamState,
-          createErrorMessage(
-            options.provider,
-            options.model,
-            error instanceof Error ? error.message : "pi prompt failed.",
-            reason,
-          ),
-          options.provider,
-          options.model,
-        );
-
-        publishPromptEvent({
-          type: "error",
-          reason,
-          error: failure,
-        });
-
-        session.provider = options.provider;
-        session.model = options.model;
-        session.thinkingLevel = options.thinkingLevel;
-        this.syncManagedExtensionStateFromPromptContext(session, promptContext);
-        this.failPromptExecution(promptContext, failure);
-      } finally {
-        unsubscribe();
-        streamingCommandTracker?.finishDanglingStreamingCommands({
-          status: "cancelled",
-          error: "Prompt execution ended before the tool run finished.",
-        });
-        toolCommandTracker?.finishDanglingCommands({
-          status: "cancelled",
-          error: "Prompt execution ended before the tool run finished.",
-        });
-        await stateWriteLane?.drain();
-        const suppressQueuedDrain = session.abortRequested;
-        session.lastPromptSuppressedQueueDrain = suppressQueuedDrain;
-        session.lastPromptRestoredQueueItem = false;
-        session.abortRequested = false;
-        session.activePrompt = false;
-        session.activePromptDone = null;
-        session.pendingUserMessage = null;
-        session.activeStreamMessage = null;
-        if (options.queuedMessageId) {
-          const latestQueued = this.getRuntimeSurfaceQueuedMessage({
-            id: options.queuedMessageId,
-          });
-          if (latestQueued.status === "dispatching") {
-            if (suppressQueuedDrain) {
-              this.cancelRuntimeSurfaceMessage({ id: options.queuedMessageId });
-            } else {
-              this.markRuntimeSurfaceMessageQueued({
-                id: options.queuedMessageId,
-                position: "front",
-              });
-              session.lastPromptRestoredQueueItem = true;
-            }
-          }
-          const settledQueued = this.getRuntimeSurfaceQueuedMessage({
-            id: options.queuedMessageId,
-          });
-          this.emitPromptQueueLog("Prompt queue delivery settled.", {
-            target: options.target,
-            queuedMessageId: options.queuedMessageId,
-            queueKind: settledQueued.kind,
-            queueStatus: settledQueued.status,
-            provider: options.provider,
-            model: options.model,
-            telemetry:
-              options.promptTelemetry ?? summarizePromptMessagesForTelemetry(options.messages),
-            clientSubmission: options.clientSubmission,
-            reason: suppressQueuedDrain
-              ? "cancelled"
-              : session.lastPromptRestoredQueueItem
-                ? "restored"
-                : "settled",
-          });
-        }
-        this.syncManagedState(session);
-        this.syncGeneratedAgentContextBindingForTarget(options.target, session);
-        await this.emitSurfaceSync({
-          session,
-          reason: "prompt.settled",
-          target: options.target,
-        });
-        await this.emitWorkspaceSync("workspace.updated");
-        if (!suppressQueuedDrain) {
-          this.wakeSurfaceQueue(options.target);
-        }
-        await this.disposeManagedSurfaceIfUnused(session);
-      }
-    } finally {
-      session.promptExecutionRuntime.current = null;
-    }
-  }
-
-  private syncManagedExtensionStateFromPromptContext(
-    session: ManagedSession,
-    promptContext: PromptExecutionContext | null,
-  ): void {
-    if (!promptContext) {
-      return;
-    }
-    session.loadedExtensionIds = [...(promptContext.loadedExtensionIds ?? [])];
-    session.availableExtensionIds = [...(promptContext.availableExtensionIds ?? [])];
-  }
-
-  private wakeSurfaceQueue(target: PromptTarget): void {
-    if (this.closed) {
-      return;
-    }
-    this.recoveryCoordinator.enqueue({
-      kind: "queue_delivery",
-      ownerScope: {
-        kind: "surface",
-        workspaceSessionId: target.workspaceSessionId as WorkspaceSessionId,
-        surfacePiSessionId: target.surfacePiSessionId as SurfacePiSessionId,
-      },
-      idempotencyKey: `queue_delivery:${target.surfacePiSessionId}`,
-      orderingKey: `surface:${target.surfacePiSessionId}`,
-      priority: 30,
-    });
-    this.recoveryCoordinator.wake();
-  }
-
-  private async runSurfaceQueue(target: PromptTarget): Promise<void> {
-    await this.runRuntimeQueueEffect(
-      this.createRuntimeSurfaceQueueDispatcher().drainSurfaceQueue(target),
-    );
-  }
-
-  private async refreshSurfaceExtensionContextBeforeNextTurnIfNeeded(
-    session: ManagedSession,
-    target: PromptTarget,
-  ): Promise<ManagedSession> {
-    const currentExternalSources = await this.buildCurrentExternalContextSources();
-    const binding = this.buildPromptBinding(session, target, currentExternalSources);
-    if (!binding.stale || !binding.updateExtensionContextBeforeNextTurn) {
-      return session;
-    }
-
-    const refreshed = await this.refreshManagedSurfacePromptBinding(session, target);
-    await this.emitSurfaceSync({
-      session: refreshed,
-      reason: "surface.updated",
-      target,
-      refreshExternalSources: true,
-    });
-    await this.emitWorkspaceSync("structured.updated");
-    return refreshed;
-  }
-
-  private async drainNextQueuedSurfacePrompt(
-    target: PromptTarget,
-    options: { awaitPrompt: boolean },
-  ): Promise<boolean> {
-    return await this.runRuntimeQueueEffect(
-      this.createRuntimeSurfaceQueueDispatcher().drainNextQueuedSurfaceMessage(target, options),
-    );
-  }
-
-  private createRuntimeSurfaceQueueDispatcher() {
-    return createRuntimeSurfaceQueueDispatcherWithPolicy<
-      PromptTarget,
-      ManagedSession,
-      Message,
-      UserPromptQueuePayload | null,
-      PreparedPromptExecutionTurn
-    >({
-      workspaceId: this.workspaceId as WorkspaceId,
-      queueClaimLeaseMs: this.runtimeLayerConfig.queueClaimLeaseMs,
-      host: {
-        isClosed: () => this.closed,
-        resolveTarget: (currentTarget) =>
-          this.resolvePromptTargetForSurfacePiSessionId(currentTarget.surfacePiSessionId),
-        retainSurface: (currentTarget) => this.retainManagedSurface(currentTarget),
-        releaseSurface: ({ target: currentTarget }) =>
-          this.releaseManagedSurface(currentTarget.surfacePiSessionId),
-        isSurfaceActive: ({ surface: session }) => session.activePrompt,
-        activePromptDone: ({ surface: session }) => session.activePromptDone,
-        continueAfterActivePrompt: ({ surface: session }) =>
-          !session.lastPromptSuppressedQueueDrain && !session.lastPromptRestoredQueueItem,
-        refreshBeforeDispatch: ({ target: currentTarget, surface: session }) =>
-          this.refreshSurfaceExtensionContextBeforeNextTurnIfNeeded(session, currentTarget),
-        materializeQueuedMessage: ({ target: currentTarget, queued }) =>
-          this.materializeQueuedSurfaceMessage(currentTarget, queued),
-        prepareTurn: async ({
-          target: currentTarget,
-          surface: session,
-          queued,
-          message,
-          metadata,
-        }) => {
-          const prepared = this.prepareQueuedPromptExecutionTurn(
-            currentTarget,
-            session,
-            queued,
-            message,
-            metadata ?? null,
-          );
-          if (!prepared) {
-            throw new Error(`Queued prompt ${queued.id} has no prompt-bearing user message.`);
-          }
-          return {
-            startTurnInput: prepared.startTurnInput,
-            prepared,
-          };
+      return await this.recoveryOptions.runTaskAgent({
+        auth: {
+          kind: "bearer",
+          token: bearerToken,
+          transport: "loopback-http",
         },
-        startPrompt: ({
-          target: currentTarget,
-          surface: session,
-          queued,
-          turn,
-          prepared,
-          message,
-          metadata,
-        }) =>
-          this.startQueuedSurfacePrompt(
-            currentTarget,
-            session,
-            queued,
-            turn,
-            prepared,
-            message,
-            metadata ?? null,
-          ),
-        notifyQueueUpdated: ({ target: currentTarget }) =>
-          this.emitQueuedSurfaceUpdate(currentTarget).then(() => undefined),
-      },
-    });
-  }
-
-  private async materializeQueuedSurfaceMessage(
-    currentTarget: PromptTarget,
-    queued: RuntimeSurfaceMessageRecord,
-  ): Promise<
-    | { kind: "dispatch"; message: Message; metadata?: UserPromptQueuePayload | null }
-    | { kind: "delivered" }
-  > {
-    if (queued.kind === "thread_report_notification") {
-      const prompt = this.buildThreadReportNotificationQueuedPrompt(queued);
-      return { kind: "dispatch", message: createSyntheticUserMessage(prompt), metadata: null };
-    } else if (queued.kind === "initial_handler_start") {
-      const snapshot = this.getStructuredSnapshot(currentTarget.workspaceSessionId);
-      if (queued.threadId && snapshot?.turns.some((turn) => turn.threadId === queued.threadId)) {
-        return { kind: "delivered" };
-      }
-      return {
-        kind: "dispatch",
-        message: createSyntheticUserMessage(this.buildInitialHandlerQueuedPrompt(queued)),
-        metadata: null,
-      };
-    } else if (queued.kind === "thread_followup") {
-      const payload = this.parseThreadFollowupQueuePayload(queued);
-      const snapshot = this.getStructuredSnapshot(currentTarget.workspaceSessionId);
-      const thread = snapshot?.threads.find((entry) => entry.id === payload?.threadId) ?? null;
-      if (!thread || thread.objectiveState === "concluded") {
-        return { kind: "delivered" };
-      }
-      return {
-        kind: "dispatch",
-        message: createSyntheticUserMessage(this.buildThreadFollowupQueuedPrompt(queued)),
-        metadata: null,
-      };
-    } else if (queued.kind === "report_request") {
-      const payload = this.parseReportRequestQueuePayload(queued);
-      const snapshot = this.getStructuredSnapshot(currentTarget.workspaceSessionId);
-      const thread = snapshot?.threads.find((entry) => entry.id === payload?.threadId) ?? null;
-      if (!thread || thread.objectiveState === "concluded") {
-        return { kind: "delivered" };
-      }
-      return {
-        kind: "dispatch",
-        message: createSyntheticUserMessage(this.buildReportRequestQueuedPrompt(queued)),
-        metadata: null,
-      };
-    } else if (queued.kind === "request_user_input_answer") {
-      return {
-        kind: "dispatch",
-        message: createSyntheticUserMessage(this.buildRequestUserInputAnswerQueuedPrompt(queued)),
-        metadata: null,
-      };
-    }
-
-    return {
-      kind: "dispatch",
-      message: this.materializeQueuedUserMessage(queued),
-      metadata: this.materializeQueuedUserPromptPayload(queued),
-    };
-  }
-
-  private buildQueuedPromptOptions(
-    currentTarget: PromptTarget,
-    session: ManagedSession,
-    queued: RuntimeSurfaceMessageRecord,
-    message: Message,
-    userPromptQueuePayload: UserPromptQueuePayload | null,
-  ): SendAgentPromptOptions {
-    return {
-      target: currentTarget,
-      provider: session.provider,
-      model: session.model,
-      thinkingLevel: session.thinkingLevel,
-      messages: [...convertToLlmMessages(session.session.agent.state.messages), message],
-      queuedMessageId: queued.id,
-      clientSubmission: userPromptQueuePayload?.clientSubmission,
-      promptTelemetry:
-        userPromptQueuePayload?.telemetry ?? summarizePromptMessagesForTelemetry([message]),
-    };
-  }
-
-  private prepareQueuedPromptExecutionTurn(
-    currentTarget: PromptTarget,
-    session: ManagedSession,
-    queued: RuntimeSurfaceMessageRecord,
-    message: Message,
-    userPromptQueuePayload: UserPromptQueuePayload | null,
-  ): PreparedPromptExecutionTurn | null {
-    return this.preparePromptExecutionTurn(
-      session,
-      this.buildQueuedPromptOptions(
-        currentTarget,
-        session,
-        queued,
-        message,
-        userPromptQueuePayload,
-      ),
-    );
-  }
-
-  private async startQueuedSurfacePrompt(
-    currentTarget: PromptTarget,
-    session: ManagedSession,
-    queued: RuntimeSurfaceMessageRecord,
-    turn: RuntimeTurnRecord,
-    preparedTurn: PreparedPromptExecutionTurn,
-    message: Message,
-    userPromptQueuePayload: UserPromptQueuePayload | null,
-  ): Promise<{ promptDone: Promise<void>; continueAfterPrompt(): boolean }> {
-    session.abortRequested = false;
-    session.lastPromptSuppressedQueueDrain = false;
-    session.lastPromptRestoredQueueItem = false;
-    session.activePrompt = true;
-    session.activeStreamSequence = 0;
-    session.activeStreamMessage = null;
-
-    const promptOptions = this.buildQueuedPromptOptions(
-      currentTarget,
-      session,
-      queued,
-      message,
-      userPromptQueuePayload,
-    );
-    this.emitPromptQueueLog("Prompt queue delivery started.", {
-      target: currentTarget,
-      queuedMessageId: queued.id,
-      queueKind: queued.kind,
-      queueStatus: queued.status,
-      provider: promptOptions.provider,
-      model: promptOptions.model,
-      telemetry: promptOptions.promptTelemetry,
-      clientSubmission: promptOptions.clientSubmission,
-    });
-    const promptExecution = this.createPromptExecutionContextFromTurn(turn, preparedTurn);
-    if (
-      (queued.kind === "thread_followup" || queued.kind === "report_request") &&
-      promptExecution
-    ) {
-      promptExecution.suppressPendingWorkflowAttentionDelivery = true;
-    }
-    this.setPendingUserMessage(session, promptExecution, message);
-    if (currentTarget.surface === "orchestrator") {
-      this.startTopLevelTitleGeneration(session, promptExecution);
-    }
-    await this.emitSurfaceSync({
-      session,
-      reason: "background.started",
-      target: currentTarget,
-    });
-    await this.emitWorkspaceSync("workspace.updated");
-
-    const promptDone = this.runAgentPrompt(session, promptOptions, promptExecution);
-    session.activePromptDone = promptDone;
-    return {
-      promptDone,
-      continueAfterPrompt: () =>
-        !session.lastPromptSuppressedQueueDrain && !session.lastPromptRestoredQueueItem,
-    };
-  }
-
-  private completePromptExecution(
-    promptContext: PromptExecutionContext | null,
-    message: AssistantMessage,
-  ): void {
-    if (!promptContext?.turnId) {
-      return;
-    }
-
-    try {
-      const snapshot = this.structuredSessionStore.getSessionState(
-        promptContext.workspaceSessionId,
-      );
-      const assistantText = messageToPlainText(message).trim();
-      const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
-      if (!turn) {
-        return;
-      }
-
-      if (promptContext.sessionWaitApplied) {
-        const wait = getEffectiveTurnWait(snapshot, promptContext.rootThreadId);
-        this.persistPendingTurnDecision({
-          promptContext,
-          turnDecision: turn.turnDecision,
-          assistantText,
-          wait,
-        });
-        this.finishRuntimeTurn({
-          turnId: promptContext.turnId,
-          status: "waiting",
-        });
-        if (this.focusedSurfacePiSessionId !== promptContext.surfacePiSessionId) {
-          this.structuredSessionStore.markSessionUnread({
-            sessionId: promptContext.workspaceSessionId,
-            reason: "assistant-turn-finished",
-          });
-        }
-        return;
-      }
-
-      this.persistPendingTurnDecision({
-        promptContext,
-        turnDecision: turn.turnDecision,
-        assistantText,
-      });
-
-      this.finishRuntimeTurn({
-        turnId: promptContext.turnId,
-        status: "completed",
-      });
-      this.settleHandlerThreadAfterPrompt(promptContext);
-      if (this.focusedSurfacePiSessionId !== promptContext.surfacePiSessionId) {
-        this.structuredSessionStore.markSessionUnread({
-          sessionId: promptContext.workspaceSessionId,
-          reason: "assistant-turn-finished",
-        });
-      }
-    } catch (error) {
-      if (!this.closed) {
-        console.error("Failed to finalize prompt execution:", error);
-      }
-    }
-  }
-
-  private settleHandlerThreadAfterPrompt(promptContext: PromptExecutionContext): void {
-    if (promptContext.surfaceKind !== "handler" || !promptContext.rootThreadId) {
-      return;
-    }
-
-    const snapshot = this.structuredSessionStore.getSessionState(promptContext.workspaceSessionId);
-    const thread =
-      snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId) ?? null;
-    if (!thread || thread.status !== "running-handler" || thread.wait) {
-      return;
-    }
-
-    const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId) ?? null;
-    if (!turn || turn.status !== "completed") {
-      return;
-    }
-
-    const hasActiveWorkflow = snapshot.workflowRuns.some(
-      (workflowRun) =>
-        workflowRun.threadId === thread.id &&
-        (workflowRun.status === "running" || workflowRun.status === "waiting"),
-    );
-    if (hasActiveWorkflow) {
-      return;
-    }
-
-    this.structuredSessionStore.updateThread({
-      threadId: thread.id,
-      status: "idle",
-    });
-  }
-
-  private failPromptExecution(
-    promptContext: PromptExecutionContext | null,
-    _message: AssistantMessage,
-  ): void {
-    if (!promptContext?.turnId) {
-      return;
-    }
-
-    try {
-      const snapshot = this.structuredSessionStore.getSessionState(
-        promptContext.workspaceSessionId,
-      );
-      const rootThread = promptContext.rootThreadId
-        ? (snapshot.threads.find((thread) => thread.id === promptContext.rootThreadId) ?? null)
-        : null;
-      if (
-        rootThread &&
-        (rootThread.status === "running-handler" || rootThread.status === "running-workflow")
-      ) {
-        this.structuredSessionStore.updateThread({
-          threadId: rootThread.id,
-          status: "troubleshooting",
-        });
-      }
-      const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
-      if (turn) {
-        this.persistPendingTurnDecision({
-          promptContext,
-          turnDecision: turn.turnDecision,
-          assistantText: "",
-        });
-      }
-      this.finishRuntimeTurn({
-        turnId: promptContext.turnId,
-        status: "failed",
+        request,
       });
     } catch (error) {
-      if (!this.closed) {
-        console.error("Failed to mark prompt execution failure:", error);
+      if (error instanceof RuntimeContractError) {
+        throw runtimeRunTaskAgentBridgeError(error);
       }
+      throw error;
     }
-  }
-
-  private persistPendingTurnDecision(input: {
-    promptContext: PromptExecutionContext;
-    turnDecision: StructuredSessionSnapshot["turns"][number]["turnDecision"];
-    assistantText: string;
-    wait?: StructuredWaitState | null;
-  }): void {
-    if (input.turnDecision !== "pending") {
-      return;
-    }
-
-    this.setRuntimeTurnDecision({
-      turnId: input.promptContext.turnId!,
-      decision: inferPendingTurnDecision(input),
-      onlyIfPending: true,
-    });
   }
 
   private syncManagedState(session: ManagedSession): void {
@@ -6943,12 +4991,6 @@ function countVisibleMessages(messages: AgentMessage[]): number {
   ).length;
 }
 
-function convertToLlmMessages(messages: AgentMessage[]): Message[] {
-  return messages.filter((message): message is Message => {
-    return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
-  });
-}
-
 function getResolvedSystemPrompt(session: ManagedSession): string {
   const resolved = session.session.agent.state.systemPrompt?.trim();
   return resolved && resolved.length > 0 ? resolved : session.systemPrompt;
@@ -7077,96 +5119,6 @@ function flattenUserMessageContent(content: Message["content"]): string {
     .join("\n");
 }
 
-function createSyntheticUserMessage(text: string): Message {
-  return {
-    role: "user",
-    timestamp: Date.now(),
-    content: [{ type: "text", text }],
-  };
-}
-
-function getLatestUserPromptText(messages: readonly Message[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "user") {
-      continue;
-    }
-
-    const text = flattenUserMessageContent(message.content).trim();
-    if (text) {
-      return text;
-    }
-  }
-
-  return null;
-}
-
-function promptExecutionExternalInstructionSources(
-  sources: readonly GeneratedAgentContextExternalSource[],
-): PromptExecutionExternalInstructionSource[] {
-  return sources.map((source) => ({
-    id: source.id,
-    kind: source.kind,
-    title: source.title,
-    path: source.path,
-    contentHash: source.contentHash,
-    order: source.order,
-    enabled: source.enabled,
-    actors: [...source.actors],
-    sourceGroup: source.sourceGroup,
-    ...(source.rootId === undefined ? {} : { rootId: source.rootId }),
-    ...(source.rootLabel === undefined ? {} : { rootLabel: source.rootLabel }),
-    readStatus: {
-      status: source.readStatus.status,
-      ...(source.readStatus.error === undefined ? {} : { error: source.readStatus.error }),
-    },
-  }));
-}
-
-function getLatestUserImages(messages: readonly Message[]): ImageContent[] {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "user" || typeof message.content === "string") {
-      continue;
-    }
-    return message.content.filter((block): block is ImageContent => block.type === "image");
-  }
-  return [];
-}
-
-function replaceLatestCommittedUserMessage(
-  session: ManagedSession,
-  promptStartMessageCount: number,
-  displayUserMessage: Message | null,
-): void {
-  if (!displayUserMessage || displayUserMessage.role !== "user") return;
-  const messages = session.session.agent.state.messages;
-  for (let index = messages.length - 1; index >= promptStartMessageCount; index -= 1) {
-    if (messages[index]?.role !== "user") continue;
-    messages[index] = structuredClone(displayUserMessage) as AgentMessage;
-    return;
-  }
-}
-
-function replaceLatestCommittedAssistantMessage(
-  session: ManagedSession,
-  promptStartMessageCount: number,
-  visibleMessage: AssistantMessage,
-): void {
-  const messages = session.session.agent.state.messages;
-  for (let index = messages.length - 1; index >= promptStartMessageCount; index -= 1) {
-    if (messages[index]?.role !== "assistant") continue;
-    messages[index] = structuredClone(visibleMessage) as AgentMessage;
-    return;
-  }
-}
-
-function isTerminalThreadStatus(
-  status: StructuredSessionSnapshot["threads"][number]["status"],
-): boolean {
-  return status === "completed";
-}
-
 function summarizePromptForTurn(text: string, limit = 96): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (!collapsed) {
@@ -7178,111 +5130,6 @@ function summarizePromptForTurn(text: string, limit = 96): string {
   }
 
   return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
-}
-
-function inferRootEpisodeKind(promptText: string): PromptExecutionContext["rootEpisodeKind"] {
-  return /\b(explain|summari[sz]e|review|audit|analy[sz]e|why|what)\b/i.test(promptText)
-    ? "analysis"
-    : "change";
-}
-
-function buildOrchestratorThreadReportPrompt(
-  _thread: StructuredSessionSnapshot["threads"][number] | null,
-  summary: string,
-  outcome: "succeeded" | "failed" | "cancelled" | null,
-): string {
-  return [
-    outcome
-      ? `System event: A handler thread concluded with outcome ${outcome}.`
-      : "System event: A handler thread emitted a durable report update.",
-    `Report summary: ${summary}`,
-    "Use thread_list and thread_episodes if durable delegated-thread state matters, then decide the next orchestrator action.",
-  ].join("\n");
-}
-
-function buildInitialHandlerThreadPrompt(
-  thread: StructuredSessionSnapshot["threads"][number],
-  parentSessionFile: string | null = null,
-): string {
-  const objective = thread.objective.trim();
-  if (thread.historyMode !== "forked" || !parentSessionFile) {
-    return objective;
-  }
-  const history = buildForkedHandlerHistoryBlock(parentSessionFile);
-  if (!history) {
-    return objective;
-  }
-  return [
-    objective,
-    "",
-    "<inherited_history>",
-    history,
-    "</inherited_history>",
-    "",
-    "Use the inherited history only as bounded background for this delegated objective.",
-  ].join("\n");
-}
-
-function parseInitialHandlerStartQueuePayload(
-  message: StructuredSurfaceQueuedMessageRecord,
-): InitialHandlerStartQueuePayload | null {
-  if (!message.payloadJson) {
-    return null;
-  }
-  try {
-    const payload = JSON.parse(message.payloadJson) as Partial<InitialHandlerStartQueuePayload>;
-    if (typeof payload.threadId !== "string") {
-      return null;
-    }
-    return {
-      threadId: payload.threadId,
-      parentSessionFile:
-        typeof payload.parentSessionFile === "string" ? payload.parentSessionFile : null,
-      requestedAt: typeof payload.requestedAt === "string" ? payload.requestedAt : "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildForkedHandlerHistoryBlock(parentSessionFile: string): string | null {
-  try {
-    const sessionManager = SessionManager.open(parentSessionFile, dirname(parentSessionFile));
-    const messages = sessionManager
-      .buildSessionContext()
-      .messages.filter((message) => message.role === "user" || message.role === "assistant")
-      .slice(-12);
-    const lines = messages
-      .map((message, index) => {
-        const text = readMessageText(message).trim();
-        if (!text) {
-          return null;
-        }
-        return `${index + 1}. orchestrator ${message.role}: ${text}`;
-      })
-      .filter((line): line is string => Boolean(line));
-    return lines.length > 0 ? lines.join("\n\n") : null;
-  } catch {
-    return null;
-  }
-}
-
-function readMessageText(message: AgentMessage): string {
-  if (!("content" in message)) {
-    return "";
-  }
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-  return message.content
-    .map((part) => {
-      if ("text" in part && typeof part.text === "string") {
-        return part.text;
-      }
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 function resolveThreadTargets(
@@ -7338,81 +5185,6 @@ function projectWorkspaceWait(
     resumeWhen: wait.resumeWhen,
     since: wait.since,
   };
-}
-
-function getThreadOwnedWaitId(wait: StructuredSessionSnapshot["session"]["wait"]): string | null {
-  if (!wait || wait.owner.kind !== "thread") {
-    return null;
-  }
-
-  return wait.owner.threadId;
-}
-
-function getEffectiveTurnWait(
-  snapshot: StructuredSessionSnapshot,
-  threadId: string | null,
-): StructuredWaitState | null {
-  if (!threadId) {
-    return null;
-  }
-  const thread = snapshot.threads.find((entry) => entry.id === threadId) ?? null;
-  if (!thread) {
-    return null;
-  }
-
-  if (getThreadOwnedWaitId(snapshot.session.wait) === threadId) {
-    return (
-      thread.wait ?? {
-        owner: "handler",
-        kind: snapshot.session.wait!.kind,
-        reason: snapshot.session.wait!.reason,
-        resumeWhen: snapshot.session.wait!.resumeWhen,
-        since: snapshot.session.wait!.since,
-      }
-    );
-  }
-
-  return thread.wait;
-}
-
-function inferPendingTurnDecision(input: {
-  assistantText: string;
-  wait?: StructuredWaitState | null;
-}): Exclude<StructuredSessionSnapshot["turns"][number]["turnDecision"], "pending"> {
-  if (input.wait) {
-    return "request_user_input";
-  }
-
-  if (looksLikeClarificationReply(input.assistantText)) {
-    return "request_user_input";
-  }
-
-  return "reply";
-}
-
-function looksLikeClarificationReply(text: string): boolean {
-  const normalized = text.trim();
-  if (!normalized || !normalized.includes("?")) {
-    return false;
-  }
-
-  return /\b(clarify|confirm|which|what|where|when|who|need|missing|provide|share|answer)\b/i.test(
-    normalized,
-  );
-}
-
-function shouldResumeThreadUserWaitOnPromptEntry(input: {
-  thread: StructuredSessionSnapshot["threads"][number];
-  sessionWait: StructuredSessionSnapshot["session"]["wait"];
-}): boolean {
-  if (input.thread.wait?.kind === "user") {
-    return true;
-  }
-
-  return (
-    getThreadOwnedWaitId(input.sessionWait) === input.thread.id &&
-    input.sessionWait?.kind === "user"
-  );
 }
 
 function getActorKindForTarget(target: PromptTarget): SvvyActorKind {
@@ -7593,351 +5365,6 @@ export function getSvvySessionDir(cwd: string, agentDir = getSvvyAgentDir()): st
   return join(agentDir, "sessions", `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
 }
 
-function createVisibleStreamState(provider: string, model: string): VisibleStreamState {
-  return {
-    partial: createPartialAssistantMessage(provider, model),
-    activeTextIndex: null,
-    activeThinkingIndex: null,
-  };
-}
-
-function applyVisibleAssistantEvent(
-  streamState: VisibleStreamState,
-  event: AssistantMessageEvent,
-  onEvent: (event: AssistantMessageEvent) => void,
-): void {
-  switch (event.type) {
-    case "text_start": {
-      streamState.activeTextIndex = streamState.partial.content.length;
-      streamState.partial.content.push({ type: "text", text: "" });
-      onEvent({
-        type: "text_start",
-        contentIndex: streamState.activeTextIndex,
-        partial: streamState.partial,
-      });
-      return;
-    }
-
-    case "text_delta": {
-      if (streamState.activeTextIndex === null) {
-        applyVisibleAssistantEvent(
-          streamState,
-          { type: "text_start", contentIndex: 0, partial: event.partial },
-          onEvent,
-        );
-      }
-
-      const contentIndex = streamState.activeTextIndex;
-      if (contentIndex === null) return;
-
-      const block = streamState.partial.content[contentIndex];
-      if (!block || block.type !== "text") return;
-
-      block.text += event.delta;
-      onEvent({
-        type: "text_delta",
-        contentIndex,
-        delta: event.delta,
-        partial: streamState.partial,
-      });
-      return;
-    }
-
-    case "text_end": {
-      const contentIndex = streamState.activeTextIndex;
-      if (contentIndex === null) return;
-
-      const block = streamState.partial.content[contentIndex];
-      if (!block || block.type !== "text") return;
-
-      onEvent({
-        type: "text_end",
-        contentIndex,
-        content: block.text,
-        partial: streamState.partial,
-      });
-      streamState.activeTextIndex = null;
-      return;
-    }
-
-    case "thinking_start": {
-      streamState.activeThinkingIndex = streamState.partial.content.length;
-      streamState.partial.content.push({ type: "thinking", thinking: "" });
-      onEvent({
-        type: "thinking_start",
-        contentIndex: streamState.activeThinkingIndex,
-        partial: streamState.partial,
-      });
-      return;
-    }
-
-    case "thinking_delta": {
-      if (streamState.activeThinkingIndex === null) {
-        applyVisibleAssistantEvent(
-          streamState,
-          { type: "thinking_start", contentIndex: 0, partial: event.partial },
-          onEvent,
-        );
-      }
-
-      const contentIndex = streamState.activeThinkingIndex;
-      if (contentIndex === null) return;
-
-      const block = streamState.partial.content[contentIndex];
-      if (!block || block.type !== "thinking") return;
-
-      block.thinking += event.delta;
-      onEvent({
-        type: "thinking_delta",
-        contentIndex,
-        delta: event.delta,
-        partial: streamState.partial,
-      });
-      return;
-    }
-
-    case "thinking_end": {
-      const contentIndex = streamState.activeThinkingIndex;
-      if (contentIndex === null) return;
-
-      const block = streamState.partial.content[contentIndex];
-      if (!block || block.type !== "thinking") return;
-
-      onEvent({
-        type: "thinking_end",
-        contentIndex,
-        content: block.thinking,
-        partial: streamState.partial,
-      });
-      streamState.activeThinkingIndex = null;
-      return;
-    }
-
-    case "toolcall_start":
-    case "toolcall_delta":
-      finishOpenVisibleBlocks(streamState, onEvent);
-      onEvent(event);
-      return;
-
-    case "toolcall_end":
-      finishOpenVisibleBlocks(streamState, onEvent);
-      streamState.partial.content[event.contentIndex] = structuredClone(event.toolCall);
-      onEvent({
-        ...event,
-        partial: streamState.partial,
-      });
-      return;
-
-    case "start":
-    case "done":
-    case "error":
-      return;
-  }
-}
-
-function surfaceStreamPatchFromAssistantEvent(
-  event: AssistantMessageEvent,
-): SurfaceStreamPatchInput | null {
-  switch (event.type) {
-    case "text_start":
-    case "thinking_start":
-      return {
-        type: event.type,
-        contentIndex: event.contentIndex,
-      };
-
-    case "text_delta":
-    case "thinking_delta":
-      return {
-        type: event.type,
-        contentIndex: event.contentIndex,
-        delta: event.delta,
-      };
-
-    case "text_end":
-    case "thinking_end":
-      return {
-        type: event.type,
-        contentIndex: event.contentIndex,
-        content: event.content,
-      };
-
-    case "toolcall_start":
-    case "toolcall_delta":
-    case "toolcall_end": {
-      const contentIndex = event.contentIndex;
-      const candidate = "toolCall" in event ? event.toolCall : event.partial.content[contentIndex];
-      if (!candidate || candidate.type !== "toolCall") {
-        return null;
-      }
-      return {
-        type: event.type,
-        contentIndex,
-        toolCall: candidate,
-      };
-    }
-
-    case "start":
-    case "done":
-    case "error":
-      return null;
-  }
-}
-
-function forwardToolcallEventToStreamingTracker(
-  tracker: import("./streaming-command-tracker").StreamingCommandTracker | null,
-  event: AssistantMessageEvent,
-): void {
-  if (!tracker) return;
-  if (event.type === "toolcall_start") {
-    const toolCall = event.partial.content[event.contentIndex];
-    if (!toolCall || toolCall.type !== "toolCall") return;
-    tracker.handleToolcallStart({
-      contentIndex: event.contentIndex,
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-      partialArguments: toolArgumentsAsJsonObject(toolCall.arguments),
-      partial: event.partial,
-    });
-  } else if (event.type === "toolcall_delta") {
-    const toolCall = event.partial.content[event.contentIndex];
-    if (!toolCall || toolCall.type !== "toolCall") return;
-    tracker.handleToolcallDelta({
-      contentIndex: event.contentIndex,
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-      delta: event.delta,
-      partialArguments: toolArgumentsAsJsonObject(toolCall.arguments),
-      partial: event.partial,
-    });
-  } else if (event.type === "toolcall_end") {
-    tracker.handleToolcallEnd({
-      contentIndex: event.contentIndex,
-      toolCallId: event.toolCall.id,
-      toolName: event.toolCall.name,
-      arguments: toolArgumentsAsJsonObject(event.toolCall.arguments),
-      partial: event.partial,
-    });
-  }
-}
-
-function toolArgumentsAsJsonObject(value: unknown): Record<string, import("@svvy/core").JsonValue> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-  try {
-    const json = JSON.parse(JSON.stringify(value));
-    return json && typeof json === "object" && !Array.isArray(json)
-      ? (json as Record<string, import("@svvy/core").JsonValue>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function finishOpenVisibleBlocks(
-  streamState: VisibleStreamState,
-  onEvent: (event: AssistantMessageEvent) => void,
-): void {
-  if (streamState.activeThinkingIndex !== null) {
-    const block = streamState.partial.content[streamState.activeThinkingIndex];
-    if (block && block.type === "thinking") {
-      onEvent({
-        type: "thinking_end",
-        contentIndex: streamState.activeThinkingIndex,
-        content: block.thinking,
-        partial: streamState.partial,
-      });
-    }
-    streamState.activeThinkingIndex = null;
-  }
-
-  if (streamState.activeTextIndex !== null) {
-    const block = streamState.partial.content[streamState.activeTextIndex];
-    if (block && block.type === "text") {
-      onEvent({
-        type: "text_end",
-        contentIndex: streamState.activeTextIndex,
-        content: block.text,
-        partial: streamState.partial,
-      });
-    }
-    streamState.activeTextIndex = null;
-  }
-}
-
-function finalizeVisibleAssistantMessage(
-  streamState: VisibleStreamState,
-  message: AssistantMessage,
-  provider: string,
-  model: string,
-): AssistantMessage {
-  const sanitized = sanitizeAssistantMessage(message, provider, model);
-  const streamedContent = structuredClone(streamState.partial.content);
-  const visibleContent = hasVisibleAssistantContent(streamedContent)
-    ? streamedContent
-    : sanitized.content;
-
-  return {
-    ...message,
-    api: `${provider}-responses`,
-    provider,
-    model,
-    content: visibleContent,
-    stopReason: message.stopReason === "toolUse" ? "stop" : message.stopReason,
-  };
-}
-
-function hasVisibleAssistantContent(content: AssistantMessage["content"]): boolean {
-  return content.some((block) => {
-    if (block.type === "text") return block.text.trim().length > 0;
-    if (block.type === "thinking") return block.thinking.trim().length > 0;
-    return block.type === "toolCall";
-  });
-}
-
-function sanitizeAssistantMessage(
-  message: AssistantMessage,
-  provider: string,
-  model: string,
-): AssistantMessage {
-  const content = message.content.filter(
-    (block) => block.type === "text" || block.type === "thinking",
-  );
-  const fallbackText =
-    message.errorMessage && (message.stopReason === "error" || message.stopReason === "aborted")
-      ? message.errorMessage
-      : "";
-  return {
-    ...message,
-    provider,
-    model,
-    content: content.length > 0 ? content : [{ type: "text", text: fallbackText }],
-  };
-}
-
-function getLatestAssistantMessage(messages: AgentMessage[]): AssistantMessage | undefined {
-  const assistantMessages = messages.filter(
-    (message): message is AssistantMessage => message.role === "assistant",
-  );
-  return assistantMessages.at(-1);
-}
-
-function getLatestUserMessage(messages: readonly Message[]): Message | null {
-  const message = messages.findLast((entry) => entry.role === "user") ?? null;
-  return message ? structuredClone(message) : null;
-}
-
-function extractAssistantText(message: AssistantMessage | undefined): string {
-  if (!message) {
-    return "";
-  }
-  return message.content
-    .map((block) => (block.type === "text" ? block.text : ""))
-    .join(" ")
-    .trim();
-}
-
 export function normalizeGeneratedTitle(input: string): string {
   const firstLine = input
     .split(/\r?\n/)
@@ -7950,6 +5377,23 @@ export function normalizeGeneratedTitle(input: string): string {
     .slice(0, 80)
     .trim();
   return normalizeTitleCasing(title) || "New Session";
+}
+
+function runtimeRunTaskAgentBridgeError(error: RuntimeContractError): RunTaskAgentBridgeError {
+  switch (error.reason) {
+    case "source-command-not-found":
+      return new RunTaskAgentBridgeError("source_command_not_found", error.message, 404);
+    case "source-command-not-handler-owned":
+      return new RunTaskAgentBridgeError("source_command_not_handler_owned", error.message, 403);
+    case "bridge-forbidden":
+      return new RunTaskAgentBridgeError("forbidden", error.message, 403);
+    case "bridge-invalid-request":
+      return new RunTaskAgentBridgeError("invalid_request", error.message, 400);
+    case "bridge-payload-too-large":
+      return new RunTaskAgentBridgeError("payload_too_large", error.message, 413);
+    default:
+      return new RunTaskAgentBridgeError("task_attempt_failed", error.message, 500);
+  }
 }
 
 function normalizeTitleCasing(title: string): string {
@@ -8013,138 +5457,4 @@ function resolveConfiguredArtifactDirectory(input: string, cwd: string): string 
     return join(homedir(), trimmed.slice(2));
   }
   return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed);
-}
-
-function messageToPlainText(message: Message): string {
-  switch (message.role) {
-    case "user":
-      return flattenUserContent(message.content);
-    case "assistant":
-      return message.content
-        .map((block) => {
-          if (block.type === "text") return block.text;
-          if (block.type === "thinking") return block.thinking;
-          if (block.type === "toolCall") return `[tool call: ${block.name}]`;
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-    case "toolResult":
-      return message.content
-        .map((block) => {
-          if (block.type === "text") return block.text;
-          if (block.type === "image") return "[image]";
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-  }
-}
-
-function buildWorkflowTaskAgentPrompt(request: RunTaskAgentInput): string {
-  if (request.promptSource.kind === "prompt") {
-    return request.promptSource.prompt.trim();
-  }
-
-  const messages = request.promptSource.messages
-    .map((message) => `${message.role}: ${message.text.trim()}`)
-    .filter((line) => line.trim().length > 0)
-    .join("\n\n");
-  if (messages.trim()) {
-    return messages;
-  }
-  throw new Error("runTaskAgent requires prompt or messages.");
-}
-
-function RunTaskAgentBridgeUsage(
-  usage: AssistantMessage["usage"] | undefined,
-): RunTaskAgentResult["usage"] | undefined {
-  if (!usage) {
-    return undefined;
-  }
-  return {
-    input: usage.input,
-    output: usage.output,
-    cacheRead: usage.cacheRead,
-    cacheWrite: usage.cacheWrite,
-  };
-}
-
-function workflowTaskMessagesFromRequest(
-  request: RunTaskAgentInput,
-  prompt: string,
-): Array<{
-  id: string;
-  role: "user" | "assistant" | "stderr";
-  source: "prompt" | "event" | "responseText";
-  text: string;
-  createdAt: string;
-}> {
-  const now = new Date().toISOString();
-  const messages =
-    request.promptSource.kind === "messages"
-      ? request.promptSource.messages.map((message) => ({
-          id: `workflow-task-message-${randomUUID()}`,
-          role: (message.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
-          source: "prompt" as const,
-          text: message.text,
-          createdAt: now,
-        }))
-      : [
-          {
-            id: `workflow-task-message-${randomUUID()}`,
-            role: "user" as const,
-            source: "prompt" as const,
-            text: prompt,
-            createdAt: now,
-          },
-        ];
-  return messages;
-}
-
-function flattenUserContent(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "image") return "[image]";
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-function createPartialAssistantMessage(provider: string, model: string): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [],
-    api: `${provider}-responses`,
-    provider,
-    model,
-    usage: ZERO_USAGE,
-    stopReason: "stop",
-    timestamp: Date.now(),
-  };
-}
-
-function createErrorMessage(
-  provider: string,
-  model: string,
-  message: string,
-  stopReason: "aborted" | "error",
-): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text: message }],
-    api: `${provider}-responses`,
-    provider,
-    model,
-    usage: ZERO_USAGE,
-    stopReason,
-    errorMessage: message,
-    timestamp: Date.now(),
-  };
 }

@@ -23,8 +23,12 @@ import {
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
+  RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
   RuntimePromptDefaultsStatePort,
+  PiRuntimePathsPort,
+  PiSessionReferencePort,
+  ProviderAuthPort,
   SandboxPolicySource,
   StateCommandPostCommitNotificationPort,
   StateContractError,
@@ -53,6 +57,7 @@ import {
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeActorExtensionBindingStatePortService,
+  type RuntimePromptBindingRecord,
   type RuntimeThreadStatePortService,
   type RuntimeOwnerId,
   type SandboxPolicySourceService,
@@ -64,6 +69,7 @@ import {
   type WorkspaceId,
   type WorkspaceSessionId,
 } from "@svvy/core";
+import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import {
   Extensions,
   layer,
@@ -82,9 +88,7 @@ import {
   RuntimeGeneratedContextRefreshHostPort,
   RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
-  RuntimeLayerPromptControlHostPort,
   RuntimeLayerProviderAuthPort,
-  RuntimeLayerSurfaceQueueWakePort,
   RuntimeSourceInvalidationScanPort,
   makeRuntimeService,
   type RuntimeLayerCommandControlPortService,
@@ -99,10 +103,15 @@ import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 import { RuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
 import {
+  RuntimeWorkflowTaskAgentBridgeBearerVerifier,
+  RuntimeWorkflowTaskAgentBridgeService,
+} from "./workflow-task-agent-bridge-service";
+import {
   makeRuntimeWorkspaceScopeService,
   RuntimeWorkspaceScopeService,
   runtimeWorkspaceScopeOwnerKey,
 } from "./workspace-runtime-scope-service";
+import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
 
 const workspaceId = "workspace_runtime_layer_effect" as WorkspaceId;
 const workspaceCwd = "/tmp/svvy-runtime-layer-effect" as AbsolutePath;
@@ -191,6 +200,158 @@ function testEffectPlatformLayer() {
         randomBytes: (size) => new Uint8Array(size).fill(1),
       }),
     ),
+  );
+}
+
+function fakeRuntimeSurfaceScopeService() {
+  return RuntimeSurfaceScopeService.of({
+    create: () =>
+      Effect.succeed({
+        surfacePiSessionId,
+        session: { surfacePiSessionId },
+        withPromptLock: (effect) => effect,
+        runPiTurn: () => Effect.die("unused"),
+        interruptActivePrompt: () => Effect.void,
+        isPromptActive: () => false,
+        activePromptDone: () => null,
+        installActivePrompt: () => Effect.void,
+        clearActivePrompt: () => Effect.void,
+      }),
+    open: () =>
+      Effect.succeed({
+        surfacePiSessionId,
+        session: { surfacePiSessionId },
+        withPromptLock: (effect) => effect,
+        runPiTurn: () => Effect.die("unused"),
+        interruptActivePrompt: () => Effect.void,
+        isPromptActive: () => false,
+        activePromptDone: () => null,
+        installActivePrompt: () => Effect.void,
+        clearActivePrompt: () => Effect.void,
+      }),
+    retainOpen: () =>
+      Effect.succeed({
+        surfacePiSessionId,
+        session: { surfacePiSessionId },
+        withPromptLock: (effect) => effect,
+        runPiTurn: () => Effect.die("unused"),
+        interruptActivePrompt: () => Effect.void,
+        isPromptActive: () => false,
+        activePromptDone: () => null,
+        installActivePrompt: () => Effect.void,
+        clearActivePrompt: () => Effect.void,
+      }),
+    release: () => Effect.void,
+    interrupt: () => Effect.void,
+    snapshot: () => Effect.succeed([]),
+  });
+}
+
+function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindingStatePortService {
+  let binding: RuntimePromptBindingRecord | null = null;
+  const makeBinding = (
+    bindingTarget: RuntimePromptBindingRecord["target"],
+  ): RuntimePromptBindingRecord => ({
+    target: bindingTarget,
+    generatedAgentContextBindingId: "binding_runtime_layer_effect",
+    generatedAgentContextFingerprint:
+      "ctx_runtime_layer_effect" as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
+    generatedAgentContextRevision: 1,
+    systemPrompt: "Runtime layer test prompt.",
+    loadedExtensionIds: [],
+    availableExtensionIds: [],
+    externalSourceHashes: [],
+    updateExtensionContextBeforeNextTurn: false,
+  });
+  return {
+    readRuntimePromptBinding: (input) => Effect.succeed(binding ?? makeBinding(input.target)),
+    updateActorExtensionBinding: (input) =>
+      Effect.succeed({
+        value: {
+          bindingId: "binding_runtime_layer_effect",
+          target: input.target,
+          loadedExtensionIds: [],
+          availableExtensionIds: [],
+          generatedAgentContextFingerprint:
+            "ctx_runtime_layer_effect" as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
+          generatedAgentContextRevision: 1,
+          externalSourceHashes: [],
+          updateExtensionContextBeforeNextTurn: false,
+          updatedAt: "2026-04-18T09:00:00.000Z" as IsoDateTimeString,
+        } as never,
+        afterCommit: [],
+      }),
+    setActorExtensionBinding: (input) =>
+      Effect.sync(() => {
+        binding = makeBinding(input.target);
+        return {
+          value: {
+            bindingId: "binding_runtime_layer_effect",
+            target: input.target,
+            loadedExtensionIds: input.loadedExtensionIds,
+            availableExtensionIds: input.availableExtensionIds,
+            generatedAgentContextFingerprint: binding.generatedAgentContextFingerprint,
+            generatedAgentContextRevision: binding.generatedAgentContextRevision,
+            externalSourceHashes: [],
+            updateExtensionContextBeforeNextTurn: false,
+            updatedAt: "2026-04-18T09:00:00.000Z" as IsoDateTimeString,
+          } as never,
+          afterCommit: [],
+        };
+      }),
+  };
+}
+
+function testPiAdapterHostLayer() {
+  return Layer.mergeAll(
+    PiAdapterLayer,
+    Layer.succeed(ProviderAuthPort, {
+      getProviderAuthSnapshot: () =>
+        Effect.succeed({
+          providerId: "openai" as never,
+          health: "missing" as const,
+        }),
+      refreshProviderCredentialSnapshot: () =>
+        Effect.succeed({
+          providerId: "openai" as never,
+          health: "missing" as const,
+        }),
+    }),
+    Layer.succeed(PiRuntimePathsPort, {
+      resolve: () =>
+        Effect.succeed({
+          workspaceId,
+          cwd: workspaceCwd,
+          agentDir: "/tmp/svvy-runtime-layer-effect/agent" as AbsolutePath,
+          sessionDir: "/tmp/svvy-runtime-layer-effect/sessions" as AbsolutePath,
+          modelRegistryPath: "/tmp/svvy-runtime-layer-effect/model-registry.json" as AbsolutePath,
+          source: "test-fixture" as const,
+        }),
+    }),
+    Layer.succeed(PiSessionReferencePort, {
+      getPiSessionReference: () => Effect.succeed(undefined),
+      savePiSessionReference: (input) =>
+        Effect.succeed({ value: input.reference, afterCommit: [] }),
+      deletePiSessionReference: (input) =>
+        Effect.succeed({
+          value: { surfacePiSessionId: input.surfacePiSessionId },
+          afterCommit: [],
+        }),
+      validatePiSessionReference: (input) =>
+        Effect.succeed({
+          valid: true as const,
+          reference:
+            input.reference ??
+            ({
+              surfacePiSessionId: input.surfacePiSessionId,
+              referenceFingerprint: "test",
+              adapterKind: "test",
+              adapterVersion: "test",
+              storageLocator: "/tmp/test.jsonl",
+            } as never),
+          referenceFingerprint: "test",
+        }),
+    }),
   );
 }
 
@@ -314,6 +475,7 @@ describe("@svvy/runtime Runtime.layer", () => {
     () => {
       const published: StateInvalidationDescriptor[][] = [];
       const livePublished: RuntimeEvent[] = [];
+      const surfaceEventActions: string[] = [];
       const acquired: AcquireWorkspaceInput[] = [];
       const createdSurfaces: CreateOrchestratorSurfaceInput[] = [];
       const closedSurfaces: CloseSurfaceInput[] = [];
@@ -333,6 +495,10 @@ describe("@svvy/runtime Runtime.layer", () => {
 
         const acquiredWorkspace = yield* runtime.workspaces.acquire(workspaceInput);
         const createdSurface = yield* runtime.surfaces.createOrchestrator(createSurfaceInput);
+        const openedSurface = yield* runtime.surfaces.open({
+          workspaceId,
+          target: surfaceResult.target,
+        });
         const closeSurfaceInput = {
           workspaceId,
           target: surfaceResult.target,
@@ -345,6 +511,12 @@ describe("@svvy/runtime Runtime.layer", () => {
         assert.deepStrictEqual(closedSurfaces, [closeSurfaceInput]);
         assert.deepStrictEqual(acquiredWorkspace, workspaceResult("created"));
         assert.deepStrictEqual(createdSurface, surfaceResult);
+        assert.deepStrictEqual(openedSurface, {
+          workspaceSessionId,
+          surfacePiSessionId,
+          target: surfaceResult.target,
+          stateRevision,
+        });
         assert.deepStrictEqual(closedSurface, {
           target: surfaceResult.target,
           lifecycle: "idle",
@@ -353,6 +525,13 @@ describe("@svvy/runtime Runtime.layer", () => {
           [workspaceInvalidation],
           [surfaceInvalidation],
           [surfaceInvalidation],
+          [surfaceInvalidation],
+        ]);
+        assert.deepStrictEqual(surfaceEventActions, [
+          "changed:surface.updated",
+          "reset:surface_reopened",
+          "changed:surface.updated",
+          "changed:surface.closed",
         ]);
         assert.deepStrictEqual(livePublished, [
           {
@@ -369,6 +548,14 @@ describe("@svvy/runtime Runtime.layer", () => {
             sequence: 2 as RuntimeEventSequence,
             workspaceId,
             target: surfaceResult.target,
+            reason: "surface.updated",
+          },
+          {
+            type: "surface.changed",
+            eventGenerationId: "runtime_layer_live_event_generation" as RuntimeEventGenerationId,
+            sequence: 3 as RuntimeEventSequence,
+            workspaceId,
+            target: surfaceResult.target,
             reason: "surface.closed",
           },
         ]);
@@ -377,6 +564,7 @@ describe("@svvy/runtime Runtime.layer", () => {
           testRuntimeLayer({
             published,
             livePublished,
+            surfaceEventActions,
             onAcquireWorkspace: (input) => {
               acquired.push(input);
               return workspaceResult("created");
@@ -696,6 +884,7 @@ describe("@svvy/runtime Runtime.layer", () => {
 interface TestLayerOverrides {
   readonly published: StateInvalidationDescriptor[][];
   readonly livePublished?: RuntimeEvent[];
+  readonly surfaceEventActions?: string[];
   readonly onAcquireWorkspace?: (input: AcquireWorkspaceInput) => AcquireWorkspaceResult;
   readonly onCreateSurface?: (input: CreateOrchestratorSurfaceInput) => CreateSurfaceResult;
   readonly onCloseSurface?: (input: CloseSurfaceInput) => CloseSurfaceResult;
@@ -755,13 +944,6 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               reasoningEffort: "medium" as const,
             }),
         }),
-        Layer.succeed(RuntimeLayerPromptControlHostPort, {
-          cancelActivePrompt: () => Effect.void,
-          cancelPrompt: () => Effect.void,
-        }),
-        Layer.succeed(RuntimeLayerSurfaceQueueWakePort, {
-          wakeSurfaceQueue: () => Effect.void,
-        }),
         Layer.succeed(RuntimeLayerProviderAuthPort, {
           ensureUsableProviderAuth: () => Effect.succeed("test-api-key"),
           getProviderAuthUnavailableMessage: () => "Provider auth unavailable.",
@@ -789,6 +971,17 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         Layer.succeed(RuntimeQueueWakeService, {
           wakeSurface: () => Effect.void,
         }),
+        Layer.succeed(RuntimeWorkflowTaskAgentBridgeService, {
+          runTaskAgent: () => Effect.die("unused"),
+        }),
+        Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
+          verify: () => Effect.succeed(true),
+        }),
+        Layer.succeed(RuntimeSurfaceScopeService, fakeRuntimeSurfaceScopeService()),
+        Layer.succeed(
+          RuntimeActorExtensionBindingStatePort,
+          fakeRuntimeActorExtensionBindingStatePort(),
+        ),
         Layer.succeed(RuntimeSourceInvalidationService, {
           hint: () => Effect.void,
           reconcile: () =>
@@ -814,22 +1007,43 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         }),
         Layer.succeed(RuntimeSurfaceEventPublisher, {
           publishSurfaceChanged: (input) =>
-            eventBus.publishLive({
-              event: {
-                type: "surface.changed" as const,
-                workspaceId: input.workspaceId,
-                target: input.target,
-                reason: input.reason,
-              },
-            }),
+            Effect.sync(() => {
+              overrides.surfaceEventActions?.push(`changed:${input.reason}`);
+            }).pipe(
+              Effect.andThen(
+                eventBus.publishLive({
+                  event: {
+                    type: "surface.changed" as const,
+                    workspaceId: input.workspaceId,
+                    target: input.target,
+                    reason: input.reason,
+                  },
+                }),
+              ),
+            ),
           publishStreamPatch: () =>
             Effect.die("RuntimeSurfaceEventPublisher.publishStreamPatch was not expected"),
-          resetSurfaceStream: () =>
-            Effect.die("RuntimeSurfaceEventPublisher.resetSurfaceStream was not expected"),
+          resetSurfaceStream: (input) =>
+            Effect.sync(() => {
+              overrides.surfaceEventActions?.push(`reset:${input.reason}`);
+              return {
+                type: "surface.stream",
+                workspaceId: input.workspaceId,
+                target: input.target,
+                streamGenerationId: input.streamGenerationId,
+                streamSequence: 1 as RuntimeEventSequence,
+                patch: {
+                  type: "stream_reset",
+                  reason: input.reason,
+                  latestStreamSequence: null,
+                },
+              } as unknown as RuntimeEvent;
+            }),
         }),
         layerRuntimeApprovalWaitService,
         Layer.succeed(RuntimeRequestInputWaitService, noRequestInputWaitService()),
         layerRuntimeBunPlatform,
+        testPiAdapterHostLayer(),
         Layer.succeed(RuntimeGeneratedContextRefreshHostPort, {
           refresh: () => Promise.resolve(),
         }),
@@ -993,13 +1207,6 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               reasoningEffort: "medium" as const,
             }),
         }),
-        Layer.succeed(RuntimeLayerPromptControlHostPort, {
-          cancelActivePrompt: () => Effect.void,
-          cancelPrompt: () => Effect.void,
-        }),
-        Layer.succeed(RuntimeLayerSurfaceQueueWakePort, {
-          wakeSurfaceQueue: () => Effect.void,
-        }),
         Layer.succeed(RuntimeLayerProviderAuthPort, {
           ensureUsableProviderAuth: () => Effect.succeed("test-api-key"),
           getProviderAuthUnavailableMessage: () => "Provider auth unavailable.",
@@ -1013,6 +1220,9 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               value: { appLogEntryId: "app_log_runtime_layer_effect" as AppLogEntryId },
               afterCommit: [],
             }),
+        }),
+        Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
+          verify: () => Effect.succeed(true),
         }),
         Layer.succeed(SandboxPolicySource, unusedSandboxPolicySource()),
         Layer.succeed(SandboxHelperCandidatesPort, {
@@ -1096,6 +1306,7 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               status: "already_terminal" as const,
             }),
         }),
+        testPiAdapterHostLayer(),
         Layer.succeed(RuntimeWorkspaceStatePort, unusedPort("RuntimeWorkspaceStatePort")),
         Layer.succeed(
           RuntimeSurfaceLifecycleStatePort,
@@ -1116,6 +1327,7 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
         Layer.succeed(RuntimeTurnStatePort, unusedPort("RuntimeTurnStatePort")),
         Layer.succeed(RuntimeEpisodeStatePort, unusedPort("RuntimeEpisodeStatePort")),
+        Layer.succeed(RuntimeWorkflowTaskStatePort, unusedPort("RuntimeWorkflowTaskStatePort")),
         Layer.succeed(
           RuntimeThreadStatePort,
           unusedPort("RuntimeThreadStatePort") as RuntimeThreadStatePortService,

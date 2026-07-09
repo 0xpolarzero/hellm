@@ -71,8 +71,8 @@ describe("workflow task-agent bridge server", () => {
     const bridge = {
       authorize: (request: RunTaskAgentInput, bearerToken: string) =>
         bearerToken === `${request.workspaceSessionId}:${request.sourceCommandId}`,
-      async runTaskAgent(request: RunTaskAgentInput) {
-        received.push(request);
+      async runTaskAgent(request: RunTaskAgentInput, bearerToken: string) {
+        received.push({ request, bearerToken });
         return { text: "done", output: { ok: true } };
       },
     };
@@ -121,31 +121,34 @@ describe("workflow task-agent bridge server", () => {
     expect(await response.json()).toEqual({ text: "done", output: { ok: true } });
     expect(received).toEqual([
       {
-        workspaceSessionId: "workspace-1",
-        sourceCommandId: "command-1",
-        operation: "runTaskAgent",
-        taskIdentity: {
-          runId: "smithers-run-1",
-          nodeId: "node-review",
-          iteration: 2,
-          attempt: 1,
-        },
-        smithersContext: {
-          run: { id: "smithers-run-1" },
-          node: { id: "node-review" },
-        },
-        agent: {
-          id: "reviewerAgent",
-          label: "Reviewer",
-          provider: "openai",
-          model: "gpt-5.4",
-          reasoning: { effort: "medium" },
-          instructions: "Review strictly.",
-          overrides: { workflows: "loaded" },
-        },
-        promptSource: {
-          kind: "messages",
-          messages: [{ role: "user", text: "Review this." }],
+        bearerToken: "workspace-1:command-1",
+        request: {
+          workspaceSessionId: "workspace-1",
+          sourceCommandId: "command-1",
+          operation: "runTaskAgent",
+          taskIdentity: {
+            runId: "smithers-run-1",
+            nodeId: "node-review",
+            iteration: 2,
+            attempt: 1,
+          },
+          smithersContext: {
+            run: { id: "smithers-run-1" },
+            node: { id: "node-review" },
+          },
+          agent: {
+            id: "reviewerAgent",
+            label: "Reviewer",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "medium" },
+            instructions: "Review strictly.",
+            overrides: { workflows: "loaded" },
+          },
+          promptSource: {
+            kind: "messages",
+            messages: [{ role: "user", text: "Review this." }],
+          },
         },
       },
     ]);

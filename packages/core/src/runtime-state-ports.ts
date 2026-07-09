@@ -9,7 +9,10 @@ import {
   CommandFactsPayloadSchema,
   CommandEventPayloadSchema,
   PromptTargetSchema,
+  RuntimeSurfaceTargetSchema,
+  WorkflowTaskRuntimeSurfaceTargetSchema,
   RequestUserInputResolvedAnswerSchema,
+  RunTaskAgentPromptSourceSchema,
   RuntimeExtensionSnapshotContextImpactTransportInputSchema,
   RuntimeExtensionUsageContextImpactTransportInputSchema,
   RuntimeExtensionUsageProfileKeyTransportSchema,
@@ -44,6 +47,9 @@ import {
   type SetRequestInputTimerPausedInput,
   SourceDomainSchema,
   SourceInvalidationScopeSchema,
+  SmithersTaskAttemptIdentitySchema,
+  SmithersTaskContextSnapshotSchema,
+  ValidatedTaskAgentParametersSchema,
   type UpdateActorExtensionBindingRequest,
 } from "./runtime-contracts";
 export {
@@ -390,6 +396,93 @@ export const RuntimeSurfaceMessageRecordSchema = Schema.Struct({
 });
 export type RuntimeSurfaceMessageRecord = typeof RuntimeSurfaceMessageRecordSchema.Type;
 
+export const AcceptRuntimeWorkflowTaskAgentStartInputSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  sourceCommandId: CommandId,
+  idempotencyKey: Schema.String,
+  agent: ValidatedTaskAgentParametersSchema,
+  taskIdentity: SmithersTaskAttemptIdentitySchema,
+  smithersContext: Schema.optionalKey(SmithersTaskContextSnapshotSchema),
+  promptSource: RunTaskAgentPromptSourceSchema,
+});
+export type AcceptRuntimeWorkflowTaskAgentStartInput =
+  typeof AcceptRuntimeWorkflowTaskAgentStartInputSchema.Type;
+
+export const RuntimeWorkflowTaskAgentStartReceiptSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  target: WorkflowTaskRuntimeSurfaceTargetSchema,
+  queuedMessage: RuntimeSurfaceMessageRecordSchema,
+  accepted: Schema.Literals(["created", "existing"]),
+});
+export type RuntimeWorkflowTaskAgentStartReceipt =
+  typeof RuntimeWorkflowTaskAgentStartReceiptSchema.Type;
+
+export const RuntimeWorkflowTaskAgentTerminalResultSchema = Schema.Struct({
+  text: Schema.String,
+  usage: Schema.optionalKey(JsonValue),
+  output: Schema.optionalKey(JsonValue),
+});
+export type RuntimeWorkflowTaskAgentTerminalResult =
+  typeof RuntimeWorkflowTaskAgentTerminalResultSchema.Type;
+
+export const RuntimeWorkflowTaskAgentTerminalReceiptSchema = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("in-flight"),
+    workspaceId: WorkspaceId,
+    target: WorkflowTaskRuntimeSurfaceTargetSchema,
+    queuedMessage: RuntimeSurfaceMessageRecordSchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("completed"),
+    result: RuntimeWorkflowTaskAgentTerminalResultSchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("failed"),
+    error: Schema.String,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("conflict"),
+    error: Schema.String,
+  }),
+]);
+export type RuntimeWorkflowTaskAgentTerminalReceipt =
+  typeof RuntimeWorkflowTaskAgentTerminalReceiptSchema.Type;
+
+export const SettleRuntimeWorkflowTaskAgentAttemptInputSchema = Schema.Struct({
+  workflowTaskAttemptId: WorkflowTaskAttemptId,
+  idempotencyKey: Schema.String,
+  status: Schema.Literals(["completed", "failed", "cancelled"]),
+  result: Schema.optionalKey(RuntimeWorkflowTaskAgentTerminalResultSchema),
+  error: Schema.optionalKey(Schema.String),
+});
+export type SettleRuntimeWorkflowTaskAgentAttemptInput =
+  typeof SettleRuntimeWorkflowTaskAgentAttemptInputSchema.Type;
+
+export interface RuntimeWorkflowTaskStatePortService {
+  acceptWorkflowTaskAgentStart(
+    input: AcceptRuntimeWorkflowTaskAgentStartInput,
+  ): Effect.Effect<StateMutationResult<RuntimeWorkflowTaskAgentStartReceipt>, StateContractError>;
+  getWorkflowTaskAgentAttemptTerminal(input: {
+    readonly workspaceSessionId: WorkspaceSessionId;
+    readonly idempotencyKey: string;
+  }): Effect.Effect<RuntimeWorkflowTaskAgentTerminalReceipt | null, StateContractError>;
+  settleWorkflowTaskAgentAttempt(
+    input: SettleRuntimeWorkflowTaskAgentAttemptInput,
+  ): Effect.Effect<
+    StateMutationResult<RuntimeWorkflowTaskAgentTerminalReceipt>,
+    StateContractError
+  >;
+}
+
+export interface RuntimeWorkflowTaskStatePort {
+  readonly _tag: "RuntimeWorkflowTaskStatePort";
+}
+
+export const RuntimeWorkflowTaskStatePort = Context.Service<
+  RuntimeWorkflowTaskStatePort,
+  RuntimeWorkflowTaskStatePortService
+>("@svvy/core/RuntimeWorkflowTaskStatePort");
+
 export const RuntimeSurfaceQueuePositionSchema = Schema.Literals(["front", "back"]);
 export type RuntimeSurfaceQueuePosition = typeof RuntimeSurfaceQueuePositionSchema.Type;
 
@@ -558,6 +651,15 @@ export const StartRuntimeTurnInputSchema = Schema.Struct({
 });
 export type StartRuntimeTurnInput = typeof StartRuntimeTurnInputSchema.Type;
 
+export const RuntimeTitleGenerationQueueReceiptSchema = Schema.Struct({
+  queued: Schema.Boolean,
+  sessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  title: Schema.String,
+});
+export type RuntimeTitleGenerationQueueReceipt =
+  typeof RuntimeTitleGenerationQueueReceiptSchema.Type;
+
 export const SetRuntimeTurnDecisionInputSchema = Schema.Struct({
   turnId: Schema.String,
   decision: RuntimeTurnDecisionSchema,
@@ -575,6 +677,10 @@ export interface RuntimeTurnStatePortService {
   startTurn(
     input: StartRuntimeTurnInput,
   ): Effect.Effect<StateMutationResult<RuntimeTurnRecord>, StateContractError>;
+  queueTopLevelTitleGeneration(input: {
+    readonly sessionId: WorkspaceSessionId;
+    readonly surfacePiSessionId: SurfacePiSessionId;
+  }): Effect.Effect<StateMutationResult<RuntimeTitleGenerationQueueReceipt>, StateContractError>;
   setTurnDecision(
     input: SetRuntimeTurnDecisionInput,
   ): Effect.Effect<StateMutationResult<RuntimeTurnRecord>, StateContractError>;
@@ -1688,7 +1794,7 @@ export type RuntimeActorExtensionBindingRecord =
   typeof RuntimeActorExtensionBindingRecordSchema.Type;
 
 export const RuntimePromptBindingRecordSchema = Schema.Struct({
-  target: PromptTargetSchema,
+  target: RuntimeSurfaceTargetSchema,
   generatedAgentContextBindingId: Schema.String,
   generatedAgentContextFingerprint: GeneratedContextFingerprint,
   generatedAgentContextRevision: NonNegativeSafeIntegerSchema,
@@ -1701,7 +1807,7 @@ export const RuntimePromptBindingRecordSchema = Schema.Struct({
 export type RuntimePromptBindingRecord = typeof RuntimePromptBindingRecordSchema.Type;
 
 export const ReadRuntimePromptBindingInputSchema = Schema.Struct({
-  target: PromptTargetSchema,
+  target: RuntimeSurfaceTargetSchema,
 });
 export type ReadRuntimePromptBindingInput = typeof ReadRuntimePromptBindingInputSchema.Type;
 
