@@ -30,6 +30,7 @@ import type {
   RuntimeEvent,
   RuntimeEventGenerationId,
   RuntimeEventSequence,
+  RuntimeEventSubscriptionClose,
   RuntimeOwnerId,
   SaveExtensionSourceEditInput,
   SetRequestInputTimerPausedInput,
@@ -1349,6 +1350,55 @@ describe("@svvy/runtime facade", () => {
 
       await facade.close();
       expect(finalized).toBe(1);
+    } finally {
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("resolves active event subscription closed receipts when the facade closes", async () => {
+    const closeReceipt = {
+      reason: "closed",
+      eventGenerationId: testEventGenerationId,
+      lastContiguousSequence: runtimeEventSequence(0),
+      rebaselineRequired: false,
+    } satisfies RuntimeEventSubscriptionClose;
+    let closeCalls = 0;
+    let resolveClosed!: (receipt: RuntimeEventSubscriptionClose) => void;
+    const closedReceiptPromise = new Promise<RuntimeEventSubscriptionClose>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {
+          submit: () => Effect.die("unused"),
+          abort: () => Effect.void,
+        },
+        queues: { steer: () => Effect.void },
+        commands: {
+          cancel: () => Effect.succeed(cancelledCommandResult),
+        },
+        events: () =>
+          Effect.succeed({
+            stream: Stream.never,
+            close: () =>
+              Effect.sync(() => {
+                closeCalls += 1;
+                resolveClosed(closeReceipt);
+              }),
+            closed: Effect.promise(() => closedReceiptPromise),
+          }),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+
+    try {
+      const subscription = await facade.events({ includeAppEvents: true });
+      const closed = subscription.closed;
+
+      await facade.close();
+
+      await expect(closed).resolves.toEqual(closeReceipt);
+      expect(closeCalls).toBe(1);
     } finally {
       await managedRuntime.dispose();
     }

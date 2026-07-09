@@ -64,6 +64,7 @@ import {
   type AgentContextPreviewRequest,
   type AgentContextPreviewResponse,
   type AgentModelChoicesResponse,
+  type RequestUserInputAnswerResponse,
   type AddExtensionInstructionFileRequest,
   type BuildExtensionRequest,
   type ConfigureExtensionInstructionFileRequest,
@@ -779,7 +780,9 @@ export interface ChatRuntime {
   ) => Promise<WorkspaceWorkflowTaskAttemptInspector>;
   getArtifactPreview: (artifactId: string, sessionId?: string) => Promise<WorkspaceArtifactPreview>;
   getRequestUserInputRequests: () => WorkspaceRequestUserInputRequest[];
-  answerRequestUserInput: (request: RequestUserInputAnswerRequest) => Promise<void>;
+  answerRequestUserInput: (
+    request: RequestUserInputAnswerRequest,
+  ) => Promise<RequestUserInputAnswerResponse>;
   setRequestUserInputTimerPaused: (request: SetRequestUserInputTimerPausedRequest) => Promise<void>;
   getRuntimeApprovalRequests: () => WorkspaceRuntimeApprovalRequest[];
   answerRuntimeApprovalRequest: (request: AnswerRuntimeApprovalRequest) => Promise<void>;
@@ -3048,6 +3051,7 @@ export async function createChatRuntime(
         upsertSurfaceController(response.snapshot);
       }
       await refreshSessions();
+      return response;
     },
     setRequestUserInputTimerPaused: async (request) => {
       await rpcClient.request.setRequestUserInputTimerPaused(

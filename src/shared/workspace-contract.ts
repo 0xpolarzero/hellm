@@ -42,6 +42,7 @@ import type {
 } from "./snippets";
 import type { AppMenuAction } from "./shortcut-registry";
 import type {
+  AnswerRequestInputResult,
   AppLogLevel,
   AppLogQuery,
   AppLogReadModel,
@@ -1331,6 +1332,13 @@ export interface RequestUserInputAnswerRequest {
   clientSubmission?: PromptClientSubmissionMetadata;
 }
 
+export interface RequestUserInputAnswerResponse extends SurfaceMutationResponse {
+  requestId: AnswerRequestInputResult["requestId"];
+  questionId: AnswerRequestInputResult["questionId"];
+  status: AnswerRequestInputResult["status"];
+  delivery: AnswerRequestInputResult["delivery"];
+}
+
 export interface SetRequestUserInputTimerPausedRequest {
   surfacePiSessionId: string;
   requestId: string;
@@ -2043,7 +2051,7 @@ export interface ChatRPCSchema {
       };
       answerRequestUserInput: {
         params: WorkspaceScoped<RequestUserInputAnswerRequest>;
-        response: SurfaceMutationResponse;
+        response: RequestUserInputAnswerResponse;
       };
       answerRuntimeApprovalRequest: {
         params: WorkspaceScoped<AnswerRuntimeApprovalRequest>;

@@ -453,6 +453,9 @@ export type MarkRuntimeSurfaceMessageSteeringInput =
 export const MarkRuntimeSurfaceMessageQueuedInputSchema = Schema.Struct({
   id: Schema.String,
   position: Schema.optionalKey(RuntimeSurfaceQueuePositionSchema),
+  claimOwnerId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  leaseVersion: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  expectedStatuses: Schema.optionalKey(Schema.Array(RuntimeSurfaceQueueStatusSchema)),
 });
 export type MarkRuntimeSurfaceMessageQueuedInput =
   typeof MarkRuntimeSurfaceMessageQueuedInputSchema.Type;
@@ -478,6 +481,7 @@ export const CancelRuntimeSurfaceMessageInputSchema = Schema.Struct({
   id: Schema.String,
   claimOwnerId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   leaseVersion: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  expectedStatuses: Schema.optionalKey(Schema.Array(RuntimeSurfaceQueueStatusSchema)),
 });
 export type CancelRuntimeSurfaceMessageInput = typeof CancelRuntimeSurfaceMessageInputSchema.Type;
 

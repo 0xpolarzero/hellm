@@ -220,7 +220,9 @@ export function runtimeRequestStatePortFromStructuredSessionState(
           status: "recorded",
           delivery:
             answered.request.variant === "blocking"
-              ? { kind: "blocking-resolved", queuedItemId: null }
+              ? answered.request.status === "completed"
+                ? { kind: "blocking-resolved", queuedItemId: null }
+                : { kind: "blocking-open", queuedItemId: null }
               : queuedItemId
                 ? { kind: "nonblocking-queued", queuedItemId }
                 : { kind: "nonblocking-recorded", queuedItemId: null },

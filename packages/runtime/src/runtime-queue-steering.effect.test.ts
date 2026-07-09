@@ -111,6 +111,15 @@ function createHarness(
       Effect.gen(function* () {
         calls.push(`mark:${input.id}:${input.position ?? "default"}`);
         markCalls.push(input);
+        if (input.expectedStatuses && !input.expectedStatuses.includes(existing.status)) {
+          return yield* Effect.fail(
+            new StateContractError({
+              operation: "state.queue.markQueued",
+              reason: "claim-conflict",
+              message: "Queued row is already dispatching.",
+            }),
+          );
+        }
         if (options.markFails) {
           return yield* Effect.fail(
             new StateContractError({
@@ -196,7 +205,11 @@ describe("runtime queue steering", () => {
         assert.strictEqual(result, undefined);
 
         assert.deepStrictEqual(harness.markCalls, [
-          { id: "queue_runtime_steer_01" as QueueItemId, position: "front" },
+          {
+            id: "queue_runtime_steer_01" as QueueItemId,
+            position: "front",
+            expectedStatuses: ["queued", "steering"],
+          },
         ]);
         assert.deepStrictEqual(harness.calls, [
           "lookup:queue_runtime_steer_01",
@@ -227,6 +240,39 @@ describe("runtime queue steering", () => {
         "mark:queue_runtime_steer_01:front",
         "publish:1",
         "postCommit:queue_runtime_steer_01:1",
+      ]);
+    }),
+  );
+
+  it.effect("rejects dispatching messages without clearing the active claim", () =>
+    Effect.gen(function* () {
+      const harness = createHarness({
+        existing: queuedRecord({
+          status: "dispatching",
+          claimOwnerId: "surface-queue-dispatcher:workspace_runtime_steer_01",
+          claimLeaseExpiresAt: "2026-04-18T09:02:00.000Z",
+          leaseVersion: 2,
+        }),
+      });
+
+      const error = yield* harness
+        .run({
+          target: handlerTarget,
+          queuedMessageId: "queue_runtime_steer_01" as QueueItemId,
+        })
+        .pipe(Effect.flip);
+
+      assert.deepStrictEqual(
+        { _tag: error._tag, operation: error.operation, reason: error.reason },
+        {
+          _tag: "RuntimeContractError",
+          operation: "runtime.queues.steer.mark",
+          reason: "state-conflict",
+        },
+      );
+      assert.deepStrictEqual(harness.calls, [
+        "lookup:queue_runtime_steer_01",
+        "mark:queue_runtime_steer_01:front",
       ]);
     }),
   );

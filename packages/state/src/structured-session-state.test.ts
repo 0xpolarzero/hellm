@@ -1249,6 +1249,59 @@ describe("structured session state write API", () => {
     ).toEqual([[second.id, "queued"]]);
   });
 
+  it("guards queued steering and cancellation against already-dispatching rows", () => {
+    const store = createStore();
+    seedSession(store, "session-queue-guard");
+    const queued = store.enqueueSurfaceMessage({
+      sessionId: "session-queue-guard",
+      surfacePiSessionId: "surface-queue-guard",
+      messageJson: JSON.stringify({ role: "user", content: "Guard this prompt" }),
+    });
+
+    const claimed = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId: "surface-queue-guard",
+      claimOwnerId: "runtime-worker-guard",
+      leaseDurationMs: 15_000,
+    });
+
+    expect(() =>
+      store.markSurfaceMessageQueued({
+        id: queued.id,
+        position: "front",
+        expectedStatuses: ["queued", "steering"],
+      }),
+    ).toThrow("Surface queued message");
+    expect(() =>
+      store.cancelSurfaceMessage({
+        id: queued.id,
+        expectedStatuses: ["queued", "steering"],
+      }),
+    ).toThrow("Surface queued message");
+    expect(store.getSurfaceQueuedMessage({ id: queued.id })).toMatchObject({
+      id: queued.id,
+      status: "dispatching",
+      claimOwnerId: "runtime-worker-guard",
+      claimLeaseExpiresAt: "2026-04-18T09:00:16.000Z",
+      leaseVersion: claimed!.leaseVersion,
+    });
+
+    store.markSurfaceMessageQueued({
+      id: queued.id,
+      position: "front",
+      expectedStatuses: ["dispatching"],
+    });
+    expect(store.getSurfaceQueuedMessage({ id: queued.id })).toMatchObject({
+      status: "queued",
+      claimOwnerId: null,
+      claimLeaseExpiresAt: null,
+    });
+    store.cancelSurfaceMessage({
+      id: queued.id,
+      expectedStatuses: ["queued", "steering"],
+    });
+    expect(store.getSurfaceQueuedMessage({ id: queued.id }).status).toBe("cancelled");
+  });
+
   it("keeps failed queued messages visible and out of future claims until restored", () => {
     const store = createStore();
     seedSession(store, "session-queue-failure");
@@ -1396,6 +1449,47 @@ describe("structured session state write API", () => {
       store.claimNextQueuedSurfaceMessage({ surfacePiSessionId: "surface-queue-expired-claim" })
         ?.id,
     ).toBe(queued.id);
+  });
+
+  it("rejects stale dispatch requeue after an expired lease is reclaimed", () => {
+    const store = createStore();
+    seedSession(store, "session-queue-stale-requeue");
+    const queued = store.enqueueSurfaceMessage({
+      sessionId: "session-queue-stale-requeue",
+      surfacePiSessionId: "surface-queue-stale-requeue",
+      messageJson: JSON.stringify({ role: "user", content: "Lease may be stolen" }),
+    });
+
+    const staleClaim = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId: "surface-queue-stale-requeue",
+      claimOwnerId: "runtime-worker-stale",
+      leaseDurationMs: 1_000,
+    });
+    store.releaseExpiredSurfaceMessageClaims({
+      surfacePiSessionId: "surface-queue-stale-requeue",
+      now: "2026-04-18T09:00:03.000Z",
+    });
+    const currentClaim = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId: "surface-queue-stale-requeue",
+      claimOwnerId: "runtime-worker-current",
+      leaseDurationMs: 15_000,
+    });
+
+    expect(() =>
+      store.markSurfaceMessageQueued({
+        id: queued.id,
+        position: "front",
+        claimOwnerId: staleClaim!.claimOwnerId,
+        leaseVersion: staleClaim!.leaseVersion,
+        expectedStatuses: ["dispatching"],
+      }),
+    ).toThrow("Surface queued message");
+    expect(store.getSurfaceQueuedMessage({ id: queued.id })).toMatchObject({
+      id: queued.id,
+      status: "dispatching",
+      claimOwnerId: "runtime-worker-current",
+      leaseVersion: currentClaim!.leaseVersion,
+    });
   });
 
   it("persists request_user_input answers as highest-priority same-surface queue work", () => {
@@ -1862,6 +1956,63 @@ describe("structured session state write API", () => {
     });
     expect(store.claimNextRecoveryWork({ claimedBy: "coordinator-b" })).toMatchObject({
       id: first.id,
+      status: "claimed",
+    });
+  });
+
+  it("preserves queue-delivery dirty-set wakes that arrive while a row is claimed", () => {
+    const store = createStore();
+    const first = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
+      kind: "queue_delivery",
+      ownerScope: {
+        kind: "surface",
+        workspaceSessionId: "session-recovery-dirty",
+        surfacePiSessionId: "surface-recovery-dirty",
+      },
+      idempotencyKey: "queue_delivery:surface-recovery-dirty",
+      orderingKey: "surface:surface-recovery-dirty",
+      orderingSeq: 0,
+      priority: 30,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+    });
+    const claimed = store.claimNextRecoveryWork({
+      claimedBy: "coordinator-dirty",
+      leaseMs: 60_000,
+    });
+
+    const redirty = store.ensureRecoveryWork({
+      scope: { kind: "workspace", workspaceId: store.workspaceId },
+      kind: "queue_delivery",
+      ownerScope: {
+        kind: "surface",
+        workspaceSessionId: "session-recovery-dirty",
+        surfacePiSessionId: "surface-recovery-dirty",
+      },
+      idempotencyKey: "queue_delivery:surface-recovery-dirty",
+      orderingKey: "surface:surface-recovery-dirty",
+      orderingSeq: 0,
+      priority: 30,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 3,
+    });
+
+    expect(claimed?.id).toBe(first.id);
+    expect(redirty.id).not.toBe(first.id);
+    expect(redirty).toMatchObject({
+      kind: "queue_delivery",
+      status: "pending",
+      idempotencyKey: "queue_delivery:surface-recovery-dirty",
+    });
+
+    store.completeRecoveryWork({
+      id: claimed!.id,
+      claimedBy: claimed!.claimedBy,
+      leaseVersion: claimed!.leaseVersion,
+    });
+    expect(store.claimNextRecoveryWork({ claimedBy: "coordinator-dirty-followup" })).toMatchObject({
+      id: redirty.id,
       status: "claimed",
     });
   });

@@ -29,10 +29,17 @@ type PendingBlockingRequestEffect = {
   sessionId: string;
   deferred: Deferred.Deferred<RequestUserInputResult, RuntimeContractError>;
   timerVersion: number;
+  timerScope: Scope.Scope | null;
+};
+
+type BlockingTimerInvalidation = {
+  readonly timerVersion: number | null;
+  readonly timerScope: Scope.Scope | null;
 };
 
 export type RuntimeBlockingRequestInputWaitRegistryOptions = {
   onRequestUpdated?: () => Effect.Effect<void>;
+  onTimerInterrupted?: (requestId: string) => Effect.Effect<void>;
 };
 
 export type RuntimeBlockingRequestInputWaitRegistry = {
@@ -83,13 +90,18 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       yield* Effect.forEach(
         entries.values(),
         (entry) =>
-          Deferred.fail(
-            entry.deferred,
-            requestInputWaitError("runtime.requestInput.closeBlockingWaitRegistry", {
-              reason: "runtime-closed",
-              message: "Request user input wait registry closed.",
-            }),
-          ).pipe(Effect.asVoid),
+          Effect.gen(function* () {
+            if (entry.timerScope) {
+              yield* Scope.close(entry.timerScope, Exit.void).pipe(Effect.ignore);
+            }
+            yield* Deferred.fail(
+              entry.deferred,
+              requestInputWaitError("runtime.requestInput.closeBlockingWaitRegistry", {
+                reason: "runtime-closed",
+                message: "Request user input wait registry closed.",
+              }),
+            ).pipe(Effect.asVoid);
+          }),
         { discard: true },
       );
     },
@@ -99,18 +111,67 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
 
   const invalidateBlockingTimer = Effect.fn("@svvy/runtime/request-input.invalidateBlockingTimer")(
     function* (requestId: string): Effect.fn.Return<number | null> {
-      return yield* Ref.modify(pending, (current) => {
-        const entry = current.get(requestId);
-        if (!entry) {
-          return [null, current] as const;
-        }
-        const next = new Map(current);
-        const nextVersion = entry.timerVersion + 1;
-        next.set(requestId, { ...entry, timerVersion: nextVersion });
-        return [nextVersion, next] as const;
-      });
+      const invalidated: BlockingTimerInvalidation = yield* Ref.modify(
+        pending,
+        (
+          current,
+        ): readonly [BlockingTimerInvalidation, Map<string, PendingBlockingRequestEffect>] => {
+          const entry = current.get(requestId);
+          if (!entry) {
+            return [{ timerVersion: null, timerScope: null }, current] as const;
+          }
+          const next = new Map(current);
+          const nextVersion = entry.timerVersion + 1;
+          next.set(requestId, { ...entry, timerVersion: nextVersion, timerScope: null });
+          return [{ timerVersion: nextVersion, timerScope: entry.timerScope }, next] as const;
+        },
+      );
+      if (invalidated.timerScope) {
+        yield* Scope.close(invalidated.timerScope, Exit.void).pipe(Effect.ignore);
+      }
+      return invalidated.timerVersion;
     },
   );
+
+  const installBlockingTimerScope = Effect.fn(
+    "@svvy/runtime/request-input.installBlockingTimerScope",
+  )(function* (
+    requestId: string,
+    timerVersion: number,
+    scope: Scope.Scope,
+  ): Effect.fn.Return<boolean> {
+    return yield* Ref.modify(pending, (current) => {
+      const entry = current.get(requestId);
+      if (!entry || entry.timerVersion !== timerVersion) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.set(requestId, { ...entry, timerScope: scope });
+      return [true, next] as const;
+    });
+  });
+
+  const clearCurrentBlockingTimerScope = Effect.fn(
+    "@svvy/runtime/request-input.clearCurrentBlockingTimerScope",
+  )(function* (requestId: string, timerVersion: number): Effect.fn.Return<void> {
+    yield* Ref.update(pending, (current) => {
+      const entry = current.get(requestId);
+      if (!entry || entry.timerVersion !== timerVersion) {
+        return current;
+      }
+      const next = new Map(current);
+      next.set(requestId, { ...entry, timerScope: null });
+      return next;
+    });
+  });
+
+  const closePendingTimer = Effect.fn("@svvy/runtime/request-input.closePendingTimer")(function* (
+    entry: PendingBlockingRequestEffect | undefined,
+  ): Effect.fn.Return<void> {
+    if (entry?.timerScope) {
+      yield* Scope.close(entry.timerScope, Exit.void).pipe(Effect.ignore);
+    }
+  });
 
   const isCurrentBlockingTimer = Effect.fn("@svvy/runtime/request-input.isCurrentBlockingTimer")(
     function* (requestId: string, timerVersion: number): Effect.fn.Return<boolean> {
@@ -173,6 +234,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
         next.delete(requestId);
         return [entry, next] as const;
       });
+      yield* closePendingTimer(pendingRequest);
       return yield* finishResolvedRequest(state, request, pendingRequest);
     },
   );
@@ -192,6 +254,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       if (!pendingRequest) {
         return;
       }
+      yield* closePendingTimer(pendingRequest);
       yield* state.sessionWaitState
         .clearSessionWait({
           sessionId: pendingRequest.sessionId as WorkspaceSessionId,
@@ -233,12 +296,36 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       }
       const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
       const durationMs = Math.max(0, Date.parse(timeout.expiresAt) - now);
+      const requestTimerScope = yield* Scope.fork(timerScope, "sequential");
+      const timerCompleted = yield* Ref.make(false);
+      const installed = yield* installBlockingTimerScope(
+        requestId,
+        timerVersion,
+        requestTimerScope,
+      );
+      if (!installed) {
+        yield* Scope.close(requestTimerScope, Exit.void).pipe(Effect.ignore);
+        return;
+      }
+      yield* Scope.addFinalizer(
+        requestTimerScope,
+        Ref.get(timerCompleted).pipe(
+          Effect.flatMap((completed) =>
+            completed || !options.onTimerInterrupted
+              ? Effect.void
+              : options.onTimerInterrupted(requestId),
+          ),
+        ),
+      );
       yield* Effect.sleep(durationMs).pipe(
+        Effect.flatMap(() => Ref.update(timerCompleted, () => true)),
         Effect.flatMap(
           Effect.fn("@svvy/runtime/request-input.fireBlockingTimeout")(function* () {
             if (!(yield* isCurrentBlockingTimer(requestId, timerVersion))) {
               return;
             }
+            yield* Ref.update(timerCompleted, () => true);
+            yield* clearCurrentBlockingTimerScope(requestId, timerVersion);
             const latest = yield* state.requestState
               .getRequestInput({
                 requestId: requestInputId,
@@ -272,7 +359,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
             requestInputWaitError("runtime.requestInput.fireBlockingTimeout", cause),
           ),
         ),
-        Effect.forkIn(timerScope),
+        Effect.forkIn(requestTimerScope),
         Effect.asVoid,
       );
     },
@@ -325,6 +412,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
           sessionId: input.request.sessionId,
           deferred,
           timerVersion: 0,
+          timerScope: null,
         });
         return [true, next] as const;
       });
@@ -340,10 +428,14 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       yield* scheduleBlockingTimeout(input.state, input.request.requestId);
       return yield* Deferred.await(deferred).pipe(
         Effect.ensuring(
-          Ref.update(pending, (current) => {
-            const next = new Map(current);
-            next.delete(input.request.requestId);
-            return next;
+          Effect.gen(function* () {
+            const entry = yield* Ref.modify(pending, (current) => {
+              const next = new Map(current);
+              const removed = next.get(input.request.requestId);
+              next.delete(input.request.requestId);
+              return [removed, next] as const;
+            });
+            yield* closePendingTimer(entry);
           }),
         ),
       );
@@ -370,6 +462,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
           sessionId: request.sessionId,
           deferred,
           timerVersion: 0,
+          timerScope: null,
         });
         return [true, next] as const;
       });
@@ -422,6 +515,7 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
         next.delete(request.requestId);
         return [entry, next] as const;
       });
+      yield* closePendingTimer(pendingRequest);
       yield* state.requestState
         .cancelRequestInput({ requestId: request.requestId })
         .pipe(

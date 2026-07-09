@@ -3104,7 +3104,9 @@ facts and committed request-input post-commit handoff values.
 record returned by the answer transaction: `threadId === null` means orchestrator, and non-null
 `threadId` means handler. Runtime uses this committed target for nonblocking queued-answer wakeup and
 must not issue a post-answer `getRequestInput(...)` read only to reconstruct the wake target. The
-public runtime facade still returns only `AnswerRequestInputResult`.
+public runtime facade still returns only `AnswerRequestInputResult`. For blocking requests,
+`answer.delivery.kind` is `blocking-open` while any question in the committed request remains open
+and `blocking-resolved` only after the committed request has no open questions.
 
 State persists request-input timeout deadline facts during `createRequestInput(...)` from explicit
 runtime-provided timestamp/duration inputs plus manifest-adopted `DateTime`/`Duration` helpers.
@@ -3339,6 +3341,11 @@ type EnsureRecoveryWorkInput<K extends RecoveryWorkKind = RecoveryWorkKind> = {
   maxAttempts: PositiveSafeInteger;
   payload: RecoveryWorkPayloadByKind[K];
 };
+
+`ensureRecoveryWork(...)` dedupes by `(scope, idempotencyKey)` across nonterminal rows except
+`claimed` rows. A claimed row represents work already draining; a new ensure with the same logical
+key records a pending follow-up row so queue-delivery and other dirty-set style work cannot lose a
+wake that arrives during an active drain.
 
 type ClaimRecoveryWorkInput = {
   scope?: RecoveryWorkScope;

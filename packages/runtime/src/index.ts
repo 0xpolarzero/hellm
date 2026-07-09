@@ -442,6 +442,10 @@ async function asyncIterableFromRuntimeEventSubscription(input: {
     operation: string,
     effect: Effect.Effect<B, RuntimeEventError | RuntimeContractError>,
     options?: RuntimeFacadeCallOptions,
+    config?: {
+      readonly allowAfterClosed?: boolean;
+      readonly registerActiveCall?: boolean;
+    },
   ) => Promise<B>;
   options: RuntimeFacadeCallOptions | undefined;
   activeSubscriptions: Set<{ close(): Promise<void> }>;
@@ -459,7 +463,9 @@ async function asyncIterableFromRuntimeEventSubscription(input: {
       closeStarted = true;
       input.activeSubscriptions.delete(activeSubscription);
       await iterator.return?.();
-      await input.run("runtime.events.close", input.subscription.close());
+      await input.run("runtime.events.close", input.subscription.close(), undefined, {
+        allowAfterClosed: true,
+      });
     }
   };
   const activeSubscription = { close: closeSubscription };
@@ -481,6 +487,8 @@ async function asyncIterableFromRuntimeEventSubscription(input: {
         ),
       ),
     ),
+    undefined,
+    { registerActiveCall: false },
   );
   if (input.isClosed()) {
     await closeSubscription();
@@ -663,9 +671,13 @@ export function createRuntimeFacade(
     operation: string,
     effect: Effect.Effect<A, E, Runtime>,
     options?: RuntimeFacadeCallOptions,
-    config?: { readonly allowRuntimeCancel?: boolean },
+    config?: {
+      readonly allowAfterClosed?: boolean;
+      readonly allowRuntimeCancel?: boolean;
+      readonly registerActiveCall?: boolean;
+    },
   ): Promise<A> => {
-    if (closed) {
+    if (closed && config?.allowAfterClosed !== true) {
       return Promise.reject(disposedFacadeError(operation));
     }
 
@@ -710,7 +722,9 @@ export function createRuntimeFacade(
           settle(() => reject(disposedFacadeError(operation)));
         },
       };
-      activeFacadeCalls.add(activeCall);
+      if (config?.registerActiveCall !== false) {
+        activeFacadeCalls.add(activeCall);
+      }
 
       if (abortPolicy === "cancel-wait-only" && signal) {
         const onAbort = () => {
@@ -1168,14 +1182,14 @@ export function createRuntimeFacade(
     },
     async close() {
       closed = true;
+      const subscriptions = [...activeEventSubscriptions];
+      activeEventSubscriptions.clear();
+      await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
       const activeCalls = [...activeFacadeCalls];
       activeFacadeCalls.clear();
       for (const activeCall of activeCalls) {
         activeCall.dispose();
       }
-      const subscriptions = [...activeEventSubscriptions];
-      activeEventSubscriptions.clear();
-      await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
     },
   };
 }

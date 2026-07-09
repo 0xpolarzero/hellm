@@ -34,6 +34,7 @@ export interface RuntimeEventSubscriptionEffect {
 
 export interface RuntimeEventBusOptions {
   eventGenerationId?: RuntimeEventGenerationId;
+  onSubscriberCountChange?: (count: number) => void;
 }
 
 export interface RuntimeEventBusService {
@@ -74,6 +75,15 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
     (`runtime-event-generation-${(runtimeEventBusGenerationCounter += 1)}` as RuntimeEventGenerationId);
   let nextSequence = 1;
   let closed = false;
+  const notifySubscriberCountChange = () => {
+    options.onSubscriberCountChange?.(subscribers.size);
+  };
+  const deleteSubscriber = (subscriberId: number) => {
+    const deleted = subscribers.delete(subscriberId);
+    if (deleted) {
+      notifySubscriberCountChange();
+    }
+  };
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
@@ -81,7 +91,10 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
       for (const subscriber of subscribers.values()) {
         yield* subscriber.close("runtime-shutdown");
       }
-      subscribers.clear();
+      if (subscribers.size > 0) {
+        subscribers.clear();
+        notifySubscriberCountChange();
+      }
     }),
   );
 
@@ -119,7 +132,7 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
           const accepted = yield* Queue.offer(subscriber.queue, event);
           if (accepted !== true) {
             yield* subscriber.close("slow-consumer");
-            subscribers.delete(subscriber.id);
+            deleteSubscriber(subscriber.id);
           }
         }
 
@@ -203,6 +216,7 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
               close: closeWithReceipt,
             };
             subscribers.set(subscriber.id, subscriber);
+            notifySubscriberCountChange();
             return {
               latestSequence: snapshotLatestSequence,
               replay: snapshotReplay,
@@ -229,6 +243,15 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
           ),
         );
 
+      const closeSubscription = (reason: RuntimeEventSubscriptionClose["reason"]) =>
+        Effect.gen(function* () {
+          yield* publishLane.withPermit(
+            Effect.sync(() => {
+              deleteSubscriber(subscriptionSnapshot.subscriberId);
+            }),
+          );
+          yield* closeWithReceipt(reason);
+        });
       const live = Stream.fromQueue(eventQueue).pipe(
         Stream.filter(
           (event) =>
@@ -244,19 +267,14 @@ export const makeRuntimeEventBus = Effect.fn("@svvy/runtime/makeRuntimeEventBus"
         }),
         Stream.ensuring(
           Effect.gen(function* () {
-            yield* publishLane.withPermit(
-              Effect.sync(() => {
-                subscribers.delete(subscriptionSnapshot.subscriberId);
-              }),
-            );
-            yield* closeWithReceipt(closed ? "runtime-shutdown" : "closed");
+            yield* closeSubscription(closed ? "runtime-shutdown" : "closed");
           }),
         ),
       );
 
       return {
         stream,
-        close: () => closeWithReceipt("closed"),
+        close: () => closeSubscription("closed"),
         closed: Deferred.await(closedReceipt),
       };
     });

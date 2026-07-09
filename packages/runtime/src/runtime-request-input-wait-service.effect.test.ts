@@ -305,6 +305,22 @@ describe("RuntimeRequestInputWaitService", () => {
       assert.deepStrictEqual(calls, []);
     }).pipe(Effect.provide(testLayer(calls)));
   });
+
+  it.effect("does not read state or wake queues for partial blocking answers", () => {
+    const calls: string[] = [];
+    return Effect.gen(function* () {
+      const service = yield* RuntimeRequestInputWaitService;
+
+      yield* service.afterAnswerCommitted({
+        surfacePiSessionId,
+        requestId,
+        delivery: { kind: "blocking-open", queuedItemId: null },
+        target: target(),
+      });
+
+      assert.deepStrictEqual(calls, []);
+    }).pipe(Effect.provide(testLayer(calls)));
+  });
 });
 
 function commandEventSummaries(events: unknown[]) {

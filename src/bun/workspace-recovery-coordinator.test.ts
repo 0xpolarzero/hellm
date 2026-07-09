@@ -99,6 +99,59 @@ describe("WorkspaceRecoveryCoordinator", () => {
     expect(completed).toEqual([claimed[0]!.id]);
   });
 
+  it("runs a follow-up queue drain when a wake is enqueued while queue delivery is claimed", async () => {
+    const pending: RuntimeRecoveryWorkRecord[] = [
+      createRecoveryWork({
+        id: "recovery-work-queue-delivery-first" as RecoveryWorkId,
+        kind: "queue_delivery",
+        status: "pending",
+        ownerScope: {
+          kind: "surface",
+          workspaceSessionId: "session-recovery-coordinator" as WorkspaceSessionId,
+          surfacePiSessionId: "surface-recovery-coordinator" as SurfacePiSessionId,
+        },
+        idempotencyKey: "queue_delivery:surface-recovery-coordinator",
+      }),
+    ];
+    const completed: RecoveryWorkId[] = [];
+    const recoveryState = createQueueDeliveryDirtySetRecoveryState({ pending, completed });
+    const drainedTargets: string[] = [];
+    let coordinator!: WorkspaceRecoveryCoordinator;
+    coordinator = new WorkspaceRecoveryCoordinator(
+      "workspace-recovery-coordinator" as WorkspaceId,
+      recoveryState,
+      createHandlers({
+        drainSurfaceQueue: async (target) => {
+          drainedTargets.push(target.surfacePiSessionId);
+          if (drainedTargets.length === 1) {
+            coordinator.enqueue({
+              kind: "queue_delivery",
+              ownerScope: {
+                kind: "surface",
+                workspaceSessionId: target.workspaceSessionId as WorkspaceSessionId,
+                surfacePiSessionId: target.surfacePiSessionId as SurfacePiSessionId,
+              },
+              idempotencyKey: `queue_delivery:${target.surfacePiSessionId}`,
+              orderingKey: `surface:${target.surfacePiSessionId}`,
+              priority: 30,
+            });
+          }
+        },
+      }),
+      runState,
+    );
+
+    coordinator.start();
+
+    await waitFor(() => drainedTargets.length === 2);
+    coordinator.close();
+    expect(drainedTargets).toEqual([
+      "surface-recovery-coordinator",
+      "surface-recovery-coordinator",
+    ]);
+    expect(completed).toHaveLength(2);
+  });
+
   it("retries failed handlers through the recovery port", async () => {
     const retried: Array<{ id: RecoveryWorkId; error: string }> = [];
     const claimed = [
@@ -225,6 +278,64 @@ function createFakeRecoveryState(input: {
           createRecoveryWork({ id, kind: "title_generation", status: "pending" }),
         );
       }),
+  };
+}
+
+function createQueueDeliveryDirtySetRecoveryState(input: {
+  pending: RuntimeRecoveryWorkRecord[];
+  completed: RecoveryWorkId[];
+}): RuntimeRecoveryStatePortService {
+  let sequence = 0;
+  return {
+    normalizeWorkspaceRecoveryState: () => Effect.succeed(stateMutation(undefined)),
+    listWorkspaceRecoveryStartupSnapshots: () => Effect.succeed([]),
+    ensureRecoveryWork: (workInput) =>
+      Effect.sync(() => {
+        const existing = input.pending.find(
+          (work) =>
+            work.idempotencyKey === workInput.idempotencyKey &&
+            work.status !== "claimed" &&
+            work.status !== "completed" &&
+            work.status !== "failed" &&
+            work.status !== "cancelled",
+        );
+        if (existing) {
+          return stateMutation(existing);
+        }
+        sequence += 1;
+        const record = createRecoveryWork({
+          ...workInput,
+          id: `recovery-work-queue-delivery-redirty-${sequence}` as RecoveryWorkId,
+          status: "pending",
+        });
+        input.pending.push(record);
+        return stateMutation(record);
+      }),
+    claimNextRecoveryWork: ({ claimedBy }) =>
+      Effect.sync(() => {
+        const next = input.pending.shift();
+        return stateMutation(
+          next
+            ? {
+                ...next,
+                status: "claimed",
+                claimedBy,
+                leaseVersion: next.leaseVersion + 1,
+              }
+            : null,
+        );
+      }),
+    completeRecoveryWork: ({ id }) =>
+      Effect.sync(() => {
+        input.completed.push(id);
+        return stateMutation(
+          createRecoveryWork({ id, kind: "queue_delivery", status: "completed" }),
+        );
+      }),
+    failOrRetryRecoveryWork: ({ id }) =>
+      Effect.sync(() =>
+        stateMutation(createRecoveryWork({ id, kind: "queue_delivery", status: "pending" })),
+      ),
   };
 }
 

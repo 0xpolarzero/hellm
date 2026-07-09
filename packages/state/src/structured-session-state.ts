@@ -1390,6 +1390,9 @@ export interface StructuredSessionStateStore {
   markSurfaceMessageQueued(input: {
     id: string;
     position?: "front" | "back";
+    claimOwnerId?: string | null;
+    leaseVersion?: number | null;
+    expectedStatuses?: readonly StructuredSurfaceQueuedMessageStatus[];
   }): StructuredSurfaceQueuedMessageRecord;
   markSurfaceMessageDelivered(input: {
     id: string;
@@ -1406,6 +1409,7 @@ export interface StructuredSessionStateStore {
     id: string;
     claimOwnerId?: string | null;
     leaseVersion?: number | null;
+    expectedStatuses?: readonly StructuredSurfaceQueuedMessageStatus[];
   }): StructuredSurfaceQueuedMessageRecord;
   reorderSurfaceMessage(input: {
     surfacePiSessionId: string;
@@ -7209,6 +7213,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   markSurfaceMessageQueued(input: {
     id: string;
     position?: "front" | "back";
+    claimOwnerId?: string | null;
+    leaseVersion?: number | null;
+    expectedStatuses?: readonly StructuredSurfaceQueuedMessageStatus[];
   }): StructuredSurfaceQueuedMessageRecord {
     const existing = this.mustFindSurfaceQueuedMessageRow(input.id);
     const timestamp = this.now();
@@ -7216,24 +7223,74 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       existing.surface_pi_session_id,
       input.position ?? "front",
     );
-    this.db
-      .query(
-        `UPDATE surface_message_queue
-         SET status = 'queued',
-             position = ?,
-             updated_at = ?,
-             claim_owner_id = NULL,
-             claim_lease_expires_at = NULL,
-             attempt_count = 0,
-             next_attempt_at = NULL,
-             last_error_json = NULL,
-             delivered_at = NULL,
-             failed_at = NULL,
-             failure_error = NULL,
-             cancelled_at = NULL
-         WHERE id = ?`,
-      )
-      .run(position, timestamp, input.id);
+    const expectedStatuses = input.expectedStatuses ?? [];
+    const result =
+      expectedStatuses.length > 0
+        ? this.db
+            .query(
+              `UPDATE surface_message_queue
+               SET status = 'queued',
+                   position = ?,
+                   updated_at = ?,
+                   claim_owner_id = NULL,
+                   claim_lease_expires_at = NULL,
+                   attempt_count = 0,
+                   next_attempt_at = NULL,
+                   last_error_json = NULL,
+                   delivered_at = NULL,
+                   failed_at = NULL,
+                   failure_error = NULL,
+                   cancelled_at = NULL
+               WHERE id = ?
+                 AND (? IS NULL OR claim_owner_id = ?)
+                 AND (? IS NULL OR lease_version = ?)
+                 AND status IN (${expectedStatuses.map(() => "?").join(", ")})`,
+            )
+            .run(
+              position,
+              timestamp,
+              input.id,
+              input.claimOwnerId ?? null,
+              input.claimOwnerId ?? null,
+              input.leaseVersion ?? null,
+              input.leaseVersion ?? null,
+              ...expectedStatuses,
+            )
+        : this.db
+            .query(
+              `UPDATE surface_message_queue
+               SET status = 'queued',
+                   position = ?,
+                   updated_at = ?,
+                   claim_owner_id = NULL,
+                   claim_lease_expires_at = NULL,
+                   attempt_count = 0,
+                   next_attempt_at = NULL,
+                   last_error_json = NULL,
+                   delivered_at = NULL,
+                   failed_at = NULL,
+                   failure_error = NULL,
+                   cancelled_at = NULL
+               WHERE id = ?
+                 AND (? IS NULL OR claim_owner_id = ?)
+                 AND (? IS NULL OR lease_version = ?)`,
+            )
+            .run(
+              position,
+              timestamp,
+              input.id,
+              input.claimOwnerId ?? null,
+              input.claimOwnerId ?? null,
+              input.leaseVersion ?? null,
+              input.leaseVersion ?? null,
+            );
+    if (result.changes !== 1) {
+      throw new StateContractError({
+        operation: "structured-session.markSurfaceMessageQueued",
+        reason: "claim-conflict",
+        message: `Surface queued message ${input.id} is not in a queueable state.`,
+      });
+    }
     this.recordSurfaceMessageEvent(existing, "surfaceMessage.restored", timestamp);
     return this.mustFindSurfaceQueuedMessageRecord(input.id);
   }
@@ -7296,10 +7353,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     id: string;
     claimOwnerId?: string | null;
     leaseVersion?: number | null;
+    expectedStatuses?: readonly StructuredSurfaceQueuedMessageStatus[];
   }): StructuredSurfaceQueuedMessageRecord {
     const existing = this.mustFindSurfaceQueuedMessageRow(input.id);
     const timestamp = this.now();
     const cancel = this.db.transaction(() => {
+      const expectedStatuses = input.expectedStatuses ?? [];
       const result = this.db
         .query(
           `UPDATE surface_message_queue
@@ -7310,7 +7369,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
                claim_lease_expires_at = NULL
            WHERE id = ?
              AND (? IS NULL OR claim_owner_id = ?)
-             AND (? IS NULL OR lease_version = ?)`,
+             AND (? IS NULL OR lease_version = ?)
+             ${
+               expectedStatuses.length > 0
+                 ? `AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
+                 : ""
+             }`,
         )
         .run(
           timestamp,
@@ -7320,9 +7384,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.claimOwnerId ?? null,
           input.leaseVersion ?? null,
           input.leaseVersion ?? null,
+          ...expectedStatuses,
         );
       if (result.changes !== 1) {
-        throw new Error(`Surface queued message claim is stale: ${input.id}`);
+        throw new StateContractError({
+          operation: "structured-session.cancelSurfaceMessage",
+          reason: "claim-conflict",
+          message: `Surface queued message claim is stale or not cancellable: ${input.id}`,
+        });
       }
 
       if (existing.kind === "request_user_input_answer") {
@@ -7860,7 +7929,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .query(
         `SELECT * FROM recovery_work
          WHERE scope_kind = ? AND workspace_id IS ? AND idempotency_key = ?
-           AND status NOT IN ('completed', 'failed', 'cancelled')
+           AND status NOT IN ('claimed', 'completed', 'failed', 'cancelled')
          LIMIT 1`,
       )
       .get(scope.scopeKind, scope.workspaceId, input.idempotencyKey) as RecoveryWorkRow | undefined;
@@ -7932,7 +8001,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .query(
         `SELECT * FROM recovery_work
          WHERE scope_kind = ? AND workspace_id IS ? AND idempotency_key = ?
-           AND status NOT IN ('completed', 'failed', 'cancelled')
+           AND status NOT IN ('claimed', 'completed', 'failed', 'cancelled')
          LIMIT 1`,
       )
       .get(scope.scopeKind, scope.workspaceId, idempotencyKey) as RecoveryWorkRow | undefined;
@@ -10611,10 +10680,11 @@ function initializeSchema(db: Database): void {
     `CREATE INDEX IF NOT EXISTS idx_extension_dependency_approval_updated
      ON extension_dependency_approval (updated_at)`,
   );
+  db.exec(`DROP INDEX IF EXISTS idx_recovery_work_active_idempotency`);
   db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_work_active_idempotency
+    `CREATE UNIQUE INDEX idx_recovery_work_active_idempotency
      ON recovery_work (scope_kind, workspace_id, idempotency_key)
-     WHERE status NOT IN ('completed', 'failed', 'cancelled')`,
+     WHERE status NOT IN ('claimed', 'completed', 'failed', 'cancelled')`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_recovery_work_claim

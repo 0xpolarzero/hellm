@@ -1392,6 +1392,10 @@ export const AnswerRequestInputDeliveryResultSchema = Schema.Union([
     queuedItemId: Schema.Null,
   }),
   Schema.Struct({
+    kind: Schema.Literal("blocking-open"),
+    queuedItemId: Schema.Null,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("nonblocking-queued"),
     queuedItemId: QueueItemId,
   }),

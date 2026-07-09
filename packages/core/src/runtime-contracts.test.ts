@@ -555,6 +555,25 @@ describe("@svvy/core runtime contracts", () => {
         queuedItemId: null,
       },
     });
+    expect(
+      unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap({
+        requestId: "rui_01",
+        questionId: "ruiq_01",
+        status: "recorded",
+        delivery: {
+          kind: "blocking-open",
+          queuedItemId: null,
+        },
+      }) as unknown,
+    ).toEqual({
+      requestId: "rui_01",
+      questionId: "ruiq_01",
+      status: "recorded",
+      delivery: {
+        kind: "blocking-open",
+        queuedItemId: null,
+      },
+    });
     expect(() =>
       unsafeDecodeAnswerRequestInputResultSyncForTestsAndBootstrap({
         queuedItemId: "queue_01",

@@ -27,7 +27,9 @@ function mapQueueStateFailure(operation: string, cause: unknown): RuntimeContrac
         ? "target-not-found"
         : stateCause.reason === "invalid-input"
           ? "invalid-input"
-          : "stale-state",
+          : stateCause.reason === "claim-conflict" || stateCause.reason === "conflict"
+            ? "state-conflict"
+            : "stale-state",
     message: stateCause.message ?? "Runtime queue state operation failed.",
     ...(stateCause.issues ? { issues: stateCause.issues } : {}),
     cause,
@@ -70,7 +72,10 @@ export const abortRuntimeQueuedMessage = Effect.fn("@svvy/runtime/messages.abort
     yield* assertQueuedMessageTarget(input, existing);
 
     const cancelledResult = yield* queue
-      .cancelSurfaceMessage({ id: input.queuedMessageId })
+      .cancelSurfaceMessage({
+        id: input.queuedMessageId,
+        expectedStatuses: ["queued", "steering"],
+      })
       .pipe(
         Effect.mapError((cause) => mapQueueStateFailure("runtime.messages.abort.cancel", cause)),
       );

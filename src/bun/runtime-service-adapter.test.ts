@@ -54,9 +54,11 @@ import {
   type RuntimeClientSubmissionSource,
   type RuntimeEvent,
   type RuntimeEventSequence,
+  type CancelRuntimeSurfaceMessageInput,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeQueueStatePortService,
   type RuntimeSurfaceMessageRecord,
+  type MarkRuntimeSurfaceMessageQueuedInput,
   type StateMutationResult,
   type OpenSurfaceInput,
   type FiniteDurationMs,
@@ -442,8 +444,8 @@ async function createHarness(
   const wakeRuntimeSurfaceQueueCalls: RuntimeSurfaceQueueWakeCall[] = [];
   const cancelActivePromptCalls: CancelActivePromptCall[] = [];
   const cancelPromptCalls: CancelPromptCall[] = [];
-  const cancelSurfaceMessageCalls: Array<{ id: string }> = [];
-  const markSurfaceMessageQueuedCalls: Array<{ id: string; position?: "front" | "back" }> = [];
+  const cancelSurfaceMessageCalls: CancelRuntimeSurfaceMessageInput[] = [];
+  const markSurfaceMessageQueuedCalls: MarkRuntimeSurfaceMessageQueuedInput[] = [];
   const answerRequestInputCalls: AnswerRequestInputInput[] = [];
   const setRequestInputTimerPausedCalls: SetRequestInputTimerPausedInput[] = [];
   const recordSourceSaveCalls: RecordRuntimeSourceSaveInput[] = [];
@@ -1619,6 +1621,7 @@ describe("catalog-backed runtime service adapter", () => {
       expect(runtime.calls.cancelSurfaceMessage).toEqual([
         {
           id: "queue_runtime_adapter_abort" as QueueItemId,
+          expectedStatuses: ["queued", "steering"],
         },
       ]);
       expect(runtime.calls.publishedStateInvalidations).toEqual([
@@ -1703,6 +1706,7 @@ describe("catalog-backed runtime service adapter", () => {
         {
           id: "queue_runtime_adapter_steer" as QueueItemId,
           position: "front",
+          expectedStatuses: ["queued", "steering"],
         },
       ]);
       expect(runtime.calls.publishedStateInvalidations).toEqual([

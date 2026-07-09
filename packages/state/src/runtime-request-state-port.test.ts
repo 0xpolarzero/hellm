@@ -268,6 +268,83 @@ describe("RuntimeRequestStatePort", () => {
     );
   });
 
+  it("reports blocking-open until every blocking request question is answered", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { port, turn, command } = yield* createPortHarness("blocking-multi");
+          const request = yield* port.createRequestInput({
+            target: orchestratorTarget(),
+            turnId: turn.id as TurnId,
+            toolItemId: "tool-call-request-state-blocking-multi" as ToolItemId,
+            sourceCommandId: command.id as CommandId,
+            mode: "blocking",
+            timeout: { enabled: true, durationMs: timeoutDurationMs },
+            questions: [
+              {
+                title: "First choice",
+                question: "What should the first answer be?",
+                defaultAnswer: { kind: "custom", text: "First default." },
+              },
+              {
+                title: "Second choice",
+                question: "What should the second answer be?",
+                defaultAnswer: { kind: "custom", text: "Second default." },
+              },
+            ],
+          });
+          const details = yield* port.getRequestInput({ requestId: request.value.requestId });
+          const firstQuestion = details.questions[0]!;
+          const secondQuestion = details.questions[1]!;
+
+          const firstAnswer = yield* port.answerRequestInput({
+            surfacePiSessionId: details.surfacePiSessionId,
+            requestId: details.requestId,
+            questionId: firstQuestion.questionId,
+            answer: { kind: "custom", text: "First user answer." },
+            delivery: "enqueue-and-run",
+          });
+          const stillOpen = yield* port.getRequestInput({ requestId: request.value.requestId });
+          const secondAnswer = yield* port.answerRequestInput({
+            surfacePiSessionId: details.surfacePiSessionId,
+            requestId: details.requestId,
+            questionId: secondQuestion.questionId,
+            answer: { kind: "custom", text: "Second user answer." },
+            delivery: "enqueue-and-run",
+          });
+          const completed = yield* port.getRequestInput({ requestId: request.value.requestId });
+
+          expect(firstAnswer.value.answer.delivery).toEqual({
+            kind: "blocking-open",
+            queuedItemId: null,
+          });
+          expect(stillOpen).toMatchObject({
+            status: "open",
+            questions: [
+              expect.objectContaining({ questionId: firstQuestion.questionId, status: "answered" }),
+              expect.objectContaining({ questionId: secondQuestion.questionId, status: "open" }),
+            ],
+          });
+          expect(secondAnswer.value.answer.delivery).toEqual({
+            kind: "blocking-resolved",
+            queuedItemId: null,
+          });
+          expect(completed.status).toBe("completed");
+        }).pipe(
+          Effect.provide(
+            layerRuntimeRequestStatePort.pipe(
+              Layer.provideMerge(
+                layerStructuredSessionState({
+                  workspace,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("validates request timer ownership through the runtime request port", async () => {
     await runTestEffect(
       Effect.scoped(

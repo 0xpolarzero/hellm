@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -97,9 +98,13 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
         const commandEvents: unknown[] = [];
         const waits: unknown[] = [];
         const defaultCalls: unknown[] = [];
+        const timerInterrupted = yield* Deferred.make<string>();
         const state = makeEffectState({ request, commandEvents, waits, defaultCalls });
 
-        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry({
+          onTimerInterrupted: (interruptedRequestId) =>
+            Deferred.succeed(timerInterrupted, interruptedRequestId).pipe(Effect.asVoid),
+        });
         const waitFiber = yield* registry
           .waitForBlockingRequest({
             state,
@@ -107,7 +112,9 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
             command,
           })
           .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
         yield* registry.setBlockingTimerPaused(state, request.requestId, true);
+        const interruptedRequestId = yield* Deferred.await(timerInterrupted);
         yield* TestClock.adjust(75);
         const status = request.status;
         yield* registry.close();
@@ -115,6 +122,7 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
 
         assert.strictEqual(status, "open");
         assert.deepStrictEqual(defaultCalls, []);
+        assert.strictEqual(interruptedRequestId, request.requestId);
         assert.deepStrictEqual(commandEventSummaries(commandEvents), [
           {
             commandId,

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -118,9 +119,11 @@ function createState(queue: RuntimeSurfaceMessageRecord[] = []) {
         return stateMutation({ ...createQueued(id), status: "failed", failureError });
       });
     },
-    markSurfaceMessageQueued: ({ id, position }) => {
+    markSurfaceMessageQueued: ({ id, position, claimOwnerId, leaseVersion }) => {
       return Effect.sync(() => {
-        calls.push(`queued:${id}:${position ?? "back"}`);
+        calls.push(
+          `queued:${id}:${position ?? "back"}:${claimOwnerId ?? ""}:${leaseVersion ?? ""}`,
+        );
         return stateMutation(createQueued(id));
       });
     },
@@ -503,7 +506,10 @@ describe("surface queue dispatcher", () => {
         message: "Generated context refresh failed.",
       });
 
-      assert.deepStrictEqual(stateCalls, [TEST_CLAIM_CALL, "queued:queue_01:front"]);
+      assert.deepStrictEqual(stateCalls, [
+        TEST_CLAIM_CALL,
+        `queued:queue_01:front:${TEST_CLAIM_OWNER_ID}:${TEST_LEASE_VERSION}`,
+      ]);
       assert.deepStrictEqual(hostCalls, ["retain", "notify", "release"]);
     }),
   );
@@ -595,7 +601,10 @@ describe("surface queue dispatcher", () => {
         message: "Prompt turn preparation failed.",
       });
 
-      assert.deepStrictEqual(stateCalls, [TEST_CLAIM_CALL, "queued:queue_01:front"]);
+      assert.deepStrictEqual(stateCalls, [
+        TEST_CLAIM_CALL,
+        `queued:queue_01:front:${TEST_CLAIM_OWNER_ID}:${TEST_LEASE_VERSION}`,
+      ]);
       assert.deepStrictEqual(hostCalls, [
         "retain",
         "refresh",
@@ -640,7 +649,10 @@ describe("surface queue dispatcher", () => {
         message: "Turn start transaction failed.",
       });
 
-      assert.deepStrictEqual(stateCalls, [TEST_CLAIM_CALL, "queued:queue_01:front"]);
+      assert.deepStrictEqual(stateCalls, [
+        TEST_CLAIM_CALL,
+        `queued:queue_01:front:${TEST_CLAIM_OWNER_ID}:${TEST_LEASE_VERSION}`,
+      ]);
       assert.deepStrictEqual(hostCalls, [
         "retain",
         "refresh",
@@ -762,8 +774,41 @@ describe("surface queue dispatcher", () => {
         reason: "state-conflict",
         message: "Queue claim transaction failed.",
       });
-      assert.deepStrictEqual(hostCalls, ["retain"]);
+      assert.deepStrictEqual(hostCalls, ["retain", "release"]);
     }),
+  );
+
+  it.effect("releases the retained surface when dispatch is interrupted before prompt start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const claimEntered = yield* Deferred.make<void, never>();
+        const { queueStatePort } = createState([createQueued("queue_01")]);
+        const blockedQueueStatePort: RuntimeQueueStatePortService = {
+          ...queueStatePort,
+          claimNextQueuedSurfaceMessage: () =>
+            Deferred.succeed(claimEntered, undefined).pipe(
+              Effect.flatMap(() => Effect.sleep(60_000)),
+              Effect.as(stateMutation<RuntimeSurfaceMessageRecord | null>(null)),
+            ),
+        };
+        const { host, calls: hostCalls } = createHost();
+        const dispatcher = createTestDispatcher(host);
+
+        const fiber = yield* runDispatcher(
+          blockedQueueStatePort,
+          dispatcher.drainNextQueuedSurfaceMessage(
+            { surfacePiSessionId: "surface_01" },
+            { awaitPrompt: false },
+          ),
+        ).pipe(Effect.forkScoped);
+
+        yield* Deferred.await(claimEntered);
+        yield* Fiber.interrupt(fiber);
+        yield* Effect.yieldNow;
+
+        assert.deepStrictEqual(hostCalls, ["retain", "release"]);
+      }),
+    ),
   );
 });
 

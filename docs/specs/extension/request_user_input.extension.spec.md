@@ -591,8 +591,10 @@ Submission controls:
 - Enter submits with `delivery: "enqueue-and-run"`
 - Cmd+Enter submits with `delivery: "queue-only"`
 - visible buttons provide the same two actions
-- in blocking mode, either action resolves the waiting tool call and returns
-  `delivery: { kind: "blocking-resolved", queuedItemId: null }`; there is no later queued answer
+- in blocking mode, either action records the submitted answer and never creates a later queued
+  answer; if questions remain open runtime returns
+  `delivery: { kind: "blocking-open", queuedItemId: null }`, and the final answer resolves the
+  waiting tool call with `delivery: { kind: "blocking-resolved", queuedItemId: null }`
 - in nonblocking mode, either action may create a durable `request_user_input_answer` queue item
   and return `delivery: { kind: "nonblocking-queued", queuedItemId }` when model delivery is still
   applicable; otherwise runtime records the answer and returns
@@ -621,6 +623,7 @@ type AnswerRequestInputResult = {
   status: "recorded" | "duplicate";
   delivery:
     | { kind: "blocking-resolved"; queuedItemId: null }
+    | { kind: "blocking-open"; queuedItemId: null }
     | { kind: "nonblocking-queued"; queuedItemId: QueueItemId }
     | { kind: "nonblocking-recorded"; queuedItemId: null };
 };
@@ -781,10 +784,12 @@ Request validation:
 - the request must reject answers to already completed, cancelled, or expired questions.
 - the request must reject blank custom text.
 - the request must reject `delivery` values other than `enqueue-and-run` or `queue-only`.
-- in blocking mode, `delivery` is accepted for API consistency but resolves the current tool call rather
-  than creating a later queue item.
+- in blocking mode, `delivery` is accepted for API consistency but never creates a later queue
+  item; partial answers record the answer and leave the wait open, and the final answer resolves
+  the current tool call.
 - the runtime returns `AnswerRequestInputResult`; `delivery.kind` tells the caller whether a
-  blocking wait was resolved, nonblocking model delivery was queued, or the answer was only recorded.
+  blocking wait remains open, a blocking wait was resolved, nonblocking model delivery was queued,
+  or the answer was only recorded.
 
 ## Live Tool Projection
 
@@ -891,9 +896,9 @@ type RequestUserInputAnswerRecord = {
 ```
 
 `delivery` records the submitted delivery intent only for later nonblocking user answers. It is
-`null` for default answers, timeout defaults, and blocking answers because blocking answers resolve
-the current wait instead of creating queued model delivery. `queuedItemId` is non-null only when the
-public result is `delivery.kind === "nonblocking-queued"`.
+`null` for default answers, timeout defaults, and blocking answers because blocking answers are
+recorded against the current wait instead of creating queued model delivery. `queuedItemId` is
+non-null only when the public result is `delivery.kind === "nonblocking-queued"`.
 
 The records above are authoritative `svvy` product state for request-input waits. They may link to
 surface wait projection, but they do not mirror pi, Smithers, or renderer-local wait state.

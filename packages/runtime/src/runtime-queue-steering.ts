@@ -37,7 +37,9 @@ function mapQueueStateFailure(operation: string, cause: unknown): RuntimeContrac
         ? "target-not-found"
         : stateCause.reason === "invalid-input"
           ? "invalid-input"
-          : "stale-state",
+          : stateCause.reason === "claim-conflict" || stateCause.reason === "conflict"
+            ? "state-conflict"
+            : "stale-state",
     message: stateCause.message ?? "Runtime queue state operation failed.",
     ...(stateCause.issues ? { issues: stateCause.issues } : {}),
     cause,
@@ -82,7 +84,11 @@ export const steerRuntimeQueuedMessage = Effect.fn("@svvy/runtime/queues.steer")
   yield* assertQueuedMessageTarget(input, existing);
 
   const queuedResult = yield* queue
-    .markSurfaceMessageQueued({ id: input.queuedMessageId, position: "front" })
+    .markSurfaceMessageQueued({
+      id: input.queuedMessageId,
+      position: "front",
+      expectedStatuses: ["queued", "steering"],
+    })
     .pipe(Effect.mapError((cause) => mapQueueStateFailure("runtime.queues.steer.mark", cause)));
   const queued = queuedResult.value;
 

@@ -2565,7 +2565,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           answerStatus: answerResult.status,
           answerDeliveryKind: answerResult.delivery.kind,
         });
-        return result;
+        return {
+          ...result,
+          requestId: answerResult.requestId,
+          questionId: answerResult.questionId,
+          status: answerResult.status,
+          delivery: answerResult.delivery,
+        };
       },
       answerRuntimeApprovalRequest: async (input) => {
         const runtime = getWorkspaceRuntime(input);

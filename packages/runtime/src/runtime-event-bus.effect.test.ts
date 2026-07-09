@@ -285,6 +285,35 @@ describe("runtime event bus", () => {
       }),
   );
 
+  it.effect("removes explicitly closed subscribers without stream consumption", () =>
+    Effect.gen(function* () {
+      const subscriberCounts: number[] = [];
+      const result = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const bus = yield* makeConfiguredRuntimeEventBus(
+            { eventReplayCapacity: 2 },
+            {
+              onSubscriberCountChange: (count) => {
+                subscriberCounts.push(count);
+              },
+            },
+          );
+          const events = yield* bus.subscribe({ afterSequence: runtimeEventSequence(0) });
+          yield* events.close();
+          const close = yield* events.closed;
+          return close;
+        }),
+      );
+
+      assert.deepStrictEqual(subscriberCounts, [1, 0]);
+      assert.deepStrictEqual(closeSummary(result), {
+        reason: "closed",
+        lastContiguousSequence: 0,
+        rebaselineRequired: false,
+      });
+    }),
+  );
+
   it.effect(
     "retains events for replay and closes slow subscribers before they miss sequences",
     () =>

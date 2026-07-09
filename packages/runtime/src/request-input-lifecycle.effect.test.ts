@@ -232,6 +232,33 @@ describe("request input lifecycle", () => {
     }),
   );
 
+  it.effect("passes blocking-open delivery to the wait service after publication", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const requestState = {
+        createRequestInput: () => Effect.die("Unexpected createRequestInput call."),
+        ...unexpectedRequestStateMethods(),
+        answerRequestInput: (input) => {
+          calls.push(`state:${input.requestId}`);
+          return Effect.succeed(answerMutation({ kind: "blocking-open", queuedItemId: null }));
+        },
+        setRequestInputTimerPaused: () => Effect.die("Unexpected setRequestInputTimerPaused call."),
+      } satisfies RuntimeRequestStatePortService;
+
+      const result = yield* answerRuntimeRequestInput(answerInput()).pipe(
+        Effect.provideService(RuntimeRequestStatePort, requestState),
+        Effect.provideService(RuntimeEventBus, eventBus(calls)),
+        Effect.provideService(RuntimeRequestInputWaitService, postCommitHost(calls)),
+      );
+      assert.deepStrictEqual(result, answerResult({ kind: "blocking-open", queuedItemId: null }));
+      assert.deepStrictEqual(calls, [
+        `state:${requestId}`,
+        "publish:1",
+        `post-answer:${requestId}:blocking-open:none:orchestrator`,
+      ]);
+    }),
+  );
+
   it.effect("passes nonblocking recorded delivery to the wait service after publication", () =>
     Effect.gen(function* () {
       const calls: string[] = [];

@@ -103,7 +103,6 @@ export function createSurfaceQueueDispatcher<
 
   const failQueuedDelivery = (
     target: TTarget,
-    surface: TSurface,
     queued: RuntimeSurfaceMessageRecord,
     error: RuntimeContractError,
   ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort> =>
@@ -125,22 +124,24 @@ export function createSurfaceQueueDispatcher<
       yield* runHost("runtime.queue.dispatch.notifyQueueUpdated", () =>
         host.notifyQueueUpdated({ target }),
       );
-      yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-        releaseSurface(target, surface),
-      );
       return yield* Effect.fail(error);
     });
 
   const requeueClaimedDelivery = (
     target: TTarget,
-    surface: TSurface,
     queued: RuntimeSurfaceMessageRecord,
     error: RuntimeContractError,
   ): Effect.Effect<never, RuntimeContractError, RuntimeQueueStatePort> =>
     Effect.gen(function* () {
       const queue = yield* RuntimeQueueStatePort;
       yield* queue
-        .markSurfaceMessageQueued({ id: queued.id, position: "front" })
+        .markSurfaceMessageQueued({
+          id: queued.id,
+          position: "front",
+          claimOwnerId,
+          leaseVersion: queued.leaseVersion,
+          expectedStatuses: ["dispatching"],
+        })
         .pipe(
           Effect.mapError((cause) =>
             runtimeQueueStateError("runtime.queue.dispatch.requeueClaimed", cause),
@@ -148,9 +149,6 @@ export function createSurfaceQueueDispatcher<
         );
       yield* runHost("runtime.queue.dispatch.notifyQueueUpdated", () =>
         host.notifyQueueUpdated({ target }),
-      );
-      yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-        releaseSurface(target, surface),
       );
       return yield* Effect.fail(error);
     });
@@ -169,136 +167,138 @@ export function createSurfaceQueueDispatcher<
         host.resolveTarget(target),
       );
       const surfacePiSessionId = yield* currentTargetSurfacePiSessionId(currentTarget);
-      let surface = yield* runHost("runtime.queue.dispatch.retainSurface", () =>
+      let releaseTransferred = false;
+      let retainedSurface: TSurface | null = null;
+      const acquired = yield* runHost("runtime.queue.dispatch.retainSurface", () =>
         host.retainSurface(currentTarget),
       );
-      if (host.isSurfaceActive({ target: currentTarget, surface })) {
-        const activePromptDone = host.activePromptDone({ target: currentTarget, surface });
-        if (options.awaitPrompt && activePromptDone) {
-          yield* runHost("runtime.queue.dispatch.awaitActivePrompt", () =>
-            activePromptDone.catch(() => undefined),
-          );
-          const shouldContinueDrain = host.continueAfterActivePrompt({
-            target: currentTarget,
-            surface,
-          });
-          yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-            releaseSurface(currentTarget, surface),
-          );
-          return shouldContinueDrain;
+      return yield* Effect.gen(function* () {
+        let surface = acquired;
+        retainedSurface = acquired;
+        if (host.isSurfaceActive({ target: currentTarget, surface })) {
+          const activePromptDone = host.activePromptDone({ target: currentTarget, surface });
+          if (options.awaitPrompt && activePromptDone) {
+            yield* runHost("runtime.queue.dispatch.awaitActivePrompt", () =>
+              activePromptDone.catch(() => undefined),
+            );
+            return host.continueAfterActivePrompt({
+              target: currentTarget,
+              surface,
+            });
+          }
+          return false;
         }
-        yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-          releaseSurface(currentTarget, surface),
-        );
-        return false;
-      }
 
-      const queuedResult = yield* queue
-        .claimNextQueuedSurfaceMessage({
-          surfacePiSessionId,
-          claimOwnerId,
-          leaseDurationMs,
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            runtimeQueueStateError("runtime.queue.dispatch.claimNext", cause),
-          ),
-        );
-      const queued = queuedResult.value;
-      if (!queued) {
-        yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-          releaseSurface(currentTarget, surface),
-        );
-        return false;
-      }
-
-      surface = yield* runHost("runtime.queue.dispatch.refreshBeforeDispatch", () =>
-        host.refreshBeforeDispatch({ target: currentTarget, surface }),
-      ).pipe(
-        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
-      );
-
-      const materialized = yield* runHost("runtime.queue.dispatch.materializeQueuedMessage", () =>
-        host.materializeQueuedMessage({
-          target: currentTarget,
-          surface,
-          queued,
-        }),
-      ).pipe(Effect.catch((error) => failQueuedDelivery(currentTarget, surface, queued, error)));
-
-      if (materialized.kind === "delivered") {
-        yield* queue
-          .markSurfaceMessageDelivered({
-            id: queued.id,
+        const queuedResult = yield* queue
+          .claimNextQueuedSurfaceMessage({
+            surfacePiSessionId,
             claimOwnerId,
-            leaseVersion: queued.leaseVersion,
+            leaseDurationMs,
           })
           .pipe(
             Effect.mapError((cause) =>
-              runtimeQueueStateError("runtime.queue.dispatch.markDelivered", cause),
+              runtimeQueueStateError("runtime.queue.dispatch.claimNext", cause),
             ),
           );
-        yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
-          releaseSurface(currentTarget, surface),
+        const queued = queuedResult.value;
+        if (!queued) {
+          return false;
+        }
+
+        surface = yield* runHost("runtime.queue.dispatch.refreshBeforeDispatch", () =>
+          host.refreshBeforeDispatch({ target: currentTarget, surface }),
+        ).pipe(Effect.catch((error) => requeueClaimedDelivery(currentTarget, queued, error)));
+        retainedSurface = surface;
+
+        const materialized = yield* runHost("runtime.queue.dispatch.materializeQueuedMessage", () =>
+          host.materializeQueuedMessage({
+            target: currentTarget,
+            surface,
+            queued,
+          }),
+        ).pipe(Effect.catch((error) => failQueuedDelivery(currentTarget, queued, error)));
+
+        if (materialized.kind === "delivered") {
+          yield* queue
+            .markSurfaceMessageDelivered({
+              id: queued.id,
+              claimOwnerId,
+              leaseVersion: queued.leaseVersion,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                runtimeQueueStateError("runtime.queue.dispatch.markDelivered", cause),
+              ),
+            );
+          return true;
+        }
+
+        const turnState = yield* RuntimeTurnStatePort;
+        const preparedTurn = yield* runHost("runtime.queue.dispatch.prepareTurn", () =>
+          host.prepareTurn({
+            target: currentTarget,
+            surface,
+            queued,
+            message: materialized.message,
+            metadata: materialized.metadata,
+          }),
+        ).pipe(Effect.catch((error) => requeueClaimedDelivery(currentTarget, queued, error)));
+        const turn = yield* turnState.startTurn(preparedTurn.startTurnInput).pipe(
+          Effect.map((result) => result.value),
+          Effect.mapError((cause) =>
+            runtimeQueueStateError("runtime.queue.dispatch.startTurn", cause),
+          ),
+          Effect.catch((error) => requeueClaimedDelivery(currentTarget, queued, error)),
         );
+
+        const started = yield* runHost("runtime.queue.dispatch.startPrompt", () =>
+          host.startPrompt({
+            target: currentTarget,
+            surface,
+            queued,
+            turn,
+            prepared: preparedTurn.prepared,
+            message: materialized.message,
+            metadata: materialized.metadata,
+          }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* turnState
+                .finishTurn({ turnId: turn.id, status: "failed" })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    runtimeQueueStateError("runtime.queue.dispatch.finishStartedTurn", cause),
+                  ),
+                );
+              return yield* failQueuedDelivery(currentTarget, queued, error);
+            }),
+          ),
+        );
+
+        const promptDoneWithRelease = started.promptDone.finally(async () => {
+          await releaseSurface(currentTarget, surface);
+        });
+        void promptDoneWithRelease.catch(() => undefined);
+        releaseTransferred = true;
+
+        if (options.awaitPrompt) {
+          yield* runHost("runtime.queue.dispatch.awaitStartedPrompt", () => promptDoneWithRelease);
+          return started.continueAfterPrompt();
+        }
         return true;
-      }
-
-      const turnState = yield* RuntimeTurnStatePort;
-      const preparedTurn = yield* runHost("runtime.queue.dispatch.prepareTurn", () =>
-        host.prepareTurn({
-          target: currentTarget,
-          surface,
-          queued,
-          message: materialized.message,
-          metadata: materialized.metadata,
-        }),
-      ).pipe(
-        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
-      );
-      const turn = yield* turnState.startTurn(preparedTurn.startTurnInput).pipe(
-        Effect.map((result) => result.value),
-        Effect.mapError((cause) =>
-          runtimeQueueStateError("runtime.queue.dispatch.startTurn", cause),
-        ),
-        Effect.catch((error) => requeueClaimedDelivery(currentTarget, surface, queued, error)),
-      );
-
-      const started = yield* runHost("runtime.queue.dispatch.startPrompt", () =>
-        host.startPrompt({
-          target: currentTarget,
-          surface,
-          queued,
-          turn,
-          prepared: preparedTurn.prepared,
-          message: materialized.message,
-          metadata: materialized.metadata,
-        }),
-      ).pipe(
-        Effect.catch((error) =>
+      }).pipe(
+        Effect.ensuring(
           Effect.gen(function* () {
-            yield* turnState
-              .finishTurn({ turnId: turn.id, status: "failed" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  runtimeQueueStateError("runtime.queue.dispatch.finishStartedTurn", cause),
-                ),
-              );
-            return yield* failQueuedDelivery(currentTarget, surface, queued, error);
+            if (releaseTransferred || retainedSurface === null) {
+              return;
+            }
+            yield* runHost("runtime.queue.dispatch.releaseSurface", () =>
+              releaseSurface(currentTarget, retainedSurface as TSurface),
+            ).pipe(Effect.ignore);
           }),
         ),
       );
-
-      const promptDoneWithRelease = started.promptDone.finally(async () => {
-        await releaseSurface(currentTarget, surface);
-      });
-      void promptDoneWithRelease.catch(() => undefined);
-
-      if (options.awaitPrompt) {
-        yield* runHost("runtime.queue.dispatch.awaitStartedPrompt", () => promptDoneWithRelease);
-        return started.continueAfterPrompt();
-      }
-      return true;
     });
 
   return {

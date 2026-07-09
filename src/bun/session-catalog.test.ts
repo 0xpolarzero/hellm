@@ -4797,6 +4797,42 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("rejects edit-to-composer for rows that are already dispatching", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Queued Edit Guard" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const queued = store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        messageJson: JSON.stringify(userMessage("This row is already claimed.")),
+      });
+      const claimed = store.claimNextQueuedSurfaceMessage({
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        claimOwnerId: "runtime-worker-edit-guard",
+        leaseDurationMs: 15_000,
+      });
+
+      await expect(
+        catalog.editQueuedSurfaceMessage({
+          target: created.target,
+          queuedMessageId: queued.id,
+        }),
+      ).rejects.toThrow("Surface queued message claim is stale or not cancellable");
+
+      expect(store.getSurfaceQueuedMessage({ id: queued.id })).toMatchObject({
+        id: queued.id,
+        status: "dispatching",
+        claimOwnerId: "runtime-worker-edit-guard",
+        leaseVersion: claimed!.leaseVersion,
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("queues active-surface follow-ups without calling pi steer", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);

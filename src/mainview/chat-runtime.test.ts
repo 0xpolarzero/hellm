@@ -50,7 +50,12 @@ import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
 } from "../shared/agent-settings";
-import type { ExtensionUsageState } from "@svvy/core";
+import type {
+  ExtensionUsageState,
+  QueueItemId,
+  RequestInputQuestionId,
+  RequestInputRequestId,
+} from "@svvy/core";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
 
@@ -2047,6 +2052,13 @@ function createFakeRpc(input: {
             ok: true,
             target: cloneTarget(target),
             snapshot: structuredClone(surfaceRecord.snapshot),
+            requestId: request.requestId as RequestInputRequestId,
+            questionId: request.questionId as RequestInputQuestionId,
+            status: "recorded",
+            delivery: {
+              kind: "nonblocking-queued",
+              queuedItemId: surfaceRecord.snapshot.queuedMessages[0]!.id as QueueItemId,
+            },
           };
         },
         answerRuntimeApprovalRequest: async (request) => {

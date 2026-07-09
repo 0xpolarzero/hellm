@@ -117,6 +117,15 @@ function createHarness(
     cancelSurfaceMessage: (input) =>
       Effect.gen(function* () {
         calls.push(`cancel:${input.id}`);
+        if (input.expectedStatuses && !input.expectedStatuses.includes(existing.status)) {
+          return yield* Effect.fail(
+            new StateContractError({
+              operation: "state.queue.cancel",
+              reason: "claim-conflict",
+              message: "Queued row is already dispatching.",
+            }),
+          );
+        }
         if (options.cancelFails) {
           return yield* Effect.fail(
             new StateContractError({
@@ -199,6 +208,34 @@ describe("runtime queued message abort", () => {
         "lookup:queue_runtime_abort_01",
         "cancel:queue_runtime_abort_01",
         "publish:1",
+      ]);
+    }),
+  );
+
+  it.effect("rejects dispatching messages and leaves active-turn cancellation to that path", () =>
+    Effect.gen(function* () {
+      const harness = createHarness({
+        existing: queuedRecord({
+          status: "dispatching",
+          claimOwnerId: "surface-queue-dispatcher:workspace_runtime_abort_01",
+          claimLeaseExpiresAt: "2026-04-18T09:02:00.000Z",
+          leaseVersion: 2,
+        }),
+      });
+
+      const error = yield* harness.run().pipe(Effect.flip);
+
+      assert.deepStrictEqual(
+        { _tag: error._tag, operation: error.operation, reason: error.reason },
+        {
+          _tag: "RuntimeContractError",
+          operation: "runtime.messages.abort.cancel",
+          reason: "state-conflict",
+        },
+      );
+      assert.deepStrictEqual(harness.calls, [
+        "lookup:queue_runtime_abort_01",
+        "cancel:queue_runtime_abort_01",
       ]);
     }),
   );

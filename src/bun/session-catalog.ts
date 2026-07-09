@@ -2075,7 +2075,10 @@ export class WorkspaceSessionCatalog {
     if (!text) {
       throw new Error("Queued user message payload cannot be restored to the composer.");
     }
-    this.structuredSessionStore.cancelSurfaceMessage({ id: input.queuedMessageId });
+    this.structuredSessionStore.cancelSurfaceMessage({
+      id: input.queuedMessageId,
+      expectedStatuses: ["queued", "steering"],
+    });
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, text, snapshot };
   }
