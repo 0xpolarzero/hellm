@@ -1156,6 +1156,8 @@ function createFakeRpc(input: {
                   usableModelProviders: ["openai" as ProviderId],
                 },
               };
+            default:
+              throw new Error(`Unsupported state read model in harness: ${request.kind}`);
           }
         },
         refetchStateReadModels: async () => [],

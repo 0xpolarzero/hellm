@@ -43,18 +43,32 @@ import type {
 import type { AppMenuAction } from "./shortcut-registry";
 import type {
   AnswerRequestInputResult,
+  ArtifactId,
   AppLogLevel,
   AppLogQuery,
   AppLogReadModel,
   AppLogSummary,
   AppLogUpdateMessage,
+  ByteCount,
+  CommandFactsPayload,
+  CommandId,
   JsonValue,
+  MessageId,
+  NonNegativeSafeInteger,
+  PositiveSafeInteger,
   ProviderAuthStatus,
   ProviderId,
+  QueueItemId,
+  RequestInputRequestId,
+  RuntimeApprovalId,
   RuntimeMessageDelivery,
+  RuntimeSurfaceTarget,
   RuntimeSubmittedMessage,
   RuntimeClientSubmissionMetadata,
+  StateStoredError,
   StateRevision,
+  SurfacePiSessionId,
+  TurnId,
   ComposerAttachment,
   WorkspaceId,
 } from "@svvy/core";
@@ -110,17 +124,176 @@ export interface ProviderAuthReadModelRequest {
   workspaceId?: WorkspaceId;
 }
 
+export interface SessionNavigationReadModelRequest {
+  kind: "sessionNavigation";
+  workspaceId?: WorkspaceId;
+}
+
+export interface SurfaceTranscriptReadModelRequest {
+  kind: "surfaceTranscript";
+  target: RuntimeSurfaceTarget;
+  afterMessageId?: MessageId;
+  limit?: PositiveSafeInteger;
+}
+
+export interface SurfaceSummaryReadModelRequest {
+  kind: "surfaceSummary";
+  target: RuntimeSurfaceTarget;
+}
+
+export interface SurfaceComposerReadModelRequest {
+  kind: "surfaceComposer";
+  target: RuntimeSurfaceTarget;
+}
+
+export interface SurfaceQueuedMessagesReadModelRequest {
+  kind: "surfaceQueuedMessages";
+  target: RuntimeSurfaceTarget;
+}
+
+export interface CommandInspectorReadModelRequest {
+  kind: "commandInspector";
+  commandId: CommandId;
+}
+
+export interface RequestInputReadModelRequest {
+  kind: "requestInput";
+  workspaceId?: WorkspaceId;
+  surfacePiSessionId?: SurfacePiSessionId;
+  requestId?: RequestInputRequestId;
+}
+
+export interface ApprovalsReadModelRequest {
+  kind: "approvals";
+  workspaceId?: WorkspaceId;
+  surfacePiSessionId?: SurfacePiSessionId;
+  requestId?: RuntimeApprovalId;
+}
+
+export type SessionNavigationReadModel =
+  CoreWorkspaceSessionNavigationReadModel<WorkspaceSessionSummary>;
+
+export interface SurfaceTranscriptReadModel {
+  target: RuntimeSurfaceTarget;
+  surfaceStatus: "idle" | "running" | "waiting" | "error";
+  promptLock: { activeTurnId: TurnId | null; queuedCount: number };
+  composerDraft: { text: string; attachmentIds: readonly string[] };
+  messages: readonly {
+    messageId: MessageId;
+    role: "user" | "assistant";
+    turnId?: TurnId;
+    text?: string;
+    commandIds?: readonly CommandId[];
+    createdAt: string;
+  }[];
+}
+
+export interface SurfaceSummaryReadModel {
+  target: RuntimeSurfaceTarget;
+  title: string;
+  status: SurfaceTranscriptReadModel["surfaceStatus"];
+  activeTurnId: TurnId | null;
+  activeTurnStartedAt: string | null;
+  queuedCount: number;
+  model: string;
+  provider: string;
+  reasoningEffort: string;
+  agentProfileId: string;
+  loadedExtensionIds: readonly string[];
+  availableExtensionIds: readonly string[];
+}
+
+export interface SurfaceComposerReadModel {
+  target: RuntimeSurfaceTarget;
+  draft: {
+    text: string;
+    attachments: readonly ComposerAttachment[];
+    snippetMentions: readonly unknown[];
+    updatedAt: string | null;
+  };
+}
+
+export interface SurfaceQueuedMessagesReadModel {
+  target: RuntimeSurfaceTarget;
+  queuedMessages: readonly {
+    id: QueueItemId;
+    kind: QueuedSurfaceMessageKind;
+    text: string;
+    title?: string;
+    summary?: string;
+    threadId?: string;
+    episodeId?: string;
+    sourceCommandId?: CommandId;
+    status: QueuedSurfaceMessageStatus;
+    failureError?: string;
+    createdAt: string;
+    updatedAt: string;
+  }[];
+}
+
+export interface CommandInspectorReadModel {
+  commandId: CommandId;
+  status: "pending" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  toolName: string;
+  target?: RuntimeSurfaceTarget;
+  acceptedArguments?: JsonValue;
+  summary?: string;
+  error?: StateStoredError;
+  finishedAt?: string;
+  output: readonly {
+    stream: "stdout" | "stderr";
+    text: string;
+    sequence: NonNegativeSafeInteger;
+  }[];
+  stdin: {
+    mode: "none" | "continuable";
+    canAttemptWrite: boolean;
+    acceptedWrites: readonly {
+      text: string;
+      acceptedBytes: ByteCount;
+      at: string;
+    }[];
+  };
+  facts?: CommandFactsPayload;
+  childCommandIds: readonly CommandId[];
+  artifactIds: readonly ArtifactId[];
+}
+
+export interface RequestInputReadModel {
+  requests: readonly WorkspaceRequestUserInputRequest[];
+}
+
+export interface ApprovalsReadModel {
+  requests: readonly WorkspaceRuntimeApprovalRequest[];
+}
+
 export type StateReadModelRequest =
   | AppLogReadModelRequest
   | AppPreferencesReadModelRequest
-  | ProviderAuthReadModelRequest;
+  | ProviderAuthReadModelRequest
+  | SessionNavigationReadModelRequest
+  | SurfaceTranscriptReadModelRequest
+  | SurfaceSummaryReadModelRequest
+  | SurfaceComposerReadModelRequest
+  | SurfaceQueuedMessagesReadModelRequest
+  | CommandInspectorReadModelRequest
+  | RequestInputReadModelRequest
+  | ApprovalsReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
   | { kind: "appLogSummary"; value: AppLogSummary }
   | { kind: "appPreferences"; value: AppPreferencesReadModel }
   | { kind: "settings"; value: SettingsReadModel }
-  | { kind: "providerAuth"; value: ProviderAuthReadModel };
+  | { kind: "providerAuth"; value: ProviderAuthReadModel }
+  | { kind: "sessionNavigation"; value: SessionNavigationReadModel }
+  | { kind: "surfaceTranscript"; value: SurfaceTranscriptReadModel }
+  | { kind: "surfaceSummary"; value: SurfaceSummaryReadModel }
+  | { kind: "surfaceComposer"; value: SurfaceComposerReadModel }
+  | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
+  | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
+  | { kind: "requestInput"; value: RequestInputReadModel }
+  | { kind: "approvals"; value: ApprovalsReadModel };
 
 export interface StateReadModelRefetchRequest {
   requests: readonly StateReadModelRequest[];
@@ -576,7 +749,8 @@ export type QueuedSurfaceMessageKind =
   | "thread_followup"
   | "report_request"
   | "thread_report_notification"
-  | "request_user_input_answer";
+  | "request_user_input_answer"
+  | "workflow_task_agent_start";
 
 export interface QueuedSurfaceMessage {
   id: string;

@@ -604,14 +604,40 @@ type StateReadModelRequest =
   | { kind: "appLogSummary"; workspaceId?: WorkspaceId }
   | { kind: "appPreferences" }
   | { kind: "settings" }
-  | { kind: "providerAuth"; workspaceId?: WorkspaceId };
+  | { kind: "providerAuth"; workspaceId?: WorkspaceId }
+  | { kind: "sessionNavigation"; workspaceId?: WorkspaceId }
+  | SurfaceTranscriptReadModelInput & { kind: "surfaceTranscript" }
+  | { kind: "surfaceSummary"; target: RuntimeSurfaceTarget }
+  | { kind: "surfaceComposer"; target: RuntimeSurfaceTarget }
+  | { kind: "surfaceQueuedMessages"; target: RuntimeSurfaceTarget }
+  | CommandInspectorReadModelInput & { kind: "commandInspector" }
+  | {
+      kind: "requestInput";
+      workspaceId?: WorkspaceId;
+      surfacePiSessionId?: SurfacePiSessionId;
+      requestId?: RequestInputRequestId;
+    }
+  | {
+      kind: "approvals";
+      workspaceId?: WorkspaceId;
+      surfacePiSessionId?: SurfacePiSessionId;
+      requestId?: RuntimeApprovalId;
+    };
 
 type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
   | { kind: "appLogSummary"; value: AppLogSummary }
   | { kind: "appPreferences"; value: AppPreferencesReadModel }
   | { kind: "settings"; value: SettingsReadModel }
-  | { kind: "providerAuth"; value: ProviderAuthReadModel };
+  | { kind: "providerAuth"; value: ProviderAuthReadModel }
+  | { kind: "sessionNavigation"; value: SessionNavigationReadModel }
+  | { kind: "surfaceTranscript"; value: SurfaceTranscriptReadModel }
+  | { kind: "surfaceSummary"; value: SurfaceSummaryReadModel }
+  | { kind: "surfaceComposer"; value: SurfaceComposerReadModel }
+  | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
+  | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
+  | { kind: "requestInput"; value: RequestInputReadModel }
+  | { kind: "approvals"; value: ApprovalsReadModel };
 
 type SettingsReadModel = {
   preferences: {
@@ -636,6 +662,127 @@ type AppLogReadModel = {
   summary: AppLogSummary;
   persistedView: AppLogViewPreferences;
   readState: AppLogReadState;
+};
+
+type SessionNavigationReadModel = WorkspaceSessionNavigationReadModel<SessionNavigationSummary>;
+
+type SessionNavigationSummary = WorkspaceSessionNavigationSummary & {
+  id: WorkspaceSessionId;
+  title: string;
+  preview: string;
+  createdAt: IsoDateTimeString;
+  messageCount: NonNegativeSafeInteger;
+  status: "idle" | "running" | "waiting" | "error";
+  isUnread: boolean;
+  unreadAt: IsoDateTimeString | null;
+  unreadReason: "assistant-turn-finished" | "manual" | null;
+  lastReadAt: IsoDateTimeString | null;
+  provider?: ProviderId;
+  modelId?: string;
+  thinkingLevel?: string;
+  wait?: {
+    threadId?: ThreadId;
+    kind: "user" | "external" | "approval" | "signal" | "timer";
+    reason: string;
+    resumeWhen: string;
+    since: IsoDateTimeString;
+  } | null;
+  counts?: {
+    turns: NonNegativeSafeInteger;
+    threads: NonNegativeSafeInteger;
+    commands: NonNegativeSafeInteger;
+    episodes: NonNegativeSafeInteger;
+    workflows: NonNegativeSafeInteger;
+    artifacts: NonNegativeSafeInteger;
+    events: NonNegativeSafeInteger;
+  };
+  threadIds?: readonly ThreadId[];
+};
+
+type SurfaceSummaryReadModel = {
+  target: RuntimeSurfaceTarget;
+  title: string;
+  status: "idle" | "running" | "waiting" | "error";
+  activeTurnId: TurnId | null;
+  activeTurnStartedAt: IsoDateTimeString | null;
+  queuedCount: NonNegativeSafeInteger;
+  model: string;
+  provider: ProviderId | "";
+  reasoningEffort: string;
+  agentProfileId: AgentProfileId | "";
+  loadedExtensionIds: readonly ExtensionId[];
+  availableExtensionIds: readonly ExtensionId[];
+};
+
+type SurfaceComposerReadModel = {
+  target: RuntimeSurfaceTarget;
+  draft: {
+    text: string;
+    attachments: readonly ComposerAttachment[];
+    snippetMentions: readonly JsonValue[];
+    updatedAt: IsoDateTimeString | null;
+  };
+};
+
+type SurfaceQueuedMessagesReadModel = {
+  target: RuntimeSurfaceTarget;
+  queuedMessages: readonly {
+    id: QueueItemId;
+    kind:
+      | "user_message"
+      | "initial_handler_start"
+      | "thread_followup"
+      | "report_request"
+      | "thread_report_notification"
+      | "request_user_input_answer"
+      | "workflow_task_agent_start";
+    text: string;
+    title?: string;
+    summary?: string;
+    threadId?: ThreadId;
+    episodeId?: EpisodeId;
+    sourceCommandId?: CommandId;
+    status: "queued" | "steering" | "dispatching" | "failed";
+    failureError?: string;
+    createdAt: IsoDateTimeString;
+    updatedAt: IsoDateTimeString;
+  }[];
+};
+
+type RequestInputReadModel = {
+  requests: readonly {
+    requestId: RequestInputRequestId;
+    workspaceSessionId: WorkspaceSessionId;
+    surfacePiSessionId: SurfacePiSessionId;
+    threadId: ThreadId | null;
+    ownerTitle: string;
+    variant: "nonblocking" | "blocking";
+    status: "open" | "completed" | "cancelled" | "expired";
+    createdAt: IsoDateTimeString;
+    completedAt: IsoDateTimeString | null;
+    timeout: RuntimeRequestInputDetailsRecord["timeout"];
+    questions: readonly RuntimeRequestInputDetailsRecord["questions"][number][];
+  }[];
+};
+
+type ApprovalsReadModel = {
+  requests: readonly {
+    requestId: RuntimeApprovalId;
+    workspaceSessionId: WorkspaceSessionId;
+    surfacePiSessionId: SurfacePiSessionId;
+    threadId: ThreadId | null;
+    ownerTitle: string;
+    toolName: "apply_patch" | "exec_command" | "execute_typescript";
+    approvalMode: "auto-review" | "user";
+    cwd: AbsolutePath | string;
+    command: string | null;
+    commandFamily: string | null;
+    snippetArtifactId: ArtifactId | null;
+    status: "pending";
+    createdAt: IsoDateTimeString;
+    completedAt: null;
+    summary: string;
+  }[];
 };
 
 type StateReadModelRebaselineRequest = {
@@ -663,6 +810,24 @@ unless this spec names matching Effect Schema codecs for renderer/RPC transport.
 `@svvy/state` exposes exactly the `StateReadModelRequest.kind` and `StateReadModelResult.kind` union
 declared above. Additional read-model kinds are not package-root facade contracts unless this spec
 names their request/result variants, builders, invalidation mappings, root exports, and tests.
+
+First-half Increment 6 read-model rows:
+
+`StateReadModelRequestSchema` and `StateReadModelResultSchema` are the package-root schema-backed
+closed transport guards for the read facade kind union. They validate the discriminant and shallow
+request fields for every variant named below while nested read-model DTOs remain the approved
+state-owned facade contracts named in this table.
+
+| Kind | Builder source | Invalidation mapping | Root exports | Tests |
+| --- | --- | --- | --- | --- |
+| `sessionNavigation` | `packages/state/src/state-facade.ts` builds `SessionNavigationReadModel` from the workspace-routed `StructuredSessionState.listSessionStates()` snapshots plus `@svvy/state/session-navigation` `buildWorkspaceSessionNavigation(...)`. | Workspace `{ model: "sessionNavigation" }` refetches `sessionNavigation`; renderer startup/manual/runtime rebaseline includes it for workspace scope. | `SessionNavigationReadModelRequest`, `SessionNavigationReadModel`, `SessionNavigationSummary` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` "builds first-half renderer read models from structured-session router stores"; `packages/package-boundaries.test.ts` root-export ledger. |
+| `surfaceTranscript` | `packages/state/src/state-facade.ts` builds the already-authored `SurfaceTranscriptReadModel` from the target session snapshot, committed turns/commands, composer draft, prompt-lock turn state, and queue count. | Workspace `{ model: "surface", ids }` expands to `surfaceTranscript`, `surfaceSummary`, `surfaceComposer`, and `surfaceQueuedMessages` for each addressed surface id. | `SurfaceTranscriptReadModelRequest`, `SurfaceTranscriptReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` fixture assertion plus `refetchInvalidation` surface expansion coverage; `packages/package-boundaries.test.ts` root-export ledger. |
+| `surfaceSummary` | `packages/state/src/state-facade.ts` builds a minimal pane-header surface summary from the target snapshot, active turn, queue count, title, model/provider/reasoning, and bound extension ids. | Workspace `{ model: "surface", ids }` expands to `surfaceSummary` with the sibling surface slices. | `SurfaceSummaryReadModelRequest`, `SurfaceSummaryReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger. |
+| `surfaceComposer` | `packages/state/src/state-facade.ts` reads `StructuredSessionState.getComposerDraft(surfacePiSessionId)` and returns durable draft text, attachments, snippet mentions, and update time. | Workspace `{ model: "surface", ids }` expands to `surfaceComposer` with the sibling surface slices. | `SurfaceComposerReadModelRequest`, `SurfaceComposerReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger. |
+| `surfaceQueuedMessages` | `packages/state/src/state-facade.ts` reads `StructuredSessionState.listQueuedSurfaceMessages({ surfacePiSessionId })` and maps the existing queued-message record/payload fields used by the renderer. | Workspace `{ model: "surface", ids }` expands to `surfaceQueuedMessages` with the sibling surface slices. | `SurfaceQueuedMessagesReadModelRequest`, `SurfaceQueuedMessagesReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger. |
+| `commandInspector` | `packages/state/src/state-facade.ts` ports the catalog `getCommandInspector` path by calling `buildStructuredCommandInspector(...)` from `packages/state/src/structured-session-selectors.ts` over the routed structured-session snapshots, then narrows to the already-authored `CommandInspectorReadModel`. | Workspace `{ model: "commandInspector", ids }` refetches one `commandInspector` result per command id. | `CommandInspectorReadModelRequest`, `CommandInspectorReadModel` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` compares against `buildStructuredCommandInspector(...)` on the same fixture snapshot; `packages/package-boundaries.test.ts` root-export ledger. |
+| `requestInput` | `packages/state/src/state-facade.ts` ports the catalog `buildWorkspaceRequestUserInputRequests()` mapping over `StructuredSessionState.listSessionStates()` and returns open/completed surface-local clarification requests/questions. | Workspace `{ model: "requestInput", ids }` refetches `requestInput`; request-input state-port commits also invalidate `surface` and `commandInspector` where applicable. | `RequestInputReadModelRequest`, `RequestInputReadModel`, `RequestInputReadModelRequestItem`, `WorkspaceRequestInputDelivery` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` fixture parity assertion and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
+| `approvals` | `packages/state/src/state-facade.ts` ports the catalog `buildWorkspaceRuntimeApprovalRequests()` mapping over `StructuredSessionState.listSessionStates()` and returns pending runtime approval requests. | Workspace `{ model: "runtimeApprovals", ids }` refetches `approvals`; runtime approval state-port commits also invalidate `surface`, `sessionNavigation`, and `commandInspector` where applicable. | `ApprovalsReadModelRequest`, `ApprovalsReadModel`, `ApprovalReadModelRequestItem` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` fixture parity assertion, invalidation refetch, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
 
 `refetchInvalidation(...)` maps committed read-model invalidation descriptors to affected facade
 read requests, and `rebaseline(...)` returns the authoritative baseline for the requested

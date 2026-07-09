@@ -34,10 +34,16 @@ import {
   createStateCommandsFacade,
   createStateFacade,
   layer,
+  stateReadModelsFromRouter,
   type StateReadModelResult,
 } from "./state-facade";
 import { StateLayerConfigSchema } from "./state-layer-config";
 import { testPlatformLayer } from "./platform-test-support";
+import { appLogStateFromStore, createAppLogStore } from "./app-log-store";
+import { runTestEffect } from "./effect.test-support";
+import { buildStructuredCommandInspector } from "./structured-session-selectors";
+import { createStructuredSessionStateStore } from "./structured-session-state";
+import { createWorkspaceStateRouter } from "./workspace-state-router";
 
 const iso = (value: string) => value as typeof IsoDateTimeStringSchema.Type;
 const noop = () => {};
@@ -952,6 +958,210 @@ describe("State app-log facade slice", () => {
       state.close();
     } finally {
       await managedRuntime.dispose();
+    }
+  });
+});
+
+describe("State read-model kind expansion", () => {
+  it("builds first-half renderer read models from structured-session router stores", async () => {
+    let idSeq = 0;
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      digest: testDigest,
+      idFactory: (prefix) => `${prefix}-facade-${++idSeq}`,
+      now: (() => {
+        let cursor = Date.parse("2026-06-21T12:00:00.000Z");
+        return () => {
+          const value = new Date(cursor).toISOString();
+          cursor += 1_000;
+          return value;
+        };
+      })(),
+      workspace: {
+        id: "workspace_state_facade_read_models" as WorkspaceId,
+        label: "State facade read models",
+        cwd: "/tmp/svvy-state-facade-read-models" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/svvy-state-facade-read-models-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    try {
+      const created = store.createOrchestratorSurface({
+        workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        title: "Expanded read models",
+      });
+      store.setComposerDraft({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: created.surfacePiSessionId,
+        text: "draft text",
+        attachments: [
+          {
+            id: "attachment-1",
+            kind: "file",
+            name: "notes.md",
+            path: "/tmp/notes.md",
+          },
+        ],
+      });
+      const turn = store.startTurn({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: created.surfacePiSessionId,
+        requestSummary: "Run fixture command",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        title: "Run exec_command",
+        summary: "Run fixture command",
+        arguments: { cmd: "printf ok" },
+        facts: { exitCode: 0 },
+      });
+      store.recordLifecycleEvent({
+        sessionId: created.workspaceSessionId,
+        kind: "command.output",
+        subjectKind: "command",
+        subjectId: command.id,
+        data: { stream: "stdout", source: "fixture", text: "ok\n" },
+      });
+      store.finishCommand({
+        commandId: command.id,
+        status: "succeeded",
+        summary: "Command finished",
+      });
+      const requestInput = store.createRequestUserInputRequest({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: created.surfacePiSessionId,
+        turnId: turn.id,
+        commandId: command.id,
+        toolItemId: "tool_request_input_fixture",
+        variant: "blocking",
+        timeout: { enabled: true, durationMs: 300_000 },
+        questions: [
+          {
+            title: "Pick path",
+            question: "Which path?",
+            defaultAnswer: { kind: "custom", text: "default path" },
+          },
+        ],
+      });
+      const approval = store.createRuntimeApprovalRequest({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: created.surfacePiSessionId,
+        turnId: turn.id,
+        commandId: command.id,
+        toolCallId: "tool_approval_fixture",
+        toolName: "exec_command",
+        approvalMode: "user",
+        cwd: "/tmp/svvy-state-facade-read-models",
+        command: "printf ok",
+        commandFamily: "shell",
+      });
+
+      const router = createWorkspaceStateRouter({
+        appGlobalStore: store,
+        workspaceStores: [{ store }],
+      });
+      const appLogStore = createAppLogStore({
+        now: () => "2026-06-21T12:00:00.000Z",
+      });
+      const readModels = stateReadModelsFromRouter({
+        router,
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+
+      const navigation = await runTestEffect(
+        readModels.fetch({
+          kind: "sessionNavigation",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(navigation).toMatchObject({
+        kind: "sessionNavigation",
+        value: { activeSessions: [{ title: "Expanded read models" }] },
+      });
+
+      const transcript = await runTestEffect(
+        readModels.fetch({ kind: "surfaceTranscript", target: created.target }),
+      );
+      expect(transcript).toMatchObject({
+        kind: "surfaceTranscript",
+        value: {
+          target: created.target,
+          surfaceStatus: "running",
+          promptLock: { activeTurnId: turn.id, queuedCount: 0 },
+          composerDraft: { text: "draft text", attachmentIds: ["attachment-1"] },
+          messages: [{ role: "user", turnId: turn.id, text: "Run fixture command" }],
+        },
+      });
+
+      const commandInspector = await runTestEffect(
+        readModels.fetch({ kind: "commandInspector", commandId: command.id as CommandId }),
+      );
+      const selectorInspector = buildStructuredCommandInspector(
+        store.getSessionState(created.workspaceSessionId),
+        command.id,
+      );
+      expect(commandInspector).toMatchObject({
+        kind: "commandInspector",
+        value: {
+          commandId: selectorInspector?.commandId,
+          status: "succeeded",
+          toolName: "exec_command",
+          summary: "Command finished",
+          output: [{ stream: "stdout", text: "ok\n", sequence: 0 }],
+          childCommandIds: [],
+          artifactIds: [],
+        },
+      });
+
+      const requestInputModel = await runTestEffect(
+        readModels.fetch({
+          kind: "requestInput",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(requestInputModel).toMatchObject({
+        kind: "requestInput",
+        value: {
+          requests: [{ requestId: requestInput.requestId, ownerTitle: "Expanded read models" }],
+        },
+      });
+
+      const approvals = await runTestEffect(
+        readModels.fetch({
+          kind: "approvals",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(approvals).toMatchObject({
+        kind: "approvals",
+        value: { requests: [{ requestId: approval.requestId, summary: "Run command: printf ok" }] },
+      });
+
+      const refetched = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: {
+            scope: "workspace",
+            workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+            invalidation: { model: "runtimeApprovals", ids: [approval.requestId as never] },
+          },
+        }),
+      );
+      expect(refetched.map((result) => result.kind)).toEqual(["approvals"]);
+
+      const baseline = await runTestEffect(
+        readModels.rebaseline({
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+          reason: "renderer-startup",
+        }),
+      );
+      expect(baseline.workspaces.map((result) => result.kind)).toContain("sessionNavigation");
+      expect(baseline.workspaces.map((result) => result.kind)).toContain("requestInput");
+      expect(baseline.workspaces.map((result) => result.kind)).toContain("approvals");
+    } finally {
+      store.close();
     }
   });
 });
