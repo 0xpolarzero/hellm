@@ -41,7 +41,6 @@ import {
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import type {
-  AppLogUpdateMessage,
   SurfaceStreamPatch,
   SurfaceSyncMessage,
   WorkspaceInfoResponse,
@@ -177,7 +176,6 @@ type WorkspaceRuntimeRegistryOptions = {
     details?: Record<string, unknown>,
     error?: unknown,
   ) => void;
-  onAppLogUpdate?: (workspaceId: string, payload: AppLogUpdateMessage) => void;
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
   listRecoverableWorkspaces?: () => readonly WorkspaceInfoResponse[];
@@ -216,7 +214,6 @@ type RuntimeRecord = WorkspaceRuntime & {
   refCount: number;
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle;
-  unsubscribeAppLog: () => void;
   unsubscribeRuntimeEvents: () => void;
 };
 
@@ -593,6 +590,13 @@ export class WorkspaceRuntimeRegistry {
     ) as ReturnType<RuntimeFacade["events"]>;
   }
 
+  async getAppRuntimeEventSubscription(
+    input?: Parameters<RuntimeFacade["events"]>[0],
+  ): ReturnType<RuntimeFacade["events"]> {
+    const runtime = await this.getAppRuntimeBootstrap();
+    return runtime.facade.events(input) as ReturnType<RuntimeFacade["events"]>;
+  }
+
   getActiveRuntime(): WorkspaceRuntime {
     if (!this.activeWorkspaceId) {
       throw new Error("No workspace is active.");
@@ -749,13 +753,6 @@ export class WorkspaceRuntimeRegistry {
         this.options.forwardBridgeLog?.(level, message, source, { ...details, workspaceId }, error);
       },
     });
-    const unsubscribeAppLog = appLog.subscribe((entries, summary) => {
-      this.options.onAppLogUpdate?.(workspaceId, {
-        workspaceId,
-        entries,
-        summary,
-      });
-    });
     appLog.info("app.lifecycle", "Workspace scope opened.", {
       workspaceId,
       kind,
@@ -827,10 +824,11 @@ export class WorkspaceRuntimeRegistry {
     });
     await sourceInvalidationCoordinator.ready();
     const appRuntime = await this.getAppRuntimeBootstrap();
-    appRuntime.internal.workspaceStates.register(
+    await appRuntime.internal.workspaceStates.register(
       kind === "default"
         ? { ...workspaceStateRegistration, isDefaultWorkspace: true }
         : workspaceStateRegistration,
+      appLogs,
     );
     let workspaceAcquired = false;
     try {
@@ -888,7 +886,6 @@ export class WorkspaceRuntimeRegistry {
       appLogs,
       appLog,
       sourceInvalidationCoordinator,
-      unsubscribeAppLog,
       unsubscribeRuntimeEvents,
       getInfo: () => ({
         workspaceId,
@@ -902,7 +899,6 @@ export class WorkspaceRuntimeRegistry {
           kind,
           cwd,
         });
-        unsubscribeAppLog();
         unsubscribeRuntimeEvents();
         catalog.setWorkspaceSyncListener(null);
         catalog.setSurfaceSyncListener(null);
@@ -1127,6 +1123,15 @@ export class WorkspaceRuntimeRegistry {
           });
         }
         return runtime.appLogs;
+      },
+      onAppLogCommitNotificationError: (error, scope) => {
+        this.options.forwardBridgeLog?.(
+          "error",
+          "Committed app-log invalidation publication failed.",
+          "runtime.events",
+          scope,
+          error,
+        );
       },
       appLogWritePort: appGlobal.appLogs.writePort,
       sandboxHostSupport: this.options.sandboxHostSupport,

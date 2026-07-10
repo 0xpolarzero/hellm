@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./accepted-native-tool-execution": "./src/accepted-native-tool-execution.ts",
+    "./app-log-commit-notification-adapter": "./src/app-log-commit-notification-adapter.ts",
     "./bootstrap": "./src/bootstrap.ts",
     "./prompt-execution-context": "./src/prompt-execution-context.ts",
     "./source-invalidation-coordinator-adapter": "./src/source-invalidation-coordinator-adapter.ts"

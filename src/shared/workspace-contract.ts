@@ -48,7 +48,6 @@ import type {
   AppLogQuery,
   AppLogReadModel,
   AppLogSummary,
-  AppLogUpdateMessage,
   ByteCount,
   CommandFactsPayload,
   CommandId,
@@ -61,14 +60,20 @@ import type {
   QueueItemId,
   RequestInputRequestId,
   RuntimeApprovalId,
+  RuntimeEventGenerationId,
+  RuntimeEventSequence,
   RuntimeMessageDelivery,
   RuntimeSurfaceTarget,
   RuntimeSubmittedAttachment,
   RuntimeClientSubmissionMetadata,
+  StateInvalidationDescriptor,
   StateStoredError,
   StateRevision,
   SnippetId,
   SurfacePiSessionId,
+  SurfaceStreamGenerationId,
+  SurfaceStreamSequence,
+  SurfaceStreamPatchInput as CoreSurfaceStreamPatchInput,
   ThreadId,
   TurnId,
   ComposerAttachment,
@@ -420,6 +425,57 @@ export interface WorkspacePaneReadModelRecord {
   localStateJson: JsonValue | null;
 }
 
+export type DesktopRendererNotificationScope =
+  | { kind: "app" }
+  | { kind: "workspace"; workspaceId: WorkspaceId }
+  | { kind: "surface"; workspaceId: WorkspaceId; surfacePiSessionId: SurfacePiSessionId };
+
+export type DesktopRendererCommand = "command-palette.open" | "quick-open.open" | "settings.open";
+
+export type DesktopRendererNotification =
+  | {
+      kind: "read-model-changed";
+      eventGenerationId: RuntimeEventGenerationId;
+      sequence: RuntimeEventSequence;
+      scope: DesktopRendererNotificationScope;
+      invalidation: StateInvalidationDescriptor;
+    }
+  | {
+      kind: "surface-stream-patch";
+      eventGenerationId: RuntimeEventGenerationId;
+      sequence: RuntimeEventSequence;
+      workspaceId: WorkspaceId;
+      target: RuntimeSurfaceTarget;
+      surfacePiSessionId: SurfacePiSessionId;
+      streamGenerationId: SurfaceStreamGenerationId;
+      streamSequence: SurfaceStreamSequence;
+      patch: CoreSurfaceStreamPatchInput;
+    }
+  | {
+      kind: "read-model-rebaseline-required";
+      reason:
+        | "event-sequence-gap"
+        | "surface-stream-gap"
+        | "surface-stream-generation-mismatch"
+        | "scope-descriptor-mismatch"
+        | "runtime-restart"
+        | "slow-consumer"
+        | "bridge-restart"
+        | "bridge-disposed";
+      rebaselineRequired: true;
+      eventGenerationId?: RuntimeEventGenerationId;
+      lastContiguousSequence?: RuntimeEventSequence;
+      scope?: DesktopRendererNotificationScope;
+    }
+  | {
+      kind: "renderer-command";
+      command: DesktopRendererCommand;
+    }
+  | {
+      kind: "app-shutdown";
+      reason: "app-shutdown" | "bridge-stopped" | "runtime-shutdown" | "startup-failure";
+    };
+
 export type StateReadModelRequest =
   | AppLogReadModelRequest
   | AppPreferencesReadModelRequest
@@ -464,6 +520,10 @@ export type StateReadModelResult =
 
 export interface StateReadModelRefetchRequest {
   requests: readonly StateReadModelRequest[];
+}
+
+export interface StateReadModelInvalidationRefetchRequest {
+  descriptor: StateInvalidationDescriptor;
 }
 
 export interface StateReadModelBaseline {
@@ -2048,6 +2108,10 @@ export interface ChatRPCSchema {
         params: StateReadModelRefetchRequest;
         response: readonly StateReadModelResult[];
       };
+      refetchStateReadModelInvalidation: {
+        params: StateReadModelInvalidationRefetchRequest;
+        response: readonly StateReadModelResult[];
+      };
       rebaselineStateReadModels: {
         params: StateReadModelRebaselineRequest;
         response: StateReadModelBaseline;
@@ -2544,7 +2608,7 @@ export interface ChatRPCSchema {
     messages: {
       sendWorkspaceSync: WorkspaceSyncMessage;
       sendSurfaceSync: SurfaceSyncMessage;
-      sendAppLogUpdate: AppLogUpdateMessage;
+      sendDesktopNotification: DesktopRendererNotification;
       sendExtensionCliRequirementActionUpdate: ExtensionCliRequirementActionUpdateMessage;
       sendAppMenuAction: { action: AppMenuAction };
     };

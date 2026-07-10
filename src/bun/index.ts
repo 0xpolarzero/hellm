@@ -115,6 +115,7 @@ import {
   submitPromptFromDesktop,
   writeCommandStdinFromDesktop,
 } from "./desktop-bridge-requests";
+import { createDesktopNotificationBridge } from "./desktop-notification-bridge";
 import {
   assertExtensionEnvOverrideTarget,
   assertExtensionEnvSecretTarget,
@@ -986,22 +987,6 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   },
   appWorkspaceTabsStore,
   listRecoverableWorkspaces: () => appWorkspaceTabsStore.getState()?.knownWorkspaces ?? [],
-  onAppLogUpdate: (workspaceId, payload) => {
-    try {
-      rpc.send.sendAppLogUpdate({
-        ...payload,
-        workspaceId,
-      });
-    } catch (error) {
-      recordDevBrowserToolsError(
-        "rpc",
-        "Unable to send app log update to the main view.",
-        "rpc",
-        { workspaceId },
-        error,
-      );
-    }
-  },
   onWorkspaceSync: (_workspaceId, payload) => {
     try {
       rpc.send.sendWorkspaceSync(payload);
@@ -1808,6 +1793,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         Promise.all(
           request.requests.map((readModelRequest) => fetchRendererStateReadModel(readModelRequest)),
         ),
+      refetchStateReadModelInvalidation: async (request) => {
+        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+        return rendererState.readModels.refetchInvalidation(request);
+      },
       rebaselineStateReadModels: async (request) => {
         const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
         return rendererState.readModels.rebaseline(request);
@@ -2993,6 +2982,29 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   }),
 });
 
+const desktopNotificationBridge = createDesktopNotificationBridge({
+  runtimeEvents: (input) => workspaceRuntimeRegistry.getAppRuntimeEventSubscription(input),
+  state: {
+    readModels: {
+      fetch: async (input) => {
+        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+        return rendererState.readModels.fetch(input);
+      },
+      rebaseline: async (input) => {
+        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
+        return rendererState.readModels.rebaseline(input);
+      },
+    },
+  },
+  rendererEmit: (notification) => {
+    rpc.send.sendDesktopNotification(notification);
+  },
+  onError: (error, context) => {
+    recordDevBrowserToolsError("rpc", "Desktop notification bridge failed.", context, {}, error);
+  },
+});
+await desktopNotificationBridge.start();
+
 const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
   {
     label: "svvy",
@@ -3065,6 +3077,12 @@ ApplicationMenu.on("application-menu-clicked", (event) => {
   const action = (event as { data?: { action?: unknown } }).data?.action;
   if (!isAppMenuAction(action)) {
     return;
+  }
+  if (action === "commandPalette.open" || action === "quickOpen.open") {
+    rpc.send.sendDesktopNotification({
+      kind: "renderer-command",
+      command: action === "commandPalette.open" ? "command-palette.open" : "quick-open.open",
+    });
   }
   rpc.send.sendAppMenuAction({ action });
 });

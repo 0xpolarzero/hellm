@@ -19,12 +19,14 @@ import {
   type AppLogSummary,
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
+  type DesktopRendererNotification,
   type ExtensionCliRequirementActionUpdateMessage,
   type PromptTarget,
   type RendererTelemetryRequest,
   type RequestUserInputAnswerRequest,
   type SendPromptRequest,
   type SetRequestUserInputTimerPausedRequest,
+  type StateReadModelBaseline,
   type SurfaceSyncMessage,
   type WorkspaceCommandInspector,
   type WriteCommandStdinRequest,
@@ -136,6 +138,8 @@ type FakeRpcHarness = {
   branchListRequests: string[];
   branchSwitchRequests: Array<{ workspaceId: string; branch: string }>;
   emitAppLogUpdate: (payload: AppLogUpdateMessage) => void;
+  emitDesktopNotification: (payload: DesktopRendererNotification) => void;
+  setRebaselineResult: (baseline: StateReadModelBaseline) => void;
   emitExtensionCliRequirementActionUpdate: (
     payload: ExtensionCliRequirementActionUpdateMessage,
   ) => void;
@@ -744,7 +748,7 @@ function createFakeRpc(input: {
 }): FakeRpcHarness {
   const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
   const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
-  const appLogUpdateListeners = new Set<(payload: AppLogUpdateMessage) => void>();
+  const desktopNotificationListeners = new Set<(payload: DesktopRendererNotification) => void>();
   const extensionCliRequirementActionUpdateListeners = new Set<
     (payload: ExtensionCliRequirementActionUpdateMessage) => void
   >();
@@ -792,6 +796,12 @@ function createFakeRpc(input: {
   let workspaceInfo = structuredClone(TEST_WORKSPACE_INFO);
   let appLogEntries: AppLogEntry[] = [];
   let appLogSeenSeq = 0;
+  let desktopNotificationSequence = 0;
+  let rebaselineResult: StateReadModelBaseline = {
+    app: [],
+    workspaces: [],
+    revision: 0 as StateRevision,
+  };
   const requestCounts = {
     listSessions: 0,
   };
@@ -907,8 +917,24 @@ function createFakeRpc(input: {
       ...appLogEntries,
       ...payload.entries.filter((entry) => !known.has(entry.id)),
     ].toSorted((left, right) => left.seq - right.seq);
-    for (const listener of appLogUpdateListeners) {
-      listener(structuredClone(payload));
+    desktopNotificationSequence += 1;
+    for (const listener of desktopNotificationListeners) {
+      listener(
+        structuredClone({
+          kind: "read-model-changed",
+          eventGenerationId: "fake-runtime-event-generation" as never,
+          sequence: desktopNotificationSequence as never,
+          scope: {
+            kind: "workspace",
+            workspaceId: payload.workspaceId as never,
+          },
+          invalidation: {
+            scope: "workspace",
+            workspaceId: payload.workspaceId as never,
+            invalidation: { model: "appLogs" },
+          },
+        } satisfies DesktopRendererNotification),
+      );
     }
   };
 
@@ -1152,11 +1178,32 @@ function createFakeRpc(input: {
           }
         },
         refetchStateReadModels: async () => [],
-        rebaselineStateReadModels: async () => ({
-          app: [],
-          workspaces: [],
-          revision: 0 as StateRevision,
-        }),
+        refetchStateReadModelInvalidation: async ({ descriptor }) => {
+          switch (descriptor.invalidation.model) {
+            case "appLogs":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "appLogs",
+                  workspaceId:
+                    descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+                await harness.client.request.fetchStateReadModel({
+                  kind: "appLogSummary",
+                  workspaceId:
+                    descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+              ];
+            case "appPreferences":
+              return [await harness.client.request.fetchStateReadModel({ kind: "appPreferences" })];
+            case "settings":
+              return [await harness.client.request.fetchStateReadModel({ kind: "settings" })];
+            case "providerAuth":
+              return [await harness.client.request.fetchStateReadModel({ kind: "providerAuth" })];
+            default:
+              return [];
+          }
+        },
+        rebaselineStateReadModels: async () => structuredClone(rebaselineResult),
         revertExtensionChange: async () => ({
           extensions: [],
           reversibleChanges: [],
@@ -2342,8 +2389,10 @@ function createFakeRpc(input: {
           surfaceSyncListeners.add(listener as (payload: SurfaceSyncMessage) => void);
           return;
         }
-        if (messageName === "sendAppLogUpdate") {
-          appLogUpdateListeners.add(listener as (payload: AppLogUpdateMessage) => void);
+        if (messageName === "sendDesktopNotification") {
+          desktopNotificationListeners.add(
+            listener as (payload: DesktopRendererNotification) => void,
+          );
           return;
         }
         if (messageName === "sendExtensionCliRequirementActionUpdate") {
@@ -2361,8 +2410,10 @@ function createFakeRpc(input: {
           surfaceSyncListeners.delete(listener as (payload: SurfaceSyncMessage) => void);
           return;
         }
-        if (messageName === "sendAppLogUpdate") {
-          appLogUpdateListeners.delete(listener as (payload: AppLogUpdateMessage) => void);
+        if (messageName === "sendDesktopNotification") {
+          desktopNotificationListeners.delete(
+            listener as (payload: DesktopRendererNotification) => void,
+          );
           return;
         }
         if (messageName === "sendExtensionCliRequirementActionUpdate") {
@@ -2398,6 +2449,14 @@ function createFakeRpc(input: {
     emitWorkspaceSync,
     emitSurfaceSync,
     emitAppLogUpdate,
+    emitDesktopNotification: (payload) => {
+      for (const listener of desktopNotificationListeners) {
+        listener(structuredClone(payload));
+      }
+    },
+    setRebaselineResult: (baseline) => {
+      rebaselineResult = structuredClone(baseline);
+    },
     emitExtensionCliRequirementActionUpdate,
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
@@ -5614,6 +5673,60 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("replaces notification-managed caches from an authoritative workspace rebaseline", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    await waitFor(() => runtime.appPreferencesSnapshot !== null);
+
+    harness.setRebaselineResult({
+      app: [
+        {
+          kind: "appPreferences",
+          value: {
+            appearance: "dark",
+            externalEditor: "zed",
+            artifactDirectory: "/tmp/rebaseline-artifacts" as never,
+            approvalMode: "user",
+            networkAccess: false,
+            ambientResources: {},
+            updatedAt: "2026-07-10T00:00:00.000Z" as never,
+            revision: 2 as StateRevision,
+          },
+        },
+      ],
+      workspaces: [],
+      revision: 2 as StateRevision,
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-rebaseline-required",
+      reason: "event-sequence-gap",
+      rebaselineRequired: true,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+      },
+    });
+
+    await waitFor(() => runtime.appPreferencesSnapshot?.appAppearance === "dark");
+    expect(runtime.appPreferencesSnapshot).toMatchObject({
+      appAppearance: "dark",
+      preferredExternalEditor: "zed",
+      artifactDirectory: "/tmp/rebaseline-artifacts",
+      approvalMode: "user",
+      networkAccess: false,
+    });
+
+    runtime.dispose();
+  });
+
   it("tracks app log summaries, live updates, static logs panes, and mark-seen requests", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -5647,6 +5760,7 @@ describe("createChatRuntime", () => {
       },
     });
 
+    await waitFor(() => runtime.appLogSummary.unread.error === 1);
     expect(runtime.appLogSummary.unread.error).toBe(1);
     await runtime.openSurface({ surface: "app-logs" }, "primary");
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "app-logs" });

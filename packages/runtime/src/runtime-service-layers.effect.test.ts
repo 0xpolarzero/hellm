@@ -66,6 +66,10 @@ import {
   RuntimeQueueWakeService,
 } from "./runtime-queue-wake-service";
 import { layerStateCommandPostCommitNotificationPort } from "./state-command-post-commit-notification";
+import {
+  layerRuntimeAppLogCommitNotification,
+  RuntimeAppLogCommitNotification,
+} from "./runtime-app-log-commit-notification";
 import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
 
 const workspaceId = "workspace_runtime_service_layers" as WorkspaceId;
@@ -469,6 +473,30 @@ describe("runtime promoted service layers", () => {
       assert.deepStrictEqual(published, [[appInvalidation]]);
     }).pipe(
       Effect.provide(layerStateCommandPostCommitNotificationPort),
+      Effect.provideService(RuntimeEventBus, eventBus({ published })),
+    );
+  });
+
+  it.effect("maps committed app-log append scopes to runtime-owned invalidations", () => {
+    const published: StateInvalidationDescriptor[][] = [];
+
+    return Effect.gen(function* () {
+      const notifications = yield* RuntimeAppLogCommitNotification;
+      yield* notifications.notifyCommittedAppend({});
+      yield* notifications.notifyCommittedAppend({ workspaceId });
+
+      assert.deepStrictEqual(published, [
+        [{ scope: "app", invalidation: { model: "appLogs" } }],
+        [
+          {
+            scope: "workspace",
+            workspaceId,
+            invalidation: { model: "appLogs" },
+          },
+        ],
+      ]);
+    }).pipe(
+      Effect.provide(layerRuntimeAppLogCommitNotification),
       Effect.provideService(RuntimeEventBus, eventBus({ published })),
     );
   });

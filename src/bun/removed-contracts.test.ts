@@ -28,8 +28,8 @@ describe("retired desktop integration RPC paths", () => {
       'setAppCache("appPreferences", await rpcClient.request.getAppPreferences())',
     );
 
-    expect(sharedContractSource).not.toContain("StateReadModelInvalidationRefetchRequest");
-    expect(sharedContractSource).not.toContain("StateInvalidationDescriptor");
+    expect(sharedContractSource).toContain("StateReadModelInvalidationRefetchRequest");
+    expect(sharedContractSource).toContain("StateInvalidationDescriptor");
     expect(sharedContractSource).toContain("StateReadModelRefetchRequest");
 
     expect(sessionCatalogSource).not.toContain(

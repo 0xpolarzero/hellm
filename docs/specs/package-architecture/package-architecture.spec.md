@@ -181,6 +181,11 @@ internal service constructors are not app/bootstrap dependencies. Accepted nativ
 points use only the named `@svvy/runtime/accepted-native-tool-execution` adapter over the
 already-acquired app-owned `ManagedRuntime`; that adapter does not make accepted-tool execution a
 desktop, browser-tool, headless, renderer, extension, generated-package, or public facade surface.
+Real committed app-log appends observed from app-global or workspace state-facade subscriptions use
+only the named `@svvy/runtime/app-log-commit-notification-adapter`; app/bootstrap supplies the
+owning scope, while the package-private runtime service constructs the fixed `appLogs` descriptor
+and publishes it. The adapter accepts no raw descriptor or event and does not add a Runtime/facade
+group or expose the service tag/layer/interface.
 Source-invalidation coordinator lifecycle entry points use only the named
 `@svvy/runtime/source-invalidation-coordinator-adapter` adapter; that adapter exposes only a
 closeable Promise handle and does not make source coordinators package-root exports, bootstrap

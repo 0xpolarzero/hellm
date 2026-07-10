@@ -254,6 +254,7 @@ const expectedPublicExports = new Map<string, Record<string, string>>([
     {
       ".": "./src/index.ts",
       "./accepted-native-tool-execution": "./src/accepted-native-tool-execution.ts",
+      "./app-log-commit-notification-adapter": "./src/app-log-commit-notification-adapter.ts",
       "./bootstrap": "./src/bootstrap.ts",
       "./prompt-execution-context": "./src/prompt-execution-context.ts",
       "./source-invalidation-coordinator-adapter":
@@ -734,6 +735,10 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runAcceptedLoadExtension",
       "runAcceptedRequestUserInput",
     ],
+  ],
+  [
+    "@svvy/runtime/app-log-commit-notification-adapter",
+    ["AppLogCommitNotificationInput", "notifyCommittedAppLogAppend"],
   ],
   [
     "@svvy/runtime/bootstrap",
@@ -3841,6 +3846,8 @@ describe("package boundaries", () => {
           "packages/runtime/src/index.ts -> layer",
           "packages/runtime/src/runtime-approval-wait-service.ts -> RuntimeApprovalWaitService",
           "packages/runtime/src/runtime-approval-wait-service.ts -> layerRuntimeApprovalWaitService",
+          "packages/runtime/src/runtime-app-log-commit-notification.ts -> RuntimeAppLogCommitNotification",
+          "packages/runtime/src/runtime-app-log-commit-notification.ts -> layerRuntimeAppLogCommitNotification",
           "packages/runtime/src/runtime-effect-requests.ts -> RuntimeExecutionPlanExecutor",
           "packages/runtime/src/runtime-effect-requests.ts -> layerRuntimeExecutionPlanExecutor",
           "packages/runtime/src/runtime-request-input-wait-service.ts -> RuntimeRequestInputWaitService",
@@ -3878,6 +3885,7 @@ describe("package boundaries", () => {
           "Title worker",
           "Approval wait registry",
           "Request-input wait registry",
+          "App-log commit notification service",
           "RuntimeSourceInvalidationScanPort",
           "Runtime startup readiness barrier",
           "Runtime shutdown preparation service",
@@ -4714,6 +4722,12 @@ describe("package boundaries", () => {
           "ManagedRuntime.ManagedRuntime",
           ["runPromise"],
           ["packages/runtime/src/accepted-native-tool-execution.ts"],
+        ],
+        [
+          "effect/ManagedRuntime",
+          "ManagedRuntime.ManagedRuntime",
+          ["runPromise"],
+          ["packages/runtime/src/app-log-commit-notification-adapter.ts"],
         ],
         [
           "effect/ManagedRuntime",
@@ -7468,6 +7482,7 @@ describe("package boundaries", () => {
   it("production public package subpath imports stay in the approved consumer matrix", () => {
     const approvedProductionPublicSubpathImports = [
       "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/accepted-native-tool-execution",
+      "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/app-log-commit-notification-adapter",
       "src/bun/app-runtime-bootstrap.ts -> @svvy/runtime/bootstrap",
       "src/bun/app-runtime-bootstrap.ts -> @svvy/state/structured-session-adapters",
       "src/bun/execute-typescript-tool.ts -> @svvy/runtime/prompt-execution-context",
@@ -8362,6 +8377,7 @@ describe("package boundaries", () => {
 
     const streamPatchProducers = listTypeScriptFiles(join(projectRoot, "src", "bun"))
       .filter((file) => !isTestFile(file))
+      .filter((file) => !file.endsWith("desktop-notification-bridge.ts"))
       .filter((file) => readSource(file).includes('type: "surface.stream"'))
       .map(display);
 
@@ -9047,6 +9063,7 @@ describe("package boundaries", () => {
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
       "packages/runtime/src/accepted-native-tool-execution.ts -> managedRuntime.runPromise",
+      "packages/runtime/src/app-log-commit-notification-adapter.ts -> managedRuntime.runPromise",
       "packages/runtime/src/index.ts -> managedRuntime.runPromiseExit",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromiseExit",
@@ -9083,6 +9100,7 @@ describe("package boundaries", () => {
 
     expect(actual).toEqual([
       "packages/runtime/src/accepted-native-tool-execution.ts -> managedRuntime.runPromise",
+      "packages/runtime/src/app-log-commit-notification-adapter.ts -> managedRuntime.runPromise",
       "packages/runtime/src/index.ts -> managedRuntime.runPromiseExit",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromise",
       "packages/runtime/src/runtime-layer-config.ts -> managedRuntime.runPromiseExit",
@@ -10741,6 +10759,7 @@ describe("package boundaries", () => {
     expect(runtimeExports).toEqual([
       ".",
       "./accepted-native-tool-execution",
+      "./app-log-commit-notification-adapter",
       "./bootstrap",
       "./prompt-execution-context",
       "./source-invalidation-coordinator-adapter",

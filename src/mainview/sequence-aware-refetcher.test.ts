@@ -162,6 +162,48 @@ describe("createSequenceAwareRefetcher", () => {
     expect(gaps).toEqual([{ expected: 2, received: 3 }]);
     expect(rebaselines).toEqual(["event-sequence-gap"]);
   });
+
+  it("invalidates in-flight refetches when reset so they cannot apply or restore stale lanes", async () => {
+    const stale = createDeferred<readonly StateReadModelResult[]>();
+    const calls: StateInvalidationDescriptor[] = [];
+    const applied: number[] = [];
+    const refetcher = createSequenceAwareRefetcher({
+      state: {
+        readModels: {
+          refetchInvalidation: async ({ descriptor }) => {
+            calls.push(descriptor);
+            if (calls.length === 1) return stale.promise;
+            return [{ kind: "commandInspector", value: null }];
+          },
+        },
+      },
+      applyReadModelPatch: (_patch, context) => applied.push(context.sequence),
+    });
+
+    refetcher(seq(10), {
+      scope: { kind: "workspace", workspaceId },
+      invalidation: commandDescriptor("command-1"),
+    });
+    expect(calls).toHaveLength(1);
+
+    refetcher.reset("runtime-restart");
+    refetcher(seq(1), {
+      scope: { kind: "workspace", workspaceId },
+      invalidation: commandDescriptor("command-1"),
+    });
+    await waitFor(() => applied.includes(1));
+
+    stale.resolve([{ kind: "commandInspector", value: null }]);
+    await Bun.sleep(0);
+    refetcher(seq(2), {
+      scope: { kind: "workspace", workspaceId },
+      invalidation: commandDescriptor("command-1"),
+    });
+    await waitFor(() => applied.includes(2));
+
+    expect(calls).toHaveLength(3);
+    expect(applied).toEqual([1, 2]);
+  });
 });
 
 async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void> {

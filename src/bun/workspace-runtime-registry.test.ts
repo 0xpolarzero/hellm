@@ -34,7 +34,6 @@ import { STRUCTURED_SESSION_DB_FILENAME, getSvvySessionDir } from "./session-cat
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { getDefaultWorkspaceCwd } from "./workspace-context";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
-import type { AppLogUpdateMessage } from "../shared/workspace-contract";
 import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
 import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
 
@@ -267,31 +266,47 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(first.appLogs.summary().seenSeq).toBe(latestSeq);
   });
 
-  it("broadcasts cwd-scoped app log updates once per shared workspace scope", async () => {
+  it("keeps cwd-scoped app logs shared without a renderer push callback", async () => {
     const cwd = tempWorkspace("shared-app-log-updates");
-    const updates: Array<{ workspaceId: string; payload: AppLogUpdateMessage }> = [];
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
-      onAppLogUpdate: (workspaceId, payload) => {
-        updates.push({ workspaceId, payload });
-      },
-    });
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
     const first = await registry.acquireWorkspace(cwd);
     const second = await registry.acquireWorkspace(join(cwd, "."));
+    const subscription = await registry.getRuntimeEventSubscription(first.workspaceId, {
+      includeAppEvents: false,
+    });
+    const eventReader = (async () => {
+      for await (const event of subscription) {
+        if (
+          event.type === "workspace_read_model.changed" &&
+          event.invalidation.model === "appLogs"
+        ) {
+          return event;
+        }
+      }
+      throw new Error("Runtime event stream closed before workspace app-log publication.");
+    })();
 
-    first.appLog.error("workspace", "Shared runtime log.");
+    try {
+      first.appLog.error("workspace", "Shared runtime log.");
 
-    expect(second.workspaceId).toBe(first.workspaceId);
-    const workspaceUpdates = updates.filter(
-      (update) => update.payload.entries[0]?.source === "workspace",
-    );
-
-    expect([...new Set(updates.map((update) => update.workspaceId))]).toEqual([first.workspaceId]);
-    expect(workspaceUpdates.map((update) => update.workspaceId)).toEqual([first.workspaceId]);
-    expect(
-      workspaceUpdates.every(
-        (update) => update.payload.entries[0]?.message === "Shared runtime log.",
-      ),
-    ).toBeTrue();
+      expect(second.workspaceId).toBe(first.workspaceId);
+      expect(
+        second.appLogs.query({ sources: ["workspace"] }).entries.map((entry) => entry.message),
+      ).toContain("Shared runtime log.");
+      const event = await eventReader;
+      expect(event.workspaceId).toBe(first.workspaceId as WorkspaceId);
+      const rendererState = await registry.getRendererStateFacade();
+      const refetched = await rendererState.readModels.refetchInvalidation({
+        descriptor: {
+          scope: "workspace",
+          workspaceId: first.workspaceId as WorkspaceId,
+          invalidation: event.invalidation,
+        },
+      });
+      expect(refetched.map((readModel) => readModel.kind)).toEqual(["appLogs", "appLogSummary"]);
+    } finally {
+      await subscription.close();
+    }
   });
 
   it("persists workspace app logs across runtime release and reacquire", async () => {
@@ -827,28 +842,24 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("records lifecycle logs when workspace scopes open and close", async () => {
     const cwd = tempWorkspace("lifecycle-app-logs");
-    const updates: Array<{ workspaceId: string; payload: AppLogUpdateMessage }> = [];
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
-      onAppLogUpdate: (workspaceId, payload) => {
-        updates.push({ workspaceId, payload });
-      },
-    });
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
     const runtime = await registry.acquireWorkspace(cwd);
     const workspaceId = runtime.workspaceId;
 
     await registry.closeWorkspace(workspaceId);
+    const reopened = await registry.acquireWorkspace(cwd);
 
-    const lifecycleEntries = updates
-      .map((update) => update.payload.entries[0])
-      .filter(
+    const lifecycleEntries = reopened.appLogs
+      .query({ sources: ["app.lifecycle"] })
+      .entries.filter(
         (entry) =>
-          entry?.source === "app.lifecycle" &&
+          entry.source === "app.lifecycle" &&
           (entry.message === "Workspace scope opened." ||
             entry.message === "Workspace scope closed."),
       );
 
-    expect(lifecycleEntries).toMatchObject([
-      {
+    expect(lifecycleEntries).toContainEqual(
+      expect.objectContaining({
         source: "app.lifecycle",
         message: "Workspace scope opened.",
         details: {
@@ -856,8 +867,10 @@ describe("WorkspaceRuntimeRegistry", () => {
           kind: "user",
           cwd: runtime.cwd,
         },
-      },
-      {
+      }),
+    );
+    expect(lifecycleEntries).toContainEqual(
+      expect.objectContaining({
         source: "app.lifecycle",
         message: "Workspace scope closed.",
         details: {
@@ -865,9 +878,8 @@ describe("WorkspaceRuntimeRegistry", () => {
           kind: "user",
           cwd: runtime.cwd,
         },
-      },
-    ]);
-    expect(updates.every((update) => update.workspaceId === workspaceId)).toBeTrue();
+      }),
+    );
   });
 
   it("keeps a workspace scope alive until every acquired visual owner is released", async () => {
@@ -989,7 +1001,6 @@ function createRegistry(
     openInitialWorkspace?: boolean;
     appDataDir?: string;
     coreTypeContractPackagePath?: string;
-    onAppLogUpdate?: ConstructorParameters<typeof WorkspaceRuntimeRegistry>[0]["onAppLogUpdate"];
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;

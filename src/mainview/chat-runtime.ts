@@ -89,6 +89,7 @@ import {
   type SetExtensionEnvOverrideRequest,
   type SetExtensionEnvSecretRequest,
   type SetExtensionTypescriptApiRequest,
+  type StateReadModelBaseline,
   type StateReadModelResult,
   type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
@@ -150,6 +151,7 @@ import {
   type WorkspaceLayoutSlotSummary,
 } from "./pane-layout";
 import { mergeAppLogEntries } from "./app-logs";
+import { createRendererNotificationStore } from "./renderer-notifications";
 import { rpc } from "./rpc";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 
@@ -635,6 +637,7 @@ export interface ChatRuntimeRpcClient {
     getAppPreferences: typeof rpc.request.getAppPreferences;
     fetchStateReadModel: typeof rpc.request.fetchStateReadModel;
     refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
+    refetchStateReadModelInvalidation: typeof rpc.request.refetchStateReadModelInvalidation;
     rebaselineStateReadModels: typeof rpc.request.rebaselineStateReadModels;
     revertExtensionChange: typeof rpc.request.revertExtensionChange;
     saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
@@ -1976,6 +1979,130 @@ export async function createChatRuntime(
     void refreshAppLogs({ limit: 600 }).catch(() => undefined);
   };
 
+  const applyAppLogSideEffects = (entries: readonly AppLogEntry[]): void => {
+    if (
+      entries.some(
+        (entry) =>
+          entry.source === "workflow.library" &&
+          entry.message === "Generated Workflows package rebuilt.",
+      )
+    ) {
+      void refreshWorkflowsGenerated().catch(() => undefined);
+    }
+    for (const entry of entries) {
+      if (entry.source !== "source.graph" || entry.message !== "Source inputs changed.") {
+        continue;
+      }
+      const domains = Array.isArray(entry.details?.domains)
+        ? entry.details.domains.filter((domain): domain is string => typeof domain === "string")
+        : [];
+      const refreshAll = domains.length === 0;
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "agent-settings" || domain === "workflows")
+      ) {
+        void refreshAgentSettings().catch(() => undefined);
+      }
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "extensions" || domain === "external_instructions")
+      ) {
+        void refreshExtensionsInventory().catch(() => undefined);
+      }
+      if (refreshAll || domains.includes("external_instructions")) {
+        void refreshExternalInstructionSources().catch(() => undefined);
+      }
+      if (
+        refreshAll ||
+        domains.some((domain) => domain === "extensions" || domain === "workflows")
+      ) {
+        void refreshWorkflowsGenerated().catch(() => undefined);
+      }
+      if (refreshAll || domains.includes("host_snippets")) {
+        void refreshSnippets().catch(() => undefined);
+      }
+    }
+  };
+
+  const applyNotificationReadModelPatch = (patch: readonly StateReadModelResult[]): void => {
+    for (const result of patch) {
+      switch (result.kind) {
+        case "appLogs": {
+          backendAppLogSummary = result.value.summary;
+          appLogSummary = summarizeRendererAppLogs(
+            backendAppLogSummary,
+            rendererTelemetryEntries,
+            rendererAppLogSeenSeq,
+          );
+          const next = mergeRendererAppLogs(
+            result.value,
+            rendererTelemetryEntries,
+            rendererAppLogSeenSeq,
+            { limit: 600 },
+          );
+          setWorkspaceCache("appLogs", next);
+          applyAppLogSideEffects(result.value.entries);
+          for (const listener of appLogUpdateListeners) {
+            listener({
+              workspaceId: workspaceInfo.workspaceId,
+              entries: result.value.entries,
+              summary: result.value.summary,
+            });
+          }
+          break;
+        }
+        case "appLogSummary":
+          backendAppLogSummary = result.value;
+          appLogSummary = summarizeRendererAppLogs(
+            backendAppLogSummary,
+            rendererTelemetryEntries,
+            rendererAppLogSeenSeq,
+          );
+          break;
+        case "appPreferences":
+          setAppCache(
+            "appPreferences",
+            appPreferencesFromStateReadModel(
+              result.value,
+              appReadModelCache.agentSettings?.appPreferences ??
+                appReadModelCache.appPreferences ??
+                DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+            ),
+          );
+          break;
+        case "settings":
+          setAppCache(
+            "appPreferences",
+            appPreferencesFromStateReadModel(
+              result.value.preferences,
+              appReadModelCache.agentSettings?.appPreferences ??
+                appReadModelCache.appPreferences ??
+                DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+            ),
+          );
+          break;
+        case "providerAuth":
+          void refreshProviderAuths().catch(() => undefined);
+          break;
+      }
+    }
+    emit();
+  };
+
+  const applyNotificationReadModelBaseline = (baseline: StateReadModelBaseline): void => {
+    appReadModelCache.appPreferences = null;
+    appReadModelCache.providerAuths = null;
+    const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
+    workspaceCache.appLogs = null;
+    backendAppLogSummary = emptyAppLogSummary();
+    appLogSummary = summarizeRendererAppLogs(
+      backendAppLogSummary,
+      rendererTelemetryEntries,
+      rendererAppLogSeenSeq,
+    );
+    applyNotificationReadModelPatch([...baseline.app, ...baseline.workspaces]);
+  };
+
   const currentLayoutSlots = (): WorkspaceLayoutSlotSummary[] =>
     WORKSPACE_LAYOUT_SLOT_IDS.map((id) => {
       const layout = id === activeLayoutId ? paneLayout : savedLayouts[id];
@@ -2709,76 +2836,6 @@ export async function createChatRuntime(
     emit();
   };
 
-  const appLogUpdateListener = (payload: AppLogUpdateMessage) => {
-    if (payload.workspaceId !== workspaceInfo.workspaceId) {
-      return;
-    }
-    backendAppLogSummary = payload.summary;
-    appLogSummary = summarizeRendererAppLogs(
-      backendAppLogSummary,
-      rendererTelemetryEntries,
-      rendererAppLogSeenSeq,
-    );
-    const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
-    if (cache.appLogs) {
-      const backendReadModel = {
-        entries: mergeAppLogEntries(cache.appLogs.entries, payload.entries).slice(-600),
-        summary: payload.summary,
-      };
-      cache.appLogs = {
-        ...mergeRendererAppLogs(backendReadModel, rendererTelemetryEntries, rendererAppLogSeenSeq, {
-          limit: 600,
-        }),
-      };
-    }
-    if (
-      payload.entries.some(
-        (entry) =>
-          entry.source === "workflow.library" &&
-          entry.message === "Generated Workflows package rebuilt.",
-      )
-    ) {
-      void refreshWorkflowsGenerated().catch(() => undefined);
-    }
-    for (const entry of payload.entries) {
-      if (entry.source !== "source.graph" || entry.message !== "Source inputs changed.") {
-        continue;
-      }
-      const domains = Array.isArray(entry.details?.domains)
-        ? entry.details.domains.filter((domain): domain is string => typeof domain === "string")
-        : [];
-      const refreshAll = domains.length === 0;
-      if (
-        refreshAll ||
-        domains.some((domain) => domain === "agent-settings" || domain === "workflows")
-      ) {
-        void refreshAgentSettings().catch(() => undefined);
-      }
-      if (
-        refreshAll ||
-        domains.some((domain) => domain === "extensions" || domain === "external_instructions")
-      ) {
-        void refreshExtensionsInventory().catch(() => undefined);
-      }
-      if (refreshAll || domains.includes("external_instructions")) {
-        void refreshExternalInstructionSources().catch(() => undefined);
-      }
-      if (
-        refreshAll ||
-        domains.some((domain) => domain === "extensions" || domain === "workflows")
-      ) {
-        void refreshWorkflowsGenerated().catch(() => undefined);
-      }
-      if (refreshAll || domains.includes("host_snippets")) {
-        void refreshSnippets().catch(() => undefined);
-      }
-    }
-    for (const listener of appLogUpdateListeners) {
-      listener(payload);
-    }
-    emit();
-  };
-
   const extensionCliRequirementActionUpdateListener = (
     payload: ExtensionCliRequirementActionUpdateMessage,
   ) => {
@@ -2790,9 +2847,16 @@ export async function createChatRuntime(
     }
   };
 
+  const rendererNotificationStore = createRendererNotificationStore({
+    rpcClient,
+    workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+    applyReadModelPatch: applyNotificationReadModelPatch,
+    applyReadModelBaseline: applyNotificationReadModelBaseline,
+    onError: (error, context) => console.error(`${context}:`, error),
+  });
+
   rpcClient.addMessageListener("sendWorkspaceSync", workspaceSyncListener);
   rpcClient.addMessageListener("sendSurfaceSync", surfaceSyncListener);
-  rpcClient.addMessageListener("sendAppLogUpdate", appLogUpdateListener);
   rpcClient.addMessageListener(
     "sendExtensionCliRequirementActionUpdate",
     extensionCliRequirementActionUpdateListener,
@@ -2939,9 +3003,9 @@ export async function createChatRuntime(
     dispose: () => {
       disposed = true;
       activeRuntimeEmitters.delete(runtimeCacheEmitter);
+      rendererNotificationStore.dispose();
       rpcClient.removeMessageListener("sendWorkspaceSync", workspaceSyncListener);
       rpcClient.removeMessageListener("sendSurfaceSync", surfaceSyncListener);
-      rpcClient.removeMessageListener("sendAppLogUpdate", appLogUpdateListener);
       rpcClient.removeMessageListener(
         "sendExtensionCliRequirementActionUpdate",
         extensionCliRequirementActionUpdateListener,

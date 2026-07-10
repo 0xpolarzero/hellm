@@ -95,6 +95,7 @@ export function createSequenceAwareRefetcher(
 ): ScheduleReadModelRefetch {
   const discardIfStale = options.discardIfStale ?? true;
   const targets = new Map<string, TargetRefetchState>();
+  let generation = 0;
 
   const schedule = ((
     sequence: RuntimeEventSequence,
@@ -144,6 +145,7 @@ export function createSequenceAwareRefetcher(
   };
 
   schedule.reset = () => {
+    generation += 1;
     targets.clear();
   };
 
@@ -155,9 +157,15 @@ export function createSequenceAwareRefetcher(
       const next = state.pending;
       state.pending = null;
       state.inFlight = true;
+      const scheduledGeneration = generation;
       const patch = await options.state.readModels.refetchInvalidation({
         descriptor: next.descriptor,
       });
+
+      if (scheduledGeneration !== generation || targets.get(targetKey) !== state) {
+        return;
+      }
+
       state.inFlight = false;
 
       const isStale =
@@ -170,7 +178,6 @@ export function createSequenceAwareRefetcher(
           descriptor: next.descriptor,
         });
       }
-      targets.set(targetKey, state);
     }
   }
 

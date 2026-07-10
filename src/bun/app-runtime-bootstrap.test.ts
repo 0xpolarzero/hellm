@@ -41,6 +41,7 @@ import {
 } from "@svvy/state/structured-session-state";
 import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
 import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runtime-bootstrap";
+import { createAppLogger } from "./app-logger";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 
@@ -307,6 +308,82 @@ describe("app runtime bootstrap", () => {
       }
       expect(event.invalidation).toEqual({ model: "appPreferences" });
       expect(events).toHaveLength(1);
+    } finally {
+      await subscription.close();
+      await bootstrap.dispose();
+    }
+  });
+
+  it("publishes renderer-visible workspace app-log invalidations for direct AppLogger commits", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    const subscription = await bootstrap.facade.events({
+      workspaceId: harness.workspaceAId,
+      includeAppEvents: false,
+    });
+
+    try {
+      const eventReader = (async () => {
+        for await (const event of subscription) {
+          if (
+            event.type === "workspace_read_model.changed" &&
+            event.invalidation.model === "appLogs"
+          ) {
+            return event;
+          }
+        }
+        throw new Error("Runtime event stream closed before workspace app-log publication.");
+      })();
+
+      const logger = createAppLogger({ appLogs: harness.workspaceAAppLogs });
+      expect(logger.info("workspace", "Direct workspace logger append.")).not.toBeNull();
+
+      const event = await eventReader;
+      expect(event.workspaceId).toBe(harness.workspaceAId);
+      expect(event.invalidation).toEqual({ model: "appLogs" });
+      const refetched = await bootstrap.rendererState.readModels.refetchInvalidation({
+        descriptor: {
+          scope: "workspace",
+          workspaceId: harness.workspaceAId,
+          invalidation: event.invalidation,
+        },
+      });
+      expect(refetched.map((readModel) => readModel.kind)).toEqual(["appLogs", "appLogSummary"]);
+    } finally {
+      await subscription.close();
+      await bootstrap.dispose();
+    }
+  });
+
+  it("publishes renderer-visible app-log invalidations for direct app facade commits", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    const subscription = await bootstrap.facade.events();
+
+    try {
+      const eventReader = (async () => {
+        for await (const event of subscription) {
+          if (event.type === "app_read_model.changed" && event.invalidation.model === "appLogs") {
+            return event;
+          }
+        }
+        throw new Error("Runtime event stream closed before app-global app-log publication.");
+      })();
+
+      expect(
+        harness.appLogs.append({
+          level: "info",
+          source: "app.lifecycle",
+          message: "Direct app facade append.",
+        }),
+      ).toMatchObject({ message: "Direct app facade append." });
+
+      const event = await eventReader;
+      expect(event.invalidation).toEqual({ model: "appLogs" });
+      const refetched = await bootstrap.rendererState.readModels.refetchInvalidation({
+        descriptor: { scope: "app", invalidation: event.invalidation },
+      });
+      expect(refetched.map((readModel) => readModel.kind)).toEqual(["appLogs", "appLogSummary"]);
     } finally {
       await subscription.close();
       await bootstrap.dispose();

@@ -1658,6 +1658,12 @@ bridge failure must not fail the domain operation that emitted the Effect log.
 a durable event log, not an app-log read model, and not sufficient for recovery. Renderer and
 headless consumers fall back to the `appLogs` invalidation/read-model refetch path whenever a live
 message is missed, rejected, filtered out, or older than the retained UI window.
+App/bootstrap may observe `createStateAppLogsFacade(...).subscribe(...)` only to identify that a real
+append committed in the app-global or a registered workspace app-log source. It hands only that
+source scope to `@svvy/runtime/app-log-commit-notification-adapter`; runtime constructs the fixed
+`appLogs` invalidation and owns event publication. State does not construct runtime descriptors from
+the subscription, publish runtime events, call renderer transport, or treat the live callback as
+durable replay.
 
 App-log read-state commands are DB/product-state-backed. `appLogs.markRead(...)`,
 `appLogs.markVisibleRangeRead(...)`, and `appLogs.clearWorkspaceUnread(...)` mutate only the

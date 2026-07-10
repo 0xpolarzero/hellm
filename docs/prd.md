@@ -216,6 +216,12 @@ The package API shape is explicit:
   acquired app-owned `ManagedRuntime` and run the package-private accepted native-tool service
   inside that runtime; it does not export the service tag, service interface, layer, dispatcher,
   extension handler, runtime-effect applier, or a desktop/headless facade group.
+  The public `@svvy/runtime/app-log-commit-notification-adapter` subpath is the only app-bootstrap
+  adapter for a real committed append observed through a state-owned app-log facade subscription.
+  App/bootstrap supplies only the owning app-global scope or `workspaceId`; the package-private
+  runtime service constructs the fixed `appLogs` invalidation and publishes it through the runtime
+  event bus. The adapter accepts no raw descriptor, read-model name, event, receipt, renderer target,
+  or retry instruction and does not add a `Runtime`/facade group.
   The public `@svvy/runtime/source-invalidation-coordinator-adapter` subpath is the only
   app-bootstrap adapter for runtime-owned source-invalidation coordinator handles. It exports the
   handle type, handle options type, and `createRuntimeSourceInvalidationCoordinatorHandle(...)`

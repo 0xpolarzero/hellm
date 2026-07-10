@@ -61,6 +61,7 @@ import {
   runAcceptedLoadExtension,
   runAcceptedRequestUserInput,
 } from "@svvy/runtime/accepted-native-tool-execution";
+import { notifyCommittedAppLogAppend } from "@svvy/runtime/app-log-commit-notification-adapter";
 import {
   awaitRuntimeStartupReadiness,
   createRuntimeLayerConfigLayer,
@@ -163,6 +164,10 @@ export interface AppRuntimeBootstrapInput {
   readonly resolveWorkspaceAppLogs?: (
     workspaceId: WorkspaceId,
   ) => Promise<Pick<StateAppLogsFacade, "append" | "query" | "summary" | "markSeen" | "subscribe">>;
+  readonly onAppLogCommitNotificationError?: (
+    error: unknown,
+    scope: { readonly workspaceId?: WorkspaceId },
+  ) => void;
   readonly appLogWritePort: AppLogWritePortService;
   readonly sandboxHostSupport: PackagedSandboxHostSupportServices;
   readonly runtimeLayerConfig: RuntimeLayerConfig;
@@ -253,7 +258,10 @@ export interface AppRuntimeBootstrap {
       runTaskAgent(input: AuthenticatedRunTaskAgentInput): Promise<RunTaskAgentResult>;
     };
     readonly workspaceStates: {
-      register(input: AppRuntimeBootstrapWorkspaceStateInput): void;
+      register(
+        input: AppRuntimeBootstrapWorkspaceStateInput,
+        appLogs?: Pick<StateAppLogsFacade, "subscribe">,
+      ): Promise<void>;
       unregister(workspaceId: WorkspaceId): boolean;
     };
   };
@@ -263,9 +271,10 @@ export interface AppRuntimeBootstrap {
 export async function createAppRuntimeBootstrap(
   input: AppRuntimeBootstrapInput,
 ): Promise<AppRuntimeBootstrap> {
+  const initialWorkspaceStateRegistrations = input.workspaceStates.map(workspaceStateRegistration);
   const workspaceRouter = createWorkspaceStateRouter({
     appGlobalStore: workspaceStateRegistration(input.appGlobalState).store,
-    workspaceStores: input.workspaceStates.map(workspaceStateRegistration),
+    workspaceStores: initialWorkspaceStateRegistrations,
   });
   const lifecycle = new AppLifecycleCoordinator();
   const workspaceStateLayer = layerWorkspaceStateRouter(workspaceRouter);
@@ -451,6 +460,44 @@ export async function createAppRuntimeBootstrap(
       stateFacadeServicesLayer,
     ).pipe(Layer.provide(runtimeHostLayer)),
   );
+  const appLogInvalidationSubscriptions = new Map<string, () => void>();
+  let appLogInvalidationSubscriptionsClosed = false;
+  const subscribeToCommittedAppLogAppends = async (
+    workspaceId?: WorkspaceId,
+    suppliedAppLogs?: Pick<StateAppLogsFacade, "subscribe">,
+  ): Promise<void> => {
+    if (appLogInvalidationSubscriptionsClosed) return;
+    const subscriptionKey = workspaceId ? `workspace:${workspaceId}` : "app";
+    if (appLogInvalidationSubscriptions.has(subscriptionKey)) return;
+    const appLogs =
+      suppliedAppLogs ??
+      (workspaceId ? await input.resolveWorkspaceAppLogs?.(workspaceId) : input.appLogs);
+    if (!appLogs) return;
+    const unsubscribe = appLogs.subscribe((entries) => {
+      if (entries.length === 0 || appLogInvalidationSubscriptionsClosed) return;
+      void notifyCommittedAppLogAppend(managedRuntime, workspaceId ? { workspaceId } : {}).catch(
+        (error) =>
+          input.onAppLogCommitNotificationError?.(error, workspaceId ? { workspaceId } : {}),
+      );
+    });
+    if (appLogInvalidationSubscriptionsClosed) {
+      unsubscribe();
+      return;
+    }
+    appLogInvalidationSubscriptions.set(subscriptionKey, unsubscribe);
+  };
+  const unsubscribeFromCommittedAppLogAppends = (workspaceId: WorkspaceId): void => {
+    const subscriptionKey = `workspace:${workspaceId}`;
+    appLogInvalidationSubscriptions.get(subscriptionKey)?.();
+    appLogInvalidationSubscriptions.delete(subscriptionKey);
+  };
+  const closeCommittedAppLogAppendSubscriptions = (): void => {
+    appLogInvalidationSubscriptionsClosed = true;
+    for (const unsubscribe of appLogInvalidationSubscriptions.values()) {
+      unsubscribe();
+    }
+    appLogInvalidationSubscriptions.clear();
+  };
   let runtimeServiceAcquired = false;
   try {
     await managedRuntime.context();
@@ -477,6 +524,10 @@ export async function createAppRuntimeBootstrap(
       seed: input.snippetsSeed,
       stateCommands,
     });
+    await subscribeToCommittedAppLogAppends();
+    for (const registration of initialWorkspaceStateRegistrations) {
+      await subscribeToCommittedAppLogAppends(registration.store.workspaceId as WorkspaceId);
+    }
     lifecycle.markReady();
     const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
       managedRuntime.runPromise(effect);
@@ -523,12 +574,21 @@ export async function createAppRuntimeBootstrap(
             ),
         },
         workspaceStates: {
-          register: (request) => {
+          register: async (request, appLogs) => {
             lifecycle.assertAccepting("app-runtime-bootstrap.workspaceStates.register");
-            workspaceRouter.registerWorkspaceState(workspaceStateRegistration(request));
+            const registration = workspaceStateRegistration(request);
+            workspaceRouter.registerWorkspaceState(registration);
+            const workspaceId = registration.store.workspaceId as WorkspaceId;
+            try {
+              await subscribeToCommittedAppLogAppends(workspaceId, appLogs);
+            } catch (cause) {
+              workspaceRouter.unregisterWorkspaceState(workspaceId);
+              throw cause;
+            }
           },
           unregister: (workspaceId) => {
             lifecycle.assertAccepting("app-runtime-bootstrap.workspaceStates.unregister");
+            unsubscribeFromCommittedAppLogAppends(workspaceId);
             return workspaceRouter.unregisterWorkspaceState(workspaceId);
           },
         },
@@ -538,6 +598,7 @@ export async function createAppRuntimeBootstrap(
           .shutdown(
             "app-shutdown",
             async () => {
+              closeCommittedAppLogAppendSubscriptions();
               stateCommands.close();
               state.close();
               facade.close();
@@ -549,6 +610,7 @@ export async function createAppRuntimeBootstrap(
     };
   } catch (cause) {
     lifecycle.markStartupFailed(cause);
+    closeCommittedAppLogAppendSubscriptions();
     try {
       if (runtimeServiceAcquired) {
         await prepareShutdown(managedRuntime, "startup-failure");

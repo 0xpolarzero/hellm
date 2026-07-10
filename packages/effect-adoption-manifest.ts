@@ -232,6 +232,14 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/ManagedRuntime",
     receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromise"],
+    allowedSourceGlobs: ["packages/runtime/src/app-log-commit-notification-adapter.ts"],
+    productReason:
+      "The app-log commit notification adapter maps a real app-bootstrap-observed committed append scope through the caller-owned ManagedRuntime while runtime owns descriptor construction and event publication.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
     members: ["runPromiseExit"],
     allowedSourceGlobs: ["packages/state/src/state-facade.ts"],
     productReason:
