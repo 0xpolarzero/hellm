@@ -1,17 +1,22 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import type { JsonValue, WorkspaceId, WorkspacePaneId } from "@svvy/core";
+import type { SaveWorkspaceLayoutSlotCommandInput } from "@svvy/state";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import type { SerializedDockview } from "dockview-core";
 import { connect, type Page } from "electrobun-browser-tools";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
-import { assistantTextMessage, getTestAgentDir, seedSessions, userMessage } from "./support";
-import type { WorkspaceDockviewLayoutState } from "../src/mainview/pane-layout";
+import { assistantTextMessage, getTestSessionDir, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(120_000);
 
 const PANE_LAYOUT_BRIDGE_TIMEOUT_MS = 10_000;
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -88,37 +93,40 @@ async function clickSessionByTitle(page: Page, title: string): Promise<void> {
   await sessionButton.click({ force: true });
 }
 
-function workspaceIdFor(workspaceDir: string): string {
+function workspaceIdFor(workspaceDir: string): WorkspaceId {
   const canonicalWorkspace = realpathSync.native(workspaceDir);
   const hash = createHash("sha256").update(canonicalWorkspace).digest("hex").slice(0, 24);
-  return `workspace:${hash}`;
+  return `workspace:${hash}` as WorkspaceId;
 }
 
-async function seedWorkspaceUiRestore(
+function seedWorkspaceLayoutSlot(
   homeDir: string,
   workspaceDir: string,
-  layout: WorkspaceDockviewLayoutState,
-): Promise<void> {
-  const agentDir = getTestAgentDir(homeDir);
-  await mkdir(agentDir, { recursive: true });
-  const workspaceKey = `workspace:${encodeURIComponent(workspaceIdFor(workspaceDir))}`;
-  await writeFile(
-    join(agentDir, "app-workspace-ui-restore.json"),
-    `${JSON.stringify(
-      {
-        [workspaceKey]: {
-          version: 5,
-          layouts: {
-            A: layout,
-            B: null,
-            C: null,
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  slot: Omit<SaveWorkspaceLayoutSlotCommandInput, "workspaceId" | "clientSubmission">,
+): void {
+  const canonicalWorkspace = realpathSync.native(workspaceDir);
+  const workspaceId = workspaceIdFor(canonicalWorkspace);
+  const store = createStructuredSessionStateStore({
+    databasePath: join(
+      getTestSessionDir(homeDir, canonicalWorkspace),
+      STRUCTURED_SESSION_DB_FILENAME,
+    ),
+    digest: testDigest,
+    workspace: {
+      id: workspaceId,
+      label: basename(canonicalWorkspace),
+      cwd: canonicalWorkspace,
+    },
+  });
+
+  try {
+    store.saveWorkspaceLayoutSlot({
+      workspaceId,
+      ...slot,
+    });
+  } finally {
+    store.close();
+  }
 }
 
 function serializedDockviewFixture(sessionPanelId: string): SerializedDockview {
@@ -354,13 +362,14 @@ test("restores serialized Dockview edge, floating, and focused panel state on mo
           throw new Error("Expected seeded restore session.");
         }
 
-        await seedWorkspaceUiRestore(seededHome, workspaceDir, {
-          dockview: serializedDockviewFixture("primary"),
+        seedWorkspaceLayoutSlot(seededHome, workspaceDir, {
+          layoutId: "A",
+          dockviewJson: serializedDockviewFixture("primary") as unknown as JsonValue,
           compactSurfaces: [],
-          panels: [
+          panes: [
             {
-              panelId: "primary",
-              binding: {
+              paneId: "primary" as WorkspacePaneId,
+              target: {
                 workspaceSessionId: seededSession.id,
                 surface: "orchestrator",
                 surfacePiSessionId: seededSession.id,
@@ -369,41 +378,48 @@ test("restores serialized Dockview edge, floating, and focused panel state on mo
                 scroll: { transcriptAnchorId: "assistant-restore", offsetPx: 24 },
                 timelineDensity: "compact",
               },
+              fallbackChrome: null,
               placement: null,
+              restore: { kind: "ready" },
             },
             {
-              panelId: "settings",
-              binding: { surface: "settings" },
+              paneId: "settings" as WorkspacePaneId,
+              target: { surface: "settings" },
               localState: {
                 scroll: null,
                 timelineDensity: "comfortable",
               },
+              fallbackChrome: null,
               placement: null,
+              restore: { kind: "ready" },
             },
             {
-              panelId: "logs",
-              binding: { surface: "app-logs" },
+              paneId: "logs" as WorkspacePaneId,
+              target: { surface: "app-logs" },
               localState: {
                 scroll: null,
                 timelineDensity: "comfortable",
               },
+              fallbackChrome: null,
               placement: { kind: "edge", direction: "left", size: 280 },
+              restore: { kind: "ready" },
             },
             {
-              panelId: "workflows",
-              binding: { surface: "workflows" },
+              paneId: "workflows" as WorkspacePaneId,
+              target: { surface: "workflows" },
               localState: {
                 scroll: null,
                 timelineDensity: "comfortable",
               },
+              fallbackChrome: null,
               placement: {
                 kind: "floating",
                 box: { x: 40, y: 64, width: 520, height: 420 },
               },
+              restore: { kind: "ready" },
             },
           ],
-          focusedPanelId: "settings",
-          updatedAt: "2026-06-09T00:00:00.000Z",
+          focusedPaneId: "settings" as WorkspacePaneId,
         });
       },
     },

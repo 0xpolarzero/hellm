@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   formatWorkspaceTabAriaLabel,
   getVisibleWorkspaceTabCounts,
+  mergeKnownWorkspaces,
   reorderWorkspaceTabs,
   summarizeWorkspaceTabCounts,
   type WorkspaceTabCounts,
@@ -21,6 +22,18 @@ type WorkspaceTabFixture = {
 
 const ids = (items: readonly WorkspaceTabFixture[]): string[] =>
   items.map((tab) => tab.workspace.workspaceTabId);
+
+const knownWorkspaceRecord = (input: {
+  workspaceTabId: string;
+  workspaceId: string;
+  cwd: string;
+  workspaceLabel: string;
+}) => ({
+  ...input,
+  kind: "user" as const,
+  openedAt: "2026-07-11T10:00:00.000Z",
+  activeLayoutId: "A" as const,
+});
 
 describe("workspace tab counts", () => {
   it("hides zero counts", () => {
@@ -172,5 +185,57 @@ describe("workspace tab reorder", () => {
     expect(
       reorderWorkspaceTabs(tabs, "tab-b", "tab-a").map((tab) => tab.workspace.workspaceId),
     ).toEqual(["same-runtime", "same-runtime", "other-runtime"]);
+  });
+});
+
+describe("known workspace history", () => {
+  it("keeps history identity stable by cwd instead of reusing a retargeted visual tab id", () => {
+    let nextId = 0;
+    const createHistoryId = () => `history-${++nextId}`;
+    const first = mergeKnownWorkspaces(
+      [],
+      [
+        knownWorkspaceRecord({
+          workspaceTabId: "visual-tab",
+          workspaceId: "workspace-a",
+          cwd: "/workspace/a",
+          workspaceLabel: "A",
+        }),
+      ],
+      createHistoryId,
+    );
+    const retargeted = mergeKnownWorkspaces(
+      first,
+      [
+        knownWorkspaceRecord({
+          workspaceTabId: "visual-tab",
+          workspaceId: "workspace-b",
+          cwd: "/workspace/b",
+          workspaceLabel: "B",
+        }),
+      ],
+      createHistoryId,
+    );
+    const refreshed = mergeKnownWorkspaces(
+      retargeted,
+      [
+        knownWorkspaceRecord({
+          workspaceTabId: "visual-tab",
+          workspaceId: "workspace-b",
+          cwd: "/workspace/b",
+          workspaceLabel: "B",
+        }),
+      ],
+      createHistoryId,
+    );
+
+    expect(retargeted.map((candidate) => candidate.workspaceTabId)).toEqual([
+      "history-1",
+      "history-2",
+    ]);
+    expect(refreshed.map((candidate) => candidate.workspaceTabId)).toEqual([
+      "history-1",
+      "history-2",
+    ]);
   });
 });

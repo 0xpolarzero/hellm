@@ -1318,6 +1318,47 @@ non-JSON command data fail the boundary. The generated core public-symbol index 
 nested schema/type symbol; `packages/core/src/session-navigation-contracts.test.ts` is the strict
 golden/negative contract test.
 
+## Workspace Chrome And Layout Read-Model Contracts
+
+`@svvy/core/workspace-layout-contracts` owns two deliberately separate renderer-safe schema
+families. `WorkspaceChromeReadModelSchema` is app-global chrome state. It contains only the active
+visual tab id, ordered open tabs, and ordered known-workspace tabs. Every tab persists exact
+`workspaceTabId`, `workspaceId`, absolute `cwd`, non-empty `workspaceLabel`, `default | user`
+workspace kind, `openedAt`, and active A/B/C layout id. It has no version or branch field. Tab ids
+are unique within each collection; the same tab may appear once in both open and known collections,
+and a non-null active id must identify an open tab.
+
+`WorkspaceLayoutReadModelSchema` is workspace-scoped and contains exactly one A, B, and C slot for
+the requested workspace. A slot contains `initialized`, JSON-or-null `dockviewJson`, the closed
+`panes` array, the closed compact-thread surface array, nullable focused pane id, and state-owned
+`updatedAt`. Pane ids are unique within a slot; focused pane ids and non-null compact-surface panel
+ids must identify persisted panes. Empty slots have no placeholder pane. `open-workspace` is an
+explicit pane target.
+
+The closed pane target union is:
+
+- orchestrator and handler targets with branded session/surface/thread identities
+- command, workflow-task-attempt, and artifact inspector targets with branded durable identities
+- Workflows, Snippets, Settings, and Open Workspace static targets
+- Agents and Extensions targets with their exact optional target id and view enums
+- App Logs with an optional workspace session id
+
+Each pane persists exact panel-local scroll anchor/finite offset and compact/comfortable density,
+nullable placement using the split/tab/edge/floating/popout union, and restore state. A ready pane
+has `fallbackChrome: null`. An unavailable pane keeps its target and persists only non-empty
+fallback title, nullable subtitle, fallback kind, non-empty reason, and nullable non-empty last
+location label. Healthy presentation chrome is derived by the renderer. Placement numbers are
+finite and floating/popout width and height are positive. A split placement's reference panel is
+restore metadata and may identify a panel no longer present in the slot; consumers use their normal
+fallback placement when it is stale.
+
+`WorkspaceLayoutSlotContentSchema` and `WorkspaceLayoutSlotContentInvariant` are shared by the core
+read model and the state `workspaceLayout.saveSlot` command so collection integrity cannot diverge.
+All public decode/encode helpers use `strictBoundaryParseOptions`; Dockview data is validated as
+JSON rather than cast from storage. `packages/core/src/workspace-layout-contracts.test.ts` pins all
+pane targets and placement variants plus identity, finite-number, positive-box, exact-slot, and
+excess-field failures.
+
 ## Runtime Prompt Submission Contract
 
 The programmatic runtime submission contract is the stable public submission boundary. Runtime
@@ -1670,6 +1711,7 @@ type SurfaceStreamPatchInput =
 
 type WorkspaceReadModelInvalidation =
   | { model: "sessionNavigation" }
+  | { model: "workspaceLayout"; ids: readonly WorkspaceLayoutSlotId[] }
   | { model: "surface"; ids: readonly SurfacePiSessionId[] }
   | { model: "commandInspector"; ids: readonly CommandId[] }
   | { model: "handlerThreadInspector"; ids: readonly ThreadId[] }
@@ -1697,6 +1739,7 @@ model. Runtime batches high-frequency command output writes into state and publi
 `commandInspector`; runtime does not expose a second command-output delta stream as product API.
 
 type AppReadModelInvalidation =
+  | { model: "workspaceChrome" }
   | { model: "workflowsGenerated"; ids?: readonly GeneratedPackageBuildId[] }
   | { model: "agents"; ids?: readonly AgentProfileId[] }
   | { model: "extensions"; ids?: readonly ExtensionId[] }

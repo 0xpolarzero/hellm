@@ -13,6 +13,15 @@ const FACADE_BACKED_REQUESTS = [
   "refetchStateReadModelInvalidation",
   "rebaselineStateReadModels",
   "stateAppLogsMarkRead",
+  "stateWorkspaceChromeSetTabs",
+  "stateWorkspaceChromeSelectTab",
+  "stateWorkspaceChromeSelectLayoutSlot",
+  "stateWorkspaceLayoutSaveSlot",
+  "stateSessionNavigationSetPinned",
+  "stateSessionNavigationSetArchived",
+  "stateSessionNavigationMarkRead",
+  "stateSessionNavigationMarkUnread",
+  "stateSessionNavigationSetSectionState",
   "stateAppPreferencesUpdate",
   "stateSnippetsCreateManaged",
   "stateSnippetsUpdateManaged",
@@ -74,11 +83,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "openWorkspace",
   "getOpenWorkspaces",
   "getDefaultWorkspace",
-  "getAppWorkspaceTabs",
-  "setAppWorkspaceTabs",
-  "getWorkspaceUiRestore",
-  "setWorkspaceUiRestore",
-  "setActiveWorkspace",
   "closeWorkspace",
   "getWorkspaceInfo",
   "listWorkspaceBranches",
@@ -89,9 +93,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "importComposerAttachments",
   "openWorkspacePath",
   "openGeneratedAgentContextExternalSourceInEditor",
-  "listSessions",
-  "getCommandInspector",
-  "listHandlerThreads",
   "getArtifactPreview",
   "createSession",
   "openSession",
@@ -100,14 +101,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "renameSession",
   "forkSession",
   "deleteSession",
-  "pinSession",
-  "unpinSession",
-  "archiveSession",
-  "unarchiveSession",
-  "markSessionUnread",
-  "markSessionRead",
-  "recordFocusedSession",
-  "setSessionNavigationSectionState",
   "recordRendererTelemetry",
   "updateComposerDraft",
   "editCommittedUserMessage",
@@ -164,11 +157,13 @@ describe("legacy RPC handler seam", () => {
       ...LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10,
     ];
 
-    for (const channel of ["sendWorkspaceSync", "sendSurfaceSync", "sendAppMenuAction"] as const) {
+    for (const channel of ["sendSurfaceSync", "sendAppMenuAction"] as const) {
       expect(classifiedRequests).not.toContain(channel);
       expect(syncSeamSource).toContain(`channel: "${channel}"`);
       expect(syncSeamSource).toContain("retiresInIncrement: 10");
     }
+    expect(syncSeamSource).toContain("sendArtifactOpen");
+    expect(syncSeamSource).not.toContain('channel: "sendWorkspaceSync"');
   });
 });
 

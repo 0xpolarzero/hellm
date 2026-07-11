@@ -5,7 +5,7 @@ import {
   dedupeInvalidations,
   mutationResult,
   sessionNavigationInvalidation,
-  workspaceChromeLayoutInvalidation,
+  workspaceLayoutInvalidation,
 } from "./state-mutation-result";
 import {
   StructuredSessionState,
@@ -26,7 +26,7 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
               result,
               dedupeInvalidations([
                 sessionNavigationInvalidation(result.workspaceId),
-                workspaceChromeLayoutInvalidation(result.workspaceId),
+                workspaceLayoutInvalidation(result.workspaceId, ["A", "B", "C"]),
               ]),
             ),
           ),
@@ -40,7 +40,7 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
               result,
               dedupeInvalidations([
                 sessionNavigationInvalidation(result.workspaceId),
-                workspaceChromeLayoutInvalidation(result.workspaceId),
+                workspaceLayoutInvalidation(result.workspaceId, ["A", "B", "C"]),
               ]),
             ),
           ),
@@ -54,7 +54,7 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
               result,
               dedupeInvalidations([
                 sessionNavigationInvalidation(result.workspaceId),
-                workspaceChromeLayoutInvalidation(result.workspaceId),
+                workspaceLayoutInvalidation(result.workspaceId, ["A", "B", "C"]),
               ]),
             ),
           ),

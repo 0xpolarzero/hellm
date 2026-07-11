@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
-  getSessionParentId,
   getSessionPreview,
   getSessionTitle,
   projectWorkspaceSessionSummary,
@@ -102,12 +101,6 @@ describe("session projection", () => {
     expect(getSessionPreview({ firstMessage: "", messages: [] })).toBe("");
   });
 
-  it("projects parent session ids from persisted paths", () => {
-    expect(getSessionParentId("/tmp/sessions/2026-04-10T10-00-00.000Z_abcd-1234.jsonl")).toBe(
-      "abcd-1234",
-    );
-  });
-
   it("builds summaries with stable metadata", () => {
     const summary = projectWorkspaceSessionSummary({
       id: "session-1",
@@ -120,8 +113,6 @@ describe("session projection", () => {
         userMessage("Investigate"),
         assistantMessage("Done", "stop", Date.parse("2026-04-10T10:06:00.000Z")),
       ],
-      sessionFile: "/tmp/session-1.jsonl",
-      parentSessionFile: "/tmp/session-0.jsonl",
       provider: "openai",
       modelId: "gpt-4o",
       thinkingLevel: "high",
@@ -129,7 +120,9 @@ describe("session projection", () => {
 
     expect(summary.title).toBe("Investigate");
     expect(summary.preview).toBe("Investigate");
-    expect(summary.parentSessionId).toBeUndefined();
+    expect(summary).not.toHaveProperty("sessionFile");
+    expect(summary).not.toHaveProperty("parentSessionId");
+    expect(summary).not.toHaveProperty("parentSessionFile");
     expect(summary.status).toBe("idle");
     expect(summary.updatedAt).toBe("2026-04-10T10:06:00.000Z");
   });
@@ -146,8 +139,6 @@ describe("session projection", () => {
         userMessage("Investigate the failing workflow."),
         assistantMessage("The workflow failed.", "error", Date.parse("2026-04-10T10:06:00.000Z")),
       ],
-      sessionFile: "/tmp/session-error-like.jsonl",
-      parentSessionFile: undefined,
       provider: "openai",
       modelId: "gpt-4o",
       thinkingLevel: "medium",
@@ -165,7 +156,6 @@ describe("session projection", () => {
       created: "2026-04-10T10:00:00.000Z",
       modified: "2026-04-10T10:05:00.000Z",
       messageCount: 2,
-      path: "/tmp/session-2.jsonl",
     });
 
     expect(summary).toEqual({
@@ -184,9 +174,6 @@ describe("session projection", () => {
       unreadAt: null,
       unreadReason: null,
       lastReadAt: null,
-      sessionFile: "/tmp/session-2.jsonl",
-      parentSessionId: undefined,
-      parentSessionFile: undefined,
     });
   });
 });

@@ -15,7 +15,7 @@ import {
 setDefaultTimeout(120_000);
 
 const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };

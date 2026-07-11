@@ -25,7 +25,6 @@ import {
   type GeneratedPackageWorkspaceLinkRepairInput,
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
-  IsoDateTimeStringSchema,
   type JsonValue,
   type AgentProfileId,
   type ExtensionId,
@@ -40,8 +39,8 @@ import {
   type SandboxPolicySourceService,
   type SourceInvalidationHint,
   type SourceReconcileRequest,
+  type StateInvalidationDescriptor,
   type WorkspaceId,
-  type WorkspaceTabId,
   type PiRuntimePathsSnapshot,
 } from "@svvy/core";
 import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
@@ -62,6 +61,7 @@ import {
   runAcceptedRequestUserInput,
 } from "@svvy/runtime/accepted-native-tool-execution";
 import { notifyCommittedAppLogAppend } from "@svvy/runtime/app-log-commit-notification-adapter";
+import { publishCommittedStateInvalidations } from "@svvy/runtime/committed-state-invalidation-adapter";
 import {
   awaitRuntimeStartupReadiness,
   createRuntimeLayerConfigLayer,
@@ -99,7 +99,6 @@ import {
   type StateAppLogsFacade,
 } from "@svvy/state";
 import type { AgentSettingsState, AppPreferences } from "../shared/agent-settings";
-import type { AppWorkspaceTabsState } from "../shared/workspace-contract";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
 import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
@@ -205,10 +204,6 @@ export interface AppRuntimeBootstrapInput {
     hasStateRows(): boolean;
     read(): AppPreferences;
   };
-  readonly workspaceChromeSeed?: {
-    hasStateRows(): boolean;
-    read(): AppWorkspaceTabsState | null;
-  };
   readonly agentSettingsSeed?: {
     hasAgentProfileRows(): boolean;
     hasExtensionEnvRows(): boolean;
@@ -250,6 +245,9 @@ export interface AppRuntimeBootstrap {
     };
     readonly workflowTaskAgentBridge: {
       runTaskAgent(input: AuthenticatedRunTaskAgentInput): Promise<RunTaskAgentResult>;
+    };
+    readonly committedStateInvalidations: {
+      publish(afterCommit: readonly StateInvalidationDescriptor[]): Promise<void>;
     };
     readonly workspaceStates: {
       register(
@@ -506,10 +504,6 @@ export async function createAppRuntimeBootstrap(
       seed: input.appPreferencesSeed,
       stateCommands,
     });
-    await seedWorkspaceChromeStateRows({
-      seed: input.workspaceChromeSeed,
-      stateCommands,
-    });
     await seedAgentSettingsStateRows({
       seed: input.agentSettingsSeed,
       stateCommands,
@@ -562,6 +556,11 @@ export async function createAppRuntimeBootstrap(
                 return yield* runtime.workflowTaskAgentBridge.runTaskAgent(request);
               }) as Effect.Effect<RunTaskAgentResult, unknown, never>,
             ),
+        },
+        committedStateInvalidations: {
+          publish: async (afterCommit) => {
+            await publishCommittedStateInvalidations(managedRuntime, afterCommit);
+          },
         },
         workspaceStates: {
           register: async (request, appLogs) => {
@@ -707,38 +706,6 @@ function stateExternalEditorFromAppPreferences(preferences: AppPreferences): str
     return preferences.customExternalEditorCommand || "custom";
   }
   return preferences.preferredExternalEditor;
-}
-
-async function seedWorkspaceChromeStateRows(input: {
-  readonly seed: AppRuntimeBootstrapInput["workspaceChromeSeed"];
-  readonly stateCommands: StateCommandsFacade;
-}): Promise<void> {
-  if (!input.seed || input.seed.hasStateRows()) {
-    return;
-  }
-  const state = input.seed.read();
-  if (!state) return;
-  await input.stateCommands.workspaceChrome.setTabs({
-    activeWorkspaceTabId: state.activeWorkspaceTabId as WorkspaceTabId | null,
-    tabs: state.tabs.map((tab) => ({
-      workspaceTabId: tab.workspaceTabId as WorkspaceTabId,
-      workspaceId: tab.workspaceId as WorkspaceId,
-      cwd: tab.cwd as AbsolutePath,
-      openedAt: tab.openedAt as typeof IsoDateTimeStringSchema.Type,
-      activeLayoutId: tab.activeLayoutId ?? "A",
-    })),
-    knownWorkspaces: state.knownWorkspaces.map((tab) => ({
-      workspaceTabId: tab.workspaceTabId as WorkspaceTabId,
-      workspaceId: tab.workspaceId as WorkspaceId,
-      cwd: tab.cwd as AbsolutePath,
-      openedAt: tab.openedAt as typeof IsoDateTimeStringSchema.Type,
-      activeLayoutId: tab.activeLayoutId ?? "A",
-    })),
-    clientSubmission: {
-      clientRequestId: "bootstrap-workspace-chrome-seed" as RuntimeClientRequestId,
-      source: "app-bootstrap" as RuntimeClientSubmissionSource,
-    },
-  });
 }
 
 async function seedAgentSettingsStateRows(input: {

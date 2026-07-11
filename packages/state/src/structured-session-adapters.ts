@@ -95,6 +95,7 @@ export {
   runtimeWorkspaceStatePortFromStore,
   runtimeWorkspaceStatePortFromStructuredSessionState,
 } from "./runtime-workspace-state-port";
+export { structuredSessionCatalogMutationsFromStore } from "./structured-session-catalog-mutations";
 export { createWorkspaceStateRouter, layerWorkspaceStateRouter } from "./workspace-state-router";
 export { stateCommandsFromRouter, stateReadModelsFromRouter } from "./state-facade";
 export type {

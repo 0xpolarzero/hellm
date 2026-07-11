@@ -30,18 +30,11 @@ type RuntimeCommandsFacade = {
   readonly writeStdin: (input: WriteCommandStdinInput) => Promise<WriteCommandStdinResult>;
 };
 
-type FetchStateReadModel = (request: {
-  readonly kind: "workspaceChromeLayout";
-  readonly workspaceId?: WorkspaceId;
-}) => Promise<StateReadModelResult>;
-
-type PanelMetadata = {
-  readonly paneId?: unknown;
-  readonly kind?: unknown;
-  readonly surfacePiSessionId?: unknown;
-  readonly threadId?: unknown;
-  readonly target?: unknown;
-};
+type FetchStateReadModel = (
+  request:
+    | { readonly kind: "workspaceChrome" }
+    | { readonly kind: "workspaceLayout"; readonly workspaceId: WorkspaceId },
+) => Promise<StateReadModelResult>;
 
 export function desktopBridgeError(input: {
   readonly operation: string;
@@ -239,53 +232,79 @@ async function assertCurrentPanelBinding(input: {
   readonly target: DesktopSubmitPromptRequest["target"];
   readonly fetchStateReadModel: FetchStateReadModel;
 }): Promise<void> {
-  let result: StateReadModelResult;
+  let chromeResult: StateReadModelResult;
   try {
-    result = await input.fetchStateReadModel({
-      kind: "workspaceChromeLayout",
+    chromeResult = await input.fetchStateReadModel({ kind: "workspaceChrome" });
+  } catch (error) {
+    throw desktopBridgeError({
+      operation: input.operation,
+      reason: "state-facade-failed",
+      message: "Failed to read authoritative workspace chrome.",
+      cause: error,
+    });
+  }
+
+  if (chromeResult.kind !== "workspaceChrome") {
+    throw desktopBridgeError({
+      operation: input.operation,
+      reason: "state-facade-failed",
+      message: `Expected workspaceChrome read model; received ${chromeResult.kind}.`,
+    });
+  }
+
+  const activeTab = chromeResult.value.tabs.find(
+    (tab) => tab.workspaceTabId === chromeResult.value.activeWorkspaceTabId,
+  );
+  if (!activeTab || activeTab.workspaceId !== input.workspaceId) {
+    throw invalidPanelBinding(
+      input.operation,
+      input.panelId,
+      "Panel does not belong to the active workspace tab.",
+    );
+  }
+
+  let layoutResult: StateReadModelResult;
+  try {
+    layoutResult = await input.fetchStateReadModel({
+      kind: "workspaceLayout",
       workspaceId: input.workspaceId,
     });
   } catch (error) {
     throw desktopBridgeError({
       operation: input.operation,
       reason: "state-facade-failed",
-      message: "Failed to read authoritative workspace panel bindings.",
+      message: "Failed to read authoritative workspace layout.",
       cause: error,
     });
   }
 
-  if (result.kind !== "workspaceChromeLayout") {
+  if (layoutResult.kind !== "workspaceLayout") {
     throw desktopBridgeError({
       operation: input.operation,
       reason: "state-facade-failed",
-      message: `Expected workspaceChromeLayout read model; received ${result.kind}.`,
+      message: `Expected workspaceLayout read model; received ${layoutResult.kind}.`,
     });
   }
 
-  const activeLayoutId =
-    result.value.tabs.find(
-      (tab) =>
-        tab.workspaceTabId === result.value.activeWorkspaceTabId &&
-        tab.workspaceId === input.workspaceId,
-    )?.activeLayoutId ??
-    result.value.tabs.find((tab) => tab.workspaceId === input.workspaceId)?.activeLayoutId;
-  const layout = result.value.layouts.find(
-    (candidate) =>
-      candidate.workspaceId === input.workspaceId &&
-      (!activeLayoutId || candidate.layoutId === activeLayoutId),
+  const slot = layoutResult.value.slots.find(
+    (candidate) => candidate.layoutId === activeTab.activeLayoutId,
   );
-  const pane = layout?.panelMetadata.find((candidate) => candidate.paneId === input.panelId) as
-    | PanelMetadata
-    | undefined;
-
-  if (!pane || pane.kind !== "surface") {
+  const pane = slot?.panes.find((candidate) => candidate.paneId === input.panelId);
+  if (
+    !pane ||
+    pane.restore.kind !== "ready" ||
+    (pane.target.surface !== "orchestrator" && pane.target.surface !== "handler")
+  ) {
     throw invalidPanelBinding(input.operation, input.panelId, "Panel is not bound to a surface.");
   }
 
-  const boundTarget = readPaneBoundTarget(pane);
+  const boundTarget = pane.target;
   if (
+    boundTarget.surface !== input.target.surface ||
+    boundTarget.workspaceSessionId !== input.target.workspaceSessionId ||
     boundTarget.surfacePiSessionId !== input.target.surfacePiSessionId ||
-    boundTarget.threadId !== ("threadId" in input.target ? (input.target.threadId ?? null) : null)
+    (boundTarget.surface === "handler" &&
+      (input.target.surface !== "handler" || boundTarget.threadId !== input.target.threadId))
   ) {
     throw invalidPanelBinding(
       input.operation,
@@ -293,27 +312,6 @@ async function assertCurrentPanelBinding(input: {
       "Panel binding no longer matches the submitted target.",
     );
   }
-}
-
-function readPaneBoundTarget(pane: PanelMetadata): {
-  readonly surfacePiSessionId: string | null;
-  readonly threadId: string | null;
-} {
-  const target =
-    pane.target && typeof pane.target === "object" ? (pane.target as PanelMetadata) : {};
-  const surfacePiSessionId =
-    typeof pane.surfacePiSessionId === "string"
-      ? pane.surfacePiSessionId
-      : typeof target.surfacePiSessionId === "string"
-        ? target.surfacePiSessionId
-        : null;
-  const threadId =
-    typeof pane.threadId === "string"
-      ? pane.threadId
-      : typeof target.threadId === "string"
-        ? target.threadId
-        : null;
-  return { surfacePiSessionId, threadId };
 }
 
 function invalidPanelBinding(

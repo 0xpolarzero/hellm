@@ -17,6 +17,26 @@ describe("Dockview workspace chrome", () => {
     );
   });
 
+  it("reapplies changed serialized layouts without feeding restore events back into persistence", async () => {
+    const dockviewSource = await readFile(
+      new URL("./DockviewWorkspace.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(dockviewSource).toContain("function applySerializedDockviewLayout");
+    expect(dockviewSource).toContain("function getDockviewLayoutSignature");
+    expect(dockviewSource).toContain("void dockviewLayout;");
+    expect(dockviewSource).toContain("applySerializedDockviewLayout(dockviewLayout);");
+    expect(dockviewSource).toContain("dockview.fromJSON(layout, { reuseExistingPanels: true });");
+    expect(dockviewSource).toContain("if (!dockview || applying) return;");
+    expect(dockviewSource).toContain("const wasApplying = applying;");
+    expect(dockviewSource).toContain("applying = wasApplying;");
+    expect(dockviewSource).toContain(
+      "appliedDockviewLayoutSignature = getDockviewLayoutSignature(serialized);",
+    );
+    expect(dockviewSource).not.toContain("{#key dockviewLayout");
+  });
+
   it("keeps Dockview geometry changes instant so pane actions do not flash through transition positions", async () => {
     const dockviewSource = await readFile(
       new URL("./DockviewWorkspace.svelte", import.meta.url),

@@ -11,6 +11,7 @@ import {
   type BuildLaunchPolicyInput,
   type CommandId,
   type ExtensionExecutionPlanId,
+  type GeneratedPackageBuildId,
   type GeneratedPackageBuildInput,
   type GeneratedPackageName,
   type IsoDateTimeString,
@@ -402,7 +403,13 @@ describe("runtime promoted service layers", () => {
       ]);
       assert.deepStrictEqual(result, {
         scope: "app-global",
-        packages: [{ packageName: "@svvyx/workflows", action: "written" }],
+        packages: [
+          {
+            packageName: "@svvyx/workflows",
+            action: "written",
+            buildId: "generated-workflows-build-runtime-service-layers" as GeneratedPackageBuildId,
+          },
+        ],
         workspaceLinks: [],
         recoveryWorkIds: [],
       });
@@ -419,6 +426,8 @@ describe("runtime promoted service layers", () => {
                   packages: input.packages.map((packageName) => ({
                     packageName,
                     action: "written" as const,
+                    buildId:
+                      "generated-workflows-build-runtime-service-layers" as GeneratedPackageBuildId,
                   })),
                 };
               }),

@@ -3,7 +3,15 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { RUNTIME_TURN_DECISIONS } from "@svvy/core";
+import {
+  RUNTIME_TURN_DECISIONS,
+  type AbsolutePath,
+  type ThreadId,
+  type WorkspaceId,
+  type WorkspacePaneId,
+  type WorkspaceSessionId,
+  type WorkspaceTabId,
+} from "@svvy/core";
 import * as Effect from "effect/Effect";
 import { StateContractError } from "@svvy/core";
 import {
@@ -78,6 +86,267 @@ describe("structured session state write API", () => {
 
   it("keeps the current top-level turn decision inventory aligned with the product spec", () => {
     expect([...STRUCTURED_TURN_DECISIONS]).toEqual(["pending", ...RUNTIME_TURN_DECISIONS]);
+  });
+
+  it("persists app chrome identity and atomic workspace slots without tab-scoped layout copies", () => {
+    const store = createStore();
+    const workspaceId = store.workspaceId as WorkspaceId;
+    const initial = store.readWorkspaceLayout(workspaceId);
+
+    expect(initial.slots.map((slot) => [slot.layoutId, slot.initialized, slot.updatedAt])).toEqual([
+      ["A", false, "1970-01-01T00:00:00.000Z"],
+      ["B", false, "1970-01-01T00:00:00.000Z"],
+      ["C", false, "1970-01-01T00:00:00.000Z"],
+    ]);
+    expect(store.readWorkspaceLayout(workspaceId)).toEqual(initial);
+
+    const firstTab = {
+      workspaceTabId: "workspace-tab-layout-first" as WorkspaceTabId,
+      workspaceId,
+      cwd: store.getWorkspaceRecord().cwd as AbsolutePath,
+      workspaceLabel: "Layout first",
+      kind: "user" as const,
+      openedAt: "2026-04-18T08:00:00.000Z" as never,
+      activeLayoutId: "A" as const,
+    };
+    const duplicateTab = {
+      ...firstTab,
+      workspaceTabId: "workspace-tab-layout-duplicate" as WorkspaceTabId,
+      workspaceLabel: "Layout duplicate",
+      openedAt: "2026-04-18T08:01:00.000Z" as never,
+    };
+    store.setWorkspaceTabs({
+      activeWorkspaceTabId: duplicateTab.workspaceTabId,
+      tabs: [firstTab, duplicateTab],
+      knownWorkspaces: [firstTab],
+    });
+    expect(store.readWorkspaceChrome()).toMatchObject({
+      activeWorkspaceTabId: duplicateTab.workspaceTabId,
+      tabs: [firstTab, duplicateTab],
+      knownWorkspaces: [firstTab],
+    });
+
+    store.saveWorkspaceLayoutSlot({
+      workspaceId,
+      layoutId: "A",
+      dockviewJson: { grid: null },
+      panes: [],
+      compactSurfaces: [],
+      focusedPaneId: null,
+    });
+    expect(store.readWorkspaceLayout(workspaceId).slots[0]?.initialized).toBe(false);
+
+    const firstPane = {
+      paneId: "pane-layout-first" as WorkspacePaneId,
+      target: { surface: "open-workspace" as const },
+      localState: { scroll: null, timelineDensity: "comfortable" as const },
+      fallbackChrome: null,
+      placement: null,
+      restore: { kind: "ready" as const },
+    };
+    const restoredPane = {
+      paneId: "pane-layout-restored" as WorkspacePaneId,
+      target: {
+        surface: "app-logs" as const,
+        workspaceSessionId: "session-layout-restored" as WorkspaceSessionId,
+      },
+      localState: {
+        scroll: { transcriptAnchorId: null, offsetPx: -9.5 },
+        timelineDensity: "compact" as const,
+      },
+      fallbackChrome: {
+        title: "Logs",
+        subtitle: "Session logs",
+        kind: "app-logs" as const,
+      },
+      placement: {
+        kind: "popout" as const,
+        box: { left: -1200, top: 40, width: 900, height: 700 },
+      },
+      restore: {
+        kind: "unavailable" as const,
+        reason: "The session is unavailable.",
+        lastKnownLocationLabel: "Popout 1",
+      },
+    };
+    store.saveWorkspaceLayoutSlot({
+      workspaceId,
+      layoutId: "A",
+      dockviewJson: { grid: { root: null } },
+      panes: [firstPane, restoredPane],
+      compactSurfaces: [
+        {
+          kind: "compact-thread",
+          workspaceSessionId: "session-layout-restored" as WorkspaceSessionId,
+          threadId: "thread-layout-restored" as ThreadId,
+          panelId: restoredPane.paneId,
+          density: "compact",
+        },
+      ],
+      focusedPaneId: restoredPane.paneId,
+    });
+    expect(store.readWorkspaceLayout(workspaceId).slots[0]).toMatchObject({
+      initialized: true,
+      panes: [firstPane, restoredPane],
+      compactSurfaces: [expect.objectContaining({ panelId: restoredPane.paneId })],
+    });
+
+    store.saveWorkspaceLayoutSlot({
+      workspaceId,
+      layoutId: "A",
+      dockviewJson: null,
+      panes: [],
+      compactSurfaces: [],
+      focusedPaneId: null,
+    });
+    const replaced = store.readWorkspaceLayout(workspaceId).slots[0];
+    expect(replaced).toMatchObject({
+      initialized: true,
+      dockviewJson: null,
+      panes: [],
+      compactSurfaces: [],
+      focusedPaneId: null,
+    });
+    expect(store.readWorkspaceLayout(workspaceId).slots).toHaveLength(3);
+  });
+
+  it("orders stale full chrome writes behind atomic granular selections and missing targets", () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "svvy-workspace-chrome-order-"));
+    tempDirs.push(workspaceCwd);
+    const databasePath = join(workspaceCwd, "state.sqlite");
+    const options = {
+      databasePath,
+      busyTimeoutMs: 1_000,
+      digest: testDigest,
+      workspace: {
+        id: workspaceCwd,
+        label: "Workspace chrome ordering",
+        cwd: workspaceCwd,
+        artifactDir: join(workspaceCwd, "artifact-store"),
+      },
+      now: createDeterministicClock(),
+    };
+    const primary = createStructuredSessionStateStore(options);
+    const concurrent = createStructuredSessionStateStore({
+      ...options,
+      now: createDeterministicClock("2026-04-18T10:00:00.000Z"),
+    });
+    stores.push(primary, concurrent);
+    const workspaceId = primary.workspaceId as WorkspaceId;
+    const firstTab = {
+      workspaceTabId: "workspace-tab-order-first" as WorkspaceTabId,
+      workspaceId,
+      cwd: workspaceCwd as AbsolutePath,
+      workspaceLabel: "First",
+      kind: "user" as const,
+      openedAt: "2026-04-18T08:00:00.000Z" as never,
+      activeLayoutId: "A" as const,
+    };
+    const secondTab = {
+      ...firstTab,
+      workspaceTabId: "workspace-tab-order-second" as WorkspaceTabId,
+      workspaceLabel: "Second",
+      openedAt: "2026-04-18T08:01:00.000Z" as never,
+    };
+    const staleFullState = {
+      activeWorkspaceTabId: firstTab.workspaceTabId,
+      tabs: [firstTab, secondTab],
+      knownWorkspaces: [firstTab, secondTab],
+    };
+
+    expect(primary.setWorkspaceTabs(staleFullState).outcome).toBe("committed");
+    expect(
+      primary.selectWorkspaceLayoutSlot({
+        workspaceTabId: firstTab.workspaceTabId,
+        layoutId: "B",
+      }).outcome,
+    ).toBe("committed");
+    expect(primary.selectWorkspaceTab({ workspaceTabId: secondTab.workspaceTabId }).outcome).toBe(
+      "committed",
+    );
+    const revisionAfterGranularSelections = primary.readCurrentStateRevision();
+
+    expect(concurrent.setWorkspaceTabs(staleFullState)).toMatchObject({
+      outcome: "no-op",
+      stateRevision: revisionAfterGranularSelections,
+    });
+    expect(primary.readWorkspaceChrome()).toMatchObject({
+      activeWorkspaceTabId: secondTab.workspaceTabId,
+      tabs: [
+        expect.objectContaining({ workspaceTabId: firstTab.workspaceTabId, activeLayoutId: "B" }),
+        expect.objectContaining({ workspaceTabId: secondTab.workspaceTabId, activeLayoutId: "A" }),
+      ],
+      knownWorkspaces: [
+        expect.objectContaining({ workspaceTabId: firstTab.workspaceTabId, activeLayoutId: "B" }),
+        expect.objectContaining({ workspaceTabId: secondTab.workspaceTabId, activeLayoutId: "A" }),
+      ],
+    });
+    expect(
+      concurrent.selectWorkspaceLayoutSlot({
+        workspaceTabId: firstTab.workspaceTabId,
+        layoutId: "B",
+      }).outcome,
+    ).toBe("no-op");
+    expect(
+      concurrent.selectWorkspaceTab({ workspaceTabId: secondTab.workspaceTabId }).outcome,
+    ).toBe("no-op");
+
+    primary.setWorkspaceTabs({
+      activeWorkspaceTabId: null,
+      tabs: [],
+      knownWorkspaces: [],
+    });
+    const revisionAfterRemoval = primary.readCurrentStateRevision();
+    for (const select of [
+      () => concurrent.selectWorkspaceTab({ workspaceTabId: firstTab.workspaceTabId }),
+      () =>
+        concurrent.selectWorkspaceLayoutSlot({
+          workspaceTabId: firstTab.workspaceTabId,
+          layoutId: "C",
+        }),
+    ]) {
+      expect(select).toThrow(StateContractError);
+      try {
+        select();
+      } catch (error) {
+        expect(error).toMatchObject({ reason: "not-found" });
+      }
+    }
+    expect(primary.readCurrentStateRevision()).toBe(revisionAfterRemoval);
+  });
+
+  it("honors the requested active tab when a full write changes the tab collection", () => {
+    const store = createStore();
+    const workspaceId = store.workspaceId as WorkspaceId;
+    const firstTab = {
+      workspaceTabId: "workspace-tab-compound-first" as WorkspaceTabId,
+      workspaceId,
+      cwd: store.getWorkspaceRecord().cwd as AbsolutePath,
+      workspaceLabel: "Compound first",
+      kind: "user" as const,
+      openedAt: "2026-04-18T08:00:00.000Z" as never,
+      activeLayoutId: "A" as const,
+    };
+    const secondTab = {
+      ...firstTab,
+      workspaceTabId: "workspace-tab-compound-second" as WorkspaceTabId,
+      workspaceLabel: "Compound second",
+      openedAt: "2026-04-18T08:01:00.000Z" as never,
+    };
+
+    store.setWorkspaceTabs({
+      activeWorkspaceTabId: firstTab.workspaceTabId,
+      tabs: [firstTab],
+      knownWorkspaces: [firstTab],
+    });
+    expect(
+      store.setWorkspaceTabs({
+        activeWorkspaceTabId: secondTab.workspaceTabId,
+        tabs: [firstTab, secondTab],
+        knownWorkspaces: [firstTab, secondTab],
+      }).outcome,
+    ).toBe("committed");
+    expect(store.readWorkspaceChrome().activeWorkspaceTabId).toBe(secondTab.workspaceTabId);
   });
 
   it("exposes structured session state through an Effect service and scoped layer", async () => {

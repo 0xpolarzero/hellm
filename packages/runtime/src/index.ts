@@ -164,6 +164,10 @@ import {
   layerRuntimeAppLogCommitNotification,
   RuntimeAppLogCommitNotification,
 } from "./runtime-app-log-commit-notification";
+import {
+  layerRuntimeCommittedStateInvalidationPublication,
+  RuntimeCommittedStateInvalidationPublication,
+} from "./runtime-committed-state-invalidation-publication";
 import { layerRuntimeExecutionPlanExecutor } from "./runtime-effect-requests";
 import { layerRuntimeWorkspaceScopeService } from "./workspace-runtime-scope-service";
 import { layerRuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
@@ -278,6 +282,8 @@ export namespace Runtime {
   const runtimeAcceptedNativeToolExecutionLayer = layerRuntimeAcceptedNativeToolExecution;
   const runtimeExecutionPlanExecutorLayer = layerRuntimeExecutionPlanExecutor;
   const runtimeAppLogCommitNotificationLayer = layerRuntimeAppLogCommitNotification;
+  const runtimeCommittedStateInvalidationPublicationLayer =
+    layerRuntimeCommittedStateInvalidationPublication;
   const runtimeStartupReadinessLayer = layerRuntimeStartupReadiness;
   const runtimeShutdownPreparationLayer = layerRuntimeShutdownPreparation;
 
@@ -286,6 +292,7 @@ export namespace Runtime {
     | RuntimeStartupReadiness
     | RuntimeShutdownPreparation
     | RuntimeAppLogCommitNotification
+    | RuntimeCommittedStateInvalidationPublication
     | StateCommandPostCommitNotificationPort,
     RuntimeLayerError,
     | RuntimeLayerConfigService
@@ -330,6 +337,7 @@ export namespace Runtime {
     runtimeAcceptedNativeToolExecutionLayer,
     runtimeExecutionPlanExecutorLayer,
     runtimeAppLogCommitNotificationLayer,
+    runtimeCommittedStateInvalidationPublicationLayer,
     runtimeStartupReadinessLayer,
     runtimeShutdownPreparationLayer,
     layerStateCommandPostCommitNotificationPort,

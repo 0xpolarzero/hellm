@@ -1,7 +1,6 @@
 <script lang="ts">
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArchiveRestoreIcon from "@lucide/svelte/icons/archive-restore";
-  import GitForkIcon from "@lucide/svelte/icons/git-fork";
   import PinIcon from "@lucide/svelte/icons/pin";
   import PinOffIcon from "@lucide/svelte/icons/pin-off";
   import type { ContextBudget } from "./context-budget";
@@ -134,9 +133,6 @@
             >
               {primaryPaneLocation.label}
             </span>
-          {/if}
-          {#if session.parentSessionId}
-            <GitForkIcon aria-label="Forked session" size={11} strokeWidth={1.85} />
           {/if}
           {#if session.isUnread}
             <span class="session-unread-dot" aria-hidden="true"></span>

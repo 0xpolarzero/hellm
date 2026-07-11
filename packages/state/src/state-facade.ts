@@ -9,12 +9,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   AbsolutePath,
+  decodeUnknownWorkspaceChromeReadModelEffect,
+  decodeUnknownWorkspaceLayoutReadModelEffect,
   decodeUnknownSessionNavigationReadModelEffect,
   type AgentProfileId,
   AppLogEntryId,
-  type ArtifactId,
-  type ByteCount,
-  type CommandFactsPayload,
   type CommandId,
   type ComposerAttachment,
   type ComposerSnippetMention,
@@ -33,7 +32,6 @@ import {
   type JsonValue as JsonValueType,
   type MessageId,
   type ModelId,
-  type NonNegativeSafeInteger,
   type PiSessionReferencePort,
   type PositiveSafeInteger,
   type ProviderAuthStatus,
@@ -80,7 +78,6 @@ import {
   type StateFacadeErrorContract,
   type StateInvalidationDescriptor,
   type StateMutationResult,
-  type StateStoredError,
   type StateRevision,
   strictBoundaryParseOptions,
   type SnippetId,
@@ -90,9 +87,13 @@ import {
   type ThreadId,
   type TurnId,
   type WorkflowTaskAttemptId,
-  type WorkspacePaneId,
   type WorkspaceSessionId,
-  type WorkspaceTabId,
+  WorkspaceChromeReadModelSchema,
+  type WorkspaceChromeReadModel,
+  WorkspaceId,
+  type WorkspaceLayoutReadModel,
+  WorkspaceLayoutReadModelSchema,
+  type WorkspaceLayoutSlotId,
   type WorkspaceId as WorkspaceIdType,
 } from "@svvy/core";
 import {
@@ -113,6 +114,7 @@ import {
   buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
   hasStructuredSessionFacts,
+  type StructuredCommandInspector,
   type StructuredHandlerThreadInspector,
   type StructuredWorkflowTaskAttemptInspector,
 } from "./structured-session-selectors";
@@ -134,7 +136,6 @@ import {
 import type { StateLayerConfig } from "./state-layer-config";
 import type { WorkspaceStateRouter } from "./workspace-state-router";
 import {
-  decodeUnknownCloseWorkspacePaneCommandInputEffect,
   decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect,
   decodeUnknownCreateManagedSnippetCommandInputEffect,
   decodeUnknownDeleteManagedSnippetCommandInputEffect,
@@ -148,7 +149,7 @@ import {
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
   decodeUnknownReorderOrchestratorProfilesCommandInputEffect,
   decodeUnknownResetActorExtensionDefaultsCommandInputEffect,
-  decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputEffect,
+  decodeUnknownSaveWorkspaceLayoutSlotCommandInputEffect,
   decodeUnknownSelectWorkspaceLayoutSlotCommandInputEffect,
   decodeUnknownSelectWorkspaceTabCommandInputEffect,
   decodeUnknownSetExternalInstructionActorUsageCommandInputEffect,
@@ -163,10 +164,8 @@ import {
   decodeUnknownUpdateAppPreferencesCommandInputEffect,
   decodeUnknownUpdateOrchestratorProfileCommandInputEffect,
   decodeUnknownUpdateThreadHandlerProfileCommandInputEffect,
-  decodeUnknownUpdateWorkspacePaneCommandInputEffect,
   type AppPreferenceAppearance,
   type AppPreferenceApprovalMode,
-  type CloseWorkspacePaneCommandInput,
   type CreateManagedSnippetCommandInput,
   type DeleteManagedSnippetCommandInput,
   type DeleteOrchestratorProfileCommandInput,
@@ -180,7 +179,7 @@ import {
   type RemoveExtensionEnvOverrideCommandInput,
   type ReorderOrchestratorProfilesCommandInput,
   type ResetActorExtensionDefaultsCommandInput,
-  type SaveWorkspaceLayoutSnapshotCommandInput,
+  type SaveWorkspaceLayoutSlotCommandInput,
   type SelectWorkspaceLayoutSlotCommandInput,
   type SelectWorkspaceTabCommandInput,
   type SetExternalInstructionActorUsageCommandInput,
@@ -195,7 +194,6 @@ import {
   type UpdateAppPreferencesCommandInput,
   type UpdateOrchestratorProfileCommandInput,
   type UpdateThreadHandlerProfileCommandInput,
-  type UpdateWorkspacePaneCommandInput,
 } from "./state-command-schemas";
 
 const decodeSessionNavigationSummaryProjection = Schema.decodeUnknownEffect(
@@ -236,7 +234,8 @@ export type StateReadModelRequest =
   | WorkflowsGeneratedReadModelRequest
   | HandlerInspectorReadModelRequest
   | WorkflowTaskAttemptInspectorReadModelRequest
-  | WorkspaceChromeLayoutReadModelRequest;
+  | WorkspaceChromeReadModelRequest
+  | WorkspaceLayoutReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
@@ -258,7 +257,8 @@ export type StateReadModelResult =
   | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
   | { kind: "handlerInspector"; value: HandlerInspectorReadModel | null }
   | { kind: "workflowTaskAttemptInspector"; value: WorkflowTaskAttemptInspectorReadModel | null }
-  | { kind: "workspaceChromeLayout"; value: WorkspaceChromeLayoutReadModel };
+  | { kind: "workspaceChrome"; value: WorkspaceChromeReadModel }
+  | { kind: "workspaceLayout"; value: WorkspaceLayoutReadModel };
 
 export interface AppPreferencesReadModel {
   appearance: AppPreferenceAppearance;
@@ -321,7 +321,7 @@ export const StateReadModelRequestSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("surfaceQueuedMessages"), target: Schema.Json }),
   Schema.Struct({
     kind: Schema.Literal("commandInspector"),
-    workspaceId: Schema.String,
+    workspaceId: WorkspaceId,
     commandId: Schema.String,
   }),
   Schema.Struct({
@@ -355,18 +355,20 @@ export const StateReadModelRequestSchema = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal("handlerInspector"),
-    workspaceId: Schema.optionalKey(Schema.String),
+    workspaceId: WorkspaceId,
     threadId: Schema.String,
   }),
   Schema.Struct({
     kind: Schema.Literal("workflowTaskAttemptInspector"),
-    workspaceId: Schema.optionalKey(Schema.String),
+    workspaceId: WorkspaceId,
     workflowTaskAttemptId: Schema.String,
   }),
   Schema.Struct({
-    kind: Schema.Literal("workspaceChromeLayout"),
-    workspaceId: Schema.optionalKey(Schema.String),
-    layoutId: Schema.optionalKey(Schema.Literals(["A", "B", "C"])),
+    kind: Schema.Literal("workspaceChrome"),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workspaceLayout"),
+    workspaceId: WorkspaceId,
   }),
 ]);
 
@@ -393,7 +395,8 @@ export const StateReadModelResultSchema = Schema.Union([
     kind: Schema.Literal("workflowTaskAttemptInspector"),
     value: Schema.NullOr(Schema.Json),
   }),
-  Schema.Struct({ kind: Schema.Literal("workspaceChromeLayout"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("workspaceChrome"), value: WorkspaceChromeReadModelSchema }),
+  Schema.Struct({ kind: Schema.Literal("workspaceLayout"), value: WorkspaceLayoutReadModelSchema }),
 ]);
 
 export interface SessionNavigationReadModelRequest {
@@ -466,20 +469,23 @@ export interface WorkflowsGeneratedReadModelRequest {
 
 export interface HandlerInspectorReadModelRequest {
   kind: "handlerInspector";
-  workspaceId?: WorkspaceIdType;
+  workspaceId: WorkspaceIdType;
   threadId: string;
 }
 
 export interface WorkflowTaskAttemptInspectorReadModelRequest {
   kind: "workflowTaskAttemptInspector";
-  workspaceId?: WorkspaceIdType;
+  workspaceId: WorkspaceIdType;
   workflowTaskAttemptId: string;
 }
 
-export interface WorkspaceChromeLayoutReadModelRequest {
-  kind: "workspaceChromeLayout";
-  workspaceId?: WorkspaceIdType;
-  layoutId?: WorkspaceLayoutSlotId;
+export interface WorkspaceChromeReadModelRequest {
+  kind: "workspaceChrome";
+}
+
+export interface WorkspaceLayoutReadModelRequest {
+  kind: "workspaceLayout";
+  workspaceId: WorkspaceIdType;
 }
 
 export type SessionNavigationReadModel = CoreSessionNavigationReadModel;
@@ -544,32 +550,9 @@ export interface SurfaceQueuedMessagesReadModel {
   }[];
 }
 
-export interface CommandInspectorReadModel {
-  commandId: CommandId;
-  status: "pending" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-  toolName: string;
-  target?: RuntimeSurfaceTarget;
-  acceptedArguments?: JsonValueType;
-  summary?: string;
-  error?: StateStoredError;
-  finishedAt?: IsoDateTimeString;
-  output: readonly {
-    stream: "stdout" | "stderr";
-    text: string;
-    sequence: NonNegativeSafeInteger;
-  }[];
-  stdin: {
-    mode: "none" | "continuable";
-    canAttemptWrite: boolean;
-    acceptedWrites: readonly {
-      text: string;
-      acceptedBytes: ByteCount;
-      at: IsoDateTimeString;
-    }[];
-  };
-  facts?: CommandFactsPayload;
-  childCommandIds: readonly CommandId[];
-  artifactIds: readonly ArtifactId[];
+export interface CommandInspectorReadModel extends StructuredCommandInspector {
+  target: RuntimeSurfaceTarget;
+  acceptedArguments: JsonValueType;
 }
 
 export interface RequestInputReadModel {
@@ -713,39 +696,6 @@ export type HandlerInspectorReadModel = StructuredHandlerThreadInspector;
 
 export type WorkflowTaskAttemptInspectorReadModel = StructuredWorkflowTaskAttemptInspector;
 
-export type WorkspaceLayoutSlotId = "A" | "B" | "C";
-
-export interface WorkspaceChromeLayoutReadModel {
-  activeWorkspaceTabId: WorkspaceTabId | null;
-  tabs: readonly WorkspaceTabReadModelRecord[];
-  knownWorkspaces: readonly WorkspaceTabReadModelRecord[];
-  layouts: readonly WorkspaceLayoutReadModelRecord[];
-}
-
-export interface WorkspaceTabReadModelRecord {
-  workspaceTabId: WorkspaceTabId;
-  workspaceId: WorkspaceIdType;
-  cwd: string;
-  openedAt: IsoDateTimeString;
-  activeLayoutId: WorkspaceLayoutSlotId;
-}
-
-export interface WorkspaceLayoutReadModelRecord {
-  workspaceId: WorkspaceIdType;
-  layoutId: WorkspaceLayoutSlotId;
-  initialized: boolean;
-  snapshotJson: JsonValueType | null;
-  focusedPaneId: WorkspacePaneId | null;
-  panelMetadata: readonly WorkspacePaneReadModelRecord[];
-}
-
-export interface WorkspacePaneReadModelRecord {
-  paneId: WorkspacePaneId;
-  kind: "surface" | "inspector" | "static";
-  target: JsonValueType;
-  localStateJson: JsonValueType | null;
-}
-
 export interface StateReadModelInvalidationRefetchRequest {
   descriptor: StateInvalidationDescriptor;
 }
@@ -816,14 +766,8 @@ export interface WorkspaceChromeStateCommands {
 }
 
 export interface WorkspaceLayoutStateCommands {
-  saveSnapshot(
-    input: SaveWorkspaceLayoutSnapshotCommandInput,
-  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
-  updatePane(
-    input: UpdateWorkspacePaneCommandInput,
-  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
-  closePane(
-    input: CloseWorkspacePaneCommandInput,
+  saveSlot(
+    input: SaveWorkspaceLayoutSlotCommandInput,
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
 }
 
@@ -949,16 +893,8 @@ export interface StateCommandsFacade {
     ): Promise<StateCommandResult>;
   };
   workspaceLayout: {
-    saveSnapshot(
-      input: SaveWorkspaceLayoutSnapshotCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    updatePane(
-      input: UpdateWorkspacePaneCommandInput,
-      options?: StateFacadeCallOptions,
-    ): Promise<StateCommandResult>;
-    closePane(
-      input: CloseWorkspacePaneCommandInput,
+    saveSlot(
+      input: SaveWorkspaceLayoutSlotCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
@@ -1268,32 +1204,12 @@ export function createStateCommandsFacade(
         ),
     },
     workspaceLayout: {
-      saveSnapshot: (input, callOptions) =>
+      saveSlot: (input, callOptions) =>
         run(
-          "stateCommands.workspaceLayout.saveSnapshot",
+          "stateCommands.workspaceLayout.saveSlot",
           Effect.gen(function* () {
             const commands = yield* StateCommands;
-            return yield* commands.workspaceLayout.saveSnapshot(input);
-          }),
-          input.clientSubmission,
-          callOptions,
-        ),
-      updatePane: (input, callOptions) =>
-        run(
-          "stateCommands.workspaceLayout.updatePane",
-          Effect.gen(function* () {
-            const commands = yield* StateCommands;
-            return yield* commands.workspaceLayout.updatePane(input);
-          }),
-          input.clientSubmission,
-          callOptions,
-        ),
-      closePane: (input, callOptions) =>
-        run(
-          "stateCommands.workspaceLayout.closePane",
-          Effect.gen(function* () {
-            const commands = yield* StateCommands;
-            return yield* commands.workspaceLayout.closePane(input);
+            return yield* commands.workspaceLayout.saveSlot(input);
           }),
           input.clientSubmission,
           callOptions,
@@ -1829,10 +1745,15 @@ function stateReadModelsFromState(state: {
                 request.workflowTaskAttemptId,
               ),
             };
-          case "workspaceChromeLayout":
+          case "workspaceChrome":
             return {
-              kind: "workspaceChromeLayout",
-              value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, request),
+              kind: "workspaceChrome",
+              value: yield* buildWorkspaceChromeReadModel(structuredSession),
+            };
+          case "workspaceLayout":
+            return {
+              kind: "workspaceLayout",
+              value: yield* buildWorkspaceLayoutReadModel(structuredSession, request.workspaceId),
             };
         }
       }),
@@ -1840,11 +1761,7 @@ function stateReadModelsFromState(state: {
       Effect.gen(function* () {
         const model = request.descriptor.invalidation.model;
         const structuredSession = yield* state.structuredSession(
-          model === "workspaceChromeLayout"
-            ? undefined
-            : request.descriptor.scope === "workspace"
-              ? request.descriptor.workspaceId
-              : undefined,
+          request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : undefined,
         );
         switch (model) {
           case "appLogs": {
@@ -1882,16 +1799,22 @@ function stateReadModelsFromState(state: {
                 value: yield* buildSessionNavigationReadModel(structuredSession),
               },
             ];
-          case "workspaceChromeLayout":
+          case "workspaceChrome":
             return [
               {
-                kind: "workspaceChromeLayout",
-                value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, {
-                  kind: "workspaceChromeLayout",
-                  ...(request.descriptor.scope === "workspace"
-                    ? { workspaceId: request.descriptor.workspaceId }
-                    : {}),
-                }),
+                kind: "workspaceChrome",
+                value: yield* buildWorkspaceChromeReadModel(structuredSession),
+              },
+            ];
+          case "workspaceLayout":
+            if (request.descriptor.scope !== "workspace") return [];
+            return [
+              {
+                kind: "workspaceLayout",
+                value: yield* buildWorkspaceLayoutReadModel(
+                  structuredSession,
+                  request.descriptor.workspaceId,
+                ),
               },
             ];
           case "surface":
@@ -2033,11 +1956,8 @@ function stateReadModelsFromState(state: {
                     }),
                   },
                   {
-                    kind: "workspaceChromeLayout",
-                    value: yield* buildWorkspaceChromeLayoutReadModel(appState, {
-                      kind: "workspaceChromeLayout",
-                      workspaceId,
-                    }),
+                    kind: "workspaceLayout",
+                    value: yield* buildWorkspaceLayoutReadModel(workspaceState, workspaceId),
                   },
                 ] satisfies StateReadModelResult[],
                 revision: workspaceStateRevision,
@@ -2067,6 +1987,10 @@ function stateReadModelsFromState(state: {
                 kind: "workflowsGenerated",
               }),
             },
+            {
+              kind: "workspaceChrome",
+              value: yield* buildWorkspaceChromeReadModel(appState),
+            },
           ],
           workspaces: workspaceBaseline.results,
           revision: Math.max(
@@ -2091,6 +2015,7 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "snippets":
     case "handlerInspector":
     case "workflowTaskAttemptInspector":
+    case "workspaceLayout":
       return request.workspaceId;
     default:
       return undefined;
@@ -2335,36 +2260,11 @@ function buildCommandInspectorReadModel(
       const inspector = buildStructuredCommandInspector(snapshot, commandId);
       if (!inspector) continue;
       const command = snapshot.commands.find((candidate) => candidate.id === inspector.commandId);
+      if (!command) continue;
       return {
-        commandId: inspector.commandId as CommandId,
-        status: commandInspectorStatus(inspector.status),
-        toolName: inspector.toolName,
-        ...(command ? { target: commandTarget(snapshot, command) } : {}),
-        ...(command?.arguments !== undefined
-          ? { acceptedArguments: command.arguments as JsonValueType }
-          : {}),
-        ...(inspector.summary ? { summary: inspector.summary } : {}),
-        ...(inspector.error ? { error: storedErrorFromMessage(inspector.error) } : {}),
-        ...(inspector.finishedAt ? { finishedAt: inspector.finishedAt as IsoDateTimeString } : {}),
-        output: inspector.outputEvents.map((event, index) => ({
-          stream: event.stream,
-          text: event.text,
-          sequence: index as NonNegativeSafeInteger,
-        })),
-        stdin: {
-          mode: inspector.stdin.mode,
-          canAttemptWrite: inspector.stdin.canAttemptWrite,
-          acceptedWrites: inspector.stdin.acceptedWrites.map((write) => ({
-            text: write.text,
-            acceptedBytes: write.acceptedBytes as ByteCount,
-            at: write.at as IsoDateTimeString,
-          })),
-        },
-        ...(inspector.facts ? { facts: inspector.facts as CommandFactsPayload } : {}),
-        childCommandIds: [...inspector.summaryChildren, ...inspector.traceChildren].map(
-          (child) => child.commandId as CommandId,
-        ),
-        artifactIds: inspector.artifacts.map((artifact) => artifact.artifactId as ArtifactId),
+        ...inspector,
+        target: commandTarget(snapshot, command),
+        acceptedArguments: (command.arguments ?? null) as JsonValueType,
       };
     }
     return null;
@@ -2549,25 +2449,50 @@ function buildWorkflowTaskAttemptInspectorReadModel(
   );
 }
 
-function buildWorkspaceChromeLayoutReadModel(
+function buildWorkspaceChromeReadModel(
   state: StructuredSessionState["Service"],
-  request: WorkspaceChromeLayoutReadModelRequest,
-): Effect.Effect<WorkspaceChromeLayoutReadModel, StateContractError> {
-  return state.readWorkspaceChromeLayout(request).pipe(
-    Effect.map((record) => ({
-      activeWorkspaceTabId: record.activeWorkspaceTabId as WorkspaceTabId | null,
-      tabs: record.tabs.map(workspaceTabReadModelRecord),
-      knownWorkspaces: record.knownWorkspaces.map(workspaceTabReadModelRecord),
-      layouts: record.layouts.map((layout) => ({
-        workspaceId: layout.workspaceId as WorkspaceIdType,
-        layoutId: layout.layoutId,
-        initialized: layout.initialized,
-        snapshotJson: layout.snapshotJson as JsonValueType | null,
-        focusedPaneId: layout.focusedPaneId as WorkspacePaneId | null,
-        panelMetadata: layout.panelMetadata as unknown as WorkspacePaneReadModelRecord[],
-      })),
-    })),
+): Effect.Effect<WorkspaceChromeReadModel, StateContractError> {
+  return state.readWorkspaceChrome().pipe(
+    Effect.flatMap((record) =>
+      decodeUnknownWorkspaceChromeReadModelEffect({
+        activeWorkspaceTabId: record.activeWorkspaceTabId,
+        tabs: record.tabs,
+        knownWorkspaces: record.knownWorkspaces,
+      }).pipe(Effect.mapError(workspaceChromeProjectionError)),
+    ),
   );
+}
+
+function buildWorkspaceLayoutReadModel(
+  state: StructuredSessionState["Service"],
+  workspaceId: WorkspaceIdType,
+): Effect.Effect<WorkspaceLayoutReadModel, StateContractError> {
+  return state.readWorkspaceLayout(workspaceId).pipe(
+    Effect.flatMap((record) =>
+      decodeUnknownWorkspaceLayoutReadModelEffect({
+        workspaceId: record.workspaceId,
+        slots: record.slots,
+      }).pipe(Effect.mapError(workspaceLayoutProjectionError)),
+    ),
+  );
+}
+
+function workspaceChromeProjectionError(cause: Schema.SchemaError): StateContractError {
+  return new StateContractError({
+    operation: "state.readModels.workspaceChrome",
+    reason: "decode-failed",
+    message: cause.message,
+    cause,
+  });
+}
+
+function workspaceLayoutProjectionError(cause: Schema.SchemaError): StateContractError {
+  return new StateContractError({
+    operation: "state.readModels.workspaceLayout",
+    reason: "decode-failed",
+    message: cause.message,
+    cause,
+  });
 }
 
 function agentProfileRecordsFromSnapshot(
@@ -2659,22 +2584,6 @@ function snippetReadModelRecord(row: StructuredSnippetRecord): SnippetReadModelR
     enabled: row.enabled,
     path: row.path,
     updatedAt: (row.updatedAt ?? row.createdAt) as IsoDateTimeString,
-  };
-}
-
-function workspaceTabReadModelRecord(row: {
-  workspaceTabId: string;
-  workspaceId: string;
-  cwd: string;
-  openedAt: string;
-  activeLayoutId: WorkspaceLayoutSlotId;
-}): WorkspaceTabReadModelRecord {
-  return {
-    workspaceTabId: row.workspaceTabId as WorkspaceTabId,
-    workspaceId: row.workspaceId as WorkspaceIdType,
-    cwd: row.cwd,
-    openedAt: row.openedAt as IsoDateTimeString,
-    activeLayoutId: row.activeLayoutId,
   };
 }
 
@@ -2924,19 +2833,6 @@ function approvalReadModelItem(
   };
 }
 
-function commandInspectorStatus(
-  status: StructuredCommandRecord["status"],
-): CommandInspectorReadModel["status"] {
-  switch (status) {
-    case "requested":
-      return "pending";
-    case "streaming":
-      return "running";
-    default:
-      return status;
-  }
-}
-
 function commandTarget(
   snapshot: StructuredSessionSnapshot,
   command: StructuredCommandRecord,
@@ -3009,15 +2905,6 @@ function targetForSurface(
   return null;
 }
 
-function storedErrorFromMessage(message: string): StateStoredError {
-  return {
-    errorTag: "CommandError",
-    operation: "state.readModels.commandInspector",
-    reason: "execution-failed",
-    message,
-  };
-}
-
 function parseJsonRecord(value: string | null): Record<string, unknown> {
   if (!value) return {};
   try {
@@ -3071,13 +2958,6 @@ function stateCommandsFromState(state: {
         Effect.gen(function* () {
           const decoded = yield* decodeSetWorkspaceTabsInput(commandInput);
           const structuredSession = yield* state.structuredSession(undefined);
-          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
-          const workspaceIds = [
-            ...existing.tabs,
-            ...existing.knownWorkspaces,
-            ...decoded.tabs,
-            ...decoded.knownWorkspaces,
-          ].map((tab) => tab.workspaceId as WorkspaceIdType);
           const subject = decoded.activeWorkspaceTabId ?? "workspace-tabs";
           return yield* commitStructuredCommand(
             receipts,
@@ -3085,82 +2965,48 @@ function stateCommandsFromState(state: {
             decoded,
             subject,
             () => structuredSession.setWorkspaceTabs(decoded),
-            workspaceChromeLayoutInvalidations(workspaceIds),
+            workspaceChromeStateInvalidations(),
           );
         }),
       selectTab: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSelectWorkspaceTabInput(commandInput);
           const structuredSession = yield* state.structuredSession(undefined);
-          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
-          const workspaceId = [...existing.tabs, ...existing.knownWorkspaces].find(
-            (tab) => tab.workspaceTabId === decoded.workspaceTabId,
-          )?.workspaceId as WorkspaceIdType | undefined;
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.workspaceChrome.selectTab",
             decoded,
             decoded.workspaceTabId,
             () => structuredSession.selectWorkspaceTab(decoded),
-            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
+            workspaceChromeStateInvalidations(),
           );
         }),
       selectLayoutSlot: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSelectWorkspaceLayoutSlotInput(commandInput);
           const structuredSession = yield* state.structuredSession(undefined);
-          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
-          const workspaceId = [...existing.tabs, ...existing.knownWorkspaces].find(
-            (tab) => tab.workspaceTabId === decoded.workspaceTabId,
-          )?.workspaceId as WorkspaceIdType | undefined;
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.workspaceChrome.selectLayoutSlot",
             decoded,
             `${decoded.workspaceTabId}:${decoded.layoutId}`,
             () => structuredSession.selectWorkspaceLayoutSlot(decoded),
-            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
+            workspaceChromeStateInvalidations(),
           );
         }),
     },
     workspaceLayout: {
-      saveSnapshot: (commandInput) =>
+      saveSlot: (commandInput) =>
         Effect.gen(function* () {
-          const decoded = yield* decodeSaveWorkspaceLayoutSnapshotInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
+          const decoded = yield* decodeSaveWorkspaceLayoutSlotInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
           return yield* commitStructuredCommand(
             receipts,
-            "stateCommands.workspaceLayout.saveSnapshot",
+            "stateCommands.workspaceLayout.saveSlot",
             decoded,
             `${decoded.workspaceId}:${decoded.layoutId}`,
-            () => structuredSession.saveWorkspaceLayoutSnapshot(decoded),
-            workspaceChromeLayoutInvalidations(decoded.workspaceId),
-          );
-        }),
-      updatePane: (commandInput) =>
-        Effect.gen(function* () {
-          const decoded = yield* decodeUpdateWorkspacePaneInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
-          return yield* commitStructuredCommand(
-            receipts,
-            "stateCommands.workspaceLayout.updatePane",
-            decoded,
-            `${decoded.workspaceId}:${decoded.layoutId}:${decoded.paneId}`,
-            () => structuredSession.updateWorkspacePane(decoded),
-            workspaceChromeLayoutInvalidations(decoded.workspaceId),
-          );
-        }),
-      closePane: (commandInput) =>
-        Effect.gen(function* () {
-          const decoded = yield* decodeCloseWorkspacePaneInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
-          return yield* commitStructuredCommand(
-            receipts,
-            "stateCommands.workspaceLayout.closePane",
-            decoded,
-            `${decoded.workspaceId}:${decoded.layoutId}:${decoded.paneId}`,
-            () => structuredSession.closeWorkspacePane(decoded),
-            workspaceChromeLayoutInvalidations(decoded.workspaceId),
+            () => structuredSession.saveWorkspaceLayoutSlot(decoded),
+            workspaceLayoutStateInvalidations(decoded.workspaceId, decoded.layoutId),
           );
         }),
     },
@@ -3562,7 +3408,11 @@ function commitStructuredCommand<
   decoded: Decoded,
   subject: string,
   commit: () => Effect.Effect<
-    { updatedAt: string; stateRevision: StateRevision },
+    {
+      updatedAt: string;
+      stateRevision: StateRevision;
+      outcome?: "committed" | "no-op";
+    },
     StateContractError
   >,
   afterCommit: readonly StateInvalidationDescriptor[],
@@ -3583,7 +3433,7 @@ function commitStructuredCommand<
         stateRevision: committed.stateRevision,
       },
     };
-    const result = mutationResult(value, afterCommit);
+    const result = mutationResult(value, committed.outcome === "no-op" ? [] : afterCommit);
     if (clientRequestId) receipts.set(receiptKey, result);
     return result;
   });
@@ -3639,16 +3489,21 @@ function providerAuthStateInvalidations(
   return [{ scope: "app", invalidation: { model: "providerAuth", ids: [status.providerId] } }];
 }
 
-function workspaceChromeLayoutInvalidations(
-  workspaceIds: WorkspaceIdType | readonly WorkspaceIdType[],
+function workspaceChromeStateInvalidations(): readonly StateInvalidationDescriptor[] {
+  return [{ scope: "app", invalidation: { model: "workspaceChrome" } }];
+}
+
+function workspaceLayoutStateInvalidations(
+  workspaceId: WorkspaceIdType,
+  layoutId: WorkspaceLayoutSlotId,
 ): readonly StateInvalidationDescriptor[] {
-  return [...new Set(Array.isArray(workspaceIds) ? workspaceIds : [workspaceIds])].map(
-    (workspaceId) => ({
-      scope: "workspace" as const,
+  return [
+    {
+      scope: "workspace",
       workspaceId,
-      invalidation: { model: "workspaceChromeLayout" as const },
-    }),
-  );
+      invalidation: { model: "workspaceLayout", ids: [layoutId] },
+    },
+  ];
 }
 
 function sessionNavigationStateInvalidations(
@@ -3954,19 +3809,9 @@ const decodeSelectWorkspaceLayoutSlotInput = (input: unknown) =>
     Effect.mapError(commandDecodeError("stateCommands.workspaceChrome.selectLayoutSlot")),
   );
 
-const decodeSaveWorkspaceLayoutSnapshotInput = (input: unknown) =>
-  decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputEffect(input).pipe(
-    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.saveSnapshot")),
-  );
-
-const decodeUpdateWorkspacePaneInput = (input: unknown) =>
-  decodeUnknownUpdateWorkspacePaneCommandInputEffect(input).pipe(
-    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.updatePane")),
-  );
-
-const decodeCloseWorkspacePaneInput = (input: unknown) =>
-  decodeUnknownCloseWorkspacePaneCommandInputEffect(input).pipe(
-    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.closePane")),
+const decodeSaveWorkspaceLayoutSlotInput = (input: unknown) =>
+  decodeUnknownSaveWorkspaceLayoutSlotCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.workspaceLayout.saveSlot")),
   );
 
 const decodeSetExtensionEnvOverrideInput = (input: unknown) =>

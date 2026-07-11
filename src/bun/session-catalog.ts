@@ -55,6 +55,8 @@ import {
   type RuntimeWorkspaceStatePortService,
   type AgentProfileId as CoreAgentProfileId,
   type StateContractError,
+  type StateInvalidationDescriptor,
+  type StateMutationResult,
   type RequestUserInputAnswerQueuePayload,
   type RuntimePromptTelemetryMessage,
   type RuntimeRecoveryStatePortService,
@@ -81,12 +83,12 @@ import {
   type SandboxPolicySourceService,
 } from "@svvy/core";
 import type {
+  ArtifactOpenMessage,
   ComposerDraft,
   ConversationSurfaceSnapshot,
   ConversationTurnTiming,
   CreateSessionRequest,
   ForkSessionRequest,
-  ListSessionsResponse,
   PromptTarget,
   PromptClientSubmissionMetadata,
   QueuedSurfaceMessage,
@@ -98,12 +100,7 @@ import type {
   WorkspaceArtifactPreview,
   RequestUserInputAnswerRequest,
   SetRequestUserInputTimerPausedRequest,
-  WorkspaceSessionNavigationReadModel,
-  WorkspaceSyncMessage,
-  WorkspaceCommandInspector,
-  WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
-  WorkspaceWorkflowTaskAttemptInspector,
   AgentContextPreviewRequest,
   AgentContextPreviewExtension,
   AgentContextPreviewResponse,
@@ -131,22 +128,14 @@ import { type PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-executio
 import {
   createStructuredSessionStateStore,
   StructuredSessionState,
+  type StructuredPiSessionRecord,
   type StructuredSessionSnapshot,
   type StructuredSessionStateStore,
   type StructuredSurfaceQueuedMessageRecord,
   structuredSessionStateFromStore,
 } from "@svvy/state/structured-session-state";
 import { layerSandboxPolicySource } from "@svvy/state";
-import {
-  buildStructuredCommandInspector,
-  buildStructuredHandlerThreadSummaries,
-  buildStructuredArtifactLink,
-  buildStructuredSessionSummaryProjection,
-  buildStructuredSessionView,
-  buildStructuredWorkflowTaskAttemptInspector,
-  hasStructuredSessionFacts,
-} from "@svvy/state/structured-session-projections";
-import { buildWorkspaceSessionNavigation } from "@svvy/state/session-navigation";
+import { buildStructuredArtifactLink } from "@svvy/state/structured-session-projections";
 import {
   runtimeActorExtensionBindingStatePortFromStore,
   runtimeApprovalStatePortFromStore,
@@ -166,6 +155,7 @@ import {
   runtimeThreadStatePortFromStore,
   runtimeTurnStatePortFromStore,
   runtimeWorkspaceStatePortFromStore,
+  structuredSessionCatalogMutationsFromStore,
   type WorkspaceStateRegistration,
 } from "@svvy/state/structured-session-adapters";
 import type { AppLoggerEvent } from "./app-logger";
@@ -234,7 +224,7 @@ import {
   type RunTaskAgentBridgeServer,
 } from "./smithers-runtime/task-agent-bridge-server";
 
-export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
+export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
 
 function deleteSessionFileLikePi(sessionPath: string): void {
   if (!existsSync(sessionPath)) {
@@ -523,6 +513,16 @@ function requiredAcceptedLoadExtensionRunner(
 
 type CatalogEffectRunner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
 
+type CommittedStateInvalidationPublisher = (
+  afterCommit: readonly StateInvalidationDescriptor[],
+) => Promise<void>;
+
+type PendingCommittedStateInvalidation = {
+  readonly operation: string;
+  readonly afterCommit: readonly StateInvalidationDescriptor[];
+  readonly details?: Record<string, unknown>;
+};
+
 const missingCatalogEffectRunner: CatalogEffectRunner = () => {
   throw new Error("WorkspaceSessionCatalog requires an app-bootstrap Effect runner.");
 };
@@ -530,6 +530,9 @@ const missingCatalogEffectRunner: CatalogEffectRunner = () => {
 export class WorkspaceSessionCatalog {
   private readonly managedSurfaces = new Map<string, ManagedSession>();
   private readonly structuredSessionStore: StructuredSessionStateStore;
+  private readonly catalogStateMutations: ReturnType<
+    typeof structuredSessionCatalogMutationsFromStore
+  >;
   private readonly runtimeActorExtensionBindingStatePort: RuntimeActorExtensionBindingStatePortService;
   private readonly runtimeApprovalStatePort: RuntimeApprovalStatePortService;
   private readonly runtimeArtifactStatePort: RuntimeArtifactStatePortService;
@@ -557,13 +560,16 @@ export class WorkspaceSessionCatalog {
   private readonly requestUserInputRuntime = new RequestUserInputRuntime();
   private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
-  private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
+  private artifactOpenListener: ((payload: ArtifactOpenMessage) => void) | null = null;
   private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
   private titleGenerationLogListener: ((event: TitleGenerationLogEvent) => void) | null = null;
   private workflowsGeneratedPackageLogListener:
     | ((event: WorkflowsGeneratedPackageLogEvent) => void)
     | null = null;
   private appLogListener: ((event: AppLoggerEvent) => void) | null = null;
+  private committedStateInvalidationPublisher: CommittedStateInvalidationPublisher | null = null;
+  private readonly pendingCommittedStateInvalidations: PendingCommittedStateInvalidation[] = [];
+  private committedStateInvalidationFlush: Promise<void> | null = null;
   private readonly runTaskAgentBridge: RunTaskAgentBridgeServer;
 
   constructor(
@@ -602,6 +608,9 @@ export class WorkspaceSessionCatalog {
       },
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
+    this.catalogStateMutations = structuredSessionCatalogMutationsFromStore(
+      this.structuredSessionStore,
+    );
     this.runtimeActorExtensionBindingStatePort = runtimeActorExtensionBindingStatePortFromStore(
       this.structuredSessionStore,
     );
@@ -660,7 +669,7 @@ export class WorkspaceSessionCatalog {
       this.runtimeRecoveryStatePort,
       {
         recoverSurfaceTurn: async (surfacePiSessionId) => {
-          this.recoverInterruptedSurfaceTurn(surfacePiSessionId);
+          await this.recoverInterruptedSurfaceTurn(surfacePiSessionId);
         },
         drainSurfaceQueue: async () => {},
         generateTitle: async (owner) => {
@@ -720,8 +729,8 @@ export class WorkspaceSessionCatalog {
     this.structuredSessionStore.close();
   }
 
-  setWorkspaceSyncListener(listener: ((payload: WorkspaceSyncMessage) => void) | null): void {
-    this.workspaceSyncListener = listener;
+  setArtifactOpenListener(listener: ((payload: ArtifactOpenMessage) => void) | null): void {
+    this.artifactOpenListener = listener;
   }
 
   setSurfaceSyncListener(listener: ((payload: SurfaceSyncMessage) => void) | null): void {
@@ -740,6 +749,13 @@ export class WorkspaceSessionCatalog {
 
   setAppLogListener(listener: ((event: AppLoggerEvent) => void) | null): void {
     this.appLogListener = listener;
+  }
+
+  setCommittedStateInvalidationPublisher(
+    publisher: CommittedStateInvalidationPublisher | null,
+  ): Promise<void> {
+    this.committedStateInvalidationPublisher = publisher;
+    return publisher ? this.flushCommittedStateInvalidations() : Promise.resolve();
   }
 
   getRuntimeExtensionContextImpactState(): RuntimeExtensionContextImpactStateFacade {
@@ -1083,116 +1099,6 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  async listSessions(): Promise<ListSessionsResponse> {
-    const summaries = await this.collectWorkspaceSessionSummaries();
-    const navigation = this.buildWorkspaceSessionNavigation(Array.from(summaries.values()));
-    return {
-      sessions: [
-        ...navigation.pinnedSessions,
-        ...navigation.activeSessions,
-        ...navigation.archived.sessions,
-      ],
-      navigation,
-    };
-  }
-
-  private async collectWorkspaceSessionSummaries(): Promise<Map<string, WorkspaceSessionSummary>> {
-    const infos = await SessionManager.list(this.cwd, this.sessionDir);
-    const summaries = new Map<string, WorkspaceSessionSummary>();
-
-    for (const info of infos) {
-      if (this.structuredSessionStore.isSessionDeleted(info.id)) {
-        continue;
-      }
-      const orchestratorSurface = this.managedSurfaces.get(info.id);
-      if (orchestratorSurface) {
-        summaries.set(info.id, await this.buildSummaryFromManagedSession(orchestratorSurface));
-        continue;
-      }
-
-      summaries.set(info.id, await this.buildSummaryFromSessionInfo(info));
-    }
-
-    for (const surface of this.managedSurfaces.values()) {
-      if (this.structuredSessionStore.isSessionDeleted(surface.sessionId)) {
-        continue;
-      }
-      if (surface.actorKind !== "orchestrator" || summaries.has(surface.sessionId)) {
-        continue;
-      }
-      summaries.set(surface.sessionId, await this.buildSummaryFromManagedSession(surface));
-    }
-
-    return summaries;
-  }
-
-  private buildWorkspaceSessionNavigation(
-    summaries: WorkspaceSessionSummary[],
-  ): WorkspaceSessionNavigationReadModel {
-    const sidebarState = this.structuredSessionStore.getWorkspaceSidebarState();
-
-    return buildWorkspaceSessionNavigation(summaries, sidebarState.archivedGroupCollapsed, {
-      pinned: {
-        collapsed: sidebarState.pinnedGroupCollapsed,
-        sizePx: sidebarState.pinnedGroupSizePx,
-      },
-      active: {
-        collapsed: sidebarState.activeGroupCollapsed,
-        sizePx: sidebarState.activeGroupSizePx,
-      },
-      archived: {
-        collapsed: sidebarState.archivedGroupCollapsed,
-        sizePx: sidebarState.archivedGroupSizePx,
-      },
-    });
-  }
-
-  async getCommandInspector(input: {
-    sessionId: string;
-    commandId: string;
-  }): Promise<WorkspaceCommandInspector> {
-    const snapshot = await this.getDerivedStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-
-    const inspector = buildStructuredCommandInspector(snapshot, input.commandId);
-    if (!inspector) {
-      throw new Error(`Structured command not found: ${input.commandId}`);
-    }
-
-    return inspector;
-  }
-
-  async listHandlerThreads(input: { sessionId: string }): Promise<WorkspaceHandlerThreadSummary[]> {
-    const snapshot = await this.getDerivedStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-
-    return buildStructuredHandlerThreadSummaries(snapshot);
-  }
-
-  async getWorkflowTaskAttemptInspector(input: {
-    sessionId: string;
-    workflowTaskAttemptId: string;
-  }): Promise<WorkspaceWorkflowTaskAttemptInspector> {
-    const snapshot = await this.getDerivedStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-
-    const inspector = buildStructuredWorkflowTaskAttemptInspector(
-      snapshot,
-      input.workflowTaskAttemptId,
-    );
-    if (!inspector) {
-      throw new Error(`Workflow task attempt not found: ${input.workflowTaskAttemptId}`);
-    }
-
-    return inspector;
-  }
-
   async getArtifactPreview(input: {
     sessionId: string;
     artifactId: string;
@@ -1226,83 +1132,6 @@ export class WorkspaceSessionCatalog {
       missingFile: Boolean(link.missingFile),
       content,
     };
-  }
-
-  async pinSession(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.setSessionPinned({ sessionId, pinned: true });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async unpinSession(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.setSessionPinned({ sessionId, pinned: false });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async archiveSession(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.setSessionArchived({ sessionId, archived: true });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async unarchiveSession(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.setSessionArchived({ sessionId, archived: false });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async markSessionUnread(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.markSessionUnread({ sessionId, reason: "manual" });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async markSessionRead(sessionId: string): Promise<WorkspaceMutationResponse> {
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) return { ok: true };
-    this.structuredSessionStore.markSessionRead({ sessionId });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async recordFocusedSession(input: {
-    sessionId: string | null;
-    surfacePiSessionId?: string | null;
-  }): Promise<WorkspaceMutationResponse> {
-    const sessionId = input.sessionId;
-    void input.surfacePiSessionId;
-    if (!sessionId) {
-      return { ok: true };
-    }
-
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) {
-      return { ok: true };
-    }
-    this.structuredSessionStore.markSessionRead({ sessionId });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async setSessionNavigationSectionState(input: {
-    section: "pinned" | "active" | "archived";
-    collapsed?: boolean;
-    sizePx?: number;
-  }): Promise<WorkspaceMutationResponse> {
-    this.structuredSessionStore.setSessionNavigationSectionState(input);
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
   }
 
   async createSession(
@@ -1354,9 +1183,14 @@ export class WorkspaceSessionCatalog {
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
-    this.syncGeneratedAgentContextBindingForTarget(target, session);
+    const committed = this.syncGeneratedAgentContextBindingForTarget(target, session);
     this.persistManagedSessionSnapshot(session);
-    await this.emitWorkspaceSync("workspace.updated");
+    if (committed) {
+      await this.publishCommittedCatalogMutation("session.create", committed, {
+        workspaceSessionId: target.workspaceSessionId,
+        surfacePiSessionId: target.surfacePiSessionId,
+      });
+    }
     return this.buildSurfaceSnapshot(session, target);
   }
 
@@ -1445,8 +1279,11 @@ export class WorkspaceSessionCatalog {
       const sessionFile = await this.getSessionFileForId(sessionId);
       SessionManager.open(sessionFile!, this.sessionDir).appendSessionInfo(trimmedTitle);
     }
-    this.structuredSessionStore.markManualTitleOverride({ sessionId, title: trimmedTitle });
-    await this.emitWorkspaceSync("workspace.updated");
+    await this.publishCommittedCatalogMutation(
+      "session.rename",
+      this.catalogStateMutations.markManualTitleOverride({ sessionId, title: trimmedTitle }),
+      { workspaceSessionId: sessionId, surfacePiSessionId: sessionId },
+    );
 
     return { ok: true };
   }
@@ -1505,8 +1342,13 @@ export class WorkspaceSessionCatalog {
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
-    this.syncStructuredPiSessionFromOrchestratorSession(session);
-    await this.emitWorkspaceSync("workspace.updated");
+    const committed = this.syncStructuredPiSessionFromOrchestratorSession(session);
+    if (committed) {
+      await this.publishCommittedCatalogMutation("session.fork", committed, {
+        workspaceSessionId: target.workspaceSessionId,
+        surfacePiSessionId: target.surfacePiSessionId,
+      });
+    }
     return this.buildSurfaceSnapshot(session, target);
   }
 
@@ -1541,8 +1383,11 @@ export class WorkspaceSessionCatalog {
         deleteSessionFileLikePi(threadSessionFile);
       }
     }
-    this.structuredSessionStore.deleteSessionState(sessionId);
-    await this.emitWorkspaceSync("workspace.updated");
+    await this.publishCommittedCatalogMutation(
+      "session.delete",
+      this.catalogStateMutations.deleteSessionState(sessionId),
+      { workspaceSessionId: sessionId },
+    );
     return { ok: true };
   }
 
@@ -1550,15 +1395,22 @@ export class WorkspaceSessionCatalog {
     input: UpdateComposerDraftRequest,
   ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
     this.assertValidPromptTarget(input.target);
-    this.structuredSessionStore.setComposerDraft({
-      sessionId: input.target.workspaceSessionId,
-      surfacePiSessionId: input.target.surfacePiSessionId,
-      threadId: input.target.threadId ?? null,
-      text: input.draft.text,
-      attachments: input.draft.attachments,
-      snippetMentions: input.draft.snippetMentions ?? [],
-    });
-    await this.emitWorkspaceSync("structured.updated");
+    await this.publishCommittedCatalogMutation(
+      "surface.composer-draft.update",
+      this.catalogStateMutations.setComposerDraft({
+        sessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId ?? null,
+        text: input.draft.text,
+        attachments: input.draft.attachments,
+        snippetMentions: input.draft.snippetMentions ?? [],
+      }),
+      {
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId ?? undefined,
+      },
+    );
     return { ok: true, target: structuredClone(input.target) };
   }
 
@@ -1585,21 +1437,35 @@ export class WorkspaceSessionCatalog {
       if (!input.target.threadId) {
         throw new Error("Thread id is required for handler extension context settings.");
       }
-      this.structuredSessionStore.setThreadExtensionContextAutoUpdate({
-        threadId: input.target.threadId,
-        enabled: input.enabled,
-      });
+      await this.publishCommittedCatalogMutation(
+        "surface.extension-context-auto-update",
+        this.catalogStateMutations.setThreadExtensionContextAutoUpdate({
+          threadId: input.target.threadId,
+          enabled: input.enabled,
+        }),
+        {
+          workspaceSessionId: input.target.workspaceSessionId,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+          threadId: input.target.threadId,
+        },
+      );
     } else {
-      this.structuredSessionStore.setSessionExtensionContextAutoUpdate({
-        sessionId: input.target.workspaceSessionId,
-        enabled: input.enabled,
-      });
+      await this.publishCommittedCatalogMutation(
+        "surface.extension-context-auto-update",
+        this.catalogStateMutations.setSessionExtensionContextAutoUpdate({
+          sessionId: input.target.workspaceSessionId,
+          enabled: input.enabled,
+        }),
+        {
+          workspaceSessionId: input.target.workspaceSessionId,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+        },
+      );
     }
     const session = this.managedSurfaces.get(input.target.surfacePiSessionId);
     const snapshot = session
       ? await this.buildSurfaceSnapshot(session, input.target, { refreshExternalSources: true })
       : undefined;
-    await this.emitWorkspaceSync("structured.updated");
     if (session) {
       await this.emitSurfaceSync({
         session,
@@ -1624,10 +1490,19 @@ export class WorkspaceSessionCatalog {
     if (!text) {
       throw new Error("Queued user message payload cannot be restored to the composer.");
     }
-    this.structuredSessionStore.cancelSurfaceMessage({
-      id: input.queuedMessageId,
-      expectedStatuses: ["queued", "steering"],
-    });
+    await this.publishCommittedCatalogMutation(
+      "surface.queue.restore-to-composer",
+      this.catalogStateMutations.cancelSurfaceMessage({
+        id: input.queuedMessageId,
+        expectedStatuses: ["queued", "steering"],
+      }),
+      {
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId ?? undefined,
+        queuedMessageId: input.queuedMessageId,
+      },
+    );
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, text, snapshot };
   }
@@ -1642,11 +1517,20 @@ export class WorkspaceSessionCatalog {
     if (input.beforeQueuedMessageId) {
       this.assertQueuedMessageBelongsToSurface(input.beforeQueuedMessageId, input.target);
     }
-    this.structuredSessionStore.reorderSurfaceMessage({
-      surfacePiSessionId: input.target.surfacePiSessionId,
-      id: input.queuedMessageId,
-      beforeId: input.beforeQueuedMessageId ?? null,
-    });
+    await this.publishCommittedCatalogMutation(
+      "surface.queue.reorder",
+      this.catalogStateMutations.reorderSurfaceMessage({
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        id: input.queuedMessageId,
+        beforeId: input.beforeQueuedMessageId ?? null,
+      }),
+      {
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId ?? undefined,
+        queuedMessageId: input.queuedMessageId,
+      },
+    );
     const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
     return { ok: true, target: structuredClone(input.target), snapshot };
   }
@@ -1684,7 +1568,6 @@ export class WorkspaceSessionCatalog {
       delivery: input.delivery,
     });
     if (!answered.queuedMessage) {
-      await this.emitWorkspaceSync("structured.updated");
       return { ok: true, target: structuredClone(target) };
     }
     const snapshot = await this.emitQueuedSurfaceUpdate(target);
@@ -1705,7 +1588,6 @@ export class WorkspaceSessionCatalog {
       throw new Error("Request user input request is not bound to a known workspace session.");
     }
     if (!input.queuedItemId) {
-      await this.emitWorkspaceSync("structured.updated");
       return { ok: true, target: structuredClone(target) };
     }
     const snapshot = await this.emitQueuedSurfaceUpdate(target);
@@ -1724,7 +1606,6 @@ export class WorkspaceSessionCatalog {
       requestId: input.requestId,
       paused: input.paused,
     });
-    await this.emitWorkspaceSync("structured.updated");
     return { ok: true };
   }
 
@@ -1753,7 +1634,7 @@ export class WorkspaceSessionCatalog {
     session.model = model;
     session.thinkingLevel = thinkingLevel;
     session.recreateOnNextPrompt = true;
-    const profileChanged = this.updateOrchestratorProfileFromComposer(target, session, {
+    this.updateOrchestratorProfileFromComposer(target, session, {
       provider,
       model,
       reasoningEffort: thinkingLevel,
@@ -1762,9 +1643,7 @@ export class WorkspaceSessionCatalog {
     if (session.activePrompt) {
       this.syncManagedState(session);
       this.persistManagedSessionSnapshot(session);
-      if (profileChanged) {
-        await this.emitWorkspaceSync("workspace.updated");
-      }
+      await this.commitSurfaceMetadata("surface.model.update", target, session);
       return { ok: true, target: structuredClone(target) };
     }
 
@@ -1775,20 +1654,18 @@ export class WorkspaceSessionCatalog {
         session.session.setThinkingLevel(thinkingLevel);
         session.recreateOnNextPrompt = false;
         this.syncManagedState(session);
-        if (target.surface === "orchestrator") {
-          this.syncStructuredPiSessionFromOrchestratorSession(session);
-        }
       }
     } catch {
       // Fall back to recreating on the next prompt.
     }
+
+    await this.commitSurfaceMetadata("surface.model.update", target, session);
 
     await this.emitSurfaceSync({
       reason: "surface.updated",
       session,
       target,
     });
-    await this.emitWorkspaceSync("workspace.updated");
     return { ok: true, target: structuredClone(target) };
   }
 
@@ -1802,29 +1679,25 @@ export class WorkspaceSessionCatalog {
     }
 
     session.thinkingLevel = level;
-    const profileChanged = this.updateOrchestratorProfileFromComposer(target, session, {
+    this.updateOrchestratorProfileFromComposer(target, session, {
       reasoningEffort: level,
     });
 
     if (session.activePrompt) {
       session.recreateOnNextPrompt = true;
-      if (profileChanged) {
-        await this.emitWorkspaceSync("workspace.updated");
-      }
+      this.persistManagedSessionSnapshot(session);
+      await this.commitSurfaceMetadata("surface.reasoning.update", target, session);
       return { ok: true, target: structuredClone(target) };
     }
 
     session.session.setThinkingLevel(level);
     this.syncManagedState(session);
-    if (target.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(session);
-    }
+    await this.commitSurfaceMetadata("surface.reasoning.update", target, session);
     await this.emitSurfaceSync({
       reason: "surface.updated",
       session,
       target,
     });
-    await this.emitWorkspaceSync("workspace.updated");
     return { ok: true, target: structuredClone(target) };
   }
 
@@ -1856,16 +1729,14 @@ export class WorkspaceSessionCatalog {
     session.loadedExtensionIds = extensionState.loadedExtensionIds;
     session.availableExtensionIds = extensionState.availableExtensionIds;
     session.recreateOnNextPrompt = true;
-    const profileChanged = this.updateOrchestratorProfileFromComposer(input.target, session, {
+    this.updateOrchestratorProfileFromComposer(input.target, session, {
       extensionUsage: { [input.extensionId]: input.state },
     });
 
     if (session.activePrompt) {
       this.syncManagedState(session);
       this.persistManagedSessionSnapshot(session);
-      if (profileChanged) {
-        await this.emitWorkspaceSync("workspace.updated");
-      }
+      await this.commitSurfaceMetadata("surface.extension-usage.update", input.target, session);
       await this.emitSurfaceSync({
         reason: "surface.updated",
         session,
@@ -1895,23 +1766,85 @@ export class WorkspaceSessionCatalog {
     });
     refreshed.recreateOnNextPrompt = false;
     this.syncManagedState(refreshed);
-    this.syncGeneratedAgentContextBindingForTarget(input.target, refreshed);
+    const committed = this.syncGeneratedAgentContextBindingForTarget(input.target, refreshed);
     this.recordAgentContextUpdatedEvent(input.target, previousBinding, refreshed);
     this.persistManagedSessionSnapshot(refreshed);
-    if (input.target.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(refreshed);
+    if (committed) {
+      await this.publishCommittedCatalogMutation("surface.extension-usage.update", committed, {
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+      });
+    } else {
+      await this.commitSurfaceMetadata("surface.extension-usage.update", input.target, refreshed);
     }
     await this.emitSurfaceSync({
       reason: "surface.updated",
       session: refreshed,
       target: input.target,
     });
-    await this.emitWorkspaceSync("workspace.updated");
     return {
       ok: true,
       target: structuredClone(input.target),
       snapshot: await this.buildSurfaceSnapshot(refreshed, input.target),
     };
+  }
+
+  private async commitSurfaceMetadata(
+    operation: string,
+    target: PromptTarget,
+    session: ManagedSession,
+  ): Promise<void> {
+    if (target.surface === "orchestrator") {
+      const committed = this.syncStructuredPiSessionFromOrchestratorSession(session);
+      if (committed) {
+        await this.publishCommittedCatalogMutation(operation, committed, {
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+        });
+      }
+      return;
+    }
+
+    if (!target.threadId) {
+      throw new Error("Handler surface metadata requires a thread id.");
+    }
+    const thread = this.requireStructuredSnapshot(target.workspaceSessionId).threads.find(
+      (candidate) => candidate.id === target.threadId,
+    );
+    if (!thread) {
+      throw new Error(`Structured handler thread not found: ${target.threadId}`);
+    }
+    let profile: Record<string, unknown> = {};
+    if (thread.agentProfileJson) {
+      try {
+        const parsed = JSON.parse(thread.agentProfileJson) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          profile = parsed as Record<string, unknown>;
+        }
+      } catch {
+        profile = {};
+      }
+    }
+    await this.publishCommittedCatalogMutation(
+      operation,
+      this.catalogStateMutations.updateThreadSurfaceMetadata({
+        threadId: target.threadId,
+        agentProfileJson: JSON.stringify({
+          ...profile,
+          provider: session.provider,
+          model: session.model,
+          reasoningEffort: session.thinkingLevel,
+        }),
+        loadedExtensionIds: session.loadedExtensionIds,
+        availableExtensionIds: session.availableExtensionIds,
+        generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      }),
+      {
+        workspaceSessionId: target.workspaceSessionId,
+        surfacePiSessionId: target.surfacePiSessionId,
+        threadId: target.threadId,
+      },
+    );
   }
 
   private updateOrchestratorProfileFromComposer(
@@ -2250,20 +2183,10 @@ export class WorkspaceSessionCatalog {
       updatedAt: header?.timestamp ?? new Date().toISOString(),
       messageCount: countVisibleMessages(session.session.agent.state.messages),
       messages: session.session.agent.state.messages,
-      sessionFile: session.session.sessionManager.getSessionFile(),
-      parentSessionFile: header?.parentSession,
       provider: session.provider,
       modelId: session.model,
       thinkingLevel: session.thinkingLevel,
     });
-  }
-
-  private async buildSummaryFromManagedSession(
-    session: ManagedSession,
-  ): Promise<WorkspaceSessionSummary> {
-    return await this.decorateSummaryWithStructuredProjection(
-      this.buildLiveSummaryFromManagedSession(session),
-    );
   }
 
   private projectSummaryFromStructuredSnapshot(
@@ -2276,8 +2199,6 @@ export class WorkspaceSessionCatalog {
       created: snapshot.pi.createdAt,
       modified: snapshot.pi.updatedAt,
       messageCount: snapshot.pi.messageCount,
-      path: undefined,
-      parentSessionPath: undefined,
     });
 
     return {
@@ -2625,7 +2546,6 @@ export class WorkspaceSessionCatalog {
   ): Promise<ConversationSurfaceSnapshot | undefined> {
     const session = this.managedSurfaces.get(target.surfacePiSessionId);
     if (!session) {
-      await this.emitWorkspaceSync("structured.updated");
       return undefined;
     }
     await this.emitSurfaceSync({
@@ -2633,7 +2553,6 @@ export class WorkspaceSessionCatalog {
       reason: "surface.updated",
       target,
     });
-    await this.emitWorkspaceSync("structured.updated");
     return this.buildSurfaceSnapshot(session, target);
   }
 
@@ -2679,40 +2598,23 @@ export class WorkspaceSessionCatalog {
     sessionId: string;
     artifactId: string;
   }): Promise<boolean> {
-    return this.emitWorkspaceSync("artifact.open", {
-      artifactOpenRequest: {
-        workspaceSessionId: input.sessionId,
-        artifactId: input.artifactId,
-      },
+    return this.emitArtifactOpen({
+      workspaceId: this.workspaceId as WorkspaceId,
+      workspaceSessionId: input.sessionId as WorkspaceSessionId,
+      artifactId: input.artifactId as ArtifactOpenMessage["artifactId"],
     });
   }
 
-  private async emitWorkspaceSync(
-    reason: WorkspaceSyncMessage["reason"],
-    extra: Pick<WorkspaceSyncMessage, "artifactOpenRequest"> = {},
-  ): Promise<boolean> {
-    if (this.closed || !this.workspaceSyncListener) {
+  private emitArtifactOpen(payload: ArtifactOpenMessage): boolean {
+    if (this.closed || !this.artifactOpenListener) {
       return false;
     }
 
     try {
-      const payload = await this.listSessions();
-      if (this.closed) {
-        return false;
-      }
-      this.workspaceSyncListener({
-        workspaceId: this.workspaceId,
-        reason,
-        sessions: payload.sessions,
-        navigation: payload.navigation,
-        ...extra,
-      });
+      this.artifactOpenListener(structuredClone(payload));
       return true;
     } catch (error) {
-      if (this.closed) {
-        return false;
-      }
-      console.error("Failed to emit workspace sync payload:", error);
+      console.error("Failed to emit artifact open payload:", error);
       return false;
     }
   }
@@ -2728,7 +2630,7 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private recoverInterruptedSurfaceTurn(surfacePiSessionId: string): void {
+  private async recoverInterruptedSurfaceTurn(surfacePiSessionId: string): Promise<void> {
     const snapshot = this.structuredSessionStore
       .listSessionStates()
       .find((state) =>
@@ -2747,21 +2649,21 @@ export class WorkspaceSessionCatalog {
       return;
     }
 
-    this.structuredSessionStore.recordLifecycleEvent({
-      sessionId: snapshot.session.id,
-      kind: "surface.turn_recovery.interrupted",
-      subjectKind: "turn",
-      subjectId: turn.id,
-      data: {
-        surfacePiSessionId,
+    await this.publishCommittedCatalogMutation(
+      "surface.turn-recovery.interrupted",
+      this.catalogStateMutations.recoverInterruptedSurfaceTurn({
+        turnId: turn.id,
+        status: turn.status === "waiting" ? "waiting" : "failed",
         reason:
           "Prompt acceptance could not be proven after workspace restart; recovery did not silently resend it.",
+      }),
+      {
+        workspaceSessionId: snapshot.session.id,
+        surfacePiSessionId,
+        threadId: turn.threadId ?? undefined,
+        turnId: turn.id,
       },
-    });
-    this.structuredSessionStore.finishTurn({
-      turnId: turn.id,
-      status: turn.status === "waiting" ? "waiting" : "failed",
-    });
+    );
   }
 
   private buildOrchestratorPromptTarget(workspaceSessionId: string): PromptTarget {
@@ -2884,7 +2786,7 @@ export class WorkspaceSessionCatalog {
   private syncGeneratedAgentContextBindingForTarget(
     target: PromptTarget,
     session: ManagedSession,
-  ): void {
+  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
     this.structuredSessionStore.upsertGeneratedAgentContextBinding({
       surfacePiSessionId: session.sessionId,
       ownerKind: target.surface === "handler" && target.threadId ? "thread" : "session",
@@ -2905,16 +2807,16 @@ export class WorkspaceSessionCatalog {
       externalSourceHashes: session.externalSourceHashes,
     });
     if (target.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(session);
-      return;
+      return this.syncStructuredPiSessionFromOrchestratorSession(session);
     }
     if (!target.threadId) {
-      return;
+      return null;
     }
     this.structuredSessionStore.updateThread({
       threadId: target.threadId,
       generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
     });
+    return null;
   }
 
   private recordAgentContextUpdatedEvent(
@@ -3351,14 +3253,6 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async buildSummaryFromSessionInfo(
-    info: WorkspaceSessionInfo,
-  ): Promise<WorkspaceSessionSummary> {
-    return await this.decorateSummaryWithStructuredProjection(
-      this.projectSummaryFromSessionInfo(info),
-    );
-  }
-
   private projectSummaryFromSessionInfo(info: WorkspaceSessionInfo): WorkspaceSessionSummary {
     return projectWorkspaceSessionSummaryFromInfo({
       id: info.id,
@@ -3367,19 +3261,19 @@ export class WorkspaceSessionCatalog {
       created: info.created,
       modified: info.modified,
       messageCount: info.messageCount,
-      path: info.path,
-      parentSessionPath: info.parentSessionPath,
     });
   }
 
-  private syncStructuredPiSessionFromSummary(summary: WorkspaceSessionSummary): void {
+  private syncStructuredPiSessionFromSummary(
+    summary: WorkspaceSessionSummary,
+  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
     if (this.structuredSessionStore.isSessionDeleted(summary.id)) {
-      return;
+      return null;
     }
 
     try {
       const snapshot = this.getStructuredSnapshot(summary.id);
-      this.structuredSessionStore.upsertPiSession({
+      return this.catalogStateMutations.upsertPiSession({
         sessionId: summary.id,
         title: summary.title,
         provider: summary.provider ?? snapshot?.pi.provider,
@@ -3404,21 +3298,23 @@ export class WorkspaceSessionCatalog {
       });
     } catch (error) {
       console.error("Failed to upsert structured session metadata:", error);
+      return null;
     }
   }
 
-  private syncStructuredPiSessionFromOrchestratorSession(session: ManagedSession): void {
+  private syncStructuredPiSessionFromOrchestratorSession(
+    session: ManagedSession,
+  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
     if (this.structuredSessionStore.isSessionDeleted(session.sessionId)) {
-      return;
+      return null;
     }
 
-    this.syncStructuredPiSessionFromSummary(this.buildLiveSummaryFromManagedSession(session));
     const summary = this.buildLiveSummaryFromManagedSession(session);
     const state = this.agentSettingsStore.getState();
     const profile =
       state.agents.orchestrators.find((agent) => agent.id === session.agentProfileId) ??
       state.agents.orchestrators[0];
-    this.structuredSessionStore.upsertPiSession({
+    return this.catalogStateMutations.upsertPiSession({
       sessionId: summary.id,
       title: summary.title,
       provider: session.provider,
@@ -3505,102 +3401,6 @@ export class WorkspaceSessionCatalog {
       throw new Error(`Structured session not found: ${sessionId}`);
     }
     return snapshot;
-  }
-
-  private async getDerivedStructuredSnapshot(
-    sessionId: string,
-  ): Promise<StructuredSessionSnapshot | null> {
-    return this.getStructuredSnapshot(sessionId);
-  }
-
-  private async decorateSummaryWithStructuredProjection(
-    summary: WorkspaceSessionSummary,
-  ): Promise<WorkspaceSessionSummary> {
-    const snapshot = await this.getDerivedStructuredSnapshot(summary.id);
-    if (!snapshot) {
-      return summary;
-    }
-
-    const navSummary: WorkspaceSessionSummary = {
-      ...summary,
-      title: snapshot.pi.title || summary.title,
-      isPinned: snapshot.session.pinnedAt !== null,
-      pinnedAt: snapshot.session.pinnedAt,
-      isArchived: snapshot.session.archivedAt !== null,
-      archivedAt: snapshot.session.archivedAt,
-      isUnread: snapshot.session.unreadAt !== null,
-      unreadAt: snapshot.session.unreadAt,
-      unreadReason: snapshot.session.unreadReason,
-      lastReadAt: snapshot.session.lastReadAt,
-      titleGeneration: {
-        status: snapshot.pi.titleGenerationStatus ?? "not-started",
-        renameLocked:
-          snapshot.pi.titleGenerationStatus === "pending" ||
-          snapshot.pi.titleGenerationStatus === "running",
-        autoFrozen: snapshot.pi.titleAutoFrozen ?? false,
-        manualOverride: snapshot.pi.titleManualOverride ?? false,
-        triggeredAt: snapshot.pi.titleGenerationTriggeredAt ?? null,
-        finishedAt: snapshot.pi.titleGenerationFinishedAt ?? null,
-        error: snapshot.pi.titleGenerationError ?? null,
-      },
-    };
-    const provisionalTitle = this.getProvisionalSessionTitle(snapshot);
-    const durableStructuredTitle =
-      snapshot.pi.titleManualOverride ||
-      snapshot.pi.titleAutoFrozen ||
-      snapshot.pi.titleGenerationStatus === "completed"
-        ? snapshot.pi.title
-        : null;
-    const projectedTitle = durableStructuredTitle || provisionalTitle;
-    const summaryWithProjectedTitle = projectedTitle
-      ? {
-          ...navSummary,
-          title: projectedTitle,
-          preview: navSummary.preview || projectedTitle,
-        }
-      : navSummary;
-
-    if (!hasStructuredSessionFacts(snapshot)) {
-      return summaryWithProjectedTitle;
-    }
-
-    const structuredSummary = buildStructuredSessionSummaryProjection(snapshot);
-    const view = buildStructuredSessionView(snapshot);
-
-    return {
-      ...summaryWithProjectedTitle,
-      preview: structuredSummary.preview || summary.preview,
-      status: structuredSummary.status,
-      updatedAt:
-        structuredSummary.updatedAt.localeCompare(summary.updatedAt) > 0
-          ? structuredSummary.updatedAt
-          : summary.updatedAt,
-      wait: projectWorkspaceWait(structuredSummary.wait),
-      counts: structuredSummary.counts,
-      threadIdsByStatus: view.threadIdsByStatus,
-      threadIds: structuredSummary.threadIds,
-      sidebarThreads: view.sidebarThreads,
-      commandRollups: view.commandRollups.length > 0 ? view.commandRollups : undefined,
-      productEvents: view.productEvents.length > 0 ? view.productEvents : undefined,
-    };
-  }
-
-  private getProvisionalSessionTitle(snapshot: StructuredSessionSnapshot): string | null {
-    if (snapshot.pi.titleManualOverride || snapshot.pi.titleGenerationStatus === "completed") {
-      return null;
-    }
-
-    const firstTurnSummary = snapshot.turns[0]?.requestSummary?.trim() ?? "";
-    const draft = this.structuredSessionStore.getComposerDraft(
-      snapshot.session.orchestratorPiSessionId,
-    );
-    const draftText = draft?.text.trim() ?? "";
-    const sourceText = draftText || firstTurnSummary;
-    if (!sourceText) {
-      return null;
-    }
-
-    return summarizePromptForTurn(sourceText, 72);
   }
 
   private async getSessionFileForId(
@@ -3888,11 +3688,12 @@ export class WorkspaceSessionCatalog {
       ) {
         return;
       }
-      this.structuredSessionStore.markTitleGenerationRunning(sessionId);
+      await this.publishCommittedCatalogMutation(
+        "session.title-generation.running",
+        this.catalogStateMutations.markTitleGenerationRunning(sessionId),
+        { workspaceSessionId: sessionId, surfacePiSessionId: sessionId },
+      );
       this.emitTitleGenerationLog({ level: "info", status: "started", sessionId });
-      if (!this.closed) {
-        await this.emitWorkspaceSync("structured.updated");
-      }
 
       const title = await this.generateTitleFromText({
         workspaceSessionId: sessionId,
@@ -3906,7 +3707,11 @@ export class WorkspaceSessionCatalog {
       if (!this.getStructuredSnapshot(sessionId)) {
         return;
       }
-      const completed = this.structuredSessionStore.completeTitleGeneration({ sessionId, title });
+      const completed = await this.publishCommittedCatalogMutation(
+        "session.title-generation.completed",
+        this.catalogStateMutations.completeTitleGeneration({ sessionId, title }),
+        { workspaceSessionId: sessionId, surfacePiSessionId: sessionId },
+      );
       const activeOrchestrator = this.managedSurfaces.get(sessionId);
       if (activeOrchestrator) {
         this.syncPiSessionTitle(activeOrchestrator, completed.title);
@@ -3922,9 +3727,6 @@ export class WorkspaceSessionCatalog {
         sessionId,
         title: completed.title,
       });
-      if (!this.closed) {
-        await this.emitWorkspaceSync("structured.updated");
-      }
     } catch (error) {
       if (this.closed) {
         return;
@@ -3935,19 +3737,20 @@ export class WorkspaceSessionCatalog {
       const settings = this.agentSettingsStore.getState().agents.titleNamer;
       const cause = error instanceof Error ? error.message : "Title generation failed.";
       const message = `Title namer ${settings.provider}/${settings.model} failed: ${cause}`;
-      this.structuredSessionStore.failTitleGeneration({
-        sessionId,
-        error: message,
-      });
+      await this.publishCommittedCatalogMutation(
+        "session.title-generation.failed",
+        this.catalogStateMutations.failTitleGeneration({
+          sessionId,
+          error: message,
+        }),
+        { workspaceSessionId: sessionId, surfacePiSessionId: sessionId },
+      );
       this.emitTitleGenerationLog({
         level: "warning",
         status: "failed",
         sessionId,
         error: message,
       });
-      if (!this.closed) {
-        await this.emitWorkspaceSync("structured.updated");
-      }
     }
   }
 
@@ -3966,7 +3769,15 @@ export class WorkspaceSessionCatalog {
     if (this.closed) {
       return;
     }
-    const updated = this.structuredSessionStore.updateThread({ threadId, title });
+    const updated = await this.publishCommittedCatalogMutation(
+      "thread.title-generation.completed",
+      this.catalogStateMutations.completeThreadTitle({ threadId, title }),
+      {
+        workspaceSessionId: detail.thread.sessionId,
+        surfacePiSessionId: detail.thread.surfacePiSessionId,
+        threadId,
+      },
+    );
     const activeThreadSurface = this.managedSurfaces.get(updated.surfacePiSessionId);
     if (activeThreadSurface) {
       this.syncPiSessionTitle(activeThreadSurface, updated.title);
@@ -3975,9 +3786,6 @@ export class WorkspaceSessionCatalog {
       if (sessionFile) {
         SessionManager.open(sessionFile, this.threadSurfaceDir).appendSessionInfo(updated.title);
       }
-    }
-    if (!this.closed) {
-      await this.emitWorkspaceSync("structured.updated");
     }
   }
 
@@ -4121,6 +3929,72 @@ export class WorkspaceSessionCatalog {
 
   private emitAppLog(event: AppLoggerEvent): void {
     this.appLogListener?.(event);
+  }
+
+  private async publishCommittedCatalogMutation<T>(
+    operation: string,
+    committed: StateMutationResult<T>,
+    details?: Record<string, unknown>,
+  ): Promise<T> {
+    const seen = new Set<string>();
+    const afterCommit = committed.afterCommit.filter((descriptor) => {
+      const key = JSON.stringify(descriptor);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (afterCommit.length > 0) {
+      this.pendingCommittedStateInvalidations.push({
+        operation,
+        afterCommit,
+        ...(details ? { details } : {}),
+      });
+      await this.flushCommittedStateInvalidations();
+    }
+    return committed.value;
+  }
+
+  private flushCommittedStateInvalidations(): Promise<void> {
+    if (this.committedStateInvalidationFlush) {
+      return this.committedStateInvalidationFlush;
+    }
+    const running = this.flushCommittedStateInvalidationsLoop();
+    this.committedStateInvalidationFlush = running;
+    return running.finally(() => {
+      if (this.committedStateInvalidationFlush === running) {
+        this.committedStateInvalidationFlush = null;
+      }
+    });
+  }
+
+  private async flushCommittedStateInvalidationsLoop(): Promise<void> {
+    while (
+      this.committedStateInvalidationPublisher &&
+      this.pendingCommittedStateInvalidations.length > 0
+    ) {
+      const pending = this.pendingCommittedStateInvalidations[0]!;
+      const publisher = this.committedStateInvalidationPublisher;
+      try {
+        await publisher(pending.afterCommit);
+        this.pendingCommittedStateInvalidations.shift();
+      } catch (error) {
+        this.emitAppLog({
+          level: "error",
+          source: "app.bridge",
+          message:
+            "State mutation committed, but read-model invalidation publication failed; retained descriptors require runtime retry or consumer rebaseline.",
+          error,
+          details: {
+            operation: pending.operation,
+            committed: true,
+            rebaselineRequired: true,
+            afterCommit: pending.afterCommit,
+            ...pending.details,
+          },
+        });
+        return;
+      }
+    }
   }
 
   private async refreshWorkspaceGeneratedPackageLinks(
@@ -4772,19 +4646,6 @@ function flattenUserMessageContent(content: Message["content"]): string {
     .join("\n");
 }
 
-function summarizePromptForTurn(text: string, limit = 96): string {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  if (!collapsed) {
-    return "New turn";
-  }
-
-  if (collapsed.length <= limit) {
-    return collapsed;
-  }
-
-  return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
-}
-
 function resolveThreadTargets(
   snapshot: StructuredSessionSnapshot,
   input: { threadIds: string[] | null; threadGroupId: string | null },
@@ -4823,21 +4684,6 @@ function resolveThreadExtensionState(
     profileExtensionOrder,
     overrides,
   });
-}
-
-function projectWorkspaceWait(
-  wait: StructuredSessionSnapshot["session"]["wait"],
-): WorkspaceSessionSummary["wait"] {
-  if (!wait || wait.owner.kind !== "orchestrator") {
-    return null;
-  }
-
-  return {
-    kind: wait.kind,
-    reason: wait.reason,
-    resumeWhen: wait.resumeWhen,
-    since: wait.since,
-  };
 }
 
 function getActorKindForTarget(target: PromptTarget): SvvyActorKind {

@@ -387,35 +387,100 @@ default workspace.
 
 ## Runtime And Storage Contracts
 
-### Workspace Tab State
+### Workspace Chrome And Layout State
 
-Workspace tab persistence needs separate durable workspace-runtime identity and visual tab identity.
-The `@svvy/core` workspace-tab state contract carries these fields, while `@svvy/state` persists the
-durable tab/layout state:
+Workspace chrome persistence keeps durable workspace-runtime identity separate from visual tab
+identity. The app-global `workspaceChrome` read model owns tab order, the active tab, known workspace
+records, and each tab's selected layout slot. Workspace-scoped `workspaceLayout` read models own the
+three durable Dockview slots for one explicit `workspaceId`.
+
+The exact `@svvy/core` chrome contract is:
 
 ```ts
 type WorkspaceKind = "default" | "user";
 
-type WorkspaceTabInfo = {
-  workspaceTabId: string;
-  workspaceId: string;
-  cwd: string;
+type WorkspaceLayoutSlotId = "A" | "B" | "C";
+
+type WorkspaceTabRecord = {
+  workspaceTabId: WorkspaceTabId;
+  workspaceId: WorkspaceId;
+  cwd: AbsolutePath;
   workspaceLabel: string;
   kind: WorkspaceKind;
-  openedAt: string;
-  // Workspace tabs choose one durable slot. When omitted, slot A is used.
-  activeLayoutId?: WorkspaceLayoutSlotId;
+  openedAt: IsoDateTimeString;
+  activeLayoutId: WorkspaceLayoutSlotId;
 };
 
-type AppWorkspaceTabsState = {
-  version: 4;
-  activeWorkspaceTabId: string | null;
-  tabs: WorkspaceTabInfo[];
-  knownWorkspaces: WorkspaceTabInfo[];
+type WorkspaceChromeReadModel = {
+  activeWorkspaceTabId: WorkspaceTabId | null;
+  tabs: readonly WorkspaceTabRecord[];
+  knownWorkspaces: readonly WorkspaceTabRecord[];
 };
 ```
 
-Implementation must keep visual tab identity separate from runtime identity so duplicate same-cwd tabs and default workspace retargeting remain coherent.
+There is no renderer-owned schema version, branch field, file-backed restore document, or combined
+chrome-and-layout payload. Branch and other live repository facts are derived separately.
+
+The exact workspace layout shape is:
+
+```ts
+type WorkspaceLayoutReadModel = {
+  workspaceId: WorkspaceId;
+  // Exactly one slot for each id, in the canonical A/B/C set.
+  slots: readonly WorkspaceLayoutSlotReadModel[];
+};
+
+type WorkspaceLayoutSlotReadModel = {
+  workspaceId: WorkspaceId;
+  layoutId: WorkspaceLayoutSlotId;
+  initialized: boolean;
+  dockviewJson: JsonValue | null;
+  panes: readonly WorkspacePaneRecord[];
+  compactSurfaces: readonly CompactWorkspaceSurface[];
+  focusedPaneId: WorkspacePaneId | null;
+  updatedAt: IsoDateTimeString;
+};
+
+type WorkspacePaneRecord = {
+  paneId: WorkspacePaneId;
+  target: WorkspacePaneTarget;
+  localState: {
+    scroll: { transcriptAnchorId: string | null; offsetPx: number } | null;
+    timelineDensity: "compact" | "comfortable";
+  };
+  placement: WorkspacePanePlacement | null;
+} & (
+  | {
+      fallbackChrome: null;
+      restore: { kind: "ready" };
+    }
+  | {
+      fallbackChrome: WorkspacePaneFallbackChrome;
+      restore: {
+        kind: "unavailable";
+        reason: string;
+        lastKnownLocationLabel: string | null;
+      };
+    }
+);
+
+type CompactWorkspaceSurface = {
+  kind: "compact-thread";
+  workspaceSessionId: WorkspaceSessionId;
+  threadId: ThreadId;
+  panelId: WorkspacePaneId | null;
+  density: "compact" | "comfortable";
+};
+```
+
+`WorkspacePaneTarget` is the closed core union for `orchestrator`, `handler`, `command`,
+`workflow-task-attempt`, `artifact`, `workflows`, `agents`, `extensions`, `snippets`, `settings`,
+`app-logs`, and `open-workspace`. `WorkspacePanePlacement` is the closed core union for `split`,
+`tab`, `edge`, `floating`, and `popout`. Healthy pane chrome is derived from the target;
+`fallbackChrome` is persisted only for an unavailable restore.
+
+Implementation must keep visual tab identity separate from runtime identity so duplicate same-cwd
+tabs and default workspace retargeting remain coherent.
 
 Rules:
 
@@ -429,6 +494,19 @@ Rules:
 - workspace layout restore state uses `(workspaceId, layoutId)`
 - each workspace tab stores only its active `layoutId`; duplicate same-cwd tabs can select different active layout ids but share the same durable slot contents
 - default workspace tabs use the same durable layout restore state as user workspace tabs; the only special case is seeding an empty selected default-workspace layout with `Open Workspace`
+- the app-global `workspaceChrome` read model is fetched without a `workspaceId`; its committed
+  invalidation is app-scoped `{ model: "workspaceChrome" }`
+- the `workspaceLayout` read model requires an explicit `workspaceId`; saving a slot emits a
+  workspace-scoped `{ model: "workspaceLayout", ids: [layoutId] }` invalidation
+- `workspaceChrome.setTabs(...)` atomically replaces the ordered open and known collections;
+  `selectTab(...)` and `selectLayoutSlot(...)` mutate only their named chrome selection
+- `workspaceLayout.saveSlot(...)` atomically replaces one complete slot's Dockview JSON, panes,
+  compact surfaces, and focus; there are no loose pane-update or pane-close persistence commands
+- every workspace store materializes exactly one empty `A`, `B`, and `C` row; the first save with a
+  bound product pane latches `initialized` to `true`, and later empty full replacements do not clear
+  that latch
+- the canonical SQLite state file is `structured-session-state-v6.sqlite`; chrome and layout have
+  no old-schema import, JSON fallback, migration fixture, compatibility alias, or dual-write path
 
 ### Workspace Lifecycle Facade
 
@@ -727,6 +805,9 @@ E2E tests:
 - choosing a repository from the first panel opens it in that same tab
 - opening a repository in a new tab preserves the default tab
 - duplicate same-cwd tabs, including default workspace tabs, share sessions, app logs, and durable layout slots keyed by `(workspaceId, layoutId)` while each tab keeps only its active layout choice
+- layout restore fixtures seed the authoritative `structured-session-state-v6.sqlite` through the
+  state store or exact state commands; they do not write renderer restore JSON or exercise a legacy
+  schema migration
 
 Run e2e through the OrbStack machine lane with `bun run test:e2e`.
 

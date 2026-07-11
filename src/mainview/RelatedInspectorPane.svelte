@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import type {
     WorkspaceArtifactPreview,
     WorkspaceCommandInspector,
@@ -14,11 +13,16 @@
     getCommandOutputSections,
     getCommandPatchSections,
     getCommandProgressSections,
+    getCommandStdinOutcomeMessage,
+    getCommandStdinSection,
     getWorkspaceCommandStatusPresentation,
+    canWriteCommandStdin,
   } from "./command-inspector";
   import CommandOutputPanel from "./CommandOutputPanel.svelte";
   import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import Badge from "./ui/Badge.svelte";
+  import Button from "./ui/Button.svelte";
+  import TextArea from "./ui/TextArea.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -29,29 +33,67 @@
   let title = $state("Inspector");
   let content = $state<unknown>(null);
   let error = $state<string | null>(null);
+  let stdinDraft = $state("");
+  let stdinSubmitting = $state(false);
+  let stdinOutcome = $state<string | null>(null);
+  let loadRevision = 0;
 
-  onMount(() => {
-    void load();
+  $effect(() => {
+    const activeRuntime = runtime;
+    const activeTarget = target;
+    const revision = ++loadRevision;
+    content = null;
+    error = null;
+    stdinDraft = "";
+    stdinSubmitting = false;
+    stdinOutcome = null;
+    title =
+      activeTarget.surface === "command"
+        ? "Command"
+        : activeTarget.surface === "workflow-task-attempt"
+          ? "Workflow Task-Agent"
+          : "Artifact";
+    const refresh = () => void load(activeRuntime, activeTarget, revision);
+    const unsubscribe =
+      activeTarget.surface === "command" || activeTarget.surface === "workflow-task-attempt"
+        ? activeRuntime.subscribe(refresh)
+        : undefined;
+    if (!unsubscribe) refresh();
+    return () => {
+      loadRevision += 1;
+      unsubscribe?.();
+    };
   });
 
-  async function load(): Promise<void> {
+  async function load(
+    activeRuntime: ChatRuntime,
+    activeTarget: StaticInspectorPaneTarget,
+    revision: number,
+  ): Promise<void> {
     error = null;
     try {
-      if (target.surface === "command") {
-        title = "Command";
-        content = await runtime.getCommandInspector(target.commandId, target.workspaceSessionId);
-      } else if (target.surface === "workflow-task-attempt") {
-        title = "Workflow Task-Agent";
-        content = await runtime.getWorkflowTaskAttemptInspector(
-          target.workflowTaskAttemptId,
-          target.workspaceSessionId,
+      let nextContent: unknown = null;
+      if (activeTarget.surface === "command") {
+        nextContent = await activeRuntime.getCommandInspector(
+          activeTarget.commandId,
+          activeTarget.workspaceSessionId,
         );
-      } else if (target.surface === "artifact") {
-        title = "Artifact";
-        content = await runtime.getArtifactPreview(target.artifactId, target.workspaceSessionId);
+      } else if (activeTarget.surface === "workflow-task-attempt") {
+        nextContent = await activeRuntime.getWorkflowTaskAttemptInspector(
+          activeTarget.workflowTaskAttemptId,
+          activeTarget.workspaceSessionId,
+        );
+      } else if (activeTarget.surface === "artifact") {
+        nextContent = await activeRuntime.getArtifactPreview(
+          activeTarget.artifactId,
+          activeTarget.workspaceSessionId,
+        );
       }
+      if (revision === loadRevision) content = nextContent;
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "Unable to load inspector.";
+      if (revision === loadRevision) {
+        error = caught instanceof Error ? caught.message : "Unable to load inspector.";
+      }
     }
   }
 
@@ -86,6 +128,33 @@
 
   function commandLabel(status: WorkspaceCommandInspector["status"]) {
     return getWorkspaceCommandStatusPresentation(status).label;
+  }
+
+  async function submitCommandStdin(inspector: WorkspaceCommandInspector): Promise<void> {
+    const text = stdinDraft;
+    if (!text.trim() || stdinSubmitting || !canWriteCommandStdin(inspector)) return;
+
+    const activeRuntime = runtime;
+    const revision = loadRevision;
+    stdinSubmitting = true;
+    stdinOutcome = null;
+    try {
+      const response = await activeRuntime.writeCommandStdin({
+        commandId: inspector.commandId,
+        text,
+        clientSubmission: { source: "command_inspector" },
+      });
+      if (revision !== loadRevision) return;
+      stdinOutcome = getCommandStdinOutcomeMessage(response);
+      if (response.status === "accepted") stdinDraft = "";
+    } catch (caught) {
+      if (revision === loadRevision) {
+        stdinOutcome =
+          caught instanceof Error ? caught.message : "Unable to write to command stdin.";
+      }
+    } finally {
+      if (revision === loadRevision) stdinSubmitting = false;
+    }
   }
 
   function childProgressSummary(child: WorkspaceCommandInspector["summaryChildren"][number]): string | null {
@@ -139,6 +208,7 @@
     </div>
     <pre>{formatContent(content)}</pre>
   {:else if isCommandInspector(content)}
+    {@const stdinSection = getCommandStdinSection(content)}
     <article class="inspector-summary">
       <div>
         <strong>{content.title}</strong>
@@ -166,6 +236,51 @@
     </div>
     {#if content.error}
       <p class="callout danger">{content.error}</p>
+    {/if}
+    {#if content.stdin.mode === "continuable"}
+      <section class="inspector-section command-stdin-composer">
+        <h4>Stdin</h4>
+        <TextArea
+          bind:value={stdinDraft}
+          resize="vertical"
+          rows={3}
+          placeholder="Send input to the running command"
+          aria-label="Command stdin"
+          disabled={!canWriteCommandStdin(content) || stdinSubmitting}
+        />
+        <div class="command-stdin-actions">
+          <span>{canWriteCommandStdin(content) ? "Command accepts input" : "Command stdin is unavailable"}</span>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={stdinSubmitting}
+            disabled={!stdinDraft.trim() || stdinSubmitting || !canWriteCommandStdin(content)}
+            onclick={() => void submitCommandStdin(content)}
+          >Send stdin</Button>
+        </div>
+        <p
+          class="command-stdin-outcome"
+          class:has-outcome={stdinOutcome !== null}
+          aria-live="polite"
+          aria-atomic="true"
+        >{stdinOutcome ?? "\u00a0"}</p>
+      </section>
+    {/if}
+    {#if stdinSection}
+      <section class="inspector-section">
+        <h4>Accepted stdin</h4>
+        <div class="command-stdin-events">
+          {#each stdinSection.events as event (event.eventId)}
+            <article class="command-stdin-event">
+              <div>
+                <span>{event.acceptedBytes} {event.acceptedBytes === 1 ? "byte" : "bytes"}</span>
+                <time datetime={event.at}>{event.at}</time>
+              </div>
+              <pre>{event.text}</pre>
+            </article>
+          {/each}
+        </div>
+      </section>
     {/if}
     {#each getCommandArgumentSections(content) as section (section.id)}
       <section class="inspector-section">
@@ -508,6 +623,65 @@
   .command-progress-events {
     display: grid;
     gap: 0.44rem;
+  }
+
+  .command-stdin-composer :global(.ui-textarea) {
+    min-height: 4.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  .command-stdin-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+  }
+
+  .command-stdin-outcome {
+    min-height: 1lh;
+    margin: 0;
+    color: var(--ui-text-secondary);
+    font-size: var(--text-xs);
+    opacity: 0;
+  }
+
+  .command-stdin-outcome.has-outcome {
+    opacity: 1;
+  }
+
+  .command-stdin-events {
+    display: grid;
+    gap: 0.44rem;
+  }
+
+  .command-stdin-event {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+  }
+
+  .command-stdin-event > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.34rem 0.55rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 68%, transparent);
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .command-stdin-event pre {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
 
   .command-diagnostics {

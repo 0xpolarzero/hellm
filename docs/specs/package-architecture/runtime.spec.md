@@ -288,6 +288,14 @@ descriptor inside runtime, and publishes through `RuntimeEventBus`. Its tag, ser
 layer, and mapping are not package-root exports, bootstrap exports, Runtime/facade groups, or
 caller-supplied callback surfaces.
 
+`RuntimeCommittedStateInvalidationPublication` is a package-private `Runtime.layer` output service
+used only by `@svvy/runtime/committed-state-invalidation-adapter`. The adapter is restricted to the
+app-bootstrap session-catalog edge and accepts only an `afterCommit` array returned by the named
+state-owned structured-session catalog mutation adapter after its concrete store call succeeds. It
+neither constructs descriptors nor accepts renderer events or read-model names. Its tag, service
+interface, layer, and `RuntimeEventBus` access are not package-root or bootstrap exports and do not
+add a public runtime facade group.
+
 `RuntimeLaunchPolicyService` is the only package-private runtime service that calls
 `Sandbox.buildLaunchPolicy(...)`. Runtime command/session lanes call this adapter rather than
 calling `Sandbox` directly. This service may be exported from a runtime-internal source module for
@@ -842,7 +850,8 @@ path is unwired.
 
 The `@svvy/runtime` package export map exposes exactly `.`, `./bootstrap`,
 `./prompt-execution-context`, `./accepted-native-tool-execution`,
-`./app-log-commit-notification-adapter`, and `./source-invalidation-coordinator-adapter`. Prompt execution context content stripping, live
+`./app-log-commit-notification-adapter`, `./committed-state-invalidation-adapter`, and
+`./source-invalidation-coordinator-adapter`. Prompt execution context content stripping, live
 invocation handles, and runtime-owned prompt execution helpers are package-private implementation
 details except for the narrow constructor/live-handle type surface named below. `@svvy/core` exports
 only the schema-backed prompt execution context DTOs. The package root value surface is explicit:
@@ -945,6 +954,27 @@ event, receipt, renderer target, or retry instruction. It runs the package-priva
 that runtime-owned service maps the committed source scope to the single `appLogs` invalidation and
 publishes it through `RuntimeEventBus`. The service tag, service interface, layer, descriptor
 mapping, and event-bus access stay package-private and are not facade groups or bootstrap exports.
+
+`@svvy/runtime/committed-state-invalidation-adapter` is the narrow app-bootstrap-only publication
+edge for session-catalog mutations that have already committed through the named restricted
+`@svvy/state` catalog mutation adapter. Its public API is
+`CommittedStateInvalidationPublicationReceipt`,
+`CommittedStateInvalidationPublicationError`, and
+`publishCommittedStateInvalidations(managedRuntime, afterCommit)`. It passes the exact committed
+descriptor array to the package-private runtime publication service and accepts no mutation
+callback, renderer target, read-model name, or caller-authored event. An empty array is a no-op.
+
+A non-empty publication after runtime disposal, shutdown, or event-bus failure rejects with
+`CommittedStateInvalidationPublicationError` carrying `committed: true` and
+`rebaselineRequired: true`; it never represents a rolled-back state write. The catalog retains
+deduplicated exact descriptor batches before publisher installation and until publication succeeds,
+then flushes them in commit order when workspace registry installs the shared runtime publisher.
+This installation also runs for workspaces opened after initial app runtime readiness. Publication
+failure is logged as committed projection-delivery failure, leaves the batch retryable, and does not
+change the successful catalog mutation result. Consumers recover by a later flush or authoritative
+state read-model rebaseline. Runtime-owned prompt, wait, command, artifact, episode, Workflows, and
+queued-title state ports keep publishing their own returned descriptors; catalog publication is not
+invoked for those paths and therefore cannot duplicate their events.
 
 `@svvy/runtime/source-invalidation-coordinator-adapter` is the only public adapter over
 runtime-owned source-invalidation coordinator handles. Its entire public API is:
@@ -2587,9 +2617,13 @@ Product-state invalidation enters runtime event publication only as committed
 by `@svvy/state` command facades handing committed descriptors to the core-owned
 `StateCommandPostCommitNotificationPort` implemented by `@svvy/runtime`, plus the narrow
 `@svvy/runtime/app-log-commit-notification-adapter` path for a real committed append observed from
-the owning state app-log facade. On that path app/bootstrap supplies only the app-global/workspace
-source scope; the package-private runtime service constructs the fixed `appLogs` descriptor and
-publishes it. App/bootstrap only wires
+the owning state app-log facade, and the narrow app-bootstrap-only
+`@svvy/runtime/committed-state-invalidation-adapter` path for unchanged descriptors returned by the
+state-owned session-catalog mutation adapter. On the app-log path app/bootstrap supplies only the
+app-global/workspace source scope; the package-private runtime service constructs the fixed
+`appLogs` descriptor and publishes it. On the catalog path app/bootstrap passes the unchanged
+committed array into runtime while the catalog retains failed batches; app/bootstrap does not
+construct or transform descriptors. App/bootstrap only wires
 the layers and facades; it does not collect, transform, publish, or retry descriptors. Public runtime
 facades do not accept raw `StateInvalidationDescriptor` values. The only public runtime
 method whose input contains descriptors is
@@ -3243,6 +3277,7 @@ Runtime event bus rules:
 | Request-input wait registry                   | `@svvy/runtime` `RuntimeRequestInputWaitService`                                                                                 | process-local registry keyed by durable wait id with surface ids stored on entries                                                                                                                                                                                          | `layer-acquired`                                                         | `Runtime.layer` acquisition                                                                                                                                              | explicit surface cancellation, workspace/app shutdown, and layer finalizer cleanup                                                 | yes within runtime     | interruption releases only matching process-local waiters; durable wait/recovery rows remain authoritative                                                    | registry acquired once, per-surface cancellation, no durable-truth tests                   |
 | Request-input wait entry                      | `@svvy/runtime` request-input service                                                                                            | scoped single-use `Deferred` plus durable wait row reference                                                                                                                                                                                                                | `operationScoped`                                                        | `request_input.create` after durable wait/request facts commit                                                                                                           | answer, timeout, cancel, turn interruption, recovery terminalization, surface/workspace close                                      | no                     | interruption keeps durable wait/recovery rows authoritative and resolves/fails the scoped deferred once                                                       | wait created/resolved/timeout/interrupted receipts                                         |
 | App-log commit notification service           | `@svvy/runtime` `RuntimeAppLogCommitNotification`                                                                                | package-private app-global/workspace scope mapper over the runtime event bus                                                                                                                                                                                                | `layer-acquired`                                                         | `Runtime.layer` acquisition                                                                                                                                              | app runtime shutdown/restart                                                                                                       | yes within runtime     | publication emits the runtime-owned `appLogs` descriptor or fails through the adapter's observable diagnostics path                                           | scope mapping and renderer refetch integration tests                                       |
+| Committed state invalidation publication      | `@svvy/runtime` `RuntimeCommittedStateInvalidationPublication`                                                                   | package-private exact after-commit descriptor publisher over the runtime event bus                                                                                                                                                                                          | `layer-acquired`                                                         | `Runtime.layer` acquisition                                                                                                                                              | app runtime shutdown/restart                                                                                                       | yes within runtime     | failure preserves committed state, returns typed rebaseline evidence, and leaves the catalog descriptor batch retryable                                        | exact descriptor, commit ordering, late-workspace, retry, and post-dispose tests            |
 | Accepted native-tool execution service        | `@svvy/runtime` accepted tool execution service                                                                                  | package-private service over runtime command/effect dependencies                                                                                                                                                                                                            | `layer-acquired`                                                         | `Runtime.layer` acquisition                                                                                                                                              | app runtime shutdown/restart                                                                                                       | yes within runtime     | shutdown rejects new accepted-tool work and drains/settles admitted command lanes                                                                             | service available through root layer, no public facade/export/import tests                 |
 | Accepted native-tool execution lane           | `@svvy/runtime` accepted tool execution service                                                                                  | command-scoped Effect operation plus ordered operation queue/command context                                                                                                                                                                                                | `operationScoped`                                                        | package-private accepted tool execution service handles `pi.tool_call.accepted` after creating or reusing the durable command row                                        | model-facing tool result, waiting state, failure, cancellation, or recovery fact committed                                         | no                     | interruption terminalizes or records recovery before returning a pi tool result/error                                                                         | ordered operation application, command fact before pi acknowledgement                      |
 | RuntimeLaunchPolicyService                    | `@svvy/runtime` launch-policy adapter service                                                                                    | package-private adapter over `@svvy/sandbox` `Sandbox.buildLaunchPolicy(...)` that maps sandbox policy failures into runtime contract failures while preserving scoped `SandboxLaunchFacts` acquisition requirements                                                        | `layer-acquired`                                                         | runtime command/session execution layer composition and `RuntimeAcceptedNativeToolExecution.acquireDirectToolLaunch(...)` when sandbox-backed command lanes are admitted | app runtime shutdown/restart                                                                                                       | yes within runtime     | interruption follows the scoped `Sandbox.buildLaunchPolicy(...)` effect; returned launch facts remain operation-scoped to the owning command session          | forwarding/error-mapping service tests; no public root/bootstrap export tests              |

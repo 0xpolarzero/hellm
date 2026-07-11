@@ -1,4 +1,5 @@
 import type { SerializedDockview } from "dockview-core";
+import type { WorkspacePaneFallbackChrome } from "@svvy/core";
 import type { WorkspacePaneSurfaceTarget } from "../shared/workspace-contract";
 
 export const PRIMARY_CHAT_PANE_ID = "primary";
@@ -100,6 +101,7 @@ export interface WorkspaceDockviewPanelState {
   binding: WorkspacePaneSurfaceTarget | null;
   localState: PaneLocalState;
   chrome?: DockviewPanelChromeState;
+  fallbackChrome?: WorkspacePaneFallbackChrome | null;
   placement?: DockviewPanelPlacementState | null;
   restore?: DockviewPanelRestoreState;
 }
@@ -211,6 +213,21 @@ export function createPanelChrome(
   }
 }
 
+export function createPanelFallbackChrome(
+  binding: WorkspacePaneSurfaceTarget,
+  current?: DockviewPanelChromeState,
+): WorkspacePaneFallbackChrome {
+  const panelChrome = current ?? createPanelChrome(binding);
+  if (panelChrome.kind === "empty" || panelChrome.kind === "unavailable") {
+    throw new Error(`Pane target produced invalid fallback chrome kind ${panelChrome.kind}.`);
+  }
+  return {
+    title: panelChrome.title,
+    subtitle: panelChrome.subtitle,
+    kind: panelChrome.kind,
+  };
+}
+
 export function createDockviewPanelState(
   panelId: string,
   binding: WorkspacePaneSurfaceTarget,
@@ -221,6 +238,7 @@ export function createDockviewPanelState(
     binding: { ...binding },
     localState: createDefaultPaneLocalState(),
     chrome: createPanelChrome(binding),
+    fallbackChrome: null,
     placement: placement ? { ...placement } : null,
     restore: {
       unavailableReason: null,
@@ -232,28 +250,31 @@ export function createDockviewPanelState(
 export function createUnavailableDockviewPanelState(
   panelId: string,
   input: {
+    target: WorkspacePaneSurfaceTarget;
     reason: string;
     lastKnownLocationLabel?: string | null;
     localState?: PaneLocalState;
     placement?: DockviewPanelPlacementState | null;
-    title?: string | null;
+    fallbackChrome?: WorkspacePaneFallbackChrome;
   },
 ): WorkspaceDockviewPanelState {
+  const fallbackChrome = input.fallbackChrome ?? createPanelFallbackChrome(input.target);
   return {
     panelId,
-    binding: null,
+    binding: { ...input.target },
     localState: input.localState
       ? structuredClone(input.localState)
       : createDefaultPaneLocalState(),
     chrome: {
       title: "Surface unavailable",
-      subtitle: input.title ?? null,
+      subtitle: fallbackChrome.title,
       icon: null,
       kind: "unavailable",
       closable: true,
       floatable: true,
       popoutable: false,
     },
+    fallbackChrome,
     placement: input.placement ? { ...input.placement } : null,
     restore: {
       unavailableReason: input.reason,
@@ -285,7 +306,13 @@ export function normalizePaneLayout(
   const rawPanels = Array.isArray(layout.panels) ? layout.panels : [];
 
   if (rawPanels.length === 0) {
-    return createEmptyPaneLayout(now);
+    const compactSurfaces = Array.isArray(layout.compactSurfaces)
+      ? layout.compactSurfaces.flatMap(normalizeCompactSurfaceState)
+      : [];
+    return {
+      ...createEmptyPaneLayout(now),
+      compactSurfaces: reconcileCompactSurfacePanelIds(compactSurfaces, new Set()),
+    };
   }
 
   const panels = rawPanels.flatMap((panel) => {
@@ -302,23 +329,22 @@ export function normalizePaneLayout(
       ...next.restore,
     } satisfies DockviewPanelRestoreState;
 
-    if (!next.binding) {
-      if (next.chrome?.kind !== "unavailable" && !restore.unavailableReason) {
-        return [];
-      }
-      return [
-        createUnavailableDockviewPanelState(String(next.panelId ?? createPanelId()), {
-          reason: restore.unavailableReason ?? "The restored surface is unavailable.",
-          lastKnownLocationLabel: restore.lastKnownLocationLabel,
-          localState,
-          placement,
-          title: next.chrome?.subtitle ?? null,
-        }),
-      ];
-    }
+    if (!next.binding) return [];
     const binding = normalizePaneBinding(next.binding);
     if (!binding) {
       return [];
+    }
+    if (restore.unavailableReason) {
+      return [
+        createUnavailableDockviewPanelState(String(next.panelId ?? createPanelId()), {
+          target: binding,
+          reason: restore.unavailableReason,
+          lastKnownLocationLabel: restore.lastKnownLocationLabel,
+          localState,
+          placement,
+          ...(next.fallbackChrome ? { fallbackChrome: next.fallbackChrome } : {}),
+        }),
+      ];
     }
     return [
       {
@@ -329,6 +355,7 @@ export function normalizePaneLayout(
           ...createPanelChrome(binding),
           ...next.chrome,
         },
+        fallbackChrome: null,
         placement,
         restore,
       },
@@ -336,7 +363,13 @@ export function normalizePaneLayout(
   });
 
   if (panels.length === 0) {
-    return createEmptyPaneLayout(now);
+    const compactSurfaces = Array.isArray(layout.compactSurfaces)
+      ? layout.compactSurfaces.flatMap(normalizeCompactSurfaceState)
+      : [];
+    return {
+      ...createEmptyPaneLayout(now),
+      compactSurfaces: reconcileCompactSurfacePanelIds(compactSurfaces, new Set()),
+    };
   }
 
   const focusedPanelId =
@@ -346,13 +379,14 @@ export function normalizePaneLayout(
   const droppedPanels = panels.length !== rawPanels.length;
   const panelIds = new Set(panels.map((panel) => panel.panelId));
   const dockview = sanitizeSerializedDockview(layout.dockview, panelIds, droppedPanels);
+  const compactSurfaces = Array.isArray(layout.compactSurfaces)
+    ? layout.compactSurfaces.flatMap(normalizeCompactSurfaceState)
+    : [];
 
   return {
     dockview,
     panels,
-    compactSurfaces: Array.isArray(layout.compactSurfaces)
-      ? layout.compactSurfaces.flatMap(normalizeCompactSurfaceState)
-      : [],
+    compactSurfaces: reconcileCompactSurfacePanelIds(compactSurfaces, panelIds),
     focusedPanelId,
     updatedAt: now,
   };
@@ -391,6 +425,17 @@ function normalizeCompactSurfaceState(value: unknown): CompactWorkspaceSurfaceSt
     default:
       return [];
   }
+}
+
+function reconcileCompactSurfacePanelIds(
+  surfaces: readonly CompactWorkspaceSurfaceState[],
+  panelIds: ReadonlySet<string>,
+): CompactWorkspaceSurfaceState[] {
+  return surfaces.map((surface) =>
+    surface.panelId !== null && !panelIds.has(surface.panelId)
+      ? { ...surface, panelId: null }
+      : { ...surface },
+  );
 }
 
 function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null {
@@ -460,10 +505,16 @@ function normalizePaneBinding(value: unknown): WorkspacePaneSurfaceTarget | null
     case "workflows":
       return { surface: "workflows" };
     case "agents":
-      return typeof binding.targetAgentProfileId === "string" &&
+      return {
+        surface: "agents",
+        ...(binding.view === "generated-context-preview" || binding.view === "profiles"
+          ? { view: binding.view }
+          : {}),
+        ...(typeof binding.targetAgentProfileId === "string" &&
         binding.targetAgentProfileId.length > 0
-        ? { surface: "agents", targetAgentProfileId: binding.targetAgentProfileId }
-        : { surface: "agents" };
+          ? { targetAgentProfileId: binding.targetAgentProfileId }
+          : {}),
+      };
     case "extensions":
       return {
         surface: "extensions",
@@ -502,6 +553,7 @@ export function bindPane(
             ...panel,
             binding: binding ? { ...binding } : null,
             chrome: createPanelChrome(binding),
+            fallbackChrome: null,
             restore: {
               unavailableReason: null,
               lastKnownLocationLabel: null,
@@ -565,6 +617,7 @@ export function removeDockviewPanel(
       panels.length !== layout.panels.length,
     ),
     panels,
+    compactSurfaces: reconcileCompactSurfacePanelIds(layout.compactSurfaces, panelIds),
     focusedPanelId:
       layout.focusedPanelId === panelId ? (panels[0]?.panelId ?? null) : layout.focusedPanelId,
   });
@@ -606,13 +659,19 @@ export function markDockviewPanelUnavailable(
     if (panel.panelId !== panelId) {
       return panel;
     }
+    if (!panel.binding) {
+      return panel;
+    }
     changed = true;
     return createUnavailableDockviewPanelState(panel.panelId, {
+      target: panel.binding,
       reason,
       lastKnownLocationLabel: panel.restore?.lastKnownLocationLabel ?? null,
       localState: panel.localState,
       placement: panel.placement ?? null,
-      title: panel.chrome?.title ?? null,
+      ...(panel.fallbackChrome
+        ? { fallbackChrome: panel.fallbackChrome }
+        : { fallbackChrome: createPanelFallbackChrome(panel.binding, panel.chrome) }),
     });
   });
   if (!changed) {

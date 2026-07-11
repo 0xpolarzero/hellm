@@ -15,9 +15,23 @@ import type {
   ExtensionCategory,
   ExtensionInterfaceKind,
   ExtensionUsageState,
-  WorkspaceSessionNavigationReadModel as CoreWorkspaceSessionNavigationReadModel,
+  SessionNavigationReadModel as CoreSessionNavigationReadModel,
+  SessionNavigationSidebarHandlerThreadRow as CoreSessionNavigationSidebarHandlerThreadRow,
+  SessionNavigationSidebarRowSubtitle as CoreSessionNavigationSidebarRowSubtitle,
+  SessionNavigationSidebarWorkflowRow as CoreSessionNavigationSidebarWorkflowRow,
+  SessionNavigationStatus as CoreSessionNavigationStatus,
+  SessionNavigationSummary as CoreSessionNavigationSummary,
+  SessionNavigationTitleGenerationStatus as CoreSessionNavigationTitleGenerationStatus,
   WorkspaceSessionNavigationSectionId,
   WorkspaceSessionNavigationSectionState,
+  WorkspaceChromeReadModel as CoreWorkspaceChromeReadModel,
+  WorkspaceLayoutReadModel as CoreWorkspaceLayoutReadModel,
+  WorkspaceLayoutSlotId as CoreWorkspaceLayoutSlotId,
+  WorkspaceLayoutSlotReadModel as CoreWorkspaceLayoutSlotReadModel,
+  WorkspacePaneRecord as CoreWorkspacePaneRecord,
+  WorkspacePaneTarget as CoreWorkspacePaneTarget,
+  WorkspaceTabRecord as CoreWorkspaceTabRecord,
+  WorkspaceKind as CoreWorkspaceKind,
 } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type { GeneratedAgentContextExternalSource } from "./generated-agent-context";
@@ -30,12 +44,9 @@ import type {
   AppLogQuery,
   AppLogReadModel,
   AppLogSummary,
-  ByteCount,
-  CommandFactsPayload,
   CommandId,
   JsonValue,
   MessageId,
-  NonNegativeSafeInteger,
   PositiveSafeInteger,
   ProviderAuthStatus,
   ProviderId,
@@ -49,7 +60,6 @@ import type {
   RuntimeSubmittedAttachment,
   RuntimeClientSubmissionMetadata,
   StateInvalidationDescriptor,
-  StateStoredError,
   SetRequestInputTimerPausedResult,
   StateRevision,
   SnippetId,
@@ -64,15 +74,24 @@ import type {
   ComposerAttachment,
   WorkflowTaskAttemptId,
   WorkspaceId,
-  WorkspacePaneId,
-  WorkspaceTabId,
+  WorkspaceSessionId,
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 import type {
+  CommandInspectorReadModel as StateCommandInspectorReadModel,
   CreateManagedSnippetCommandInput,
   DeleteManagedSnippetCommandInput,
   MarkAppLogReadCommandInput,
+  MarkSessionReadCommandInput,
+  MarkSessionUnreadCommandInput,
+  SaveWorkspaceLayoutSlotCommandInput,
+  SelectWorkspaceLayoutSlotCommandInput,
+  SelectWorkspaceTabCommandInput,
+  SetSessionArchivedCommandInput,
+  SetSessionNavigationSectionStateCommandInput,
+  SetSessionPinnedCommandInput,
   SetSnippetEnabledCommandInput,
+  SetWorkspaceTabsCommandInput,
   StateCommandResult,
   UpdateAppPreferencesCommandInput,
   UpdateManagedSnippetCommandInput,
@@ -199,24 +218,26 @@ export interface WorkflowsGeneratedReadModelRequest {
 
 export interface HandlerInspectorReadModelRequest {
   kind: "handlerInspector";
-  workspaceId?: WorkspaceId;
+  workspaceId: WorkspaceId;
   threadId: ThreadId;
 }
 
 export interface WorkflowTaskAttemptInspectorReadModelRequest {
   kind: "workflowTaskAttemptInspector";
-  workspaceId?: WorkspaceId;
+  workspaceId: WorkspaceId;
   workflowTaskAttemptId: WorkflowTaskAttemptId;
 }
 
-export interface WorkspaceChromeLayoutReadModelRequest {
-  kind: "workspaceChromeLayout";
-  workspaceId?: WorkspaceId;
-  layoutId?: "A" | "B" | "C";
+export interface WorkspaceChromeReadModelRequest {
+  kind: "workspaceChrome";
 }
 
-export type SessionNavigationReadModel =
-  CoreWorkspaceSessionNavigationReadModel<WorkspaceSessionSummary>;
+export interface WorkspaceLayoutReadModelRequest {
+  kind: "workspaceLayout";
+  workspaceId: WorkspaceId;
+}
+
+export type SessionNavigationReadModel = CoreSessionNavigationReadModel;
 
 export interface SurfaceTranscriptReadModel {
   target: RuntimeSurfaceTarget;
@@ -276,33 +297,7 @@ export interface SurfaceQueuedMessagesReadModel {
   }[];
 }
 
-export interface CommandInspectorReadModel {
-  commandId: CommandId;
-  status: "pending" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-  toolName: string;
-  target?: RuntimeSurfaceTarget;
-  acceptedArguments?: JsonValue;
-  summary?: string;
-  error?: StateStoredError;
-  finishedAt?: string;
-  output: readonly {
-    stream: "stdout" | "stderr";
-    text: string;
-    sequence: NonNegativeSafeInteger;
-  }[];
-  stdin: {
-    mode: "none" | "continuable";
-    canAttemptWrite: boolean;
-    acceptedWrites: readonly {
-      text: string;
-      acceptedBytes: ByteCount;
-      at: string;
-    }[];
-  };
-  facts?: CommandFactsPayload;
-  childCommandIds: readonly CommandId[];
-  artifactIds: readonly ArtifactId[];
-}
+export type CommandInspectorReadModel = StateCommandInspectorReadModel;
 
 export interface RequestInputReadModel {
   requests: readonly WorkspaceRequestUserInputRequest[];
@@ -401,36 +396,12 @@ export interface WorkflowsGeneratedExportReadModelRecord {
   workflowAgentId: string | null;
 }
 
-export interface WorkspaceChromeLayoutReadModel {
-  activeWorkspaceTabId: WorkspaceTabId | null;
-  tabs: readonly WorkspaceTabReadModelRecord[];
-  knownWorkspaces: readonly WorkspaceTabReadModelRecord[];
-  layouts: readonly WorkspaceLayoutReadModelRecord[];
-}
-
-export interface WorkspaceTabReadModelRecord {
-  workspaceTabId: WorkspaceTabId;
-  workspaceId: WorkspaceId;
-  cwd: string;
-  openedAt: string;
-  activeLayoutId: WorkspaceLayoutSlotId;
-}
-
-export interface WorkspaceLayoutReadModelRecord {
-  workspaceId: WorkspaceId;
-  layoutId: WorkspaceLayoutSlotId;
-  initialized: boolean;
-  snapshotJson: JsonValue | null;
-  focusedPaneId: WorkspacePaneId | null;
-  panelMetadata: readonly WorkspacePaneReadModelRecord[];
-}
-
-export interface WorkspacePaneReadModelRecord {
-  paneId: WorkspacePaneId;
-  kind: "surface" | "inspector" | "static";
-  target: JsonValue;
-  localStateJson: JsonValue | null;
-}
+export type WorkspaceChromeReadModel = CoreWorkspaceChromeReadModel;
+export type WorkspaceLayoutReadModel = CoreWorkspaceLayoutReadModel;
+export type WorkspaceLayoutSlotReadModel = CoreWorkspaceLayoutSlotReadModel;
+export type WorkspacePaneRecord = CoreWorkspacePaneRecord;
+export type WorkspacePaneTarget = CoreWorkspacePaneTarget;
+export type WorkspaceTabRecord = CoreWorkspaceTabRecord;
 
 export type DesktopRendererNotificationScope =
   | { kind: "app" }
@@ -501,7 +472,8 @@ export type StateReadModelRequest =
   | WorkflowsGeneratedReadModelRequest
   | HandlerInspectorReadModelRequest
   | WorkflowTaskAttemptInspectorReadModelRequest
-  | WorkspaceChromeLayoutReadModelRequest;
+  | WorkspaceChromeReadModelRequest
+  | WorkspaceLayoutReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
@@ -523,7 +495,8 @@ export type StateReadModelResult =
   | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
   | { kind: "handlerInspector"; value: WorkspaceHandlerThreadInspector | null }
   | { kind: "workflowTaskAttemptInspector"; value: WorkspaceWorkflowTaskAttemptInspector | null }
-  | { kind: "workspaceChromeLayout"; value: WorkspaceChromeLayoutReadModel };
+  | { kind: "workspaceChrome"; value: WorkspaceChromeReadModel }
+  | { kind: "workspaceLayout"; value: WorkspaceLayoutReadModel };
 
 export interface StateReadModelRefetchRequest {
   requests: readonly StateReadModelRequest[];
@@ -1032,22 +1005,17 @@ export interface UpdateComposerDraftRequest {
   };
 }
 
-export interface WorkspaceSyncMessage {
-  workspaceId: string;
-  reason: "workspace.updated" | "structured.updated" | "artifact.open";
-  sessions: WorkspaceSessionSummary[];
-  navigation: WorkspaceSessionNavigationReadModel;
-  artifactOpenRequest?: {
-    workspaceSessionId: string;
-    artifactId: string;
-  };
+export interface ArtifactOpenMessage {
+  workspaceId: WorkspaceId;
+  workspaceSessionId: WorkspaceSessionId;
+  artifactId: ArtifactId;
 }
 
 export interface CancelPromptRequest {
   target: PromptTarget;
 }
 
-export type WorkspaceKind = "default" | "user";
+export type WorkspaceKind = CoreWorkspaceKind;
 
 export interface WorkspaceInfoResponse {
   workspaceId: string;
@@ -1080,26 +1048,10 @@ export interface SwitchWorkspaceBranchResponse {
 export interface WorkspaceTabInfo extends WorkspaceInfoResponse {
   workspaceTabId: string;
   openedAt: string;
-  activeLayoutId?: WorkspaceLayoutSlotId;
+  activeLayoutId: WorkspaceLayoutSlotId;
 }
 
-export interface AppWorkspaceTabsState {
-  version: 4;
-  activeWorkspaceTabId: string | null;
-  tabs: WorkspaceTabInfo[];
-  knownWorkspaces: WorkspaceTabInfo[];
-}
-
-export type WorkspaceLayoutSlotId = "A" | "B" | "C";
-
-export interface AppWorkspaceUiRestoreState {
-  version: 5;
-  layouts: Record<WorkspaceLayoutSlotId, unknown | null>;
-}
-
-export interface SetWorkspaceUiRestoreRequest extends WorkspaceScopedRequest {
-  state: AppWorkspaceUiRestoreState;
-}
+export type WorkspaceLayoutSlotId = CoreWorkspaceLayoutSlotId;
 
 export type OpenWorkspacePlacement = "current-tab" | "new-tab";
 
@@ -1206,14 +1158,8 @@ export interface ProviderAuthInfo {
   authFailedAt?: string | null;
 }
 
-export type SessionStatus = "idle" | "running" | "waiting" | "error";
-export type SessionTitleGenerationStatus =
-  | "not-started"
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type SessionStatus = CoreSessionNavigationStatus;
+export type SessionTitleGenerationStatus = CoreSessionNavigationTitleGenerationStatus;
 
 export interface WorkspaceCommandRollupChild {
   commandId: string;
@@ -1349,49 +1295,8 @@ export interface WorkspaceProductEvent {
   details?: Record<string, unknown>;
 }
 
-export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupChild {
-  visibility: "trace" | "summary" | "surface";
-  facts: Record<string, unknown> | null;
-  startedAt: string;
-  updatedAt: string;
-  finishedAt: string | null;
-  artifacts: WorkspaceCommandArtifactLink[];
-  outputEvents: WorkspaceCommandOutputEvent[];
-  stdin: WorkspaceCommandStdinState;
-  argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
-  progressEvents?: WorkspaceCommandProgressEvent[];
-  patchSnapshots: WorkspaceCommandPatchSnapshot[];
-  diagnostics: WorkspaceCommandDiagnosticSnapshot[];
-}
-
-export interface WorkspaceCommandInspector {
-  commandId: string;
-  threadId: string | null;
-  workflowRunId?: string | null;
-  workflowTaskAttemptId?: string | null;
-  toolName: string;
-  visibility: "trace" | "summary" | "surface";
-  status: "streaming" | "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-  title: string;
-  summary: string;
-  facts: Record<string, unknown> | null;
-  error: string | null;
-  startedAt: string;
-  updatedAt: string;
-  finishedAt: string | null;
-  artifacts: WorkspaceCommandArtifactLink[];
-  outputEvents: WorkspaceCommandOutputEvent[];
-  stdin: WorkspaceCommandStdinState;
-  argumentSnapshots: WorkspaceCommandArgumentSnapshot[];
-  progressEvents?: WorkspaceCommandProgressEvent[];
-  patchSnapshots: WorkspaceCommandPatchSnapshot[];
-  diagnostics: WorkspaceCommandDiagnosticSnapshot[];
-  childCount: number;
-  summaryChildCount: number;
-  traceChildCount: number;
-  summaryChildren: WorkspaceCommandInspectorChild[];
-  traceChildren: WorkspaceCommandInspectorChild[];
-}
+export type WorkspaceCommandInspector = CommandInspectorReadModel;
+export type WorkspaceCommandInspectorChild = WorkspaceCommandInspector["summaryChildren"][number];
 
 export interface DesktopWriteCommandStdinRequest {
   commandId: string;
@@ -1584,95 +1489,14 @@ export interface WorkspaceHandlerThreadInspector extends WorkspaceHandlerThreadS
   artifacts: WorkspaceCommandArtifactLink[];
 }
 
-export interface WorkspaceSidebarRowSubtitle {
-  badge: "waiting" | "error" | "workflow" | "text";
-  text: string;
-  tone: "muted" | "waiting" | "error";
-}
-
-export interface WorkspaceSidebarWorkflowRow {
-  workflowRunId: string;
-  workflowName: string;
-  status: WorkspaceHandlerThreadWorkflowSummary["status"];
-  subtitle: WorkspaceSidebarRowSubtitle | null;
-  updatedAt: string;
-}
-
-export interface WorkspaceSidebarHandlerThreadRow {
-  threadId: string;
-  surfacePiSessionId: string;
-  title: string;
-  objective: string;
-  status: WorkspaceHandlerThreadSummary["status"];
-  subtitle: WorkspaceSidebarRowSubtitle | null;
-  latestCommandRollup: WorkspaceCommandRollup | null;
-  updatedAt: string;
-  workflows: WorkspaceSidebarWorkflowRow[];
-}
-
-export interface WorkspaceSessionSummary {
-  id: string;
-  title: string;
-  preview: string;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  status: SessionStatus;
-  isPinned: boolean;
-  pinnedAt: string | null;
-  isArchived: boolean;
-  archivedAt: string | null;
-  isUnread: boolean;
-  unreadAt: string | null;
-  unreadReason: "assistant-turn-finished" | "manual" | null;
-  lastReadAt: string | null;
-  sessionFile?: string;
-  parentSessionId?: string;
-  parentSessionFile?: string;
-  modelId?: string;
-  provider?: string;
-  thinkingLevel?: string;
-  wait?: {
-    threadId?: string;
-    kind: "user" | "external" | "approval" | "signal" | "timer";
-    reason: string;
-    resumeWhen: string;
-    since: string;
-  } | null;
-  counts?: {
-    turns: number;
-    threads: number;
-    commands: number;
-    episodes: number;
-    workflows: number;
-    artifacts: number;
-    events: number;
-  };
-  threadIdsByStatus?: {
-    runningHandler: string[];
-    runningWorkflow: string[];
-    waiting: string[];
-    troubleshooting: string[];
-  };
-  threadIds?: string[];
-  sidebarThreads?: WorkspaceSidebarHandlerThreadRow[];
-  commandRollups?: WorkspaceCommandRollup[];
-  productEvents?: WorkspaceProductEvent[];
-  titleGeneration?: {
-    status: SessionTitleGenerationStatus;
-    renameLocked: boolean;
-    autoFrozen: boolean;
-    manualOverride: boolean;
-    triggeredAt: string | null;
-    finishedAt: string | null;
-    error: string | null;
-  };
-}
+export type WorkspaceSidebarRowSubtitle = CoreSessionNavigationSidebarRowSubtitle;
+export type WorkspaceSidebarWorkflowRow = CoreSessionNavigationSidebarWorkflowRow;
+export type WorkspaceSidebarHandlerThreadRow = CoreSessionNavigationSidebarHandlerThreadRow;
+export type WorkspaceSessionSummary = CoreSessionNavigationSummary;
 
 export type { WorkspaceSessionNavigationSectionId, WorkspaceSessionNavigationSectionState };
 
-export type WorkspaceSessionNavigationReadModel =
-  CoreWorkspaceSessionNavigationReadModel<WorkspaceSessionSummary>;
+export type WorkspaceSessionNavigationReadModel = CoreSessionNavigationReadModel;
 
 export type WorkspaceRequestUserInputDelivery = RuntimeMessageDelivery;
 
@@ -1872,11 +1696,6 @@ export interface SurfaceSyncMessage {
   target: PromptTarget;
   snapshot?: ConversationSurfaceSnapshot;
   streamPatch?: SurfaceStreamPatch;
-}
-
-export interface ListSessionsResponse {
-  sessions: WorkspaceSessionSummary[];
-  navigation: WorkspaceSessionNavigationReadModel;
 }
 
 export interface CreateSessionRequest {
@@ -2221,26 +2040,6 @@ export interface ChatRPCSchema {
         params: undefined;
         response: WorkspaceInfoResponse;
       };
-      getAppWorkspaceTabs: {
-        params: undefined;
-        response: AppWorkspaceTabsState | null;
-      };
-      setAppWorkspaceTabs: {
-        params: AppWorkspaceTabsState;
-        response: WorkspaceMutationResponse;
-      };
-      getWorkspaceUiRestore: {
-        params: WorkspaceScopedRequest;
-        response: AppWorkspaceUiRestoreState | null;
-      };
-      setWorkspaceUiRestore: {
-        params: SetWorkspaceUiRestoreRequest;
-        response: WorkspaceMutationResponse;
-      };
-      setActiveWorkspace: {
-        params: WorkspaceScopedRequest;
-        response: WorkspaceMutationResponse;
-      };
       closeWorkspace: {
         params: WorkspaceScopedRequest;
         response: WorkspaceMutationResponse;
@@ -2285,21 +2084,9 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<OpenGeneratedAgentContextExternalSourceInEditorRequest>;
         response: OpenWorkspaceSourceInEditorResponse;
       };
-      listSessions: {
-        params: WorkspaceScopedRequest;
-        response: ListSessionsResponse;
-      };
-      getCommandInspector: {
-        params: WorkspaceScoped<{ sessionId: string; commandId: string }>;
-        response: WorkspaceCommandInspector | null;
-      };
       writeCommandStdin: {
         params: WorkspaceScoped<WriteCommandStdinRequest>;
         response: WriteCommandStdinResponse;
-      };
-      listHandlerThreads: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceHandlerThreadSummary[];
       };
       getArtifactPreview: {
         params: WorkspaceScoped<{ sessionId: string; artifactId: string }>;
@@ -2333,41 +2120,41 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<{ sessionId: string }>;
         response: WorkspaceMutationResponse;
       };
-      pinSession: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateSessionNavigationSetPinned: {
+        params: SetSessionPinnedCommandInput;
+        response: StateCommandResult;
       };
-      unpinSession: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateSessionNavigationSetArchived: {
+        params: SetSessionArchivedCommandInput;
+        response: StateCommandResult;
       };
-      archiveSession: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateSessionNavigationMarkRead: {
+        params: MarkSessionReadCommandInput;
+        response: StateCommandResult;
       };
-      unarchiveSession: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateSessionNavigationMarkUnread: {
+        params: MarkSessionUnreadCommandInput;
+        response: StateCommandResult;
       };
-      markSessionUnread: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateSessionNavigationSetSectionState: {
+        params: SetSessionNavigationSectionStateCommandInput;
+        response: StateCommandResult;
       };
-      markSessionRead: {
-        params: WorkspaceScoped<{ sessionId: string }>;
-        response: WorkspaceMutationResponse;
+      stateWorkspaceChromeSetTabs: {
+        params: SetWorkspaceTabsCommandInput;
+        response: StateCommandResult;
       };
-      recordFocusedSession: {
-        params: WorkspaceScoped<{ sessionId: string | null; surfacePiSessionId?: string | null }>;
-        response: WorkspaceMutationResponse;
+      stateWorkspaceChromeSelectTab: {
+        params: SelectWorkspaceTabCommandInput;
+        response: StateCommandResult;
       };
-      setSessionNavigationSectionState: {
-        params: WorkspaceScoped<{
-          section: WorkspaceSessionNavigationSectionId;
-          collapsed?: boolean;
-          sizePx?: number;
-        }>;
-        response: WorkspaceMutationResponse;
+      stateWorkspaceChromeSelectLayoutSlot: {
+        params: SelectWorkspaceLayoutSlotCommandInput;
+        response: StateCommandResult;
+      };
+      stateWorkspaceLayoutSaveSlot: {
+        params: SaveWorkspaceLayoutSlotCommandInput;
+        response: StateCommandResult;
       };
       sendPrompt: {
         params: WorkspaceScoped<SendPromptRequest>;
@@ -2455,7 +2242,7 @@ export interface ChatRPCSchema {
   webview: {
     requests: Record<string, never>;
     messages: {
-      sendWorkspaceSync: WorkspaceSyncMessage;
+      sendArtifactOpen: ArtifactOpenMessage;
       sendSurfaceSync: SurfaceSyncMessage;
       sendDesktopNotification: DesktopRendererNotification;
       sendAppMenuAction: { action: AppMenuAction };

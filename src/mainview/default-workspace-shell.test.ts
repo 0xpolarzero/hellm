@@ -50,10 +50,10 @@ describe("default workspace renderer shell", () => {
       "await rpc.request.openWorkspace({ cwd: savedTab.cwd, workspaceTabId: savedTab.workspaceTabId })",
     );
     expect(appSource).toContain(
-      "toWorkspaceTabInfo(workspaceInfo, savedTab.openedAt, savedTab.workspaceTabId)",
+      "toWorkspaceTabInfo(workspaceInfo, savedTab.openedAt, savedTab.workspaceTabId, savedTab.activeLayoutId)",
     );
     expect(appSource).toContain(
-      "toWorkspaceTabInfo(fallback, savedTab.openedAt, savedTab.workspaceTabId)",
+      "toWorkspaceTabInfo(fallback, savedTab.openedAt, savedTab.workspaceTabId, savedTab.activeLayoutId)",
     );
     expect(appSource).toContain("let restoreErrorsByWorkspaceTabId = $state");
     expect(appSource).toContain('if (savedTab.kind === "default") throw error;');
@@ -124,6 +124,16 @@ describe("default workspace renderer shell", () => {
     );
   });
 
+  it("starts the workspace folder picker from the selected visual tab", async () => {
+    const bunSource = await readFile(new URL("../bun/index.ts", import.meta.url), "utf8");
+
+    expect(bunSource).toContain("async function readActiveWorkspaceFromState()");
+    expect(bunSource).toContain(
+      "startingFolder = (await readActiveWorkspaceFromState())?.cwd ?? startingFolder;",
+    );
+    expect(bunSource).not.toContain("workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.cwd");
+  });
+
   it("retargets Open Workspace into the current visual tab without cancelling prior running work", async () => {
     const appSource = await readFile(new URL("./App.svelte", import.meta.url), "utf8");
 
@@ -136,12 +146,16 @@ describe("default workspace renderer shell", () => {
     expect(appSource).toContain(
       "candidate.workspace.workspaceTabId === activeWorkspaceTabId ? tab : candidate",
     );
-    expect(appSource).toContain("if (oldTab) releaseVisualWorkspaceTab(oldTab);");
+    expect(appSource).toContain("if (replacedTab) releaseVisualWorkspaceTab(replacedTab);");
+    expect(appSource).toContain("restoreLocalWorkspaceChrome(previousChrome);");
+    expect(
+      appSource.indexOf("await selectWorkspaceTab(tab.workspace.workspaceTabId, true);"),
+    ).toBeLessThan(appSource.indexOf("if (replacedTab) releaseVisualWorkspaceTab(replacedTab);"));
     expect(appSource).toContain("function retainDetachedWorkspaceRuntime");
     expect(appSource).toContain("tab.counts.running > 0");
     expect(appSource).toContain("!hasVisibleWorkspaceReference(tab.workspace.workspaceId)");
     expect(appSource).toContain("releaseDetachedWorkspaceRuntime(tab.workspace.workspaceId)");
-    expect(appSource).toContain("await setActiveWorkspace(tab.workspace.workspaceTabId);");
+    expect(appSource).toContain("await selectWorkspaceTab(tab.workspace.workspaceTabId, true);");
   });
 
   it("creates default New Tab entries after the active tab with normal layout persistence", async () => {
@@ -152,11 +166,11 @@ describe("default workspace renderer shell", () => {
     expect(appSource).toContain("const defaultInfo = await rpc.request.getDefaultWorkspace();");
     expect(appSource).toContain("...tabs.slice(0, activeIndex + 1)");
     expect(appSource).toContain("...tabs.slice(activeIndex + 1)");
-    expect(appSource).toContain("await setActiveWorkspace(tab.workspace.workspaceTabId);");
-    expect(runtimeSource).not.toContain('workspaceInfo.kind !== "default"');
-    expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
-    expect(runtimeSource).toContain("setWorkspaceUiRestore(scoped({ state }))");
-    expect(runtimeSource).toContain('} else if (workspaceInfo.kind === "default")');
+    expect(appSource).toContain("await selectWorkspaceTab(tab.workspace.workspaceTabId, true);");
+    expect(runtimeSource).toContain('workspaceInfo.kind !== "default"');
+    expect(runtimeSource).toContain('kind: "workspaceLayout"');
+    expect(runtimeSource).toContain("stateWorkspaceLayoutSaveSlot");
+    expect(runtimeSource).toContain("hydrateSelectedLayout");
     expect(runtimeSource).toContain('{ surface: "open-workspace" }');
   });
 
@@ -181,7 +195,7 @@ describe("default workspace renderer shell", () => {
     expect(appSource).toContain("tabs = [replacementTab];");
     expect(appSource).toContain("activeWorkspaceTabId = replacementTab.workspace.workspaceTabId;");
     expect(appSource).toContain(
-      "await setActiveWorkspace(replacementTab.workspace.workspaceTabId);",
+      "await selectWorkspaceTab(replacementTab.workspace.workspaceTabId, true);",
     );
   });
 
@@ -230,14 +244,14 @@ describe("default workspace renderer shell", () => {
       "const scoped = <T extends object>(request?: T): T & { workspaceId: string } => ({",
     );
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId");
-    expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
+    expect(runtimeSource).toContain('kind: "workspaceLayout"');
     expect(runtimeSource).toContain("getAppLogs: refreshAppLogs");
     expect(runtimeSource).toContain('fetchStateReadModel({ kind: "workflowsGenerated" })');
     expect(runtimeSource).not.toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
     expect(runtimeSource).not.toContain("rpcClient.request.updateGeneratedAgentContext");
     expect(runtimeSource).toContain('kind: "snippets"');
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId as WorkspaceId");
-    expect(runtimeSource).toContain("rpcClient.request.listSessions(scoped())");
+    expect(runtimeSource).not.toContain("rpcClient.request.listSessions(scoped())");
     expect(runtimeSource).toContain('fetchStateReadModel({ kind: "appPreferences" })');
     expect(runtimeSource).not.toContain("getAppPreferences(scoped");
     expect(runtimeSource).not.toContain("getAppWorkspaceTabs(scoped");
@@ -250,10 +264,10 @@ describe("default workspace renderer shell", () => {
       "updateAppPreferences: {\n        params: AppPreferences;",
     );
     expect(contractSource).toContain("stateAppPreferencesUpdate: {");
-    expect(contractSource).toContain("getAppWorkspaceTabs: {\n        params: undefined;");
-    expect(contractSource).toContain(
-      "setAppWorkspaceTabs: {\n        params: AppWorkspaceTabsState;",
-    );
+    expect(contractSource).not.toContain("getAppWorkspaceTabs: {");
+    expect(contractSource).not.toContain("setAppWorkspaceTabs: {");
+    expect(contractSource).toContain("stateWorkspaceChromeSetTabs: {");
+    expect(contractSource).toContain("stateWorkspaceLayoutSaveSlot: {");
     expect(contractSource).not.toContain("getGeneratedAgentContext: {");
     expect(contractSource).not.toContain("updateGeneratedAgentContext: {");
     expect(contractSource).not.toContain("getWorkflowsGenerated: {");
@@ -263,7 +277,7 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).not.toContain("markAppLogsSeen: {");
     expect(contractSource).toContain("stateAppLogsMarkRead: {");
     expect(contractSource).not.toContain("params: WorkspaceScoped<AppLogQuery> | undefined;");
-    expect(contractSource).toContain("listSessions: {\n        params: WorkspaceScopedRequest;");
+    expect(contractSource).not.toContain("listSessions: {");
 
     expect(routingSource).toContain("return registry.getRuntime(input.workspaceId);");
     expect(routingSource).not.toContain("getActiveRuntime");
@@ -362,7 +376,7 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(dockviewSource).toContain("dockview.fromJSON(dockviewLayout");
+    expect(dockviewSource).toContain("dockview.fromJSON(layout, { reuseExistingPanels: true });");
     expect(dockviewSource).toContain("if (!applying && panel) onFocusPanel(panel.id);");
     expect(dockviewSource).toContain("const focused = nextFocusedPanelId");
     expect(dockviewSource).toContain("dockview.setActivePanel(focused);");
@@ -381,6 +395,9 @@ describe("default workspace renderer shell", () => {
     expect(panelHostSource).toContain("unavailable-surface-panel");
     expect(panelHostSource).toContain('pane?.chrome?.kind === "unavailable"');
     expect(panelHostSource).toContain("pane.restore?.unavailableReason");
+    expect(panelHostSource.indexOf('pane?.chrome?.kind === "unavailable"')).toBeLessThan(
+      panelHostSource.indexOf('pane?.target?.surface === "app-logs"'),
+    );
   });
 
   it("tracks prompt freshness banner state through Svelte state", async () => {
@@ -1531,8 +1548,27 @@ describe("default workspace renderer shell", () => {
   it("keeps layout slot controls active for the default workspace", async () => {
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
 
-    expect(runtimeSource).not.toContain('workspaceInfo.kind !== "default"');
+    expect(runtimeSource).toContain('workspaceInfo.kind !== "default"');
+    expect(runtimeSource).toContain("queueSelectedLayoutHydration");
     expect(runtimeSource).toContain("get layoutSlots()");
+  });
+
+  it("routes tab and layout selection through one App-owned chrome mutation authority", async () => {
+    const appSource = await readFile(new URL("./App.svelte", import.meta.url), "utf8");
+    const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
+
+    expect(appSource).toContain(
+      "const workspaceChromeMutations = createWorkspaceChromeMutationQueue",
+    );
+    expect(appSource).toContain("selectWorkspaceLayoutSlot: (layoutId) =>");
+    expect(appSource).toContain("refetchAuthoritativeWorkspaceChrome");
+    expect(appSource).toContain(
+      "awaitWorkspaceChromeMutations: () => workspaceChromeMutations.drain()",
+    );
+    expect(appSource).toContain("workspaceChromeMutations.runTracked");
+    expect(runtimeSource).toContain("options.selectWorkspaceLayoutSlot?.(layoutId)");
+    expect(runtimeSource).not.toContain("createWorkspaceChromeMutationQueue");
+    expect(runtimeSource).not.toContain("stateWorkspaceChromeSelectLayoutSlot");
   });
 
   it("keeps default workspace product surfaces wired through the normal shell", async () => {

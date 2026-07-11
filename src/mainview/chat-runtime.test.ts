@@ -13,8 +13,9 @@ import {
   composerAttachmentPromptText,
   parseComposerAttachmentTextSignature,
   serializeComposerAttachmentTextSignature,
+  type ArtifactOpenMessage,
   type ComposerAttachment,
-  type AppWorkspaceUiRestoreState,
+  type CommandInspectorReadModel,
   type AppLogEntry,
   type AppLogQuery,
   type AppLogReadModel,
@@ -30,22 +31,23 @@ import {
   type StateReadModelBaseline,
   type StateSnippetsReadModel,
   type SurfaceSyncMessage,
-  type WorkspaceCommandInspector,
   type WriteCommandStdinRequest,
   type WriteCommandStdinResponse,
-  type WorkspaceHandlerThreadSummary,
+  type WorkspaceHandlerThreadInspector,
   type WorkspaceRuntimeApprovalRequest,
   type WorkspaceRequestUserInputRequest,
   type WorkspaceSessionSummary,
+  type WorkspaceLayoutReadModel,
+  type WorkspaceLayoutSlotReadModel,
+  type WorkspacePaneRecord,
   type WorkspaceScoped,
-  type WorkspaceSyncMessage,
   type WorkspaceWorkflowTaskAttemptInspector,
   type WorkflowsGeneratedReadModel,
   type WorkspaceTabInfo,
 } from "../shared/workspace-contract";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "../shared/snippets";
 import type { PromptHistoryEntry } from "./prompt-history";
-import type { ChatRuntimeRpcClient } from "./chat-runtime";
+import type { ChatRuntimeOptions, ChatRuntimeRpcClient } from "./chat-runtime";
 import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane-layout";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
@@ -62,9 +64,13 @@ import type {
   RequestInputQuestionId,
   RequestInputRequestId,
   RuntimeApprovalId,
+  RuntimeClientRequestId,
   SnippetId,
   StateRevision,
+  ThreadId,
+  WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspaceSessionId,
 } from "@svvy/core";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
@@ -99,6 +105,7 @@ const TEST_WORKSPACE_INFO: WorkspaceTabInfo = {
   kind: "user",
   branch: "main",
   openedAt: "2026-04-10T10:00:00.000Z",
+  activeLayoutId: "A",
 };
 
 type PromptHandlerResult = {
@@ -122,8 +129,12 @@ type SurfaceRecord = {
   retainCount: number;
 };
 
-type WorkspaceUiRestoreState = AppWorkspaceUiRestoreState & {
+type RendererLayoutFixtureState = {
   layouts: Record<WorkspaceLayoutSlotId, WorkspaceDockviewLayoutState | null>;
+};
+
+type MutableSessionSummary = {
+  -readonly [Key in keyof WorkspaceSessionSummary]: WorkspaceSessionSummary[Key];
 };
 
 type FakeRpcHarness = {
@@ -136,7 +147,7 @@ type FakeRpcHarness = {
   thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }>;
   cancelRequests: PromptTarget[];
   requestCounts: {
-    listSessions: number;
+    sessionNavigation: number;
     listProviderAuths: number;
     fetchProviderAuth: number;
     rebaselineStateReadModels: number;
@@ -151,9 +162,9 @@ type FakeRpcHarness = {
   setAppGlobalLogs: (readModel: AppLogReadModel) => void;
   setRequestInputReadModelRequests: (requests: readonly WorkspaceRequestUserInputRequest[]) => void;
   setApprovalsReadModelRequests: (requests: readonly WorkspaceRuntimeApprovalRequest[]) => void;
-  commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
+  commandInspectorRequests: Array<{ workspaceId: string; commandId: string }>;
   commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>>;
-  handlerThreadListRequests: string[];
+  handlerInspectorRequests: Array<{ workspaceId: string; threadId: string }>;
   workflowTaskAttemptInspectorRequests: Array<{
     workspaceId: string;
     workflowTaskAttemptId: string;
@@ -179,22 +190,42 @@ type FakeRpcHarness = {
   openWorkflowsGeneratedExportRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openWorkflowsGeneratedExportInEditor"]>[0]
   >;
+  workspaceLayoutSaveRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateWorkspaceLayoutSaveSlot"]>[0]
+  >;
+  setWorkspaceLayoutSaveHandler: (
+    handler:
+      | ((
+          request: Parameters<ChatRuntimeRpcClient["request"]["stateWorkspaceLayoutSaveSlot"]>[0],
+        ) => Promise<void>)
+      | null,
+  ) => void;
+  setWorkspaceLayoutReadHandler: (
+    handler: ((readModel: WorkspaceLayoutReadModel) => Promise<void>) | null,
+  ) => void;
+  setWorkspaceActiveLayoutId: (layoutId: WorkspaceLayoutSlotId) => void;
+  setCommandInspector: (inspector: CommandInspectorReadModel | null) => void;
+  setHandlerInspectors: (inspectors: readonly WorkspaceHandlerThreadInspector[]) => void;
+  setWorkflowTaskAttemptInspector: (
+    inspector: WorkspaceWorkflowTaskAttemptInspector | null,
+  ) => void;
+  setCommandInspectorReadHandler: (
+    handler: ((commandId: string, value: CommandInspectorReadModel | null) => Promise<void>) | null,
+  ) => void;
+  setOpenSessionHandler: (sessionId: string, handler: (() => Promise<void>) | null) => void;
   setSnippetRows: (rows: StateSnippetsReadModel["snippets"]) => void;
   setWorkflowsGeneratedReadModel: (readModel: WorkflowsGeneratedReadModel) => void;
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
-  updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
-  emitWorkspaceSync: (
-    reason?: WorkspaceSyncMessage["reason"],
-    workspaceId?: string,
-    extra?: Pick<WorkspaceSyncMessage, "artifactOpenRequest">,
-  ) => void;
+  updateSummary: (sessionId: string, updater: (summary: MutableSessionSummary) => void) => void;
+  emitSessionNavigationInvalidation: (workspaceId?: string) => void;
+  emitArtifactOpen: (payload: ArtifactOpenMessage) => void;
   emitSurfaceSync: (
     payload: Omit<SurfaceSyncMessage, "workspaceId"> & { workspaceId?: string },
   ) => void;
   getRetainCount: (surfacePiSessionId: string) => number;
   getSurfaceSnapshot: (surfacePiSessionId: string) => ConversationSurfaceSnapshot;
-  getWorkspaceUiRestore: (workspaceId: string) => WorkspaceUiRestoreState | null;
-  setWorkspaceUiRestore: (workspaceId: string, state: WorkspaceUiRestoreState) => void;
+  getRendererLayoutFixture: (workspaceId: string) => RendererLayoutFixtureState | null;
+  setRendererLayoutFixture: (workspaceId: string, state: RendererLayoutFixtureState) => void;
 };
 
 function cloneTarget(target: PromptTarget): PromptTarget {
@@ -363,7 +394,6 @@ function createSummary(
   title: string,
   preview: string,
   reasoningEffort: ReasoningEffort = "medium",
-  options: { parentSessionId?: string } = {},
 ): WorkspaceSessionSummary {
   return {
     id,
@@ -384,7 +414,6 @@ function createSummary(
     provider: "openai",
     modelId: "gpt-4o",
     thinkingLevel: reasoningEffort,
-    ...(options.parentSessionId ? { parentSessionId: options.parentSessionId } : {}),
     wait: null,
     counts: {
       turns: 0,
@@ -458,9 +487,11 @@ function createSurfaceSnapshot(input: {
 function createCommandInspector(
   commandId = "command-1",
   toolName = "execute_typescript",
-): WorkspaceCommandInspector {
+): CommandInspectorReadModel {
   return {
     commandId,
+    target: createOrchestratorTarget("session-1") as never,
+    acceptedArguments: {},
     threadId: "thread-1",
     workflowRunId: null,
     toolName,
@@ -520,7 +551,7 @@ function createCommandInspector(
   };
 }
 
-function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThreadSummary {
+function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThreadInspector {
   return {
     threadId,
     surfacePiSessionId: `thread-session-${threadId}`,
@@ -553,6 +584,11 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
       summary: "Patched the parser transitions and added regression coverage.",
       createdAt: "2026-04-10T10:04:00.000Z",
     },
+    commandRollups: [],
+    workflowRuns: [],
+    workflowTaskAttempts: [],
+    episodes: [],
+    artifacts: [],
   };
 }
 
@@ -713,18 +749,122 @@ function createMemoryStorage(): ChatStorage {
   } as ChatStorage;
 }
 
-function createWorkspaceRestoreState(
-  layout: WorkspaceUiRestoreState["layouts"]["A"],
+function createRendererLayoutFixtureState(
+  layout: RendererLayoutFixtureState["layouts"]["A"],
   activeLayoutId: "A" | "B" | "C" = "A",
-): WorkspaceUiRestoreState {
+): RendererLayoutFixtureState {
   return {
-    version: 5,
     layouts: {
       A: activeLayoutId === "A" ? layout : null,
       B: activeLayoutId === "B" ? layout : null,
       C: activeLayoutId === "C" ? layout : null,
     },
   };
+}
+
+function fixtureFallbackChrome(
+  target: WorkspacePaneRecord["target"],
+): Exclude<WorkspacePaneRecord["fallbackChrome"], null> {
+  const kind = target.surface === "handler" ? "handler-thread" : target.surface;
+  return {
+    title: target.surface === "orchestrator" ? "Orchestrator" : "Restored surface",
+    subtitle: null,
+    kind,
+  };
+}
+
+function workspaceLayoutFromFixture(
+  workspaceId: string,
+  fixture: RendererLayoutFixtureState | null,
+): WorkspaceLayoutReadModel {
+  const slots = (["A", "B", "C"] as const).map((layoutId): WorkspaceLayoutSlotReadModel => {
+    const layout = fixture?.layouts[layoutId] ?? null;
+    const panes = (layout?.panels ?? []).flatMap((panel): WorkspacePaneRecord[] => {
+      if (!panel.binding) return [];
+      const unavailableReason = panel.restore?.unavailableReason?.trim() ?? "";
+      const target = structuredClone(panel.binding) as WorkspacePaneRecord["target"];
+      return [
+        unavailableReason
+          ? {
+              paneId: panel.panelId as never,
+              target,
+              localState: structuredClone(panel.localState),
+              fallbackChrome: panel.fallbackChrome ?? fixtureFallbackChrome(target),
+              placement: structuredClone(panel.placement ?? null) as never,
+              restore: {
+                kind: "unavailable",
+                reason: unavailableReason,
+                lastKnownLocationLabel: panel.restore?.lastKnownLocationLabel ?? null,
+              },
+            }
+          : {
+              paneId: panel.panelId as never,
+              target,
+              localState: structuredClone(panel.localState),
+              fallbackChrome: null,
+              placement: structuredClone(panel.placement ?? null) as never,
+              restore: { kind: "ready" },
+            },
+      ];
+    });
+    const paneIds = new Set(panes.map((pane) => pane.paneId));
+    return {
+      workspaceId: workspaceId as WorkspaceId,
+      layoutId,
+      initialized: panes.length > 0,
+      dockviewJson: structuredClone(layout?.dockview ?? null) as JsonValue | null,
+      panes,
+      compactSurfaces: (layout?.compactSurfaces ?? [])
+        .filter((surface) => surface.panelId === null || paneIds.has(surface.panelId as never))
+        .map((surface) => ({
+          kind: surface.kind,
+          workspaceSessionId: surface.workspaceSessionId as never,
+          threadId: surface.threadId as never,
+          panelId: surface.panelId as never,
+          density: surface.density,
+        })),
+      focusedPaneId:
+        layout?.focusedPanelId && paneIds.has(layout.focusedPanelId as never)
+          ? (layout.focusedPanelId as never)
+          : (panes[0]?.paneId ?? null),
+      updatedAt: (layout?.updatedAt ?? "1970-01-01T00:00:00.000Z") as never,
+    };
+  });
+  return { workspaceId: workspaceId as WorkspaceId, slots };
+}
+
+function saveLayoutFixtureSlot(
+  fixtures: Map<string, RendererLayoutFixtureState>,
+  request: Parameters<ChatRuntimeRpcClient["request"]["stateWorkspaceLayoutSaveSlot"]>[0],
+): void {
+  const fixture = fixtures.get(request.workspaceId) ?? createRendererLayoutFixtureState(null);
+  fixture.layouts[request.layoutId] = {
+    dockview: structuredClone(request.dockviewJson) as WorkspaceDockviewLayoutState["dockview"],
+    panels: request.panes.map((pane) => ({
+      panelId: pane.paneId,
+      binding: structuredClone(pane.target) as never,
+      localState: structuredClone(pane.localState),
+      fallbackChrome: structuredClone(pane.fallbackChrome),
+      placement: structuredClone(pane.placement) as never,
+      restore:
+        pane.restore.kind === "ready"
+          ? { unavailableReason: null, lastKnownLocationLabel: null }
+          : {
+              unavailableReason: pane.restore.reason,
+              lastKnownLocationLabel: pane.restore.lastKnownLocationLabel,
+            },
+    })),
+    compactSurfaces: request.compactSurfaces.map((surface) => ({
+      kind: surface.kind,
+      workspaceSessionId: surface.workspaceSessionId,
+      threadId: surface.threadId,
+      panelId: surface.panelId,
+      density: surface.density,
+    })),
+    focusedPanelId: request.focusedPaneId,
+    updatedAt: new Date().toISOString(),
+  };
+  fixtures.set(request.workspaceId, structuredClone(fixture));
 }
 
 function emptyAppLogReadModel(): AppLogReadModel {
@@ -742,18 +882,21 @@ function emptyAppLogReadModel(): AppLogReadModel {
 function createFakeRpc(input: {
   sessions: WorkspaceSessionSummary[];
   surfaces: ConversationSurfaceSnapshot[];
-  commandInspector?: WorkspaceCommandInspector;
+  commandInspector?: CommandInspectorReadModel;
   commandStdinResponse?: WriteCommandStdinResponse;
-  handlerThreads?: WorkspaceHandlerThreadSummary[];
+  handlerThreads?: WorkspaceHandlerThreadInspector[];
   workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
   requestUserInputRequests?: WorkspaceRequestUserInputRequest[];
   runtimeApprovalRequests?: WorkspaceRuntimeApprovalRequest[];
 }): FakeRpcHarness {
-  const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
+  const artifactOpenListeners = new Set<(payload: ArtifactOpenMessage) => void>();
   const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
   const desktopNotificationListeners = new Set<(payload: DesktopRendererNotification) => void>();
-  const summaries = new Map(
-    input.sessions.map((summary) => [summary.id, structuredClone(summary)]),
+  const summaries = new Map<string, MutableSessionSummary>(
+    input.sessions.map((summary) => [
+      summary.id,
+      structuredClone(summary) as MutableSessionSummary,
+    ]),
   );
   const surfaces = new Map<string, SurfaceRecord>(
     input.surfaces.map((snapshot) => [
@@ -772,9 +915,9 @@ function createFakeRpc(input: {
   const modelUpdates: Array<{ target: PromptTarget; model: string }> = [];
   const thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }> = [];
   const cancelRequests: PromptTarget[] = [];
-  const commandInspectorRequests: Array<{ sessionId: string; commandId: string }> = [];
+  const commandInspectorRequests: Array<{ workspaceId: string; commandId: string }> = [];
   const commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>> = [];
-  const handlerThreadListRequests: string[] = [];
+  const handlerInspectorRequests: Array<{ workspaceId: string; threadId: string }> = [];
   const workflowTaskAttemptInspectorRequests: Array<{
     workspaceId: string;
     workflowTaskAttemptId: string;
@@ -795,10 +938,30 @@ function createFakeRpc(input: {
   const openSnippetSourceRequests: FakeRpcHarness["openSnippetSourceRequests"] = [];
   const openWorkflowsGeneratedExportRequests: FakeRpcHarness["openWorkflowsGeneratedExportRequests"] =
     [];
+  const workspaceLayoutSaveRequests: FakeRpcHarness["workspaceLayoutSaveRequests"] = [];
+  let workspaceLayoutSaveHandler:
+    | ((request: FakeRpcHarness["workspaceLayoutSaveRequests"][number]) => Promise<void>)
+    | null = null;
+  let workspaceLayoutReadHandler: ((readModel: WorkspaceLayoutReadModel) => Promise<void>) | null =
+    null;
+  let commandInspectorReadModel = structuredClone(input.commandInspector ?? null);
+  let commandInspectorReadHandler:
+    | ((commandId: string, value: CommandInspectorReadModel | null) => Promise<void>)
+    | null = null;
+  let handlerInspectorReadModels = new Map(
+    (input.handlerThreads ?? []).map((inspector) => [
+      inspector.threadId,
+      structuredClone(inspector),
+    ]),
+  );
+  let workflowTaskAttemptInspectorReadModel = structuredClone(
+    input.workflowTaskAttemptInspector ?? null,
+  );
+  const openSessionHandlers = new Map<string, () => Promise<void>>();
   const appLogSeenRequests: number[] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
-  const workspaceUiRestore = new Map<string, AppWorkspaceUiRestoreState>();
+  const rendererLayoutFixtures = new Map<string, RendererLayoutFixtureState>();
   let workspaceInfo = structuredClone(TEST_WORKSPACE_INFO);
   let appLogEntries: AppLogEntry[] = [];
   let appLogSeenSeq = 0;
@@ -819,14 +982,22 @@ function createFakeRpc(input: {
     revision: 0 as StateRevision,
   };
   const requestCounts = {
-    listSessions: 0,
+    sessionNavigation: 0,
     listProviderAuths: 0,
     fetchProviderAuth: 0,
     rebaselineStateReadModels: 0,
     rendererReady: 0,
   };
-  let focusedSurfacePiSessionId: string | null = null;
   let queuedMessageSequence = 0;
+
+  const stateCommandResult = (clientRequestId?: RuntimeClientRequestId) => ({
+    receipt: {
+      clientRequestId: clientRequestId ?? null,
+      outcome: "applied" as const,
+      committedAt: "2026-04-10T10:10:00.000Z" as typeof IsoDateTimeStringSchema.Type,
+      stateRevision: 1 as StateRevision,
+    },
+  });
 
   const listSessions = (): WorkspaceSessionSummary[] =>
     Array.from(summaries.values()).map((summary) => structuredClone(summary));
@@ -844,7 +1015,7 @@ function createFakeRpc(input: {
 
   const updateSummary = (
     sessionId: string,
-    updater: (summary: WorkspaceSessionSummary) => void,
+    updater: (summary: MutableSessionSummary) => void,
   ): void => {
     const summary = summaries.get(sessionId) ?? null;
     if (!summary) {
@@ -853,19 +1024,50 @@ function createFakeRpc(input: {
     updater(summary);
   };
 
-  const emitWorkspaceSync = (
-    reason: WorkspaceSyncMessage["reason"] = "workspace.updated",
+  const emitSessionNavigationInvalidation = (
     workspaceId = TEST_WORKSPACE_INFO.workspaceId,
-    extra: Pick<WorkspaceSyncMessage, "artifactOpenRequest"> = {},
   ): void => {
-    const payload: WorkspaceSyncMessage = {
-      workspaceId,
-      reason,
-      sessions: listSessions(),
-      navigation: listNavigation(),
-      ...extra,
-    };
-    for (const listener of workspaceSyncListeners) {
+    desktopNotificationSequence += 1;
+    for (const listener of desktopNotificationListeners) {
+      listener({
+        kind: "read-model-changed",
+        eventGenerationId: "fake-runtime-event-generation" as never,
+        sequence: desktopNotificationSequence as never,
+        scope: {
+          kind: "workspace",
+          workspaceId: workspaceId as WorkspaceId,
+        },
+        invalidation: {
+          scope: "workspace",
+          workspaceId: workspaceId as WorkspaceId,
+          invalidation: { model: "sessionNavigation" },
+        },
+      });
+    }
+  };
+
+  const emitWorkspaceLayoutInvalidation = (
+    workspaceId: string,
+    layoutId: WorkspaceLayoutSlotId,
+  ): void => {
+    desktopNotificationSequence += 1;
+    for (const listener of desktopNotificationListeners) {
+      listener({
+        kind: "read-model-changed",
+        eventGenerationId: "fake-runtime-event-generation" as never,
+        sequence: desktopNotificationSequence as never,
+        scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+        invalidation: {
+          scope: "workspace",
+          workspaceId: workspaceId as WorkspaceId,
+          invalidation: { model: "workspaceLayout", ids: [layoutId] },
+        },
+      });
+    }
+  };
+
+  const emitArtifactOpen = (payload: ArtifactOpenMessage): void => {
+    for (const listener of artifactOpenListeners) {
       listener(structuredClone(payload));
     }
   };
@@ -1076,6 +1278,36 @@ function createFakeRpc(input: {
         }),
         fetchStateReadModel: async (request) => {
           switch (request.kind) {
+            case "workspaceChrome": {
+              const tab = {
+                workspaceTabId: workspaceInfo.workspaceTabId as never,
+                workspaceId: workspaceInfo.workspaceId as never,
+                cwd: workspaceInfo.cwd as never,
+                workspaceLabel: workspaceInfo.workspaceLabel,
+                kind: workspaceInfo.kind,
+                openedAt: workspaceInfo.openedAt as never,
+                activeLayoutId: workspaceInfo.activeLayoutId,
+              };
+              return {
+                kind: "workspaceChrome",
+                value: {
+                  activeWorkspaceTabId: tab.workspaceTabId,
+                  tabs: [tab],
+                  knownWorkspaces: [tab],
+                },
+              };
+            }
+            case "workspaceLayout": {
+              const readModel = workspaceLayoutFromFixture(
+                request.workspaceId,
+                rendererLayoutFixtures.get(request.workspaceId) ?? null,
+              );
+              await workspaceLayoutReadHandler?.(readModel);
+              return {
+                kind: "workspaceLayout",
+                value: readModel,
+              };
+            }
             case "appPreferences": {
               const preferences = (
                 await harness.client.request.getAgentSettings({
@@ -1140,6 +1372,31 @@ function createFakeRpc(input: {
                   usableModelProviders: ["openai" as ProviderId],
                 },
               };
+            case "sessionNavigation":
+              requestCounts.sessionNavigation += 1;
+              return {
+                kind: "sessionNavigation",
+                value: listNavigation(),
+              };
+            case "commandInspector": {
+              commandInspectorRequests.push({
+                workspaceId: request.workspaceId,
+                commandId: request.commandId,
+              });
+              const value = structuredClone(commandInspectorReadModel);
+              await commandInspectorReadHandler?.(request.commandId, value);
+              return { kind: "commandInspector", value };
+            }
+            case "handlerInspector": {
+              handlerInspectorRequests.push({
+                workspaceId: request.workspaceId,
+                threadId: request.threadId,
+              });
+              return {
+                kind: "handlerInspector",
+                value: structuredClone(handlerInspectorReadModels.get(request.threadId) ?? null),
+              };
+            }
             case "requestInput":
               return {
                 kind: "requestInput",
@@ -1176,12 +1433,12 @@ function createFakeRpc(input: {
               };
             case "workflowTaskAttemptInspector":
               workflowTaskAttemptInspectorRequests.push({
-                workspaceId: request.workspaceId ?? "",
+                workspaceId: request.workspaceId,
                 workflowTaskAttemptId: request.workflowTaskAttemptId,
               });
               return {
                 kind: "workflowTaskAttemptInspector",
-                value: structuredClone(input.workflowTaskAttemptInspector ?? null),
+                value: structuredClone(workflowTaskAttemptInspectorReadModel),
               };
             default:
               throw new Error(`Unsupported state read model in harness: ${request.kind}`);
@@ -1189,6 +1446,10 @@ function createFakeRpc(input: {
         },
         refetchStateReadModels: async () => [],
         refetchStateReadModelInvalidation: async ({ descriptor }) => {
+          const descriptorWorkspaceId =
+            descriptor.scope === "workspace"
+              ? descriptor.workspaceId
+              : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId);
           switch (descriptor.invalidation.model) {
             case "appLogs":
               return [
@@ -1209,6 +1470,60 @@ function createFakeRpc(input: {
               return [await harness.client.request.fetchStateReadModel({ kind: "settings" })];
             case "providerAuth":
               return [await harness.client.request.fetchStateReadModel({ kind: "providerAuth" })];
+            case "workspaceChrome":
+              return [
+                await harness.client.request.fetchStateReadModel({ kind: "workspaceChrome" }),
+              ];
+            case "workspaceLayout":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "workspaceLayout",
+                  workspaceId:
+                    descriptor.scope === "workspace"
+                      ? descriptor.workspaceId
+                      : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId),
+                }),
+              ];
+            case "sessionNavigation":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "sessionNavigation",
+                  workspaceId:
+                    descriptor.scope === "workspace"
+                      ? descriptor.workspaceId
+                      : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId),
+                }),
+              ];
+            case "commandInspector":
+              return await Promise.all(
+                descriptor.invalidation.ids.map((commandId) =>
+                  harness.client.request.fetchStateReadModel({
+                    kind: "commandInspector",
+                    workspaceId: descriptorWorkspaceId,
+                    commandId,
+                  }),
+                ),
+              );
+            case "handlerThreadInspector":
+              return await Promise.all(
+                descriptor.invalidation.ids.map((threadId) =>
+                  harness.client.request.fetchStateReadModel({
+                    kind: "handlerInspector",
+                    workspaceId: descriptorWorkspaceId,
+                    threadId,
+                  }),
+                ),
+              );
+            case "workflowTaskAttemptInspector":
+              return await Promise.all(
+                descriptor.invalidation.ids.map((workflowTaskAttemptId) =>
+                  harness.client.request.fetchStateReadModel({
+                    kind: "workflowTaskAttemptInspector",
+                    workspaceId: descriptorWorkspaceId,
+                    workflowTaskAttemptId,
+                  }),
+                ),
+              );
             case "requestInput":
               return [
                 await harness.client.request.fetchStateReadModel({
@@ -1505,11 +1820,14 @@ function createFakeRpc(input: {
           };
         },
         getWorkspaceInfo: async () => structuredClone(workspaceInfo),
-        getWorkspaceUiRestore: async ({ workspaceId }) =>
-          structuredClone(workspaceUiRestore.get(workspaceId) ?? null),
-        setWorkspaceUiRestore: async ({ workspaceId, state }) => {
-          workspaceUiRestore.set(workspaceId, structuredClone(state));
-          return { ok: true };
+        stateWorkspaceLayoutSaveSlot: async (request) => {
+          workspaceLayoutSaveRequests.push(structuredClone(request));
+          await workspaceLayoutSaveHandler?.(request);
+          saveLayoutFixtureSlot(rendererLayoutFixtures, request);
+          queueMicrotask(() =>
+            emitWorkspaceLayoutInvalidation(request.workspaceId, request.layoutId),
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
         listWorkspaceBranches: async ({ workspaceId }) => {
           branchListRequests.push(workspaceId);
@@ -1665,17 +1983,6 @@ function createFakeRpc(input: {
             path: snippetRows.find((snippet) => snippet.id === request.snippetId)?.path ?? "",
           };
         },
-        listSessions: async () => {
-          requestCounts.listSessions += 1;
-          return {
-            sessions: listSessions(),
-            navigation: listNavigation(),
-          };
-        },
-        getCommandInspector: async ({ sessionId, commandId }) => {
-          commandInspectorRequests.push({ sessionId, commandId });
-          return structuredClone(input.commandInspector ?? createCommandInspector(commandId));
-        },
         writeCommandStdin: async (request) => {
           commandStdinRequests.push(structuredClone(request));
           return structuredClone(
@@ -1684,12 +1991,6 @@ function createFakeRpc(input: {
               status: "accepted",
               acceptedBytes: new TextEncoder().encode(request.text).byteLength,
             },
-          );
-        },
-        listHandlerThreads: async ({ sessionId }) => {
-          handlerThreadListRequests.push(sessionId);
-          return structuredClone(
-            input.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
           );
         },
         getArtifactPreview: async ({ sessionId, artifactId }) => ({
@@ -1713,6 +2014,7 @@ function createFakeRpc(input: {
           return structuredClone(snapshot);
         },
         openSession: async ({ sessionId }) => {
+          await openSessionHandlers.get(sessionId)?.();
           const record = getSurfaceRecord(sessionId);
           record.retainCount += 1;
           openedTargets.push(cloneTarget(record.snapshot.target));
@@ -1760,7 +2062,6 @@ function createFakeRpc(input: {
             title ?? `${sourceSummary.title} fork`,
             sourceSummary.preview,
             sourceSurface.reasoningEffort,
-            { parentSessionId: sessionId },
           );
           const snapshot = createSurfaceSnapshot({
             target: createOrchestratorTarget(nextSessionId),
@@ -1784,72 +2085,51 @@ function createFakeRpc(input: {
           }
           return { ok: true };
         },
-        pinSession: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
-            summary.isPinned = true;
-            summary.pinnedAt = "2026-04-10T10:10:00.000Z";
-            summary.isArchived = false;
-            summary.archivedAt = null;
+        stateSessionNavigationSetPinned: async (request) => {
+          updateSummary(request.workspaceSessionId, (summary) => {
+            summary.isPinned = request.pinned;
+            summary.pinnedAt = request.pinned ? "2026-04-10T10:10:00.000Z" : null;
+            if (request.pinned) {
+              summary.isArchived = false;
+              summary.archivedAt = null;
+            }
           });
-          return { ok: true };
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
-        unpinSession: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
-            summary.isPinned = false;
-            summary.pinnedAt = null;
+        stateSessionNavigationSetArchived: async (request) => {
+          updateSummary(request.workspaceSessionId, (summary) => {
+            summary.isArchived = request.archived;
+            summary.archivedAt = request.archived ? "2026-04-10T10:10:00.000Z" : null;
+            if (request.archived) {
+              summary.isPinned = false;
+              summary.pinnedAt = null;
+            }
           });
-          return { ok: true };
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
-        archiveSession: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
-            summary.isArchived = true;
-            summary.archivedAt = "2026-04-10T10:10:00.000Z";
-            summary.isPinned = false;
-            summary.pinnedAt = null;
-          });
-          return { ok: true };
-        },
-        unarchiveSession: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
-            summary.isArchived = false;
-            summary.archivedAt = null;
-          });
-          return { ok: true };
-        },
-        markSessionUnread: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
+        stateSessionNavigationMarkUnread: async (request) => {
+          updateSummary(request.workspaceSessionId, (summary) => {
             summary.isUnread = true;
             summary.unreadAt = "2026-04-10T10:10:00.000Z";
             summary.unreadReason = "manual";
           });
-          return { ok: true };
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
-        markSessionRead: async ({ sessionId }) => {
-          updateSummary(sessionId, (summary) => {
+        stateSessionNavigationMarkRead: async (request) => {
+          updateSummary(request.workspaceSessionId, (summary) => {
             summary.isUnread = false;
             summary.unreadAt = null;
             summary.unreadReason = null;
             summary.lastReadAt = "2026-04-10T10:11:00.000Z";
           });
-          return { ok: true };
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
-        recordFocusedSession: async ({ sessionId, surfacePiSessionId }) => {
-          focusedSurfacePiSessionId = sessionId ? (surfacePiSessionId ?? null) : null;
-          if (sessionId) {
-            updateSummary(sessionId, (summary) => {
-              summary.isUnread = false;
-              summary.unreadAt = null;
-              summary.unreadReason = null;
-              summary.lastReadAt = "2026-04-10T10:11:00.000Z";
-            });
-          }
-          return { ok: true };
-        },
-        setSessionNavigationSectionState: async ({ section, collapsed }) => {
+        stateSessionNavigationSetSectionState: async (request) => {
+          const { section, collapsed } = request;
           if (section === "archived" && typeof collapsed === "boolean") {
             archivedGroupCollapsed = collapsed;
           }
-          return { ok: true };
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
         sendPrompt: async (request) => {
           const record = getSurfaceRecord(request.target.surfacePiSessionId);
@@ -1929,7 +2209,7 @@ function createFakeRpc(input: {
           updateSummary(request.target.workspaceSessionId, (summary) => {
             summary.status = "running";
           });
-          emitWorkspaceSync("workspace.updated");
+          emitSessionNavigationInvalidation();
           queueMicrotask(() => {
             emitSurfaceSync({
               reason: "background.started",
@@ -1977,11 +2257,9 @@ function createFakeRpc(input: {
               summary.preview = result.assistantText;
               summary.messageCount = nextMessages.length;
               summary.status = "idle";
-              if (focusedSurfacePiSessionId !== request.target.surfacePiSessionId) {
-                summary.isUnread = true;
-                summary.unreadAt = "2026-04-10T10:12:00.000Z";
-                summary.unreadReason = "assistant-turn-finished";
-              }
+              summary.isUnread = true;
+              summary.unreadAt = "2026-04-10T10:12:00.000Z";
+              summary.unreadReason = "assistant-turn-finished";
             });
 
             const surfaceSyncPayload: SurfaceSyncMessage = {
@@ -1996,7 +2274,7 @@ function createFakeRpc(input: {
               emitAssistantStream(request.target, result.assistantText, provider, model);
               emitSurfaceSync(surfaceSyncPayload);
             }
-            emitWorkspaceSync("workspace.updated");
+            emitSessionNavigationInvalidation();
             const [nextQueued, ...remainingQueued] = record.snapshot.queuedMessages;
             if (nextQueued) {
               record.snapshot = { ...record.snapshot, queuedMessages: remainingQueued };
@@ -2216,7 +2494,7 @@ function createFakeRpc(input: {
               target: cloneTarget(target),
               snapshot: structuredClone(surfaceRecord.snapshot),
             });
-            emitWorkspaceSync("structured.updated");
+            emitSessionNavigationInvalidation();
           });
           return {
             requestId: request.requestId as RequestInputRequestId,
@@ -2241,7 +2519,7 @@ function createFakeRpc(input: {
             approvalRequest.status = request.approved ? "approved" : "denied";
             approvalRequest.completedAt = "2026-04-10T10:13:00.000Z";
           }
-          emitWorkspaceSync("structured.updated");
+          emitSessionNavigationInvalidation();
           return {
             approvalId: request.requestId as RuntimeApprovalId,
             commandId: "command-approved" as CommandId,
@@ -2408,8 +2686,8 @@ function createFakeRpc(input: {
         removeProviderAuth: async () => ({ ok: true }),
       },
       addMessageListener: (messageName: string, listener: unknown) => {
-        if (messageName === "sendWorkspaceSync") {
-          workspaceSyncListeners.add(listener as (payload: WorkspaceSyncMessage) => void);
+        if (messageName === "sendArtifactOpen") {
+          artifactOpenListeners.add(listener as (payload: ArtifactOpenMessage) => void);
           return;
         }
         if (messageName === "sendSurfaceSync") {
@@ -2424,8 +2702,8 @@ function createFakeRpc(input: {
         }
       },
       removeMessageListener: (messageName: string, listener: unknown) => {
-        if (messageName === "sendWorkspaceSync") {
-          workspaceSyncListeners.delete(listener as (payload: WorkspaceSyncMessage) => void);
+        if (messageName === "sendArtifactOpen") {
+          artifactOpenListeners.delete(listener as (payload: ArtifactOpenMessage) => void);
           return;
         }
         if (messageName === "sendSurfaceSync") {
@@ -2450,7 +2728,7 @@ function createFakeRpc(input: {
     requestCounts,
     commandInspectorRequests,
     commandStdinRequests,
-    handlerThreadListRequests,
+    handlerInspectorRequests,
     workflowTaskAttemptInspectorRequests,
     requestUserInputAnswerRequests,
     runtimeApprovalAnswerRequests,
@@ -2461,6 +2739,7 @@ function createFakeRpc(input: {
     snippetEnableRequests,
     openSnippetSourceRequests,
     openWorkflowsGeneratedExportRequests,
+    workspaceLayoutSaveRequests,
     appLogSeenRequests,
     branchListRequests,
     branchSwitchRequests,
@@ -2468,7 +2747,8 @@ function createFakeRpc(input: {
       promptHandlers.set(surfacePiSessionId, handler);
     },
     updateSummary,
-    emitWorkspaceSync,
+    emitSessionNavigationInvalidation,
+    emitArtifactOpen,
     emitSurfaceSync,
     emitAppLogUpdate,
     emitDesktopNotification: (payload) => {
@@ -2494,13 +2774,40 @@ function createFakeRpc(input: {
     setWorkflowsGeneratedReadModel: (readModel) => {
       workflowsGeneratedReadModel = structuredClone(readModel);
     },
+    setWorkspaceLayoutSaveHandler: (handler) => {
+      workspaceLayoutSaveHandler = handler;
+    },
+    setWorkspaceLayoutReadHandler: (handler) => {
+      workspaceLayoutReadHandler = handler;
+    },
+    setWorkspaceActiveLayoutId: (layoutId) => {
+      workspaceInfo = { ...workspaceInfo, activeLayoutId: layoutId };
+    },
+    setCommandInspector: (inspector) => {
+      commandInspectorReadModel = structuredClone(inspector);
+    },
+    setHandlerInspectors: (inspectors) => {
+      handlerInspectorReadModels = new Map(
+        inspectors.map((inspector) => [inspector.threadId, structuredClone(inspector)]),
+      );
+    },
+    setWorkflowTaskAttemptInspector: (inspector) => {
+      workflowTaskAttemptInspectorReadModel = structuredClone(inspector);
+    },
+    setCommandInspectorReadHandler: (handler) => {
+      commandInspectorReadHandler = handler;
+    },
+    setOpenSessionHandler: (sessionId, handler) => {
+      if (handler) openSessionHandlers.set(sessionId, handler);
+      else openSessionHandlers.delete(sessionId);
+    },
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
       structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
-    getWorkspaceUiRestore: (workspaceId) =>
-      structuredClone((workspaceUiRestore.get(workspaceId) as WorkspaceUiRestoreState) ?? null),
-    setWorkspaceUiRestore: (workspaceId, state) => {
-      workspaceUiRestore.set(workspaceId, structuredClone(state));
+    getRendererLayoutFixture: (workspaceId) =>
+      structuredClone(rendererLayoutFixtures.get(workspaceId) ?? null),
+    setRendererLayoutFixture: (workspaceId, state) => {
+      rendererLayoutFixtures.set(workspaceId, structuredClone(state));
     },
   };
 
@@ -2511,23 +2818,34 @@ async function createRuntime(
   harness: FakeRpcHarness,
   storage = createMemoryStorage(),
   workspaceInfo = TEST_WORKSPACE_INFO,
-  options: { seedInitialLayout?: boolean } = {},
+  options: {
+    seedInitialLayout?: boolean;
+    runtimeOptions?: Omit<ChatRuntimeOptions, "workspaceInfo">;
+  } = {},
 ) {
   if (
     options.seedInitialLayout !== false &&
     workspaceInfo.kind === "user" &&
-    !harness.getWorkspaceUiRestore(workspaceInfo.workspaceId)
+    !harness.getRendererLayoutFixture(workspaceInfo.workspaceId)
   ) {
-    const catalog = await harness.client.request.listSessions({
-      workspaceId: workspaceInfo.workspaceId,
+    const navigation = await harness.client.request.fetchStateReadModel({
+      kind: "sessionNavigation",
+      workspaceId: workspaceInfo.workspaceId as WorkspaceId,
     });
-    const initialSession = catalog.sessions[0];
+    const initialSession =
+      navigation.kind === "sessionNavigation"
+        ? [
+            ...navigation.value.pinnedSessions,
+            ...navigation.value.activeSessions,
+            ...navigation.value.archived.sessions,
+          ][0]
+        : undefined;
     if (initialSession) {
       try {
         harness.getSurfaceSnapshot(initialSession.id);
-        harness.setWorkspaceUiRestore(
+        harness.setRendererLayoutFixture(
           workspaceInfo.workspaceId,
-          createWorkspaceRestoreState({
+          createRendererLayoutFixtureState({
             dockview: null,
             compactSurfaces: [],
             panels: [
@@ -2550,7 +2868,11 @@ async function createRuntime(
     }
   }
   const { createChatRuntime } = await import("./chat-runtime");
-  return await createChatRuntime({ workspaceInfo }, harness.client as never, storage);
+  return await createChatRuntime(
+    { workspaceInfo, ...options.runtimeOptions },
+    harness.client as never,
+    storage,
+  );
 }
 
 describe("createChatRuntime", () => {
@@ -3083,7 +3405,7 @@ describe("createChatRuntime", () => {
     expect(runtime.sessions).toEqual([]);
     expect(runtime.paneLayout.panels).toHaveLength(0);
     expect(runtime.paneLayout.focusedPanelId).toBeNull();
-    expect(harness.client.request.listSessions).toBeDefined();
+    expect(harness.client.request.fetchStateReadModel).toBeDefined();
 
     runtime.dispose();
   });
@@ -4226,7 +4548,8 @@ describe("createChatRuntime", () => {
       summary.preview = "Background workflow updated.";
       summary.status = "running";
     });
-    harness.emitWorkspaceSync("workspace.updated");
+    const navigationFetchesBeforeInvalidation = harness.requestCounts.sessionNavigation;
+    harness.emitSessionNavigationInvalidation();
 
     await waitFor(
       () =>
@@ -4236,12 +4559,12 @@ describe("createChatRuntime", () => {
 
     expect(runtime.getPane("secondary")?.target).toEqual(threadTarget);
     expect(runtime.paneLayout.focusedPanelId).toBe("secondary");
-    expect(harness.requestCounts.listSessions).toBe(2);
+    expect(harness.requestCounts.sessionNavigation).toBe(navigationFetchesBeforeInvalidation + 1);
 
     runtime.dispose();
   });
 
-  it("opens artifact inspector panes from workspace sync open requests", async () => {
+  it("opens artifact inspector panes from identity-only artifact events", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
@@ -4253,11 +4576,10 @@ describe("createChatRuntime", () => {
     });
 
     const runtime = await createRuntime(harness);
-    harness.emitWorkspaceSync("artifact.open", TEST_WORKSPACE_INFO.workspaceId, {
-      artifactOpenRequest: {
-        workspaceSessionId: "session-1",
-        artifactId: "artifact-1",
-      },
+    harness.emitArtifactOpen({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      workspaceSessionId: "session-1" as WorkspaceSessionId,
+      artifactId: "artifact-1" as never,
     });
 
     const focusedPaneId = runtime.paneLayout.focusedPanelId ?? runtime.primaryPaneId;
@@ -4270,7 +4592,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("ignores workspace and surface sync messages for other workspace ids", async () => {
+  it("ignores navigation invalidations and surface sync messages for other workspace ids", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
@@ -4290,7 +4612,7 @@ describe("createChatRuntime", () => {
     harness.updateSummary("session-1", (summary) => {
       summary.preview = "foreign workspace update";
     });
-    harness.emitWorkspaceSync("workspace.updated", "/tmp/other");
+    harness.emitSessionNavigationInvalidation("/tmp/other");
     harness.emitSurfaceSync({
       workspaceId: "/tmp/other",
       reason: "surface.updated",
@@ -4309,7 +4631,7 @@ describe("createChatRuntime", () => {
       lastMessage?.role === "assistant" && "content" in lastMessage ? lastMessage.content[0] : null,
     ).toMatchObject({ text: "main reply" });
 
-    harness.emitWorkspaceSync("workspace.updated");
+    harness.emitSessionNavigationInvalidation();
     await waitFor(
       () =>
         runtime.sessions.find((session) => session.id === "session-1")?.preview ===
@@ -4328,7 +4650,10 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [
         createSummary("session-1", "First", "first reply"),
-        createSummary("session-2", "Second", "second reply"),
+        {
+          ...createSummary("session-2", "Second", "second reply"),
+          threadIds: ["thread-77" as ThreadId],
+        },
       ],
       surfaces: [
         createSurfaceSnapshot({
@@ -4358,9 +4683,11 @@ describe("createChatRuntime", () => {
     expect(threads).toEqual(handlerThreads);
     expect(workflowTaskAttemptDetail).toEqual(workflowTaskAttemptInspector);
     expect(harness.commandInspectorRequests).toEqual([
-      { sessionId: "session-2", commandId: "command-77" },
+      { workspaceId: TEST_WORKSPACE_INFO.workspaceId, commandId: "command-77" },
     ]);
-    expect(harness.handlerThreadListRequests).toEqual(["session-2"]);
+    expect(harness.handlerInspectorRequests).toEqual([
+      { workspaceId: TEST_WORKSPACE_INFO.workspaceId, threadId: "thread-77" },
+    ]);
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
       {
         workspaceId: TEST_WORKSPACE_INFO.workspaceId,
@@ -4368,6 +4695,324 @@ describe("createChatRuntime", () => {
       },
     ]);
 
+    runtime.dispose();
+  });
+
+  it("deduplicates state inspector reads and canonicalizes child commands to their parent", async () => {
+    const commandInspector = createCommandInspector("command-parent");
+    const olderThread = {
+      ...createHandlerThreadSummary("thread-older"),
+      updatedAt: "2026-04-10T10:01:00.000Z",
+    };
+    const newerThread = {
+      ...createHandlerThreadSummary("thread-newer"),
+      updatedAt: "2026-04-10T10:09:00.000Z",
+    };
+    const session = {
+      ...createSummary("session-1", "First", "first reply"),
+      threadIds: [
+        "thread-older" as ThreadId,
+        "thread-missing" as ThreadId,
+        "thread-newer" as ThreadId,
+      ],
+    };
+    const harness = createFakeRpc({
+      sessions: [session],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+      commandInspector,
+      handlerThreads: [olderThread, newerThread],
+      workflowTaskAttemptInspector: createWorkflowTaskAttemptInspector("attempt-1"),
+    });
+    const runtime = await createRuntime(harness);
+
+    const [firstCommand, secondCommand] = await Promise.all([
+      runtime.getCommandInspector("command-child"),
+      runtime.getCommandInspector("command-child"),
+    ]);
+    expect(firstCommand.commandId).toBe("command-parent");
+    expect(secondCommand.commandId).toBe("command-parent");
+    expect((await runtime.getCommandInspector("command-parent")).commandId).toBe("command-parent");
+    expect(harness.commandInspectorRequests).toEqual([
+      { workspaceId: TEST_WORKSPACE_INFO.workspaceId, commandId: "command-child" },
+    ]);
+
+    const [firstThreads, secondThreads] = await Promise.all([
+      runtime.listHandlerThreads("session-1"),
+      runtime.listHandlerThreads("session-1"),
+    ]);
+    expect(firstThreads.map((thread) => thread.threadId)).toEqual(["thread-newer", "thread-older"]);
+    expect(secondThreads).toEqual(firstThreads);
+    expect(runtime.getHandlerThreadsSnapshot("session-1")).toEqual(firstThreads);
+    expect(harness.handlerInspectorRequests).toHaveLength(3);
+
+    const [firstAttempt, secondAttempt] = await Promise.all([
+      runtime.getWorkflowTaskAttemptInspector("attempt-1"),
+      runtime.getWorkflowTaskAttemptInspector("attempt-1"),
+    ]);
+    expect(secondAttempt).toEqual(firstAttempt);
+    expect(harness.workflowTaskAttemptInspectorRequests).toHaveLength(1);
+
+    runtime.dispose();
+  });
+
+  it("uses session navigation membership as handler thread list authority", async () => {
+    const removedThread = createHandlerThreadSummary("thread-removed");
+    const addedThread = {
+      ...createHandlerThreadSummary("thread-added"),
+      updatedAt: "2026-04-10T10:12:00.000Z",
+    };
+    const harness = createFakeRpc({
+      sessions: [
+        {
+          ...createSummary("session-1", "First", "first reply"),
+          threadIds: ["thread-removed" as ThreadId],
+        },
+      ],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+      handlerThreads: [removedThread],
+    });
+    const runtime = await createRuntime(harness);
+
+    expect(
+      (await runtime.listHandlerThreads("session-1")).map((thread) => thread.threadId),
+    ).toEqual(["thread-removed"]);
+    expect(
+      runtime.getHandlerThreadsSnapshot("session-1")?.map((thread) => thread.threadId),
+    ).toEqual(["thread-removed"]);
+
+    harness.setHandlerInspectors([removedThread, addedThread]);
+    harness.updateSummary("session-1", (summary) => {
+      summary.threadIds = ["thread-added" as ThreadId];
+    });
+    harness.emitSessionNavigationInvalidation();
+    await waitFor(
+      () =>
+        runtime.sessions.find((session) => session.id === "session-1")?.threadIds?.[0] ===
+        "thread-added",
+    );
+
+    expect(runtime.getHandlerThreadsSnapshot("session-1")).toBeUndefined();
+    expect(
+      (await runtime.listHandlerThreads("session-1")).map((thread) => thread.threadId),
+    ).toEqual(["thread-added"]);
+    expect(
+      runtime.getHandlerThreadsSnapshot("session-1")?.map((thread) => thread.threadId),
+    ).toEqual(["thread-added"]);
+    expect(harness.handlerInspectorRequests.map((request) => request.threadId)).toEqual([
+      "thread-removed",
+      "thread-added",
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("keeps a newer command notification over a stale initial fetch and wires stdin updates live", async () => {
+    const staleInspector = {
+      ...createCommandInspector("command-live", "exec_command"),
+      summary: "stale command state",
+      updatedAt: "2026-04-10T10:01:00.000Z",
+    };
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first reply")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+      commandInspector: staleInspector,
+    });
+    const runtime = await createRuntime(harness);
+    const staleReadStarted = createDeferred();
+    const releaseStaleRead = createDeferred();
+    let blockFirstRead = true;
+    harness.setCommandInspectorReadHandler(async () => {
+      if (!blockFirstRead) return;
+      blockFirstRead = false;
+      staleReadStarted.resolve();
+      await releaseStaleRead.promise;
+    });
+
+    const initialRead = runtime.getCommandInspector("command-live");
+    await staleReadStarted.promise;
+    let runtimeEmissions = 0;
+    const unsubscribeRuntime = runtime.subscribe(() => {
+      runtimeEmissions += 1;
+    });
+    const emissionsBeforeNotification = runtimeEmissions;
+    const notifiedInspector = {
+      ...staleInspector,
+      summary: "newer notification state",
+      updatedAt: "2026-04-10T10:02:00.000Z",
+    };
+    harness.setCommandInspector(notifiedInspector);
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "commandInspector", ids: ["command-live" as CommandId] },
+      },
+    });
+    await waitFor(
+      () =>
+        harness.commandInspectorRequests.length === 2 &&
+        runtimeEmissions > emissionsBeforeNotification,
+    );
+    releaseStaleRead.resolve();
+
+    expect((await initialRead).summary).toBe("newer notification state");
+    expect((await runtime.getCommandInspector("command-live")).summary).toBe(
+      "newer notification state",
+    );
+
+    await runtime.writeCommandStdin({ commandId: "command-live", text: "yes\n" });
+    harness.setCommandInspector({
+      ...notifiedInspector,
+      updatedAt: "2026-04-10T10:03:00.000Z",
+      stdin: {
+        mode: "continuable",
+        canAttemptWrite: true,
+        acceptedWrites: [
+          {
+            eventId: "stdin-event-1",
+            text: "yes\n",
+            acceptedBytes: 4 as never,
+            at: "2026-04-10T10:03:00.000Z",
+          },
+        ],
+      },
+    });
+    const emissionsBeforeStdinInvalidation = runtimeEmissions;
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 2 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "commandInspector", ids: ["command-live" as CommandId] },
+      },
+    });
+    await waitFor(
+      () =>
+        harness.commandInspectorRequests.length === 3 &&
+        runtimeEmissions > emissionsBeforeStdinInvalidation,
+    );
+    expect((await runtime.getCommandInspector("command-live")).stdin.acceptedWrites).toEqual([
+      {
+        eventId: "stdin-event-1",
+        text: "yes\n",
+        acceptedBytes: 4,
+        at: "2026-04-10T10:03:00.000Z",
+      },
+    ]);
+
+    unsubscribeRuntime();
+    runtime.dispose();
+  });
+
+  it("applies live handler and workflow-attempt inspector invalidations", async () => {
+    const session = {
+      ...createSummary("session-1", "First", "first reply"),
+      threadIds: ["thread-live" as ThreadId],
+    };
+    const initialThread = createHandlerThreadSummary("thread-live");
+    const initialAttempt = createWorkflowTaskAttemptInspector("attempt-live");
+    const harness = createFakeRpc({
+      sessions: [session],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+      handlerThreads: [initialThread],
+      workflowTaskAttemptInspector: initialAttempt,
+    });
+    const runtime = await createRuntime(harness);
+    await runtime.listHandlerThreads("session-1");
+    await runtime.getWorkflowTaskAttemptInspector("attempt-live");
+    let runtimeEmissions = 0;
+    const unsubscribeRuntime = runtime.subscribe(() => {
+      runtimeEmissions += 1;
+    });
+    const emissionsBeforeInvalidations = runtimeEmissions;
+
+    harness.setHandlerInspectors([
+      {
+        ...initialThread,
+        objective: "Updated handler objective",
+        updatedAt: "2026-04-10T10:10:00.000Z",
+      },
+    ]);
+    harness.setWorkflowTaskAttemptInspector({
+      ...initialAttempt,
+      summary: "Updated task-attempt summary",
+      updatedAt: "2026-04-10T10:10:00.000Z",
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "handlerThreadInspector", ids: ["thread-live" as ThreadId] },
+      },
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 2 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: {
+          model: "workflowTaskAttemptInspector",
+          ids: ["attempt-live" as WorkflowTaskAttemptId],
+        },
+      },
+    });
+    await waitFor(
+      () =>
+        harness.handlerInspectorRequests.length === 2 &&
+        harness.workflowTaskAttemptInspectorRequests.length === 2 &&
+        runtimeEmissions >= emissionsBeforeInvalidations + 2 &&
+        runtime.getHandlerThreadsSnapshot("session-1")?.[0]?.objective ===
+          "Updated handler objective",
+    );
+
+    expect(runtime.getHandlerThreadsSnapshot("session-1")?.[0]?.objective).toBe(
+      "Updated handler objective",
+    );
+    expect((await runtime.getWorkflowTaskAttemptInspector("attempt-live")).summary).toBe(
+      "Updated task-attempt summary",
+    );
+
+    unsubscribeRuntime();
     runtime.dispose();
   });
 
@@ -4479,7 +5124,14 @@ describe("createChatRuntime", () => {
     });
 
     const runtime = await createRuntime(harness);
-    await runtime.pinSession("session-2");
+    await waitFor(() => harness.requestCounts.sessionNavigation >= 3);
+    const runAcceptedMutation = async (mutation: () => Promise<void>): Promise<void> => {
+      const before = harness.requestCounts.sessionNavigation;
+      await mutation();
+      expect(harness.requestCounts.sessionNavigation).toBe(before + 1);
+    };
+    await runAcceptedMutation(() => runtime.pinSession("session-2"));
+    await runAcceptedMutation(() => runtime.pinSession("session-2"));
 
     expect(runtime.sessionNavigation.pinnedSessions.map((session) => session.id)).toEqual([
       "session-2",
@@ -4488,8 +5140,16 @@ describe("createChatRuntime", () => {
       "session-1",
     ]);
 
-    await runtime.archiveSession("session-2");
-    await runtime.setSessionNavigationSectionState("archived", { collapsed: false });
+    await runAcceptedMutation(() => runtime.unpinSession("session-2"));
+    expect(runtime.sessionNavigation.activeSessions.map((session) => session.id)).toContain(
+      "session-2",
+    );
+    await runAcceptedMutation(() => runtime.pinSession("session-2"));
+    await runAcceptedMutation(() => runtime.archiveSession("session-2"));
+    await runAcceptedMutation(() => runtime.archiveSession("session-2"));
+    await runAcceptedMutation(() =>
+      runtime.setSessionNavigationSectionState("archived", { collapsed: false }),
+    );
 
     expect(runtime.sessionNavigation.pinnedSessions).toEqual([]);
     expect(runtime.sessionNavigation.archived.collapsed).toBe(false);
@@ -4497,19 +5157,19 @@ describe("createChatRuntime", () => {
       "session-2",
     ]);
 
-    await runtime.unarchiveSession("session-2");
+    await runAcceptedMutation(() => runtime.unarchiveSession("session-2"));
     expect(runtime.sessionNavigation.activeSessions.map((session) => session.id)).toContain(
       "session-2",
     );
     expect(runtime.sessions.find((session) => session.id === "session-2")?.isPinned).toBe(false);
 
-    await runtime.markSessionUnread("session-2");
+    await runAcceptedMutation(() => runtime.markSessionUnread("session-2"));
     expect(runtime.sessions.find((session) => session.id === "session-2")?.isUnread).toBe(true);
     expect(runtime.sessions.find((session) => session.id === "session-2")?.unreadReason).toBe(
       "manual",
     );
 
-    await runtime.markSessionRead("session-2");
+    await runAcceptedMutation(() => runtime.markSessionRead("session-2"));
     expect(runtime.sessions.find((session) => session.id === "session-2")?.isUnread).toBe(false);
     expect(runtime.sessions.find((session) => session.id === "session-2")?.unreadReason).toBeNull();
 
@@ -4537,7 +5197,7 @@ describe("createChatRuntime", () => {
     await Bun.sleep(0);
     firstRuntime.dispose();
 
-    const restoreState = firstHarness.getWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId);
+    const restoreState = firstHarness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId);
     expect(restoreState?.layouts.A?.focusedPanelId).toBe("secondary");
     expect(restoreState?.layouts.A?.panels).toContainEqual(
       expect.objectContaining({
@@ -4559,7 +5219,7 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    secondHarness.setWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
+    secondHarness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
     const secondRuntime = await createRuntime(secondHarness, storage);
 
     expect(secondRuntime.paneLayout.focusedPanelId).toBe("secondary");
@@ -4588,9 +5248,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -4704,9 +5364,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview,
         compactSurfaces: [],
         panels: [
@@ -4810,9 +5470,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -4851,9 +5511,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -4928,7 +5588,7 @@ describe("createChatRuntime", () => {
     expect(runtime.activeLayoutId).toBe("A");
     expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
 
-    const restoreState = harness.getWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId);
+    const restoreState = harness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId);
     expect(restoreState?.layouts.A?.panels[0]?.binding).toEqual(
       createOrchestratorTarget("session-1"),
     );
@@ -4936,6 +5596,710 @@ describe("createChatRuntime", () => {
       createOrchestratorTarget("session-1"),
     );
     expect(restoreState?.layouts.C).toBeNull();
+
+    runtime.dispose();
+  });
+
+  it("serializes and coalesces rapid saves without allowing an older acknowledgement to win", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const firstSave = createDeferred();
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      if (harness.workspaceLayoutSaveRequests.length === 1) await firstSave.promise;
+    });
+
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "first", offsetPx: 1 });
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 1);
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "second", offsetPx: 2 });
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "latest", offsetPx: 3 });
+    expect(harness.workspaceLayoutSaveRequests).toHaveLength(1);
+
+    firstSave.resolve();
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 2);
+    expect(harness.workspaceLayoutSaveRequests[1]?.panes[0]?.localState.scroll).toEqual({
+      transcriptAnchorId: "latest",
+      offsetPx: 3,
+    });
+    await waitFor(
+      () =>
+        harness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId)?.layouts.A?.panels[0]
+          ?.localState.scroll?.transcriptAnchorId === "latest",
+    );
+    expect(runtime.getPane("primary")?.scroll?.transcriptAnchorId).toBe("latest");
+
+    runtime.dispose();
+  });
+
+  it("drains the latest captured save after renderer disposal", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const firstSave = createDeferred();
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      if (harness.workspaceLayoutSaveRequests.length === 1) await firstSave.promise;
+    });
+
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "first", offsetPx: 1 });
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 1);
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "final", offsetPx: 4 });
+    runtime.dispose();
+    firstSave.resolve();
+
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 2);
+    await waitFor(
+      () =>
+        harness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId)?.layouts.A?.panels[0]
+          ?.localState.scroll?.transcriptAnchorId === "final",
+    );
+  });
+
+  it("rolls a failed final save back to authoritative state after one idempotent retry", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      throw new Error("save failed");
+    });
+
+    runtime.setPaneScroll("primary", { transcriptAnchorId: "unsaved", offsetPx: 9 });
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 2);
+    await waitFor(() => runtime.getPane("primary")?.scroll === null);
+    expect(harness.workspaceLayoutSaveRequests[0]?.clientSubmission?.clientRequestId).toBe(
+      harness.workspaceLayoutSaveRequests[1]?.clientSubmission?.clientRequestId,
+    );
+
+    runtime.dispose();
+  });
+
+  it("does not resolve a pane retarget before its layout generation is committed", async () => {
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const saveCommitted = createDeferred();
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      await saveCommitted.promise;
+    });
+
+    const retargetAndPrompt = runtime
+      .openSession("session-2", "primary")
+      .then(() => runtime.sendPromptToTarget(createOrchestratorTarget("session-2"), "after bind"));
+    await waitFor(() => harness.workspaceLayoutSaveRequests.length === 1);
+
+    expect(harness.workspaceLayoutSaveRequests[0]?.panes[0]?.target).toEqual(
+      createOrchestratorTarget("session-2") as never,
+    );
+    expect(harness.promptRequests).toHaveLength(0);
+
+    saveCommitted.resolve();
+    await retargetAndPrompt;
+    expect(harness.promptRequests).toHaveLength(1);
+    expect(harness.promptRequests[0]?.target).toEqual(createOrchestratorTarget("session-2"));
+
+    runtime.dispose();
+  });
+
+  it("blocks an immediately visible prompt controller on its pane-binding save", async () => {
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const saveCommitted = createDeferred();
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      await saveCommitted.promise;
+    });
+
+    const openPromise = runtime.openSession("session-2", "primary");
+    await waitFor(
+      () =>
+        runtime.getPaneController("primary")?.target.surfacePiSessionId === "session-2" &&
+        harness.workspaceLayoutSaveRequests.length === 1,
+    );
+    const controller = runtime.getPaneController("primary");
+    expect(controller).toBeTruthy();
+    const sendPromise = controller!.sendPrompt(
+      { text: "send only after binding", attachments: [] },
+      "primary",
+    );
+
+    await Bun.sleep(0);
+    expect(harness.promptRequests).toHaveLength(0);
+
+    saveCommitted.resolve();
+    await Promise.all([openPromise, sendPromise]);
+    expect(harness.promptRequests).toHaveLength(1);
+    expect(harness.promptRequests[0]?.target).toEqual(createOrchestratorTarget("session-2"));
+
+    runtime.dispose();
+  });
+
+  it("propagates a failed pane-binding save to an already waiting prompt", async () => {
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const firstSaveAttempt = createDeferred();
+    harness.setWorkspaceLayoutSaveHandler(async () => {
+      if (harness.workspaceLayoutSaveRequests.length === 1) {
+        await firstSaveAttempt.promise;
+      }
+      throw new Error("binding persistence failed");
+    });
+
+    const openPromise = runtime.openSession("session-2", "primary");
+    await waitFor(
+      () =>
+        runtime.getPaneController("primary")?.target.surfacePiSessionId === "session-2" &&
+        harness.workspaceLayoutSaveRequests.length === 1,
+    );
+    const sendPromise = runtime
+      .getPaneController("primary")!
+      .sendPrompt({ text: "must not escape failed binding", attachments: [] }, "primary");
+    firstSaveAttempt.resolve();
+
+    const [openResult, sendResult] = await Promise.allSettled([openPromise, sendPromise]);
+    expect(openResult.status).toBe("rejected");
+    expect(sendResult.status).toBe("rejected");
+    if (sendResult.status === "rejected") {
+      expect(String(sendResult.reason)).toContain("binding persistence failed");
+    }
+    expect(harness.promptRequests).toHaveLength(0);
+
+    runtime.dispose();
+  });
+
+  it("waits for app chrome mutations and rechecks the prompt pane before dispatch", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const chromeCommitted = createDeferred();
+    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+      runtimeOptions: {
+        awaitWorkspaceChromeMutations: () => chromeCommitted.promise,
+      },
+    });
+    const controller = runtime.getPaneController("primary");
+    expect(controller).toBeTruthy();
+
+    const sendPromise = controller!.sendPrompt(
+      { text: "do not retarget this", attachments: [] },
+      "primary",
+    );
+    await Bun.sleep(0);
+    expect(harness.promptRequests).toHaveLength(0);
+
+    await runtime.openSurface({ surface: "app-logs" }, "primary");
+    chromeCommitted.resolve();
+    await expect(sendPromise).rejects.toThrow("remain attached");
+    expect(harness.promptRequests).toHaveLength(0);
+
+    runtime.dispose();
+  });
+
+  it("saves detached compact-surface pane references as null when closing their pane", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: {
+          dockview: null,
+          panels: [
+            {
+              panelId: "primary",
+              binding: createOrchestratorTarget("session-1"),
+              localState: { scroll: null, timelineDensity: "comfortable" },
+            },
+          ],
+          compactSurfaces: [
+            {
+              kind: "compact-thread",
+              workspaceSessionId: "session-1",
+              threadId: "thread-1",
+              panelId: "primary",
+              density: "compact",
+            },
+          ],
+          focusedPanelId: "primary",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        B: null,
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness);
+
+    expect(runtime.paneLayout.compactSurfaces[0]?.panelId).toBe("primary");
+
+    await runtime.closePane("primary");
+
+    expect(harness.workspaceLayoutSaveRequests[0]?.compactSurfaces[0]?.panelId).toBeNull();
+    expect(runtime.paneLayout.compactSurfaces[0]?.panelId).toBeNull();
+
+    expect(harness.workspaceLayoutSaveRequests.at(-1)?.compactSurfaces).toEqual([
+      {
+        kind: "compact-thread",
+        workspaceSessionId: "session-1",
+        threadId: "thread-1",
+        panelId: null,
+        density: "compact",
+      },
+    ] as never);
+
+    runtime.dispose();
+  });
+
+  it("refetches and rolls back a rejected layout selection", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b"),
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+      runtimeOptions: {
+        workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
+        initialLayoutId: "A",
+        selectWorkspaceLayoutSlot: async () => {
+          throw new Error("selection rejected");
+        },
+      },
+    });
+
+    await expect(runtime.switchWorkspaceLayout("B")).rejects.toThrow("selection rejected");
+
+    expect(runtime.activeLayoutId).toBe("A");
+    expect(runtime.getPane("slot-a")?.target).toEqual(createOrchestratorTarget("session-1"));
+    expect(runtime.getPane("slot-b")).toBeUndefined();
+
+    runtime.dispose();
+  });
+
+  it("refreshes an incoming slot before hydration without saving its stale cached copy", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Cached", "cached"),
+        createSummary("session-3", "Authoritative", "authoritative"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b-cached"),
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness);
+    harness.workspaceLayoutSaveRequests.length = 0;
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-3", "slot-b-authoritative"),
+        C: null,
+      },
+    });
+
+    await runtime.switchWorkspaceLayout("B");
+
+    expect(runtime.getPane("slot-b-authoritative")?.target).toEqual(
+      createOrchestratorTarget("session-3"),
+    );
+    expect(runtime.getPane("slot-b-cached")).toBeUndefined();
+    expect(harness.workspaceLayoutSaveRequests.map((request) => request.layoutId)).toEqual(["A"]);
+
+    runtime.dispose();
+  });
+
+  it("lets a newer layout notification win over an older in-flight slot refresh", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Stale", "stale"),
+        createSummary("session-3", "Newer", "newer"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b-stale"),
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+      runtimeOptions: {
+        workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
+      },
+    });
+    const staleReadStarted = createDeferred();
+    const releaseStaleRead = createDeferred();
+    let blockNextLayoutRead = true;
+    harness.setWorkspaceLayoutReadHandler(async () => {
+      if (!blockNextLayoutRead) return;
+      blockNextLayoutRead = false;
+      staleReadStarted.resolve();
+      await releaseStaleRead.promise;
+    });
+    harness.setWorkspaceActiveLayoutId("B");
+
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "workspaceChrome" } },
+    });
+    await staleReadStarted.promise;
+
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-3", "slot-b-newer"),
+        C: null,
+      },
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 2 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "workspaceLayout", ids: ["B"] },
+      },
+    });
+    releaseStaleRead.resolve();
+
+    await waitFor(
+      () =>
+        runtime.activeLayoutId === "B" &&
+        runtime.getPane("slot-b-newer")?.target?.surface === "orchestrator",
+    );
+    expect(runtime.getPane("slot-b-newer")?.target).toEqual(createOrchestratorTarget("session-3"));
+    expect(runtime.getPane("slot-b-stale")).toBeUndefined();
+
+    runtime.dispose();
+  });
+
+  it("waits for an active layout transition before dispatching from its hydrated pane", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b"),
+        C: null,
+      },
+    });
+    const selectionCommitted = createDeferred();
+    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+      runtimeOptions: {
+        selectWorkspaceLayoutSlot: () => selectionCommitted.promise,
+      },
+    });
+
+    const switchPromise = runtime.switchWorkspaceLayout("B");
+    await waitFor(() => runtime.getPaneController("slot-b") !== null);
+    const sendPromise = runtime
+      .getPaneController("slot-b")!
+      .sendPrompt({ text: "after layout selection", attachments: [] }, "slot-b");
+    await Bun.sleep(0);
+    expect(harness.promptRequests).toHaveLength(0);
+
+    selectionCommitted.resolve();
+    await Promise.all([switchPromise, sendPromise]);
+    expect(harness.promptRequests).toHaveLength(1);
+    expect(harness.promptRequests[0]?.target).toEqual(createOrchestratorTarget("session-2"));
+
+    runtime.dispose();
+  });
+
+  it("hydrates the authoritative selected slot when a layout selection rolls back", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "Cached", "cached"),
+        createSummary("session-2", "Second", "second"),
+        createSummary("session-3", "Authoritative", "authoritative"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a-cached"),
+        B: layout("session-2", "slot-b"),
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+      runtimeOptions: {
+        workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
+        initialLayoutId: "A",
+        selectWorkspaceLayoutSlot: async () => {
+          harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+            layouts: {
+              A: layout("session-3", "slot-a-authoritative"),
+              B: layout("session-2", "slot-b"),
+              C: null,
+            },
+          });
+          throw new Error("selection rejected");
+        },
+      },
+    });
+
+    await expect(runtime.switchWorkspaceLayout("B")).rejects.toThrow("selection rejected");
+
+    expect(runtime.activeLayoutId).toBe("A");
+    expect(runtime.getPane("slot-a-authoritative")?.target).toEqual(
+      createOrchestratorTarget("session-3"),
+    );
+    expect(runtime.getPane("slot-a-cached")).toBeUndefined();
+
+    runtime.dispose();
+  });
+
+  it("does not capture the current slot into an immediately selected intermediate slot", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+        createSummary("session-3", "Third", "third"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b"),
+        C: layout("session-3", "slot-c"),
+      },
+    });
+    const runtime = await createRuntime(harness);
+
+    const selectB = runtime.switchWorkspaceLayout("B");
+    const selectC = runtime.switchWorkspaceLayout("C");
+    await Promise.all([selectB, selectC]);
+
+    expect(runtime.activeLayoutId).toBe("C");
+    expect(runtime.getPane("slot-c")?.target).toEqual(createOrchestratorTarget("session-3"));
+    await runtime.switchWorkspaceLayout("B");
+    expect(runtime.getPane("slot-b")?.target).toEqual(createOrchestratorTarget("session-2"));
+    expect(runtime.getPane("slot-a")).toBeUndefined();
+
+    runtime.dispose();
+  });
+
+  it("serializes a newer slot selection behind an older delayed hydration", async () => {
+    const layout = (sessionId: string, panelId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      panels: [
+        {
+          panelId,
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      compactSurfaces: [],
+      focusedPanelId: panelId,
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+        createSummary("session-3", "Third", "third"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1", "slot-a"),
+        B: layout("session-2", "slot-b"),
+        C: layout("session-3", "slot-c"),
+      },
+    });
+    const runtime = await createRuntime(harness);
+    const enteredSecondOpen = createDeferred();
+    const releaseSecondOpen = createDeferred();
+    harness.setOpenSessionHandler("session-2", async () => {
+      enteredSecondOpen.resolve();
+      await releaseSecondOpen.promise;
+    });
+
+    const selectB = runtime.switchWorkspaceLayout("B");
+    await enteredSecondOpen.promise;
+    const selectC = runtime.switchWorkspaceLayout("C");
+    releaseSecondOpen.resolve();
+    await Promise.all([selectB, selectC]);
+
+    expect(runtime.activeLayoutId).toBe("C");
+    expect(runtime.getPane("slot-c")?.target).toEqual(createOrchestratorTarget("session-3"));
+    expect(runtime.getPane("slot-b")).toBeUndefined();
+    await runtime.switchWorkspaceLayout("B");
+    expect(runtime.getPane("slot-b")?.target).toEqual(createOrchestratorTarget("session-2"));
 
     runtime.dispose();
   });
@@ -4951,9 +6315,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState(
+      createRendererLayoutFixtureState(
         {
           dockview: null,
           compactSurfaces: [],
@@ -5003,8 +6367,7 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId, {
-      version: 5,
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
       layouts: {
         A: {
           dockview: null,
@@ -5058,6 +6421,153 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("retargets active pane ownership across slots without closing inactive controllers", async () => {
+    const layout = (sessionId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      compactSurfaces: [],
+      panels: [
+        {
+          panelId: "shared-pane",
+          binding: createOrchestratorTarget(sessionId),
+          localState: {
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+      ],
+      focusedPanelId: "shared-pane",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: layout("session-1"),
+        B: layout("session-2"),
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness);
+    const firstController = runtime.getSurfaceController("session-1");
+    expect(firstController?.ownerPaneIds).toEqual(["shared-pane"]);
+
+    await runtime.switchWorkspaceLayout("B");
+    const secondController = runtime.getSurfaceController("session-2");
+    expect(firstController?.ownerPaneIds).toEqual([]);
+    expect(secondController?.ownerPaneIds).toEqual(["shared-pane"]);
+    expect(harness.closeRequests).toEqual([]);
+
+    await runtime.switchWorkspaceLayout("A");
+    expect(firstController?.ownerPaneIds).toEqual(["shared-pane"]);
+    expect(secondController?.ownerPaneIds).toEqual([]);
+    expect(
+      harness.openedTargets.filter((target) => target.surfacePiSessionId === "session-1"),
+    ).toHaveLength(1);
+
+    await runtime.closePane("shared-pane");
+    expect(harness.closeRequests).toEqual([createOrchestratorTarget("session-1")]);
+    expect(secondController?.ownerPaneIds).toEqual([]);
+
+    await runtime.switchWorkspaceLayout("B");
+    expect(secondController?.ownerPaneIds).toEqual(["shared-pane"]);
+    expect(
+      harness.openedTargets.filter((target) => target.surfacePiSessionId === "session-2"),
+    ).toHaveLength(1);
+    expect(harness.closeRequests).toEqual([createOrchestratorTarget("session-1")]);
+
+    runtime.dispose();
+  });
+
+  it("holds prompt admission until an authoritative active-pane retarget finishes", async () => {
+    const layout = (sessionId: string): WorkspaceDockviewLayoutState => ({
+      dockview: null,
+      compactSurfaces: [],
+      panels: [
+        {
+          panelId: "shared-pane",
+          binding: createOrchestratorTarget(sessionId),
+          localState: { scroll: null, timelineDensity: "comfortable" },
+        },
+      ],
+      focusedPanelId: "shared-pane",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first"),
+        createSummary("session-2", "Second", "second"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+      ],
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: { A: layout("session-1"), B: null, C: null },
+    });
+    const runtime = await createRuntime(harness);
+    const previousController = runtime.getSurfaceController("session-1");
+    expect(previousController?.ownerPaneIds).toEqual(["shared-pane"]);
+    const retargetStarted = createDeferred();
+    const finishRetarget = createDeferred();
+    harness.setOpenSessionHandler("session-2", async () => {
+      retargetStarted.resolve();
+      await finishRetarget.promise;
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: { A: layout("session-2"), B: null, C: null },
+    });
+
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "workspaceLayout", ids: ["A"] },
+      },
+    });
+    await retargetStarted.promise;
+
+    const sendPromise = previousController!.sendPrompt(
+      { text: "must not use the stale active binding", attachments: [] },
+      "shared-pane",
+    );
+    let sendSettled = false;
+    void sendPromise.then(
+      () => {
+        sendSettled = true;
+      },
+      () => {
+        sendSettled = true;
+      },
+    );
+    await Bun.sleep(0);
+    expect(sendSettled).toBe(false);
+    expect(harness.promptRequests).toEqual([]);
+
+    finishRetarget.resolve();
+    await expect(sendPromise).rejects.toThrow("remain attached");
+    expect(previousController?.ownerPaneIds).toEqual([]);
+    expect(runtime.getSurfaceController("session-2")?.ownerPaneIds).toEqual(["shared-pane"]);
+    expect(harness.promptRequests).toEqual([]);
+
+    runtime.dispose();
+  });
+
   it("syncs shared workspace layout slot changes into another open tab on the same slot", async () => {
     const storage = createMemoryStorage();
     const harness = createFakeRpc({
@@ -5070,26 +6580,20 @@ describe("createChatRuntime", () => {
       ],
     });
     const { createChatRuntime } = await import("./chat-runtime");
-    let secondRuntime: Awaited<ReturnType<typeof createChatRuntime>> | null = null;
-    let syncPromise: Promise<void> = Promise.resolve();
     const firstRuntime = await createChatRuntime(
-      {
-        workspaceInfo: TEST_WORKSPACE_INFO,
-        onWorkspaceLayoutPersist: (state) => {
-          syncPromise = secondRuntime?.syncWorkspaceLayoutState(state) ?? Promise.resolve();
-        },
-      },
+      { workspaceInfo: TEST_WORKSPACE_INFO },
       harness.client as never,
       storage,
     );
-    secondRuntime = await createChatRuntime(
+    const secondRuntime = await createChatRuntime(
       { workspaceInfo: TEST_WORKSPACE_INFO },
       harness.client as never,
       storage,
     );
 
     await firstRuntime.openSurface({ surface: "app-logs" }, "primary");
-    await syncPromise;
+    await Bun.sleep(0);
+    await Bun.sleep(0);
 
     expect(secondRuntime.getPane("primary")?.target).toEqual({ surface: "app-logs" });
 
@@ -5108,9 +6612,9 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [],
@@ -5128,7 +6632,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("starts an uninitialized user workspace by opening the newest session", async () => {
+  it("keeps an uninitialized user workspace slot blank when sessions already exist", async () => {
     const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -5145,19 +6649,15 @@ describe("createChatRuntime", () => {
     });
 
     expect(runtime.sessions).toHaveLength(1);
-    expect(runtime.paneLayout.panels).toEqual([
-      expect.objectContaining({
-        panelId: "primary",
-        binding: createOrchestratorTarget("session-1"),
-      }),
-    ]);
-    expect(runtime.paneLayout.focusedPanelId).toBe("primary");
-    expect(runtime.getSurfaceController("session-1")).not.toBeNull();
+    expect(runtime.paneLayout.panels).toEqual([]);
+    expect(runtime.paneLayout.focusedPanelId).toBeNull();
+    expect(runtime.getSurfaceController("session-1")).toBeNull();
+    expect(harness.openedTargets).toEqual([]);
 
     runtime.dispose();
   });
 
-  it("starts an uninitialized empty user workspace by creating a new orchestrator", async () => {
+  it("keeps an uninitialized empty user workspace slot blank without creating a session", async () => {
     const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [],
@@ -5168,15 +6668,10 @@ describe("createChatRuntime", () => {
       seedInitialLayout: false,
     });
 
-    expect(runtime.sessions).toHaveLength(1);
-    expect(runtime.paneLayout.panels).toEqual([
-      expect.objectContaining({
-        panelId: "primary",
-        binding: createOrchestratorTarget("session-1"),
-      }),
-    ]);
-    expect(runtime.paneLayout.focusedPanelId).toBe("primary");
-    expect(runtime.getSurfaceController("session-1")).not.toBeNull();
+    expect(runtime.sessions).toHaveLength(0);
+    expect(runtime.paneLayout.panels).toEqual([]);
+    expect(runtime.paneLayout.focusedPanelId).toBeNull();
+    expect(harness.openedTargets).toEqual([]);
 
     runtime.dispose();
   });
@@ -5193,9 +6688,9 @@ describe("createChatRuntime", () => {
       branch: undefined,
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       defaultWorkspaceInfo.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -5236,9 +6731,9 @@ describe("createChatRuntime", () => {
       branch: undefined,
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       defaultWorkspaceInfo.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [],
@@ -5457,7 +6952,13 @@ describe("createChatRuntime", () => {
     );
     firstRuntime.dispose();
 
-    const restoreState = firstHarness.getWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId);
+    await waitFor(
+      () =>
+        firstHarness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId)?.layouts.A?.panels
+          .length === 6,
+    );
+
+    const restoreState = firstHarness.getRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId);
     expect(restoreState?.layouts.A?.panels.map((panel) => panel.placement)).toEqual([
       null,
       { kind: "edge", direction: "left", size: 280 },
@@ -5476,7 +6977,7 @@ describe("createChatRuntime", () => {
         }),
       ],
     });
-    secondHarness.setWorkspaceUiRestore(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
+    secondHarness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
     const secondRuntime = await createRuntime(secondHarness, storage);
 
     expect(secondRuntime.paneLayout.panels.map((panel) => panel.placement)).toEqual([
@@ -5503,9 +7004,9 @@ describe("createChatRuntime", () => {
       branch: undefined,
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       defaultWorkspaceInfo.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -5567,9 +7068,9 @@ describe("createChatRuntime", () => {
       branch: undefined,
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       defaultWorkspaceInfo.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -5609,9 +7110,9 @@ describe("createChatRuntime", () => {
       branch: undefined,
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       defaultWorkspaceInfo.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -5645,9 +7146,9 @@ describe("createChatRuntime", () => {
       sessions: [createSummary("missing-session", "Missing", "")],
       surfaces: [],
     });
-    harness.setWorkspaceUiRestore(
+    harness.setRendererLayoutFixture(
       TEST_WORKSPACE_INFO.workspaceId,
-      createWorkspaceRestoreState({
+      createRendererLayoutFixtureState({
         dockview: null,
         compactSurfaces: [],
         panels: [
@@ -5671,7 +7172,7 @@ describe("createChatRuntime", () => {
     expect(runtime.paneLayout.panels).toHaveLength(1);
     expect(runtime.paneLayout.panels[0]).toMatchObject({
       panelId: "primary",
-      binding: null,
+      binding: createOrchestratorTarget("missing-session"),
       chrome: {
         title: "Surface unavailable",
         subtitle: "Orchestrator",
@@ -5681,7 +7182,7 @@ describe("createChatRuntime", () => {
         unavailableReason: "Missing fake surface missing-session",
       },
     });
-    expect(runtime.getPane("primary")?.target).toBeNull();
+    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("missing-session"));
     expect(runtime.getPane("primary")?.chrome?.kind).toBe("unavailable");
     expect(runtime.getPane("primary")?.restore?.unavailableReason).toBe(
       "Missing fake surface missing-session",
@@ -5740,6 +7241,58 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("clears and reloads inspector targets that remain bound across a workspace rebaseline", async () => {
+    const initialInspector = {
+      ...createCommandInspector("command-bound"),
+      summary: "before rebaseline",
+    };
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first")],
+      surfaces: [
+        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+      commandInspector: initialInspector,
+    });
+    harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
+      layouts: {
+        A: {
+          dockview: null,
+          compactSurfaces: [],
+          panels: [
+            {
+              panelId: "command-pane",
+              binding: {
+                workspaceSessionId: "session-1",
+                surface: "command",
+                commandId: "command-bound",
+              },
+              localState: { scroll: null, timelineDensity: "comfortable" },
+            },
+          ],
+          focusedPanelId: "command-pane",
+          updatedAt: "2026-04-27T00:00:00.000Z",
+        },
+        B: null,
+        C: null,
+      },
+    });
+    const runtime = await createRuntime(harness);
+    expect((await runtime.getCommandInspector("command-bound")).summary).toBe("before rebaseline");
+    harness.setCommandInspector({
+      ...initialInspector,
+      summary: "after rebaseline",
+      updatedAt: "2026-04-10T10:20:00.000Z",
+    });
+    harness.setRebaselineResult({ app: [], workspaces: [], revision: 2 as StateRevision });
+
+    await runtime.markRendererReady();
+    await waitFor(() => harness.commandInspectorRequests.length === 2);
+
+    expect((await runtime.getCommandInspector("command-bound")).summary).toBe("after rebaseline");
+
+    runtime.dispose();
+  });
+
   it("replaces notification-managed caches from an authoritative workspace rebaseline", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -5787,7 +7340,14 @@ describe("createChatRuntime", () => {
           },
         },
       ],
-      workspaces: [],
+      workspaces: [
+        {
+          kind: "sessionNavigation",
+          value: buildWorkspaceSessionNavigation([
+            createSummary("session-2", "Rebaselined", "authoritative state"),
+          ]),
+        },
+      ],
       revision: 2 as StateRevision,
     });
     harness.emitDesktopNotification({
@@ -5800,7 +7360,11 @@ describe("createChatRuntime", () => {
       },
     });
 
-    await waitFor(() => runtime.appPreferencesSnapshot?.appAppearance === "dark");
+    await waitFor(
+      () =>
+        runtime.appPreferencesSnapshot?.appAppearance === "dark" &&
+        runtime.sessions[0]?.id === "session-2",
+    );
     expect(runtime.appPreferencesSnapshot).toMatchObject({
       appAppearance: "dark",
       preferredExternalEditor: "zed",
@@ -5823,6 +7387,8 @@ describe("createChatRuntime", () => {
         },
       },
     });
+    expect(runtime.sessions.map((session) => session.id)).toEqual(["session-2"]);
+    expect(runtime.sessionNavigation.activeSessions[0]?.title).toBe("Rebaselined");
 
     runtime.dispose();
   });
@@ -6215,7 +7781,7 @@ describe("createChatRuntime", () => {
     const runtime = await createRuntime(harness);
     const requestInput = createRequestUserInputRequest();
     const approval = createRuntimeApprovalRequest();
-    const sessionListingsBeforeInvalidations = harness.requestCounts.listSessions;
+    const navigationFetchesBeforeInvalidations = harness.requestCounts.sessionNavigation;
 
     harness.setRequestInputReadModelRequests([requestInput]);
     harness.setApprovalsReadModelRequests([approval]);
@@ -6256,7 +7822,7 @@ describe("createChatRuntime", () => {
 
     expect(runtime.getRequestUserInputRequests()).toEqual([requestInput]);
     expect(runtime.getRuntimeApprovalRequests()).toEqual([approval]);
-    expect(harness.requestCounts.listSessions).toBe(sessionListingsBeforeInvalidations);
+    expect(harness.requestCounts.sessionNavigation).toBe(navigationFetchesBeforeInvalidations);
     runtime.dispose();
   });
 
@@ -6272,7 +7838,7 @@ describe("createChatRuntime", () => {
     const runtime = await createRuntime(harness);
     const requestInput = createRequestUserInputRequest({ requestId: "rui-current" });
     const approval = createRuntimeApprovalRequest({ requestId: "apr-current" });
-    const sessionListingsBeforeRebaseline = harness.requestCounts.listSessions;
+    const navigationFetchesBeforeRebaseline = harness.requestCounts.sessionNavigation;
     harness.setRebaselineResult({
       app: [],
       workspaces: [
@@ -6300,7 +7866,7 @@ describe("createChatRuntime", () => {
 
     expect(runtime.getRequestUserInputRequests()).toEqual([requestInput]);
     expect(runtime.getRuntimeApprovalRequests()).toEqual([approval]);
-    expect(harness.requestCounts.listSessions).toBe(sessionListingsBeforeRebaseline);
+    expect(harness.requestCounts.sessionNavigation).toBe(navigationFetchesBeforeRebaseline);
     runtime.dispose();
   });
 

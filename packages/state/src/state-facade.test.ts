@@ -51,6 +51,7 @@ import {
   layer,
   stateCommandsFromRouter,
   stateReadModelsFromRouter,
+  StateReadModelRequestSchema,
   type StateReadModelResult,
 } from "./state-facade";
 import { StateLayerConfigSchema } from "./state-layer-config";
@@ -389,6 +390,8 @@ describe("State app-log facade slice", () => {
         workspaceTabId: "workspace-tab-command-facade" as WorkspaceTabId,
         workspaceId,
         cwd: "/tmp/svvy-state-command-facade" as typeof AbsolutePath.Type,
+        workspaceLabel: "Command facade",
+        kind: "user" as const,
         openedAt: iso("2026-06-21T12:00:00.000Z"),
         activeLayoutId: "A" as const,
       };
@@ -396,6 +399,8 @@ describe("State app-log facade slice", () => {
         workspaceTabId: "workspace-tab-command-facade-second" as WorkspaceTabId,
         workspaceId: secondWorkspaceId,
         cwd: "/tmp/svvy-state-command-facade-second" as typeof AbsolutePath.Type,
+        workspaceLabel: "Command facade second",
+        kind: "user" as const,
         openedAt: iso("2026-06-21T12:00:00.000Z"),
         activeLayoutId: "A" as const,
       };
@@ -413,29 +418,20 @@ describe("State app-log facade slice", () => {
                 source: "test" as RuntimeClientSubmissionSource,
               },
             }),
-          descriptors: [
-            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
-            {
-              scope: "workspace",
-              workspaceId: secondWorkspaceId,
-              invalidation: { model: "workspaceChromeLayout" },
-            },
-          ],
+          descriptors: [{ scope: "app", invalidation: { model: "workspaceChrome" } }],
         },
         {
           operation: "stateCommands.workspaceChrome.selectTab",
           clientRequestId: "workspace-chrome-select-command",
           run: () =>
             commands.workspaceChrome.selectTab({
-              workspaceTabId: tab.workspaceTabId,
+              workspaceTabId: secondTab.workspaceTabId,
               clientSubmission: {
                 clientRequestId: "workspace-chrome-select-command" as RuntimeClientRequestId,
                 source: "test" as RuntimeClientSubmissionSource,
               },
             }),
-          descriptors: [
-            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
-          ],
+          descriptors: [{ scope: "app", invalidation: { model: "workspaceChrome" } }],
         },
         {
           operation: "stateCommands.workspaceChrome.selectLayoutSlot",
@@ -449,33 +445,42 @@ describe("State app-log facade slice", () => {
                 source: "test" as RuntimeClientSubmissionSource,
               },
             }),
-          descriptors: [
-            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
-          ],
+          descriptors: [{ scope: "app", invalidation: { model: "workspaceChrome" } }],
         },
         {
-          operation: "stateCommands.workspaceLayout.saveSnapshot",
+          operation: "stateCommands.workspaceLayout.saveSlot",
           clientRequestId: "workspace-layout-command",
           run: () =>
-            commands.workspaceLayout.saveSnapshot({
+            commands.workspaceLayout.saveSlot({
               workspaceId,
               layoutId: "A",
-              snapshotJson: { dockview: true },
+              dockviewJson: { dockview: true },
               focusedPaneId: "pane-command-facade" as WorkspacePaneId,
-              panelMetadata: [
+              panes: [
                 {
                   paneId: "pane-command-facade" as WorkspacePaneId,
-                  kind: "agents",
-                  localStateJson: { selected: "profile-default" },
+                  target: {
+                    surface: "agents",
+                    targetAgentProfileId: "profile-default" as AgentProfileId,
+                  },
+                  localState: { scroll: null, timelineDensity: "comfortable" },
+                  fallbackChrome: null,
+                  placement: null,
+                  restore: { kind: "ready" },
                 },
               ],
+              compactSurfaces: [],
               clientSubmission: {
                 clientRequestId: "workspace-layout-command" as RuntimeClientRequestId,
                 source: "test" as RuntimeClientSubmissionSource,
               },
             }),
           descriptors: [
-            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
+            {
+              scope: "workspace",
+              workspaceId,
+              invalidation: { model: "workspaceLayout", ids: ["A"] },
+            },
           ],
         },
         {
@@ -575,6 +580,12 @@ describe("State app-log facade slice", () => {
           },
         });
       }
+
+      await expect(
+        commands.workspaceChrome.selectTab({
+          workspaceTabId: "workspace-tab-missing" as WorkspaceTabId,
+        }),
+      ).rejects.toBeInstanceOf(StateFacadeError);
 
       commands.close();
     } finally {
@@ -688,6 +699,7 @@ describe("State app-log facade slice", () => {
         "agents",
         "extensions",
         "workflowsGenerated",
+        "workspaceChrome",
       ]);
       state.close();
     } finally {
@@ -1215,6 +1227,18 @@ describe("State app-log facade slice", () => {
 });
 
 describe("State read-model kind expansion", () => {
+  it("requires explicit workspace routing for workspace inspector reads", () => {
+    for (const request of [
+      { kind: "handlerInspector", threadId: "thread-explicit-workspace" },
+      {
+        kind: "workflowTaskAttemptInspector",
+        workflowTaskAttemptId: "workflow-task-explicit-workspace",
+      },
+    ]) {
+      expect(() => Schema.decodeUnknownSync(StateReadModelRequestSchema)(request)).toThrow();
+    }
+  });
+
   it("builds first-half renderer read models from structured-session router stores", async () => {
     let idSeq = 0;
     const store = createStructuredSessionStateStore({
@@ -1378,6 +1402,8 @@ describe("State read-model kind expansion", () => {
         workspaceTabId: "workspace-tab-read-model-fixture" as WorkspaceTabId,
         workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
         cwd: "/tmp/svvy-state-facade-read-models" as typeof AbsolutePath.Type,
+        workspaceLabel: "State facade read models",
+        kind: "user" as const,
         openedAt: iso("2026-06-21T12:00:00.000Z"),
         activeLayoutId: "B" as const,
       };
@@ -1386,19 +1412,29 @@ describe("State read-model kind expansion", () => {
         tabs: [fixtureTab],
         knownWorkspaces: [fixtureTab],
       });
-      store.saveWorkspaceLayoutSnapshot({
+      store.saveWorkspaceLayoutSlot({
         workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
         layoutId: "B",
-        snapshotJson: { dockview: { activeGroup: "primary" } },
+        dockviewJson: { dockview: { activeGroup: "primary" } },
         focusedPaneId: "pane-read-model-fixture" as WorkspacePaneId,
-        panelMetadata: [
+        panes: [
           {
             paneId: "pane-read-model-fixture" as WorkspacePaneId,
-            kind: "surface",
-            surfacePiSessionId: created.surfacePiSessionId,
-            localStateJson: { selectedTab: "transcript" },
+            target: {
+              surface: "orchestrator",
+              workspaceSessionId: created.workspaceSessionId,
+              surfacePiSessionId: created.surfacePiSessionId,
+            },
+            localState: {
+              scroll: { transcriptAnchorId: "message-fixture", offsetPx: 14.5 },
+              timelineDensity: "comfortable",
+            },
+            fallbackChrome: null,
+            placement: { kind: "floating", box: { x: 20, y: 30, width: 800, height: 600 } },
+            restore: { kind: "ready" },
           },
         ],
+        compactSurfaces: [],
       });
       const managedSnippet = store.createManagedSnippet({
         workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
@@ -1649,18 +1685,30 @@ describe("State read-model kind expansion", () => {
         store.getSessionState(created.workspaceSessionId),
         command.id,
       );
-      expect(commandInspector).toMatchObject({
+      expect(commandInspector).toEqual({
         kind: "commandInspector",
-        value: {
-          commandId: selectorInspector?.commandId,
-          status: "succeeded",
-          toolName: "exec_command",
-          summary: "Command finished",
-          output: [{ stream: "stdout", text: "ok\n", sequence: 0 }],
-          childCommandIds: [],
-          artifactIds: [],
-        },
+        value: selectorInspector
+          ? {
+              ...selectorInspector,
+              target: created.target,
+              acceptedArguments: { cmd: "printf ok" },
+            }
+          : null,
       });
+      expect(
+        await runTestEffect(
+          readModels.refetchInvalidation({
+            descriptor: {
+              scope: "workspace",
+              workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+              invalidation: {
+                model: "commandInspector",
+                ids: [command.id as CommandId],
+              },
+            },
+          }),
+        ),
+      ).toEqual([commandInspector]);
 
       const requestInputModel = await runTestEffect(
         readModels.fetch({
@@ -1835,6 +1883,7 @@ describe("State read-model kind expansion", () => {
       const handlerInspector = await runTestEffect(
         readModels.fetch({
           kind: "handlerInspector",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
           threadId: handlerThread.id as ThreadId,
         }),
       );
@@ -1850,6 +1899,7 @@ describe("State read-model kind expansion", () => {
       const workflowTaskInspector = await runTestEffect(
         readModels.fetch({
           kind: "workflowTaskAttemptInspector",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
           workflowTaskAttemptId: workflowTaskAttempt.id as WorkflowTaskAttemptId,
         }),
       );
@@ -1865,20 +1915,17 @@ describe("State read-model kind expansion", () => {
         },
       });
 
-      const workspaceChromeLayout = await runTestEffect(
-        readModels.fetch({
-          kind: "workspaceChromeLayout",
-          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
-        }),
-      );
-      expect(workspaceChromeLayout).toMatchObject({
-        kind: "workspaceChromeLayout",
+      const workspaceChrome = await runTestEffect(readModels.fetch({ kind: "workspaceChrome" }));
+      expect(workspaceChrome).toMatchObject({
+        kind: "workspaceChrome",
         value: {
           activeWorkspaceTabId: "workspace-tab-read-model-fixture",
           tabs: [
             {
               workspaceTabId: "workspace-tab-read-model-fixture",
               workspaceId: "workspace_state_facade_read_models",
+              workspaceLabel: "State facade read models",
+              kind: "user",
               activeLayoutId: "B",
             },
           ],
@@ -1887,27 +1934,44 @@ describe("State read-model kind expansion", () => {
               workspaceTabId: "workspace-tab-read-model-fixture",
               workspaceId: "workspace_state_facade_read_models",
               cwd: "/tmp/svvy-state-facade-read-models",
+              workspaceLabel: "State facade read models",
+              kind: "user",
               activeLayoutId: "B",
             },
           ],
         },
       });
-      if (workspaceChromeLayout.kind !== "workspaceChromeLayout") {
-        throw new Error("Expected workspaceChromeLayout read model.");
+      const workspaceLayout = await runTestEffect(
+        readModels.fetch({
+          kind: "workspaceLayout",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      if (workspaceLayout.kind !== "workspaceLayout") {
+        throw new Error("Expected workspaceLayout read model.");
       }
-      expect(workspaceChromeLayout.value.layouts).toEqual(
+      const repeatedWorkspaceLayout = await runTestEffect(
+        readModels.fetch({
+          kind: "workspaceLayout",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(repeatedWorkspaceLayout).toEqual(workspaceLayout);
+      expect(workspaceLayout.value.slots).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             workspaceId: "workspace_state_facade_read_models",
             layoutId: "B",
             initialized: true,
             focusedPaneId: "pane-read-model-fixture",
-            snapshotJson: { dockview: { activeGroup: "primary" } },
-            panelMetadata: expect.arrayContaining([
+            dockviewJson: { dockview: { activeGroup: "primary" } },
+            panes: expect.arrayContaining([
               expect.objectContaining({
                 paneId: "pane-read-model-fixture",
-                kind: "surface",
-                surfacePiSessionId: created.surfacePiSessionId,
+                target: expect.objectContaining({
+                  surface: "orchestrator",
+                  surfacePiSessionId: created.surfacePiSessionId,
+                }),
               }),
             ]),
           }),
@@ -1938,11 +2002,18 @@ describe("State read-model kind expansion", () => {
           descriptor: {
             scope: "workspace",
             workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
-            invalidation: { model: "workspaceChromeLayout" },
+            invalidation: { model: "workspaceLayout", ids: ["B"] },
           },
         }),
       );
-      expect(secondHalfRefetched.map((result) => result.kind)).toEqual(["workspaceChromeLayout"]);
+      expect(secondHalfRefetched.map((result) => result.kind)).toEqual(["workspaceLayout"]);
+
+      const chromeRefetched = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: { scope: "app", invalidation: { model: "workspaceChrome" } },
+        }),
+      );
+      expect(chromeRefetched.map((result) => result.kind)).toEqual(["workspaceChrome"]);
 
       const baseline = await runTestEffect(
         readModels.rebaseline({
@@ -1954,10 +2025,10 @@ describe("State read-model kind expansion", () => {
       expect(baseline.workspaces.map((result) => result.kind)).toContain("requestInput");
       expect(baseline.workspaces.map((result) => result.kind)).toContain("approvals");
       expect(baseline.app.map((result) => result.kind)).toEqual(
-        expect.arrayContaining(["agents", "extensions", "workflowsGenerated"]),
+        expect.arrayContaining(["agents", "extensions", "workflowsGenerated", "workspaceChrome"]),
       );
       expect(baseline.workspaces.map((result) => result.kind)).toEqual(
-        expect.arrayContaining(["snippets", "workspaceChromeLayout"]),
+        expect.arrayContaining(["snippets", "workspaceLayout"]),
       );
     } finally {
       store.close();
@@ -2277,6 +2348,8 @@ describe("State read-model kind expansion", () => {
         workspaceTabId: "workspace-tab-rebaseline" as WorkspaceTabId,
         workspaceId,
         cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+        workspaceLabel: "Rebaseline routed",
+        kind: "user" as const,
         openedAt: iso("2026-06-21T12:00:00.000Z"),
         activeLayoutId: "A" as const,
       };
@@ -2290,14 +2363,108 @@ describe("State read-model kind expansion", () => {
         tabs: [],
         knownWorkspaces: [],
       });
+      workspaceStore.saveWorkspaceLayoutSlot({
+        workspaceId,
+        layoutId: "C",
+        dockviewJson: null,
+        panes: [
+          {
+            paneId: "pane-routed-layout" as WorkspacePaneId,
+            target: { surface: "open-workspace" },
+            localState: { scroll: null, timelineDensity: "compact" },
+            fallbackChrome: null,
+            placement: null,
+            restore: { kind: "ready" },
+          },
+        ],
+        compactSurfaces: [],
+        focusedPaneId: "pane-routed-layout" as WorkspacePaneId,
+      });
 
+      const router = createWorkspaceStateRouter({
+        appGlobalStore,
+        workspaceStores: [{ store: workspaceStore }],
+      });
       const readModels = stateReadModelsFromRouter({
-        router: createWorkspaceStateRouter({
-          appGlobalStore,
-          workspaceStores: [{ store: workspaceStore }],
-        }),
+        router,
         appLogs: appLogStateFromStore(appLogStore),
       });
+      const commands = stateCommandsFromRouter({
+        router,
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+      const readWorkspaceChrome = appGlobalStore.readWorkspaceChrome.bind(appGlobalStore);
+      appGlobalStore.readWorkspaceChrome = () => {
+        throw new Error("workspace chrome facade selection must not pre-read");
+      };
+      const alreadySelected = await runTestEffect(
+        commands.workspaceChrome.selectTab({ workspaceTabId: tab.workspaceTabId }),
+      );
+      expect(alreadySelected).toMatchObject({
+        value: { receipt: { outcome: "applied" } },
+        afterCommit: [],
+      });
+      appGlobalStore.readWorkspaceChrome = readWorkspaceChrome;
+      const saved = await runTestEffect(
+        commands.workspaceLayout.saveSlot({
+          workspaceId,
+          layoutId: "B",
+          dockviewJson: null,
+          panes: [],
+          compactSurfaces: [],
+          focusedPaneId: null,
+          clientSubmission: {
+            clientRequestId: "workspace-layout-routed" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        }),
+      );
+      const duplicateSaved = await runTestEffect(
+        commands.workspaceLayout.saveSlot({
+          workspaceId,
+          layoutId: "B",
+          dockviewJson: null,
+          panes: [],
+          compactSurfaces: [],
+          focusedPaneId: null,
+          clientSubmission: {
+            clientRequestId: "workspace-layout-routed" as RuntimeClientRequestId,
+            source: "test" as RuntimeClientSubmissionSource,
+          },
+        }),
+      );
+      expect(saved).toMatchObject({
+        value: { receipt: { outcome: "applied" } },
+        afterCommit: [
+          {
+            scope: "workspace",
+            workspaceId,
+            invalidation: { model: "workspaceLayout", ids: ["B"] },
+          },
+        ],
+      });
+      expect(duplicateSaved).toMatchObject({
+        value: { receipt: { outcome: "duplicate" } },
+        afterCommit: [],
+      });
+      expect(workspaceStore.readWorkspaceLayout(workspaceId).slots[1]?.updatedAt).not.toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+      expect(
+        appGlobalStore.readWorkspaceLayout(appGlobalStore.workspaceId).slots[1]?.updatedAt,
+      ).toBe("1970-01-01T00:00:00.000Z");
+      await expect(
+        runTestEffect(
+          commands.workspaceLayout.saveSlot({
+            workspaceId: "workspace-layout-missing" as WorkspaceId,
+            layoutId: "A",
+            dockviewJson: null,
+            panes: [],
+            compactSurfaces: [],
+            focusedPaneId: null,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
       const workspaceBaseline = await runTestEffect(
         readModels.rebaseline({ workspaceId, reason: "renderer-startup" }),
       );
@@ -2316,19 +2483,55 @@ describe("State read-model kind expansion", () => {
 
       const chrome = await runTestEffect(
         readModels.refetchInvalidation({
-          descriptor: {
-            scope: "workspace",
-            workspaceId,
-            invalidation: { model: "workspaceChromeLayout" },
-          },
+          descriptor: { scope: "app", invalidation: { model: "workspaceChrome" } },
         }),
       );
       expect(chrome).toMatchObject([
         {
-          kind: "workspaceChromeLayout",
+          kind: "workspaceChrome",
           value: { activeWorkspaceTabId: tab.workspaceTabId, tabs: [tab] },
         },
       ]);
+
+      const layout = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: {
+            scope: "workspace",
+            workspaceId,
+            invalidation: { model: "workspaceLayout", ids: ["C"] },
+          },
+        }),
+      );
+      expect(layout).toMatchObject([
+        {
+          kind: "workspaceLayout",
+          value: {
+            workspaceId,
+            slots: expect.arrayContaining([
+              expect.objectContaining({
+                layoutId: "C",
+                panes: [expect.objectContaining({ paneId: "pane-routed-layout" })],
+              }),
+            ]),
+          },
+        },
+      ]);
+
+      appGlobalStore.setWorkspaceTabs({
+        activeWorkspaceTabId: null,
+        tabs: [],
+        knownWorkspaces: [],
+      });
+      const revisionAfterTabDisappeared = appGlobalStore.readCurrentStateRevision();
+      await expect(
+        runTestEffect(
+          commands.workspaceChrome.selectLayoutSlot({
+            workspaceTabId: tab.workspaceTabId,
+            layoutId: "B",
+          }),
+        ),
+      ).rejects.toMatchObject({ reason: "not-found" });
+      expect(appGlobalStore.readCurrentStateRevision()).toBe(revisionAfterTabDisappeared);
 
       const appBaseline = await runTestEffect(readModels.rebaseline({ reason: "manual-refresh" }));
       expect(appBaseline.workspaces).toEqual([]);
@@ -2404,7 +2607,7 @@ describe("State read-model kind expansion", () => {
     }
   });
 
-  it("routes command-inspector reads by explicit workspace identity", async () => {
+  it("routes inspector reads by explicit workspace identity", async () => {
     const makeStore = (workspaceId: WorkspaceId) => {
       let nextId = 0;
       return createStructuredSessionStateStore({
@@ -2444,6 +2647,60 @@ describe("State read-model kind expansion", () => {
         title: "Inspect routing",
         summary: "Inspect routing",
       });
+      const childCommand = workspaceStore.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: surface.surfacePiSessionId,
+        parentCommandId: command.id,
+        toolName: "read",
+        executor: "execute_typescript",
+        visibility: "trace",
+        title: "Inspect routed child",
+        summary: "Inspect routed child",
+      });
+      const handlerThread = workspaceStore.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: "surface-routed-handler",
+        title: "Routed handler",
+        objective: "Prove handler inspector routing.",
+      });
+      const handlerTurn = workspaceStore.startTurn({
+        sessionId: surface.workspaceSessionId,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        requestSummary: "Run routed workflow",
+      });
+      const workflowCommand = workspaceStore.createCommand({
+        turnId: handlerTurn.id,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        toolName: "exec_command",
+        executor: "handler",
+        visibility: "surface",
+        title: "Run routed workflow",
+        summary: "Run routed workflow",
+      });
+      const workflowRun = workspaceStore.recordWorkflow({
+        threadId: handlerThread.id,
+        commandId: workflowCommand.id,
+        smithersRunId: "smithers-routed-inspector",
+        workflowName: "routed_inspector",
+        workflowSource: "saved",
+        status: "running",
+        summary: "Routed workflow is running.",
+      });
+      const workflowTaskAttempt = workspaceStore.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: workflowRun.smithersRunId,
+        nodeId: "inspect",
+        iteration: 0,
+        attempt: 1,
+        surfacePiSessionId: "surface-routed-workflow-task",
+        title: "Routed workflow task",
+        summary: "Inspect routed state.",
+        kind: "agent",
+        status: "running",
+        smithersState: "running",
+      });
       const readModels = stateReadModelsFromRouter({
         router: createWorkspaceStateRouter({
           appGlobalStore,
@@ -2456,13 +2713,51 @@ describe("State read-model kind expansion", () => {
         readModels.fetch({
           kind: "commandInspector",
           workspaceId,
-          commandId: command.id as CommandId,
+          commandId: childCommand.id as CommandId,
         }),
       );
+      const selectorInspector = buildStructuredCommandInspector(
+        workspaceStore.getSessionState(surface.workspaceSessionId),
+        childCommand.id,
+      );
 
-      expect(inspector).toMatchObject({
+      expect(inspector).toEqual({
         kind: "commandInspector",
-        value: { commandId: command.id, toolName: "exec_command" },
+        value: selectorInspector
+          ? {
+              ...selectorInspector,
+              target: surface.target,
+              acceptedArguments: null,
+            }
+          : null,
+      });
+
+      await expect(
+        runTestEffect(
+          readModels.fetch({
+            kind: "handlerInspector",
+            workspaceId,
+            threadId: handlerThread.id as ThreadId,
+          }),
+        ),
+      ).resolves.toMatchObject({
+        kind: "handlerInspector",
+        value: { threadId: handlerThread.id, title: "Routed handler" },
+      });
+      await expect(
+        runTestEffect(
+          readModels.fetch({
+            kind: "workflowTaskAttemptInspector",
+            workspaceId,
+            workflowTaskAttemptId: workflowTaskAttempt.id as WorkflowTaskAttemptId,
+          }),
+        ),
+      ).resolves.toMatchObject({
+        kind: "workflowTaskAttemptInspector",
+        value: {
+          workflowTaskAttemptId: workflowTaskAttempt.id,
+          title: "Routed workflow task",
+        },
       });
     } finally {
       appLogStore.close();

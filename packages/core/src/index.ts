@@ -26,3 +26,4 @@ export * from "./sandbox-policy-contracts";
 export * from "./secret-store-ports";
 export * from "./session-navigation-contracts";
 export * from "./workflow-task-agent-bridge-contracts";
+export * from "./workspace-layout-contracts";

@@ -44,6 +44,7 @@ import {
   type GeneratedWorkflowsExportBuildEvidence,
   type HandlerInheritedHistoryBlock,
   type JsonValue,
+  type CompactWorkspaceSurface,
   type DeletePiSessionReferenceInput,
   type MarkGeneratedPackageRefreshNeededInput,
   type AcquireDefaultWorkspaceInput,
@@ -95,6 +96,8 @@ import {
   type SavePiSessionReferenceInput,
   type ValidatePiSessionReferenceInput,
   type WorkspaceId,
+  type WorkspacePaneRecord,
+  CheckedWorkspaceLayoutSlotContentSchema,
   type RuntimeTurnDecision,
   SnippetMetadataSchema,
   SnippetSourceSchema,
@@ -108,7 +111,6 @@ import {
   normalizeExternalInstructionsSettings,
 } from "@svvy/core";
 import type {
-  CloseWorkspacePaneCommandInput,
   CreateManagedSnippetCommandInput,
   DeleteManagedSnippetCommandInput,
   DeleteOrchestratorProfileCommandInput,
@@ -116,7 +118,7 @@ import type {
   RemoveExtensionEnvOverrideCommandInput,
   ReorderOrchestratorProfilesCommandInput,
   ResetActorExtensionDefaultsCommandInput,
-  SaveWorkspaceLayoutSnapshotCommandInput,
+  SaveWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceTabCommandInput,
   SetExternalInstructionActorUsageCommandInput,
@@ -127,7 +129,6 @@ import type {
   UpdateManagedSnippetCommandInput,
   UpdateOrchestratorProfileCommandInput,
   UpdateThreadHandlerProfileCommandInput,
-  UpdateWorkspacePaneCommandInput,
   WorkspaceLayoutSlotId,
 } from "./state-command-schemas";
 
@@ -138,6 +139,7 @@ const DEFAULT_SIDEBAR_SECTION_SIZES = {
 } as const;
 
 const GLOBAL_PROVIDER_AUTH_WORKSPACE_KEY = "";
+const EMPTY_WORKSPACE_LAYOUT_UPDATED_AT = "1970-01-01T00:00:00.000Z";
 const MIN_SIDEBAR_SECTION_SIZE_PX = 64;
 const MAX_SIDEBAR_SECTION_SIZE_PX = 1000;
 const DEFAULT_EXTERNAL_INSTRUCTIONS_JSON = JSON.stringify(DEFAULT_EXTERNAL_INSTRUCTIONS);
@@ -151,6 +153,10 @@ const decodeSnippetMetadataContract = Schema.decodeUnknownSync(
 );
 const decodeSnippetSourceContract = Schema.decodeUnknownSync(
   SnippetSourceSchema,
+  strictBoundaryParseOptions,
+);
+const decodeWorkspaceLayoutSlotContentContract = Schema.decodeUnknownSync(
+  CheckedWorkspaceLayoutSlotContentSchema,
   strictBoundaryParseOptions,
 );
 
@@ -354,19 +360,30 @@ export interface StructuredMutationCommitRecord {
   stateRevision: StateRevision;
 }
 
+export interface StructuredWorkspaceChromeMutationRecord extends StructuredMutationCommitRecord {
+  outcome: "committed" | "no-op";
+}
+
 export interface StructuredWorkspaceTabRecord {
   workspaceTabId: string;
   workspaceId: string;
   cwd: string;
+  workspaceLabel: string;
+  kind: "default" | "user";
   openedAt: string;
   activeLayoutId: WorkspaceLayoutSlotId;
 }
 
-export interface StructuredWorkspaceChromeLayoutRecord {
+export interface StructuredWorkspaceChromeRecord {
   activeWorkspaceTabId: string | null;
   tabs: StructuredWorkspaceTabRecord[];
   knownWorkspaces: StructuredWorkspaceTabRecord[];
-  layouts: StructuredWorkspaceLayoutSlotRecord[];
+  stateRevision: StateRevision;
+}
+
+export interface StructuredWorkspaceLayoutRecord {
+  workspaceId: string;
+  slots: readonly StructuredWorkspaceLayoutSlotRecord[];
   stateRevision: StateRevision;
 }
 
@@ -374,9 +391,10 @@ export interface StructuredWorkspaceLayoutSlotRecord {
   workspaceId: string;
   layoutId: WorkspaceLayoutSlotId;
   initialized: boolean;
-  snapshotJson: JsonValue | null;
+  dockviewJson: JsonValue | null;
+  panes: readonly WorkspacePaneRecord[];
+  compactSurfaces: readonly CompactWorkspaceSurface[];
   focusedPaneId: string | null;
-  panelMetadata: JsonValue[];
   updatedAt: string;
 }
 
@@ -1066,21 +1084,20 @@ export interface StructuredSessionStateStore {
   hasAppPreferencesRow(): boolean;
   readAppPreferences(): StructuredAppPreferencesRecord;
   updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord;
-  hasWorkspaceChromeLayoutRows(): boolean;
-  readWorkspaceChromeLayout(input?: {
-    workspaceId?: string;
-    layoutId?: WorkspaceLayoutSlotId;
-  }): StructuredWorkspaceChromeLayoutRecord;
-  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredMutationCommitRecord;
-  selectWorkspaceTab(input: SelectWorkspaceTabCommandInput): StructuredMutationCommitRecord;
+  hasWorkspaceChromeRows(): boolean;
+  readWorkspaceChrome(): StructuredWorkspaceChromeRecord;
+  hasWorkspaceLayoutRows(): boolean;
+  readWorkspaceLayout(workspaceId: string): StructuredWorkspaceLayoutRecord;
+  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredWorkspaceChromeMutationRecord;
+  selectWorkspaceTab(
+    input: SelectWorkspaceTabCommandInput,
+  ): StructuredWorkspaceChromeMutationRecord;
   selectWorkspaceLayoutSlot(
     input: SelectWorkspaceLayoutSlotCommandInput,
+  ): StructuredWorkspaceChromeMutationRecord;
+  saveWorkspaceLayoutSlot(
+    input: SaveWorkspaceLayoutSlotCommandInput,
   ): StructuredMutationCommitRecord;
-  saveWorkspaceLayoutSnapshot(
-    input: SaveWorkspaceLayoutSnapshotCommandInput,
-  ): StructuredMutationCommitRecord;
-  updateWorkspacePane(input: UpdateWorkspacePaneCommandInput): StructuredMutationCommitRecord;
-  closeWorkspacePane(input: CloseWorkspacePaneCommandInput): StructuredMutationCommitRecord;
   hasAgentProfileRows(): boolean;
   listAgentProfiles(): StructuredAgentProfileRecord[];
   updateOrchestratorProfile(
@@ -1196,6 +1213,11 @@ export interface StructuredSessionStateStore {
   finishTurn(input: {
     turnId: string;
     status: Exclude<StructuredTurnStatus, "running">;
+  }): StructuredTurnRecord;
+  recoverInterruptedSurfaceTurn(input: {
+    turnId: string;
+    status: "waiting" | "failed";
+    reason: string;
   }): StructuredTurnRecord;
   createThread(input: {
     turnId: string;
@@ -2055,6 +2077,8 @@ type WorkspaceChromeTabRow = {
   workspace_tab_id: string;
   workspace_id: string;
   cwd: string;
+  workspace_label: string;
+  workspace_kind: "default" | "user";
   opened_at: string;
   active_layout_id: WorkspaceLayoutSlotId;
   tab_kind: "open" | "known";
@@ -2066,9 +2090,10 @@ type WorkspaceLayoutSlotRow = {
   workspace_id: string;
   layout_id: WorkspaceLayoutSlotId;
   initialized: number;
-  snapshot_json: string | null;
+  dockview_json: string | null;
+  panes_json: string;
+  compact_surfaces_json: string;
   focused_pane_id: string | null;
-  panel_metadata_json: string;
   updated_at: string;
 };
 
@@ -2589,6 +2614,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         );
     }
     this.workspaceId = this.workspace.id;
+    this.ensureWorkspaceLayoutSlots();
   }
 
   close(): void {
@@ -2696,7 +2722,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  hasWorkspaceChromeLayoutRows(): boolean {
+  hasWorkspaceChromeRows(): boolean {
     const chrome = this.db
       .query(`SELECT 1 AS found FROM workspace_chrome_state WHERE id = 1`)
       .get() as { found: number } | undefined;
@@ -2704,58 +2730,128 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const tab = this.db.query(`SELECT 1 AS found FROM workspace_chrome_tab LIMIT 1`).get() as
       | { found: number }
       | undefined;
-    if (tab) return true;
+    return Boolean(tab);
+  }
+
+  hasWorkspaceLayoutRows(): boolean {
     const layout = this.db.query(`SELECT 1 AS found FROM workspace_layout_slot LIMIT 1`).get() as
       | { found: number }
       | undefined;
     return Boolean(layout);
   }
 
-  readWorkspaceChromeLayout(
-    input: {
-      workspaceId?: string;
-      layoutId?: WorkspaceLayoutSlotId;
-    } = {},
-  ): StructuredWorkspaceChromeLayoutRecord {
+  readWorkspaceChrome(): StructuredWorkspaceChromeRecord {
     const state = this.db.query(`SELECT * FROM workspace_chrome_state WHERE id = 1`).get() as
       | WorkspaceChromeStateRow
       | undefined;
     const tabs = this.queryWorkspaceChromeTabs("open");
     const knownWorkspaces = this.queryWorkspaceChromeTabs("known");
-    const rows = this.db
-      .query(
-        `SELECT * FROM workspace_layout_slot
-         WHERE (?1 IS NULL OR workspace_id = ?1)
-           AND (?2 IS NULL OR layout_id = ?2)
-         ORDER BY workspace_id ASC, layout_id ASC`,
-      )
-      .all(input.workspaceId ?? null, input.layoutId ?? null) as WorkspaceLayoutSlotRow[];
-    const existingKeys = new Set(rows.map((row) => `${row.workspace_id}:${row.layout_id}`));
-    const workspaceIds = new Set<string>();
-    if (input.workspaceId) workspaceIds.add(input.workspaceId);
-    for (const tab of [...tabs, ...knownWorkspaces]) workspaceIds.add(tab.workspaceId);
-    if (workspaceIds.size === 0) workspaceIds.add(this.workspace.id);
-    const layoutIds: WorkspaceLayoutSlotId[] = input.layoutId ? [input.layoutId] : ["A", "B", "C"];
-    const defaultLayouts = [...workspaceIds].flatMap((workspaceId) =>
-      layoutIds
-        .filter((layoutId) => !existingKeys.has(`${workspaceId}:${layoutId}`))
-        .map((layoutId) => this.defaultWorkspaceLayoutSlot(workspaceId, layoutId)),
-    );
     return {
       activeWorkspaceTabId: state?.active_workspace_tab_id ?? null,
       tabs,
       knownWorkspaces,
-      layouts: [...rows.map((row) => this.mapWorkspaceLayoutSlot(row)), ...defaultLayouts],
       stateRevision: this.readStateRevision(),
     };
   }
 
-  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredMutationCommitRecord {
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
+  readWorkspaceLayout(workspaceId: string): StructuredWorkspaceLayoutRecord {
+    this.assertWorkspaceLayoutScope(workspaceId, "structured-session.readWorkspaceLayout");
+    const rows = this.db
+      .query(
+        `SELECT * FROM workspace_layout_slot
+         WHERE workspace_id = ?
+         ORDER BY layout_id ASC`,
+      )
+      .all(workspaceId) as WorkspaceLayoutSlotRow[];
+    if (
+      rows.length !== 3 ||
+      !(["A", "B", "C"] as const).every((layoutId) =>
+        rows.some((row) => row.layout_id === layoutId),
+      )
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.readWorkspaceLayout",
+        reason: "decode-failed",
+        message: `Workspace ${workspaceId} does not have exactly one A, B, and C layout slot.`,
+      });
+    }
+    return {
+      workspaceId,
+      slots: rows.map((row) => this.mapWorkspaceLayoutSlot(row)),
+      stateRevision: this.readStateRevision(),
+    };
+  }
+
+  setWorkspaceTabs(input: SetWorkspaceTabsCommandInput): StructuredWorkspaceChromeMutationRecord {
+    return this.db.transaction((): StructuredWorkspaceChromeMutationRecord => {
+      const state = this.db.query(`SELECT * FROM workspace_chrome_state WHERE id = 1`).get() as
+        | WorkspaceChromeStateRow
+        | undefined;
+      const currentTabs = this.queryWorkspaceChromeTabs("open");
+      const currentKnownWorkspaces = this.queryWorkspaceChromeTabs("known");
+      const existingLayoutIdByWorkspaceTab = new Map<string, WorkspaceLayoutSlotId>();
+      for (const tab of [...currentTabs, ...currentKnownWorkspaces]) {
+        const key = `${tab.workspaceTabId}\u0000${tab.workspaceId}`;
+        if (!existingLayoutIdByWorkspaceTab.has(key)) {
+          existingLayoutIdByWorkspaceTab.set(key, tab.activeLayoutId);
+        }
+      }
+      const incomingOpenLayoutIdByWorkspaceTab = new Map(
+        input.tabs.map((tab) => [
+          `${tab.workspaceTabId}\u0000${tab.workspaceId}`,
+          tab.activeLayoutId,
+        ]),
+      );
+      const preserveGranularSelection = (
+        tab: StructuredWorkspaceTabRecord,
+      ): StructuredWorkspaceTabRecord => {
+        const key = `${tab.workspaceTabId}\u0000${tab.workspaceId}`;
+        return {
+          ...tab,
+          activeLayoutId:
+            existingLayoutIdByWorkspaceTab.get(key) ??
+            incomingOpenLayoutIdByWorkspaceTab.get(key) ??
+            tab.activeLayoutId,
+        };
+      };
+      const tabs = input.tabs.map(preserveGranularSelection);
+      const knownWorkspaces = input.knownWorkspaces.map(preserveGranularSelection);
+      const tabCollectionsChanged =
+        !workspaceTabCollectionsEqual(currentTabs, tabs) ||
+        !workspaceTabCollectionsEqual(currentKnownWorkspaces, knownWorkspaces);
+      const activeWorkspaceTabId =
+        !tabCollectionsChanged &&
+        state?.active_workspace_tab_id !== null &&
+        state?.active_workspace_tab_id !== undefined &&
+        tabs.some((tab) => tab.workspaceTabId === state.active_workspace_tab_id)
+          ? state.active_workspace_tab_id
+          : input.activeWorkspaceTabId;
+      if (
+        activeWorkspaceTabId !== null &&
+        !tabs.some((tab) => tab.workspaceTabId === activeWorkspaceTabId)
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.setWorkspaceTabs",
+          reason: "invalid-input",
+          message: `Active workspace tab ${activeWorkspaceTabId} is not open.`,
+        });
+      }
+      if (
+        state &&
+        state.active_workspace_tab_id === activeWorkspaceTabId &&
+        workspaceTabCollectionsEqual(currentTabs, tabs) &&
+        workspaceTabCollectionsEqual(currentKnownWorkspaces, knownWorkspaces)
+      ) {
+        return {
+          outcome: "no-op",
+          updatedAt: state.updated_at,
+          stateRevision: this.readStateRevision(),
+        };
+      }
+      const updatedAt = this.now();
       this.db.query(`DELETE FROM workspace_chrome_tab`).run();
-      this.insertWorkspaceChromeTabs(input.tabs, "open", updatedAt);
-      this.insertWorkspaceChromeTabs(input.knownWorkspaces, "known", updatedAt);
+      this.insertWorkspaceChromeTabs(tabs, "open", updatedAt);
+      this.insertWorkspaceChromeTabs(knownWorkspaces, "known", updatedAt);
       this.db
         .query(
           `INSERT INTO workspace_chrome_state (id, active_workspace_tab_id, updated_at)
@@ -2764,15 +2860,42 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              active_workspace_tab_id = excluded.active_workspace_tab_id,
              updated_at = excluded.updated_at`,
         )
-        .run(input.activeWorkspaceTabId, updatedAt);
-      return this.bumpStateRevision();
+        .run(activeWorkspaceTabId, updatedAt);
+      return {
+        outcome: "committed",
+        updatedAt,
+        stateRevision: this.bumpStateRevision(),
+      };
     })();
-    return { updatedAt, stateRevision };
   }
 
-  selectWorkspaceTab(input: SelectWorkspaceTabCommandInput): StructuredMutationCommitRecord {
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
+  selectWorkspaceTab(
+    input: SelectWorkspaceTabCommandInput,
+  ): StructuredWorkspaceChromeMutationRecord {
+    return this.db.transaction((): StructuredWorkspaceChromeMutationRecord => {
+      const tab = this.db
+        .query(
+          `SELECT * FROM workspace_chrome_tab
+           WHERE workspace_tab_id = ? AND tab_kind = 'open'`,
+        )
+        .get(input.workspaceTabId) as WorkspaceChromeTabRow | undefined;
+      if (!tab) {
+        throw workspaceChromeTabNotFoundError(
+          "structured-session.selectWorkspaceTab",
+          input.workspaceTabId,
+        );
+      }
+      const state = this.db.query(`SELECT * FROM workspace_chrome_state WHERE id = 1`).get() as
+        | WorkspaceChromeStateRow
+        | undefined;
+      if (state?.active_workspace_tab_id === input.workspaceTabId) {
+        return {
+          outcome: "no-op",
+          updatedAt: state.updated_at,
+          stateRevision: this.readStateRevision(),
+        };
+      }
+      const updatedAt = this.now();
       this.db
         .query(
           `INSERT INTO workspace_chrome_state (id, active_workspace_tab_id, updated_at)
@@ -2782,16 +2905,36 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              updated_at = excluded.updated_at`,
         )
         .run(input.workspaceTabId, updatedAt);
-      return this.bumpStateRevision();
+      return {
+        outcome: "committed",
+        updatedAt,
+        stateRevision: this.bumpStateRevision(),
+      };
     })();
-    return { updatedAt, stateRevision };
   }
 
   selectWorkspaceLayoutSlot(
     input: SelectWorkspaceLayoutSlotCommandInput,
-  ): StructuredMutationCommitRecord {
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
+  ): StructuredWorkspaceChromeMutationRecord {
+    return this.db.transaction((): StructuredWorkspaceChromeMutationRecord => {
+      const rows = this.db
+        .query(`SELECT * FROM workspace_chrome_tab WHERE workspace_tab_id = ?`)
+        .all(input.workspaceTabId) as WorkspaceChromeTabRow[];
+      const openTab = rows.find((row) => row.tab_kind === "open");
+      if (!openTab) {
+        throw workspaceChromeTabNotFoundError(
+          "structured-session.selectWorkspaceLayoutSlot",
+          input.workspaceTabId,
+        );
+      }
+      if (rows.every((row) => row.active_layout_id === input.layoutId)) {
+        return {
+          outcome: "no-op",
+          updatedAt: openTab.updated_at,
+          stateRevision: this.readStateRevision(),
+        };
+      }
+      const updatedAt = this.now();
       this.db
         .query(
           `UPDATE workspace_chrome_tab
@@ -2799,90 +2942,32 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            WHERE workspace_tab_id = ?`,
         )
         .run(input.layoutId, updatedAt, input.workspaceTabId);
-      return this.bumpStateRevision();
+      return {
+        outcome: "committed",
+        updatedAt,
+        stateRevision: this.bumpStateRevision(),
+      };
     })();
-    return { updatedAt, stateRevision };
   }
 
-  saveWorkspaceLayoutSnapshot(
-    input: SaveWorkspaceLayoutSnapshotCommandInput,
+  saveWorkspaceLayoutSlot(
+    input: SaveWorkspaceLayoutSlotCommandInput,
   ): StructuredMutationCommitRecord {
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
-      this.upsertWorkspaceLayoutSlot({
-        workspaceId: input.workspaceId,
-        layoutId: input.layoutId,
-        initialized: true,
-        snapshotJson: input.snapshotJson as JsonValue,
-        focusedPaneId: input.focusedPaneId ?? null,
-        panelMetadata: input.panelMetadata as unknown as JsonValue[],
-        updatedAt,
-      });
-      return this.bumpStateRevision();
-    })();
-    return { updatedAt, stateRevision };
-  }
-
-  updateWorkspacePane(input: UpdateWorkspacePaneCommandInput): StructuredMutationCommitRecord {
+    this.assertWorkspaceLayoutScope(
+      input.workspaceId,
+      "structured-session.saveWorkspaceLayoutSlot",
+    );
     const updatedAt = this.now();
     const stateRevision = this.db.transaction(() => {
       const current = this.findWorkspaceLayoutSlot(input.workspaceId, input.layoutId);
-      const currentMetadata = current
-        ? this.mapWorkspaceLayoutSlot(current).panelMetadata
-        : ([] as JsonValue[]);
-      const nextMetadata = currentMetadata.map((pane) => {
-        if (!pane || typeof pane !== "object" || Array.isArray(pane)) return pane;
-        const record = pane as Record<string, unknown>;
-        if (record.paneId !== input.paneId) return pane;
-        return { ...record, ...input.patch } as JsonValue;
-      });
-      const hasPane = nextMetadata.some(
-        (pane) =>
-          pane &&
-          typeof pane === "object" &&
-          !Array.isArray(pane) &&
-          (pane as Record<string, unknown>).paneId === input.paneId,
-      );
-      const panelMetadata = hasPane
-        ? nextMetadata
-        : [...nextMetadata, { paneId: input.paneId, kind: "static", target: input.patch }];
       this.upsertWorkspaceLayoutSlot({
         workspaceId: input.workspaceId,
         layoutId: input.layoutId,
-        initialized: true,
-        snapshotJson: current ? fromJson<JsonValue>(current.snapshot_json) : null,
-        focusedPaneId: current?.focused_pane_id ?? null,
-        panelMetadata,
-        updatedAt,
-      });
-      return this.bumpStateRevision();
-    })();
-    return { updatedAt, stateRevision };
-  }
-
-  closeWorkspacePane(input: CloseWorkspacePaneCommandInput): StructuredMutationCommitRecord {
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
-      const current = this.findWorkspaceLayoutSlot(input.workspaceId, input.layoutId);
-      const panelMetadata = current
-        ? this.mapWorkspaceLayoutSlot(current).panelMetadata.filter(
-            (pane) =>
-              !(
-                pane &&
-                typeof pane === "object" &&
-                !Array.isArray(pane) &&
-                (pane as Record<string, unknown>).paneId === input.paneId
-              ),
-          )
-        : [];
-      this.upsertWorkspaceLayoutSlot({
-        workspaceId: input.workspaceId,
-        layoutId: input.layoutId,
-        initialized: true,
-        snapshotJson: current ? fromJson<JsonValue>(current.snapshot_json) : null,
-        focusedPaneId:
-          current?.focused_pane_id === input.paneId ? null : (current?.focused_pane_id ?? null),
-        panelMetadata,
+        initialized: current?.initialized !== 0 || input.panes.length > 0,
+        dockviewJson: input.dockviewJson,
+        panes: [...input.panes],
+        compactSurfaces: [...input.compactSurfaces],
+        focusedPaneId: input.focusedPaneId,
         updatedAt,
       });
       return this.bumpStateRevision();
@@ -5299,6 +5384,28 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return this.mustFindTurnRecord(input.turnId);
+  }
+
+  recoverInterruptedSurfaceTurn(input: {
+    turnId: string;
+    status: "waiting" | "failed";
+    reason: string;
+  }): StructuredTurnRecord {
+    const recover = this.db.transaction(() => {
+      const turn = this.mustFindTurnRecord(input.turnId);
+      this.recordLifecycleEvent({
+        sessionId: turn.sessionId,
+        kind: "surface.turn_recovery.interrupted",
+        subjectKind: "turn",
+        subjectId: turn.id,
+        data: {
+          surfacePiSessionId: turn.surfacePiSessionId,
+          reason: input.reason,
+        },
+      });
+      return this.finishTurn({ turnId: input.turnId, status: input.status });
+    });
+    return recover();
   }
 
   createThread(input: {
@@ -9904,6 +10011,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       workspaceTabId: row.workspace_tab_id,
       workspaceId: row.workspace_id,
       cwd: row.cwd,
+      workspaceLabel: row.workspace_label,
+      kind: row.workspace_kind,
       openedAt: row.opened_at,
       activeLayoutId: row.active_layout_id,
     }));
@@ -9918,14 +10027,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       this.db
         .query(
           `INSERT INTO workspace_chrome_tab (
-             workspace_tab_id, workspace_id, cwd, opened_at, active_layout_id,
-             tab_kind, position, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             workspace_tab_id, workspace_id, cwd, workspace_label, workspace_kind,
+             opened_at, active_layout_id, tab_kind, position, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           tab.workspaceTabId,
           tab.workspaceId,
           tab.cwd,
+          tab.workspaceLabel,
+          tab.kind,
           tab.openedAt,
           tab.activeLayoutId,
           tabKind,
@@ -9933,21 +10044,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           updatedAt,
         );
     });
-  }
-
-  private defaultWorkspaceLayoutSlot(
-    workspaceId: string,
-    layoutId: WorkspaceLayoutSlotId,
-  ): StructuredWorkspaceLayoutSlotRecord {
-    return {
-      workspaceId,
-      layoutId,
-      initialized: false,
-      snapshotJson: null,
-      focusedPaneId: null,
-      panelMetadata: [],
-      updatedAt: this.now(),
-    };
   }
 
   private findWorkspaceLayoutSlot(
@@ -9965,37 +10061,79 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     this.db
       .query(
         `INSERT INTO workspace_layout_slot (
-           workspace_id, layout_id, initialized, snapshot_json, focused_pane_id,
-           panel_metadata_json, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+           workspace_id, layout_id, initialized, dockview_json, panes_json,
+           compact_surfaces_json, focused_pane_id, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(workspace_id, layout_id) DO UPDATE SET
            initialized = excluded.initialized,
-           snapshot_json = excluded.snapshot_json,
+           dockview_json = excluded.dockview_json,
+           panes_json = excluded.panes_json,
+           compact_surfaces_json = excluded.compact_surfaces_json,
            focused_pane_id = excluded.focused_pane_id,
-           panel_metadata_json = excluded.panel_metadata_json,
            updated_at = excluded.updated_at`,
       )
       .run(
         input.workspaceId,
         input.layoutId,
         input.initialized ? 1 : 0,
-        input.snapshotJson === null ? null : JSON.stringify(input.snapshotJson),
+        input.dockviewJson === null ? null : JSON.stringify(input.dockviewJson),
+        JSON.stringify(input.panes),
+        JSON.stringify(input.compactSurfaces),
         input.focusedPaneId,
-        JSON.stringify(input.panelMetadata),
         input.updatedAt,
       );
   }
 
+  private ensureWorkspaceLayoutSlots(): void {
+    this.db.transaction(() => {
+      for (const layoutId of ["A", "B", "C"] as const) {
+        this.db
+          .query(
+            `INSERT INTO workspace_layout_slot (
+               workspace_id, layout_id, initialized, dockview_json, panes_json,
+               compact_surfaces_json, focused_pane_id, updated_at
+             ) VALUES (?, ?, 0, NULL, '[]', '[]', NULL, ?)
+             ON CONFLICT(workspace_id, layout_id) DO NOTHING`,
+          )
+          .run(this.workspace.id, layoutId, EMPTY_WORKSPACE_LAYOUT_UPDATED_AT);
+      }
+    })();
+  }
+
   private mapWorkspaceLayoutSlot(row: WorkspaceLayoutSlotRow): StructuredWorkspaceLayoutSlotRecord {
+    let content;
+    try {
+      content = decodeWorkspaceLayoutSlotContentContract({
+        dockviewJson: row.dockview_json === null ? null : JSON.parse(row.dockview_json),
+        panes: JSON.parse(row.panes_json),
+        compactSurfaces: JSON.parse(row.compact_surfaces_json),
+        focusedPaneId: row.focused_pane_id,
+      });
+    } catch (cause) {
+      throw new StateContractError({
+        operation: "structured-session.readWorkspaceLayout",
+        reason: "decode-failed",
+        message: `Persisted workspace layout ${row.workspace_id}:${row.layout_id} is invalid.`,
+        cause,
+      });
+    }
     return {
       workspaceId: row.workspace_id,
       layoutId: row.layout_id,
       initialized: row.initialized !== 0,
-      snapshotJson: fromJson<JsonValue>(row.snapshot_json),
-      focusedPaneId: row.focused_pane_id,
-      panelMetadata: fromJson<JsonValue[]>(row.panel_metadata_json) ?? [],
+      ...content,
       updatedAt: row.updated_at,
     };
+  }
+
+  private assertWorkspaceLayoutScope(workspaceId: string, operation: string): void {
+    if (workspaceId !== this.workspace.id) {
+      throw new StateContractError({
+        operation,
+        reason: "invalid-input",
+        message: `Workspace ${workspaceId} is not managed by this state store.`,
+      });
+    }
   }
 
   private upsertAgentProfileCommand(
@@ -11865,6 +12003,8 @@ function initializeSchema(db: Database): void {
       workspace_tab_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
       cwd TEXT NOT NULL,
+      workspace_label TEXT NOT NULL,
+      workspace_kind TEXT NOT NULL,
       opened_at TEXT NOT NULL,
       active_layout_id TEXT NOT NULL,
       tab_kind TEXT NOT NULL,
@@ -11877,9 +12017,10 @@ function initializeSchema(db: Database): void {
       workspace_id TEXT NOT NULL,
       layout_id TEXT NOT NULL,
       initialized INTEGER NOT NULL DEFAULT 0,
-      snapshot_json TEXT,
+      dockview_json TEXT,
+      panes_json TEXT NOT NULL,
+      compact_surfaces_json TEXT NOT NULL,
       focused_pane_id TEXT,
-      panel_metadata_json TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL,
       PRIMARY KEY(workspace_id, layout_id)
     );
@@ -12524,16 +12665,6 @@ function initializeSchema(db: Database): void {
     "external_instructions_json",
     `TEXT NOT NULL DEFAULT '${DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON}'`,
   );
-  ensureColumn(db, "workspace_chrome_state", "active_workspace_tab_id", "TEXT");
-  ensureColumn(db, "workspace_chrome_state", "updated_at", "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "workspace_chrome_tab", "active_layout_id", "TEXT NOT NULL DEFAULT 'A'");
-  ensureColumn(db, "workspace_chrome_tab", "tab_kind", "TEXT NOT NULL DEFAULT 'open'");
-  ensureColumn(db, "workspace_chrome_tab", "position", "INTEGER NOT NULL DEFAULT 0");
-  ensureColumn(db, "workspace_chrome_tab", "updated_at", "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "workspace_layout_slot", "initialized", "INTEGER NOT NULL DEFAULT 0");
-  ensureColumn(db, "workspace_layout_slot", "snapshot_json", "TEXT");
-  ensureColumn(db, "workspace_layout_slot", "focused_pane_id", "TEXT");
-  ensureColumn(db, "workspace_layout_slot", "panel_metadata_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "agent_profile", "reasoning_json", "TEXT");
   ensureColumn(db, "agent_profile", "follow_composer", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "agent_profile", "extension_usage_json", "TEXT NOT NULL DEFAULT '{}'");
@@ -12947,6 +13078,39 @@ function snippetNotFoundError(
     reason: "not-found",
     message: `${managedOnly ? "Managed snippet" : "Snippet"} ${snippetId} was not found in workspace ${workspaceId}.`,
   });
+}
+
+function workspaceChromeTabNotFoundError(
+  operation: string,
+  workspaceTabId: string,
+): StateContractError {
+  return new StateContractError({
+    operation,
+    reason: "not-found",
+    message: `Open workspace tab ${workspaceTabId} was not found.`,
+  });
+}
+
+function workspaceTabCollectionsEqual(
+  left: readonly StructuredWorkspaceTabRecord[],
+  right: readonly StructuredWorkspaceTabRecord[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((tab, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        tab.workspaceTabId === other.workspaceTabId &&
+        tab.workspaceId === other.workspaceId &&
+        tab.cwd === other.cwd &&
+        tab.workspaceLabel === other.workspaceLabel &&
+        tab.kind === other.kind &&
+        tab.openedAt === other.openedAt &&
+        tab.activeLayoutId === other.activeLayoutId
+      );
+    })
+  );
 }
 
 function decodeExternalInstructionsSettings(value: unknown): ExternalInstructionsSettings {

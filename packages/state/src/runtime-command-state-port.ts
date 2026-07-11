@@ -15,8 +15,11 @@ import {
 import {
   commandInspectorInvalidation,
   dedupeInvalidations,
+  handlerThreadInspectorInvalidation,
   mutationResult,
+  sessionNavigationInvalidation,
   surfaceInvalidation,
+  workflowTaskAttemptInspectorInvalidation,
 } from "./state-mutation-result";
 
 function mapRuntimeCommandRecord(record: StructuredCommandRecord): RuntimeCommandRecord {
@@ -30,14 +33,61 @@ function commandInvalidations(
   return dedupeInvalidations([
     commandInspectorInvalidation(workspaceId, record.id),
     surfaceInvalidation(workspaceId, record.surfacePiSessionId),
+    sessionNavigationInvalidation(workspaceId),
+    ...(record.threadId ? [handlerThreadInspectorInvalidation(workspaceId, record.threadId)] : []),
+    ...(record.workflowTaskAttemptId
+      ? [workflowTaskAttemptInspectorInvalidation(workspaceId, record.workflowTaskAttemptId)]
+      : []),
   ]);
 }
 
-function commandEventInvalidations(
-  workspaceId: string,
-  input: { commandId: string },
-): readonly StateInvalidationDescriptor[] {
-  return [commandInspectorInvalidation(workspaceId, input.commandId)];
+function recordCommandEvent(
+  state: StructuredSessionState["Service"],
+  input: Parameters<RuntimeCommandStatePortService["recordCommandEvent"]>[0],
+) {
+  return Effect.gen(function* () {
+    yield* state.recordLifecycleEvent({
+      sessionId: input.sessionId,
+      kind: input.kind,
+      subjectKind: "command",
+      subjectId: input.commandId,
+      ...(input.at ? { at: input.at } : {}),
+      ...(input.data ? { data: input.data } : {}),
+    });
+    const command = yield* state.findCommandById(input.commandId);
+    return mutationResult(
+      undefined,
+      command
+        ? commandInvalidations(state.workspaceId, mapRuntimeCommandRecord(command))
+        : [commandInspectorInvalidation(state.workspaceId, input.commandId)],
+    );
+  });
+}
+
+function recordCommandStdinWrite(
+  state: StructuredSessionState["Service"],
+  input: Parameters<RuntimeCommandStatePortService["recordStdinWrite"]>[0],
+) {
+  return Effect.gen(function* () {
+    yield* state.recordLifecycleEvent({
+      sessionId: input.sessionId,
+      kind: "command.stdin",
+      subjectKind: "command",
+      subjectId: input.commandId,
+      ...(input.at ? { at: input.at } : {}),
+      data: {
+        text: input.text,
+        acceptedBytes: input.acceptedBytes,
+      },
+    });
+    const command = yield* state.findCommandById(input.commandId);
+    return mutationResult(
+      undefined,
+      command
+        ? commandInvalidations(state.workspaceId, mapRuntimeCommandRecord(command))
+        : [commandInspectorInvalidation(state.workspaceId, input.commandId)],
+    );
+  });
 }
 
 export function runtimeCommandStatePortFromStructuredSessionState(
@@ -87,35 +137,8 @@ export function runtimeCommandStatePortFromStructuredSessionState(
           mutationResult(record, commandInvalidations(state.workspaceId, record)),
         ),
       ),
-    recordCommandEvent: (input) =>
-      state
-        .recordLifecycleEvent({
-          sessionId: input.sessionId,
-          kind: input.kind,
-          subjectKind: "command",
-          subjectId: input.commandId,
-          ...(input.at ? { at: input.at } : {}),
-          ...(input.data ? { data: input.data } : {}),
-        })
-        .pipe(
-          Effect.as(mutationResult(undefined, commandEventInvalidations(state.workspaceId, input))),
-        ),
-    recordStdinWrite: (input) =>
-      state
-        .recordLifecycleEvent({
-          sessionId: input.sessionId,
-          kind: "command.stdin",
-          subjectKind: "command",
-          subjectId: input.commandId,
-          ...(input.at ? { at: input.at } : {}),
-          data: {
-            text: input.text,
-            acceptedBytes: input.acceptedBytes,
-          },
-        })
-        .pipe(
-          Effect.as(mutationResult(undefined, commandEventInvalidations(state.workspaceId, input))),
-        ),
+    recordCommandEvent: (input) => recordCommandEvent(state, input),
+    recordStdinWrite: (input) => recordCommandStdinWrite(state, input),
     hasCommandOutputEvent: (input) =>
       state
         .getSessionState(input.sessionId)

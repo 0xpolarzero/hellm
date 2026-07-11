@@ -240,6 +240,14 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/ManagedRuntime",
     receiver: "ManagedRuntime.ManagedRuntime",
+    members: ["runPromise"],
+    allowedSourceGlobs: ["packages/runtime/src/committed-state-invalidation-adapter.ts"],
+    productReason:
+      "The committed-state invalidation adapter maps exact state-produced after-commit descriptors through the caller-owned ManagedRuntime while runtime owns event publication and catalog retains failed batches for rebaseline or retry.",
+  },
+  {
+    module: "effect/ManagedRuntime",
+    receiver: "ManagedRuntime.ManagedRuntime",
     members: ["runPromiseExit"],
     allowedSourceGlobs: ["packages/state/src/state-facade.ts"],
     productReason:

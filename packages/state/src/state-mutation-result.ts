@@ -8,6 +8,7 @@ import type {
   SurfacePiSessionId,
   WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspaceLayoutSlotId,
 } from "@svvy/core";
 
 export function mutationResult<T>(
@@ -36,13 +37,14 @@ export function sessionNavigationInvalidation(workspaceId: string): StateInvalid
   };
 }
 
-export function workspaceChromeLayoutInvalidation(
+export function workspaceLayoutInvalidation(
   workspaceId: string,
+  layoutIds: readonly WorkspaceLayoutSlotId[],
 ): StateInvalidationDescriptor {
   return {
     scope: "workspace",
     workspaceId: workspaceId as WorkspaceId,
-    invalidation: { model: "workspaceChromeLayout" },
+    invalidation: { model: "workspaceLayout", ids: layoutIds },
   };
 }
 

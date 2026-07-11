@@ -71,7 +71,7 @@ describe("RuntimeWorkspaceStatePort", () => {
       {
         scope: "workspace",
         workspaceId,
-        invalidation: { model: "workspaceChromeLayout" },
+        invalidation: { model: "workspaceLayout", ids: ["A", "B", "C"] },
       },
     ]);
     expect(released.value).toEqual({

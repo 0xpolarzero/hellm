@@ -49,11 +49,11 @@ import {
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import type {
+  ArtifactOpenMessage,
   SurfaceStreamPatch,
   SurfaceSyncMessage,
   WorkspaceInfoResponse,
   WorkspaceKind,
-  WorkspaceSyncMessage,
 } from "../shared/workspace-contract";
 import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
 import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
@@ -98,7 +98,6 @@ import {
 } from "./source-watch-inputs";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
-import type { AppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 
 type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
   readonly sourceRoots: ExtensionSourceRoots;
@@ -194,9 +193,7 @@ type WorkspaceRuntimeRegistryOptions = {
     error?: unknown,
   ) => void;
   onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
-  onWorkspaceSync?: (workspaceId: string, payload: WorkspaceSyncMessage) => void;
-  listRecoverableWorkspaces?: () => readonly WorkspaceInfoResponse[];
-  appWorkspaceTabsStore?: AppWorkspaceTabsStore;
+  onArtifactOpen?: (workspaceId: string, payload: ArtifactOpenMessage) => void;
   runtimeDependencies?: Partial<RuntimeProviderAuthDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
   sandboxHostSupport: PackagedSandboxHostSupportServices;
@@ -681,6 +678,10 @@ export class WorkspaceRuntimeRegistry {
     return runtime;
   }
 
+  getRuntimeOrNull(workspaceId: string): WorkspaceRuntime | null {
+    return this.runtimes.get(workspaceId) ?? null;
+  }
+
   getRuntimeOperations(workspaceId: string): WorkspaceRuntimeOperations {
     const operations = this.getAppRuntimeFacadeOperations();
     this.getRuntime(workspaceId);
@@ -891,12 +892,6 @@ export class WorkspaceRuntimeRegistry {
 
   getInitialCwd(): string {
     return this.options.initialCwd;
-  }
-
-  setActiveWorkspace(workspaceId: string): WorkspaceRuntime {
-    const runtime = this.getRuntime(workspaceId);
-    this.activeWorkspaceId = runtime.workspaceId;
-    return runtime;
   }
 
   listOpenWorkspaces(): WorkspaceInfoResponse[] {
@@ -1146,7 +1141,8 @@ export class WorkspaceRuntimeRegistry {
     let workspaceCloseRecorded = false;
 
     const detachCatalogListeners = (): void => {
-      catalog.setWorkspaceSyncListener(null);
+      void catalog.setCommittedStateInvalidationPublisher(null);
+      catalog.setArtifactOpenListener(null);
       catalog.setSurfaceSyncListener(null);
       catalog.setTitleGenerationLogListener(null);
       catalog.setWorkflowsGeneratedPackageLogListener(null);
@@ -1331,10 +1327,10 @@ export class WorkspaceRuntimeRegistry {
         this.openingWorkspaceCwds.set(requestedWorkspaceId, cwd);
       }
       try {
-        catalog.setWorkspaceSyncListener((payload) => {
-          this.options.onWorkspaceSync?.(workspaceId, {
+        catalog.setArtifactOpenListener((payload) => {
+          this.options.onArtifactOpen?.(workspaceId, {
             ...payload,
-            workspaceId,
+            workspaceId: workspaceId as WorkspaceId,
           });
         });
         catalog.setSurfaceSyncListener((payload) => {
@@ -1361,6 +1357,9 @@ export class WorkspaceRuntimeRegistry {
             ? { ...workspaceStateRegistration, isDefaultWorkspace: true }
             : workspaceStateRegistration,
           appLogs,
+        );
+        await catalog.setCommittedStateInvalidationPublisher((afterCommit) =>
+          appRuntime!.internal.committedStateInvalidations.publish(afterCommit),
         );
         if (kind === "default") {
           desktopOwnerReleaseRequired = true;
@@ -1824,6 +1823,18 @@ export class WorkspaceRuntimeRegistry {
     const runtime = await this.appRuntimeBootstrap;
     this.resolvedAppRuntimeBootstrap = runtime;
     await this.hydrateStateOwnedAppPreferencesFromStateRows();
+    const appGlobal = await this.getAppGlobalHostRecord();
+    const catalogs = new Set<WorkspaceSessionCatalog>([
+      appGlobal.catalog,
+      ...this.retainedWorkspaceHostRecords().map((host) => host.catalog),
+    ]);
+    await Promise.all(
+      [...catalogs].map((catalog) =>
+        catalog.setCommittedStateInvalidationPublisher((afterCommit) =>
+          runtime.internal.committedStateInvalidations.publish(afterCommit),
+        ),
+      ),
+    );
     return runtime;
   }
 
@@ -1918,6 +1929,7 @@ export class WorkspaceRuntimeRegistry {
       appLogs,
       sourceStatePort: catalog.getRuntimeSourceStatePort(),
       dispose: async () => {
+        await catalog.setCommittedStateInvalidationPublisher(null);
         catalog.setTitleGenerationLogListener(null);
         catalog.setWorkflowsGeneratedPackageLogListener(null);
         catalog.setAppLogListener(null);
@@ -1990,7 +2002,7 @@ export class WorkspaceRuntimeRegistry {
         materializeCoreTypeContractPackage:
           generatedPackageBoundaryHost.materializeCoreTypeContractPackage,
       },
-      generatedPackageStatePort: this.createGeneratedPackageStatePort(),
+      generatedPackageStatePort: this.createGeneratedPackageStatePort(appGlobal.catalog),
       sourceInvalidation: {
         appGlobalCoordinator: this.appGlobalSourceInvalidationCoordinator,
         listAcquiredWorkspaceIds: () =>
@@ -2021,11 +2033,6 @@ export class WorkspaceRuntimeRegistry {
         hasStateRows: () =>
           appGlobal.catalog.workspaceStateRouterRegistration().store.hasAppPreferencesRow(),
         read: () => appGlobal.agentSettingsStore.getState().appPreferences,
-      },
-      workspaceChromeSeed: {
-        hasStateRows: () =>
-          appGlobal.catalog.workspaceStateRouterRegistration().store.hasWorkspaceChromeLayoutRows(),
-        read: () => this.options.appWorkspaceTabsStore?.getState?.() ?? null,
       },
       agentSettingsSeed: {
         hasAgentProfileRows: () =>
@@ -2222,11 +2229,10 @@ export class WorkspaceRuntimeRegistry {
           this.workspaceHostRecords().map((runtime) => runtime.workspaceId as WorkspaceId),
         ),
       listRecoverableWorkspaceIds: () =>
-        Effect.succeed(
-          this.options
-            .listRecoverableWorkspaces?.()
-            .filter((workspace) => workspace.kind === "user")
-            .map((workspace) => workspace.workspaceId as WorkspaceId) ?? [],
+        Effect.sync(() =>
+          this.listRecoverableWorkspacesFromState(catalog).map(
+            (workspace) => workspace.workspaceId as WorkspaceId,
+          ),
         ),
       now: () => Effect.succeed(new Date().toISOString() as IsoDateTimeString),
       generatedPackageLinkPath: async ({ packageName, workspaceId }) => {
@@ -2267,87 +2273,118 @@ export class WorkspaceRuntimeRegistry {
     };
   }
 
-  private createGeneratedPackageStatePort(): Pick<
+  private createGeneratedPackageStatePort(
+    catalog: WorkspaceSessionCatalog,
+  ): Pick<
     RuntimeGeneratedPackageStatePortService,
     "markWorkspaceLinksRepairNeeded" | "recordWorkspaceLinkStatus"
   > {
     return {
-      recordWorkspaceLinkStatus: (input) => {
-        const recoverableWorkspace = this.findRecoverableWorkspace(input.status.workspaceId);
-        if (!recoverableWorkspace) {
-          return Effect.fail(
-            new StateContractError({
-              operation: "runtime.generatedPackages.recordWorkspaceLinkStatus",
-              reason: "not-found",
-              message: `Workspace generated-package link status target is not recoverable: ${input.status.workspaceId}.`,
-            }),
-          );
-        }
+      recordWorkspaceLinkStatus: (input) =>
+        Effect.flatMap(
+          Effect.sync(() => this.findRecoverableWorkspace(catalog, input.status.workspaceId)),
+          (recoverableWorkspace) => {
+            if (!recoverableWorkspace) {
+              return Effect.fail(
+                new StateContractError({
+                  operation: "runtime.generatedPackages.recordWorkspaceLinkStatus",
+                  reason: "not-found",
+                  message: `Workspace generated-package link status target is not recoverable: ${input.status.workspaceId}.`,
+                }),
+              );
+            }
 
-        return Effect.flatMap(
-          Effect.try({
-            try: () => this.persistedWorkspaceStateStoreOptions(recoverableWorkspace),
-            catch: (cause: unknown) =>
-              new StateContractError({
-                operation: "runtime.generatedPackages.openRecoverableWorkspaceState",
-                reason: "transaction-failed",
-                message:
-                  cause instanceof Error
-                    ? cause.message
-                    : "Unable to open recoverable workspace state.",
-                cause,
+            return Effect.flatMap(
+              Effect.try({
+                try: () => this.persistedWorkspaceStateStoreOptions(recoverableWorkspace),
+                catch: (cause: unknown) =>
+                  new StateContractError({
+                    operation: "runtime.generatedPackages.openRecoverableWorkspaceState",
+                    reason: "transaction-failed",
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Unable to open recoverable workspace state.",
+                    cause,
+                  }),
               }),
-          }),
-          (store) =>
-            recordPersistedWorkspaceGeneratedPackageLinkStatus({
-              store,
-              request: input,
-            }),
-        );
-      },
-      markWorkspaceLinksRepairNeeded: (input) => {
-        const recoverableWorkspace = this.findRecoverableWorkspace(input.workspaceId);
-        if (!recoverableWorkspace) {
-          return Effect.fail(
-            new StateContractError({
-              operation: "runtime.generatedPackages.markWorkspaceLinksRepairNeeded",
-              reason: "not-found",
-              message: `Workspace generated-package link repair target is not recoverable: ${input.workspaceId}.`,
-            }),
-          );
-        }
+              (store) =>
+                recordPersistedWorkspaceGeneratedPackageLinkStatus({
+                  store,
+                  request: input,
+                }),
+            );
+          },
+        ),
+      markWorkspaceLinksRepairNeeded: (input) =>
+        Effect.flatMap(
+          Effect.sync(() => this.findRecoverableWorkspace(catalog, input.workspaceId)),
+          (recoverableWorkspace) => {
+            if (!recoverableWorkspace) {
+              return Effect.fail(
+                new StateContractError({
+                  operation: "runtime.generatedPackages.markWorkspaceLinksRepairNeeded",
+                  reason: "not-found",
+                  message: `Workspace generated-package link repair target is not recoverable: ${input.workspaceId}.`,
+                }),
+              );
+            }
 
-        return Effect.acquireUseRelease(
-          Effect.try({
-            try: () => this.persistedWorkspaceStateStoreOptions(recoverableWorkspace),
-            catch: (cause: unknown) =>
-              new StateContractError({
-                operation: "runtime.generatedPackages.openRecoverableWorkspaceState",
-                reason: "transaction-failed",
-                message:
-                  cause instanceof Error
-                    ? cause.message
-                    : "Unable to open recoverable workspace state.",
-                cause,
+            return Effect.acquireUseRelease(
+              Effect.try({
+                try: () => this.persistedWorkspaceStateStoreOptions(recoverableWorkspace),
+                catch: (cause: unknown) =>
+                  new StateContractError({
+                    operation: "runtime.generatedPackages.openRecoverableWorkspaceState",
+                    reason: "transaction-failed",
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Unable to open recoverable workspace state.",
+                    cause,
+                  }),
               }),
-          }),
-          (store) =>
-            markPersistedWorkspaceGeneratedPackageLinksRepairNeeded({
-              store,
-              request: input,
-            }),
-          () => Effect.void,
-        );
-      },
+              (store) =>
+                markPersistedWorkspaceGeneratedPackageLinksRepairNeeded({
+                  store,
+                  request: input,
+                }),
+              () => Effect.void,
+            );
+          },
+        ),
     };
   }
 
-  private findRecoverableWorkspace(workspaceId: WorkspaceId): WorkspaceInfoResponse | null {
+  private listRecoverableWorkspacesFromState(
+    catalog: WorkspaceSessionCatalog,
+  ): WorkspaceInfoResponse[] {
+    const chrome = catalog.workspaceStateRouterRegistration().store.readWorkspaceChrome();
+    const records = [...chrome.tabs, ...chrome.knownWorkspaces].filter(
+      (workspace) => workspace.kind === "user",
+    );
+    const byWorkspaceId = new Map<string, WorkspaceInfoResponse>();
+    for (const workspace of records) {
+      if (!byWorkspaceId.has(workspace.workspaceId)) {
+        byWorkspaceId.set(workspace.workspaceId, {
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.cwd,
+          workspaceLabel: workspace.workspaceLabel,
+          kind: workspace.kind,
+        });
+      }
+    }
+    return [...byWorkspaceId.values()];
+  }
+
+  private findRecoverableWorkspace(
+    catalog: WorkspaceSessionCatalog,
+    workspaceId: WorkspaceId,
+  ): WorkspaceInfoResponse | null {
     return (
-      this.options
-        .listRecoverableWorkspaces?.()
-        .find((workspace) => workspace.workspaceId === workspaceId && workspace.kind === "user") ??
-      null
+      this.listRecoverableWorkspacesFromState(catalog).find(
+        (workspace) => workspace.workspaceId === workspaceId,
+      ) ?? null
     );
   }
 

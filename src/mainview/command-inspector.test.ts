@@ -10,6 +10,7 @@ import {
   getCommandOutputSections,
   getCommandPatchSections,
   getCommandProgressSections,
+  getCommandStdinOutcomeMessage,
   getCommandStdinSection,
   getVisibleCommandRollups,
   getWorkspaceCommandStatusPresentation,
@@ -72,6 +73,12 @@ function createSessionSummary(): WorkspaceSessionSummary {
 
 function createInspector(): WorkspaceCommandInspector {
   return {
+    target: {
+      surface: "orchestrator",
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: "surface-1",
+    } as WorkspaceCommandInspector["target"],
+    acceptedArguments: null,
     commandId: "command-parent",
     threadId: "thread-1",
     workflowRunId: null,
@@ -378,6 +385,32 @@ describe("command inspector helpers", () => {
         },
       ],
     });
+  });
+
+  it("explains every stdin submission outcome", () => {
+    expect(
+      getCommandStdinOutcomeMessage({
+        commandId: "command-1",
+        status: "accepted",
+        acceptedBytes: 1,
+      }),
+    ).toBe("Accepted 1 byte of stdin.");
+    expect(
+      getCommandStdinOutcomeMessage({
+        commandId: "command-1",
+        status: "accepted",
+        acceptedBytes: 4,
+      }),
+    ).toBe("Accepted 4 bytes of stdin.");
+    expect(getCommandStdinOutcomeMessage({ commandId: "command-1", status: "stdin_closed" })).toBe(
+      "Stdin is closed for this command.",
+    );
+    expect(getCommandStdinOutcomeMessage({ commandId: "command-1", status: "not_running" })).toBe(
+      "This command is not running.",
+    );
+    expect(
+      getCommandStdinOutcomeMessage({ commandId: "command-1", status: "already_terminal" }),
+    ).toBe("This command has already finished.");
   });
 
   it("groups recovered command progress", () => {

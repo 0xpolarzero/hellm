@@ -34,6 +34,7 @@ import {
   type PromptExecutionContext,
   type RuntimeApprovalId,
   type SandboxLaunchFacts,
+  type StateInvalidationDescriptor,
   type WorkspaceId,
 } from "@svvy/core";
 import { RuntimeEventBus } from "../../packages/runtime/src/runtime-event-bus";
@@ -341,48 +342,6 @@ async function waitFor(
   }
 
   throw new Error("Timed out waiting for test condition.");
-}
-
-function createPersistedSession(
-  cwd: string,
-  sessionDir: string,
-  options: {
-    title?: string;
-    prompt: string;
-    reply: string;
-    replyStopReason?: StopReason;
-    thinkingLevel?: ThinkingLevel;
-    assistantProvider?: string;
-    assistantModel?: string;
-    modelChange?: {
-      provider: string;
-      model: string;
-    };
-  },
-) {
-  const sessionManager = SessionManager.create(cwd, sessionDir);
-  if (options.title) {
-    sessionManager.appendSessionInfo(options.title);
-  }
-  if (options.thinkingLevel) {
-    sessionManager.appendThinkingLevelChange(options.thinkingLevel);
-  }
-  sessionManager.appendMessage(userMessage(options.prompt));
-  sessionManager.appendMessage(
-    assistantMessage(options.reply, {
-      stopReason: options.replyStopReason,
-      provider: options.assistantProvider,
-      model: options.assistantModel,
-    }),
-  );
-  if (options.modelChange) {
-    sessionManager.appendModelChange(options.modelChange.provider, options.modelChange.model);
-  }
-
-  return {
-    id: sessionManager.getSessionId(),
-    path: sessionManager.getSessionFile(),
-  };
 }
 
 function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): StructuredSessionStateStore {
@@ -1272,25 +1231,304 @@ describe("WorkspaceSessionCatalog", () => {
     expect(normalizeGeneratedTitle("Session")).toBe("Session");
   });
 
-  it("lists workspace sessions through a sessions array without activeSessionId", async () => {
+  it("retains committed create invalidations until a publisher exists and publishes delete after commit", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const existing = createPersistedSession(cwd, sessionDir, {
-      title: "Existing Session",
-      prompt: "Inspect the queue",
-      reply: "Queue inspected",
-      thinkingLevel: "high",
-    });
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const store = getStructuredSessionStore(catalog);
+    const publications: StateInvalidationDescriptor[][] = [];
 
     try {
-      const created = await catalog.createSession({ title: "Live Session" }, DEFAULTS);
-      const result = await catalog.listSessions();
+      const created = await catalog.createSession({ title: "Cross-tab invalidations" }, DEFAULTS);
+      const sessionId = created.target.workspaceSessionId;
+      expect(publications).toEqual([]);
 
-      expect(result.sessions.some((session) => session.id === existing.id)).toBe(true);
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        publications.push([...afterCommit]);
+        if (publications.length === 1) {
+          expect(store.getSessionState(sessionId).pi.title).toBe("Cross-tab invalidations");
+        } else {
+          expect(store.isSessionDeleted(sessionId)).toBe(true);
+          expect(() => store.getSessionState(sessionId)).toThrow();
+        }
+      });
+
+      expect(publications).toEqual([
+        [
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: { model: "surface", ids: [sessionId as never] },
+          },
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: { model: "sessionNavigation" },
+          },
+        ],
+      ]);
+
+      await catalog.deleteSession(sessionId);
+      expect(publications[1]).toEqual([
+        {
+          scope: "workspace",
+          workspaceId: cwd as WorkspaceId,
+          invalidation: { model: "sessionNavigation" },
+        },
+        {
+          scope: "workspace",
+          workspaceId: cwd as WorkspaceId,
+          invalidation: { model: "surface", ids: [sessionId as never] },
+        },
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("keeps committed invalidations retryable when publication fails without reporting rollback", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const appLogs: Array<{ message: string; details?: Record<string, unknown> }> = [];
+    const retried: StateInvalidationDescriptor[][] = [];
+    catalog.setAppLogListener((event) => {
+      if (event.level === "error") appLogs.push(event);
+    });
+    await catalog.setCommittedStateInvalidationPublisher(async () => {
+      throw new Error("event bus unavailable");
+    });
+
+    try {
+      const created = await catalog.createSession({ title: "Committed despite publish" }, DEFAULTS);
       expect(
-        result.sessions.some((session) => session.id === created.target.workspaceSessionId),
+        getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
+          .title,
+      ).toBe("Committed despite publish");
+      expect(appLogs).toHaveLength(1);
+      expect(appLogs[0]).toMatchObject({
+        details: {
+          operation: "session.create",
+          committed: true,
+          rebaselineRequired: true,
+        },
+      });
+
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        retried.push([...afterCommit]);
+      });
+      expect(retried).toHaveLength(1);
+      expect(retried[0]?.map((descriptor) => descriptor.invalidation.model)).toEqual([
+        "surface",
+        "sessionNavigation",
+      ]);
+    } finally {
+      catalog.setAppLogListener(null);
+      await catalog.dispose();
+    }
+  });
+
+  it("publishes composer and queue restore/reorder invalidations only after each commit", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const store = getStructuredSessionStore(catalog);
+    const created = await catalog.createSession({ title: "Surface invalidations" }, DEFAULTS);
+    const publications: StateInvalidationDescriptor[][] = [];
+
+    try {
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        publications.push([...afterCommit]);
+      });
+      publications.length = 0;
+
+      await catalog.updateComposerDraft({
+        target: created.target,
+        draft: { text: "durable cross-tab draft", attachments: [] },
+      });
+      expect(store.getComposerDraft(created.target.surfacePiSessionId)?.text).toBe(
+        "durable cross-tab draft",
+      );
+
+      const first = store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        messageJson: JSON.stringify(userMessage("first")),
+      });
+      const second = store.enqueueSurfaceMessage({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        messageJson: JSON.stringify(userMessage("second")),
+      });
+      await catalog.reorderQueuedSurfaceMessage({
+        target: created.target,
+        queuedMessageId: second.id,
+        beforeQueuedMessageId: first.id,
+      });
+      expect(
+        store
+          .listQueuedSurfaceMessages({ surfacePiSessionId: created.target.surfacePiSessionId })
+          .map((row) => row.id),
+      ).toEqual([second.id, first.id]);
+
+      await catalog.editQueuedSurfaceMessage({
+        target: created.target,
+        queuedMessageId: first.id,
+      });
+      expect(store.getSurfaceQueuedMessage({ id: first.id }).status).toBe("cancelled");
+
+      expect(publications).toHaveLength(3);
+      for (const publication of publications) {
+        expect(publication).toEqual([
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: {
+              model: "surface",
+              ids: [created.target.surfacePiSessionId as never],
+            },
+          },
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: { model: "sessionNavigation" },
+          },
+        ]);
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("publishes running and completed top-level title invalidations from the asynchronous job", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
+    const restoreTitleCompletion = setPiTitleCompletionForTests(
+      async () =>
+        assistantMessage("Generated async title", {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+        }) as AssistantMessage,
+    );
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const publications: StateInvalidationDescriptor[][] = [];
+
+    try {
+      const created = await catalog.createSession({ title: "New orchestrator" }, DEFAULTS);
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        publications.push([...afterCommit]);
+      });
+      publications.length = 0;
+      const store = getStructuredSessionStore(catalog);
+      store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Generate a useful title asynchronously",
+      });
+      store.queueTitleGeneration(created.target.workspaceSessionId);
+
+      await (
+        catalog as unknown as { runTitleGenerationJob(sessionId: string): Promise<void> }
+      ).runTitleGenerationJob(created.target.workspaceSessionId);
+
+      expect(store.getSessionState(created.target.workspaceSessionId).pi).toMatchObject({
+        title: "Generated async title",
+        titleGenerationStatus: "completed",
+      });
+      expect(publications).toHaveLength(2);
+      expect(publications.map((batch) => batch.map((item) => item.invalidation.model))).toEqual([
+        ["surface", "sessionNavigation"],
+        ["surface", "sessionNavigation"],
+      ]);
+    } finally {
+      restoreTitleCompletion();
+      restoreTitleNamerEnv();
+      await catalog.dispose();
+    }
+  });
+
+  it("does not duplicate invalidations returned to runtime-owned turn publication paths", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Runtime-owned publication" }, DEFAULTS);
+    const catalogPublications: StateInvalidationDescriptor[][] = [];
+
+    try {
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        catalogPublications.push([...afterCommit]);
+      });
+      catalogPublications.length = 0;
+
+      const result = await runCatalogEffect(
+        catalog.getRuntimeTurnStatePort().startTurn({
+          sessionId: created.target.workspaceSessionId as never,
+          surfacePiSessionId: created.target.surfacePiSessionId as never,
+          requestSummary: "Runtime owns this result and publishes it once.",
+        }),
+      );
+
+      expect(result.afterCommit.map((item) => item.invalidation.model)).toEqual([
+        "surface",
+        "sessionNavigation",
+      ]);
+      expect(catalogPublications).toEqual([]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("commits interrupted-turn recovery atomically before publishing its exact invalidations", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Interrupted recovery" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+    const publications: StateInvalidationDescriptor[][] = [];
+
+    try {
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        publications.push([...afterCommit]);
+      });
+      publications.length = 0;
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "A turn interrupted by restart",
+      });
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        expect(store.getSessionState(created.target.workspaceSessionId).turns[0]).toMatchObject({
+          id: turn.id,
+          status: "failed",
+        });
+        publications.push([...afterCommit]);
+      });
+
+      await (
+        catalog as unknown as {
+          recoverInterruptedSurfaceTurn(surfacePiSessionId: string): Promise<void>;
+        }
+      ).recoverInterruptedSurfaceTurn(created.target.surfacePiSessionId);
+
+      const snapshot = store.getSessionState(created.target.workspaceSessionId);
+      expect(
+        snapshot.events.some(
+          (event) =>
+            event.kind === "surface.turn_recovery.interrupted" && event.subject.id === turn.id,
+        ),
       ).toBe(true);
-      expect("activeSessionId" in (result as unknown as Record<string, unknown>)).toBe(false);
+      expect(publications).toEqual([
+        [
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: {
+              model: "surface",
+              ids: [created.target.surfacePiSessionId as never],
+            },
+          },
+          {
+            scope: "workspace",
+            workspaceId: cwd as WorkspaceId,
+            invalidation: { model: "sessionNavigation" },
+          },
+        ],
+      ]);
     } finally {
       await catalog.dispose();
     }
@@ -1333,72 +1571,16 @@ describe("WorkspaceSessionCatalog", () => {
       expect(() => getStructuredSessionStore(catalog).getSessionState(sessionId)).toThrow(
         `Structured session not found: ${sessionId}`,
       );
-      expect(
-        (await catalog.listSessions()).sessions.some((session) => session.id === sessionId),
-      ).toBe(false);
-
-      await catalog.recordFocusedSession({
-        sessionId,
-        surfacePiSessionId: sessionId,
-      });
-
       expect(() => getStructuredSessionStore(catalog).getSessionState(sessionId)).toThrow(
         `Structured session not found: ${sessionId}`,
       );
-      expect(
-        (await catalog.listSessions()).sessions.some((session) => session.id === sessionId),
-      ).toBe(false);
     } finally {
       process.env.PATH = previousPath;
       await catalog.dispose();
     }
   });
 
-  it("does not clear archive metadata unless the pi file is actually removed", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const fakeBin = join(mkdtempSync(join(tmpdir(), "svvy-trash-bin-")));
-    tempDirs.push(fakeBin);
-    const fakeTrashPath = join(fakeBin, "trash");
-    writeFileSync(
-      fakeTrashPath,
-      [
-        "#!/bin/sh",
-        "# Simulate a trash command that reports success but leaves the file behind.",
-        "exit 0",
-      ].join("\n"),
-    );
-    chmodSync(fakeTrashPath, 0o755);
-    const previousPath = process.env.PATH;
-    process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Archived Delete Me" }, DEFAULTS);
-      const sessionId = created.target.workspaceSessionId;
-      const sessionFile = getManagedSurface(
-        catalog,
-        sessionId,
-      ).session.sessionManager.getSessionFile();
-
-      await catalog.archiveSession(sessionId);
-      const archived = (await catalog.listSessions()).sessions.find(
-        (session) => session.id === sessionId,
-      );
-      expect(archived?.isArchived).toBe(true);
-
-      await catalog.deleteSession(sessionId);
-
-      expect(existsSync(sessionFile)).toBe(false);
-      expect(
-        (await catalog.listSessions()).sessions.some((session) => session.id === sessionId),
-      ).toBe(false);
-    } finally {
-      process.env.PATH = previousPath;
-      await catalog.dispose();
-    }
-  });
-
-  it("keeps hard-deleted sessions tombstoned across repeated create/delete and stale mutations", async () => {
+  it("keeps hard-deleted sessions tombstoned across repeated create/delete and stale renames", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const fakeBin = join(mkdtempSync(join(tmpdir(), "svvy-trash-bin-")));
     tempDirs.push(fakeBin);
@@ -1427,38 +1609,19 @@ describe("WorkspaceSessionCatalog", () => {
           sessionId,
         ).session.sessionManager.getSessionFile();
 
-        if (index % 3 === 0) {
-          await catalog.archiveSession(sessionId);
-        } else if (index % 3 === 1) {
-          await catalog.pinSession(sessionId);
-        }
-
         await catalog.deleteSession(sessionId);
         deletedSessionIds.push(sessionId);
 
         expect(existsSync(sessionFile)).toBe(false);
         expect(getStructuredSessionStore(catalog).isSessionDeleted(sessionId)).toBe(true);
 
-        await catalog.recordFocusedSession({ sessionId, surfacePiSessionId: sessionId });
-        await catalog.markSessionRead(sessionId);
-        await catalog.markSessionUnread(sessionId);
-        await catalog.archiveSession(sessionId);
-        await catalog.unarchiveSession(sessionId);
-        await catalog.pinSession(sessionId);
-        await catalog.unpinSession(sessionId);
         await catalog.renameSession(sessionId, `Stale Rename ${index}`);
 
         expect(() => getStructuredSessionStore(catalog).getSessionState(sessionId)).toThrow();
-        expect(
-          (await catalog.listSessions()).sessions.some((session) => session.id === sessionId),
-        ).toBe(false);
       }
 
-      const listedIds = new Set(
-        (await catalog.listSessions()).sessions.map((session) => session.id),
-      );
       for (const sessionId of deletedSessionIds) {
-        expect(listedIds.has(sessionId)).toBe(false);
+        expect(getStructuredSessionStore(catalog).isSessionDeleted(sessionId)).toBe(true);
       }
     } finally {
       process.env.PATH = previousPath;
@@ -1533,7 +1696,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("uses the live first composer draft as the provisional session title", async () => {
+  it("persists the live first composer draft across surface close and reopen", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
@@ -1557,9 +1720,6 @@ describe("WorkspaceSessionCatalog", () => {
         },
       });
 
-      expect((await catalog.listSessions()).sessions[0]?.title).toBe(
-        "A text written in the composer should survive closing surfaces",
-      );
       await catalog.closeSurface(created.target);
       const reopened = await catalog.openSurface(created.target);
       expect(reopened.composerDraft.text).toBe(
@@ -1581,8 +1741,10 @@ describe("WorkspaceSessionCatalog", () => {
         sessionId: created.target.workspaceSessionId,
         title: "Durable Composer Drafts",
       });
-
-      expect((await catalog.listSessions()).sessions[0]?.title).toBe("Durable Composer Drafts");
+      expect(
+        getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
+          .title,
+      ).toBe("Durable Composer Drafts");
     } finally {
       await catalog.dispose();
     }

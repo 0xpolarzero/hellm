@@ -27,7 +27,7 @@ export interface RuntimeEventSubscriptionLike extends AsyncIterable<RuntimeEvent
 
 export interface DesktopNotificationBridgeState {
   readonly readModels: {
-    fetch(input: { readonly kind: "workspaceChromeLayout" }): Promise<StateReadModelResult>;
+    fetch(input: { readonly kind: "workspaceChrome" }): Promise<StateReadModelResult>;
     rebaseline(input: StateReadModelRebaselineRequest): Promise<StateReadModelBaseline>;
   };
 }
@@ -62,10 +62,11 @@ type RuntimeEventCursor = {
 };
 
 type SurfaceStreamCursor = {
-  readonly workspaceId: WorkspaceId;
   readonly generationId: SurfaceStreamGenerationId;
   readonly lastStreamSequence: SurfaceStreamSequence;
 };
+type SurfaceStreamCursors = Map<WorkspaceId, Map<SurfacePiSessionId, SurfaceStreamCursor>>;
+type SurfaceStreamEvent = Extract<RuntimeEvent, { readonly type: "surface.stream" }>;
 type ReadModelChangedNotification = Extract<
   DesktopRendererNotification,
   { readonly kind: "read-model-changed" }
@@ -92,10 +93,11 @@ export function createDesktopNotificationBridge(
     {
       readonly context: SubscriptionContext;
       readonly notification: RebaselineNotification;
+      readonly resumeFromSurfaceStreamEvent?: SurfaceStreamEvent;
     }
   >();
   const eventCursors = new Map<string, RuntimeEventCursor>();
-  const surfaceCursors = new Map<SurfacePiSessionId, SurfaceStreamCursor>();
+  const surfaceCursors: SurfaceStreamCursors = new Map();
 
   const emit = (notification: DesktopRendererNotification): void => {
     if (stopped) {
@@ -111,11 +113,7 @@ export function createDesktopNotificationBridge(
     if (context.kind === "app") {
       return;
     }
-    for (const [surfacePiSessionId, cursor] of surfaceCursors) {
-      if (cursor.workspaceId === context.workspaceId) {
-        surfaceCursors.delete(surfacePiSessionId);
-      }
-    }
+    surfaceCursors.delete(context.workspaceId);
   };
 
   const closeSubscription = async (
@@ -184,7 +182,12 @@ export function createDesktopNotificationBridge(
   const ensureSubscription = async (context: SubscriptionContext): Promise<void> => {
     const pending = pendingRebaselines.get(subscriptionKey(context));
     if (pending) {
-      await recoverScope(pending.context, pending.notification);
+      await recoverScope(
+        pending.context,
+        pending.notification,
+        undefined,
+        pending.resumeFromSurfaceStreamEvent,
+      );
       return;
     }
     await openSubscription(context);
@@ -219,13 +222,18 @@ export function createDesktopNotificationBridge(
     context: SubscriptionContext,
     notification: RebaselineNotification,
     record?: SubscriptionRecord,
+    resumeFromSurfaceStreamEvent?: SurfaceStreamEvent,
   ): Promise<void> => {
     const key = subscriptionKey(context);
     if (stopped || recoveringKeys.has(key) || record?.recovering) {
       return;
     }
     recoveringKeys.add(key);
-    pendingRebaselines.set(key, { context, notification });
+    pendingRebaselines.set(key, {
+      context,
+      notification,
+      ...(resumeFromSurfaceStreamEvent ? { resumeFromSurfaceStreamEvent } : {}),
+    });
     if (record) {
       record.recovering = true;
       await closeSubscription(record, { clearCursors: false });
@@ -242,7 +250,27 @@ export function createDesktopNotificationBridge(
         reason:
           notification.reason === "runtime-restart" ? "runtime-restart" : "event-sequence-gap",
       });
-      clearScopeCursors(context);
+      if (
+        resumeFromSurfaceStreamEvent &&
+        context.kind === "workspace" &&
+        resumeFromSurfaceStreamEvent.workspaceId === context.workspaceId
+      ) {
+        eventCursors.set(key, {
+          eventGenerationId: resumeFromSurfaceStreamEvent.eventGenerationId,
+          lastSequence: resumeFromSurfaceStreamEvent.sequence,
+        });
+        let workspaceSurfaceCursors = surfaceCursors.get(context.workspaceId);
+        if (!workspaceSurfaceCursors) {
+          workspaceSurfaceCursors = new Map();
+          surfaceCursors.set(context.workspaceId, workspaceSurfaceCursors);
+        }
+        workspaceSurfaceCursors.set(resumeFromSurfaceStreamEvent.target.surfacePiSessionId, {
+          generationId: resumeFromSurfaceStreamEvent.streamGenerationId,
+          lastStreamSequence: resumeFromSurfaceStreamEvent.streamSequence,
+        });
+      } else {
+        clearScopeCursors(context);
+      }
       pendingRebaselines.delete(key);
       emit(notification);
     } catch (error) {
@@ -279,8 +307,7 @@ export function createDesktopNotificationBridge(
           surfaceCursors,
         });
         const workspaceScopesChanged =
-          event.type === "workspace_read_model.changed" &&
-          event.invalidation.model === "workspaceChromeLayout";
+          event.type === "app_read_model.changed" && event.invalidation.model === "workspaceChrome";
         if (!notification) {
           if (workspaceScopesChanged) {
             await scheduleReconciliation();
@@ -288,7 +315,13 @@ export function createDesktopNotificationBridge(
           continue;
         }
         if (notification.kind === "read-model-rebaseline-required") {
-          await recoverScope(record.context, notification, record);
+          const resumeFromSurfaceStreamEvent =
+            event.type === "surface.stream" &&
+            (notification.reason === "surface-stream-gap" ||
+              notification.reason === "surface-stream-generation-mismatch")
+              ? event
+              : undefined;
+          await recoverScope(record.context, notification, record, resumeFromSurfaceStreamEvent);
           return;
         }
         emit(notification);
@@ -460,7 +493,7 @@ export function mapRuntimeEventToDesktopNotification(
   context: {
     readonly subscriptionScope?: "app" | "workspace";
     readonly expectedWorkspaceId?: WorkspaceId;
-    readonly surfaceCursors?: Map<SurfacePiSessionId, SurfaceStreamCursor>;
+    readonly surfaceCursors?: SurfaceStreamCursors;
   } = {},
 ): DesktopRendererNotification | null {
   if (context.subscriptionScope === "app" && "workspaceId" in event) {
@@ -498,17 +531,21 @@ export function desktopRendererCommandNotification(
 }
 
 function mapSurfaceStreamEvent(
-  event: Extract<RuntimeEvent, { readonly type: "surface.stream" }>,
-  surfaceCursors: Map<SurfacePiSessionId, SurfaceStreamCursor>,
+  event: SurfaceStreamEvent,
+  surfaceCursors: SurfaceStreamCursors,
 ): DesktopRendererNotification {
   const surfacePiSessionId = event.target.surfacePiSessionId;
-  const existing = surfaceCursors.get(surfacePiSessionId);
+  let workspaceSurfaceCursors = surfaceCursors.get(event.workspaceId);
+  if (!workspaceSurfaceCursors) {
+    workspaceSurfaceCursors = new Map();
+    surfaceCursors.set(event.workspaceId, workspaceSurfaceCursors);
+  }
+  const existing = workspaceSurfaceCursors.get(surfacePiSessionId);
   if (!existing) {
     if ((event.streamSequence as number) !== 1) {
       return rebaseline("surface-stream-gap", event.eventGenerationId, surfaceScope(event));
     }
-    surfaceCursors.set(surfacePiSessionId, {
-      workspaceId: event.workspaceId,
+    workspaceSurfaceCursors.set(surfacePiSessionId, {
       generationId: event.streamGenerationId,
       lastStreamSequence: event.streamSequence,
     });
@@ -524,8 +561,7 @@ function mapSurfaceStreamEvent(
   if ((event.streamSequence as number) !== (existing.lastStreamSequence as number) + 1) {
     return rebaseline("surface-stream-gap", event.eventGenerationId, surfaceScope(event));
   }
-  surfaceCursors.set(surfacePiSessionId, {
-    workspaceId: event.workspaceId,
+  workspaceSurfaceCursors.set(surfacePiSessionId, {
     generationId: event.streamGenerationId,
     lastStreamSequence: event.streamSequence,
   });
@@ -755,9 +791,9 @@ function runtimeEventRebaselineFailure(error: unknown):
 async function resolveWorkspaceIdsFromState(
   state: DesktopNotificationBridgeState,
 ): Promise<WorkspaceId[]> {
-  const result = await state.readModels.fetch({ kind: "workspaceChromeLayout" });
-  if (result.kind !== "workspaceChromeLayout") {
-    throw new Error(`Expected workspaceChromeLayout read model; received ${result.kind}.`);
+  const result = await state.readModels.fetch({ kind: "workspaceChrome" });
+  if (result.kind !== "workspaceChrome") {
+    throw new Error(`Expected workspaceChrome read model; received ${result.kind}.`);
   }
   const workspaceIds = new Set<WorkspaceId>();
   for (const tab of result.value.tabs) {

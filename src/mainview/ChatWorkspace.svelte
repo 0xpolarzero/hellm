@@ -1321,7 +1321,17 @@
     const session = currentSession;
     const surface = currentSurface?.surface;
     if (!session || surface !== "orchestrator") {
+      handlerThreadLoadToken += 1;
       handlerThreads = [];
+      handlerThreadsError = undefined;
+      handlerThreadsLoading = false;
+      return;
+    }
+
+    const snapshot = runtime.getHandlerThreadsSnapshot(session.id);
+    if (snapshot) {
+      handlerThreadLoadToken += 1;
+      handlerThreads = snapshot;
       handlerThreadsError = undefined;
       handlerThreadsLoading = false;
       return;
@@ -1332,13 +1342,6 @@
     handlerThreadsError = undefined;
     void runtime
       .listHandlerThreads(session.id)
-      .then((nextThreads) => {
-        if (loadToken !== handlerThreadLoadToken) {
-          return;
-        }
-
-        handlerThreads = nextThreads;
-      })
       .catch((error) => {
         if (loadToken !== handlerThreadLoadToken) {
           return;

@@ -35,9 +35,7 @@ describe("narrowRendererStateFacade", () => {
         selectLayoutSlot: async () => ({ receipt: {} }) as never,
       },
       workspaceLayout: {
-        saveSnapshot: async () => ({ receipt: {} }) as never,
-        updatePane: async () => ({ receipt: {} }) as never,
-        closePane: async () => ({ receipt: {} }) as never,
+        saveSlot: async () => ({ receipt: {} }) as never,
       },
       sessionNavigation: {
         setPinned: async () => {

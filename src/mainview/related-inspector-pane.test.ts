@@ -39,6 +39,35 @@ function readStaticAttribute(attribute: SvelteAstNode | undefined): string | nul
 }
 
 describe("RelatedInspectorPane", () => {
+  test("reacts to runtime invalidations and inspector target changes", async () => {
+    const source = await readFile(
+      new URL("./RelatedInspectorPane.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("$effect(() =>");
+    expect(source).toContain("const activeRuntime = runtime");
+    expect(source).toContain("const activeTarget = target");
+    expect(source).toContain("activeRuntime.subscribe(refresh)");
+    expect(source).toContain("revision === loadRevision");
+    expect(source).toContain('activeTarget.surface === "workflow-task-attempt"');
+  });
+
+  test("submits continuable command stdin and renders live receipts", async () => {
+    const source = await readFile(
+      new URL("./RelatedInspectorPane.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("canWriteCommandStdin(content)");
+    expect(source).toContain("getCommandStdinSection(content)");
+    expect(source).toContain("activeRuntime.writeCommandStdin({");
+    expect(source).toContain('clientSubmission: { source: "command_inspector" }');
+    expect(source).toContain("!text.trim() || stdinSubmitting");
+    expect(source).toContain("getCommandStdinOutcomeMessage(response)");
+    expect(source).toContain("stdinSection.events");
+  });
+
   test("sandboxes visible HTML artifact previews with only scripts allowed", async () => {
     const source = await readFile(
       new URL("./RelatedInspectorPane.svelte", import.meta.url),

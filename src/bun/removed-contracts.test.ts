@@ -3,6 +3,46 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 describe("retired desktop integration RPC paths", () => {
+  it("keeps workspace chrome and layouts on exact state facade contracts", async () => {
+    const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const bootstrapSource = await Bun.file(`${import.meta.dir}/app-runtime-bootstrap.ts`).text();
+    const registrySource = await Bun.file(
+      `${import.meta.dir}/workspace-runtime-registry.ts`,
+    ).text();
+    const notificationSource = await Bun.file(
+      `${import.meta.dir}/desktop-notification-bridge.ts`,
+    ).text();
+
+    for (const retiredName of [
+      "getAppWorkspaceTabs",
+      "setAppWorkspaceTabs",
+      "getWorkspaceUiRestore",
+      "setWorkspaceUiRestore",
+      "workspaceChromeLayout",
+    ]) {
+      expect(indexSource).not.toContain(retiredName);
+      expect(bootstrapSource).not.toContain(retiredName);
+      expect(registrySource).not.toContain(retiredName);
+      expect(notificationSource).not.toContain(retiredName);
+    }
+    for (const commandName of [
+      "stateWorkspaceChromeSetTabs",
+      "stateWorkspaceChromeSelectTab",
+      "stateWorkspaceChromeSelectLayoutSlot",
+      "stateWorkspaceLayoutSaveSlot",
+    ]) {
+      expect(indexSource).toContain(`${commandName}:`);
+    }
+    expect(indexSource).not.toContain("setActiveWorkspace:");
+    expect(bootstrapSource).not.toContain("workspaceChromeSeed");
+    expect(registrySource).toContain("store.readWorkspaceChrome()");
+    expect(notificationSource).toContain('event.invalidation.model === "workspaceChrome"');
+    expect(existsSync(`${import.meta.dir}/app-workspace-tabs-store.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/app-workspace-tabs-store.test.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/app-workspace-ui-restore-store.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/app-workspace-ui-restore-store.test.ts`)).toBe(false);
+  });
+
   it("keeps increment-5 state command/read-model RPC groups off retired direct stores", async () => {
     const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(
@@ -199,6 +239,7 @@ describe("retired desktop integration RPC paths", () => {
     const sharedContractSource = await Bun.file(
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
+    const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
     const legacyChannels = [
       { channel: "getAgentSettings", retirementIncrement: "Increment 8" },
       { channel: "updateAgentProfile", retirementIncrement: "Increment 10" },
@@ -210,8 +251,6 @@ describe("retired desktop integration RPC paths", () => {
       { channel: "setExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "removeExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
-      { channel: "listSessions", retirementIncrement: "Increment 8" },
-      { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
     ] as const;
 
     expect(
@@ -225,6 +264,8 @@ describe("retired desktop integration RPC paths", () => {
 
     for (const channel of [
       "getHandlerThreadInspector",
+      "getCommandInspector",
+      "listHandlerThreads",
       "getSnippets",
       "createManagedSnippet",
       "updateManagedSnippet",
@@ -242,6 +283,32 @@ describe("retired desktop integration RPC paths", () => {
       expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}`);
       expect(backendSource).not.toContain(`${channel}:`);
     }
+
+    for (const channel of [
+      "listSessions",
+      "pinSession",
+      "unpinSession",
+      "archiveSession",
+      "unarchiveSession",
+      "markSessionUnread",
+      "markSessionRead",
+      "recordFocusedSession",
+      "setSessionNavigationSectionState",
+    ]) {
+      expect(sharedContractSource).not.toContain(`${channel}: {`);
+      expect(backendSource).not.toContain(`${channel}:`);
+    }
+    expect(sharedContractSource).toContain(
+      "SessionNavigationSummary as CoreSessionNavigationSummary",
+    );
+    expect(sharedContractSource).not.toContain("sessionFile?:");
+    expect(sharedContractSource).toContain("sendArtifactOpen: ArtifactOpenMessage");
+    expect(sharedContractSource).not.toContain("sendWorkspaceSync");
+    expect(chatRuntimeSource).toContain('kind: "sessionNavigation"');
+    expect(sessionCatalogSource).toContain("setArtifactOpenListener");
+    expect(sessionCatalogSource).toContain("emitArtifactOpen");
+    expect(sessionCatalogSource).not.toContain("emitWorkspaceSync");
+    expect(sessionCatalogSource).not.toContain("async listSessions(");
   });
 });
 

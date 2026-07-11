@@ -107,8 +107,6 @@
   let currentModel = $state<ChatSurfaceController["agent"]["state"]["model"] | null>(null);
   let currentThinkingLevel = $state<ThinkingLevel>("off");
   let handlerThreads = $state<WorkspaceHandlerThreadSummary[]>([]);
-  let handlerThreadsSessionId = $state<string | null>(null);
-  let handlerThreadLoadToken = 0;
   let controllerRevision = $state(0);
   let workspaceMentionPaths = $state<ReadonlySet<string>>(new Set());
   let editDraft = $state<ComposerEditDraft | null>(null);
@@ -206,8 +204,6 @@
       currentModel = null;
       currentThinkingLevel = "off";
       handlerThreads = [];
-      handlerThreadsSessionId = null;
-      handlerThreadLoadToken += 1;
       return;
     }
 
@@ -249,27 +245,15 @@
   function refreshHandlerThreadBlocks() {
     if (!controller || controller.target.surface !== "orchestrator") {
       handlerThreads = [];
-      handlerThreadsSessionId = null;
-      handlerThreadLoadToken += 1;
       return;
     }
 
     const sessionId = controller.target.workspaceSessionId;
-    if (handlerThreadsSessionId !== sessionId) {
-      handlerThreads = [];
+    const snapshot = runtime.getHandlerThreadsSnapshot(sessionId);
+    handlerThreads = snapshot ?? [];
+    if (!snapshot) {
+      void runtime.listHandlerThreads(sessionId).catch(() => undefined);
     }
-    handlerThreadsSessionId = sessionId;
-    const loadToken = ++handlerThreadLoadToken;
-    void runtime
-      .listHandlerThreads(sessionId)
-      .then((nextThreads) => {
-        if (loadToken !== handlerThreadLoadToken) return;
-        handlerThreads = nextThreads;
-      })
-      .catch(() => {
-        if (loadToken !== handlerThreadLoadToken) return;
-        handlerThreads = [];
-      });
   }
 
   function openExtension(extensionId: string): void {
@@ -672,7 +656,24 @@
   });
 </script>
 
-{#if pane?.target?.surface === "app-logs"}
+{#if pane?.chrome?.kind === "unavailable"}
+  <section
+    class="dockview-unavailable-panel"
+    data-testid="unavailable-surface-panel"
+    data-panel-id={panelId}
+  >
+    <div>
+      <strong>{pane.chrome.title}</strong>
+      {#if pane.chrome.subtitle}
+        <span>{pane.chrome.subtitle}</span>
+      {/if}
+      <p>{pane.restore?.unavailableReason ?? "The restored surface could not be reopened."}</p>
+      {#if pane.restore?.lastKnownLocationLabel}
+        <small>{pane.restore.lastKnownLocationLabel}</small>
+      {/if}
+    </div>
+  </section>
+{:else if pane?.target?.surface === "app-logs"}
   <AppLogsPane {runtime} {panelId} />
 {:else if pane?.target?.surface === "agents"}
   <AgentsPane
@@ -709,23 +710,6 @@
   />
 {:else if pane?.target?.surface === "command" || pane?.target?.surface === "workflow-task-attempt" || pane?.target?.surface === "artifact"}
   <RelatedInspectorPane {runtime} target={pane.target} />
-{:else if pane?.chrome?.kind === "unavailable"}
-  <section
-    class="dockview-unavailable-panel"
-    data-testid="unavailable-surface-panel"
-    data-panel-id={panelId}
-  >
-    <div>
-      <strong>{pane.chrome.title}</strong>
-      {#if pane.chrome.subtitle}
-        <span>{pane.chrome.subtitle}</span>
-      {/if}
-      <p>{pane.restore?.unavailableReason ?? "The restored surface could not be reopened."}</p>
-      {#if pane.restore?.lastKnownLocationLabel}
-        <small>{pane.restore.lastKnownLocationLabel}</small>
-      {/if}
-    </div>
-  </section>
 {:else if controller}
   <section
     class="dockview-chat-panel"

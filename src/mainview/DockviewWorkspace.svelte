@@ -70,6 +70,7 @@
   let observedDockviewHeight = 0;
   let unsubscribeRuntime: (() => void) | null = null;
   let panelHostRefreshKeys = new Map<string, string>();
+  let appliedDockviewLayoutSignature: string | null = null;
   const tabRenderers = new Set<SurfaceTabRenderer>();
   const headerRenderers = new Set<SurfaceHeaderActionsRenderer>();
 
@@ -570,24 +571,56 @@
     dockview.onDidCreateTabGroup(() => persistDockview());
     dockview.onDidDestroyTabGroup(() => persistDockview());
     syncDockviewPanels();
-    if (dockviewLayout) {
-      try {
-        applying = true;
-        dockview.fromJSON(dockviewLayout, { reuseExistingPanels: true });
-      } catch {
-        syncDockviewPanels();
-      } finally {
-        applying = false;
-      }
-      panelHostRefreshKeys = new Map();
-      syncDockviewPanels();
-    }
+    applySerializedDockviewLayout(dockviewLayout);
     scheduleDockviewLayout();
   }
 
   function persistDockview(): void {
     if (!dockview || applying) return;
-    onPersistDockview(dockview.toJSON(), dockview.activePanel?.id ?? null);
+    const serialized = dockview.toJSON();
+    appliedDockviewLayoutSignature = getDockviewLayoutSignature(serialized);
+    onPersistDockview(serialized, dockview.activePanel?.id ?? null);
+  }
+
+  function applySerializedDockviewLayout(layout: SerializedDockview | null): void {
+    if (!dockview) return;
+    const signature = getDockviewLayoutSignature(layout);
+    if (signature === appliedDockviewLayoutSignature) return;
+    if (!layout) {
+      appliedDockviewLayoutSignature = signature;
+      return;
+    }
+
+    const wasApplying = applying;
+    applying = true;
+    try {
+      dockview.fromJSON(layout, { reuseExistingPanels: true });
+      appliedDockviewLayoutSignature = signature;
+      panelHostRefreshKeys = new Map();
+      syncDockviewPanels();
+    } catch {
+      syncDockviewPanels();
+    } finally {
+      applying = wasApplying;
+    }
+  }
+
+  function getDockviewLayoutSignature(layout: SerializedDockview | null): string {
+    return JSON.stringify(toCanonicalJson(layout));
+  }
+
+  function toCanonicalJson(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map(toCanonicalJson);
+    }
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, toCanonicalJson(child)]),
+    );
   }
 
   function layoutDockview(): void {
@@ -673,6 +706,7 @@
     if (!dockview) return;
     const nextPanels = runtimePanels();
     const nextFocusedPanelId = runtimeFocusedPanelId();
+    const wasApplying = applying;
     applying = true;
     try {
       for (const panel of nextPanels) {
@@ -716,7 +750,7 @@
         dockview.setActivePanel(focused);
       }
     } finally {
-      applying = false;
+      applying = wasApplying;
     }
   }
 
@@ -770,9 +804,11 @@
 
   $effect(() => {
     void panels;
+    void dockviewLayout;
     void focusedPanelId;
     void agentSettings;
     syncDockviewPanels();
+    applySerializedDockviewLayout(dockviewLayout);
     refreshSurfaceTabs();
     scheduleDockviewLayout();
   });

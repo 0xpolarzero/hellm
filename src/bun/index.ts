@@ -43,6 +43,7 @@ import type {
   EditCommittedUserMessageResponse,
   SendPromptResponse,
   SwitchWorkspaceBranchResponse,
+  WorkspaceInfoResponse,
 } from "../shared/workspace-contract";
 import {
   DEFAULT_AGENT_SETTINGS,
@@ -68,7 +69,6 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import {
   decodePromptClientSubmissionToRuntimeInput,
-  getSvvyAgentDir,
   type SessionDefaults,
 } from "./session-catalog";
 import {
@@ -84,8 +84,6 @@ import {
   FILE_BACKED_EDIT_CONFLICT_CODE,
   isFileBackedEditConflictError,
 } from "../shared/file-backed-edit";
-import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
-import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
 import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
 import {
   normalizeDesktopBridgeHandlers,
@@ -143,12 +141,6 @@ const PREFERRED_MODEL_FRAGMENTS = [
 let resolvedDefaults: AgentDefaults | null = null;
 let desktopHost: ElectrobunDesktopHostAdapter | null = null;
 const startupWorkspaceCwd = resolveWorkspaceCwd();
-const appWorkspaceTabsStore = createAppWorkspaceTabsStore({
-  agentDir: getSvvyAgentDir(),
-});
-const appWorkspaceUiRestoreStore = createAppWorkspaceUiRestoreStore({
-  agentDir: getSvvyAgentDir(),
-});
 
 function workflowsBuildFailedError(diagnostics: unknown[]): Error {
   const error = new Error("Workflows build failed.") as Error & {
@@ -773,13 +765,11 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
     ensureUsableProviderAuth,
     getProviderAuthUnavailableMessage,
   },
-  appWorkspaceTabsStore,
-  listRecoverableWorkspaces: () => appWorkspaceTabsStore.getState()?.knownWorkspaces ?? [],
-  onWorkspaceSync: (_workspaceId, payload) => {
+  onArtifactOpen: (_workspaceId, payload) => {
     void sendLegacyRendererMessage(
-      "sendWorkspaceSync",
+      "sendArtifactOpen",
       payload,
-      "Unable to send workspace sync to the main view.",
+      "Unable to send artifact open request to the main view.",
     );
   },
   onSurfaceSync: (_workspaceId, payload) => {
@@ -892,6 +882,26 @@ function desktopStateReadModelResult(result: StateReadModelResult): DesktopState
       exports: result.value.exports,
     },
   };
+}
+
+async function readActiveWorkspaceFromState(): Promise<WorkspaceInfoResponse | null> {
+  const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+  const result = requireStateReadModel(
+    await state.readModels.fetch({ kind: "workspaceChrome" }),
+    "workspaceChrome",
+  );
+  const activeTab = result.value.tabs.find(
+    (tab) => tab.workspaceTabId === result.value.activeWorkspaceTabId,
+  );
+  if (!activeTab) {
+    return null;
+  }
+  return addWorkspaceBranch({
+    workspaceId: activeTab.workspaceId,
+    cwd: activeTab.cwd,
+    workspaceLabel: activeTab.workspaceLabel,
+    kind: activeTab.kind,
+  });
 }
 
 function desktopStateReadModelBaseline(
@@ -1419,6 +1429,26 @@ function buildDesktopRpcHandlers(
       rebaselineStateReadModels: async (request) =>
         desktopStateReadModelBaseline(await facades.state.readModels.rebaseline(request)),
       stateAppLogsMarkRead: (request) => facades.commands.state.appLogs.markRead(request),
+      stateSessionNavigationSetPinned: async (request) =>
+        (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.setPinned(
+          request,
+        ),
+      stateSessionNavigationSetArchived: async (request) =>
+        (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.setArchived(
+          request,
+        ),
+      stateSessionNavigationMarkRead: async (request) =>
+        (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.markRead(
+          request,
+        ),
+      stateSessionNavigationMarkUnread: async (request) =>
+        (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.markUnread(
+          request,
+        ),
+      stateSessionNavigationSetSectionState: async (request) =>
+        (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.setSectionState(
+          request,
+        ),
       stateAppPreferencesUpdate: async (request) => {
         const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
         runtime?.appLog.info("settings", "App preferences updated.", {
@@ -1668,13 +1698,25 @@ function buildDesktopRpcHandlers(
       },
       openWorkspace: async (input: OpenWorkspaceRequest = {}) => {
         const { cwd } = input;
+        let startingFolder = workspaceRuntimeRegistry.getInitialCwd();
+        if (!cwd) {
+          try {
+            startingFolder = (await readActiveWorkspaceFromState())?.cwd ?? startingFolder;
+          } catch (error) {
+            recordDevBrowserToolsError(
+              "app",
+              "Unable to resolve the selected workspace for the folder picker.",
+              "workspace.chrome",
+              {},
+              error,
+            );
+          }
+        }
         const selectedCwd =
           cwd ??
           (
             await Utils.openFileDialog({
-              startingFolder:
-                workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.cwd ??
-                workspaceRuntimeRegistry.getInitialCwd(),
+              startingFolder,
               allowedFileTypes: "*",
               canChooseFiles: false,
               canChooseDirectory: true,
@@ -1693,28 +1735,14 @@ function buildDesktopRpcHandlers(
       getDefaultWorkspace: async () => {
         return addWorkspaceBranch((await workspaceRuntimeRegistry.getDefaultWorkspace()).getInfo());
       },
-      getAppWorkspaceTabs: async () => {
-        return appWorkspaceTabsStore.getState();
-      },
-      setAppWorkspaceTabs: async (state) => {
-        appWorkspaceTabsStore.setState(state);
-        return { ok: true };
-      },
-      getWorkspaceUiRestore: async ({ workspaceId }) => {
-        return appWorkspaceUiRestoreStore.getState(workspaceId);
-      },
-      setWorkspaceUiRestore: async ({ workspaceId, state }) => {
-        appWorkspaceUiRestoreStore.setState(workspaceId, state);
-        return { ok: true };
-      },
-      setActiveWorkspace: async ({ workspaceId }) => {
-        const runtime = workspaceRuntimeRegistry.setActiveWorkspace(workspaceId);
-        runtime.appLog.info("workspace", "Active workspace changed.", {
-          workspaceId: runtime.workspaceId,
-        });
-        recordDevBrowserToolsEvent("workspace.activated", { workspaceId: runtime.workspaceId });
-        return { ok: true };
-      },
+      stateWorkspaceChromeSetTabs: (request) =>
+        facades.commands.state.workspaceChrome.setTabs(request),
+      stateWorkspaceChromeSelectTab: (request) =>
+        facades.commands.state.workspaceChrome.selectTab(request),
+      stateWorkspaceChromeSelectLayoutSlot: (request) =>
+        facades.commands.state.workspaceChrome.selectLayoutSlot(request),
+      stateWorkspaceLayoutSaveSlot: (request) =>
+        facades.commands.state.workspaceLayout.saveSlot(request),
       closeWorkspace: async ({ workspaceId }) => {
         const closed = await workspaceRuntimeRegistry.closeWorkspace(workspaceId);
         recordDevBrowserToolsEvent("workspace.closed", { workspaceId, closed });
@@ -1853,26 +1881,11 @@ function buildDesktopRpcHandlers(
         );
         return { ...result, path: source.path };
       },
-      listSessions: async (input) => {
-        return await getWorkspaceRuntime(input).catalog.listSessions();
-      },
-      getCommandInspector: async (input) => {
-        const { sessionId, commandId } = input;
-        return await getWorkspaceRuntime(input).catalog.getCommandInspector({
-          sessionId,
-          commandId,
-        });
-      },
       writeCommandStdin: async (input) => {
         return await writeCommandStdinFromDesktop({
           operation: "desktop.writeCommandStdin",
           payload: stripWorkspaceId(input),
           runtimeCommands: facades.commands.runtime,
-        });
-      },
-      listHandlerThreads: async (input) => {
-        return await getWorkspaceRuntime(input).catalog.listHandlerThreads({
-          sessionId: input.sessionId,
         });
       },
       getArtifactPreview: async (input) => {
@@ -1984,93 +1997,6 @@ function buildDesktopRpcHandlers(
         recordDevBrowserToolsEvent("session.deleted", { sessionId });
         runtime.appLog.info("session", "Workspace session deleted.", {
           workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      pinSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.pinSession(sessionId);
-        recordDevBrowserToolsEvent("session.pinned", { sessionId });
-        runtime.appLog.info("session", "Workspace session pinned.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      unpinSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.unpinSession(sessionId);
-        recordDevBrowserToolsEvent("session.unpinned", { sessionId });
-        runtime.appLog.info("session", "Workspace session unpinned.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      archiveSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.archiveSession(sessionId);
-        recordDevBrowserToolsEvent("session.archived", { sessionId });
-        runtime.appLog.info("session", "Workspace session archived.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      unarchiveSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.unarchiveSession(sessionId);
-        recordDevBrowserToolsEvent("session.unarchived", { sessionId });
-        runtime.appLog.info("session", "Workspace session unarchived.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      markSessionUnread: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.markSessionUnread(sessionId);
-        recordDevBrowserToolsEvent("session.marked-unread", { sessionId });
-        runtime.appLog.info("session", "Workspace session marked unread.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      markSessionRead: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const result = await runtime.catalog.markSessionRead(sessionId);
-        recordDevBrowserToolsEvent("session.marked-read", { sessionId });
-        runtime.appLog.info("session", "Workspace session marked read.", {
-          workspaceSessionId: sessionId,
-        });
-        return result;
-      },
-      recordFocusedSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId, surfacePiSessionId } = input;
-        const result = await runtime.catalog.recordFocusedSession({
-          sessionId,
-          surfacePiSessionId,
-        });
-        if (sessionId) {
-          recordDevBrowserToolsEvent("session.focused", { sessionId });
-        }
-        return result;
-      },
-      setSessionNavigationSectionState: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { section, collapsed, sizePx } = input;
-        const result = await runtime.catalog.setSessionNavigationSectionState({
-          section,
-          collapsed,
-          sizePx,
-        });
-        recordDevBrowserToolsEvent("session.navigation-section.updated", {
-          section,
-          collapsed,
-          sizePx,
         });
         return result;
       },
@@ -2510,19 +2436,34 @@ desktopHost = createElectrobunDesktopHostAdapter({
       defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
       getDefaultAgentSettings,
       getMainWindow: () => mainWindow,
-      getActiveWorkspace: () =>
-        workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.getInfo() ?? null,
+      getActiveWorkspace: readActiveWorkspaceFromState,
       getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
       getWorkspaceBranch,
       listProviderAuthSummaries,
-      listOpenSurfaceSnapshots: async () =>
+      listOpenSurfaceSnapshots: async (workspaceId) =>
         (await workspaceRuntimeRegistry
-          .getActiveRuntimeOrNull()
+          .getRuntimeOrNull(workspaceId)
           ?.catalog.listOpenSurfaceSnapshots()) ?? [],
-      listWorkspaceSessions: async () =>
-        (await workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.catalog.listSessions()) ?? {
-          sessions: [],
-        },
+      listWorkspaceSessions: async (workspaceId) => {
+        if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
+          return { sessions: [] };
+        }
+        const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+        const result = requireStateReadModel(
+          await state.readModels.fetch({
+            kind: "sessionNavigation",
+            workspaceId: workspaceId as WorkspaceId,
+          }),
+          "sessionNavigation",
+        );
+        return {
+          sessions: [
+            ...result.value.pinnedSessions,
+            ...result.value.activeSessions,
+            ...result.value.archived.sessions,
+          ],
+        };
+      },
       mainWindow,
     }).catch((error) => {
       recordAppRuntimeError(
@@ -2618,10 +2559,11 @@ await runDesktopBootstrap({
     }
 
     if (devBrowserToolsMetadata) {
+      const activeWorkspace = await readActiveWorkspaceFromState();
       recordDevBrowserToolsEvent("app.ready", {
         bridgeUrl: devBrowserToolsMetadata.url ?? null,
         url,
-        workspaceId: workspaceRuntimeRegistry.getActiveWorkspaceId(),
+        workspaceId: activeWorkspace?.workspaceId ?? null,
       });
       recordAppRuntimeLog("info", "svvy dev browser tools bridge mounted.", "dev-browser-tools", {
         appId: devBrowserToolsMetadata.appId,

@@ -200,6 +200,141 @@ describe("desktop notification bridge", () => {
     });
   });
 
+  it("tracks the same surface id independently in different workspaces", () => {
+    const cursors = new Map();
+
+    expect(
+      mapRuntimeEventToDesktopNotification(
+        surfaceStreamEvent({
+          sequence: 1,
+          streamSequence: 1,
+          streamGenerationId: "workspace-1-generation",
+          workspaceId: "workspace-1",
+        }),
+        { surfaceCursors: cursors },
+      ),
+    ).toMatchObject({ kind: "surface-stream-patch", workspaceId: "workspace-1" });
+    expect(
+      mapRuntimeEventToDesktopNotification(
+        surfaceStreamEvent({
+          sequence: 2,
+          streamSequence: 1,
+          streamGenerationId: "workspace-2-generation",
+          workspaceId: "workspace-2",
+        }),
+        { surfaceCursors: cursors },
+      ),
+    ).toMatchObject({ kind: "surface-stream-patch", workspaceId: "workspace-2" });
+    expect(
+      mapRuntimeEventToDesktopNotification(
+        surfaceStreamEvent({
+          sequence: 3,
+          streamSequence: 2,
+          streamGenerationId: "workspace-1-generation",
+          workspaceId: "workspace-1",
+        }),
+        { surfaceCursors: cursors },
+      ),
+    ).toMatchObject({
+      kind: "surface-stream-patch",
+      workspaceId: "workspace-1",
+      streamSequence: 2,
+    });
+  });
+
+  it("resumes after a surface stream generation rebaseline from the triggering event", async () => {
+    const notifications: DesktopRendererNotification[] = [];
+    const rebaselines: unknown[] = [];
+    const workspaceSubscriptionInputs: unknown[] = [];
+    const appSubscription = new PushSubscription();
+    const firstWorkspaceSubscription = new PushSubscription();
+    const replacementWorkspaceSubscription = new PushSubscription();
+    const bridge = createDesktopNotificationBridge({
+      runtimeEvents: async (input) => {
+        if (!input?.workspaceId) {
+          return appSubscription;
+        }
+        workspaceSubscriptionInputs.push(input);
+        return workspaceSubscriptionInputs.length === 1
+          ? firstWorkspaceSubscription
+          : replacementWorkspaceSubscription;
+      },
+      state: stateWithWorkspaceTabs(["workspace-1"], (input) => rebaselines.push(input)),
+      rendererEmit: (notification) => {
+        notifications.push(notification);
+      },
+    });
+
+    await bridge.start();
+    await firstWorkspaceSubscription.waitForNextCall(1);
+    firstWorkspaceSubscription.push(
+      surfaceStreamEvent({
+        sequence: 1,
+        streamSequence: 1,
+        streamGenerationId: "turn-1-generation",
+      }),
+    );
+    await waitFor(
+      () =>
+        notifications.filter((notification) => notification.kind === "surface-stream-patch")
+          .length === 1,
+    );
+
+    firstWorkspaceSubscription.push(
+      surfaceStreamEvent({
+        sequence: 2,
+        streamSequence: 1,
+        streamGenerationId: "turn-2-generation",
+      }),
+    );
+    await waitFor(() => workspaceSubscriptionInputs.length === 2);
+
+    expect(rebaselines).toEqual([{ workspaceId, reason: "event-sequence-gap" }]);
+    expect(workspaceSubscriptionInputs[1]).toEqual({
+      workspaceId,
+      includeAppEvents: false,
+      eventGenerationId: generationId,
+      afterSequence: 2,
+    });
+    expect(
+      notifications.filter(
+        (notification) => notification.kind === "read-model-rebaseline-required",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        reason: "surface-stream-generation-mismatch",
+        scope: { kind: "surface", workspaceId, surfacePiSessionId: "surface-1" },
+      }),
+    ]);
+
+    replacementWorkspaceSubscription.push(
+      surfaceStreamEvent({
+        sequence: 3,
+        streamSequence: 2,
+        streamGenerationId: "turn-2-generation",
+      }),
+    );
+    await waitFor(
+      () =>
+        notifications.filter((notification) => notification.kind === "surface-stream-patch")
+          .length === 2,
+    );
+
+    expect(
+      notifications.filter(
+        (notification) => notification.kind === "read-model-rebaseline-required",
+      ),
+    ).toHaveLength(1);
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        kind: "surface-stream-patch",
+        streamGenerationId: "turn-2-generation",
+        streamSequence: 2,
+      }),
+    );
+    await bridge.stop();
+  });
+
   it("downgrades scope and descriptor mismatches to rebaseline", () => {
     expect(
       mapRuntimeEventToDesktopNotification(
@@ -393,16 +528,15 @@ describe("desktop notification bridge", () => {
       secondWorkspaceSubscription.waitForNextCall(1),
     ]);
     workspaceIds.splice(0, 1);
-    firstWorkspaceSubscription.push(
+    appSubscription.push(
       runtimeEvent({
-        type: "workspace_read_model.changed",
+        type: "app_read_model.changed",
         eventGenerationId: generationId,
         sequence: 1 as never,
-        workspaceId,
-        invalidation: { model: "workspaceChromeLayout" },
+        invalidation: { model: "workspaceChrome" },
       }),
     );
-    await firstWorkspaceSubscription.waitForNextCall(2);
+    await waitFor(() => firstWorkspaceSubscription.closeCalls === 1);
 
     expect(appSubscription.closeCalls).toBe(0);
     expect(firstWorkspaceSubscription.closeCalls).toBe(1);
@@ -450,11 +584,17 @@ function surfaceStreamEvent(input: {
   sequence: number;
   streamSequence: number;
   streamGenerationId: string;
+  workspaceId?: string;
+  surfacePiSessionId?: string;
 }): RuntimeEvent {
   return runtimeEvent({
     type: "surface.stream",
-    workspaceId,
-    target,
+    workspaceId: (input.workspaceId ?? workspaceId) as never,
+    target: {
+      surface: "orchestrator",
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: input.surfacePiSessionId ?? "surface-1",
+    } as never,
     eventGenerationId: generationId,
     sequence: input.sequence as never,
     streamGenerationId: input.streamGenerationId as never,
@@ -472,16 +612,17 @@ function stateWithWorkspaceTabs(workspaceIds: string[], onRebaseline?: (input: u
   return {
     readModels: {
       fetch: async (): Promise<StateReadModelResult> => ({
-        kind: "workspaceChromeLayout",
+        kind: "workspaceChrome",
         value: {
           activeWorkspaceTabId: null,
           knownWorkspaces: [],
-          layouts: [],
           tabs: workspaceIds.map((id) => ({
             workspaceId: id as never,
             workspaceTabId: `tab-${id}` as never,
-            cwd: `/tmp/${id}`,
-            openedAt: "2026-01-01T00:00:00.000Z",
+            cwd: `/tmp/${id}` as never,
+            workspaceLabel: id,
+            kind: "user" as const,
+            openedAt: "2026-01-01T00:00:00.000Z" as never,
             activeLayoutId: "A",
           })),
         },

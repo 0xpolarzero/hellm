@@ -2,11 +2,6 @@ import { describe, expect, it } from "bun:test";
 
 const REMAINING_LEGACY_SYNC_CHANNELS = [
   {
-    channel: "sendWorkspaceSync",
-    retiresInIncrement: 10,
-    reason: "surface/transcript panes still consume workspace snapshots until read-model migration",
-  },
-  {
     channel: "sendSurfaceSync",
     retiresInIncrement: 10,
     reason: "surface/transcript panes still consume stream and snapshot sync until increment 10",
@@ -25,6 +20,11 @@ describe("legacy sync seam", () => {
     ).text();
     const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const runtimeSource = await Bun.file(`${import.meta.dir}/../mainview/chat-runtime.ts`).text();
+
+    for (const source of [contractSource, indexSource, runtimeSource]) {
+      expect(source).toContain("sendArtifactOpen");
+      expect(source).not.toContain("sendWorkspaceSync");
+    }
 
     for (const entry of REMAINING_LEGACY_SYNC_CHANNELS) {
       expect(entry.retiresInIncrement).toBe(10);

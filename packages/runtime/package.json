@@ -8,6 +8,7 @@
     "./accepted-native-tool-execution": "./src/accepted-native-tool-execution.ts",
     "./app-log-commit-notification-adapter": "./src/app-log-commit-notification-adapter.ts",
     "./bootstrap": "./src/bootstrap.ts",
+    "./committed-state-invalidation-adapter": "./src/committed-state-invalidation-adapter.ts",
     "./prompt-execution-context": "./src/prompt-execution-context.ts",
     "./source-invalidation-coordinator-adapter": "./src/source-invalidation-coordinator-adapter.ts"
   },

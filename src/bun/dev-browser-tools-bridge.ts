@@ -78,13 +78,13 @@ export const noopDevBrowserToolsRecorder: DevBrowserToolsRecorder = {
 type MountDevBrowserToolsBridgeOptions = {
   defaultSystemPrompt: string;
   getDefaultAgentSettings: () => AgentDefaults;
-  getActiveWorkspace: () => WorkspaceInfoResponse | null;
+  getActiveWorkspace: () => Promise<WorkspaceInfoResponse | null>;
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceBranch: (cwd: string) => string | undefined;
   getOpenWorkspaces: () => WorkspaceInfoResponse[];
   listProviderAuthSummaries: () => Promise<ProviderAuthInfo[]>;
-  listOpenSurfaceSnapshots: () => Promise<OpenSurfaceSnapshot[]>;
-  listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
+  listOpenSurfaceSnapshots: (workspaceId: string) => Promise<OpenSurfaceSnapshot[]>;
+  listWorkspaceSessions: (workspaceId: string) => Promise<WorkspaceSessionsState>;
   mainWindow: BrowserWindow;
 };
 
@@ -109,10 +109,14 @@ export async function mountDevBrowserToolsBridge(
   }
 
   async function buildState(): Promise<DevBrowserToolsState> {
-    const activeWorkspace = options.getActiveWorkspace();
+    const activeWorkspace = await options.getActiveWorkspace();
     const defaults = options.getDefaultAgentSettings();
-    const sessions = activeWorkspace ? await options.listWorkspaceSessions() : { sessions: [] };
-    const openSurfaces = activeWorkspace ? await options.listOpenSurfaceSnapshots() : [];
+    const sessions = activeWorkspace
+      ? await options.listWorkspaceSessions(activeWorkspace.workspaceId)
+      : { sessions: [] };
+    const openSurfaces = activeWorkspace
+      ? await options.listOpenSurfaceSnapshots(activeWorkspace.workspaceId)
+      : [];
     const providerAuths = await options.listProviderAuthSummaries();
     const openWorkspaces = options.getOpenWorkspaces();
 

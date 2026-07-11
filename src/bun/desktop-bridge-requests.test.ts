@@ -31,40 +31,80 @@ const orchestratorTarget = {
   surfacePiSessionId: "surface-1" as SurfacePiSessionId,
 };
 
-function chromeLayout(surfacePiSessionId = "surface-1", threadId?: string): StateReadModelResult {
-  return {
-    kind: "workspaceChromeLayout",
-    value: {
-      activeWorkspaceTabId: "tab-1" as WorkspaceTabId,
-      tabs: [
-        {
-          workspaceTabId: "tab-1" as WorkspaceTabId,
-          workspaceId,
-          cwd: "/tmp/workspace",
-          openedAt: "2026-07-09T00:00:00.000Z",
-          activeLayoutId: "A",
-        },
-      ],
-      knownWorkspaces: [],
-      layouts: [
-        {
-          workspaceId,
-          layoutId: "A",
-          initialized: true,
-          snapshotJson: null,
-          focusedPaneId: "primary" as WorkspacePaneId,
-          panelMetadata: [
+function panelStateFetch(surfacePiSessionId = "surface-1", threadId?: string) {
+  return async (
+    request:
+      | { readonly kind: "workspaceChrome" }
+      | { readonly kind: "workspaceLayout"; readonly workspaceId: WorkspaceId },
+  ): Promise<StateReadModelResult> => {
+    if (request.kind === "workspaceChrome") {
+      return {
+        kind: "workspaceChrome",
+        value: {
+          activeWorkspaceTabId: "tab-1" as WorkspaceTabId,
+          tabs: [
             {
-              paneId: "primary",
-              kind: "surface",
-              surfacePiSessionId,
-              ...(threadId ? { threadId } : {}),
-              localStateJson: null,
-            } as never,
+              workspaceTabId: "tab-1" as WorkspaceTabId,
+              workspaceId,
+              cwd: "/tmp/workspace" as never,
+              workspaceLabel: "Workspace",
+              kind: "user",
+              openedAt: "2026-07-09T00:00:00.000Z" as never,
+              activeLayoutId: "A",
+            },
           ],
+          knownWorkspaces: [],
         },
-      ],
-    },
+      };
+    }
+    return {
+      kind: "workspaceLayout",
+      value: {
+        workspaceId: request.workspaceId,
+        slots: [
+          {
+            workspaceId: request.workspaceId,
+            layoutId: "A",
+            initialized: true,
+            dockviewJson: null,
+            focusedPaneId: "primary" as WorkspacePaneId,
+            panes: [
+              {
+                paneId: "primary" as WorkspacePaneId,
+                target: threadId
+                  ? {
+                      surface: "handler",
+                      workspaceSessionId: "session-1" as WorkspaceSessionId,
+                      surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+                      threadId: threadId as never,
+                    }
+                  : {
+                      surface: "orchestrator",
+                      workspaceSessionId: "session-1" as WorkspaceSessionId,
+                      surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+                    },
+                localState: { scroll: null, timelineDensity: "comfortable" },
+                fallbackChrome: null,
+                placement: null,
+                restore: { kind: "ready" },
+              },
+            ],
+            compactSurfaces: [],
+            updatedAt: "2026-07-09T00:00:00.000Z" as never,
+          },
+          ...(["B", "C"] as const).map((layoutId) => ({
+            workspaceId: request.workspaceId,
+            layoutId,
+            initialized: false,
+            dockviewJson: null,
+            focusedPaneId: null,
+            panes: [],
+            compactSurfaces: [],
+            updatedAt: "2026-07-09T00:00:00.000Z" as never,
+          })),
+        ],
+      },
+    };
   };
 }
 
@@ -81,7 +121,7 @@ describe("desktop bridge request normalization", () => {
           clientRequestId: "client-1",
         },
         workspaceId,
-        fetchStateReadModel: async () => chromeLayout("surface-current"),
+        fetchStateReadModel: panelStateFetch("surface-current"),
         runtimeMessages: {
           submit: async (input) => {
             submitted.push(input);
@@ -107,7 +147,7 @@ describe("desktop bridge request normalization", () => {
         clientRequestId: "client-1",
       },
       workspaceId,
-      fetchStateReadModel: async () => chromeLayout("surface-1"),
+      fetchStateReadModel: panelStateFetch("surface-1"),
       runtimeMessages: {
         submit: async (input) => {
           submitted.push(input);
@@ -142,6 +182,77 @@ describe("desktop bridge request normalization", () => {
     });
   });
 
+  it("uses the active duplicate tab layout instead of another tab for the same workspace", async () => {
+    const baseFetch = panelStateFetch();
+    const submitted: SubmitMessageInput[] = [];
+    const fetchStateReadModel = async (
+      request:
+        | { readonly kind: "workspaceChrome" }
+        | { readonly kind: "workspaceLayout"; readonly workspaceId: WorkspaceId },
+    ): Promise<StateReadModelResult> => {
+      const result = await baseFetch(request);
+      if (result.kind === "workspaceChrome") {
+        const firstTab = result.value.tabs[0]!;
+        return {
+          kind: "workspaceChrome",
+          value: {
+            ...result.value,
+            activeWorkspaceTabId: "tab-2" as WorkspaceTabId,
+            tabs: [
+              firstTab,
+              {
+                ...firstTab,
+                workspaceTabId: "tab-2" as WorkspaceTabId,
+                activeLayoutId: "B",
+              },
+            ],
+          },
+        };
+      }
+      if (result.kind !== "workspaceLayout") {
+        throw new Error(`Expected workspaceLayout; received ${result.kind}.`);
+      }
+      const primary = result.value.slots.find((slot) => slot.layoutId === "A")!.panes[0]!;
+      return {
+        kind: "workspaceLayout",
+        value: {
+          ...result.value,
+          slots: result.value.slots.map((slot) =>
+            slot.layoutId === "A"
+              ? { ...slot, initialized: false, panes: [], focusedPaneId: null }
+              : slot.layoutId === "B"
+                ? {
+                    ...slot,
+                    initialized: true,
+                    panes: [primary],
+                    focusedPaneId: primary.paneId,
+                  }
+                : slot,
+          ),
+        },
+      };
+    };
+
+    await submitPromptFromDesktop({
+      payload: {
+        panelId: "primary",
+        target: orchestratorTarget,
+        text: "Use tab B",
+        clientRequestId: "client-duplicate-tab",
+      },
+      workspaceId,
+      fetchStateReadModel,
+      runtimeMessages: {
+        submit: async (input) => {
+          submitted.push(input);
+          return { status: "queued" } as never;
+        },
+      },
+    });
+
+    expect(submitted).toHaveLength(1);
+  });
+
   it("rejects forbidden submit payload fields as invalid input", async () => {
     await expect(
       submitPromptFromDesktop({
@@ -153,7 +264,7 @@ describe("desktop bridge request normalization", () => {
           panelSnapshot: {},
         },
         workspaceId,
-        fetchStateReadModel: async () => chromeLayout(),
+        fetchStateReadModel: panelStateFetch(),
         runtimeMessages: {
           submit: async () => {
             throw new Error("should not submit");

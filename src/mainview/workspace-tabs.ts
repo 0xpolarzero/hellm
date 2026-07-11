@@ -103,3 +103,30 @@ export function reorderWorkspaceTabs<
   nextTabs.splice(beforeIndex >= 0 ? beforeIndex : nextTabs.length, 0, movingTab);
   return nextTabs;
 }
+
+function workspaceHistoryKey(workspace: WorkspaceTabInfo): string {
+  return workspace.cwd.trim() || workspace.workspaceId;
+}
+
+export function mergeKnownWorkspaces(
+  existing: readonly WorkspaceTabInfo[],
+  incoming: readonly WorkspaceTabInfo[],
+  createHistoryId: () => string,
+): WorkspaceTabInfo[] {
+  const byKey = new Map<string, WorkspaceTabInfo>();
+  for (const workspace of existing) {
+    if (workspace.kind === "default") continue;
+    byKey.set(workspaceHistoryKey(workspace), workspace);
+  }
+  for (const workspace of incoming) {
+    if (workspace.kind === "default") continue;
+    const key = workspaceHistoryKey(workspace);
+    byKey.set(key, {
+      ...workspace,
+      workspaceTabId: byKey.get(key)?.workspaceTabId ?? createHistoryId(),
+    });
+  }
+  return [...byKey.values()].toSorted((left, right) =>
+    left.workspaceLabel.localeCompare(right.workspaceLabel),
+  );
+}

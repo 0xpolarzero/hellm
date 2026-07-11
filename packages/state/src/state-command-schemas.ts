@@ -19,15 +19,18 @@ import {
   SnippetId,
   SnippetMetadataSchema,
   strictBoundaryParseOptions,
-  SurfacePiSessionId,
-  ThreadId,
-  WorkflowTaskAttemptId,
   WorkspacePaneId,
   WorkspaceSessionId,
   WorkspaceSessionNavigationSectionIdSchema,
   WorkspaceTabId,
   WorkspaceId,
+  CompactWorkspaceSurfaceSchema,
+  WorkspaceLayoutSlotIdSchema,
+  WorkspaceLayoutSlotContentInvariant,
+  WorkspacePaneRecordSchema,
+  WorkspaceTabRecordSchema,
 } from "@svvy/core";
+import type { WorkspaceLayoutSlotId } from "@svvy/core";
 
 const BaseAppLogReadCommandInputSchema = Schema.Struct({
   workspaceId: Schema.optionalKey(WorkspaceId),
@@ -88,24 +91,44 @@ export const RecordProviderAuthStatusCommandInputSchema = Schema.Struct({
 export type RecordProviderAuthStatusCommandInput =
   typeof RecordProviderAuthStatusCommandInputSchema.Type;
 
-export const WorkspaceLayoutSlotIdSchema = Schema.Literals(["A", "B", "C"]);
-export type WorkspaceLayoutSlotId = typeof WorkspaceLayoutSlotIdSchema.Type;
+export { WorkspaceLayoutSlotIdSchema };
+export type { WorkspaceLayoutSlotId };
 
-export const WorkspaceTabRecordInputSchema = Schema.Struct({
-  workspaceTabId: WorkspaceTabId,
-  workspaceId: WorkspaceId,
-  cwd: AbsolutePath,
-  openedAt: IsoDateTimeStringSchema,
-  activeLayoutId: WorkspaceLayoutSlotIdSchema,
-});
+export const WorkspaceTabRecordInputSchema = WorkspaceTabRecordSchema;
 export type WorkspaceTabRecordInput = typeof WorkspaceTabRecordInputSchema.Type;
 
-export const SetWorkspaceTabsCommandInputSchema = Schema.Struct({
+const SetWorkspaceTabsCommandInputFieldsSchema = Schema.Struct({
   activeWorkspaceTabId: Schema.NullOr(WorkspaceTabId),
   tabs: Schema.Array(WorkspaceTabRecordInputSchema),
   knownWorkspaces: Schema.Array(WorkspaceTabRecordInputSchema),
   clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
+type SetWorkspaceTabsCommandInputFields = typeof SetWorkspaceTabsCommandInputFieldsSchema.Type;
+
+const SetWorkspaceTabsCommandInvariant = Schema.makeFilter(
+  (input: SetWorkspaceTabsCommandInputFields) => {
+    const openIds = input.tabs.map((tab) => tab.workspaceTabId);
+    if (new Set(openIds).size !== openIds.length) {
+      return { path: ["tabs"], issue: "workspace tab ids must be unique" };
+    }
+    const knownIds = input.knownWorkspaces.map((tab) => tab.workspaceTabId);
+    if (new Set(knownIds).size !== knownIds.length) {
+      return { path: ["knownWorkspaces"], issue: "known workspace tab ids must be unique" };
+    }
+    if (input.activeWorkspaceTabId !== null && !openIds.includes(input.activeWorkspaceTabId)) {
+      return {
+        path: ["activeWorkspaceTabId"],
+        issue: "active workspace tab id must identify an open tab",
+      };
+    }
+    return true;
+  },
+  { expected: "coherent workspace chrome tab identity" },
+);
+
+export const SetWorkspaceTabsCommandInputSchema = SetWorkspaceTabsCommandInputFieldsSchema.pipe(
+  Schema.check(SetWorkspaceTabsCommandInvariant),
+);
 export type SetWorkspaceTabsCommandInput = typeof SetWorkspaceTabsCommandInputSchema.Type;
 
 export const SelectWorkspaceTabCommandInputSchema = Schema.Struct({
@@ -176,79 +199,21 @@ export const SetSessionNavigationSectionStateCommandInputSchema = Schema.Struct(
 export type SetSessionNavigationSectionStateCommandInput =
   typeof SetSessionNavigationSectionStateCommandInputSchema.Type;
 
-export const WorkspacePaneMetadataInputSchema = Schema.Union([
-  Schema.Struct({
-    paneId: WorkspacePaneId,
-    kind: Schema.Literal("surface"),
-    surfacePiSessionId: SurfacePiSessionId,
-    threadId: Schema.optionalKey(ThreadId),
-    localStateJson: Schema.optionalKey(Schema.Json),
-  }),
-  Schema.Struct({
-    paneId: WorkspacePaneId,
-    kind: Schema.Literal("inspector"),
-    target: Schema.Union([
-      Schema.Struct({ kind: Schema.Literal("command"), commandId: Schema.String }),
-      Schema.Struct({
-        kind: Schema.Literal("workflow-task-attempt"),
-        workflowTaskAttemptId: WorkflowTaskAttemptId,
-      }),
-    ]),
-    localStateJson: Schema.optionalKey(Schema.Json),
-  }),
-  Schema.Struct({
-    paneId: WorkspacePaneId,
-    kind: Schema.Literals([
-      "workflows",
-      "app_logs",
-      "agents",
-      "extensions",
-      "snippets",
-      "settings",
-      "open_workspace",
-    ]),
-    localStateJson: Schema.optionalKey(Schema.Json),
-  }),
-]);
-export type WorkspacePaneMetadataInput = typeof WorkspacePaneMetadataInputSchema.Type;
-
-export const SaveWorkspaceLayoutSnapshotCommandInputSchema = Schema.Struct({
+const SaveWorkspaceLayoutSlotCommandInputFieldsSchema = Schema.Struct({
   workspaceId: WorkspaceId,
   layoutId: WorkspaceLayoutSlotIdSchema,
-  snapshotJson: Schema.Json,
-  focusedPaneId: Schema.optionalKey(WorkspacePaneId),
-  panelMetadata: Schema.Array(WorkspacePaneMetadataInputSchema),
+  dockviewJson: Schema.NullOr(JsonValue),
+  panes: Schema.Array(WorkspacePaneRecordSchema),
+  compactSurfaces: Schema.Array(CompactWorkspaceSurfaceSchema),
+  focusedPaneId: Schema.NullOr(WorkspacePaneId),
   clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
-export type SaveWorkspaceLayoutSnapshotCommandInput =
-  typeof SaveWorkspaceLayoutSnapshotCommandInputSchema.Type;
-
-export const WorkspacePanePatchSchema = Schema.Struct({
-  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  surfacePiSessionId: Schema.optionalKey(Schema.NullOr(SurfacePiSessionId)),
-  threadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
-  workflowTaskAttemptId: Schema.optionalKey(Schema.NullOr(WorkflowTaskAttemptId)),
-  commandId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  localStateJson: Schema.optionalKey(Schema.NullOr(Schema.Json)),
-});
-export type WorkspacePanePatch = typeof WorkspacePanePatchSchema.Type;
-
-export const UpdateWorkspacePaneCommandInputSchema = Schema.Struct({
-  workspaceId: WorkspaceId,
-  layoutId: WorkspaceLayoutSlotIdSchema,
-  paneId: WorkspacePaneId,
-  patch: WorkspacePanePatchSchema,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
-});
-export type UpdateWorkspacePaneCommandInput = typeof UpdateWorkspacePaneCommandInputSchema.Type;
-
-export const CloseWorkspacePaneCommandInputSchema = Schema.Struct({
-  workspaceId: WorkspaceId,
-  layoutId: WorkspaceLayoutSlotIdSchema,
-  paneId: WorkspacePaneId,
-  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
-});
-export type CloseWorkspacePaneCommandInput = typeof CloseWorkspacePaneCommandInputSchema.Type;
+export const SaveWorkspaceLayoutSlotCommandInputSchema =
+  SaveWorkspaceLayoutSlotCommandInputFieldsSchema.pipe(
+    Schema.check(WorkspaceLayoutSlotContentInvariant),
+  );
+export type SaveWorkspaceLayoutSlotCommandInput =
+  typeof SaveWorkspaceLayoutSlotCommandInputSchema.Type;
 
 export const SetExtensionEnvOverrideCommandInputSchema = Schema.Struct({
   extensionId: ExtensionId,
@@ -622,55 +587,20 @@ export const encodeSelectWorkspaceLayoutSlotCommandInputEffect = Schema.encodeEf
   strictBoundaryParseOptions,
 );
 
-export const decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputExit = Schema.decodeUnknownExit(
-  SaveWorkspaceLayoutSnapshotCommandInputSchema,
+export const decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit = Schema.decodeUnknownExit(
+  SaveWorkspaceLayoutSlotCommandInputSchema,
   strictBoundaryParseOptions,
 );
-export const decodeUnknownSaveWorkspaceLayoutSnapshotCommandInputEffect =
-  Schema.decodeUnknownEffect(
-    SaveWorkspaceLayoutSnapshotCommandInputSchema,
-    strictBoundaryParseOptions,
-  );
-export const encodeSaveWorkspaceLayoutSnapshotCommandInputExit = Schema.encodeExit(
-  SaveWorkspaceLayoutSnapshotCommandInputSchema,
+export const decodeUnknownSaveWorkspaceLayoutSlotCommandInputEffect = Schema.decodeUnknownEffect(
+  SaveWorkspaceLayoutSlotCommandInputSchema,
   strictBoundaryParseOptions,
 );
-export const encodeSaveWorkspaceLayoutSnapshotCommandInputEffect = Schema.encodeEffect(
-  SaveWorkspaceLayoutSnapshotCommandInputSchema,
+export const encodeSaveWorkspaceLayoutSlotCommandInputExit = Schema.encodeExit(
+  SaveWorkspaceLayoutSlotCommandInputSchema,
   strictBoundaryParseOptions,
 );
-
-export const decodeUnknownUpdateWorkspacePaneCommandInputExit = Schema.decodeUnknownExit(
-  UpdateWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeUnknownUpdateWorkspacePaneCommandInputEffect = Schema.decodeUnknownEffect(
-  UpdateWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeUpdateWorkspacePaneCommandInputExit = Schema.encodeExit(
-  UpdateWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeUpdateWorkspacePaneCommandInputEffect = Schema.encodeEffect(
-  UpdateWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-
-export const decodeUnknownCloseWorkspacePaneCommandInputExit = Schema.decodeUnknownExit(
-  CloseWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeUnknownCloseWorkspacePaneCommandInputEffect = Schema.decodeUnknownEffect(
-  CloseWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeCloseWorkspacePaneCommandInputExit = Schema.encodeExit(
-  CloseWorkspacePaneCommandInputSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeCloseWorkspacePaneCommandInputEffect = Schema.encodeEffect(
-  CloseWorkspacePaneCommandInputSchema,
+export const encodeSaveWorkspaceLayoutSlotCommandInputEffect = Schema.encodeEffect(
+  SaveWorkspaceLayoutSlotCommandInputSchema,
   strictBoundaryParseOptions,
 );
 

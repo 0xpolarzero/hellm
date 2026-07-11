@@ -14,10 +14,14 @@ import {
   WorkflowTaskAttemptId,
   WorkspaceId,
 } from "./ids";
+import { WorkspaceLayoutSlotIdSchema } from "./workspace-layout-contracts";
 
 export const WorkspaceReadModelInvalidationSchema = Schema.Union([
   Schema.Struct({ model: Schema.Literal("sessionNavigation") }),
-  Schema.Struct({ model: Schema.Literal("workspaceChromeLayout") }),
+  Schema.Struct({
+    model: Schema.Literal("workspaceLayout"),
+    ids: Schema.Array(WorkspaceLayoutSlotIdSchema),
+  }),
   Schema.Struct({ model: Schema.Literal("surface"), ids: Schema.Array(SurfacePiSessionId) }),
   Schema.Struct({ model: Schema.Literal("commandInspector"), ids: Schema.Array(CommandId) }),
   Schema.Struct({ model: Schema.Literal("handlerThreadInspector"), ids: Schema.Array(ThreadId) }),
@@ -53,6 +57,7 @@ export const decodeUnknownWorkspaceReadModelInvalidationEffect = Schema.decodeUn
 );
 
 export const AppReadModelInvalidationSchema = Schema.Union([
+  Schema.Struct({ model: Schema.Literal("workspaceChrome") }),
   Schema.Struct({
     model: Schema.Literal("workflowsGenerated"),
     ids: Schema.optionalKey(Schema.Array(GeneratedPackageBuildId)),

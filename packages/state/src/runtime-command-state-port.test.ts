@@ -61,7 +61,7 @@ describe("RuntimeCommandStatePort", () => {
           });
           const foundById = yield* port.findCommandById({ commandId: command.value.id });
           const running = yield* port.startCommand({ commandId: command.value.id });
-          yield* port.recordCommandEvent({
+          const commandEvent = yield* port.recordCommandEvent({
             sessionId: "session-runtime-command-state-port",
             commandId: command.value.id,
             kind: "command.output",
@@ -112,6 +112,11 @@ describe("RuntimeCommandStatePort", () => {
                 ids: ["surface-runtime-command-state-port"],
               },
             },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "sessionNavigation" },
+            },
           ]);
           expect(found?.id).toBe(command.value.id);
           expect(foundById?.id).toBe(command.value.id);
@@ -119,13 +124,8 @@ describe("RuntimeCommandStatePort", () => {
           expect(running.afterCommit as unknown).toEqual(command.afterCommit as unknown);
           expect(hasLiveStdout).toBeTrue();
           expect(hasLiveStderr).toBeFalse();
-          expect(stdinWrite.afterCommit as unknown).toEqual([
-            {
-              scope: "workspace",
-              workspaceId: workspace.id,
-              invalidation: { model: "commandInspector", ids: [command.value.id] },
-            },
-          ]);
+          expect(commandEvent.afterCommit as unknown).toEqual(command.afterCommit as unknown);
+          expect(stdinWrite.afterCommit as unknown).toEqual(command.afterCommit as unknown);
           expect(
             snapshot.events.find(
               (event) => event.kind === "command.stdin" && event.subject.id === command.value.id,
@@ -145,6 +145,155 @@ describe("RuntimeCommandStatePort", () => {
             finishedAt: expect.any(String),
           });
           expect(finished.afterCommit as unknown).toEqual(command.afterCommit as unknown);
+        }).pipe(
+          Effect.provide(
+            layerRuntimeCommandStatePort.pipe(
+              Layer.provideMerge(
+                layerStructuredSessionState({
+                  workspace,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it("invalidates linked handler and workflow-attempt projections for command rows and events", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          const workspaceSessionId = "session-runtime-command-linked";
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Linked command invalidations",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            messageCount: 0,
+            status: "idle",
+            createdAt: "2026-04-18T08:55:00.000Z",
+            updatedAt: "2026-04-18T08:56:00.000Z",
+          });
+          const orchestratorTurn = yield* state.startTurn({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId: "surface-command-linked-orchestrator",
+            requestSummary: "Delegate linked workflow work.",
+          });
+          const thread = yield* state.createThread({
+            turnId: orchestratorTurn.id,
+            surfacePiSessionId: "surface-command-linked-handler",
+            title: "Linked handler",
+            objective: "Run a workflow task-agent command.",
+          });
+          const handlerTurn = yield* state.startTurn({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId: thread.surfacePiSessionId,
+            threadId: thread.id,
+            requestSummary: "Run linked workflow.",
+          });
+          const workflowOwnerCommand = yield* state.createCommand({
+            turnId: handlerTurn.id,
+            surfacePiSessionId: thread.surfacePiSessionId,
+            threadId: thread.id,
+            toolName: "exec_command",
+            executor: "handler",
+            visibility: "surface",
+            title: "Run linked workflow",
+            summary: "Run linked workflow.",
+          });
+          const workflowRun = yield* state.recordWorkflow({
+            threadId: thread.id,
+            commandId: workflowOwnerCommand.id,
+            smithersRunId: "smithers-command-linked",
+            workflowName: "command_linked",
+            workflowSource: "saved",
+            status: "running",
+            summary: "Linked workflow is running.",
+          });
+          const workflowTaskAttempt = yield* state.upsertWorkflowTaskAttempt({
+            workflowRunId: workflowRun.id,
+            smithersRunId: workflowRun.smithersRunId,
+            nodeId: "implement",
+            iteration: 0,
+            attempt: 1,
+            surfacePiSessionId: "surface-command-linked-workflow-task",
+            title: "Linked workflow task",
+            summary: "Run linked task command.",
+            kind: "agent",
+            status: "running",
+            smithersState: "running",
+          });
+
+          const port = yield* RuntimeCommandStatePort;
+          const created = yield* port.createCommand({
+            workflowTaskAttemptId: workflowTaskAttempt.id,
+            surfacePiSessionId: "surface-command-linked-workflow-task",
+            threadId: thread.id,
+            workflowRunId: workflowRun.id,
+            toolName: "apply_patch",
+            executor: "workflow-task-agent",
+            visibility: "summary",
+            title: "Apply linked patch",
+            summary: "Apply linked patch.",
+          });
+          const expectedInvalidations = [
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "commandInspector", ids: [created.value.id] },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: {
+                model: "surface",
+                ids: ["surface-command-linked-workflow-task"],
+              },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "sessionNavigation" },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "handlerThreadInspector", ids: [thread.id] },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: {
+                model: "workflowTaskAttemptInspector",
+                ids: [workflowTaskAttempt.id],
+              },
+            },
+          ];
+
+          expect(created.afterCommit as unknown).toEqual(expectedInvalidations);
+          const event = yield* port.recordCommandEvent({
+            sessionId: workspaceSessionId,
+            commandId: created.value.id,
+            kind: "command.progress",
+            data: { source: "runtime", message: "Applying linked patch." },
+          });
+          expect(event.afterCommit as unknown).toEqual(expectedInvalidations);
+          const stdin = yield* port.recordStdinWrite({
+            sessionId: workspaceSessionId,
+            commandId: created.value.id,
+            text: "continue\n",
+            acceptedBytes: 9,
+          });
+          expect(stdin.afterCommit as unknown).toEqual(expectedInvalidations);
+          const finished = yield* port.finishCommand({
+            commandId: created.value.id,
+            status: "succeeded",
+            summary: "Applied linked patch.",
+          });
+          expect(finished.afterCommit as unknown).toEqual(expectedInvalidations);
         }).pipe(
           Effect.provide(
             layerRuntimeCommandStatePort.pipe(

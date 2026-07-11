@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import * as Effect from "effect/Effect";
 import type {
   AbsolutePath,
   CommandId,
@@ -44,6 +44,10 @@ const registries: WorkspaceRuntimeRegistry[] = [];
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
+
+function normalizeWorkspaceRuntimeId(cwd: string): string {
+  return `workspace:${createHash("sha256").update(cwd).digest("hex").slice(0, 24)}`;
+}
 
 afterEach(async () => {
   const registriesToClose = registries.splice(0);
@@ -139,6 +143,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     const registry = createRegistry(cwd);
 
     expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry.getRuntimeOrNull("workspace-restored-but-not-acquired")).toBeNull();
     expect(registry.getActiveWorkspaceId()).toBeNull();
   });
 
@@ -411,46 +416,37 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("shares the durable session catalog across duplicate tabs for the same cwd", async () => {
     const cwd = tempWorkspace("shared-session-cwd");
     const agentDir = tempWorkspace("agent-dir");
-    const sessionManager = SessionManager.create(
-      cwd,
-      getSvvySessionDir(realpathSync.native(cwd), agentDir),
-    );
-    sessionManager.appendSessionInfo("Persistent Session");
-    sessionManager.appendMessage({
-      role: "user",
-      timestamp: Date.now(),
-      content: [{ type: "text", text: "Remember this session" }],
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      timestamp: Date.now(),
-      api: "openai-responses",
-      content: [{ type: "text", text: "Remembered." }],
-      provider: "openai",
-      model: "gpt-4o",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-    });
     const registry = createRegistry(cwd, agentDir);
 
     const first = await registry.acquireWorkspace(cwd);
-    const firstListed = await first.catalog.listSessions();
+    const created = await first.catalog.createSession(
+      { title: "Persistent Session" },
+      { provider: "openai", model: "gpt-4o", thinkingLevel: "medium" },
+    );
+    const state = await registry.getRendererStateFacade();
+    const firstListed = await state.readModels.fetch({
+      kind: "sessionNavigation",
+      workspaceId: first.workspaceId as WorkspaceId,
+    });
 
     const second = await registry.acquireWorkspace(join(cwd, "."));
-    const listed = await second.catalog.listSessions();
+    const listed = await state.readModels.fetch({
+      kind: "sessionNavigation",
+      workspaceId: second.workspaceId as WorkspaceId,
+    });
 
     expect(second.workspaceId).toBe(first.workspaceId);
-    expect(firstListed.sessions.map((session) => session.id)).toContain(
-      sessionManager.getSessionId(),
+    expect(firstListed.kind).toBe("sessionNavigation");
+    expect(listed.kind).toBe("sessionNavigation");
+    if (firstListed.kind !== "sessionNavigation" || listed.kind !== "sessionNavigation") {
+      throw new Error("Expected session navigation read models.");
+    }
+    expect(firstListed.value.activeSessions.map((session) => session.id)).toContain(
+      created.target.workspaceSessionId,
     );
-    expect(listed.sessions.map((session) => session.id)).toContain(sessionManager.getSessionId());
+    expect(listed.value.activeSessions.map((session) => session.id)).toContain(
+      created.target.workspaceSessionId,
+    );
   });
 
   it("shares app logs and read models across duplicate tabs for the same cwd", async () => {
@@ -631,15 +627,28 @@ describe("WorkspaceRuntimeRegistry", () => {
       cwd: realpathSync.native(unopenedCwd),
       kind: "user",
     };
-    let recoverableWorkspaces: ReturnType<WorkspaceRuntimeRegistry["listOpenWorkspaces"]> = [
-      unopenedInfo,
-    ];
     const registry = createRegistry(ownerCwd, agentDir, {
       workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
-      listRecoverableWorkspaces: () => recoverableWorkspaces,
     });
     await registry.ready();
     const ownerRuntime = await registry.acquireWorkspace(ownerCwd);
+    await (
+      await registry.getStateCommandsFacade()
+    ).workspaceChrome.setTabs({
+      activeWorkspaceTabId: "tab_generated_unopened_repair" as never,
+      tabs: [
+        {
+          workspaceTabId: "tab_generated_unopened_repair" as never,
+          workspaceId: unopenedInfo.workspaceId as WorkspaceId,
+          cwd: unopenedInfo.cwd as AbsolutePath,
+          workspaceLabel: unopenedInfo.workspaceLabel,
+          kind: unopenedInfo.kind,
+          openedAt: "2026-07-11T00:00:00.000Z" as never,
+          activeLayoutId: "A",
+        },
+      ],
+      knownWorkspaces: [],
+    });
     const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
       workspaceId: ownerRuntime.workspaceId,
     });
@@ -703,6 +712,54 @@ describe("WorkspaceRuntimeRegistry", () => {
       });
     } finally {
       unopenedStore.close();
+    }
+  });
+
+  it("reads recoverable workspace ids without self-awaiting app-global host acquisition", async () => {
+    const cwd = tempWorkspace("runtime-recoverable-bootstrap-owner");
+    const unopenedCwd = realpathSync.native(
+      tempWorkspace("runtime-recoverable-bootstrap-unopened"),
+    );
+    const registry = createRegistry(cwd);
+    const owner = await registry.acquireWorkspace(cwd);
+    const appGlobal = await registry["getAppGlobalHostRecord"]();
+    appGlobal.catalog.workspaceStateRouterRegistration().store.setWorkspaceTabs({
+      activeWorkspaceTabId: "tab_recoverable_bootstrap" as never,
+      tabs: [
+        {
+          workspaceTabId: "tab_recoverable_bootstrap" as never,
+          workspaceId: "workspace_recoverable_bootstrap" as WorkspaceId,
+          cwd: unopenedCwd as AbsolutePath,
+          workspaceLabel: "Recoverable bootstrap workspace",
+          kind: "user",
+          openedAt: "2026-07-11T00:00:00.000Z" as never,
+          activeLayoutId: "A",
+        },
+      ],
+      knownWorkspaces: [
+        {
+          workspaceTabId: "known_recoverable_bootstrap" as never,
+          workspaceId: "workspace_recoverable_bootstrap" as WorkspaceId,
+          cwd: unopenedCwd as AbsolutePath,
+          workspaceLabel: "Recoverable bootstrap workspace",
+          kind: "user",
+          openedAt: "2026-07-11T00:00:00.000Z" as never,
+          activeLayoutId: "B",
+        },
+      ],
+    });
+    const boundary = registry["createGeneratedPackageRefreshBoundaryHost"](appGlobal.catalog, {
+      workspaceId: owner.workspaceId,
+      cwd: owner.cwd,
+    });
+    const originalAppGlobalHost = registry["appGlobalHost"];
+    registry["appGlobalHost"] = new Promise(() => {});
+    try {
+      await expect(Effect.runPromise(boundary.listRecoverableWorkspaceIds())).resolves.toEqual([
+        "workspace_recoverable_bootstrap" as WorkspaceId,
+      ]);
+    } finally {
+      registry["appGlobalHost"] = originalAppGlobalHost;
     }
   });
 
@@ -797,6 +854,116 @@ describe("WorkspaceRuntimeRegistry", () => {
     } finally {
       await runtimeEvents.close();
     }
+  });
+
+  it("installs committed-state publication for a workspace opened after app runtime readiness", async () => {
+    const initialCwd = tempWorkspace("late-publication-initial");
+    const lateCwd = tempWorkspace("late-publication-workspace");
+    const registry = createRegistry(initialCwd);
+    await registry.acquireDesktopAppFacades();
+
+    const late = await registry.acquireWorkspace(lateCwd);
+    const runtimeEvents = await collectRuntimeEvents(
+      registry.getRuntimeEventSubscription(late.workspaceId),
+    );
+    try {
+      const created = await late.catalog.createSession(
+        { title: "Late-open cross-tab session" },
+        { provider: "openai", model: "gpt-4o", thinkingLevel: "medium" },
+      );
+
+      await waitFor(() =>
+        runtimeEvents.events.some(
+          (event) =>
+            event.type === "workspace_read_model.changed" &&
+            event.workspaceId === late.workspaceId &&
+            event.invalidation.model === "sessionNavigation",
+        ),
+      );
+      const state = await registry.getRendererStateFacade();
+      const navigation = await state.readModels.fetch({
+        kind: "sessionNavigation",
+        workspaceId: late.workspaceId as WorkspaceId,
+      });
+      expect(navigation.kind).toBe("sessionNavigation");
+      if (navigation.kind === "sessionNavigation") {
+        expect(navigation.value.activeSessions.map((summary) => summary.id)).toContain(
+          created.target.workspaceSessionId,
+        );
+      }
+    } finally {
+      await runtimeEvents.close();
+    }
+  });
+
+  it("registers late workspace state before flushing retained recovery invalidations", async () => {
+    const initialCwd = tempWorkspace("recovery-publication-order-initial");
+    const lateCwd = realpathSync.native(tempWorkspace("recovery-publication-order-late"));
+    const agentDir = tempWorkspace("recovery-publication-order-agent");
+    const sessionDir = getSvvySessionDir(lateCwd, agentDir);
+    mkdirSync(sessionDir, { recursive: true });
+    const store = createStructuredSessionStateStore({
+      databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+      digest: testDigest,
+      workspace: {
+        id: normalizeWorkspaceRuntimeId(lateCwd),
+        label: "Recovery publication order",
+        cwd: lateCwd,
+        artifactDir: join(sessionDir, "artifacts"),
+      },
+    });
+    store.upsertPiSession({
+      sessionId: "session-recovery-publication-order",
+      title: "Interrupted before app restart",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-07-11T09:00:00.000Z",
+      updatedAt: "2026-07-11T09:01:00.000Z",
+    });
+    store.startTurn({
+      sessionId: "session-recovery-publication-order",
+      surfacePiSessionId: "session-recovery-publication-order",
+      requestSummary: "Recover this interrupted turn",
+    });
+    store.close();
+
+    const registry = createRegistry(initialCwd, agentDir);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected ready app runtime bootstrap.");
+    const bootstrap = await bootstrapPromise;
+    const order: string[] = [];
+    const register = bootstrap.internal.workspaceStates.register.bind(
+      bootstrap.internal.workspaceStates,
+    );
+    const publish = bootstrap.internal.committedStateInvalidations.publish.bind(
+      bootstrap.internal.committedStateInvalidations,
+    );
+    bootstrap.internal.workspaceStates.register = async (input, appLogs) => {
+      order.push("register:start");
+      await waitFor(() => readTurnStatus(sessionDir) === "failed");
+      await register(input, appLogs);
+      order.push("register:complete");
+    };
+    bootstrap.internal.committedStateInvalidations.publish = async (afterCommit) => {
+      order.push("publish:start");
+      const readModel = await bootstrap.rendererState.readModels.fetch({
+        kind: "sessionNavigation",
+        workspaceId: normalizeWorkspaceRuntimeId(lateCwd) as WorkspaceId,
+      });
+      expect(readModel.kind).toBe("sessionNavigation");
+      await publish(afterCommit);
+      order.push("publish:complete");
+    };
+
+    await registry.acquireWorkspace(lateCwd);
+
+    expect(order).toEqual([
+      "register:start",
+      "register:complete",
+      "publish:start",
+      "publish:complete",
+    ]);
   });
 
   it("rejects late bootstrap callbacks during shutdown without recreating the app runtime", async () => {
@@ -2077,10 +2244,27 @@ describe("WorkspaceRuntimeRegistry", () => {
       },
     );
 
-    expect((await first.catalog.listSessions()).sessions.map((session) => session.title)).toEqual([
+    const state = await registry.getRendererStateFacade();
+    const firstNavigation = await state.readModels.fetch({
+      kind: "sessionNavigation",
+      workspaceId: first.workspaceId as WorkspaceId,
+    });
+    const secondNavigation = await state.readModels.fetch({
+      kind: "sessionNavigation",
+      workspaceId: second.workspaceId as WorkspaceId,
+    });
+    expect(firstNavigation.kind).toBe("sessionNavigation");
+    expect(secondNavigation.kind).toBe("sessionNavigation");
+    if (
+      firstNavigation.kind !== "sessionNavigation" ||
+      secondNavigation.kind !== "sessionNavigation"
+    ) {
+      throw new Error("Expected session navigation read models.");
+    }
+    expect(firstNavigation.value.activeSessions.map((session) => session.title)).toEqual([
       "Targeted A",
     ]);
-    expect((await second.catalog.listSessions()).sessions).toEqual([]);
+    expect(secondNavigation.value.activeSessions).toEqual([]);
   });
 
   it("hydrates state-owned appPreferences into the store used by tool approval and network decisions", async () => {
@@ -2229,9 +2413,6 @@ function createRegistry(
     forwardBridgeLog?: ConstructorParameters<
       typeof WorkspaceRuntimeRegistry
     >[0]["forwardBridgeLog"];
-    listRecoverableWorkspaces?: ConstructorParameters<
-      typeof WorkspaceRuntimeRegistry
-    >[0]["listRecoverableWorkspaces"];
   } = {},
 ): WorkspaceRuntimeRegistry {
   const registry = new WorkspaceRuntimeRegistry({
@@ -2257,6 +2438,20 @@ function tempWorkspace(name: string): string {
 
 function workspaceStateStore(runtime: WorkspaceRuntime) {
   return runtime.catalog["workspaceStateRouterRegistration"]().store;
+}
+
+function readTurnStatus(sessionDir: string): string | null {
+  const database = new Database(join(sessionDir, STRUCTURED_SESSION_DB_FILENAME), {
+    readonly: true,
+  });
+  try {
+    const row = database.query(`SELECT status FROM turn ORDER BY rowid ASC LIMIT 1`).get() as {
+      status: string;
+    } | null;
+    return row?.status ?? null;
+  } finally {
+    database.close();
+  }
 }
 
 async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void> {

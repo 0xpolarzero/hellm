@@ -200,6 +200,41 @@ describe("normalizePaneLayout", () => {
       },
     ]);
   });
+
+  it("detaches compact surfaces when normalization drops their referenced pane", () => {
+    const normalized = normalizePaneLayout({
+      dockview: null,
+      panels: [
+        {
+          panelId: "invalid",
+          binding: { surface: "orchestrator", workspaceSessionId: "session-1" } as never,
+          localState: null,
+        },
+      ],
+      compactSurfaces: [
+        {
+          kind: "compact-thread",
+          workspaceSessionId: "session-1",
+          threadId: "thread-1",
+          panelId: "invalid",
+          density: "compact",
+        },
+      ],
+      focusedPanelId: "invalid",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } as unknown as Parameters<typeof normalizePaneLayout>[0]);
+
+    expect(normalized.panels).toEqual([]);
+    expect(normalized.compactSurfaces).toEqual([
+      {
+        kind: "compact-thread",
+        workspaceSessionId: "session-1",
+        threadId: "thread-1",
+        panelId: null,
+        density: "compact",
+      },
+    ]);
+  });
 });
 
 describe("pane layout normalization", () => {
@@ -241,13 +276,17 @@ describe("pane layout normalization", () => {
     expect(layout.focusedPanelId).toBe("logs");
   });
 
-  it("preserves explicit unavailable restored panels without a surface binding", () => {
+  it("preserves explicit unavailable restored panels with their durable target", () => {
     const layout = normalizePaneLayout({
       dockview: null,
       panels: [
         {
           panelId: "unavailable",
-          binding: null,
+          binding: {
+            workspaceSessionId: "session-1",
+            surface: "orchestrator",
+            surfacePiSessionId: "session-1",
+          },
           localState: {
             scroll: { transcriptAnchorId: "assistant-1", offsetPx: 42 },
             timelineDensity: "compact",
@@ -260,6 +299,11 @@ describe("pane layout normalization", () => {
             closable: true,
             floatable: true,
             popoutable: false,
+          },
+          fallbackChrome: {
+            title: "Orchestrator",
+            subtitle: "session-1",
+            kind: "orchestrator",
           },
           restore: {
             unavailableReason: "Missing restored surface.",
@@ -275,7 +319,11 @@ describe("pane layout normalization", () => {
     expect(layout.panels).toHaveLength(1);
     expect(layout.panels[0]).toMatchObject({
       panelId: "unavailable",
-      binding: null,
+      binding: {
+        workspaceSessionId: "session-1",
+        surface: "orchestrator",
+        surfacePiSessionId: "session-1",
+      },
       localState: {
         scroll: { transcriptAnchorId: "assistant-1", offsetPx: 42 },
         timelineDensity: "compact",
@@ -293,7 +341,7 @@ describe("pane layout normalization", () => {
     expect(layout.focusedPanelId).toBe("unavailable");
   });
 
-  it("marks an existing restored panel unavailable without keeping the old surface binding", () => {
+  it("marks an existing restored panel unavailable while keeping its durable target", () => {
     const layout = normalizePaneLayout({
       dockview: null,
       panels: [
@@ -323,7 +371,11 @@ describe("pane layout normalization", () => {
 
     expect(unavailable.panels[0]).toMatchObject({
       panelId: "primary",
-      binding: null,
+      binding: {
+        workspaceSessionId: "session-1",
+        surface: "orchestrator",
+        surfacePiSessionId: "session-1",
+      },
       chrome: {
         title: "Surface unavailable",
         subtitle: "Orchestrator",
@@ -342,7 +394,11 @@ describe("pane layout normalization", () => {
       panels: [
         {
           panelId: "primary",
-          binding: null,
+          binding: {
+            workspaceSessionId: "session-1",
+            surface: "orchestrator",
+            surfacePiSessionId: "session-1",
+          },
           localState: {
             scroll: null,
             timelineDensity: "comfortable",
@@ -355,6 +411,11 @@ describe("pane layout normalization", () => {
             closable: true,
             floatable: true,
             popoutable: false,
+          },
+          fallbackChrome: {
+            title: "Orchestrator",
+            subtitle: "session-1",
+            kind: "orchestrator",
           },
           restore: {
             unavailableReason: "Missing fake surface session-1",

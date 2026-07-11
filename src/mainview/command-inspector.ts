@@ -6,9 +6,9 @@ import type {
   WorkspaceCommandOutputEvent,
   WorkspaceCommandPatchSnapshot,
   WorkspaceCommandProgressEvent,
-  WorkspaceCommandRollup,
   WorkspaceCommandStdinEvent,
   WorkspaceSessionSummary,
+  WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
 
 export interface WorkspaceCommandStatusPresentation {
@@ -61,7 +61,7 @@ export interface WorkspaceCommandArgumentSection {
 
 export function getVisibleCommandRollups(
   session: WorkspaceSessionSummary | null | undefined,
-): WorkspaceCommandRollup[] {
+): NonNullable<WorkspaceSessionSummary["commandRollups"]> {
   return session?.commandRollups ?? [];
 }
 
@@ -155,6 +155,19 @@ export function getCommandStdinSection(
     title: "Stdin",
     events,
   };
+}
+
+export function getCommandStdinOutcomeMessage(response: WriteCommandStdinResponse): string {
+  switch (response.status) {
+    case "accepted":
+      return `Accepted ${response.acceptedBytes} ${response.acceptedBytes === 1 ? "byte" : "bytes"} of stdin.`;
+    case "stdin_closed":
+      return "Stdin is closed for this command.";
+    case "not_running":
+      return "This command is not running.";
+    case "already_terminal":
+      return "This command has already finished.";
+  }
 }
 
 export function getCommandProgressSections(

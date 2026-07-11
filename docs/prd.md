@@ -222,6 +222,13 @@ The package API shape is explicit:
   runtime service constructs the fixed `appLogs` invalidation and publishes it through the runtime
   event bus. The adapter accepts no raw descriptor, read-model name, event, receipt, renderer target,
   or retry instruction and does not add a `Runtime`/facade group.
+  The public `@svvy/runtime/committed-state-invalidation-adapter` subpath is the narrow
+  app-bootstrap session-catalog edge for exact `afterCommit` descriptors returned by the named
+  state-owned catalog mutation adapter after a concrete structured-session write commits. Runtime
+  publishes those unchanged descriptors through its event bus. Catalog writes retain unaccepted
+  descriptor batches for retry or consumer rebaseline, and publication failure never reports the
+  committed write as rolled back. Renderer, desktop, browser-tool, headless, extension, and
+  generated-package callers cannot invoke this adapter or supply descriptors.
   The public `@svvy/runtime/source-invalidation-coordinator-adapter` subpath is the only
   app-bootstrap adapter for runtime-owned source-invalidation coordinator handles. It exports the
   handle type, handle options type, and `createRuntimeSourceInvalidationCoordinatorHandle(...)`

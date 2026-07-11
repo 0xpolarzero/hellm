@@ -8,10 +8,12 @@ import {
   decodeUnknownCreateManagedSnippetCommandInputExit,
   decodeUnknownDeleteManagedSnippetCommandInputExit,
   decodeUnknownRecordProviderAuthStatusCommandInputExit,
+  decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit,
   decodeUnknownSetSnippetEnabledCommandInputExit,
   decodeUnknownSetSessionArchivedCommandInputExit,
   decodeUnknownSetSessionNavigationSectionStateCommandInputExit,
   decodeUnknownSetSessionPinnedCommandInputExit,
+  decodeUnknownSetWorkspaceTabsCommandInputExit,
   decodeUnknownUpdateAppPreferencesCommandInputExit,
   decodeUnknownUpdateManagedSnippetCommandInputExit,
   encodeCreateManagedSnippetCommandInputExit,
@@ -20,10 +22,12 @@ import {
   encodeMarkSessionReadCommandInputExit,
   encodeMarkSessionUnreadCommandInputExit,
   encodeRecordProviderAuthStatusCommandInputExit,
+  encodeSaveWorkspaceLayoutSlotCommandInputExit,
   encodeSetSnippetEnabledCommandInputExit,
   encodeSetSessionArchivedCommandInputExit,
   encodeSetSessionNavigationSectionStateCommandInputExit,
   encodeSetSessionPinnedCommandInputExit,
+  encodeSetWorkspaceTabsCommandInputExit,
   encodeUpdateAppPreferencesCommandInputExit,
   encodeUpdateManagedSnippetCommandInputExit,
 } from "./state-command-schemas";
@@ -346,6 +350,128 @@ describe("@svvy/state command schemas", () => {
           workspaceId: "workspace_navigation",
           section: "sessions",
           collapsed: true,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("pins exact workspace chrome identity and known/open overlap semantics", () => {
+    const tab = {
+      workspaceTabId: "workspace-tab-schema",
+      workspaceId: "workspace-schema",
+      cwd: "/tmp/workspace-schema",
+      workspaceLabel: "Workspace schema",
+      kind: "user",
+      openedAt: "2026-07-11T10:00:00.000Z",
+      activeLayoutId: "A",
+    } as const;
+    const decoded = decodeUnknownSetWorkspaceTabsCommandInputExit({
+      activeWorkspaceTabId: tab.workspaceTabId,
+      tabs: [tab],
+      knownWorkspaces: [tab],
+    });
+
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    if (Exit.isSuccess(decoded)) {
+      expect(encodeSetWorkspaceTabsCommandInputExit(decoded.value)).toEqual(decoded);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetWorkspaceTabsCommandInputExit({
+          activeWorkspaceTabId: "workspace-tab-missing",
+          tabs: [tab],
+          knownWorkspaces: [tab],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetWorkspaceTabsCommandInputExit({
+          activeWorkspaceTabId: tab.workspaceTabId,
+          tabs: [tab, tab],
+          knownWorkspaces: [tab],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetWorkspaceTabsCommandInputExit({
+          activeWorkspaceTabId: tab.workspaceTabId,
+          tabs: [{ ...tab, branch: "main" }],
+          knownWorkspaces: [tab],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("decodes one full workspace layout slot through the core collection invariant", () => {
+    const pane = {
+      paneId: "pane-layout-schema",
+      target: { surface: "open-workspace" },
+      localState: {
+        scroll: { transcriptAnchorId: null, offsetPx: 12.5 },
+        timelineDensity: "compact",
+      },
+      fallbackChrome: null,
+      placement: {
+        kind: "split",
+        referencePanelId: "pane-restored-reference",
+        direction: "right",
+        size: 420.5,
+      },
+      restore: { kind: "ready" },
+    } as const;
+    const input = {
+      workspaceId: "workspace-layout-schema",
+      layoutId: "B",
+      dockviewJson: { grid: null },
+      panes: [pane],
+      compactSurfaces: [],
+      focusedPaneId: pane.paneId,
+    } as const;
+    const decoded = decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit(input);
+
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    if (Exit.isSuccess(decoded)) {
+      expect(encodeSaveWorkspaceLayoutSlotCommandInputExit(decoded.value)).toEqual(decoded);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit({
+          ...input,
+          panes: [pane, pane],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit({
+          ...input,
+          focusedPaneId: "pane-missing",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit({
+          ...input,
+          compactSurfaces: [
+            {
+              kind: "compact-thread",
+              workspaceSessionId: "session-layout-schema",
+              threadId: "thread-layout-schema",
+              panelId: "pane-missing",
+              density: "comfortable",
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit({
+          ...input,
+          rendererPreview: { focused: true },
         }),
       ),
     ).toBe(true);

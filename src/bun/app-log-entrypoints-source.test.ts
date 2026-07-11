@@ -19,7 +19,6 @@ describe("Bun app-log entrypoints", () => {
     expect(indexSource).toContain('"session", "Workspace session opened."');
     expect(indexSource).toContain('"session", "Workspace session renamed."');
     expect(indexSource).toContain('"session", "Workspace session deleted."');
-    expect(indexSource).toContain('"session", "Workspace session archived."');
     expect(indexSource).toContain('"surface", "Surface opened."');
     expect(indexSource).toContain('"surface", "Surface closed."');
     expect(indexSource).toContain('"surface", "Surface model changed."');
@@ -28,10 +27,8 @@ describe("Bun app-log entrypoints", () => {
     expect(runtimeLayerSource).toContain('message: "Prompt requested."');
     expect(runtimeLayerSource).toContain('"Prompt queued for surface delivery."');
     expect(runtimeLayerSource).toContain('"Prompt queued and surface queue wake requested."');
-    expect(indexSource).toContain(
-      '"external-editor", "Workspace source opened in external editor."',
-    );
-    expect(indexSource).toContain('"external-editor", "Workspace source file does not exist."');
+    expect(indexSource).toContain('"external-editor", "Snippet source opened in external editor."');
+    expect(indexSource).toContain('"external-editor", "Workflows export file does not exist."');
     expect(indexSource).toContain('"external-editor", "Custom external editor command is empty."');
     expect(indexSource).toContain('"external-editor", "Custom external editor command failed."');
   });
