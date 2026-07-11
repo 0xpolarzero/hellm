@@ -44,6 +44,7 @@ import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runti
 import { createAppLogger } from "./app-logger";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
+import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
 
 const tempDirs: string[] = [];
 const openStores: StructuredSessionStateStore[] = [];
@@ -406,6 +407,49 @@ describe("app runtime bootstrap", () => {
         "snippets",
       ]);
       expect("close" in bootstrap.rendererStateCommands).toBe(false);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
+  it("seeds exact external-instruction preferences into authoritative state rows", async () => {
+    const harness = createBootstrapHarness();
+    const externalInstructions: AppPreferences["externalInstructions"] = {
+      globalRoots: [
+        {
+          id: "bootstrap-team-docs",
+          kind: "custom",
+          label: "Bootstrap team docs",
+          path: "/tmp/bootstrap-team-docs",
+          enabled: true,
+        },
+      ],
+      globalControls: {
+        "/tmp/bootstrap-team-docs/AGENTS.md": {
+          enabled: true,
+          actors: ["handler", "workflow-task"],
+        },
+      },
+      workspaceControls: {},
+    };
+    const bootstrap = await createAppRuntimeBootstrap({
+      ...harness.input,
+      appPreferencesSeed: {
+        hasStateRows: () => false,
+        read: () => ({
+          ...structuredClone(DEFAULT_AGENT_SETTINGS_STATE.appPreferences),
+          externalInstructions,
+        }),
+      },
+    });
+
+    try {
+      const result = await bootstrap.rendererState.readModels.fetch({ kind: "appPreferences" });
+      expect(result.kind).toBe("appPreferences");
+      if (result.kind !== "appPreferences") {
+        throw new Error("Expected appPreferences read model.");
+      }
+      expect(result.value.externalInstructions).toEqual(externalInstructions);
     } finally {
       await bootstrap.dispose();
     }

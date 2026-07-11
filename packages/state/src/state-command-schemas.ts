@@ -5,6 +5,7 @@ import {
   AppLogEntryId,
   AppLogQuerySchema,
   ExternalInstructionSourceId,
+  ExternalInstructionsSettingsSchema,
   ExtensionEnvName,
   ExtensionId,
   ExtensionUsageStateSchema,
@@ -66,6 +67,7 @@ export const UpdateAppPreferencesPatchSchema = Schema.Struct({
   artifactDirectory: Schema.optionalKey(AbsolutePath),
   approvalMode: Schema.optionalKey(AppPreferenceApprovalModeSchema),
   networkAccess: Schema.optionalKey(Schema.Boolean),
+  externalInstructions: Schema.optionalKey(ExternalInstructionsSettingsSchema),
   ambientResources: Schema.optionalKey(JsonValue),
 });
 export type UpdateAppPreferencesPatch = typeof UpdateAppPreferencesPatchSchema.Type;

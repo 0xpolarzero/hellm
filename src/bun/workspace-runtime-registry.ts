@@ -125,6 +125,7 @@ type StateOwnedAppPreferencesRecord = {
   readonly artifactDirectory: string;
   readonly approvalMode: AppPreferences["approvalMode"];
   readonly networkAccess: boolean;
+  readonly externalInstructions: AppPreferences["externalInstructions"];
   readonly ambientResources: unknown;
 };
 export type WorkspaceRuntimeOperations = Pick<
@@ -2547,6 +2548,7 @@ function appPreferencesFromStructuredRecord(
     artifactDirectory: record.artifactDirectory,
     approvalMode: record.approvalMode,
     networkAccess: record.networkAccess,
+    externalInstructions: record.externalInstructions,
     ambientAgentResources:
       typeof record.ambientResources === "object" &&
       record.ambientResources !== null &&

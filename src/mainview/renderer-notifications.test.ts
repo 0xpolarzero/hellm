@@ -4,7 +4,7 @@ import type {
   StateReadModelBaseline,
   StateReadModelResult,
 } from "../shared/workspace-contract";
-import type { WorkspaceId } from "@svvy/core";
+import { DEFAULT_EXTERNAL_INSTRUCTIONS, type WorkspaceId } from "@svvy/core";
 import { createRendererNotificationStore } from "./renderer-notifications";
 
 const workspaceId = "workspace-renderer-notifications" as WorkspaceId;
@@ -29,6 +29,7 @@ describe("renderer notification store", () => {
           artifactDirectory: "/tmp/artifacts" as never,
           approvalMode: "auto-review",
           networkAccess: true,
+          externalInstructions: DEFAULT_EXTERNAL_INSTRUCTIONS,
           ambientResources: {},
           updatedAt: "2026-01-01T00:00:00.000Z" as never,
           revision: 1 as never,
@@ -166,6 +167,7 @@ describe("renderer notification store", () => {
             artifactDirectory: "/tmp/artifacts" as never,
             approvalMode: "user",
             networkAccess: false,
+            externalInstructions: DEFAULT_EXTERNAL_INSTRUCTIONS,
             ambientResources: {},
             updatedAt: "2026-01-01T00:00:00.000Z" as never,
             revision: 2 as never,

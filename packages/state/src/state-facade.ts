@@ -27,6 +27,7 @@ import {
   type AppLogWritePort,
   type AppLogWritePortService,
   type ExtensionId,
+  type ExternalInstructionsSettings,
   type ExtensionStatePort,
   type JsonValue as JsonValueType,
   type MessageId,
@@ -242,6 +243,7 @@ export interface AppPreferencesReadModel {
   artifactDirectory: string;
   approvalMode: AppPreferenceApprovalMode;
   networkAccess: boolean;
+  externalInstructions: ExternalInstructionsSettings;
   ambientResources: JsonValueType;
   updatedAt: IsoDateTimeString;
   revision: StateRevision;
@@ -3375,6 +3377,7 @@ function appPreferencesReadModel(record: StructuredAppPreferencesRecord): AppPre
     artifactDirectory: record.artifactDirectory,
     approvalMode: record.approvalMode,
     networkAccess: record.networkAccess,
+    externalInstructions: record.externalInstructions,
     ambientResources: record.ambientResources,
     updatedAt: record.updatedAt as IsoDateTimeString,
     revision: record.stateRevision,

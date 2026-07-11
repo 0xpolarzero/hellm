@@ -101,6 +101,7 @@ export interface AppPreferencesReadModel {
   artifactDirectory: string;
   approvalMode: AppPreferences["approvalMode"];
   networkAccess: boolean;
+  externalInstructions: AppPreferences["externalInstructions"];
   ambientResources: JsonValue;
   updatedAt: string;
   revision: StateRevision;

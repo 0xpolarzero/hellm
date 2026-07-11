@@ -2096,6 +2096,24 @@ describe("WorkspaceRuntimeRegistry", () => {
       patch: {
         approvalMode: "user",
         networkAccess: false,
+        externalInstructions: {
+          globalRoots: [
+            {
+              id: "state-owned-team-docs",
+              kind: "custom",
+              label: "Team docs",
+              path: "/tmp/state-owned-team-docs",
+              enabled: true,
+            },
+          ],
+          globalControls: {
+            "/tmp/state-owned-team-docs/AGENTS.md": {
+              enabled: true,
+              actors: ["orchestrator", "handler"],
+            },
+          },
+          workspaceControls: {},
+        },
       },
       clientSubmission: {
         clientRequestId: "state-owned-preferences-tool-decisions" as RuntimeClientRequestId,
@@ -2107,6 +2125,26 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getRuntime(runtime.workspaceId)).toBe(runtime);
     expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("user");
     expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(false);
+    expect(runtime.agentSettingsStore.getState().appPreferences.externalInstructions).toMatchObject(
+      {
+        globalRoots: expect.arrayContaining([
+          expect.objectContaining({
+            id: "state-owned-team-docs",
+            kind: "custom",
+            label: "Team docs",
+            path: "/tmp/state-owned-team-docs",
+            enabled: true,
+          }),
+        ]),
+        globalControls: {
+          "/tmp/state-owned-team-docs/AGENTS.md": {
+            enabled: true,
+            actors: expect.arrayContaining(["orchestrator", "handler"]),
+          },
+        },
+        workspaceControls: {},
+      },
+    );
   });
 
   it("hydrates authoritative security preferences before a new workspace becomes ready", async () => {

@@ -47,6 +47,24 @@ describe("@svvy/state command schemas", () => {
         artifactDirectory: "/tmp/svvy-artifacts",
         approvalMode: "user",
         networkAccess: false,
+        externalInstructions: {
+          globalRoots: [
+            {
+              id: "custom-docs",
+              kind: "custom",
+              label: "Custom docs",
+              path: "/tmp/custom-docs",
+              enabled: true,
+            },
+          ],
+          globalControls: {
+            "custom-docs/AGENTS.md": {
+              enabled: true,
+              actors: ["orchestrator", "handler"],
+            },
+          },
+          workspaceControls: {},
+        },
         ambientResources: { skills: true },
       },
       clientSubmission: {
@@ -62,6 +80,20 @@ describe("@svvy/state command schemas", () => {
 
     expect(Exit.isSuccess(decoded)).toBe(true);
     expect(Exit.isFailure(undefinedField)).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownUpdateAppPreferencesCommandInputExit({
+          patch: {
+            externalInstructions: {
+              globalRoots: [],
+              globalControls: {},
+              workspaceControls: {},
+              rendererPreview: true,
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
     if (Exit.isSuccess(decoded)) {
       expect(encodeUpdateAppPreferencesCommandInputExit(decoded.value)).toEqual(decoded);
     }

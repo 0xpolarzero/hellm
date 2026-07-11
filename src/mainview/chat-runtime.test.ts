@@ -1057,6 +1057,7 @@ function createFakeRpc(input: {
                   artifactDirectory: preferences.artifactDirectory,
                   approvalMode: preferences.approvalMode,
                   networkAccess: preferences.networkAccess,
+                  externalInstructions: preferences.externalInstructions,
                   ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
                   updatedAt: new Date(0).toISOString(),
                   revision: 0 as StateRevision,
@@ -5551,6 +5552,7 @@ describe("createChatRuntime", () => {
             artifactDirectory: "/tmp/renderer-ready" as never,
             approvalMode: "user",
             networkAccess: false,
+            externalInstructions: DEFAULT_AGENT_SETTINGS_STATE.appPreferences.externalInstructions,
             ambientResources: {},
             updatedAt: "2026-07-11T00:00:00.000Z" as never,
             revision: 1 as StateRevision,
@@ -5592,6 +5594,24 @@ describe("createChatRuntime", () => {
             artifactDirectory: "/tmp/rebaseline-artifacts" as never,
             approvalMode: "user",
             networkAccess: false,
+            externalInstructions: {
+              globalRoots: [
+                {
+                  id: "team-instructions",
+                  kind: "custom",
+                  label: "Team instructions",
+                  path: "/tmp/team-instructions",
+                  enabled: true,
+                },
+              ],
+              globalControls: {
+                "/tmp/team-instructions/AGENTS.md": {
+                  enabled: true,
+                  actors: ["orchestrator", "workflow-task"],
+                },
+              },
+              workspaceControls: {},
+            },
             ambientResources: {},
             updatedAt: "2026-07-10T00:00:00.000Z" as never,
             revision: 2 as StateRevision,
@@ -5618,6 +5638,21 @@ describe("createChatRuntime", () => {
       artifactDirectory: "/tmp/rebaseline-artifacts",
       approvalMode: "user",
       networkAccess: false,
+      externalInstructions: {
+        globalRoots: [
+          expect.objectContaining({
+            id: "team-instructions",
+            path: "/tmp/team-instructions",
+            enabled: true,
+          }),
+        ],
+        globalControls: {
+          "/tmp/team-instructions/AGENTS.md": {
+            enabled: true,
+            actors: ["orchestrator", "workflow-task"],
+          },
+        },
+      },
     });
 
     runtime.dispose();

@@ -699,6 +699,7 @@ async function seedAppPreferencesStateRows(input: {
       artifactDirectory: preferences.artifactDirectory as AbsolutePath,
       approvalMode: preferences.approvalMode,
       networkAccess: preferences.networkAccess,
+      externalInstructions: preferences.externalInstructions,
       ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
     },
     clientSubmission: {

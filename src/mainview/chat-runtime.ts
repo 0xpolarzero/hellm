@@ -261,6 +261,7 @@ function appPreferencesFromStateReadModel(
     artifactDirectory: readModel.artifactDirectory,
     approvalMode: readModel.approvalMode,
     networkAccess: readModel.networkAccess,
+    externalInstructions: readModel.externalInstructions,
     ambientAgentResources:
       typeof readModel.ambientResources === "object" &&
       readModel.ambientResources !== null &&

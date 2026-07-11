@@ -1,4 +1,22 @@
-import type { ExtensionUsageState } from "@svvy/core";
+import {
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
+  type ExtensionUsageState,
+  type ExternalInstructionActor,
+  type ExternalInstructionsSettings,
+} from "@svvy/core";
+
+export {
+  DEFAULT_EXTERNAL_INSTRUCTION_ACTORS,
+  DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS,
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
+} from "@svvy/core";
+export type {
+  ExternalInstructionActor,
+  ExternalInstructionControl,
+  ExternalInstructionGlobalRootKind,
+  ExternalInstructionGlobalRootSetting,
+  ExternalInstructionsSettings,
+} from "@svvy/core";
 
 export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AgentProfileKind = "orchestrator" | "special";
@@ -9,8 +27,6 @@ export type AppAppearance = "system" | "light" | "dark";
 export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
 export type RequestUserInputMode = "nonblocking" | "blocking";
 export type ApprovalMode = "auto-review" | "user" | "full-access";
-export type ExternalInstructionActor = "orchestrator" | "handler" | "workflow-task";
-export type ExternalInstructionGlobalRootKind = "builtin" | "custom";
 export type AmbientAgentResourceHost = "pi" | "codex" | "claude" | "other";
 export type AmbientAgentResourceCategory =
   | "callableCapabilities"
@@ -141,25 +157,6 @@ export interface AmbientAgentResourcesSettings {
   enablements: AmbientAgentResourceEnablementRecord[];
 }
 
-export interface ExternalInstructionGlobalRootSetting {
-  id: string;
-  kind: ExternalInstructionGlobalRootKind;
-  label: string;
-  path: string;
-  enabled: boolean;
-}
-
-export interface ExternalInstructionControl {
-  enabled: boolean;
-  actors: ExternalInstructionActor[];
-}
-
-export interface ExternalInstructionsSettings {
-  globalRoots: ExternalInstructionGlobalRootSetting[];
-  globalControls: Record<string, ExternalInstructionControl>;
-  workspaceControls: Record<string, Record<string, ExternalInstructionControl>>;
-}
-
 export const AMBIENT_AGENT_RESOURCE_CATEGORIES = [
   "callableCapabilities",
   "runtimeExtensionsAndPackages",
@@ -180,42 +177,6 @@ export const DEFAULT_AMBIENT_AGENT_RESOURCES = {
   ) as Record<AmbientAgentResourceCategory, AmbientAgentResourceCategorySetting>,
   enablements: [],
 } satisfies AmbientAgentResourcesSettings;
-
-export const DEFAULT_EXTERNAL_INSTRUCTION_ACTORS = [
-  "orchestrator",
-  "handler",
-  "workflow-task",
-] as const satisfies readonly ExternalInstructionActor[];
-
-export const DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS = [
-  {
-    id: "pi",
-    kind: "builtin",
-    label: "pi",
-    path: "~/.config/pi",
-    enabled: false,
-  },
-  {
-    id: "codex",
-    kind: "builtin",
-    label: "Codex",
-    path: "~/.codex",
-    enabled: false,
-  },
-  {
-    id: "claude",
-    kind: "builtin",
-    label: "Claude",
-    path: "~/.claude",
-    enabled: false,
-  },
-] as const satisfies readonly ExternalInstructionGlobalRootSetting[];
-
-export const DEFAULT_EXTERNAL_INSTRUCTIONS = {
-  globalRoots: [...DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS],
-  globalControls: {},
-  workspaceControls: {},
-} satisfies ExternalInstructionsSettings;
 
 export const DEFAULT_AGENT_SETTINGS = {
   provider: "zai",

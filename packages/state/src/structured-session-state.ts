@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import {
   RUNTIME_TURN_DECISIONS,
   StateContractError,
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
   type ArtifactMaterializationStatus,
   type ArtifactMetadataRecord,
   decodeUnknownExtensionDependencyApprovalIdentityExit,
@@ -34,6 +35,7 @@ import {
   type ExtensionDependencyReadiness,
   type ExtensionId,
   type ExtensionUsageState,
+  type ExternalInstructionsSettings,
   type GeneratedPackageName,
   type HandlerInheritedHistoryBlock,
   type JsonValue,
@@ -89,6 +91,7 @@ import {
   type WorkspaceId,
   type RuntimeTurnDecision,
   type StateRevision,
+  decodeUnknownExternalInstructionsSettingsExit,
 } from "@svvy/core";
 import type {
   CloseWorkspacePaneCommandInput,
@@ -123,6 +126,11 @@ const DEFAULT_SIDEBAR_SECTION_SIZES = {
 const GLOBAL_PROVIDER_AUTH_WORKSPACE_KEY = "";
 const MIN_SIDEBAR_SECTION_SIZE_PX = 64;
 const MAX_SIDEBAR_SECTION_SIZE_PX = 1000;
+const DEFAULT_EXTERNAL_INSTRUCTIONS_JSON = JSON.stringify(DEFAULT_EXTERNAL_INSTRUCTIONS);
+const DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON = DEFAULT_EXTERNAL_INSTRUCTIONS_JSON.replaceAll(
+  "'",
+  "''",
+);
 
 function runtimeSourceScopeKey(scope: RuntimeSourceScanFactRecord["scope"]): string {
   return scope.kind === "workspace" ? `workspace:${scope.workspaceId}` : "app-global";
@@ -302,6 +310,7 @@ export interface StructuredAppPreferencesRecord {
   artifactDirectory: string;
   approvalMode: StructuredAppPreferenceApprovalMode;
   networkAccess: boolean;
+  externalInstructions: ExternalInstructionsSettings;
   ambientResources: JsonValue;
   updatedAt: string;
   stateRevision: StateRevision;
@@ -313,6 +322,7 @@ export interface StructuredAppPreferencesPatch {
   artifactDirectory?: string;
   approvalMode?: StructuredAppPreferenceApprovalMode;
   networkAccess?: boolean;
+  externalInstructions?: ExternalInstructionsSettings;
   ambientResources?: JsonValue;
   updatedAt?: string;
 }
@@ -2552,6 +2562,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         artifactDirectory: input.artifactDirectory ?? current.artifactDirectory,
         approvalMode: input.approvalMode ?? current.approvalMode,
         networkAccess: input.networkAccess ?? current.networkAccess,
+        externalInstructions:
+          input.externalInstructions === undefined
+            ? current.externalInstructions
+            : input.externalInstructions,
         ambientResources:
           input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
         updatedAt: nextUpdatedAt,
@@ -2567,16 +2581,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              artifact_directory,
              approval_mode,
              network_access,
+             external_instructions_json,
              ambient_resources_json,
              updated_at
            )
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              appearance = excluded.appearance,
              external_editor = excluded.external_editor,
              artifact_directory = excluded.artifact_directory,
              approval_mode = excluded.approval_mode,
              network_access = excluded.network_access,
+             external_instructions_json = excluded.external_instructions_json,
              ambient_resources_json = excluded.ambient_resources_json,
              updated_at = excluded.updated_at`,
         )
@@ -2586,6 +2602,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           next.artifactDirectory,
           next.approvalMode,
           next.networkAccess ? 1 : 0,
+          JSON.stringify(next.externalInstructions),
           JSON.stringify(next.ambientResources),
           next.updatedAt,
         );
@@ -2598,6 +2615,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       artifactDirectory: input.artifactDirectory ?? current.artifactDirectory,
       approvalMode: input.approvalMode ?? current.approvalMode,
       networkAccess: input.networkAccess ?? current.networkAccess,
+      externalInstructions:
+        input.externalInstructions === undefined
+          ? current.externalInstructions
+          : input.externalInstructions,
       ambientResources:
         input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
       updatedAt: nextUpdatedAt,
@@ -9546,6 +9567,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           artifact_directory: string;
           approval_mode: string;
           network_access: number;
+          external_instructions_json: string;
           ambient_resources_json: string;
           updated_at: string;
         }
@@ -9557,6 +9579,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         artifactDirectory: defaultArtifactDirectory(),
         approvalMode: "auto-review",
         networkAccess: true,
+        externalInstructions: decodeExternalInstructionsSettings(
+          JSON.parse(DEFAULT_EXTERNAL_INSTRUCTIONS_JSON),
+        ),
         ambientResources: {},
         updatedAt: this.now(),
         stateRevision: this.readStateRevision(),
@@ -9569,6 +9594,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       artifactDirectory: row.artifact_directory,
       approvalMode: row.approval_mode,
       networkAccess: row.network_access !== 0,
+      externalInstructions: decodeExternalInstructionsSettings(
+        fromJson<unknown>(row.external_instructions_json) ??
+          JSON.parse(DEFAULT_EXTERNAL_INSTRUCTIONS_JSON),
+      ),
       ambientResources: fromJson<JsonValue>(row.ambient_resources_json) ?? {},
       updatedAt: row.updated_at,
       stateRevision: this.readStateRevision(),
@@ -11334,6 +11363,7 @@ function initializeSchema(db: Database): void {
       artifact_directory TEXT NOT NULL DEFAULT '~/.config/svvy/artifacts',
       approval_mode TEXT NOT NULL,
       network_access INTEGER NOT NULL,
+      external_instructions_json TEXT NOT NULL DEFAULT '${DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON}',
       ambient_resources_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL
     );
@@ -12063,6 +12093,12 @@ function initializeSchema(db: Database): void {
     "TEXT NOT NULL DEFAULT '~/.config/svvy/artifacts'",
   );
   ensureColumn(db, "app_preferences", "ambient_resources_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(
+    db,
+    "app_preferences",
+    "external_instructions_json",
+    `TEXT NOT NULL DEFAULT '${DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON}'`,
+  );
   ensureColumn(db, "workspace_chrome_state", "active_workspace_tab_id", "TEXT");
   ensureColumn(db, "workspace_chrome_state", "updated_at", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "workspace_chrome_tab", "active_layout_id", "TEXT NOT NULL DEFAULT 'A'");
@@ -12350,6 +12386,14 @@ function fromJson<T>(value: string | null | undefined): T | null {
     return null;
   }
   return JSON.parse(value) as T;
+}
+
+function decodeExternalInstructionsSettings(value: unknown): ExternalInstructionsSettings {
+  const decoded = decodeUnknownExternalInstructionsSettingsExit(value);
+  if (Exit.isFailure(decoded)) {
+    throw new Error("INVALID_STATE: persisted external instruction settings are invalid.");
+  }
+  return decoded.value;
 }
 
 function normalizeStringList(values: readonly string[]): string[] {

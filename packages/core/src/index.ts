@@ -7,6 +7,7 @@ export * from "./desktop-bridge-error-contract";
 export * from "./errors";
 export * from "./extension-contracts";
 export * from "./extension-state-ports";
+export * from "./external-instruction-contracts";
 export * from "./generated-package-contracts";
 export * from "./ids";
 export * from "./native-tool-contracts";

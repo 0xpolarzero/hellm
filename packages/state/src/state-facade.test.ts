@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   AppLogWritePort,
   AbsolutePath,
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
   IsoDateTimeStringSchema,
   ProviderAuthStatusStatePort,
   RuntimeWorkspaceStatePort,
@@ -621,6 +622,7 @@ describe("State app-log facade slice", () => {
         artifactDirectory: defaultArtifactDirectory(),
         approvalMode: "auto-review",
         networkAccess: true,
+        externalInstructions: DEFAULT_EXTERNAL_INSTRUCTIONS,
         ambientResources: {},
         updatedAt: "1970-01-01T00:00:00.000Z",
         revision: 0,
@@ -657,6 +659,31 @@ describe("State app-log facade slice", () => {
           artifactDirectory: "/tmp/svvy-custom-artifacts" as typeof AbsolutePath.Type,
           approvalMode: "user",
           networkAccess: false,
+          externalInstructions: {
+            globalRoots: [
+              {
+                id: "custom-docs",
+                kind: "custom",
+                label: "Custom docs",
+                path: "/tmp/custom-docs",
+                enabled: true,
+              },
+            ],
+            globalControls: {
+              "custom-docs/AGENTS.md": {
+                enabled: true,
+                actors: ["orchestrator", "handler"],
+              },
+            },
+            workspaceControls: {
+              workspace_state_root: {
+                "workspace/CLAUDE.md": {
+                  enabled: false,
+                  actors: ["workflow-task"],
+                },
+              },
+            },
+          },
           ambientResources: { skills: true, commands: false },
         },
         clientSubmission: {
@@ -697,6 +724,31 @@ describe("State app-log facade slice", () => {
         artifactDirectory: "/tmp/svvy-custom-artifacts",
         approvalMode: "user",
         networkAccess: false,
+        externalInstructions: {
+          globalRoots: [
+            {
+              id: "custom-docs",
+              kind: "custom",
+              label: "Custom docs",
+              path: "/tmp/custom-docs",
+              enabled: true,
+            },
+          ],
+          globalControls: {
+            "custom-docs/AGENTS.md": {
+              enabled: true,
+              actors: ["orchestrator", "handler"],
+            },
+          },
+          workspaceControls: {
+            workspace_state_root: {
+              "workspace/CLAUDE.md": {
+                enabled: false,
+                actors: ["workflow-task"],
+              },
+            },
+          },
+        },
         ambientResources: { skills: true, commands: false },
         updatedAt: "1970-01-01T00:00:00.000Z",
         revision: 1,
