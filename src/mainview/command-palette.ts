@@ -1,5 +1,5 @@
-import type { AgentProfileSettings } from "../shared/agent-settings";
 import type {
+  ConfiguredAgentProfileReadModelRecord,
   PromptTarget,
   WorkspacePaneSurfaceTarget,
   WorkspaceHandlerThreadSummary,
@@ -10,6 +10,7 @@ import type {
 import type { ChatRuntime } from "./chat-runtime";
 import type { DockviewTabGroupPlacementTarget } from "./pane-layout";
 import { getShortcutReadable } from "../shared/shortcut-registry";
+import { configuredAgentProfileReasoningEffort } from "./configured-agent-profile";
 
 export type CommandPaletteMode = "commands" | "search";
 
@@ -105,7 +106,7 @@ export type CommandRegistryInput = {
   focusedPaneExists?: boolean;
   focusedSurfaceTarget?: PromptTarget | null;
   paneTabGroups?: DockviewTabGroupPlacementTarget[];
-  orchestratorProfiles?: AgentProfileSettings[];
+  orchestratorProfiles?: readonly ConfiguredAgentProfileReadModelRecord[];
   handlerThreads?: WorkspaceHandlerThreadSummary[];
 };
 
@@ -555,24 +556,24 @@ function getPaneCommandAvailability(
 }
 
 function buildProfileNewOrchestratorActions(
-  profiles: readonly AgentProfileSettings[],
+  profiles: readonly ConfiguredAgentProfileReadModelRecord[],
 ): CommandAction[] {
   return profiles.map((profile) => ({
-    id: `session.new.profile.${profile.id}`,
+    id: `session.new.profile.${profile.profileId}`,
     label: `New orchestrator: ${profile.name}`,
     category: "agents",
     aliases: [
       "new orchestrator profile",
       "agent profile",
       "orchestrator profile",
-      profile.provider,
-      profile.model,
-      profile.reasoningEffort,
+      profile.providerId,
+      profile.modelId,
+      configuredAgentProfileReasoningEffort(profile),
     ],
     shortcut: null,
     availability: { kind: "available" },
-    execute: { kind: "create-session", agentProfileId: profile.id },
-    targetName: `${profile.provider}/${profile.model} · ${profile.reasoningEffort}`,
+    execute: { kind: "create-session", agentProfileId: profile.profileId },
+    targetName: `${profile.providerId}/${profile.modelId} · ${configuredAgentProfileReasoningEffort(profile)}`,
     badge: "Profile",
   }));
 }

@@ -5,7 +5,6 @@
   import {
     DEFAULT_WORKFLOW_AGENT_SETTINGS,
     type AgentProfileId,
-    type AgentProfileSettings,
     type AgentSettingsState,
     type WorkflowAgentKey,
     type WorkflowAgentSettings,
@@ -14,44 +13,44 @@
     AgentContextPreviewRequest,
     AgentContextPreviewResponse,
     AgentModelChoice,
+    AgentsReadModel,
+    ConfiguredAgentProfileReadModelRecord,
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
-  import type { ExtensionUsageState } from "@svvy/core";
+  import type { AgentProfileId as StateAgentProfileId, ExtensionId, ExtensionUsageState } from "@svvy/core";
   import type { FileBackedSaveMode } from "../shared/file-backed-edit";
   import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
   import Button from "./ui/Button.svelte";
-  import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
   import AgentProfileRowForm from "./AgentProfileRowForm.svelte";
   import {
     type AgentContextActor,
     extensionUsageItems as buildExtensionUsageItems,
+    mergeActorExtensionDefaults,
   } from "./agents-pane-extension-usage";
   import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
   import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
   import { createWorkflowAgentId as createWorkflowAgentExportId } from "./agent-profile-ids";
+  import { configuredAgentProfileReasoningEffort } from "./configured-agent-profile";
 
   type Props = {
     runtime: ChatRuntime;
     panelId: string;
-    initialSettings?: AgentSettingsState | null;
     targetAgentProfileId?: string | null;
     targetView?: "profiles" | "generated-context-preview";
-    onSettingsChanged?: (settings: AgentSettingsState) => void;
   };
 
   let {
     runtime,
     panelId,
-    initialSettings = null,
     targetAgentProfileId = null,
     targetView = "profiles",
-    onSettingsChanged,
   }: Props = $props();
 
-  let settings = $state<AgentSettingsState | null>(null);
+  let agents = $state<AgentsReadModel | null>(null);
+  let legacySettings = $state<AgentSettingsState | null>(null);
   let loading = $state(true);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
@@ -84,28 +83,62 @@
   let dragAnimationFrame: number | null = null;
   let settingsLoadRequest = 0;
   let unsubscribeRuntimeSnapshots: (() => void) | null = null;
-  let initialSettingsSeeded = false;
 
-  const orchestrators = $derived(settings?.agents.orchestrators ?? []);
-  const displayedOrchestrators = $derived(
-    reorderQueuedMessageItems(orchestrators, draggedProfileId, dropBeforeProfileId),
+  const orchestrators = $derived(
+    (agents?.configuredProfiles ?? [])
+      .filter((profile) => profile.actor === "orchestrator")
+      .toSorted(
+        (left, right) => left.position - right.position || left.profileId.localeCompare(right.profileId),
+      ),
   );
-  const threadHandler = $derived(settings?.agents.special.threadHandler ?? null);
+  const displayedOrchestrators = $derived(
+    reorderConfiguredProfiles(orchestrators, draggedProfileId, dropBeforeProfileId),
+  );
+  const threadHandler = $derived(
+    agents?.configuredProfiles.find((profile) => profile.actor === "handler") ?? null,
+  );
   const workflowAgents = $derived(
-    Object.values(settings?.workflowAgents ?? {}).toSorted((left, right) =>
+    Object.values(legacySettings?.workflowAgents ?? {}).toSorted((left, right) =>
       left.label.localeCompare(right.label) || left.id.localeCompare(right.id),
     ),
   );
+
+  function reorderConfiguredProfiles(
+    profiles: readonly ConfiguredAgentProfileReadModelRecord[],
+    movingProfileId: string | null,
+    beforeProfileId: string | null,
+  ): ConfiguredAgentProfileReadModelRecord[] {
+    if (!movingProfileId) return [...profiles];
+    const moving = profiles.find((profile) => profile.profileId === movingProfileId);
+    if (!moving || movingProfileId === beforeProfileId) return [...profiles];
+    const remaining = profiles.filter((profile) => profile.profileId !== movingProfileId);
+    const beforeIndex = beforeProfileId
+      ? remaining.findIndex((profile) => profile.profileId === beforeProfileId)
+      : remaining.length;
+    if (beforeIndex < 0) return [...profiles];
+    return [...remaining.slice(0, beforeIndex), moving, ...remaining.slice(beforeIndex)];
+  }
+
+  function configuredProfileOrderChanged(
+    profiles: readonly ConfiguredAgentProfileReadModelRecord[],
+    movingProfileId: string | null,
+    beforeProfileId: string | null,
+  ): boolean {
+    const reordered = reorderConfiguredProfiles(profiles, movingProfileId, beforeProfileId);
+    return reordered.some(
+      (profile, index) => profile.profileId !== profiles[index]?.profileId,
+    );
+  }
   async function loadSettings() {
     const requestId = ++settingsLoadRequest;
-    loading = !settings;
+    loading = !agents;
     errorMessage = null;
     try {
-      const nextSettings = await runtime.getAgentSettings();
+      const nextAgents = await runtime.getAgents();
       if (requestId !== settingsLoadRequest) return;
-      settings = nextSettings;
-      onSettingsChanged?.(nextSettings);
+      agents = nextAgents;
       loading = false;
+      void loadLegacyWorkflowSettings(requestId);
       void loadAgentModelChoices(requestId);
       void loadExtensionsInventory(requestId);
     } catch (error) {
@@ -118,15 +151,30 @@
     }
   }
 
-  async function loadAgentModelChoices(requestId: number) {
-    const snapshot = runtime.agentModelChoicesSnapshot;
+  async function loadLegacyWorkflowSettings(requestId: number) {
+    const snapshot = runtime.agentSettingsSnapshot;
     if (snapshot && requestId === settingsLoadRequest) {
-      modelChoices = snapshot.items;
+      legacySettings = snapshot;
     }
     try {
-      const nextModelChoices = await runtime.getAgentModelChoices();
+      const nextSettings = await runtime.getAgentSettings();
       if (requestId === settingsLoadRequest) {
-        modelChoices = nextModelChoices.items;
+        legacySettings = nextSettings;
+      }
+    } catch {
+      // Workflow-agent source rows remain on the legacy settings facade until their own cutover.
+    }
+  }
+
+  async function loadAgentModelChoices(requestId: number) {
+    const snapshot = runtime.modelMetadataSnapshot;
+    if (snapshot && requestId === settingsLoadRequest) {
+      modelChoices = [...snapshot];
+    }
+    try {
+      const nextModelChoices = await runtime.listModelMetadata();
+      if (requestId === settingsLoadRequest) {
+        modelChoices = [...nextModelChoices];
       }
     } catch {
       if (requestId === settingsLoadRequest) {
@@ -157,8 +205,14 @@
   }
 
   function actorForProfileId(profileId: string): AgentContextActor {
-    if (settings?.agents.special.threadHandler.id === profileId) return "handler";
-    if (settings?.workflowAgents[profileId as WorkflowAgentKey]) return "workflow-task";
+    if (
+      agents?.configuredProfiles.some(
+        (profile) => profile.profileId === profileId && profile.actor === "handler",
+      )
+    ) {
+      return "handler";
+    }
+    if (legacySettings?.workflowAgents[profileId as WorkflowAgentKey]) return "workflow-task";
     return "orchestrator";
   }
 
@@ -258,26 +312,49 @@
     }
   }
 
-  function mutateProfile(profile: AgentProfileSettings): AgentProfileSettings {
+  function cloneConfiguredProfile(
+    profile: ConfiguredAgentProfileReadModelRecord,
+  ): ConfiguredAgentProfileReadModelRecord {
     return {
       ...profile,
       extensionUsage: { ...profile.extensionUsage },
-      extensionOrder: [...(profile.extensionOrder ?? [])],
+      extensionOrder: [...profile.extensionOrder],
     };
   }
 
-  async function saveProfile(profile: AgentProfileSettings): Promise<AgentProfileSettings> {
-    savingProfileId = profile.id;
+  function configuredProfileById(
+    profileId: string,
+    fallback: ConfiguredAgentProfileReadModelRecord,
+  ): ConfiguredAgentProfileReadModelRecord {
+    return (
+      agents?.configuredProfiles.find((candidate) => candidate.profileId === profileId) ??
+      cloneConfiguredProfile(fallback)
+    );
+  }
+
+  async function saveProfile(
+    profile: ConfiguredAgentProfileReadModelRecord,
+  ): Promise<ConfiguredAgentProfileReadModelRecord> {
+    savingProfileId = profile.profileId;
     errorMessage = null;
     try {
-      settings = await runtime.updateAgentProfile(mutateProfile(profile));
-      onSettingsChanged?.(settings);
-      return (
-        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
-        (settings.agents.special.threadHandler.id === profile.id
-          ? settings.agents.special.threadHandler
-          : mutateProfile(profile))
-      );
+      const profileInput = {
+        profileId: profile.profileId,
+        name: profile.name,
+        providerId: profile.providerId,
+        modelId: profile.modelId,
+        reasoning: { effort: configuredAgentProfileReasoningEffort(profile) },
+        extensionUsage: { ...profile.extensionUsage },
+        extensionOrder: [...profile.extensionOrder],
+      };
+      agents =
+        profile.actor === "orchestrator"
+          ? await runtime.updateOrchestratorProfile({
+              ...profileInput,
+              followComposer: profile.followComposer,
+            })
+          : await runtime.updateThreadHandlerProfile(profileInput);
+      return configuredProfileById(profile.profileId, profile);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save agent profile.";
       throw error;
@@ -293,17 +370,16 @@
     savingWorkflowAgentKey = agent.id;
     errorMessage = null;
     try {
-      settings = await runtime.updateWorkflowAgent(agent.id, {
+      legacySettings = await runtime.updateWorkflowAgent(agent.id, {
         ...agent,
         overrides: { ...agent.overrides },
         extensionOrder: [...(agent.extensionOrder ?? [])],
       }, options);
-      onSettingsChanged?.(settings);
       if (workflowAgentInstructionDrafts[agent.id] !== undefined) {
         const { [agent.id]: _discarded, ...rest } = workflowAgentInstructionDrafts;
         workflowAgentInstructionDrafts = rest;
       }
-      return settings.workflowAgents[agent.id] ?? agent;
+      return legacySettings.workflowAgents[agent.id] ?? agent;
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save workflow agent.";
       throw error;
@@ -313,25 +389,20 @@
   }
 
   async function setProfileExtensionUsage(
-    profile: AgentProfileSettings,
+    profile: ConfiguredAgentProfileReadModelRecord,
     extensionId: string,
     state: ExtensionUsageState,
-  ): Promise<AgentProfileSettings> {
+  ): Promise<ConfiguredAgentProfileReadModelRecord> {
     errorMessage = null;
     try {
-      settings = await runtime.setAgentProfileExtensionUsage({
-        agentProfile: profile.id,
-        extensionId,
-        state,
+      agents = await runtime.setConfiguredProfileExtensionUsage({
+        actor: profile.actor,
+        profileId: profile.profileId,
+        extensionId: extensionId as ExtensionId,
+        usage: state,
       });
-      onSettingsChanged?.(settings);
-      refreshAgentContextPreview(profile.id, actorForProfileId(profile.id));
-      return (
-        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
-        (settings.agents.special.threadHandler.id === profile.id
-          ? settings.agents.special.threadHandler
-          : mutateProfile(profile))
-      );
+      refreshAgentContextPreview(profile.profileId, profile.actor);
+      return configuredProfileById(profile.profileId, profile);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save extension usage.";
       throw error;
@@ -345,14 +416,13 @@
   ): Promise<WorkflowAgentSettings> {
     errorMessage = null;
     try {
-      settings = await runtime.setAgentProfileExtensionUsage({
+      legacySettings = await runtime.setAgentProfileExtensionUsage({
         agentProfile: agent.id,
         extensionId,
         state,
       });
-      onSettingsChanged?.(settings);
       refreshAgentContextPreview(agent.id, "workflow-task");
-      return settings.workflowAgents[agent.id] ?? agent;
+      return legacySettings.workflowAgents[agent.id] ?? agent;
     } catch (error) {
       errorMessage =
         error instanceof Error ? error.message : "Unable to save workflow agent extension usage.";
@@ -368,14 +438,23 @@
   ): Promise<void> {
     errorMessage = null;
     try {
+      if (actor === "orchestrator") {
+        agents = await runtime.promoteConfiguredProfileExtensionDefault({
+          actor,
+          profileId: profileId as StateAgentProfileId,
+          extensionId: extensionId as ExtensionId,
+          usage: state,
+        });
+        refreshAgentContextPreview(profileId, actor);
+        return;
+      }
       const inventory = await runtime.setExtensionDefaultUsage({
         actorKind: actor,
         extensionId,
         state,
       });
       extensionInventoryItems = inventory.extensions;
-      settings = await runtime.getAgentSettings();
-      onSettingsChanged?.(settings);
+      legacySettings = await runtime.getAgentSettings();
       refreshAgentContextPreview(profileId, actor);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save extension default.";
@@ -404,38 +483,38 @@
   }
 
   async function updateProfileExtensionEditor(
-    profile: AgentProfileSettings,
+    profile: ConfiguredAgentProfileReadModelRecord,
     actor: AgentContextActor,
-    updates: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
-  ): Promise<AgentProfileSettings> {
+    updates: Pick<ConfiguredAgentProfileReadModelRecord, "extensionUsage" | "extensionOrder">,
+  ): Promise<ConfiguredAgentProfileReadModelRecord> {
     errorMessage = null;
     try {
-      settings = await runtime.updateAgentProfile({
-        ...mutateProfile(profile),
+      const saved = await saveProfile({
+        ...cloneConfiguredProfile(profile),
         ...updates,
       });
-      onSettingsChanged?.(settings);
-      refreshAgentContextPreview(profile.id, actor);
-      return (
-        settings.agents.orchestrators.find((candidate) => candidate.id === profile.id) ??
-        (settings.agents.special.threadHandler.id === profile.id
-          ? settings.agents.special.threadHandler
-          : mutateProfile(profile))
-      );
+      refreshAgentContextPreview(profile.profileId, actor);
+      return saved;
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save extension settings.";
       throw error;
     }
   }
 
-  function resetProfileExtensionSelection(profile: AgentProfileSettings, actor: AgentContextActor) {
+  function resetProfileExtensionSelection(
+    profile: ConfiguredAgentProfileReadModelRecord,
+    actor: AgentContextActor,
+  ) {
     return updateProfileExtensionEditor(profile, actor, {
       extensionUsage: {},
-      extensionOrder: [...(profile.extensionOrder ?? [])],
+      extensionOrder: [...profile.extensionOrder],
     });
   }
 
-  function resetProfileExtensionOrder(profile: AgentProfileSettings, actor: AgentContextActor) {
+  function resetProfileExtensionOrder(
+    profile: ConfiguredAgentProfileReadModelRecord,
+    actor: AgentContextActor,
+  ) {
     return updateProfileExtensionEditor(profile, actor, {
       extensionUsage: { ...profile.extensionUsage },
       extensionOrder: [],
@@ -443,7 +522,7 @@
   }
 
   function setProfileExtensionOrder(
-    profile: AgentProfileSettings,
+    profile: ConfiguredAgentProfileReadModelRecord,
     actor: AgentContextActor,
     extensionOrder: string[],
   ) {
@@ -464,10 +543,9 @@
         overrides: { ...updates.overrides },
         extensionOrder: [...(updates.extensionOrder ?? [])],
       };
-      settings = await runtime.updateWorkflowAgent(agent.id, nextAgent);
-      onSettingsChanged?.(settings);
+      legacySettings = await runtime.updateWorkflowAgent(agent.id, nextAgent);
       refreshAgentContextPreview(agent.id, "workflow-task");
-      return settings.workflowAgents[agent.id] ?? nextAgent;
+      return legacySettings.workflowAgents[agent.id] ?? nextAgent;
     } catch (error) {
       errorMessage =
         error instanceof Error ? error.message : "Unable to save workflow agent extensions.";
@@ -506,7 +584,7 @@
       .replace(/^-+|-+$/g, "")
       .slice(0, 36);
     const prefix = slug || "orchestrator";
-    const existingIds = new Set(orchestrators.map((profile) => profile.id));
+    const existingIds = new Set(orchestrators.map((profile) => profile.profileId));
     let index = orchestrators.length + 1;
     let id = `${prefix}-${index}`;
     while (existingIds.has(id)) {
@@ -517,23 +595,25 @@
   }
 
   function createWorkflowAgentId(baseName: string): WorkflowAgentKey {
-    return createWorkflowAgentExportId(baseName, Object.keys(settings?.workflowAgents ?? {}));
+    return createWorkflowAgentExportId(baseName, Object.keys(legacySettings?.workflowAgents ?? {}));
   }
 
-  async function createOrchestratorProfile(source?: AgentProfileSettings) {
+  async function createOrchestratorProfile(source?: ConfiguredAgentProfileReadModelRecord) {
     const baseProfile = source ?? orchestrators[0];
     if (!baseProfile) return;
     const name = source ? `${source.name} copy` : `Orchestrator ${orchestrators.length + 1}`;
-    const profile: AgentProfileSettings = {
-      ...mutateProfile(baseProfile),
-      id: createProfileId(name),
-      kind: "orchestrator",
+    const profile: ConfiguredAgentProfileReadModelRecord = {
+      ...cloneConfiguredProfile(baseProfile),
+      profileId: createProfileId(name) as StateAgentProfileId,
+      actor: "orchestrator",
       name,
       builtin: false,
       locked: false,
+      deletable: true,
+      position: orchestrators.length,
     };
     await saveProfile(profile);
-    expandedProfileIds.add(profile.id);
+    expandedProfileIds.add(profile.profileId);
     expandedProfileIds = new Set(expandedProfileIds);
   }
 
@@ -574,8 +654,7 @@
     deletingWorkflowAgentKey = agent.id;
     errorMessage = null;
     try {
-      settings = await runtime.deleteWorkflowAgent(agent.id);
-      onSettingsChanged?.(settings);
+      legacySettings = await runtime.deleteWorkflowAgent(agent.id);
       confirmingDeleteWorkflowAgentKey = null;
       expandedProfileIds.delete(agent.id);
       expandedProfileIds = new Set(expandedProfileIds);
@@ -590,20 +669,25 @@
     confirmingDeleteWorkflowAgentKey = null;
   }
 
-  function requestDeleteProfile(profile: AgentProfileSettings) {
-    if (profile.locked || deletingProfileId) return;
-    confirmingDeleteProfileId = profile.id;
+  function requestDeleteProfile(profile: ConfiguredAgentProfileReadModelRecord) {
+    if (!profile.deletable || deletingProfileId) return;
+    confirmingDeleteProfileId = profile.profileId;
   }
 
-  async function deleteProfile(profile: AgentProfileSettings) {
-    if (profile.locked || deletingProfileId || confirmingDeleteProfileId !== profile.id) return;
-    deletingProfileId = profile.id;
+  async function deleteProfile(profile: ConfiguredAgentProfileReadModelRecord) {
+    if (
+      !profile.deletable ||
+      deletingProfileId ||
+      confirmingDeleteProfileId !== profile.profileId
+    ) {
+      return;
+    }
+    deletingProfileId = profile.profileId;
     errorMessage = null;
     try {
-      settings = await runtime.deleteAgentProfile(profile.id);
-      onSettingsChanged?.(settings);
+      agents = await runtime.deleteOrchestratorProfile({ profileId: profile.profileId });
       confirmingDeleteProfileId = null;
-      expandedProfileIds.delete(profile.id);
+      expandedProfileIds.delete(profile.profileId);
       expandedProfileIds = new Set(expandedProfileIds);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to delete agent profile.";
@@ -659,13 +743,16 @@
     window.removeEventListener("blur", cancelPointerDrag);
   }
 
-  function handlePointerDown(event: PointerEvent, profile: AgentProfileSettings) {
+  function handlePointerDown(
+    event: PointerEvent,
+    profile: ConfiguredAgentProfileReadModelRecord,
+  ) {
     if (event.button !== 0 || !event.isPrimary) return;
     if (profile.locked) return;
     clearDragFrame();
     removeDragListeners();
     profileDrag = {
-      profileId: profile.id,
+      profileId: profile.profileId,
       pointerId: event.pointerId,
       startY: event.clientY,
       lastY: event.clientY,
@@ -757,7 +844,7 @@
     const pointerId = profileDrag.pointerId;
     const beforeProfileId = dropBeforeProfileId;
     const shouldCommitReorder =
-      completedDrag && queuedMessageOrderChanged(orchestrators, profileId, beforeProfileId);
+      completedDrag && configuredProfileOrderChanged(orchestrators, profileId, beforeProfileId);
     profileDrag = null;
     draggedProfileId = null;
     dropBeforeProfileId = null;
@@ -768,11 +855,10 @@
     savingProfileId = profileId;
     errorMessage = null;
     try {
-      const nextIds = reorderQueuedMessageItems(orchestrators, profileId, beforeProfileId).map(
-        (candidate) => candidate.id,
+      const nextIds = reorderConfiguredProfiles(orchestrators, profileId, beforeProfileId).map(
+        (candidate) => candidate.profileId,
       );
-      settings = await runtime.reorderOrchestratorAgents(nextIds);
-      onSettingsChanged?.(settings);
+      agents = await runtime.reorderOrchestratorProfiles({ profileIds: nextIds });
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to reorder profiles.";
     } finally {
@@ -794,13 +880,28 @@
   function extensionUsageItems(input: {
     actor: AgentContextActor;
     profileId: string;
-    usage: Record<string, ExtensionUsageState>;
+    usage: Readonly<Record<string, ExtensionUsageState>>;
   }): ExtensionUsageControlItem[] {
+    const stateActorDefaults =
+      input.actor === "orchestrator"
+        ? agents?.actorExtensionDefaults.find((record) => record.actor === input.actor)
+        : null;
+    const inventoryDefaults =
+      input.actor === "orchestrator"
+        ? mergeActorExtensionDefaults({
+            actor: input.actor,
+            inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults,
+            stateDefaults: stateActorDefaults,
+          })
+        : (runtime.extensionsInventorySnapshot?.defaults ?? null);
     return buildExtensionUsageItems({
       ...input,
       extensionInventoryItems,
-      inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
-      networkAccess: settings?.appPreferences.networkAccess ?? true,
+      inventoryDefaults,
+      networkAccess:
+        runtime.appPreferencesSnapshot?.networkAccess ??
+        legacySettings?.appPreferences.networkAccess ??
+        true,
     });
   }
 
@@ -816,18 +917,19 @@
   }
 
   function syncRuntimeSnapshots() {
-    const nextSettings =
-      !initialSettingsSeeded && initialSettings ? initialSettings : runtime.agentSettingsSnapshot;
-    const nextModelChoices = runtime.agentModelChoicesSnapshot;
+    const nextAgents = runtime.agentsSnapshot;
+    const nextSettings = runtime.agentSettingsSnapshot;
+    const nextModelChoices = runtime.modelMetadataSnapshot;
     const nextExtensionsInventory = runtime.extensionsInventorySnapshot;
-    initialSettingsSeeded = true;
-    if (nextSettings) {
-      settings = nextSettings;
+    if (nextAgents) {
+      agents = nextAgents;
       loading = false;
-      onSettingsChanged?.(nextSettings);
+    }
+    if (nextSettings) {
+      legacySettings = nextSettings;
     }
     if (nextModelChoices) {
-      modelChoices = nextModelChoices.items;
+      modelChoices = [...nextModelChoices];
     }
     if (nextExtensionsInventory) {
       extensionInventoryItems = nextExtensionsInventory.extensions;
@@ -859,17 +961,12 @@
   });
 
   $effect(() => {
-    if (!initialSettings || settings) return;
-    settings = initialSettings;
-    loading = false;
-  });
-
-  $effect(() => {
-    void settings;
+    void agents;
+    void legacySettings;
     void targetAgentProfileId;
     void targetView;
-    if (settings && targetView === "generated-context-preview") {
-      const targetProfileId = targetAgentProfileId ?? settings.agents.orchestrators[0]?.id ?? null;
+    if (agents && targetView === "generated-context-preview") {
+      const targetProfileId = targetAgentProfileId ?? orchestrators[0]?.profileId ?? null;
       if (targetProfileId) {
         expandedProfileIds.add(targetProfileId);
         expandedProfileIds = new Set(expandedProfileIds);
@@ -885,7 +982,7 @@
     <p class="agents-status">Loading...</p>
   {:else if errorMessage}
     <p class="agents-error">{errorMessage}</p>
-  {:else if settings}
+  {:else if agents}
     <div class="agent-category">
       <div class="agent-category-heading">
         <div class="agent-category-title">
@@ -905,13 +1002,13 @@
         </div>
       </div>
       <div class="agent-rows" bind:this={orchestratorRowsElement}>
-        {#each displayedOrchestrators as profile (profile.id)}
-          {@const expanded = expandedProfileIds.has(profile.id)}
+        {#each displayedOrchestrators as profile (profile.profileId)}
+          {@const expanded = expandedProfileIds.has(profile.profileId)}
           <article
-            class={`agent-profile-row ${expanded ? "expanded" : ""} ${profile.id === draggedProfileId ? "dragging" : ""}`.trim()}
-            data-profile-id={profile.id}
+            class={`agent-profile-row ${expanded ? "expanded" : ""} ${profile.profileId === draggedProfileId ? "dragging" : ""}`.trim()}
+            data-profile-id={profile.profileId}
             data-reorderable={profile.locked ? "false" : "true"}
-            data-targeted={targetAgentProfileId === profile.id ? "true" : undefined}
+            data-targeted={targetAgentProfileId === profile.profileId ? "true" : undefined}
             animate:flip={{ duration: draggedProfileId ? 170 : 0 }}
           >
             {@render profileRowContent(profile, "orchestrator", expanded)}
@@ -929,12 +1026,12 @@
       </div>
       <div class="agent-rows">
         {#if threadHandler}
-          {@const expanded = expandedProfileIds.has(threadHandler.id)}
+          {@const expanded = expandedProfileIds.has(threadHandler.profileId)}
           <article
             class={`agent-profile-row ${expanded ? "expanded" : ""}`.trim()}
-            data-profile-id={threadHandler.id}
+            data-profile-id={threadHandler.profileId}
             data-reorderable="false"
-            data-targeted={targetAgentProfileId === threadHandler.id ? "true" : undefined}
+            data-targeted={targetAgentProfileId === threadHandler.profileId ? "true" : undefined}
           >
             {@render profileRowContent(threadHandler, "special", expanded)}
           </article>
@@ -987,7 +1084,7 @@
     deleting={deletingWorkflowAgentKey === agent.id}
     isDefault={isDefaultWorkflowAgent(agent)}
     saving={savingWorkflowAgentKey === agent.id}
-    preferredExternalEditor={settings?.appPreferences.preferredExternalEditor}
+    preferredExternalEditor={legacySettings?.appPreferences.preferredExternalEditor}
     sourceTokenCountLabel={expanded
       ? formatPromptTokenCount(workflowAgentInstructionTokenCount(agent))
       : null}
@@ -1040,7 +1137,7 @@
 {/snippet}
 
 {#snippet profileRowContent(
-  profile: AgentProfileSettings,
+  profile: ConfiguredAgentProfileReadModelRecord,
   category: "orchestrator" | "special",
   expanded: boolean,
 )}
@@ -1049,12 +1146,12 @@
     {expanded}
     {modelChoices}
     {profile}
-    confirmingDelete={confirmingDeleteProfileId === profile.id}
-    deleting={deletingProfileId === profile.id}
-    saving={savingProfileId === profile.id}
+    confirmingDelete={confirmingDeleteProfileId === profile.profileId}
+    deleting={deletingProfileId === profile.profileId}
+    saving={savingProfileId === profile.profileId}
     extensionUsageItems={extensionUsageItems({
       actor: category === "special" ? "handler" : "orchestrator",
-      profileId: profile.id,
+      profileId: profile.profileId,
       usage: profile.extensionUsage,
     })}
     onCancelDelete={cancelDeleteProfileConfirmation}
@@ -1065,22 +1162,22 @@
     onSave={saveProfile}
     onOpenExtension={openExtension}
     onSetExtensionDefault={category === "orchestrator"
-      ? (extensionId, state) => setActorExtensionDefault("orchestrator", profile.id, extensionId, state)
+      ? (extensionId, state) => setActorExtensionDefault("orchestrator", profile.profileId, extensionId, state)
       : undefined}
     onSetExtensionUsage={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
-    onToggleExpanded={() => toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")}
+    onToggleExpanded={() => toggleExpanded(profile.profileId, category === "special" ? "handler" : "orchestrator")}
   />
   {#if expanded}
     {@const actor = category === "special" ? "handler" : "orchestrator"}
-    {@const previewKey = contextPreviewKey(actor, profile.id)}
+    {@const previewKey = contextPreviewKey(actor, profile.profileId)}
     <div class="agent-profile-expanded">
       <ProfileExtensionEditor
         {actor}
-        disabled={deletingProfileId === profile.id}
+        disabled={deletingProfileId === profile.profileId}
         extensionOrder={profile.extensionOrder ?? []}
         items={extensionUsageItems({
           actor,
-          profileId: profile.id,
+          profileId: profile.profileId,
           usage: profile.extensionUsage,
         })}
         loading={loadingContextPreviewKey === previewKey}
@@ -1093,7 +1190,7 @@
         onSetExtensionDefault={(extensionId, state) =>
           actor === "handler"
             ? undefined
-            : setActorExtensionDefault(actor, profile.id, extensionId, state)}
+            : setActorExtensionDefault(actor, profile.profileId, extensionId, state)}
         onStateChange={(extensionId, state) => setProfileExtensionUsage(profile, extensionId, state)}
       />
     </div>

@@ -12,10 +12,10 @@
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import FolderGit2Icon from "@lucide/svelte/icons/folder-git-2";
   import type { ContextBudget } from "./context-budget";
-  import type { AgentProfileSettings } from "../shared/agent-settings";
   import { getShortcutCompact, getShortcutReadable } from "../shared/shortcut-registry";
   import type {
     AppLogSummary,
+    ConfiguredAgentProfileReadModelRecord,
     WorkspaceBranchInfo,
     WorkspaceCommandRollup,
     WorkspaceSessionNavigationReadModel,
@@ -36,6 +36,7 @@
   import Tooltip from "./ui/Tooltip.svelte";
   import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ui/ContextMenu.svelte";
+  import { configuredAgentProfileReasoningEffort } from "./configured-agent-profile";
 
   const NEW_SESSION_MENU_CLOSE_DELAY_MS = 500;
 
@@ -58,7 +59,7 @@
     paneLocationsBySessionId?: Record<string, SidebarPaneLocation[]>;
     paneLocationsByThreadId?: Record<string, SidebarPaneLocation[]>;
     paneLocationsByWorkflowRunId?: Record<string, SidebarPaneLocation[]>;
-    orchestratorProfiles?: AgentProfileSettings[];
+    orchestratorProfiles?: readonly ConfiguredAgentProfileReadModelRecord[];
     appLogSummary?: AppLogSummary | null;
     busy?: boolean;
     errorMessage?: string;
@@ -665,8 +666,8 @@
                 <span class="sidebar-action-label">New orchestrator</span>
                 {#if orchestratorProfiles[0]}
                   <span class="new-orchestrator-default">
-                    <span>{orchestratorProfiles[0].model}</span>
-                    <span>{orchestratorProfiles[0].reasoningEffort}</span>
+                    <span>{orchestratorProfiles[0].modelId}</span>
+                    <span>{configuredAgentProfileReasoningEffort(orchestratorProfiles[0])}</span>
                   </span>
                 {/if}
               </span>
@@ -676,7 +677,7 @@
         </div>
         <div class="new-session-accordion" aria-hidden={!showNewSessionMenu}>
           <div class="new-session-accordion-inner">
-            {#each orchestratorProfiles.slice(1) as profile (profile.id)}
+            {#each orchestratorProfiles.slice(1) as profile (profile.profileId)}
               <button
                 type="button"
                 class="sidebar-action-row new-session-child profile-picker-row"
@@ -684,15 +685,15 @@
                 tabindex={showNewSessionMenu ? 0 : -1}
                 onclick={(event) => {
                   closeNewSessionMenu();
-                  onCreateSession(event, profile.id);
+                  onCreateSession(event, profile.profileId);
                 }}
               >
                 <span class="sidebar-action-icon"><BotIcon aria-hidden="true" size={14} strokeWidth={1.9} /></span>
                 <span class="profile-picker-content">
                   <span class="sidebar-action-label">{profile.name}</span>
                   <span class="profile-picker-badges">
-                    <span>{profile.model}</span>
-                    <span>{profile.reasoningEffort}</span>
+                    <span>{profile.modelId}</span>
+                    <span>{configuredAgentProfileReasoningEffort(profile)}</span>
                   </span>
                 </span>
               </button>

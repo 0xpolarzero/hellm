@@ -17,6 +17,7 @@ import {
   type ActorKind,
   type CommandId,
   type ExtensionHandlerResult,
+  type MessageId,
   type NativeToolResult,
   type PiRuntimeEvent,
   type PromptExecutionContext,
@@ -752,7 +753,12 @@ function settlePromptTurn(input: {
   const turnStatus = input.status === "completed" ? "completed" : "failed";
   return Effect.gen(function* () {
     const finishedTurn = yield* input.turnState
-      .finishTurn({ turnId: state.input.turn.id, status: turnStatus })
+      .finishTurn({
+        turnId: state.input.turn.id,
+        status: turnStatus,
+        assistantMessageId: state.assistantMessageId as MessageId,
+        assistantText: state.assistantText,
+      })
       .pipe(Effect.mapError((cause) => runtimeStateError("runtime.prompt.finishTurn", cause)));
     yield* input.eventBus
       .publishStateInvalidations({ afterCommit: finishedTurn.afterCommit })

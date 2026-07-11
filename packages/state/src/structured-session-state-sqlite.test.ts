@@ -190,6 +190,75 @@ describe("structured session state SQLite persistence", () => {
     );
   });
 
+  it("persists orchestrator and workflow-task extension defaults independently", () => {
+    const first = createSqliteStore();
+    const orchestrator = first.store.setAgentActorExtensionDefaults({
+      actor: "orchestrator",
+      extensionUsage: { shell: "loaded", github: "available" },
+      extensionOrder: ["shell", "github"],
+    });
+    const workflowTask = first.store.setAgentActorExtensionDefaults({
+      actor: "workflow-task",
+      extensionUsage: { smithers: "unavailable" },
+      extensionOrder: ["smithers", "shell"],
+    });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.listAgentActorExtensionDefaults()).toEqual([
+      {
+        actor: "orchestrator",
+        extensionUsage: { shell: "loaded", github: "available" },
+        extensionOrder: ["shell", "github"],
+        updatedAt: orchestrator.updatedAt,
+      },
+      {
+        actor: "workflow-task",
+        extensionUsage: { smithers: "unavailable" },
+        extensionOrder: ["smithers", "shell"],
+        updatedAt: workflowTask.updatedAt,
+      },
+    ]);
+  });
+
+  it("persists settled assistant transcript text and identity across restart", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-assistant-transcript",
+      title: "Assistant transcript",
+    });
+    const turn = first.store.startTurn({
+      sessionId: "session-assistant-transcript",
+      surfacePiSessionId: "session-assistant-transcript",
+      requestSummary: "Explain the result",
+    });
+    first.store.finishTurn({
+      turnId: turn.id,
+      status: "completed",
+      assistantMessageId: `${turn.id}:assistant`,
+      assistantText: "The result is durable.",
+    });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.getSessionState("session-assistant-transcript").turns).toMatchObject([
+      {
+        id: turn.id,
+        assistantMessageId: `${turn.id}:assistant`,
+        assistantText: "The result is durable.",
+        status: "completed",
+      },
+    ]);
+  });
+
   it("normalizes managed snippet titles and persists exact snippet metadata", () => {
     const { store, workspaceCwd } = createSqliteStore();
     const workspaceId = workspaceCwd as WorkspaceId;

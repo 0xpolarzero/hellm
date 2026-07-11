@@ -1039,6 +1039,8 @@ describe("@svvy/core state-backed port contracts", () => {
       requestSummary: "Implement the runtime facade",
       turnDecision: "pending",
       status: "running",
+      assistantMessageId: null,
+      assistantText: null,
       startedAt: "2026-06-21T12:34:56.789Z",
       updatedAt: "2026-06-21T12:34:56.789Z",
       finishedAt: null,
@@ -1062,6 +1064,8 @@ describe("@svvy/core state-backed port contracts", () => {
     const finishInput = Schema.decodeUnknownSync(FinishRuntimeTurnInputSchema)({
       turnId: "turn_01",
       status: "completed",
+      assistantMessageId: "message_assistant_01",
+      assistantText: "The runtime facade is implemented.",
     });
 
     expect(pendingRecord.turnDecision).toBe("pending");
@@ -1069,6 +1073,7 @@ describe("@svvy/core state-backed port contracts", () => {
     expect(startInput.threadId).toBeUndefined();
     expect(decisionInput.onlyIfPending).toBe(true);
     expect(finishInput.status).toBe("completed");
+    expect(finishInput.assistantText).toBe("The runtime facade is implemented.");
   });
 
   it("rejects running as a runtime turn finish status", () => {

@@ -2,7 +2,6 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, UserMessage } from "@mariozechner/pi-ai";
 import type {
   AgentProfileId,
-  AgentProfileSettings,
   AgentSettingsState,
   AppPreferences,
   RequestUserInputSettings,
@@ -46,7 +45,9 @@ import type {
   AppLogSummary,
   CommandId,
   JsonValue,
+  ListModelsInput,
   MessageId,
+  ModelInfo,
   PositiveSafeInteger,
   ProviderAuthStatus,
   ProviderId,
@@ -56,7 +57,11 @@ import type {
   RuntimeEventGenerationId,
   RuntimeEventSequence,
   RuntimeMessageDelivery,
+  OpenExtensionSourceEditInput,
   RuntimeSurfaceTarget,
+  SaveExtensionSourceEditInput,
+  SourceEditSaveResult,
+  SourceEditSession,
   RuntimeSubmittedAttachment,
   RuntimeClientSubmissionMetadata,
   StateInvalidationDescriptor,
@@ -78,22 +83,35 @@ import type {
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 import type {
+  AgentActorExtensionDefaultsReadModelRecord as StateAgentActorExtensionDefaultsReadModelRecord,
+  AgentBindingReadModelRecord as StateAgentBindingReadModelRecord,
+  AgentsReadModel as StateAgentsReadModel,
   CommandInspectorReadModel as StateCommandInspectorReadModel,
+  ConfiguredAgentProfileReadModelRecord as StateConfiguredAgentProfileReadModelRecord,
   CreateManagedSnippetCommandInput,
+  DeleteOrchestratorProfileCommandInput,
   DeleteManagedSnippetCommandInput,
+  GeneratedContextPreviewReadModelRecord as StateGeneratedContextPreviewReadModelRecord,
   MarkAppLogReadCommandInput,
   MarkSessionReadCommandInput,
   MarkSessionUnreadCommandInput,
+  PromoteProfileExtensionDefaultCommandInput,
+  ReorderOrchestratorProfilesCommandInput,
+  ResetActorExtensionDefaultsCommandInput,
   SaveWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceTabCommandInput,
   SetSessionArchivedCommandInput,
   SetSessionNavigationSectionStateCommandInput,
   SetSessionPinnedCommandInput,
+  SetExternalInstructionActorUsageCommandInput,
+  SetProfileExtensionUsageCommandInput,
   SetSnippetEnabledCommandInput,
   SetWorkspaceTabsCommandInput,
   StateCommandResult,
   UpdateAppPreferencesCommandInput,
+  UpdateOrchestratorProfileCommandInput,
+  UpdateThreadHandlerProfileCommandInput,
   UpdateManagedSnippetCommandInput,
 } from "@svvy/state";
 
@@ -307,36 +325,12 @@ export interface ApprovalsReadModel {
   requests: readonly WorkspaceRuntimeApprovalRequest[];
 }
 
-export interface AgentsReadModel {
-  profiles: readonly AgentProfileReadModelRecord[];
-  generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
-}
-
-export interface AgentProfileReadModelRecord {
-  profileId: string;
-  actor: "orchestrator" | "handler" | "workflow-task";
-  name: string;
-  providerId: string;
-  modelId: string;
-  reasoning: JsonValue | null;
-  followComposer: boolean;
-  loadedExtensionIds: readonly string[];
-  availableExtensionIds: readonly string[];
-  generatedAgentContextFingerprint: string | null;
-  source: "surface-binding" | "handler-thread" | "workflow-task-attempt";
-}
-
-export interface GeneratedContextPreviewReadModelRecord {
-  ownerKind: "session" | "thread" | "workflow-task-attempt";
-  ownerId: string;
-  surfacePiSessionId: SurfacePiSessionId;
-  actorKind: "orchestrator" | "handler" | "workflow-task";
-  generatedAgentContextFingerprint: string;
-  generatedAgentContextRevision: number;
-  loadedExtensionIds: readonly string[];
-  availableExtensionIds: readonly string[];
-  externalSourceHashes: readonly string[];
-}
+export type AgentsReadModel = StateAgentsReadModel;
+export type AgentActorExtensionDefaultsReadModelRecord =
+  StateAgentActorExtensionDefaultsReadModelRecord;
+export type AgentBindingReadModelRecord = StateAgentBindingReadModelRecord;
+export type ConfiguredAgentProfileReadModelRecord = StateConfiguredAgentProfileReadModelRecord;
+export type GeneratedContextPreviewReadModelRecord = StateGeneratedContextPreviewReadModelRecord;
 
 export interface ExtensionsReadModel {
   records: readonly ExtensionReadModelRecord[];
@@ -1704,18 +1698,6 @@ export interface CreateSessionRequest {
   agentProfileId?: AgentProfileId;
 }
 
-export interface UpdateAgentProfileRequest {
-  profile: AgentProfileSettings;
-}
-
-export interface DeleteAgentProfileRequest {
-  id: AgentProfileId;
-}
-
-export interface ReorderOrchestratorAgentsRequest {
-  ids: AgentProfileId[];
-}
-
 export interface UpdateWorkflowAgentRequest {
   key: WorkflowAgentKey;
   settings: WorkflowAgentSettings;
@@ -1791,22 +1773,7 @@ export interface AgentContextPreviewResponse {
   extensions: AgentContextPreviewExtension[];
 }
 
-export interface AgentModelChoice {
-  providerId: string;
-  modelId: string;
-  providerAuthenticated: boolean;
-  authSource: Exclude<AuthKeyType, "none"> | "missing";
-  supportedReasoning: ReasoningEffort[];
-  capabilities: {
-    reasoning: boolean;
-    vision: boolean;
-    toolCalling: boolean;
-  };
-}
-
-export interface AgentModelChoicesResponse {
-  items: AgentModelChoice[];
-}
+export type AgentModelChoice = ModelInfo;
 
 export interface OpenSessionRequest {
   sessionId: string;
@@ -1876,6 +1843,38 @@ export interface ChatRPCSchema {
         params: UpdateAppPreferencesCommandInput;
         response: StateCommandResult;
       };
+      stateAgentProfilesUpdateOrchestrator: {
+        params: WorkspaceScoped<UpdateOrchestratorProfileCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesUpdateThreadHandler: {
+        params: WorkspaceScoped<UpdateThreadHandlerProfileCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesDeleteOrchestrator: {
+        params: WorkspaceScoped<DeleteOrchestratorProfileCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesReorderOrchestrators: {
+        params: WorkspaceScoped<ReorderOrchestratorProfilesCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesSetExtensionUsage: {
+        params: WorkspaceScoped<SetProfileExtensionUsageCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesPromoteExtensionDefault: {
+        params: WorkspaceScoped<PromoteProfileExtensionDefaultCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesResetExtensionDefaults: {
+        params: WorkspaceScoped<ResetActorExtensionDefaultsCommandInput>;
+        response: StateCommandResult;
+      };
+      stateAgentProfilesSetExternalInstructionUsage: {
+        params: WorkspaceScoped<SetExternalInstructionActorUsageCommandInput>;
+        response: StateCommandResult;
+      };
       getGeneratedAgentContextExternalSources: {
         params: WorkspaceScopedRequest;
         response: GeneratedAgentContextExternalSource[];
@@ -1900,17 +1899,13 @@ export interface ChatRPCSchema {
         params: OpenSnippetSourceInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
       };
-      updateAgentProfile: {
-        params: WorkspaceScoped<UpdateAgentProfileRequest>;
-        response: AgentSettingsState;
+      openSourceEdit: {
+        params: OpenExtensionSourceEditInput;
+        response: SourceEditSession;
       };
-      deleteAgentProfile: {
-        params: WorkspaceScoped<DeleteAgentProfileRequest>;
-        response: AgentSettingsState;
-      };
-      reorderOrchestratorAgents: {
-        params: WorkspaceScoped<ReorderOrchestratorAgentsRequest>;
-        response: AgentSettingsState;
+      saveSourceEdit: {
+        params: SaveExtensionSourceEditInput;
+        response: SourceEditSaveResult;
       };
       updateWorkflowAgent: {
         params: WorkspaceScoped<UpdateWorkflowAgentRequest>;
@@ -1932,9 +1927,9 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<AgentContextPreviewRequest>;
         response: AgentContextPreviewResponse;
       };
-      getAgentModelChoices: {
-        params: WorkspaceScopedRequest;
-        response: AgentModelChoicesResponse;
+      listModelMetadata: {
+        params: ListModelsInput;
+        response: readonly ModelInfo[];
       };
       getExtensionsInventory: {
         params: WorkspaceScopedRequest;

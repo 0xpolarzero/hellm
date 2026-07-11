@@ -17,11 +17,16 @@ import type {
   IsoDateTimeStringSchema,
   JsonValue,
   MimeType,
+  ModelInfo,
+  OpenExtensionSourceEditInput,
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
   RuntimeAttachmentId,
   RuntimeSubmittedAttachment,
+  SaveExtensionSourceEditInput,
   SnippetId,
+  SourceEditSaveResult,
+  SourceEditSession,
   ThreadId,
   WorkflowTaskAttemptId,
   WorkspaceId,
@@ -77,7 +82,7 @@ import {
   type WorkspacePaneRecord,
   type AgentContextPreviewRequest,
   type AgentContextPreviewResponse,
-  type AgentModelChoicesResponse,
+  type AgentsReadModel,
   type AppPreferencesReadModel,
   type RequestUserInputAnswerResponse,
   type AddExtensionInstructionFileRequest,
@@ -110,7 +115,15 @@ import {
   type WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
 import type {
+  DeleteOrchestratorProfileCommandInput,
+  OrchestratorAgentProfileInput,
+  PromoteProfileExtensionDefaultCommandInput,
+  ReorderOrchestratorProfilesCommandInput,
+  ResetActorExtensionDefaultsCommandInput,
   SaveWorkspaceLayoutSlotCommandInput,
+  SetExternalInstructionActorUsageCommandInput,
+  SetProfileExtensionUsageCommandInput,
+  ThreadHandlerProfileInput,
   UpdateAppPreferencesCommandInput,
 } from "@svvy/state";
 import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
@@ -130,7 +143,6 @@ import {
   type AppPreferences,
   DEFAULT_AGENT_SETTINGS_STATE,
   type ReasoningEffort,
-  type AgentProfileSettings,
   type AgentProfileId,
   type RequestUserInputSettings,
   type WorkflowAgentKey,
@@ -208,8 +220,9 @@ type AppReadModelCache = {
   workspaceChrome: WorkspaceChromeReadModel | null;
   agentSettings: AgentSettingsState | null;
   appPreferences: AppPreferences | null;
+  agents: AgentsReadModel | null;
   workflowsGenerated: WorkflowsGeneratedReadModel | null;
-  agentModelChoices: AgentModelChoicesResponse | null;
+  modelMetadata: readonly ModelInfo[] | null;
   providerAuths: ProviderAuthInfo[] | null;
 };
 
@@ -225,8 +238,9 @@ const appReadModelCache: AppReadModelCache = {
   workspaceChrome: null,
   agentSettings: null,
   appPreferences: null,
+  agents: null,
   workflowsGenerated: null,
-  agentModelChoices: null,
+  modelMetadata: null,
   providerAuths: null,
 };
 
@@ -723,7 +737,7 @@ export interface ChatRuntimeRpcClient {
     rendererReady: typeof rpc.request.rendererReady;
     getAgentSettings: typeof rpc.request.getAgentSettings;
     getAgentContextPreview: typeof rpc.request.getAgentContextPreview;
-    getAgentModelChoices: typeof rpc.request.getAgentModelChoices;
+    listModelMetadata: typeof rpc.request.listModelMetadata;
     getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
     fetchStateReadModel: typeof rpc.request.fetchStateReadModel;
     refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
@@ -757,9 +771,16 @@ export interface ChatRuntimeRpcClient {
     stateSnippetsDeleteManaged: typeof rpc.request.stateSnippetsDeleteManaged;
     stateSnippetsSetEnabled: typeof rpc.request.stateSnippetsSetEnabled;
     openSnippetSourceInEditor: typeof rpc.request.openSnippetSourceInEditor;
-    updateAgentProfile: typeof rpc.request.updateAgentProfile;
-    deleteAgentProfile: typeof rpc.request.deleteAgentProfile;
-    reorderOrchestratorAgents: typeof rpc.request.reorderOrchestratorAgents;
+    openSourceEdit: typeof rpc.request.openSourceEdit;
+    saveSourceEdit: typeof rpc.request.saveSourceEdit;
+    stateAgentProfilesUpdateOrchestrator: typeof rpc.request.stateAgentProfilesUpdateOrchestrator;
+    stateAgentProfilesUpdateThreadHandler: typeof rpc.request.stateAgentProfilesUpdateThreadHandler;
+    stateAgentProfilesDeleteOrchestrator: typeof rpc.request.stateAgentProfilesDeleteOrchestrator;
+    stateAgentProfilesReorderOrchestrators: typeof rpc.request.stateAgentProfilesReorderOrchestrators;
+    stateAgentProfilesSetExtensionUsage: typeof rpc.request.stateAgentProfilesSetExtensionUsage;
+    stateAgentProfilesPromoteExtensionDefault: typeof rpc.request.stateAgentProfilesPromoteExtensionDefault;
+    stateAgentProfilesResetExtensionDefaults: typeof rpc.request.stateAgentProfilesResetExtensionDefaults;
+    stateAgentProfilesSetExternalInstructionUsage: typeof rpc.request.stateAgentProfilesSetExternalInstructionUsage;
     updateWorkflowAgent: typeof rpc.request.updateWorkflowAgent;
     deleteWorkflowAgent: typeof rpc.request.deleteWorkflowAgent;
     openWorkflowAgentSourceInEditor: typeof rpc.request.openWorkflowAgentSourceInEditor;
@@ -841,7 +862,8 @@ export interface ChatRuntime {
   workspaceChromeSnapshot: WorkspaceChromeReadModel | null;
   agentSettingsSnapshot: AgentSettingsState | null;
   appPreferencesSnapshot: AppPreferences | null;
-  agentModelChoicesSnapshot: AgentModelChoicesResponse | null;
+  agentsSnapshot: AgentsReadModel | null;
+  modelMetadataSnapshot: readonly ModelInfo[] | null;
   providerAuthsSnapshot: ProviderAuthInfo[] | null;
   extensionsInventorySnapshot: ExtensionsInventoryReadModel | null;
   externalInstructionSourcesSnapshot: GeneratedAgentContextExternalSource[] | null;
@@ -946,12 +968,35 @@ export interface ChatRuntime {
     target: "source" | "generated";
   }) => Promise<boolean>;
   openGeneratedAgentContextExternalSourceInEditor: (path: string) => Promise<boolean>;
+  openSourceEdit: (input: OpenExtensionSourceEditInput) => Promise<SourceEditSession>;
+  saveSourceEdit: (input: SaveExtensionSourceEditInput) => Promise<SourceEditSaveResult>;
   getGeneratedAgentContextExternalSources: () => Promise<GeneratedAgentContextExternalSource[]>;
   getAgentSettings: () => Promise<AgentSettingsState>;
+  getAgents: () => Promise<AgentsReadModel>;
+  updateOrchestratorProfile: (profile: OrchestratorAgentProfileInput) => Promise<AgentsReadModel>;
+  updateThreadHandlerProfile: (profile: ThreadHandlerProfileInput) => Promise<AgentsReadModel>;
+  deleteOrchestratorProfile: (
+    input: Omit<DeleteOrchestratorProfileCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
+  reorderOrchestratorProfiles: (
+    input: Omit<ReorderOrchestratorProfilesCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
+  setConfiguredProfileExtensionUsage: (
+    input: Omit<SetProfileExtensionUsageCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
+  promoteConfiguredProfileExtensionDefault: (
+    input: Omit<PromoteProfileExtensionDefaultCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
+  resetConfiguredActorExtensionDefaults: (
+    input: Omit<ResetActorExtensionDefaultsCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
+  setConfiguredExternalInstructionUsage: (
+    input: Omit<SetExternalInstructionActorUsageCommandInput, "clientSubmission">,
+  ) => Promise<AgentsReadModel>;
   getAgentContextPreview: (
     request?: AgentContextPreviewRequest,
   ) => Promise<AgentContextPreviewResponse>;
-  getAgentModelChoices: () => Promise<AgentModelChoicesResponse>;
+  listModelMetadata: () => Promise<readonly ModelInfo[]>;
   listProviderAuths: () => Promise<ProviderAuthInfo[]>;
   setProviderApiKey: (request: { providerId: string; apiKey: string }) => Promise<{ ok: boolean }>;
   startOAuth: (request: { providerId: string }) => Promise<{ ok: boolean; error?: string }>;
@@ -1017,9 +1062,6 @@ export interface ChatRuntime {
   removeExtensionEnvOverride: (
     input: Omit<RemoveExtensionEnvOverrideRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
-  updateAgentProfile: (profile: AgentProfileSettings) => Promise<AgentSettingsState>;
-  deleteAgentProfile: (id: AgentProfileId) => Promise<AgentSettingsState>;
-  reorderOrchestratorAgents: (ids: AgentProfileId[]) => Promise<AgentSettingsState>;
   updateWorkflowAgent: (
     key: WorkflowAgentKey,
     settings: WorkflowAgentSettings,
@@ -2139,8 +2181,21 @@ export async function createChatRuntime(
       ),
     )!;
 
-  const refreshAgentModelChoices = async (): Promise<AgentModelChoicesResponse> =>
-    setAppCache("agentModelChoices", await rpcClient.request.getAgentModelChoices(scoped()))!;
+  const refreshAgents = async (): Promise<AgentsReadModel> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({ kind: "agents" }),
+      "agents",
+    );
+    return setAppCache("agents", result.value)!;
+  };
+
+  const refreshModelMetadata = async (): Promise<readonly ModelInfo[]> =>
+    setAppCache(
+      "modelMetadata",
+      await rpcClient.request.listModelMetadata({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+      }),
+    )!;
 
   const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> =>
     setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
@@ -2240,7 +2295,8 @@ export async function createChatRuntime(
   const refreshWarmReadModels = (): void => {
     void refreshAgentSettings().catch(() => undefined);
     void refreshAppPreferences().catch(() => undefined);
-    void refreshAgentModelChoices().catch(() => undefined);
+    void refreshAgents().catch(() => undefined);
+    void refreshModelMetadata().catch(() => undefined);
     void refreshProviderAuths().catch(() => undefined);
     void refreshExtensionsInventory().catch(() => undefined);
     void refreshExternalInstructionSources().catch(() => undefined);
@@ -2649,6 +2705,9 @@ export async function createChatRuntime(
             ),
           );
           break;
+        case "agents":
+          setAppCache("agents", result.value);
+          break;
         case "workspaceChrome": {
           setAppCache("workspaceChrome", result.value);
           const workspaceTab = options.workspaceTabId
@@ -2729,6 +2788,7 @@ export async function createChatRuntime(
       appReadModelCache.appLogs = null;
       appReadModelCache.workspaceChrome = null;
       appReadModelCache.appPreferences = null;
+      appReadModelCache.agents = null;
       appReadModelCache.providerAuths = null;
       appReadModelCache.workflowsGenerated = null;
       applyNotificationReadModelPatch(baseline.app, undefined, scope);
@@ -3930,8 +3990,11 @@ export async function createChatRuntime(
     get appPreferencesSnapshot() {
       return cloneOrNull(appReadModelCache.appPreferences);
     },
-    get agentModelChoicesSnapshot() {
-      return cloneOrNull(appReadModelCache.agentModelChoices);
+    get agentsSnapshot() {
+      return cloneOrNull(appReadModelCache.agents);
+    },
+    get modelMetadataSnapshot() {
+      return cloneOrNull(appReadModelCache.modelMetadata);
     },
     get providerAuthsSnapshot() {
       return cloneOrNull(appReadModelCache.providerAuths);
@@ -4511,29 +4574,120 @@ export async function createChatRuntime(
       );
       return result.opened;
     },
+    openSourceEdit: (input) => rpcClient.request.openSourceEdit(input),
+    saveSourceEdit: (input) => rpcClient.request.saveSourceEdit(input),
     getAgentSettings: refreshAgentSettings,
+    getAgents: refreshAgents,
+    updateOrchestratorProfile: async (profile) => {
+      await rpcClient.request.stateAgentProfilesUpdateOrchestrator({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        profile,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    updateThreadHandlerProfile: async (profile) => {
+      await rpcClient.request.stateAgentProfilesUpdateThreadHandler({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        profile,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    deleteOrchestratorProfile: async (input) => {
+      await rpcClient.request.stateAgentProfilesDeleteOrchestrator({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    reorderOrchestratorProfiles: async (input) => {
+      await rpcClient.request.stateAgentProfilesReorderOrchestrators({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    setConfiguredProfileExtensionUsage: async (input) => {
+      await rpcClient.request.stateAgentProfilesSetExtensionUsage({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    promoteConfiguredProfileExtensionDefault: async (input) => {
+      await rpcClient.request.stateAgentProfilesPromoteExtensionDefault({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    resetConfiguredActorExtensionDefaults: async (input) => {
+      await rpcClient.request.stateAgentProfilesResetExtensionDefaults({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
+    setConfiguredExternalInstructionUsage: async (input) => {
+      await rpcClient.request.stateAgentProfilesSetExternalInstructionUsage({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      return refreshAgents();
+    },
     getAgentContextPreview: (request = {}) =>
       rpcClient.request.getAgentContextPreview(scoped(request)),
-    getAgentModelChoices: refreshAgentModelChoices,
+    listModelMetadata: refreshModelMetadata,
     listProviderAuths: refreshProviderAuths,
     setProviderApiKey: async (request) => {
       const result = await rpcClient.request.setProviderApiKey(request);
       await refreshProviderAuths();
-      void refreshAgentModelChoices().catch(() => undefined);
+      void refreshModelMetadata().catch(() => undefined);
       return result;
     },
     startOAuth: async (request) => {
       const result = await rpcClient.request.startOAuth(request);
       if (result.ok) {
         await refreshProviderAuths();
-        void refreshAgentModelChoices().catch(() => undefined);
+        void refreshModelMetadata().catch(() => undefined);
       }
       return result;
     },
     removeProviderAuth: async (request) => {
       const result = await rpcClient.request.removeProviderAuth(request);
       await refreshProviderAuths();
-      void refreshAgentModelChoices().catch(() => undefined);
+      void refreshModelMetadata().catch(() => undefined);
       return result;
     },
     getExtensionsInventory: refreshExtensionsInventory,
@@ -4547,7 +4701,7 @@ export async function createChatRuntime(
         },
       });
       const nextPreferences = await refreshAppPreferences();
-      void refreshAgentModelChoices().catch(() => undefined);
+      void refreshModelMetadata().catch(() => undefined);
       void refreshExtensionsInventory().catch(() => undefined);
       void refreshExternalInstructionSources().catch(() => undefined);
       return nextPreferences;
@@ -4655,18 +4809,6 @@ export async function createChatRuntime(
       setWorkspaceCache(
         "extensionsInventory",
         await rpcClient.request.removeExtensionEnvOverride(scoped(input)),
-      )!,
-    updateAgentProfile: async (profile) =>
-      setAppCache(
-        "agentSettings",
-        await rpcClient.request.updateAgentProfile(scoped({ profile })),
-      )!,
-    deleteAgentProfile: async (id) =>
-      setAppCache("agentSettings", await rpcClient.request.deleteAgentProfile(scoped({ id })))!,
-    reorderOrchestratorAgents: async (ids) =>
-      setAppCache(
-        "agentSettings",
-        await rpcClient.request.reorderOrchestratorAgents(scoped({ ids })),
       )!,
     updateWorkflowAgent: async (key, settings, saveOptions) => {
       const result: UpdateWorkflowAgentResponse = await rpcClient.request.updateWorkflowAgent(

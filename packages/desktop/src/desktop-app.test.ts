@@ -24,6 +24,9 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       rebaseline: async () => ({}),
     },
   } as unknown as CreateDesktopAppInput["state"];
+  const modelMetadata = {
+    list: async () => [],
+  } as CreateDesktopAppInput["modelMetadata"];
   const commands = {
     runtime: {},
     state: {
@@ -37,6 +40,7 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
 
   return {
     runtime,
+    modelMetadata,
     state,
     commands,
     notifications: {
@@ -51,7 +55,7 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       bridge: {
         exposeRendererApi: async (api) => {
           events.push("bridge:expose");
-          expect(api).toEqual({ runtime, state, commands });
+          expect(api).toEqual({ runtime, modelMetadata, state, commands });
           return {
             rendererReady: Promise.resolve(),
             dispose: async () => {

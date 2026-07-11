@@ -300,21 +300,7 @@ async function getMainViewUrl(channel: string): Promise<string> {
   return "views://mainview/index.html";
 }
 
-function getDefaultAgentSettings(runtime?: WorkspaceRuntime): AgentDefaults {
-  if (runtime) {
-    const savedDefault =
-      runtime.agentSettingsStore
-        .getState()
-        .agents.orchestrators.find((agent) => agent.id === DEFAULT_ORCHESTRATOR_PROFILE_ID) ??
-      runtime.agentSettingsStore.getState().agents.orchestrators[0];
-    if (savedDefault?.provider && savedDefault.model) {
-      return {
-        provider: savedDefault.provider,
-        model: savedDefault.model,
-        reasoningEffort: savedDefault.reasoningEffort,
-      };
-    }
-  }
+function getDefaultAgentSettings(): AgentDefaults {
   if (resolvedDefaults) {
     return resolvedDefaults;
   }
@@ -351,26 +337,13 @@ function getDefaultAgentSettings(runtime?: WorkspaceRuntime): AgentDefaults {
   return resolvedDefaults;
 }
 
-function getSessionDefaults(
-  runtime: WorkspaceRuntime,
-  profileId = DEFAULT_ORCHESTRATOR_PROFILE_ID,
-): SessionDefaults {
-  const agentSettings = runtime.agentSettingsStore
-    .getState()
-    .agents.orchestrators.find((agent) => agent.id === profileId);
-  if (!agentSettings) {
-    throw new Error(`Unknown orchestrator agent profile: ${profileId}`);
-  }
-  const defaults =
-    agentSettings.provider && agentSettings.model
-      ? agentSettings
-      : getDefaultAgentSettings(runtime);
+function getSessionDefaults(profileId = DEFAULT_ORCHESTRATOR_PROFILE_ID): SessionDefaults {
+  const defaults = getDefaultAgentSettings();
   return {
     model: defaults.model,
     provider: defaults.provider,
     thinkingLevel: defaults.reasoningEffort,
-    agentProfileId: agentSettings.id,
-    agentProfileSettings: agentSettings,
+    agentProfileId: profileId,
   };
 }
 
@@ -1012,6 +985,44 @@ function buildDesktopRpcHandlers(
     request: StateReadModelRequest,
   ): Promise<DesktopStateReadModelResult> =>
     fetchStateReadModel(request).then(desktopStateReadModelResult);
+  const validateAgentProfileModel = async (
+    workspaceId: string,
+    profile: {
+      providerId: string;
+      modelId: string;
+      reasoning?: { effort: AgentDefaults["reasoningEffort"] };
+    },
+  ): Promise<void> => {
+    const metadata = await facades.modelMetadata.list({
+      workspaceId: workspaceId as WorkspaceId,
+      providerId: profile.providerId as ProviderId,
+    });
+    const selected = metadata.find(
+      (model) => model.providerId === profile.providerId && model.modelId === profile.modelId,
+    );
+    assertAgentModelSelection(
+      {
+        providerId: profile.providerId,
+        modelId: profile.modelId,
+        reasoningEffort:
+          profile.reasoning?.effort ??
+          selected?.supportedReasoning[0] ??
+          DEFAULT_AGENT_SETTINGS.reasoningEffort,
+      },
+      metadata.map((model) => ({
+        providerId: model.providerId,
+        modelId: model.modelId,
+        providerAuthenticated: model.authStatus.health === "usable",
+        authSource: model.authStatus.health === "usable" ? "apikey" : "missing",
+        supportedReasoning: [...model.supportedReasoning],
+        capabilities: {
+          reasoning: model.supportsReasoning,
+          vision: model.inputModalities.includes("image"),
+          toolCalling: true,
+        },
+      })),
+    );
+  };
 
   return normalizeDesktopBridgeHandlers<ElectrobunRpcHandlers>({
     requests: {
@@ -1025,18 +1036,7 @@ function buildDesktopRpcHandlers(
       getAgentContextPreview: async (input) => {
         return getWorkspaceRuntime(input).catalog.getAgentContextPreview(stripWorkspaceId(input));
       },
-      getAgentModelChoices: async () => {
-        return {
-          items: readDefaultModelCatalog().map((choice) => ({
-            providerId: choice.providerId,
-            modelId: choice.modelId,
-            providerAuthenticated: choice.providerAuthenticated,
-            authSource: choice.authSource,
-            supportedReasoning: choice.supportedReasoning,
-            capabilities: choice.capabilities,
-          })),
-        };
-      },
+      listModelMetadata: (input) => facades.modelMetadata.list(input),
       getExtensionsInventory: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         return readWorkspaceExtensionsInventory(runtime);
@@ -1470,6 +1470,28 @@ function buildDesktopRpcHandlers(
         await defaultRuntime.catalog.notifyAppPreferencesChanged();
         return result;
       },
+      stateAgentProfilesUpdateOrchestrator: async (request) => {
+        await validateAgentProfileModel(request.workspaceId, request.profile);
+        return facades.commands.state.agentProfiles.updateOrchestrator(stripWorkspaceId(request));
+      },
+      stateAgentProfilesUpdateThreadHandler: async (request) => {
+        await validateAgentProfileModel(request.workspaceId, request.profile);
+        return facades.commands.state.agentProfiles.updateThreadHandler(stripWorkspaceId(request));
+      },
+      stateAgentProfilesDeleteOrchestrator: (request) =>
+        facades.commands.state.agentProfiles.deleteOrchestrator(stripWorkspaceId(request)),
+      stateAgentProfilesReorderOrchestrators: (request) =>
+        facades.commands.state.agentProfiles.reorderOrchestrators(stripWorkspaceId(request)),
+      stateAgentProfilesSetExtensionUsage: (request) =>
+        facades.commands.state.agentProfiles.setProfileExtensionUsage(stripWorkspaceId(request)),
+      stateAgentProfilesPromoteExtensionDefault: (request) =>
+        facades.commands.state.agentProfiles.promoteExtensionDefault(stripWorkspaceId(request)),
+      stateAgentProfilesResetExtensionDefaults: (request) =>
+        facades.commands.state.agentProfiles.resetActorExtensionDefaults(stripWorkspaceId(request)),
+      stateAgentProfilesSetExternalInstructionUsage: (request) =>
+        facades.commands.state.agentProfiles.setExternalInstructionActorUsage(
+          stripWorkspaceId(request),
+        ),
       getGeneratedAgentContextExternalSources: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
       },
@@ -1508,33 +1530,8 @@ function buildDesktopRpcHandlers(
         });
         return { ...result, path: snippet.path };
       },
-      updateAgentProfile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { profile } = input;
-        assertAgentModelSelection(
-          {
-            providerId: profile.provider,
-            modelId: profile.model,
-            reasoningEffort: profile.reasoningEffort,
-          },
-          readDefaultModelCatalog(),
-        );
-        resolvedDefaults = null;
-        runtime.appLog.info("settings", "Agent profile updated.", { profileId: profile.id });
-        return runtime.agentSettingsStore.setAgentProfile(profile);
-      },
-      deleteAgentProfile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { id } = input;
-        runtime.appLog.info("settings", "Agent profile deleted.", { profileId: id });
-        return runtime.agentSettingsStore.deleteAgentProfile(id);
-      },
-      reorderOrchestratorAgents: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { ids } = input;
-        runtime.appLog.info("settings", "Orchestrator agents reordered.", { count: ids.length });
-        return runtime.agentSettingsStore.reorderOrchestratorProfiles(ids);
-      },
+      openSourceEdit: (input) => facades.runtime.sourceEdits.open(input),
+      saveSourceEdit: (input) => facades.runtime.sourceEdits.save(input),
       updateWorkflowAgent: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { key, settings, baseSourceVersion, mode } = input;
@@ -1673,7 +1670,7 @@ function buildDesktopRpcHandlers(
       },
       setAgentProfileExtensionUsage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = runtime.catalog.setExtensionUsage({
+        const result = await runtime.catalog.setExtensionUsage({
           agentProfile: input.agentProfile,
           extensionId: input.extensionId,
           state: input.state,
@@ -1900,7 +1897,7 @@ function buildDesktopRpcHandlers(
         const { title, parentSessionId, agentProfileId } = input;
         const session = await runtime.catalog.createSession(
           { title, parentSessionId, agentProfileId },
-          getSessionDefaults(runtime, agentProfileId),
+          getSessionDefaults(agentProfileId),
         );
         recordDevBrowserToolsEvent("session.created", {
           parentSessionId: parentSessionId ?? null,
@@ -1980,7 +1977,7 @@ function buildDesktopRpcHandlers(
         const { sessionId, title, messageTimestamp } = input;
         const session = await runtime.catalog.forkSession(
           { sessionId, title, messageTimestamp },
-          getSessionDefaults(runtime),
+          getSessionDefaults(),
         );
         recordDevBrowserToolsEvent("session.forked", {
           sessionId,
@@ -2543,6 +2540,7 @@ await runDesktopBootstrap({
 
     desktopApp = createDesktopApp({
       runtime: facades.runtimeActions,
+      modelMetadata: facades.modelMetadata,
       state: facades.rendererState,
       commands: {
         runtime: facades.runtimeCommands,

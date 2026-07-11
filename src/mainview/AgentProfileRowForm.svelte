@@ -7,11 +7,12 @@
 	import LockIcon from "@lucide/svelte/icons/lock";
 	import Trash2Icon from "@lucide/svelte/icons/trash-2";
 	import { createForm } from "@tanstack/svelte-form";
+	import type { ReasoningEffort } from "../shared/agent-settings";
 	import type {
-		AgentProfileSettings,
-		ReasoningEffort,
-	} from "../shared/agent-settings";
-	import type { AgentModelChoice } from "../shared/workspace-contract";
+		AgentModelChoice,
+		ConfiguredAgentProfileReadModelRecord,
+	} from "../shared/workspace-contract";
+	import { configuredAgentProfileReasoningEffort } from "./configured-agent-profile";
 	import Checkbox from "./ui/Checkbox.svelte";
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
 	import CompactSelect, { type CompactSelectOption } from "./ui/CompactSelect.svelte";
@@ -25,7 +26,7 @@
 		modelValue: string;
 		name: string;
 		reasoningEffort: ReasoningEffort;
-		updateFromComposer: boolean;
+		followComposer: boolean;
 	};
 
 	type Props = {
@@ -34,7 +35,7 @@
 		deleting: boolean;
 		expanded: boolean;
 		modelChoices: AgentModelChoice[];
-		profile: AgentProfileSettings;
+		profile: ConfiguredAgentProfileReadModelRecord;
 		saving: boolean;
 		extensionUsageItems: ExtensionUsageControlItem[];
 		onCancelDelete: () => void;
@@ -43,11 +44,13 @@
 		onPointerDown?: (event: PointerEvent) => void;
 		onOpenExtension: (extensionId: string) => void;
 		onRequestDelete: () => void;
-		onSave: (profile: AgentProfileSettings) => Promise<AgentProfileSettings>;
+		onSave: (
+			profile: ConfiguredAgentProfileReadModelRecord,
+		) => Promise<ConfiguredAgentProfileReadModelRecord>;
 		onSetExtensionUsage: (
 			extensionId: string,
 			state: ExtensionUsageControlItem["state"],
-		) => Promise<AgentProfileSettings>;
+		) => Promise<ConfiguredAgentProfileReadModelRecord>;
 		onSetExtensionDefault?: (
 			extensionId: string,
 			state: ExtensionUsageControlItem["state"],
@@ -82,16 +85,18 @@
 		return `${choice.providerId}:${choice.modelId}`;
 	}
 
-	function agentModelValue(agent: Pick<AgentProfileSettings, "provider" | "model">): string {
-		return `${agent.provider}:${agent.model}`;
+	function agentModelValue(
+		agent: Pick<ConfiguredAgentProfileReadModelRecord, "providerId" | "modelId">,
+	): string {
+		return `${agent.providerId}:${agent.modelId}`;
 	}
 
-	function valuesFor(input: AgentProfileSettings): ProfileFormValues {
+	function valuesFor(input: ConfiguredAgentProfileReadModelRecord): ProfileFormValues {
 		return {
 			modelValue: agentModelValue(input),
 			name: input.name,
-			reasoningEffort: input.reasoningEffort,
-			updateFromComposer: input.updateFromComposer,
+			reasoningEffort: configuredAgentProfileReasoningEffort(input),
+			followComposer: input.followComposer,
 		};
 	}
 
@@ -101,7 +106,9 @@
 
 	function modelOptions(currentValue: string): CompactComboboxOption[] {
 		const options = modelChoices
-			.filter((choice) => choice.providerAuthenticated || modelChoiceValue(choice) === currentValue)
+			.filter(
+				(choice) => choice.authStatus.health === "usable" || modelChoiceValue(choice) === currentValue,
+			)
 			.toSorted((left, right) => {
 				const leftCurrent = modelChoiceValue(left) === currentValue;
 				const rightCurrent = modelChoiceValue(right) === currentValue;
@@ -117,14 +124,14 @@
 				label: choice.modelId,
 				triggerLabel: choice.modelId,
 				searchText: `${choice.modelId} ${choice.providerId}`,
-				disabled: !choice.providerAuthenticated,
+				disabled: choice.authStatus.health !== "usable",
 			}));
 		if (!options.some((option) => option.value === currentValue)) {
 			options.unshift({
 				value: currentValue,
-				label: profile.model,
-				triggerLabel: profile.model,
-				searchText: `${profile.model} ${profile.provider}`,
+				label: profile.modelId,
+				triggerLabel: profile.modelId,
+				searchText: `${profile.modelId} ${profile.providerId}`,
 				disabled: true,
 			});
 		}
@@ -158,11 +165,18 @@
 				if (!choice && value.modelValue !== currentModelValue) {
 					return "Choose a model from the available provider metadata.";
 				}
-				if (choice && !choice.providerAuthenticated && value.modelValue !== currentModelValue) {
+				if (
+					choice &&
+					choice.authStatus.health !== "usable" &&
+					value.modelValue !== currentModelValue
+				) {
 					return "Choose an authenticated provider model.";
 				}
 				if (
-					!reasoningOptions(value.modelValue, profile.reasoningEffort).some(
+					!reasoningOptions(
+						value.modelValue,
+						configuredAgentProfileReasoningEffort(profile),
+					).some(
 						(option) => option.value === value.reasoningEffort,
 					)
 				) {
@@ -175,14 +189,13 @@
 			submitError = "";
 			const choice = selectedChoice(value.modelValue);
 			const [provider, model] = value.modelValue.split(/:(.*)/s);
-			const next: AgentProfileSettings = {
+			const next: ConfiguredAgentProfileReadModelRecord = {
 				...profile,
 				name: value.name.trim(),
-				provider: choice?.providerId ?? provider,
-				model: choice?.modelId ?? model,
-				reasoningEffort: value.reasoningEffort,
-				systemPrompt: "",
-				updateFromComposer: value.updateFromComposer,
+				providerId: choice?.providerId ?? provider,
+				modelId: choice?.modelId ?? model,
+				reasoning: { effort: value.reasoningEffort },
+				followComposer: value.followComposer,
 			};
 			const saved = await onSave(next);
 			formApi.reset(valuesFor(saved));
@@ -308,11 +321,11 @@
 			<label class="composer-sync-field">
 				<Checkbox
 					size="sm"
-					checked={formState.current.values.updateFromComposer}
+					checked={formState.current.values.followComposer}
 					disabled={controlsDisabled}
 					onchange={(event) => {
 						form.setFieldValue(
-							"updateFromComposer",
+							"followComposer",
 							(event.currentTarget as HTMLInputElement).checked,
 						);
 						submitSoon();

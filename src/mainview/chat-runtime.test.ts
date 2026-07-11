@@ -22,6 +22,7 @@ import {
   type AppLogSummary,
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
+  type ConfiguredAgentProfileReadModelRecord,
   type DesktopRendererNotification,
   type PromptTarget,
   type RendererTelemetryRequest,
@@ -55,10 +56,13 @@ import {
   type AppPreferences,
 } from "../shared/agent-settings";
 import type {
+  AbsolutePath,
   CommandId,
+  ExtensionId,
   ExtensionUsageState,
   IsoDateTimeStringSchema,
   JsonValue,
+  ModelId,
   ProviderId,
   QueueItemId,
   RequestInputQuestionId,
@@ -187,6 +191,8 @@ type FakeRpcHarness = {
   openSnippetSourceRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openSnippetSourceInEditor"]>[0]
   >;
+  sourceEditOpenRequests: Array<Parameters<ChatRuntimeRpcClient["request"]["openSourceEdit"]>[0]>;
+  sourceEditSaveRequests: Array<Parameters<ChatRuntimeRpcClient["request"]["saveSourceEdit"]>[0]>;
   openWorkflowsGeneratedExportRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openWorkflowsGeneratedExportInEditor"]>[0]
   >;
@@ -936,6 +942,8 @@ function createFakeRpc(input: {
   const snippetDeleteRequests: FakeRpcHarness["snippetDeleteRequests"] = [];
   const snippetEnableRequests: FakeRpcHarness["snippetEnableRequests"] = [];
   const openSnippetSourceRequests: FakeRpcHarness["openSnippetSourceRequests"] = [];
+  const sourceEditOpenRequests: FakeRpcHarness["sourceEditOpenRequests"] = [];
+  const sourceEditSaveRequests: FakeRpcHarness["sourceEditSaveRequests"] = [];
   const openWorkflowsGeneratedExportRequests: FakeRpcHarness["openWorkflowsGeneratedExportRequests"] =
     [];
   const workspaceLayoutSaveRequests: FakeRpcHarness["workspaceLayoutSaveRequests"] = [];
@@ -969,6 +977,54 @@ function createFakeRpc(input: {
   let persistedAppPreferences: AppPreferences = structuredClone(
     DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
   );
+  let configuredAgentProfiles: ConfiguredAgentProfileReadModelRecord[] = [
+    {
+      profileId: "default-orchestrator" as ConfiguredAgentProfileReadModelRecord["profileId"],
+      actor: "orchestrator",
+      name: "Default orchestrator",
+      providerId: "openai" as ProviderId,
+      modelId: "gpt-4o" as ModelId,
+      reasoning: { effort: "medium" },
+      followComposer: false,
+      extensionUsage: {},
+      extensionOrder: [],
+      position: 0,
+      updatedAt: "2026-04-10T10:00:00.000Z",
+      builtin: true,
+      locked: true,
+      deletable: false,
+    },
+    {
+      profileId: "thread-handler" as ConfiguredAgentProfileReadModelRecord["profileId"],
+      actor: "handler",
+      name: "Thread handler",
+      providerId: "openai" as ProviderId,
+      modelId: "gpt-4o" as ModelId,
+      reasoning: { effort: "medium" },
+      followComposer: false,
+      extensionUsage: {},
+      extensionOrder: [],
+      position: 0,
+      updatedAt: "2026-04-10T10:00:00.000Z",
+      builtin: true,
+      locked: true,
+      deletable: false,
+    },
+  ];
+  let agentActorExtensionDefaults = [
+    {
+      actor: "orchestrator" as const,
+      extensionUsage: {} as Record<string, ExtensionUsageState>,
+      extensionOrder: [] as ExtensionId[],
+      updatedAt: null as string | null,
+    },
+    {
+      actor: "workflow-task" as const,
+      extensionUsage: {} as Record<string, ExtensionUsageState>,
+      extensionOrder: [] as ExtensionId[],
+      updatedAt: null as string | null,
+    },
+  ];
   let snippetRows: StateSnippetsReadModel["snippets"] = [];
   let workflowsGeneratedReadModel: WorkflowsGeneratedReadModel = {
     packageName: "@svvyx/workflows",
@@ -1255,22 +1311,21 @@ function createFakeRpc(input: {
           tokenCount: { tokens: 3, accuracy: "estimated" },
           extensions: [],
         }),
-        getAgentModelChoices: async () => ({
-          items: [
-            {
-              providerId: "openai",
-              modelId: "gpt-4o",
-              providerAuthenticated: true,
-              authSource: "apikey",
-              supportedReasoning: ["low", "medium", "high"],
-              capabilities: {
-                reasoning: true,
-                vision: true,
-                toolCalling: true,
-              },
+        listModelMetadata: async ({ workspaceId }) => [
+          {
+            providerId: "openai" as ProviderId,
+            modelId: "gpt-4o" as ModelId,
+            displayName: "GPT-4o",
+            supportsReasoning: true,
+            supportedReasoning: ["low", "medium", "high"],
+            inputModalities: ["text", "image"],
+            authStatus: {
+              providerId: "openai" as ProviderId,
+              workspaceId,
+              health: "usable",
             },
-          ],
-        }),
+          },
+        ],
         getExtensionsInventory: async () => ({
           extensions: [],
           reversibleChanges: [],
@@ -1372,6 +1427,16 @@ function createFakeRpc(input: {
                   usableModelProviders: ["openai" as ProviderId],
                 },
               };
+            case "agents":
+              return {
+                kind: "agents",
+                value: {
+                  configuredProfiles: structuredClone(configuredAgentProfiles),
+                  actorExtensionDefaults: structuredClone(agentActorExtensionDefaults),
+                  bindings: [],
+                  generatedContextPreviews: [],
+                },
+              };
             case "sessionNavigation":
               requestCounts.sessionNavigation += 1;
               return {
@@ -1470,6 +1535,8 @@ function createFakeRpc(input: {
               return [await harness.client.request.fetchStateReadModel({ kind: "settings" })];
             case "providerAuth":
               return [await harness.client.request.fetchStateReadModel({ kind: "providerAuth" })];
+            case "agents":
+              return [await harness.client.request.fetchStateReadModel({ kind: "agents" })];
             case "workspaceChrome":
               return [
                 await harness.client.request.fetchStateReadModel({ kind: "workspaceChrome" }),
@@ -1671,33 +1738,6 @@ function createFakeRpc(input: {
           snapshots: [],
         }),
         getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
-        updateAgentProfile: async ({ profile, workspaceId }) => {
-          const next = await harness.client.request.getAgentSettings({ workspaceId });
-          if (profile.kind === "orchestrator") {
-            next.agents.orchestrators = next.agents.orchestrators.map((candidate) =>
-              candidate.id === profile.id ? profile : candidate,
-            );
-          } else if (profile.id === next.agents.special.threadHandler.id) {
-            next.agents.special.threadHandler = profile;
-          }
-          return next;
-        },
-        deleteAgentProfile: async ({ id, workspaceId }) => {
-          const next = await harness.client.request.getAgentSettings({ workspaceId });
-          next.agents.orchestrators = next.agents.orchestrators.filter(
-            (candidate) => candidate.id !== id || candidate.locked,
-          );
-          return next;
-        },
-        reorderOrchestratorAgents: async ({ ids, workspaceId }) => {
-          const next = await harness.client.request.getAgentSettings({ workspaceId });
-          const byId = new Map(next.agents.orchestrators.map((profile) => [profile.id, profile]));
-          next.agents.orchestrators = ids.flatMap((id) => {
-            const profile = byId.get(id);
-            return profile ? [profile] : [];
-          });
-          return next;
-        },
         updateWorkflowAgent: async ({ key, settings, workspaceId }) => {
           const state = {
             ...(await harness.client.request.getAgentSettings({ workspaceId })),
@@ -1982,6 +2022,171 @@ function createFakeRpc(input: {
             editor: "system",
             path: snippetRows.find((snippet) => snippet.id === request.snippetId)?.path ?? "",
           };
+        },
+        openSourceEdit: async (request) => {
+          sourceEditOpenRequests.push(structuredClone(request));
+          return {
+            sourceKind: request.sourceKind,
+            sourceId: request.sourceId,
+            path: `/tmp/${request.sourceId}.agent.json` as AbsolutePath,
+            sourceVersion: "sha256:source-version",
+            fingerprint: "sha256:source-version",
+            text: "{}\n",
+            diagnostics: [],
+          };
+        },
+        saveSourceEdit: async (request) => {
+          sourceEditSaveRequests.push(structuredClone(request));
+          return {
+            status: "saved",
+            sourceVersion: "sha256:saved-version",
+            fingerprint: "sha256:saved-version",
+            diagnostics: [],
+            reconcileRequired: true,
+          };
+        },
+        stateAgentProfilesUpdateOrchestrator: async (request) => {
+          const current = configuredAgentProfiles.find(
+            (profile) =>
+              profile.actor === "orchestrator" && profile.profileId === request.profile.profileId,
+          );
+          const builtin = request.profile.profileId === "default-orchestrator";
+          configuredAgentProfiles = [
+            ...configuredAgentProfiles.filter(
+              (profile) =>
+                profile.actor !== "orchestrator" || profile.profileId !== request.profile.profileId,
+            ),
+            {
+              profileId: request.profile.profileId,
+              actor: "orchestrator",
+              name: request.profile.name,
+              providerId: request.profile.providerId,
+              modelId: request.profile.modelId,
+              reasoning: request.profile.reasoning ?? null,
+              followComposer: request.profile.followComposer,
+              extensionUsage: { ...request.profile.extensionUsage },
+              extensionOrder: [...(request.profile.extensionOrder ?? [])],
+              position:
+                current?.position ??
+                configuredAgentProfiles.filter((profile) => profile.actor === "orchestrator")
+                  .length,
+              updatedAt: "2026-04-10T10:10:00.000Z",
+              builtin,
+              locked: builtin,
+              deletable: !builtin,
+            },
+          ];
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesUpdateThreadHandler: async (request) => {
+          configuredAgentProfiles = [
+            ...configuredAgentProfiles.filter((profile) => profile.actor !== "handler"),
+            {
+              profileId: request.profile.profileId,
+              actor: "handler",
+              name: request.profile.name,
+              providerId: request.profile.providerId,
+              modelId: request.profile.modelId,
+              reasoning: request.profile.reasoning ?? null,
+              followComposer: false,
+              extensionUsage: { ...request.profile.extensionUsage },
+              extensionOrder: [...(request.profile.extensionOrder ?? [])],
+              position: 0,
+              updatedAt: "2026-04-10T10:10:00.000Z",
+              builtin: true,
+              locked: true,
+              deletable: false,
+            },
+          ];
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesDeleteOrchestrator: async (request) => {
+          configuredAgentProfiles = configuredAgentProfiles.filter(
+            (profile) =>
+              profile.actor !== "orchestrator" ||
+              profile.profileId !== request.profileId ||
+              profile.locked,
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesReorderOrchestrators: async (request) => {
+          const byId = new Map(
+            configuredAgentProfiles
+              .filter((profile) => profile.actor === "orchestrator")
+              .map((profile) => [profile.profileId, profile]),
+          );
+          const orchestrators = request.profileIds.flatMap((profileId, position) => {
+            const profile = byId.get(profileId);
+            return profile ? [{ ...profile, position }] : [];
+          });
+          configuredAgentProfiles = [
+            ...orchestrators,
+            ...configuredAgentProfiles.filter((profile) => profile.actor === "handler"),
+          ];
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesSetExtensionUsage: async (request) => {
+          configuredAgentProfiles = configuredAgentProfiles.map((profile) =>
+            profile.actor === request.actor && profile.profileId === request.profileId
+              ? {
+                  ...profile,
+                  extensionUsage: {
+                    ...profile.extensionUsage,
+                    [request.extensionId]: request.usage,
+                  },
+                }
+              : profile,
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesPromoteExtensionDefault: async (request) => {
+          agentActorExtensionDefaults = agentActorExtensionDefaults.map((defaults) =>
+            defaults.actor === request.actor
+              ? {
+                  ...defaults,
+                  extensionUsage: {
+                    ...defaults.extensionUsage,
+                    [request.extensionId]: request.usage,
+                  },
+                  updatedAt: "2026-04-10T10:10:00.000Z",
+                }
+              : defaults,
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesResetExtensionDefaults: async (request) => {
+          agentActorExtensionDefaults = agentActorExtensionDefaults.map((defaults) =>
+            defaults.actor === request.actor
+              ? {
+                  ...defaults,
+                  extensionUsage:
+                    request.reset === "usage" || request.reset === "usage-and-order"
+                      ? {}
+                      : defaults.extensionUsage,
+                  extensionOrder:
+                    request.reset === "order" || request.reset === "usage-and-order"
+                      ? []
+                      : defaults.extensionOrder,
+                  updatedAt: "2026-04-10T10:10:00.000Z",
+                }
+              : defaults,
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
+        },
+        stateAgentProfilesSetExternalInstructionUsage: async (request) => {
+          configuredAgentProfiles = configuredAgentProfiles.map((profile) =>
+            profile.actor === request.actor && profile.profileId === request.profileId
+              ? {
+                  ...profile,
+                  extensionUsage: {
+                    ...profile.extensionUsage,
+                    [request.sourceId]:
+                      request.usage === "disabled" ? "unavailable" : request.usage,
+                  },
+                }
+              : profile,
+          );
+          return stateCommandResult(request.clientSubmission?.clientRequestId);
         },
         writeCommandStdin: async (request) => {
           commandStdinRequests.push(structuredClone(request));
@@ -2738,6 +2943,8 @@ function createFakeRpc(input: {
     snippetDeleteRequests,
     snippetEnableRequests,
     openSnippetSourceRequests,
+    sourceEditOpenRequests,
+    sourceEditSaveRequests,
     openWorkflowsGeneratedExportRequests,
     workspaceLayoutSaveRequests,
     appLogSeenRequests,
@@ -7664,6 +7871,119 @@ describe("createChatRuntime", () => {
         target: "generated",
       },
     ]);
+    runtime.dispose();
+  });
+
+  it("routes file-backed source edits through the runtime facade without renderer file access", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+
+    const opened = await runtime.openSourceEdit({
+      sourceKind: "workflow-agent",
+      sourceId: "reviewer",
+    });
+    expect(opened).toMatchObject({
+      sourceKind: "workflow-agent",
+      sourceId: "reviewer",
+      sourceVersion: "sha256:source-version",
+    });
+
+    const saved = await runtime.saveSourceEdit({
+      sourceKind: "workflow-agent",
+      sourceId: "reviewer",
+      expectedSourceVersion: opened.sourceVersion,
+      text: '{"id":"reviewer"}\n',
+      saveMode: "compare-and-swap",
+    });
+    expect(saved).toMatchObject({
+      status: "saved",
+      sourceVersion: "sha256:saved-version",
+    });
+    expect(harness.sourceEditOpenRequests).toEqual([
+      { sourceKind: "workflow-agent", sourceId: "reviewer" },
+    ]);
+    expect(harness.sourceEditSaveRequests).toEqual([
+      {
+        sourceKind: "workflow-agent",
+        sourceId: "reviewer",
+        expectedSourceVersion: "sha256:source-version",
+        text: '{"id":"reviewer"}\n',
+        saveMode: "compare-and-swap",
+      },
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("routes configured profile commands through state and refetches the agents cache", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    const reviewProfileId =
+      "review-orchestrator" as ConfiguredAgentProfileReadModelRecord["profileId"];
+
+    const created = await runtime.updateOrchestratorProfile({
+      profileId: reviewProfileId,
+      name: "Review orchestrator",
+      providerId: "openai" as ProviderId,
+      modelId: "gpt-4o" as ModelId,
+      reasoning: { effort: "high" },
+      followComposer: true,
+      extensionUsage: {},
+      extensionOrder: [],
+    });
+    expect(created.configuredProfiles).toContainEqual(
+      expect.objectContaining({
+        profileId: reviewProfileId,
+        actor: "orchestrator",
+        followComposer: true,
+        reasoning: { effort: "high" },
+      }),
+    );
+    expect(runtime.agentsSnapshot).toEqual(created);
+
+    const withUsage = await runtime.setConfiguredProfileExtensionUsage({
+      actor: "orchestrator",
+      profileId: reviewProfileId,
+      extensionId: "github" as ExtensionId,
+      usage: "loaded",
+    });
+    expect(
+      withUsage.configuredProfiles.find((profile) => profile.profileId === reviewProfileId)
+        ?.extensionUsage,
+    ).toEqual({ github: "loaded" });
+
+    const withDefault = await runtime.promoteConfiguredProfileExtensionDefault({
+      actor: "orchestrator",
+      profileId: reviewProfileId,
+      extensionId: "github" as ExtensionId,
+      usage: "loaded",
+    });
+    expect(
+      withDefault.actorExtensionDefaults.find((defaults) => defaults.actor === "orchestrator")
+        ?.extensionUsage,
+    ).toEqual({ github: "loaded" });
+
+    const reordered = await runtime.reorderOrchestratorProfiles({
+      profileIds: [
+        "default-orchestrator" as ConfiguredAgentProfileReadModelRecord["profileId"],
+        reviewProfileId,
+      ],
+    });
+    expect(
+      reordered.configuredProfiles
+        .filter((profile) => profile.actor === "orchestrator")
+        .toSorted((left, right) => left.position - right.position)
+        .map((profile) => profile.profileId),
+    ).toEqual([
+      "default-orchestrator" as ConfiguredAgentProfileReadModelRecord["profileId"],
+      reviewProfileId,
+    ]);
+
+    const deleted = await runtime.deleteOrchestratorProfile({ profileId: reviewProfileId });
+    expect(
+      deleted.configuredProfiles.some((profile) => profile.profileId === reviewProfileId),
+    ).toBe(false);
+    expect(runtime.agentsSnapshot).toEqual(deleted);
     runtime.dispose();
   });
 

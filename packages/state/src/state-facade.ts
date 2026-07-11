@@ -27,6 +27,7 @@ import {
   type AppLogWritePort,
   type AppLogWritePortService,
   type ExtensionId,
+  type ExtensionUsageState,
   type ExternalInstructionsSettings,
   type ExtensionStatePort,
   type JsonValue as JsonValueType,
@@ -614,11 +615,40 @@ export interface ApprovalReadModelRequestItem {
 }
 
 export interface AgentsReadModel {
-  profiles: readonly AgentProfileReadModelRecord[];
+  configuredProfiles: readonly ConfiguredAgentProfileReadModelRecord[];
+  actorExtensionDefaults: readonly AgentActorExtensionDefaultsReadModelRecord[];
+  bindings: readonly AgentBindingReadModelRecord[];
   generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
 }
 
-export interface AgentProfileReadModelRecord {
+export interface AgentActorExtensionDefaultsReadModelRecord {
+  actor: "orchestrator" | "workflow-task";
+  extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
+  extensionOrder: readonly ExtensionId[];
+  updatedAt: IsoDateTimeString | null;
+}
+
+export interface ConfiguredAgentProfileReadModelRecord {
+  profileId: AgentProfileId;
+  actor: "orchestrator" | "handler";
+  name: string;
+  providerId: ProviderId | "";
+  modelId: ModelId | "";
+  reasoning: JsonValueType | null;
+  followComposer: boolean;
+  extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
+  extensionOrder: readonly ExtensionId[];
+  position: number;
+  updatedAt: IsoDateTimeString;
+  builtin: boolean;
+  locked: boolean;
+  deletable: boolean;
+}
+
+export interface AgentBindingReadModelRecord {
+  ownerKind: "session" | "thread" | "workflow-task-attempt";
+  ownerId: WorkspaceSessionId | ThreadId | WorkflowTaskAttemptId | string;
+  surfacePiSessionId: SurfacePiSessionId | null;
   profileId: AgentProfileId | string;
   actor: "orchestrator" | "handler" | "workflow-task";
   name: string;
@@ -2327,10 +2357,22 @@ function buildAgentsReadModel(
   return Effect.gen(function* () {
     const snapshots = yield* state.listSessionStates();
     const persistedProfiles = yield* state.listAgentProfiles();
-    const profiles = [
-      ...persistedProfiles.map(agentProfileRecordFromPersisted),
-      ...snapshots.flatMap(agentProfileRecordsFromSnapshot),
-    ].filter((profile) => (request.profileId ? profile.profileId === request.profileId : true));
+    const persistedActorExtensionDefaults = yield* state.listAgentActorExtensionDefaults();
+    const configuredProfiles = persistedProfiles
+      .map(configuredAgentProfileRecord)
+      .filter((profile) => (request.profileId ? profile.profileId === request.profileId : true));
+    const bindings = snapshots
+      .flatMap(agentBindingRecordsFromSnapshot)
+      .filter((binding) => (request.profileId ? binding.profileId === request.profileId : true));
+    const actorExtensionDefaults = (["orchestrator", "workflow-task"] as const).map((actor) => {
+      const persisted = persistedActorExtensionDefaults.find((record) => record.actor === actor);
+      return {
+        actor,
+        extensionUsage: { ...persisted?.extensionUsage },
+        extensionOrder: (persisted?.extensionOrder ?? []) as ExtensionId[],
+        updatedAt: (persisted?.updatedAt ?? null) as IsoDateTimeString | null,
+      };
+    });
     const generatedContextPreviews = snapshots
       .flatMap((snapshot) => snapshot.generatedAgentContextBindings)
       .map((binding) => ({
@@ -2344,7 +2386,7 @@ function buildAgentsReadModel(
         availableExtensionIds: binding.availableExtensionIds as ExtensionId[],
         externalSourceHashes: binding.externalSourceHashes,
       }));
-    return { profiles, generatedContextPreviews };
+    return { configuredProfiles, actorExtensionDefaults, bindings, generatedContextPreviews };
   });
 }
 
@@ -2353,14 +2395,12 @@ function buildExtensionsReadModel(
   request: ExtensionsReadModelRequest,
 ): Effect.Effect<ExtensionsReadModel, StateContractError> {
   return Effect.gen(function* () {
-    const snapshots = yield* state.listSessionStates();
     const facts = yield* state.readGeneratedPackageFacts({ packages: ["@svvyx/extensions"] });
     const extensionPackage = facts[0] ?? null;
     const persistedProfiles = yield* state.listAgentProfiles();
-    const usage = extensionUsageFromAgentRecords([
-      ...persistedProfiles.map(agentProfileRecordFromPersisted),
-      ...snapshots.flatMap(agentProfileRecordsFromSnapshot),
-    ]);
+    const usage = extensionUsageFromConfiguredAgentRecords(
+      persistedProfiles.map(configuredAgentProfileRecord),
+    );
     const records = [...usage.entries()]
       .filter(([extensionId]) => (request.extensionId ? extensionId === request.extensionId : true))
       .map(([extensionId, value]) => ({
@@ -2498,20 +2538,29 @@ function workspaceLayoutProjectionError(cause: Schema.SchemaError): StateContrac
   });
 }
 
-function agentProfileRecordsFromSnapshot(
+function agentBindingRecordsFromSnapshot(
   snapshot: StructuredSessionSnapshot,
-): AgentProfileReadModelRecord[] {
-  const records: AgentProfileReadModelRecord[] = [];
+): AgentBindingReadModelRecord[] {
+  const records: AgentBindingReadModelRecord[] = [];
+  const orchestratorProfile = parseJsonRecord(snapshot.pi.orchestratorAgentProfileJson ?? null);
   records.push({
-    profileId: snapshot.pi.orchestratorAgentProfileId ?? snapshot.session.id,
+    ownerKind: "session",
+    ownerId: snapshot.session.id as WorkspaceSessionId,
+    surfacePiSessionId: snapshot.session.orchestratorPiSessionId as SurfacePiSessionId,
+    profileId:
+      snapshot.pi.orchestratorAgentProfileId ??
+      readString(orchestratorProfile, "profileId", "id") ??
+      snapshot.session.id,
     actor: "orchestrator",
-    name: snapshot.pi.title,
-    providerId: (snapshot.pi.provider ?? "") as ProviderId | "",
-    modelId: (snapshot.pi.model ?? "") as ModelId | "",
-    reasoning: snapshot.pi.reasoningEffort ? { effort: snapshot.pi.reasoningEffort } : null,
-    followComposer: Boolean(
-      parseJsonRecord(snapshot.pi.orchestratorAgentProfileJson ?? null).followComposer,
-    ),
+    name: readString(orchestratorProfile, "name") ?? snapshot.pi.title,
+    providerId: (snapshot.pi.provider ??
+      readString(orchestratorProfile, "providerId", "provider") ??
+      "") as ProviderId | "",
+    modelId: (snapshot.pi.model ?? readString(orchestratorProfile, "modelId", "model") ?? "") as
+      | ModelId
+      | "",
+    reasoning: bindingReasoning(orchestratorProfile, snapshot.pi.reasoningEffort),
+    followComposer: readBoolean(orchestratorProfile, "followComposer", "updateFromComposer"),
     loadedExtensionIds: (snapshot.pi.loadedExtensionIds ?? []) as ExtensionId[],
     availableExtensionIds: (snapshot.pi.availableExtensionIds ?? []) as ExtensionId[],
     generatedAgentContextFingerprint: snapshot.pi.generatedAgentContextFingerprint ?? null,
@@ -2519,13 +2568,19 @@ function agentProfileRecordsFromSnapshot(
   });
 
   for (const thread of snapshot.threads) {
+    const profile = parseJsonRecord(thread.agentProfileJson ?? null);
     records.push({
-      profileId: "threadHandler" as AgentProfileId,
+      ownerKind: "thread",
+      ownerId: thread.id as ThreadId,
+      surfacePiSessionId: thread.surfacePiSessionId as SurfacePiSessionId,
+      profileId: (readString(profile, "profileId", "id") ?? "thread-handler") as AgentProfileId,
       actor: "handler",
-      name: "Thread Handler",
-      providerId: (snapshot.pi.provider ?? "") as ProviderId | "",
-      modelId: (snapshot.pi.model ?? "") as ModelId | "",
-      reasoning: null,
+      name: readString(profile, "name") ?? "Thread handler",
+      providerId: (readString(profile, "providerId", "provider") ?? snapshot.pi.provider ?? "") as
+        | ProviderId
+        | "",
+      modelId: (readString(profile, "modelId", "model") ?? snapshot.pi.model ?? "") as ModelId | "",
+      reasoning: bindingReasoning(profile),
       followComposer: false,
       loadedExtensionIds: thread.loadedExtensionIds as ExtensionId[],
       availableExtensionIds: thread.availableExtensionIds as ExtensionId[],
@@ -2536,10 +2591,15 @@ function agentProfileRecordsFromSnapshot(
 
   for (const attempt of snapshot.workflowTaskAttempts) {
     records.push({
+      ownerKind: "workflow-task-attempt",
+      ownerId: attempt.id as WorkflowTaskAttemptId,
+      surfacePiSessionId: attempt.surfacePiSessionId
+        ? (attempt.surfacePiSessionId as SurfacePiSessionId)
+        : null,
       profileId: (attempt.agentId ?? attempt.id) as AgentProfileId,
       actor: "workflow-task",
       name: attempt.title,
-      providerId: "" as ProviderId | "",
+      providerId: (attempt.agentEngine ?? "") as ProviderId | "",
       modelId: (attempt.agentModel ?? "") as ModelId | "",
       reasoning: null,
       followComposer: false,
@@ -2553,27 +2613,27 @@ function agentProfileRecordsFromSnapshot(
   return records;
 }
 
-function agentProfileRecordFromPersisted(
+function configuredAgentProfileRecord(
   profile: StructuredAgentProfileRecord,
-): AgentProfileReadModelRecord {
-  const loadedExtensionIds = Object.entries(profile.extensionUsage)
-    .filter(([, usage]) => usage === "loaded")
-    .map(([extensionId]) => extensionId as ExtensionId);
-  const availableExtensionIds = Object.entries(profile.extensionUsage)
-    .filter(([, usage]) => usage === "available")
-    .map(([extensionId]) => extensionId as ExtensionId);
+): ConfiguredAgentProfileReadModelRecord {
+  const builtin =
+    (profile.actor === "orchestrator" && profile.profileId === "default-orchestrator") ||
+    (profile.actor === "handler" && profile.profileId === "thread-handler");
   return {
-    profileId: profile.profileId,
+    profileId: profile.profileId as AgentProfileId,
     actor: profile.actor,
     name: profile.name,
     providerId: profile.providerId as ProviderId | "",
     modelId: profile.modelId as ModelId | "",
     reasoning: profile.reasoning as JsonValueType | null,
     followComposer: profile.followComposer,
-    loadedExtensionIds,
-    availableExtensionIds,
-    generatedAgentContextFingerprint: null,
-    source: profile.actor === "handler" ? "handler-thread" : "surface-binding",
+    extensionUsage: { ...profile.extensionUsage },
+    extensionOrder: profile.extensionOrder as ExtensionId[],
+    position: profile.position,
+    updatedAt: profile.updatedAt as IsoDateTimeString,
+    builtin,
+    locked: builtin,
+    deletable: profile.actor === "orchestrator" && !builtin,
   };
 }
 
@@ -2590,7 +2650,9 @@ function snippetReadModelRecord(row: StructuredSnippetRecord): SnippetReadModelR
   };
 }
 
-function extensionUsageFromAgentRecords(records: readonly AgentProfileReadModelRecord[]) {
+function extensionUsageFromConfiguredAgentRecords(
+  records: readonly ConfiguredAgentProfileReadModelRecord[],
+) {
   const usage = new Map<
     string,
     { loadedByProfileIds: Set<string>; availableByProfileIds: Set<string> }
@@ -2606,11 +2668,12 @@ function extensionUsageFromAgentRecords(records: readonly AgentProfileReadModelR
     return created;
   };
   for (const record of records) {
-    for (const extensionId of record.loadedExtensionIds) {
-      ensure(extensionId).loadedByProfileIds.add(record.profileId);
-    }
-    for (const extensionId of record.availableExtensionIds) {
-      ensure(extensionId).availableByProfileIds.add(record.profileId);
+    for (const [extensionId, state] of Object.entries(record.extensionUsage)) {
+      if (state === "loaded") {
+        ensure(extensionId).loadedByProfileIds.add(record.profileId);
+      } else if (state === "available") {
+        ensure(extensionId).availableByProfileIds.add(record.profileId);
+      }
     }
   }
   return usage;
@@ -2719,16 +2782,31 @@ function transcriptMessages(
 ): SurfaceTranscriptReadModel["messages"] {
   const messages = snapshot.turns
     .filter((turn) => turn.surfacePiSessionId === request.target.surfacePiSessionId)
-    .map((turn) => ({
-      messageId: turn.id as unknown as MessageId,
-      role: "user" as const,
-      turnId: turn.id as TurnId,
-      text: turn.requestSummary,
-      commandIds: snapshot.commands
-        .filter((command) => command.turnId === turn.id)
-        .map((command) => command.id as CommandId),
-      createdAt: turn.startedAt as IsoDateTimeString,
-    }));
+    .flatMap((turn) => {
+      const userMessage: SurfaceTranscriptReadModel["messages"][number] = {
+        messageId: turn.id as unknown as MessageId,
+        role: "user",
+        turnId: turn.id as TurnId,
+        text: turn.requestSummary,
+        createdAt: turn.startedAt as IsoDateTimeString,
+      };
+      if (turn.assistantMessageId === null && turn.assistantText === null) {
+        return [userMessage];
+      }
+      return [
+        userMessage,
+        {
+          messageId: (turn.assistantMessageId ?? `${turn.id}:assistant`) as MessageId,
+          role: "assistant" as const,
+          turnId: turn.id as TurnId,
+          text: turn.assistantText ?? "",
+          commandIds: snapshot.commands
+            .filter((command) => command.turnId === turn.id)
+            .map((command) => command.id as CommandId),
+          createdAt: turn.startedAt as IsoDateTimeString,
+        },
+      ];
+    });
   const afterIndex = request.afterMessageId
     ? messages.findIndex((message) => message.messageId === request.afterMessageId)
     : -1;
@@ -2918,6 +2996,33 @@ function parseJsonRecord(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function readString(record: Record<string, unknown>, ...keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
+}
+
+function readBoolean(record: Record<string, unknown>, ...keys: readonly string[]): boolean {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+  }
+  return false;
+}
+
+function bindingReasoning(
+  profile: Record<string, unknown>,
+  liveReasoningEffort?: string,
+): JsonValueType | null {
+  if (liveReasoningEffort) return { effort: liveReasoningEffort };
+  const reasoning = profile.reasoning;
+  if (reasoning !== undefined) return reasoning as JsonValueType;
+  const reasoningEffort = readString(profile, "reasoningEffort");
+  return reasoningEffort ? { effort: reasoningEffort } : null;
 }
 
 function stateCommandsFromState(state: {

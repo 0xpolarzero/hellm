@@ -1,4 +1,6 @@
 import type {
+  ListModelsInput,
+  ModelInfo,
   RuntimeEventGenerationId,
   RuntimeEventSequence,
   RuntimeSurfaceTarget,
@@ -26,6 +28,10 @@ export interface RendererStateFacade {
   >;
 }
 
+export interface RendererModelMetadataFacade {
+  readonly list: (input: ListModelsInput) => Promise<readonly ModelInfo[]>;
+}
+
 export interface RendererStateCommandsFacade {
   readonly workspaceChrome: BootstrapStateCommandsFacade["workspaceChrome"];
   readonly workspaceLayout: BootstrapStateCommandsFacade["workspaceLayout"];
@@ -44,6 +50,7 @@ export interface DesktopNotificationBridge {
 
 export interface CreateDesktopAppInput {
   readonly runtime: DesktopRuntimeActionsFacade;
+  readonly modelMetadata: RendererModelMetadataFacade;
   readonly state: RendererStateFacade;
   readonly commands: {
     readonly runtime: RuntimeCommandsFacade;
@@ -63,6 +70,7 @@ export interface DesktopHostAdapter {
 export interface DesktopBridgeAdapter {
   exposeRendererApi(input: {
     runtime: DesktopRuntimeActionsFacade;
+    modelMetadata: RendererModelMetadataFacade;
     state: RendererStateFacade;
     commands: CreateDesktopAppInput["commands"];
   }): Promise<DesktopBridgeRegistration>;
@@ -264,6 +272,7 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
         try {
           bridgeRegistration = await input.host.bridge.exposeRendererApi({
             runtime: input.runtime,
+            modelMetadata: input.modelMetadata,
             state: input.state,
             commands: input.commands,
           });

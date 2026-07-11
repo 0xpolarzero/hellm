@@ -129,7 +129,9 @@
 
 	function modelOptions(currentValue: string): CompactComboboxOption[] {
 		const options = modelChoices
-			.filter((choice) => choice.providerAuthenticated || modelChoiceValue(choice) === currentValue)
+			.filter(
+				(choice) => choice.authStatus.health === "usable" || modelChoiceValue(choice) === currentValue,
+			)
 			.toSorted((left, right) => {
 				const leftCurrent = modelChoiceValue(left) === currentValue;
 				const rightCurrent = modelChoiceValue(right) === currentValue;
@@ -145,7 +147,7 @@
 				label: choice.modelId,
 				triggerLabel: choice.modelId,
 				searchText: `${choice.modelId} ${choice.providerId}`,
-				disabled: !choice.providerAuthenticated,
+				disabled: choice.authStatus.health !== "usable",
 			}));
 		if (!options.some((option) => option.value === currentValue)) {
 			options.unshift({
@@ -197,7 +199,11 @@
 				if (!choice && value.modelValue !== currentModelValue) {
 					return "Choose a model from the available provider metadata.";
 				}
-				if (choice && !choice.providerAuthenticated && value.modelValue !== currentModelValue) {
+				if (
+					choice &&
+					choice.authStatus.health !== "usable" &&
+					value.modelValue !== currentModelValue
+				) {
 					return "Choose an authenticated provider model.";
 				}
 				if (

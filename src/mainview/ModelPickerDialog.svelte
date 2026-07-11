@@ -53,7 +53,7 @@
 	const groupedModels = $derived.by(() => {
 		const entries: ModelEntry[] = [];
 		for (const choice of modelChoices) {
-			if (!choice.providerAuthenticated) continue;
+			if (choice.authStatus.health !== "usable") continue;
 			try {
 				const model = getModel(
 					choice.providerId as Parameters<typeof getModel>[0],
@@ -67,10 +67,10 @@
 		let visible = entries;
 
 		if (filterThinking) {
-			visible = visible.filter((entry) => entry.choice.capabilities.reasoning);
+			visible = visible.filter((entry) => entry.choice.supportsReasoning);
 		}
 		if (filterVision) {
-			visible = visible.filter((entry) => entry.choice.capabilities.vision);
+			visible = visible.filter((entry) => entry.choice.inputModalities.includes("image"));
 		}
 
 		const searching = searchQuery.trim().length > 0;
@@ -175,10 +175,10 @@
 								</div>
 								<p>
 									{entry.id}
-									{#if entry.choice.capabilities.reasoning}
+					{#if entry.choice.supportsReasoning}
 										· thinking
 									{/if}
-									{#if entry.choice.capabilities.vision}
+					{#if entry.choice.inputModalities.includes("image")}
 										· vision
 									{/if}
 								</p>

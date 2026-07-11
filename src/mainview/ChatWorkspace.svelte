@@ -5,7 +5,7 @@
   import PanelLeftDashedIcon from "@lucide/svelte/icons/panel-left-dashed";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
+  import type { AppAppearance } from "../shared/agent-settings";
   import CommandPalette from "./CommandPalette.svelte";
   import DockviewWorkspace from "./DockviewWorkspace.svelte";
   import { formatTimestamp } from "./chat-format";
@@ -27,6 +27,7 @@
   import type {
     AppLogSummary,
     AgentModelChoice,
+    AgentsReadModel,
     DesktopRendererCommand,
     WorkspaceHandlerThreadSummary,
     WorkspaceWorkflowTaskAttemptSummary,
@@ -205,7 +206,7 @@
   let paletteError = $state<string | undefined>(undefined);
   let paletteBusy = $state(false);
   let workspaceMentionPaths = $state<ReadonlySet<string>>(new Set());
-  let agentSettings = $state<AgentSettingsState | null>(null);
+  let agents = $state<AgentsReadModel | null>(null);
   let requestUserInputRequests = $state<WorkspaceRequestUserInputRequest[]>([]);
   let runtimeApprovalRequests = $state<WorkspaceRuntimeApprovalRequest[]>([]);
 
@@ -458,6 +459,13 @@
   const recentSessionSuggestions = $derived(
     sessions.filter((session) => session.id !== activeSessionId).slice(0, 3),
   );
+  const orchestratorProfiles = $derived(
+    (agents?.configuredProfiles ?? [])
+      .filter((profile) => profile.actor === "orchestrator")
+      .toSorted(
+        (left, right) => left.position - right.position || left.profileId.localeCompare(right.profileId),
+      ),
+  );
   const commandRegistry = $derived(
     buildCommandRegistry({
       sessions,
@@ -466,7 +474,7 @@
       focusedPaneExists: !!runtime.paneLayout.focusedPanelId,
       focusedSurfaceTarget,
       paneTabGroups: getDockviewTabGroupPlacementTargets(runtime.paneLayout),
-      orchestratorProfiles: agentSettings?.agents.orchestrators ?? [],
+      orchestratorProfiles,
       handlerThreads,
     }),
   );
@@ -600,9 +608,9 @@
     setTimeout(() => {
       showModelPicker = true;
     }, 0);
-    modelChoices = runtime.agentModelChoicesSnapshot?.items ?? [];
+    modelChoices = [...(runtime.modelMetadataSnapshot ?? [])];
     try {
-      modelChoices = (await runtime.getAgentModelChoices()).items;
+      modelChoices = [...(await runtime.listModelMetadata())];
     } catch {
       modelChoices = [];
     }
@@ -701,16 +709,16 @@
     await runSessionMutation(() => runtime.switchWorkspaceBranch(branch), { rethrow: true });
   }
 
-  async function refreshAgentSettings() {
-    const snapshot = runtime.agentSettingsSnapshot;
+  async function refreshAgents() {
+    const snapshot = runtime.agentsSnapshot;
     if (snapshot) {
-      agentSettings = snapshot;
+      agents = snapshot;
     }
     try {
-      agentSettings = await runtime.getAgentSettings();
+      agents = await runtime.getAgents();
     } catch (error) {
-      console.error("Failed to load agent settings:", error);
-      agentSettings = null;
+      console.error("Failed to load configured agent profiles:", error);
+      agents = null;
     }
   }
 
@@ -1389,7 +1397,7 @@
     workspaceBranch = runtime.branch;
     sessionNavigation = runtime.sessionNavigation;
     appLogSummary = runtime.appLogSummary;
-    agentSettings = runtime.agentSettingsSnapshot ?? agentSettings;
+    agents = runtime.agentsSnapshot ?? agents;
     paneLayout = runtime.paneLayout;
     activeLayoutId = runtime.activeLayoutId;
     layoutSlots = runtime.layoutSlots;
@@ -1452,7 +1460,7 @@
       .catch((error) => {
         console.error("Failed to load workspace mention paths:", error);
       });
-    void refreshAgentSettings();
+    void refreshAgents();
 
     const unsubscribeRuntime = runtime.subscribe(() => {
       syncRuntimeState();
@@ -1561,7 +1569,7 @@
           {appLogSummary}
           busy={mutatingSession}
           errorMessage={sidebarError}
-          orchestratorProfiles={agentSettings?.agents.orchestrators ?? []}
+          {orchestratorProfiles}
           onCreateSession={handleCreateSession}
           onOpenSession={handleOpenSession}
           onOpenHandlerThread={handleOpenSidebarHandlerThread}
@@ -1619,7 +1627,6 @@
         recentWorkspaces={knownWorkspaces}
         onFocusPanel={(panelId) => void handleFocusPane(panelId)}
         onOpenModelPicker={(panelId) => void handleOpenPaneModelPicker(panelId)}
-        onAgentSettingsChanged={(settings) => (agentSettings = settings)}
         {onAppAppearanceChanged}
         onOpenWorkspace={() => onOpenWorkspace?.()}
         onOpenWorkspaceInNewTab={() => onOpenWorkspaceInNewTab?.()}

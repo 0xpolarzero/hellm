@@ -140,6 +140,7 @@ async function reportRendererReady(): Promise<void> {
 
 const rendererApiInput = {
   runtime: {} as never,
+  modelMetadata: {} as never,
   state: {} as never,
   commands: {} as never,
 };

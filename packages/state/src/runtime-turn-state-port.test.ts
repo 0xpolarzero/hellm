@@ -57,6 +57,8 @@ describe("RuntimeTurnStatePort", () => {
           const finishedResult = yield* port.finishTurn({
             turnId: turn.id,
             status: "completed",
+            assistantMessageId: `${turn.id}:assistant` as never,
+            assistantText: "Turn complete.",
           });
           const finished = finishedResult.value;
 
@@ -76,6 +78,8 @@ describe("RuntimeTurnStatePort", () => {
             id: turn.id,
             turnDecision: "reply",
             status: "completed",
+            assistantMessageId: `${turn.id}:assistant`,
+            assistantText: "Turn complete.",
             finishedAt: expect.any(String),
           });
           for (const result of [turnResult, decidedResult, finishedResult]) {

@@ -52,6 +52,8 @@ import {
   normalizeGeneratedTitle,
   WorkspaceSessionCatalog,
   resolveRestoredSessionDefaults,
+  type CatalogAgentProfileAuthority,
+  type CatalogAgentProfileAuthoritySnapshot,
   type SessionDefaults,
 } from "./session-catalog";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
@@ -235,8 +237,139 @@ function createWorkspaceSessionCatalog(
     undefined,
     runCatalogEffect,
   );
+  catalog.setAgentProfileAuthority(
+    createInMemoryCatalogAgentProfileAuthority(
+      createAgentSettingsStore({
+        cwd,
+        agentDir,
+        workflowsSourceRoot: recoveryOptions.workflowsSourceRoot,
+      }),
+    ),
+  );
   catalogApprovalWaitServices.set(catalog, approvalWaitService);
   return catalog;
+}
+
+function createInMemoryCatalogAgentProfileAuthority(
+  settingsStore: ReturnType<typeof createAgentSettingsStore>,
+): CatalogAgentProfileAuthority {
+  const settings = settingsStore.getState();
+  let snapshot: CatalogAgentProfileAuthoritySnapshot = {
+    configuredProfiles: [
+      ...settings.agents.orchestrators.map((profile, position) => ({
+        profileId: profile.id as never,
+        actor: "orchestrator" as const,
+        name: profile.name,
+        providerId: profile.provider as never,
+        modelId: profile.model as never,
+        reasoning: { effort: profile.reasoningEffort },
+        followComposer: profile.updateFromComposer,
+        extensionUsage: { ...profile.extensionUsage },
+        extensionOrder: (profile.extensionOrder ?? []) as never,
+        position,
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+        builtin: profile.builtin,
+        locked: profile.locked,
+        deletable: !profile.locked,
+      })),
+      {
+        profileId: settings.agents.special.threadHandler.id as never,
+        actor: "handler" as const,
+        name: settings.agents.special.threadHandler.name,
+        providerId: settings.agents.special.threadHandler.provider as never,
+        modelId: settings.agents.special.threadHandler.model as never,
+        reasoning: { effort: settings.agents.special.threadHandler.reasoningEffort },
+        followComposer: false,
+        extensionUsage: { ...settings.agents.special.threadHandler.extensionUsage },
+        extensionOrder: (settings.agents.special.threadHandler.extensionOrder ?? []) as never,
+        position: 0,
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+    ],
+    actorExtensionDefaults: (["orchestrator", "workflow-task"] as const).map((actor) => ({
+      actor,
+      extensionUsage: { ...settings.extensionDefaults.usage[actor] },
+      extensionOrder: [...settings.extensionDefaults.order] as never,
+      updatedAt: "2026-07-11T00:00:00.000Z" as never,
+    })),
+  };
+  const replaceProfile = (
+    actor: "orchestrator" | "handler",
+    profile: {
+      profileId: string;
+      name: string;
+      providerId: string;
+      modelId: string;
+      reasoning?: { effort: string };
+      extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
+      extensionOrder?: readonly string[];
+      followComposer?: boolean;
+    },
+  ) => {
+    const current = snapshot.configuredProfiles.find(
+      (candidate) => candidate.actor === actor && candidate.profileId === profile.profileId,
+    );
+    const next = {
+      profileId: profile.profileId as never,
+      actor,
+      name: profile.name,
+      providerId: profile.providerId as never,
+      modelId: profile.modelId as never,
+      reasoning: profile.reasoning ?? null,
+      followComposer: profile.followComposer ?? false,
+      extensionUsage: { ...profile.extensionUsage },
+      extensionOrder: [...(profile.extensionOrder ?? [])] as never,
+      position:
+        current?.position ??
+        snapshot.configuredProfiles.filter((candidate) => candidate.actor === actor).length,
+      updatedAt: "2026-07-11T00:00:00.000Z" as never,
+      builtin: current?.builtin ?? false,
+      locked: current?.locked ?? false,
+      deletable: current?.deletable ?? actor === "orchestrator",
+    };
+    snapshot = {
+      ...snapshot,
+      configuredProfiles: [
+        ...snapshot.configuredProfiles.filter(
+          (candidate) => !(candidate.actor === actor && candidate.profileId === profile.profileId),
+        ),
+        next,
+      ].toSorted((left, right) => left.position - right.position),
+    };
+  };
+  return {
+    read: async () => structuredClone(snapshot),
+    updateOrchestrator: async (profile) => {
+      replaceProfile("orchestrator", profile);
+    },
+    updateThreadHandler: async (profile) => {
+      replaceProfile("handler", profile);
+    },
+    setProfileExtensionUsage: async (input) => {
+      const profile = snapshot.configuredProfiles.find(
+        (candidate) => candidate.actor === input.actor && candidate.profileId === input.profileId,
+      );
+      if (!profile) throw new Error(`Unknown ${input.actor} agent profile: ${input.profileId}`);
+      const extensionUsage = { ...profile.extensionUsage };
+      const actorDefault = snapshot.actorExtensionDefaults.find(
+        (candidate) => candidate.actor === input.actor,
+      )?.extensionUsage[input.extensionId];
+      if (input.actor === "orchestrator" && actorDefault === input.usage) {
+        delete extensionUsage[input.extensionId];
+      } else {
+        extensionUsage[input.extensionId] = input.usage;
+      }
+      snapshot = {
+        ...snapshot,
+        configuredProfiles: snapshot.configuredProfiles.map((candidate) =>
+          candidate === profile ? { ...candidate, extensionUsage } : candidate,
+        ),
+      };
+    },
+  };
 }
 
 async function answerRuntimeApprovalThroughRuntime(
@@ -461,27 +594,47 @@ async function setSurfaceExtensionUsage(
   await setSurfaceExtensionUsageFn.call(catalog, target, extensionId, state);
 }
 
-function getCatalogAgentProfiles(catalog: WorkspaceSessionCatalog): AgentProfileSettings[] {
-  return (
-    catalog as unknown as {
-      agentSettingsStore: {
-        getState: () => { agents: { orchestrators: AgentProfileSettings[] } };
-      };
-    }
-  ).agentSettingsStore.getState().agents.orchestrators;
+async function getCatalogAgentProfiles(
+  catalog: WorkspaceSessionCatalog,
+): Promise<AgentProfileSettings[]> {
+  const authority = (catalog as unknown as { agentProfileAuthority: CatalogAgentProfileAuthority })
+    .agentProfileAuthority;
+  const snapshot = await authority.read();
+  return snapshot.configuredProfiles
+    .filter((profile) => profile.actor === "orchestrator")
+    .map((profile) => ({
+      id: profile.profileId,
+      kind: "orchestrator",
+      name: profile.name,
+      provider: profile.providerId,
+      model: profile.modelId,
+      reasoningEffort: (profile.reasoning as { effort: AgentProfileSettings["reasoningEffort"] })
+        .effort,
+      systemPrompt: "",
+      extensionUsage: { ...profile.extensionUsage },
+      extensionOrder: [...profile.extensionOrder],
+      updateFromComposer: profile.followComposer,
+      builtin: profile.builtin,
+      locked: profile.locked,
+    }));
 }
 
-function setCatalogAgentProfile(
+async function setCatalogAgentProfile(
   catalog: WorkspaceSessionCatalog,
   profile: AgentProfileSettings,
-): void {
-  (
-    catalog as unknown as {
-      agentSettingsStore: {
-        setAgentProfile: (profile: AgentProfileSettings) => unknown;
-      };
-    }
-  ).agentSettingsStore.setAgentProfile(profile);
+): Promise<void> {
+  const authority = (catalog as unknown as { agentProfileAuthority: CatalogAgentProfileAuthority })
+    .agentProfileAuthority;
+  await authority.updateOrchestrator({
+    profileId: profile.id as never,
+    name: profile.name,
+    providerId: profile.provider as never,
+    modelId: profile.model as never,
+    reasoning: { effort: profile.reasoningEffort },
+    extensionUsage: profile.extensionUsage as never,
+    extensionOrder: profile.extensionOrder as never,
+    followComposer: profile.updateFromComposer,
+  });
 }
 
 async function createHandlerThreadHarness(
@@ -1804,7 +1957,6 @@ describe("WorkspaceSessionCatalog", () => {
               parentThreadId: string;
               parentSurfacePiSessionId: string;
               objective: string;
-              agentProfileSettings: null;
               loadedByCommandId: string;
             }): Promise<{ id: string; title: string }>;
           }
@@ -1814,7 +1966,6 @@ describe("WorkspaceSessionCatalog", () => {
           parentThreadId: orchestratorThread.id,
           parentSurfacePiSessionId: created.target.surfacePiSessionId,
           objective: "Configure workflow checks for this repository.",
-          agentProfileSettings: null,
           loadedByCommandId: orchestratorThread.id,
         });
 
@@ -1975,7 +2126,6 @@ describe("WorkspaceSessionCatalog", () => {
             objective: string;
             historyMode: "isolated";
             overrides: Record<string, "loaded" | "available" | "unavailable">;
-            agentProfileSettings: null;
             loadedByCommandId: string;
             autoStart: false;
           }): Promise<{ id: string; surfacePiSessionId: string }>;
@@ -1995,7 +2145,6 @@ describe("WorkspaceSessionCatalog", () => {
           "thread-orchestration": "loaded",
           "thread-handling": "unavailable",
         },
-        agentProfileSettings: null,
         loadedByCommandId: orchestratorThread.id,
         autoStart: false,
       });
@@ -2343,19 +2492,6 @@ describe("WorkspaceSessionCatalog", () => {
         {
           ...DEFAULTS,
           agentProfileId: DEFAULT_ORCHESTRATOR_PROFILE_ID,
-          agentProfileSettings: {
-            id: DEFAULT_ORCHESTRATOR_PROFILE_ID,
-            kind: "orchestrator",
-            name: "Default orchestrator",
-            provider: DEFAULTS.provider,
-            model: DEFAULTS.model,
-            reasoningEffort: DEFAULTS.thinkingLevel,
-            systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-            extensionUsage: {},
-            updateFromComposer: false,
-            builtin: true,
-            locked: true,
-          },
         },
       );
 
@@ -2459,24 +2595,25 @@ describe("WorkspaceSessionCatalog", () => {
     const suffix = "Custom raw orchestrator profile suffix.";
 
     try {
+      const customProfile: AgentProfileSettings = {
+        id: "custom-orchestrator",
+        kind: "orchestrator",
+        name: "Custom orchestrator",
+        provider: DEFAULTS.provider,
+        model: DEFAULTS.model,
+        reasoningEffort: DEFAULTS.thinkingLevel,
+        systemPrompt: suffix,
+        extensionUsage: {},
+        updateFromComposer: false,
+        builtin: false,
+        locked: false,
+      };
+      await setCatalogAgentProfile(catalog, customProfile);
       const created = await catalog.createSession(
         { title: "Raw Settings Prompt" },
         {
           ...DEFAULTS,
           agentProfileId: "custom-orchestrator",
-          agentProfileSettings: {
-            id: "custom-orchestrator",
-            kind: "orchestrator",
-            name: "Custom orchestrator",
-            provider: DEFAULTS.provider,
-            model: DEFAULTS.model,
-            reasoningEffort: DEFAULTS.thinkingLevel,
-            systemPrompt: suffix,
-            extensionUsage: {},
-            updateFromComposer: false,
-            builtin: false,
-            locked: false,
-          },
         },
       );
 
@@ -2825,8 +2962,8 @@ describe("WorkspaceSessionCatalog", () => {
           (snapshot) => snapshot.target.surfacePiSessionId === handler.target.surfacePiSessionId,
         ) ?? null;
 
-      expect(orchestratorSnapshot?.model).toBe(DEFAULTS.model);
-      expect(orchestratorSnapshot?.reasoningEffort).toBe(DEFAULTS.thinkingLevel);
+      expect(orchestratorSnapshot?.model).toBe(created.model);
+      expect(orchestratorSnapshot?.reasoningEffort).toBe(created.reasoningEffort);
       expect(handlerSnapshot?.reasoningEffort).toBe("high");
 
       const handlerUpdates = surfaceSyncs.filter(
@@ -2900,8 +3037,8 @@ describe("WorkspaceSessionCatalog", () => {
     };
 
     try {
-      setCatalogAgentProfile(catalog, syncedProfile);
-      setCatalogAgentProfile(catalog, fixedProfile);
+      await setCatalogAgentProfile(catalog, syncedProfile);
+      await setCatalogAgentProfile(catalog, fixedProfile);
 
       const synced = await catalog.createSession(
         { title: "Synced profile", agentProfileId: syncedProfile.id },
@@ -2910,14 +3047,13 @@ describe("WorkspaceSessionCatalog", () => {
           model: syncedProfile.model,
           thinkingLevel: syncedProfile.reasoningEffort,
           agentProfileId: syncedProfile.id,
-          agentProfileSettings: syncedProfile,
         },
       );
       await setSurfaceModel(catalog, synced.target, "gpt-4.1-mini");
       await setSurfaceThoughtLevel(catalog, synced.target, "high");
       await setSurfaceExtensionUsage(catalog, synced.target, "smithers", "loaded");
 
-      const syncedAfter = getCatalogAgentProfiles(catalog).find(
+      const syncedAfter = (await getCatalogAgentProfiles(catalog)).find(
         (profile) => profile.id === syncedProfile.id,
       );
       expect(syncedAfter).toMatchObject({
@@ -2934,7 +3070,6 @@ describe("WorkspaceSessionCatalog", () => {
           model: fixedProfile.model,
           thinkingLevel: fixedProfile.reasoningEffort,
           agentProfileId: fixedProfile.id,
-          agentProfileSettings: fixedProfile,
         },
       );
       await setSurfaceModel(catalog, fixed.target, "gpt-4.1-mini");
@@ -2945,7 +3080,7 @@ describe("WorkspaceSessionCatalog", () => {
         state: "loaded",
       });
 
-      const fixedAfter = getCatalogAgentProfiles(catalog).find(
+      const fixedAfter = (await getCatalogAgentProfiles(catalog)).find(
         (profile) => profile.id === fixedProfile.id,
       );
       expect(fixedAfter).toMatchObject({

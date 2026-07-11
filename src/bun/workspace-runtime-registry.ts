@@ -68,6 +68,7 @@ import {
   getSvvyAgentDir,
   getSvvyDataDir,
   STRUCTURED_SESSION_DB_FILENAME,
+  type CatalogAgentProfileAuthority,
   type WorkspaceSessionCatalog,
   type TitleGenerationLogEvent,
   type WorkflowsGeneratedPackageLogEvent,
@@ -143,6 +144,7 @@ export interface DesktopAppFacades {
   readonly runtimeCommands: CreateDesktopAppInput["commands"]["runtime"];
   readonly rendererState: RendererStateFacade;
   readonly rendererStateCommands: RendererStateCommandsFacade;
+  readonly modelMetadata: AppRuntimeBootstrap["modelMetadata"];
   readonly runtimeEvents: RuntimeFacade["events"];
 }
 
@@ -388,6 +390,10 @@ export class WorkspaceRuntimeRegistry {
   private appGlobalHost: Promise<AppGlobalHostRecord> | null = null;
   private appRuntimeBootstrap: Promise<AppRuntimeBootstrap> | null = null;
   private resolvedAppRuntimeBootstrap: AppRuntimeBootstrap | null = null;
+  private catalogAgentProfileAuthority: {
+    runtime: AppRuntimeBootstrap;
+    authority: CatalogAgentProfileAuthority;
+  } | null = null;
   private desktopAppFacades: Promise<DesktopAppFacades> | null = null;
   private appRuntimeBootstrapState: "accepting" | "shutting-down" | "closed" = "accepting";
   private appRuntimeShutdownPromise: Promise<void> | null = null;
@@ -868,6 +874,7 @@ export class WorkspaceRuntimeRegistry {
           runtimeCommands: runtime.facade.commands,
           rendererState: runtime.rendererState,
           rendererStateCommands: runtime.rendererStateCommands,
+          modelMetadata: runtime.modelMetadata,
           runtimeEvents: runtime.facade.events,
         };
       });
@@ -1054,6 +1061,7 @@ export class WorkspaceRuntimeRegistry {
       }
       this.appRuntimeBootstrapState = "closed";
       this.resolvedAppRuntimeBootstrap = null;
+      this.catalogAgentProfileAuthority = null;
       this.desktopAppFacades = null;
       this.appGlobalHost = null;
       this.openingRuntimes.clear();
@@ -1351,6 +1359,7 @@ export class WorkspaceRuntimeRegistry {
           appendAppLoggerEvent(workspaceAppLog, event);
         });
         appRuntime = await this.getAppRuntimeBootstrap();
+        catalog.setAgentProfileAuthority(this.createCatalogAgentProfileAuthority(appRuntime));
         workspaceStateRegistered = true;
         await appRuntime.internal.workspaceStates.register(
           kind === "default"
@@ -1828,6 +1837,10 @@ export class WorkspaceRuntimeRegistry {
       appGlobal.catalog,
       ...this.retainedWorkspaceHostRecords().map((host) => host.catalog),
     ]);
+    const agentProfileAuthority = this.createCatalogAgentProfileAuthority(runtime);
+    for (const catalog of catalogs) {
+      catalog.setAgentProfileAuthority(agentProfileAuthority);
+    }
     await Promise.all(
       [...catalogs].map((catalog) =>
         catalog.setCommittedStateInvalidationPublisher((afterCommit) =>
@@ -1836,6 +1849,37 @@ export class WorkspaceRuntimeRegistry {
       ),
     );
     return runtime;
+  }
+
+  private createCatalogAgentProfileAuthority(
+    runtime: AppRuntimeBootstrap,
+  ): CatalogAgentProfileAuthority {
+    if (this.catalogAgentProfileAuthority?.runtime === runtime) {
+      return this.catalogAgentProfileAuthority.authority;
+    }
+    const authority: CatalogAgentProfileAuthority = {
+      read: async () => {
+        const result = await runtime.state.readModels.fetch({ kind: "agents" });
+        if (result.kind !== "agents") {
+          throw new Error(`Expected agents read model; received ${result.kind}.`);
+        }
+        return {
+          configuredProfiles: result.value.configuredProfiles,
+          actorExtensionDefaults: result.value.actorExtensionDefaults,
+        };
+      },
+      updateOrchestrator: async (profile) => {
+        await runtime.stateCommands.agentProfiles.updateOrchestrator({ profile });
+      },
+      updateThreadHandler: async (profile) => {
+        await runtime.stateCommands.agentProfiles.updateThreadHandler({ profile });
+      },
+      setProfileExtensionUsage: async (input) => {
+        await runtime.stateCommands.agentProfiles.setProfileExtensionUsage(input);
+      },
+    };
+    this.catalogAgentProfileAuthority = { runtime, authority };
+    return authority;
   }
 
   private async getAppGlobalHostRecord(): Promise<AppGlobalHostRecord> {

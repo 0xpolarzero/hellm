@@ -1,5 +1,6 @@
 import type { ExtensionCategory, ExtensionUsageState } from "@svvy/core";
 import type {
+  AgentActorExtensionDefaultsReadModelRecord,
   AgentContextPreviewRequest,
   ExtensionsInventoryReadModel,
   ExtensionInventoryItemReadModel,
@@ -23,12 +24,50 @@ export type ExtensionUsageControlItem = {
 
 type ExtensionUsageInventoryInput = {
   actor: AgentContextActor;
-  usage: Record<string, ExtensionUsageState>;
+  usage: Readonly<Record<string, ExtensionUsageState>>;
   profileId: string;
   extensionInventoryItems: ExtensionInventoryItemReadModel[];
   inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
   networkAccess: boolean;
 };
+
+export function mergeActorExtensionDefaults(input: {
+  actor: "orchestrator" | "workflow-task";
+  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
+  stateDefaults?: AgentActorExtensionDefaultsReadModelRecord | null;
+}): ExtensionsInventoryReadModel["defaults"] | null {
+  const inventoryDefaults = input.inventoryDefaults ?? null;
+  const stateDefaults = input.stateDefaults ?? null;
+  if (!stateDefaults || stateDefaults.actor !== input.actor) {
+    return inventoryDefaults;
+  }
+
+  const usage = Object.fromEntries(
+    Object.entries(inventoryDefaults?.usage ?? {}).map(([extensionId, defaults]) => [
+      extensionId,
+      [...defaults],
+    ]),
+  );
+  for (const [extensionId, state] of Object.entries(stateDefaults.extensionUsage)) {
+    usage[extensionId] = [
+      ...(usage[extensionId] ?? []).filter((candidate) => candidate.actorKind !== input.actor),
+      {
+        actorKind: input.actor,
+        state,
+        customized: stateDefaults.updatedAt !== null,
+        configurable: true,
+      },
+    ];
+  }
+
+  return {
+    order:
+      stateDefaults.extensionOrder.length > 0
+        ? [...stateDefaults.extensionOrder]
+        : [...(inventoryDefaults?.order ?? [])],
+    usage,
+  };
+}
 
 export function baselineExtensionState(input: {
   actor: AgentContextActor;

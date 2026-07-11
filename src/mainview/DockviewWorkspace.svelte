@@ -17,7 +17,7 @@
   import "dockview-core/dist/styles/dockview.css";
   import DockviewPanelHost from "./DockviewPanelHost.svelte";
   import type { ChatRuntime } from "./chat-runtime";
-  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
+  import type { AppAppearance } from "../shared/agent-settings";
   import type { WorkspaceTabInfo } from "../shared/workspace-contract";
   import type { WorkspaceDockviewPanelState } from "./pane-layout";
   import { getSurfaceDisplayTitle } from "./surface-title";
@@ -36,7 +36,6 @@
     recentWorkspaces?: WorkspaceTabInfo[];
     onFocusPanel: (panelId: string) => void;
     onOpenModelPicker: (panelId: string) => void;
-    onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
@@ -53,7 +52,6 @@
     recentWorkspaces = [],
     onFocusPanel,
     onOpenModelPicker,
-    onAgentSettingsChanged,
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
     onAppAppearanceChanged,
@@ -99,9 +97,6 @@
           },
           get onOpenModelPicker() {
             return onOpenModelPicker;
-          },
-          get onAgentSettingsChanged() {
-            return onAgentSettingsChanged;
           },
           get openingWorkspace() {
             return openingWorkspace;

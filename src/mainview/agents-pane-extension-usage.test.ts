@@ -3,6 +3,7 @@ import type { ExtensionInventoryItemReadModel } from "../shared/workspace-contra
 import {
   canSelectExtensionUsageState,
   extensionUsageItems,
+  mergeActorExtensionDefaults,
   resolvedExtensionState,
   type ExtensionUsageControlItem,
 } from "./agents-pane-extension-usage";
@@ -49,6 +50,61 @@ function extensionInventoryItem(
 }
 
 describe("Agents pane extension usage helpers", () => {
+  it("layers sparse state actor defaults over builtin inventory defaults", () => {
+    expect(
+      mergeActorExtensionDefaults({
+        actor: "orchestrator",
+        inventoryDefaults: {
+          order: ["shell", "smithers"],
+          usage: {
+            shell: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "loaded",
+              },
+            ],
+            smithers: [
+              {
+                actorKind: "orchestrator",
+                configurable: true,
+                customized: false,
+                state: "available",
+              },
+            ],
+          },
+        },
+        stateDefaults: {
+          actor: "orchestrator",
+          extensionOrder: [],
+          extensionUsage: { smithers: "unavailable" },
+          updatedAt: "2026-07-11T12:00:00.000Z",
+        },
+      }),
+    ).toEqual({
+      order: ["shell", "smithers"],
+      usage: {
+        shell: [
+          {
+            actorKind: "orchestrator",
+            configurable: true,
+            customized: false,
+            state: "loaded",
+          },
+        ],
+        smithers: [
+          {
+            actorKind: "orchestrator",
+            configurable: true,
+            customized: true,
+            state: "unavailable",
+          },
+        ],
+      },
+    });
+  });
+
   it("resolves implicit builtin usage from inventory defaults", () => {
     const web = extensionInventoryItem({
       id: "web",

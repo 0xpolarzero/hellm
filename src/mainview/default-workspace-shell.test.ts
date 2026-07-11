@@ -445,8 +445,13 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain("actorForProfileId(targetProfileId)");
     expect(agentsPaneSource).toContain('toggleExpanded(agent.id, "workflow-task")');
     expect(agentsPaneSource).toContain(
-      'toggleExpanded(profile.id, category === "special" ? "handler" : "orchestrator")',
+      'toggleExpanded(profile.profileId, category === "special" ? "handler" : "orchestrator")',
     );
+    expect(agentsPaneSource).toContain("runtime.getAgents()");
+    expect(agentsPaneSource).toContain("ConfiguredAgentProfileReadModelRecord");
+    expect(agentsPaneSource).toContain("agents?.actorExtensionDefaults.find");
+    expect(agentsPaneSource).toContain("runtime.promoteConfiguredProfileExtensionDefault");
+    expect(agentsPaneSource).not.toContain('systemPrompt: ""');
     expect(agentsPaneSource).not.toContain("Profiles used by orchestrators");
     expect(agentsPaneSource).not.toContain("agents-header");
     expect(agentsPaneSource).toContain("{preview.actor}");
@@ -692,11 +697,11 @@ describe("default workspace renderer shell", () => {
     );
     const backendSource = await readFile(new URL("../bun/index.ts", import.meta.url), "utf8");
 
-    expect(agentsPaneSource).toContain("runtime.getAgentModelChoices()");
-    expect(agentsPaneSource).toContain("modelChoices = nextModelChoices.items");
+    expect(agentsPaneSource).toContain("runtime.listModelMetadata()");
+    expect(agentsPaneSource).toContain("modelChoices = [...nextModelChoices]");
     expect(agentsPaneSource).toContain("AgentProfileRowForm");
     expect(agentProfileFormSource).toContain("createForm");
-    expect(agentProfileFormSource).toContain("!choice.providerAuthenticated");
+    expect(agentProfileFormSource).toContain('choice.authStatus.health !== "usable"');
     expect(agentProfileFormSource).toContain("supportedReasoning");
     expect(agentProfileFormSource).toContain(
       "Choose a model from the available provider metadata.",
@@ -706,7 +711,7 @@ describe("default workspace renderer shell", () => {
     );
     expect(agentProfileFormSource).toContain("formApi.reset(valuesFor(saved))");
     expect(workflowAgentFormSource).toContain("createForm");
-    expect(workflowAgentFormSource).toContain("!choice.providerAuthenticated");
+    expect(workflowAgentFormSource).toContain('choice.authStatus.health !== "usable"');
     expect(workflowAgentFormSource).toContain("supportedReasoning");
     expect(workflowAgentFormSource).toContain(
       "Choose a model from the available provider metadata.",
@@ -716,31 +721,30 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).not.toContain("getModel(");
     expect(agentsPaneSource).not.toContain("option?.model ??");
     expect(agentsPaneSource).not.toContain("reasoning: false");
-    expect(dockviewHostSource).toContain("runtime.getAgentModelChoices()");
-    expect(dockviewHostSource).toContain("!choice.providerAuthenticated");
+    expect(dockviewHostSource).toContain("runtime.listModelMetadata()");
+    expect(dockviewHostSource).toContain('choice.authStatus.health !== "usable"');
     expect(chatComposerSource).toContain("supportedThinkingLevels");
     expect(chatComposerSource).toContain("modelOptionThinkingLevels");
     expect(chatComposerSource).toContain("!supportedThinkingLevels.includes(thinkingLevel)");
     expect(chatComposerSource).not.toContain("getSupportedThinkingLevels");
     expect(modelPickerSource).toContain("modelChoices: AgentModelChoice[]");
     expect(modelPickerSource).toContain("onSelect(entry.model, entry.choice)");
-    expect(modelPickerSource).toContain("choice.capabilities.reasoning");
-    expect(modelPickerSource).toContain("choice.capabilities.vision");
+    expect(modelPickerSource).toContain("choice.supportsReasoning");
+    expect(modelPickerSource).toContain('choice.inputModalities.includes("image")');
     expect(modelPickerSource).not.toContain("discoverModels");
     expect(modelPickerSource).not.toContain("getProviders()");
     expect(modelPickerSource).not.toContain("getModels(");
-    expect(chatWorkspaceSource).toContain("runtime.getAgentModelChoices()");
+    expect(chatWorkspaceSource).toContain("runtime.listModelMetadata()");
     expect(chatWorkspaceSource).toContain("clampThinkingLevelForModel");
     expect(chatWorkspaceSource).toContain("agent.setThinkingLevel(nextThinkingLevel)");
     expect(chatWorkspaceSource).not.toContain("listConfiguredProviders");
     expect(chatWorkspaceSource).not.toContain("allowedProviders");
-    expect(runtimeSource).toContain("getAgentModelChoices: () =>");
+    expect(runtimeSource).toContain("listModelMetadata: () =>");
     expect(runtimeSource).not.toContain("listConfiguredProviders");
-    expect(contractSource).toContain("export interface AgentModelChoice");
-    expect(contractSource).toContain("getAgentModelChoices");
-    expect(contractSource).toContain("supportedReasoning: ReasoningEffort[]");
+    expect(contractSource).toContain("export type AgentModelChoice = ModelInfo");
+    expect(contractSource).toContain("listModelMetadata");
     expect(backendSource).toContain("assertAgentModelSelection");
-    expect(backendSource).toContain("items: readDefaultModelCatalog().map");
+    expect(backendSource).toContain("facades.modelMetadata.list(input)");
     expect(existsSync(new URL("./model-options.ts", import.meta.url))).toBe(false);
     expect(existsSync(new URL("./model-thinking.ts", import.meta.url))).toBe(false);
     expect(existsSync(new URL("./model-discovery.ts", import.meta.url))).toBe(false);
@@ -1499,7 +1503,7 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("function notifyReadModelCachesChanged");
     expect(runtimeSource).toContain("const refreshWarmReadModels");
     expect(runtimeSource).toContain("refreshWarmReadModels();");
-    expect(runtimeSource).toContain("agentModelChoicesSnapshot");
+    expect(runtimeSource).toContain("modelMetadataSnapshot");
     expect(runtimeSource).toContain("providerAuthsSnapshot");
     expect(runtimeSource).toContain("externalInstructionSourcesSnapshot");
     expect(runtimeSource).toContain("getExtensionsInventory: refreshExtensionsInventory");
@@ -1508,7 +1512,8 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("listProviderAuths: refreshProviderAuths");
 
     expect(agentsPaneSource).toContain("runtime.agentSettingsSnapshot");
-    expect(agentsPaneSource).toContain("runtime.agentModelChoicesSnapshot");
+    expect(agentsPaneSource).toContain("runtime.agentsSnapshot");
+    expect(agentsPaneSource).toContain("runtime.modelMetadataSnapshot");
     expect(agentsPaneSource).toContain("runtime.extensionsInventorySnapshot");
     expect(agentsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
     expect(agentsPaneSource).not.toContain("rpc.request");

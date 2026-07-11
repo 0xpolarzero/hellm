@@ -11,8 +11,10 @@ import {
   type AppLogEntryId,
   type CommandId,
   type CreateOrchestratorSurfaceInput,
+  type ExtensionId,
   type IsoDateTimeString,
   type PromptTarget,
+  type ProviderId,
   type RuntimeEvent,
   type RuntimeClientRequestId,
   type RuntimeClientSubmissionId,
@@ -48,6 +50,7 @@ import { createTestSandboxHostSupport } from "./sandbox-host-support.test-suppor
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   normalizeExternalInstructionsSettings,
+  type AgentSettingsState,
   type AppPreferences,
 } from "../shared/agent-settings";
 
@@ -218,6 +221,65 @@ describe("app runtime bootstrap", () => {
         "app:scan:extensions",
         `workspace:${harness.workspaceAId}:reconcile:external_instructions`,
       ]);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
+  it("exposes renderer-safe pi model metadata joined with authoritative provider auth status", async () => {
+    const harness = createBootstrapHarness();
+    const providerId = "openai" as ProviderId;
+    harness.appGlobal.store.recordProviderAuthStatus({
+      status: {
+        providerId,
+        health: "usable",
+        redactedAccountLabel: "App OpenAI credential",
+      },
+      observedAt: "2026-05-01T09:00:00.000Z" as typeof IsoDateTimeStringSchema.Type,
+      source: "startup_scan",
+    });
+    harness.appGlobal.store.recordProviderAuthStatus({
+      status: {
+        providerId,
+        workspaceId: harness.workspaceAId,
+        health: "expired",
+        redactedAccountLabel: "Workspace A OpenAI credential",
+        issue: "Reconnect the workspace credential.",
+      },
+      observedAt: "2026-05-01T09:00:01.000Z" as typeof IsoDateTimeStringSchema.Type,
+      source: "user_action",
+    });
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+
+    try {
+      const workspaceAModels = await bootstrap.modelMetadata.list({
+        workspaceId: harness.workspaceAId,
+        providerId,
+      });
+      const workspaceBModels = await bootstrap.modelMetadata.list({
+        workspaceId: harness.workspaceBId,
+        providerId,
+      });
+
+      expect(workspaceAModels.length).toBeGreaterThan(0);
+      expect(workspaceAModels.every((model) => model.providerId === providerId)).toBe(true);
+      expect(workspaceAModels[0]).toMatchObject({
+        displayName: expect.any(String),
+        inputModalities: expect.arrayContaining(["text"]),
+        authStatus: {
+          providerId,
+          workspaceId: harness.workspaceAId,
+          health: "expired",
+          redactedAccountLabel: "Workspace A OpenAI credential",
+          issue: "Reconnect the workspace credential.",
+        },
+      });
+      expect(workspaceBModels[0]?.authStatus).toMatchObject({
+        providerId,
+        health: "usable",
+        redactedAccountLabel: "App OpenAI credential",
+      });
+      expect(workspaceBModels[0]?.authStatus).not.toHaveProperty("workspaceId");
     } finally {
       await bootstrap.dispose();
     }
@@ -462,6 +524,58 @@ describe("app runtime bootstrap", () => {
     }
   });
 
+  it("seeds exact profile reasoning and independent actor extension defaults", async () => {
+    const harness = createBootstrapHarness();
+    const settings = structuredClone(DEFAULT_AGENT_SETTINGS_STATE) as AgentSettingsState;
+    settings.agents.orchestrators[0]!.reasoningEffort = "high";
+    settings.agents.special.threadHandler.reasoningEffort = "low";
+    settings.extensionDefaults = {
+      order: ["alpha"],
+      usage: {
+        orchestrator: { alpha: "loaded" },
+        "workflow-task": { alpha: "available" },
+      },
+    };
+    const bootstrap = await createAppRuntimeBootstrap({
+      ...harness.input,
+      agentSettingsSeed: {
+        hasAgentProfileRows: () => false,
+        hasExtensionEnvRows: () => true,
+        read: () => settings,
+      },
+    });
+
+    try {
+      const result = await bootstrap.rendererState.readModels.fetch({ kind: "agents" });
+      expect(result.kind).toBe("agents");
+      if (result.kind !== "agents") throw new Error("Expected agents read model.");
+      expect(
+        Object.fromEntries(
+          result.value.configuredProfiles.map(({ profileId, reasoning }) => [profileId, reasoning]),
+        ),
+      ).toEqual({
+        "default-orchestrator": { effort: "high" },
+        "thread-handler": { effort: "low" },
+      });
+      expect(result.value.actorExtensionDefaults).toEqual([
+        {
+          actor: "orchestrator",
+          extensionUsage: { alpha: "loaded" },
+          extensionOrder: ["alpha" as ExtensionId],
+          updatedAt: expect.any(String),
+        },
+        {
+          actor: "workflow-task",
+          extensionUsage: { alpha: "available" },
+          extensionOrder: ["alpha" as ExtensionId],
+          updatedAt: expect.any(String),
+        },
+      ]);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
   it("prepares startup-failure shutdown before disposing the acquired runtime", async () => {
     const harness = createBootstrapHarness();
     const listSessionStates = harness.appGlobal.store.listSessionStates.bind(
@@ -501,6 +615,15 @@ describe("app runtime bootstrap", () => {
     await expect(bootstrap.facade.events()).rejects.toMatchObject({
       type: "runtime-facade-error",
       reason: "disposed",
+    });
+    await expect(
+      bootstrap.modelMetadata.list({
+        workspaceId: harness.workspaceAId,
+        providerId: "openai" as ProviderId,
+      }),
+    ).rejects.toMatchObject({
+      operation: "app-runtime-bootstrap.modelMetadata.list",
+      reason: "runtime-shutdown",
     });
     await expect(Promise.all([firstShutdown, duplicateShutdown])).resolves.toEqual([
       undefined,

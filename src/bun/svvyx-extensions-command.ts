@@ -2130,6 +2130,7 @@ export function setExtensionUsage(input: {
   extensionId: string;
   agentProfile: string;
   state: ExtensionUsageState;
+  targetActor?: SvvyActorKind;
 }): SetExtensionUsageResult {
   const extension = requireExtension(input.extensionId, input.extensionsRoot);
   if (extension.id === "extension-loading") {
@@ -2139,7 +2140,16 @@ export function setExtensionUsage(input: {
     );
   }
 
-  const target = resolveUsageProfile(input.agentSettingsStore, input.agentProfile);
+  const target =
+    input.targetActor === "workflow-task"
+      ? resolveWorkflowUsageProfile(input.agentSettingsStore, input.agentProfile)
+      : resolveUsageProfile(input.agentSettingsStore, input.agentProfile);
+  if (input.targetActor && target.actor !== input.targetActor) {
+    throw extensionsCommandError(
+      "AGENT_PROFILE_NOT_FOUND",
+      `Agent profile not found for ${input.targetActor}: ${input.agentProfile}`,
+    );
+  }
   assertUsageStateAllowedForActor({
     actor: target.actor,
     extension,
@@ -2314,6 +2324,24 @@ function resolveUsageProfile(
     };
   }
   throw extensionsCommandError("AGENT_PROFILE_NOT_FOUND", `Agent profile not found: ${requested}`);
+}
+
+function resolveWorkflowUsageProfile(
+  store: AgentSettingsStore,
+  requested: string,
+): Extract<UsageProfileTarget, { actor: "workflow-task" }> {
+  const workflowAgent = store.getState().workflowAgents[requested];
+  if (!workflowAgent) {
+    throw extensionsCommandError(
+      "AGENT_PROFILE_NOT_FOUND",
+      `Workflow task-agent profile not found: ${requested}`,
+    );
+  }
+  return {
+    actor: "workflow-task",
+    agentProfileName: workflowAgent.id,
+    profile: workflowAgent,
+  };
 }
 
 type UsageProfileTarget = ReturnType<typeof resolveUsageProfile>;

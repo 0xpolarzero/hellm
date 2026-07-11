@@ -152,9 +152,17 @@ type RendererStateFacade = {
   >;
 };
 type RendererStateCommandsFacade = {
+  workspaceChrome: BootstrapStateCommandsFacade["workspaceChrome"];
+  workspaceLayout: BootstrapStateCommandsFacade["workspaceLayout"];
   appLogs: BootstrapStateCommandsFacade["appLogs"];
   appPreferences: BootstrapStateCommandsFacade["appPreferences"];
   providerAuth: BootstrapStateCommandsFacade["providerAuth"];
+  extensionEnv: BootstrapStateCommandsFacade["extensionEnv"];
+  agentProfiles: BootstrapStateCommandsFacade["agentProfiles"];
+  snippets: BootstrapStateCommandsFacade["snippets"];
+};
+type RendererModelMetadataFacade = {
+  list(input: ListModelsInput): Promise<readonly ModelInfo[]>;
 };
 
 type DesktopNotificationBridge = {
@@ -164,6 +172,7 @@ type DesktopNotificationBridge = {
 
 type CreateDesktopAppInput = {
   runtime: DesktopRuntimeActionsFacade;
+  modelMetadata: RendererModelMetadataFacade;
   state: RendererStateFacade;
   commands: {
     runtime: RuntimeCommandsFacade;
@@ -183,6 +192,7 @@ type DesktopHostAdapter = {
 type DesktopBridgeAdapter = {
   exposeRendererApi(input: {
     runtime: DesktopRuntimeActionsFacade;
+    modelMetadata: RendererModelMetadataFacade;
     state: RendererStateFacade;
     commands: CreateDesktopAppInput["commands"];
   }): Promise<DesktopBridgeRegistration>;
@@ -361,6 +371,7 @@ const state = createStateFacade(managedRuntime);
 const stateCommands = createStateCommandsFacade(managedRuntime);
 const rendererState = narrowRendererStateFacade(state);
 const rendererStateCommands = narrowRendererStateCommandsFacade(stateCommands);
+const modelMetadata = createRendererModelMetadataFacade(managedRuntime);
 
 const commands = {
   runtime: runtime.commands,
@@ -384,6 +395,7 @@ await createDesktopApp({
   runtime: omitRuntimeEventsCloseAndCommands(runtime),
   state: rendererState,
   commands,
+  modelMetadata,
   notifications,
   host: desktopHost,
 }).start();
@@ -470,6 +482,12 @@ state-backed read models and submit typed product commands through runtime/app c
 renderer-facing state facade is read-only: read-model fetch, invalidation refetch, and rebaseline
 APIs only. It must not expose generic create/update/delete, table, transaction, migration, SQL,
 repository, or state-port mutation methods.
+
+App/bootstrap also injects a renderer-safe `modelMetadata.list(ListModelsInput): Promise<readonly
+ModelInfo[]>` facade. It is backed by `PiAdapter.models.list` inside the single app-owned
+`ManagedRuntime` and joins only redacted provider-auth status from the app-global state store (plus
+the addressed workspace override). It is an app/bootstrap facade, not a new public method on the
+`@svvy/runtime` facade group; desktop and renderer code receive only core-owned `ModelInfo` DTOs.
 
 Desktop chrome and layout commands are renderer UI intents normalized by `@svvy/desktop` and
 forwarded to bootstrap-provided command facades. The Effect command services that mutate app or

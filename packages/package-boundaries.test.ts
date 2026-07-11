@@ -268,7 +268,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
   [
     "@svvy/state",
     [
-      "AgentProfileReadModelRecord",
+      "AgentActorExtensionDefaultsReadModelRecord",
+      "AgentBindingReadModelRecord",
       "AgentProfileStateCommands",
       "AgentsReadModel",
       "AgentsReadModelRequest",
@@ -288,6 +289,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "ClearWorkspaceAppLogUnreadCommandInputSchema",
       "CompactWorkspaceSurface",
       "CommandInspectorReadModel",
+      "ConfiguredAgentProfileReadModelRecord",
       "CommandInspectorReadModelRequest",
       "CreateManagedSnippetCommandInput",
       "CreateManagedSnippetCommandInputSchema",
@@ -727,6 +729,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopWindowHandle",
       "DesktopWindowId",
       "RendererStateCommandsFacade",
+      "RendererModelMetadataFacade",
       "RendererStateFacade",
       "createDesktopApp",
     ],
@@ -984,6 +987,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredWorkspaceChromeMutationRecord",
       "StructuredWorkspaceLayoutRecord",
       "StructuredWorkspaceLayoutSlotRecord",
+      "StructuredAgentActorExtensionDefaultsInput",
+      "StructuredAgentActorExtensionDefaultsRecord",
       "StructuredAgentProfileRecord",
       "StructuredExtensionEnvOverrideRecord",
       "StructuredSnippetRecord",
@@ -7298,8 +7303,9 @@ describe("package boundaries", () => {
     );
     expect(source).toContain("type RendererStateCommandsFacade = {");
     expect(source).toContain(
-      'exposeRendererApi(input: {\n    runtime: DesktopRuntimeActionsFacade;\n    state: RendererStateFacade;\n    commands: CreateDesktopAppInput["commands"];\n  })',
+      'exposeRendererApi(input: {\n    runtime: DesktopRuntimeActionsFacade;\n    modelMetadata: RendererModelMetadataFacade;\n    state: RendererStateFacade;\n    commands: CreateDesktopAppInput["commands"];\n  })',
     );
+    expect(source).toContain("list(input: ListModelsInput): Promise<readonly ModelInfo[]>;");
   });
 
   it("Smithers generated-reference filters do not ban required official CLI markers", () => {
@@ -10128,15 +10134,26 @@ describe("package boundaries", () => {
       ).toSorted(),
     ).toEqual(
       [
+        "AgentActorExtensionDefaultsReadModelRecord",
+        "AgentBindingReadModelRecord",
+        "AgentsReadModel",
         "CommandInspectorReadModel",
+        "ConfiguredAgentProfileReadModelRecord",
         "CreateManagedSnippetCommandInput",
         "DeleteManagedSnippetCommandInput",
+        "DeleteOrchestratorProfileCommandInput",
+        "GeneratedContextPreviewReadModelRecord",
         "MarkAppLogReadCommandInput",
         "MarkSessionReadCommandInput",
         "MarkSessionUnreadCommandInput",
+        "PromoteProfileExtensionDefaultCommandInput",
+        "ReorderOrchestratorProfilesCommandInput",
+        "ResetActorExtensionDefaultsCommandInput",
         "SaveWorkspaceLayoutSlotCommandInput",
         "SelectWorkspaceLayoutSlotCommandInput",
         "SelectWorkspaceTabCommandInput",
+        "SetExternalInstructionActorUsageCommandInput",
+        "SetProfileExtensionUsageCommandInput",
         "SetSessionArchivedCommandInput",
         "SetSessionNavigationSectionStateCommandInput",
         "SetSessionPinnedCommandInput",
@@ -10145,6 +10162,8 @@ describe("package boundaries", () => {
         "StateCommandResult",
         "UpdateAppPreferencesCommandInput",
         "UpdateManagedSnippetCommandInput",
+        "UpdateOrchestratorProfileCommandInput",
+        "UpdateThreadHandlerProfileCommandInput",
       ].toSorted(),
     );
   });

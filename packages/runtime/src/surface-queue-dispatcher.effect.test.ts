@@ -77,6 +77,8 @@ function createTurn(id: string, queued: RuntimeSurfaceMessageRecord): RuntimeTur
     requestSummary: `summary:${queued.id}`,
     turnDecision: "pending",
     status: "running",
+    assistantMessageId: null,
+    assistantText: null,
     startedAt: "2026-04-18T09:00:00.000Z",
     updatedAt: "2026-04-18T09:00:00.000Z",
     finishedAt: null,

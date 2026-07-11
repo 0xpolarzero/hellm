@@ -10,6 +10,7 @@ import {
   PiAdapterError,
   PiRuntimePathsPort,
   ProviderAuthPort,
+  ProviderAuthStatusStatePort,
   ProviderAuthPortError,
   RuntimeContractError,
   RuntimeGeneratedPackageStatePort,
@@ -26,9 +27,11 @@ import {
   type GeneratedPackagesRefreshResult,
   type InternalRefreshGeneratedPackagesRequest,
   type JsonValue,
+  type ListModelsInput,
   type AgentProfileId,
   type ExtensionId,
   type ModelId,
+  type ModelInfo,
   type ProviderId,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeClientRequestId,
@@ -43,7 +46,7 @@ import {
   type WorkspaceId,
   type PiRuntimePathsSnapshot,
 } from "@svvy/core";
-import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
+import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import {
   layer as extensionsLayer,
@@ -87,6 +90,7 @@ import {
 import {
   createWorkspaceStateRouter,
   layerWorkspaceStateRouter,
+  providerAuthStatusStatePortFromStore,
   stateCommandsFromRouter,
   stateReadModelsFromRouter,
   type WorkspaceStateRegistration,
@@ -217,6 +221,9 @@ export interface AppRuntimeBootstrap {
   readonly stateCommands: StateCommandsFacade;
   readonly rendererState: RendererStateFacade;
   readonly rendererStateCommands: RendererStateCommandsFacade;
+  readonly modelMetadata: {
+    list(input: ListModelsInput): Promise<readonly ModelInfo[]>;
+  };
   readonly readiness: RuntimeStartupReadinessReceipt;
   readonly internal: {
     readonly launchFacts: {
@@ -263,9 +270,10 @@ export interface AppRuntimeBootstrap {
 export async function createAppRuntimeBootstrap(
   input: AppRuntimeBootstrapInput,
 ): Promise<AppRuntimeBootstrap> {
+  const appGlobalStateRegistration = workspaceStateRegistration(input.appGlobalState);
   const initialWorkspaceStateRegistrations = input.workspaceStates.map(workspaceStateRegistration);
   const workspaceRouter = createWorkspaceStateRouter({
-    appGlobalStore: workspaceStateRegistration(input.appGlobalState).store,
+    appGlobalStore: appGlobalStateRegistration.store,
     workspaceStores: initialWorkspaceStateRegistrations,
   });
   const lifecycle = new AppLifecycleCoordinator();
@@ -311,6 +319,9 @@ export async function createAppRuntimeBootstrap(
     routerPort: workspaceRouter.generatedPackage,
     unopenedWorkspaceFallback: input.generatedPackageStatePort,
   });
+  const providerAuthStatusState = providerAuthStatusStatePortFromStore(
+    appGlobalStateRegistration.store,
+  );
   const sandboxHostSupport = input.sandboxHostSupport;
   const extensionPackageLayer = Layer.mergeAll(
     layerRuntimeBunPlatform,
@@ -403,6 +414,7 @@ export async function createAppRuntimeBootstrap(
             }),
         }),
     }),
+    Layer.succeed(ProviderAuthStatusStatePort, providerAuthStatusState),
     Layer.succeed(PiRuntimePathsPort, {
       resolve: ({ workspaceId }) =>
         Effect.tryPromise({
@@ -450,6 +462,7 @@ export async function createAppRuntimeBootstrap(
       Runtime.layer.pipe(Layer.provide(runtimeLayerConfig)),
       runtimeLayerConfig,
       stateFacadeServicesLayer,
+      Layer.effect(PiAdapter, PiAdapter),
     ).pipe(Layer.provide(runtimeHostLayer)),
   );
   const appLogInvalidationSubscriptions = new Map<string, () => void>();
@@ -507,6 +520,7 @@ export async function createAppRuntimeBootstrap(
     await seedAgentSettingsStateRows({
       seed: input.agentSettingsSeed,
       stateCommands,
+      appGlobalStateStore: appGlobalStateRegistration.store,
     });
     await subscribeToCommittedAppLogAppends();
     for (const registration of initialWorkspaceStateRegistrations) {
@@ -515,6 +529,19 @@ export async function createAppRuntimeBootstrap(
     lifecycle.markReady();
     const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
       managedRuntime.runPromise(effect);
+    const modelMetadata: AppRuntimeBootstrap["modelMetadata"] = {
+      list: async (request) => {
+        lifecycle.assertAccepting("app-runtime-bootstrap.modelMetadata.list");
+        return runRuntimePromise(
+          Effect.gen(function* () {
+            const piAdapter = yield* PiAdapter;
+            return yield* piAdapter.models
+              .list(request)
+              .pipe(Effect.provideService(ProviderAuthStatusStatePort, providerAuthStatusState));
+          }) as Effect.Effect<readonly ModelInfo[], unknown, never>,
+        );
+      },
+    };
     const acquireDirectToolLaunch = (
       request: Omit<BuildLaunchPolicyInput, "launchKind"> & {
         readonly toolName: "exec_command" | "apply_patch" | "execute_typescript";
@@ -526,6 +553,7 @@ export async function createAppRuntimeBootstrap(
       stateCommands,
       rendererState,
       rendererStateCommands,
+      modelMetadata,
       readiness,
       internal: {
         launchFacts: {
@@ -711,6 +739,7 @@ function stateExternalEditorFromAppPreferences(preferences: AppPreferences): str
 async function seedAgentSettingsStateRows(input: {
   readonly seed: AppRuntimeBootstrapInput["agentSettingsSeed"];
   readonly stateCommands: StateCommandsFacade;
+  readonly appGlobalStateStore: WorkspaceStateRegistration["store"];
 }): Promise<void> {
   if (!input.seed) return;
   const settings = input.seed.read();
@@ -722,6 +751,7 @@ async function seedAgentSettingsStateRows(input: {
           name: profile.name,
           providerId: profile.provider as ProviderId,
           modelId: profile.model as ModelId,
+          reasoning: { effort: profile.reasoningEffort },
           extensionUsage: Object.fromEntries(
             Object.entries(profile.extensionUsage).map(([extensionId, usage]) => [
               extensionId as ExtensionId,
@@ -743,6 +773,7 @@ async function seedAgentSettingsStateRows(input: {
         name: settings.agents.special.threadHandler.name,
         providerId: settings.agents.special.threadHandler.provider as ProviderId,
         modelId: settings.agents.special.threadHandler.model as ModelId,
+        reasoning: { effort: settings.agents.special.threadHandler.reasoningEffort },
         extensionUsage: Object.fromEntries(
           Object.entries(settings.agents.special.threadHandler.extensionUsage).map(
             ([extensionId, usage]) => [extensionId as ExtensionId, usage],
@@ -756,6 +787,15 @@ async function seedAgentSettingsStateRows(input: {
         clientRequestId: "bootstrap-agent-profile-thread-handler" as RuntimeClientRequestId,
         source: "app-bootstrap" as RuntimeClientSubmissionSource,
       },
+    });
+  }
+  const persistedActorDefaults = input.appGlobalStateStore.listAgentActorExtensionDefaults();
+  for (const actor of ["orchestrator", "workflow-task"] as const) {
+    if (persistedActorDefaults.some((record) => record.actor === actor)) continue;
+    input.appGlobalStateStore.setAgentActorExtensionDefaults({
+      actor,
+      extensionUsage: settings.extensionDefaults.usage[actor] ?? {},
+      extensionOrder: settings.extensionDefaults.order,
     });
   }
   if (!input.seed.hasExtensionEnvRows()) {

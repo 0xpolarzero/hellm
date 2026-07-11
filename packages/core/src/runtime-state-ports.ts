@@ -75,6 +75,7 @@ import {
   GeneratedContextFingerprint,
   GeneratedPackageBuildId,
   IsoDateTimeStringSchema,
+  MessageId,
   NonNegativeSafeIntegerSchema,
   FiniteDurationMsSchema,
   PositiveDurationMsSchema,
@@ -679,6 +680,8 @@ export const RuntimeTurnRecordSchema = Schema.Struct({
   requestSummary: Schema.String,
   turnDecision: Schema.Union([Schema.Literal("pending"), RuntimeTurnDecisionSchema]),
   status: RuntimeTurnStatusSchema,
+  assistantMessageId: Schema.NullOr(MessageId),
+  assistantText: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   finishedAt: Schema.NullOr(Schema.String),
@@ -712,6 +715,8 @@ export type SetRuntimeTurnDecisionInput = typeof SetRuntimeTurnDecisionInputSche
 export const FinishRuntimeTurnInputSchema = Schema.Struct({
   turnId: Schema.String,
   status: FinishRuntimeTurnStatusSchema,
+  assistantMessageId: Schema.optionalKey(MessageId),
+  assistantText: Schema.optionalKey(Schema.String),
 });
 export type FinishRuntimeTurnInput = typeof FinishRuntimeTurnInputSchema.Type;
 

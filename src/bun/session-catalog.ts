@@ -54,6 +54,9 @@ import {
   type RuntimeTurnStatePortService,
   type RuntimeWorkspaceStatePortService,
   type AgentProfileId as CoreAgentProfileId,
+  type ExtensionId as CoreExtensionId,
+  type ModelId as CoreModelId,
+  type ProviderId as CoreProviderId,
   type StateContractError,
   type StateInvalidationDescriptor,
   type StateMutationResult,
@@ -134,7 +137,14 @@ import {
   type StructuredSurfaceQueuedMessageRecord,
   structuredSessionStateFromStore,
 } from "@svvy/state/structured-session-state";
-import { layerSandboxPolicySource } from "@svvy/state";
+import {
+  layerSandboxPolicySource,
+  type AgentActorExtensionDefaultsReadModelRecord,
+  type ConfiguredAgentProfileReadModelRecord,
+  type OrchestratorAgentProfileInput,
+  type SetProfileExtensionUsageCommandInput,
+  type ThreadHandlerProfileInput,
+} from "@svvy/state";
 import { buildStructuredArtifactLink } from "@svvy/state/structured-session-projections";
 import {
   runtimeActorExtensionBindingStatePortFromStore,
@@ -224,7 +234,7 @@ import {
   type RunTaskAgentBridgeServer,
 } from "./smithers-runtime/task-agent-bridge-server";
 
-export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v7.sqlite";
+export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v8.sqlite";
 
 function deleteSessionFileLikePi(sessionPath: string): void {
   if (!existsSync(sessionPath)) {
@@ -320,7 +330,6 @@ export interface SessionDefaults {
   model: string;
   thinkingLevel: ThinkingLevel;
   agentProfileId?: AgentProfileId;
-  agentProfileSettings?: AgentProfileSettings;
 }
 
 export interface SendAgentPromptResult {
@@ -517,6 +526,20 @@ type CommittedStateInvalidationPublisher = (
   afterCommit: readonly StateInvalidationDescriptor[],
 ) => Promise<void>;
 
+export interface CatalogAgentProfileAuthoritySnapshot {
+  readonly configuredProfiles: readonly ConfiguredAgentProfileReadModelRecord[];
+  readonly actorExtensionDefaults: readonly AgentActorExtensionDefaultsReadModelRecord[];
+}
+
+export interface CatalogAgentProfileAuthority {
+  read(): Promise<CatalogAgentProfileAuthoritySnapshot>;
+  updateOrchestrator(profile: OrchestratorAgentProfileInput): Promise<void>;
+  updateThreadHandler(profile: ThreadHandlerProfileInput): Promise<void>;
+  setProfileExtensionUsage(
+    input: Omit<SetProfileExtensionUsageCommandInput, "clientSubmission">,
+  ): Promise<void>;
+}
+
 type PendingCommittedStateInvalidation = {
   readonly operation: string;
   readonly afterCommit: readonly StateInvalidationDescriptor[];
@@ -552,6 +575,8 @@ export class WorkspaceSessionCatalog {
   private readonly runtimeExtensionContextImpactState: RuntimeExtensionContextImpactStateFacade;
   private readonly recoveryCoordinator: WorkspaceRecoveryCoordinator;
   private readonly agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
+  private agentProfileAuthority: CatalogAgentProfileAuthority | null = null;
+  private agentProfileAuthoritySnapshot: CatalogAgentProfileAuthoritySnapshot | null = null;
   private readonly generatedAgentContextStore: GeneratedAgentContextStore;
   private readonly generatedAgentContextAggregateCache: ReturnType<
     typeof createGeneratedAgentContextAggregateCache
@@ -758,6 +783,12 @@ export class WorkspaceSessionCatalog {
     return publisher ? this.flushCommittedStateInvalidations() : Promise.resolve();
   }
 
+  setAgentProfileAuthority(authority: CatalogAgentProfileAuthority): void {
+    if (this.agentProfileAuthority === authority) return;
+    this.agentProfileAuthority = authority;
+    this.agentProfileAuthoritySnapshot = null;
+  }
+
   getRuntimeExtensionContextImpactState(): RuntimeExtensionContextImpactStateFacade {
     return this.runtimeExtensionContextImpactState;
   }
@@ -844,6 +875,46 @@ export class WorkspaceSessionCatalog {
     return Effect.runSync(effect);
   }
 
+  private async refreshAgentProfileAuthority(): Promise<CatalogAgentProfileAuthoritySnapshot> {
+    if (!this.agentProfileAuthority) {
+      throw new Error(
+        "WorkspaceSessionCatalog requires the app-global state-backed agent profile authority.",
+      );
+    }
+    const snapshot = await this.agentProfileAuthority.read();
+    this.agentProfileAuthoritySnapshot = {
+      configuredProfiles: snapshot.configuredProfiles.map((profile) => ({
+        ...profile,
+        extensionUsage: { ...profile.extensionUsage },
+        extensionOrder: [...profile.extensionOrder],
+      })),
+      actorExtensionDefaults: snapshot.actorExtensionDefaults.map((defaults) => ({
+        ...defaults,
+        extensionUsage: { ...defaults.extensionUsage },
+        extensionOrder: [...defaults.extensionOrder],
+      })),
+    };
+    return this.agentProfileAuthoritySnapshot;
+  }
+
+  private requireAgentProfileAuthority(): CatalogAgentProfileAuthority {
+    if (!this.agentProfileAuthority) {
+      throw new Error(
+        "WorkspaceSessionCatalog requires the app-global state-backed agent profile authority.",
+      );
+    }
+    return this.agentProfileAuthority;
+  }
+
+  private requireAgentProfileAuthoritySnapshot(): CatalogAgentProfileAuthoritySnapshot {
+    if (!this.agentProfileAuthoritySnapshot) {
+      throw new Error(
+        "WorkspaceSessionCatalog agent profiles must be refreshed before synchronous prompt projection.",
+      );
+    }
+    return this.agentProfileAuthoritySnapshot;
+  }
+
   private enqueueRuntimeSurfaceMessage(
     input: EnqueueRuntimeSurfaceMessageInput,
   ): RuntimeSurfaceMessageRecord {
@@ -897,17 +968,17 @@ export class WorkspaceSessionCatalog {
     request: AgentContextPreviewRequest = {},
   ): Promise<AgentContextPreviewResponse> {
     const actor = request.actor ?? "orchestrator";
-    const settings = this.agentSettingsStore.getState();
+    const profileAuthority = await this.refreshAgentProfileAuthority();
     const externalInstructionSources = await this.buildCurrentExternalContextSources();
     if (actor === "handler") {
-      const profile = settings.agents.special.threadHandler;
-      const extensionState = resolveActorExtensionState({
-        actor: "handler",
-        defaultExtensionOrder: settings.extensionDefaults.order,
-        defaultExtensionUsage: settings.extensionDefaults.usage,
-        profileExtensionUsage: profile.extensionUsage,
-        profileExtensionOrder: profile.extensionOrder,
-      });
+      const profile = configuredAgentProfileSettings(
+        requireConfiguredAgentProfile(profileAuthority, "handler"),
+      );
+      const extensionState = this.resolveConfiguredProfileExtensionState(
+        "handler",
+        profile,
+        profileAuthority,
+      );
       const systemPrompt = this.buildPromptFromLibrary("handler", {
         ...extensionState,
         externalInstructionSources,
@@ -937,6 +1008,7 @@ export class WorkspaceSessionCatalog {
       };
     }
     if (actor === "workflow-task") {
+      const settings = this.agentSettingsStore.getState();
       const profile =
         request.profileId && request.profileId in settings.workflowAgents
           ? settings.workflowAgents[request.profileId as WorkflowAgentKey]
@@ -980,24 +1052,15 @@ export class WorkspaceSessionCatalog {
         ),
       };
     }
-    const profile =
-      settings.agents.orchestrators.find((candidate) => candidate.id === request.profileId) ??
-      settings.agents.orchestrators.find(
-        (candidate) => candidate.id === DEFAULT_ORCHESTRATOR_PROFILE_ID,
-      ) ??
-      settings.agents.orchestrators[0];
-    if (!profile) {
-      throw new Error("No orchestrator agent profile is configured.");
-    }
-    const extensionState = resolveActorExtensionState({
-      actor: "orchestrator",
-      defaultExtensionOrder: settings.extensionDefaults.order,
-      defaultExtensionUsage: settings.extensionDefaults.usage,
-      profileExtensionUsage: profile.extensionUsage,
-      profileExtensionOrder: profile.extensionOrder,
-    });
-    const systemPrompt = this.buildOrchestratorSystemPrompt(
+    const profile = configuredAgentProfileSettings(
+      requireConfiguredAgentProfile(profileAuthority, "orchestrator", request.profileId),
+    );
+    const extensionState = this.resolveConfiguredProfileExtensionState(
+      "orchestrator",
       profile,
+      profileAuthority,
+    );
+    const systemPrompt = this.buildOrchestratorSystemPrompt(
       extensionState,
       externalInstructionSources,
     );
@@ -1030,11 +1093,38 @@ export class WorkspaceSessionCatalog {
     return this.extensionsRoot;
   }
 
-  setExtensionUsage(input: {
+  async setExtensionUsage(input: {
     agentProfile: string;
     extensionId: string;
     state: ExtensionUsageState;
-  }): { actor: "orchestrator" | "handler" | "workflow-task"; settings: AgentSettingsState } {
+  }): Promise<{
+    actor: "orchestrator" | "handler" | "workflow-task";
+    settings: AgentSettingsState;
+  }> {
+    const profileAuthority = await this.refreshAgentProfileAuthority();
+    const configuredProfile = profileAuthority.configuredProfiles.find(
+      (profile) => profile.profileId === input.agentProfile,
+    );
+    if (configuredProfile) {
+      if (input.extensionId === "extension-loading") {
+        throw new Error("Extension Loading is fixed loaded and cannot be changed.");
+      }
+      await this.requireAgentProfileAuthority().setProfileExtensionUsage({
+        actor: configuredProfile.actor,
+        profileId: configuredProfile.profileId,
+        extensionId: input.extensionId as CoreExtensionId,
+        usage: input.state,
+      });
+      const refreshed = await this.refreshAgentProfileAuthority();
+      return {
+        actor: configuredProfile.actor,
+        settings: projectConfiguredProfilesIntoAgentSettings(
+          this.agentSettingsStore.getState(),
+          refreshed,
+        ),
+      };
+    }
+
     const result = setExtensionUsage({
       agentSettingsStore: this.agentSettingsStore,
       extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
@@ -1042,14 +1132,8 @@ export class WorkspaceSessionCatalog {
       agentProfile: input.agentProfile,
       extensionId: input.extensionId,
       state: input.state,
+      targetActor: "workflow-task",
     });
-    if (
-      result.actor !== "orchestrator" &&
-      result.actor !== "handler" &&
-      result.actor !== "workflow-task"
-    ) {
-      throw new Error(`Unsupported extension usage actor: ${result.actor}`);
-    }
     return {
       actor: result.actor,
       settings: this.agentSettingsStore.getState(),
@@ -1070,9 +1154,8 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  buildOrchestratorSystemPrompt(
-    settings: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
-    extensionState = this.resolveProfileExtensionState("orchestrator", settings),
+  private buildOrchestratorSystemPrompt(
+    extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] },
     externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
   ): string {
     return this.buildPromptFromLibrary("orchestrator", {
@@ -1081,20 +1164,22 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private resolveProfileExtensionState(
-    actor: SvvyActorKind,
+  private resolveConfiguredProfileExtensionState(
+    actor: "orchestrator" | "handler",
     settings: {
-      extensionUsage?: Record<string, ExtensionUsageState>;
-      overrides?: Record<string, ExtensionUsageState>;
+      extensionUsage?: Readonly<Record<string, ExtensionUsageState>>;
       extensionOrder?: readonly string[];
     },
+    snapshot: CatalogAgentProfileAuthoritySnapshot,
   ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
-    const defaults = this.agentSettingsStore.getState().extensionDefaults;
+    const actorDefaults = snapshot.actorExtensionDefaults.find(
+      (candidate) => candidate.actor === actor,
+    );
     return resolveActorExtensionState({
       actor,
-      defaultExtensionOrder: defaults.order,
-      defaultExtensionUsage: defaults.usage,
-      profileExtensionUsage: settings.extensionUsage ?? settings.overrides ?? {},
+      defaultExtensionOrder: actorDefaults?.extensionOrder ?? [],
+      defaultExtensionUsage: actorDefaults ? { [actor]: actorDefaults.extensionUsage } : {},
+      profileExtensionUsage: settings.extensionUsage ?? {},
       profileExtensionOrder: settings.extensionOrder,
     });
   }
@@ -1138,6 +1223,7 @@ export class WorkspaceSessionCatalog {
     request: CreateSessionRequest,
     defaults: SessionDefaults,
   ): Promise<ConversationSurfaceSnapshot> {
+    const profileAuthority = await this.refreshAgentProfileAuthority();
     const parentSessionFile = request.parentSessionId
       ? await this.getSessionFileForId(request.parentSessionId)
       : undefined;
@@ -1149,18 +1235,12 @@ export class WorkspaceSessionCatalog {
 
     const agentProfileId =
       request.agentProfileId ?? defaults.agentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
-    if (request.agentProfileId) {
-      this.resolveOrchestratorAgentProfile(request.agentProfileId);
-    }
-    const agentProfileSettings =
-      defaults.agentProfileSettings ?? this.resolveOrchestratorAgentProfile(agentProfileId);
-    const extensionState = resolveActorExtensionState({
-      actor: "orchestrator",
-      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
-      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
-      profileExtensionUsage: agentProfileSettings.extensionUsage,
-      profileExtensionOrder: agentProfileSettings.extensionOrder,
-    });
+    const configuredProfile = this.resolveOrchestratorAgentProfile(agentProfileId);
+    const extensionState = this.resolveConfiguredProfileExtensionState(
+      "orchestrator",
+      configuredProfile,
+      profileAuthority,
+    );
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
       ...extensionState,
@@ -1170,9 +1250,9 @@ export class WorkspaceSessionCatalog {
     const session = await this.createManagedSurfaceRecord({
       sessionManager,
       actorKind: "orchestrator",
-      provider: defaults.provider,
-      model: defaults.model,
-      thinkingLevel: defaults.thinkingLevel,
+      provider: configuredProfile.provider,
+      model: configuredProfile.model,
+      thinkingLevel: configuredProfile.reasoningEffort,
       systemPrompt: aggregate.outputs.prompt,
       generatedAgentContextAggregateKey: aggregate.cacheKey,
       generatedAgentContextAggregate: aggregate.outputs,
@@ -1211,7 +1291,8 @@ export class WorkspaceSessionCatalog {
     return { ok: true };
   }
 
-  resolvePromptDefaultsForTarget(target: PromptTarget): AgentDefaults {
+  async resolvePromptDefaultsForTarget(target: PromptTarget): Promise<AgentDefaults> {
+    await this.refreshAgentProfileAuthority();
     this.assertValidPromptTarget(target);
     const activeSurface = this.managedSurfaces.get(target.surfacePiSessionId);
     if (activeSurface) {
@@ -1242,11 +1323,7 @@ export class WorkspaceSessionCatalog {
       };
     }
 
-    const defaultProfile =
-      this.agentSettingsStore
-        .getState()
-        .agents.orchestrators.find((agent) => agent.id === DEFAULT_ORCHESTRATOR_PROFILE_ID) ??
-      this.agentSettingsStore.getState().agents.orchestrators[0];
+    const defaultProfile = this.resolveOrchestratorAgentProfile(DEFAULT_ORCHESTRATOR_PROFILE_ID);
     return defaultProfile
       ? {
           provider: defaultProfile.provider,
@@ -1257,6 +1334,7 @@ export class WorkspaceSessionCatalog {
   }
 
   async renameSession(sessionId: string, title: string): Promise<WorkspaceMutationResponse> {
+    await this.refreshAgentProfileAuthority();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       throw new Error("Session title cannot be empty.");
@@ -1292,6 +1370,7 @@ export class WorkspaceSessionCatalog {
     request: ForkSessionRequest,
     defaults: SessionDefaults,
   ): Promise<ConversationSurfaceSnapshot> {
+    const profileAuthority = await this.refreshAgentProfileAuthority();
     const sourceSessionFile = await this.getSessionFileForId(request.sessionId, false);
     if (!sourceSessionFile || !existsSync(sourceSessionFile)) {
       const activeOrchestrator = this.managedSurfaces.get(request.sessionId) ?? null;
@@ -1318,13 +1397,11 @@ export class WorkspaceSessionCatalog {
         defaults.agentProfileId ??
         DEFAULT_ORCHESTRATOR_PROFILE_ID) as AgentProfileId,
     );
-    const extensionState = resolveActorExtensionState({
-      actor: "orchestrator",
-      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
-      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
-      profileExtensionUsage: sourceAgentProfile.extensionUsage,
-      profileExtensionOrder: sourceAgentProfile.extensionOrder,
-    });
+    const extensionState = this.resolveConfiguredProfileExtensionState(
+      "orchestrator",
+      sourceAgentProfile,
+      profileAuthority,
+    );
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
       ...extensionState,
@@ -1333,11 +1410,15 @@ export class WorkspaceSessionCatalog {
     const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
       actorKind: "orchestrator",
+      provider: sourceAgentProfile.provider,
+      model: sourceAgentProfile.model,
+      thinkingLevel: sourceAgentProfile.reasoningEffort,
       systemPrompt: aggregate.outputs.prompt,
       generatedAgentContextAggregateKey: aggregate.cacheKey,
       generatedAgentContextAggregate: aggregate.outputs,
       loadedExtensionIds: extensionState.loadedExtensionIds,
       availableExtensionIds: extensionState.availableExtensionIds,
+      agentProfileId: sourceAgentProfile.id,
       externalContextSources,
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
@@ -1634,7 +1715,7 @@ export class WorkspaceSessionCatalog {
     session.model = model;
     session.thinkingLevel = thinkingLevel;
     session.recreateOnNextPrompt = true;
-    this.updateOrchestratorProfileFromComposer(target, session, {
+    await this.updateOrchestratorProfileFromComposer(target, session, {
       provider,
       model,
       reasoningEffort: thinkingLevel,
@@ -1679,7 +1760,7 @@ export class WorkspaceSessionCatalog {
     }
 
     session.thinkingLevel = level;
-    this.updateOrchestratorProfileFromComposer(target, session, {
+    await this.updateOrchestratorProfileFromComposer(target, session, {
       reasoningEffort: level,
     });
 
@@ -1729,7 +1810,7 @@ export class WorkspaceSessionCatalog {
     session.loadedExtensionIds = extensionState.loadedExtensionIds;
     session.availableExtensionIds = extensionState.availableExtensionIds;
     session.recreateOnNextPrompt = true;
-    this.updateOrchestratorProfileFromComposer(input.target, session, {
+    await this.updateOrchestratorProfileFromComposer(input.target, session, {
       extensionUsage: { [input.extensionId]: input.state },
     });
 
@@ -1847,43 +1928,72 @@ export class WorkspaceSessionCatalog {
     );
   }
 
-  private updateOrchestratorProfileFromComposer(
+  private async updateOrchestratorProfileFromComposer(
     target: PromptTarget,
     session: ManagedSession,
     updates: Partial<
       Pick<AgentProfileSettings, "provider" | "model" | "reasoningEffort" | "extensionUsage">
     >,
-  ): boolean {
+  ): Promise<boolean> {
     if (target.surface !== "orchestrator") {
       return false;
     }
-    const profile = this.agentSettingsStore
-      .getState()
-      .agents.orchestrators.find((agent) => agent.id === session.agentProfileId);
+    const profileAuthority = await this.refreshAgentProfileAuthority();
+    const configuredProfile = profileAuthority.configuredProfiles.find(
+      (profile) => profile.actor === "orchestrator" && profile.profileId === session.agentProfileId,
+    );
+    const profile = configuredProfile
+      ? configuredAgentProfileSettings(configuredProfile)
+      : undefined;
     if (!profile?.updateFromComposer) {
       return false;
     }
-    const nextProfile = {
-      ...profile,
-      ...updates,
-      extensionUsage: {
-        ...profile.extensionUsage,
-        ...updates.extensionUsage,
-      },
-    };
+    const nextProvider = updates.provider ?? profile.provider;
+    const nextModel = updates.model ?? profile.model;
+    const nextReasoningEffort = updates.reasoningEffort ?? profile.reasoningEffort;
+    let changed = false;
     if (
-      nextProfile.provider === profile.provider &&
-      nextProfile.model === profile.model &&
-      nextProfile.reasoningEffort === profile.reasoningEffort &&
-      sameExtensionUsage(nextProfile.extensionUsage, profile.extensionUsage)
+      nextProvider !== profile.provider ||
+      nextModel !== profile.model ||
+      nextReasoningEffort !== profile.reasoningEffort
     ) {
-      return false;
+      await this.requireAgentProfileAuthority().updateOrchestrator({
+        profileId: profile.id as CoreAgentProfileId,
+        name: profile.name,
+        providerId: nextProvider as CoreProviderId,
+        modelId: nextModel as CoreModelId,
+        reasoning: { effort: nextReasoningEffort },
+        extensionUsage: Object.fromEntries(
+          Object.entries(profile.extensionUsage).map(([extensionId, usage]) => [
+            extensionId as CoreExtensionId,
+            usage,
+          ]),
+        ),
+        extensionOrder: profile.extensionOrder?.map(
+          (extensionId) => extensionId as CoreExtensionId,
+        ),
+        followComposer: true,
+      });
+      changed = true;
     }
-    this.agentSettingsStore.setAgentProfile(nextProfile);
-    return true;
+    for (const [extensionId, usage] of Object.entries(updates.extensionUsage ?? {})) {
+      if (profile.extensionUsage[extensionId] === usage) continue;
+      await this.requireAgentProfileAuthority().setProfileExtensionUsage({
+        actor: "orchestrator",
+        profileId: profile.id as CoreAgentProfileId,
+        extensionId: extensionId as CoreExtensionId,
+        usage,
+      });
+      changed = true;
+    }
+    if (changed) {
+      await this.refreshAgentProfileAuthority();
+    }
+    return changed;
   }
 
   private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
+    await this.refreshAgentProfileAuthority();
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildAggregateForTarget(target, {
       externalInstructionSources: externalContextSources,
@@ -2229,6 +2339,7 @@ export class WorkspaceSessionCatalog {
     target: PromptTarget,
     options: { refreshExternalSources?: boolean } = {},
   ): Promise<ConversationSurfaceSnapshot> {
+    await this.refreshAgentProfileAuthority();
     const currentExternalSources = options.refreshExternalSources
       ? await this.buildCurrentExternalContextSources()
       : session.externalContextSources;
@@ -2687,13 +2798,13 @@ export class WorkspaceSessionCatalog {
   }
 
   private resolveOrchestratorAgentProfile(profileId: AgentProfileId): AgentProfileSettings {
-    const profile = this.agentSettingsStore
-      .getState()
-      .agents.orchestrators.find((agent) => agent.id === profileId);
-    if (!profile) {
-      throw new Error(`Unknown orchestrator agent profile: ${profileId}`);
-    }
-    return profile;
+    return configuredAgentProfileSettings(
+      requireConfiguredAgentProfile(
+        this.requireAgentProfileAuthoritySnapshot(),
+        "orchestrator",
+        profileId,
+      ),
+    );
   }
 
   private resolveThreadProfileSettings(
@@ -2887,18 +2998,17 @@ export class WorkspaceSessionCatalog {
 
     const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
     const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
-    const currentProfile =
-      this.agentSettingsStore
-        .getState()
-        .agents.orchestrators.find((agent) => agent.id === profileId) ??
-      this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
-    const current = resolveActorExtensionState({
-      actor: "orchestrator",
-      defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
-      defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
-      profileExtensionUsage: currentProfile.extensionUsage,
-      profileExtensionOrder: currentProfile.extensionOrder,
-    });
+    const configuredProfile = this.requireAgentProfileAuthoritySnapshot().configuredProfiles.find(
+      (profile) => profile.actor === "orchestrator" && profile.profileId === profileId,
+    );
+    const currentProfile = configuredProfile
+      ? configuredAgentProfileSettings(configuredProfile)
+      : this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
+    const current = this.resolveConfiguredProfileExtensionState(
+      "orchestrator",
+      currentProfile,
+      this.requireAgentProfileAuthoritySnapshot(),
+    );
     const sessionLoadedExtensionIds =
       managed?.loadedExtensionIds ?? snapshot?.pi.loadedExtensionIds ?? [];
     const sessionAvailableExtensionIds =
@@ -2908,13 +3018,11 @@ export class WorkspaceSessionCatalog {
         snapshot,
         profileId,
       );
-      const baseline = resolveActorExtensionState({
-        actor: "orchestrator",
-        defaultExtensionOrder: this.agentSettingsStore.getState().extensionDefaults.order,
-        defaultExtensionUsage: this.agentSettingsStore.getState().extensionDefaults.usage,
-        profileExtensionUsage: baselineProfile.extensionUsage,
-        profileExtensionOrder: baselineProfile.extensionOrder,
-      });
+      const baseline = this.resolveConfiguredProfileExtensionState(
+        "orchestrator",
+        baselineProfile,
+        this.requireAgentProfileAuthoritySnapshot(),
+      );
       const baselineLoaded = new Set(baseline.loadedExtensionIds);
       const dynamicallyLoaded = sessionLoadedExtensionIds.filter((id) => !baselineLoaded.has(id));
       if (dynamicallyLoaded.length === 0) {
@@ -3167,32 +3275,31 @@ export class WorkspaceSessionCatalog {
     snapshot: StructuredSessionSnapshot | null | undefined,
     key: AgentProfileId,
   ): AgentProfileSettings {
-    const current =
-      this.agentSettingsStore.getState().agents.orchestrators.find((agent) => agent.id === key) ??
-      this.agentSettingsStore.getState().agents.orchestrators[0];
-    if (!current) {
-      throw new Error("No orchestrator agent profiles are configured.");
-    }
     const json = snapshot?.pi.orchestratorAgentProfileJson;
     if (!json) {
-      return current;
+      return this.resolveOrchestratorAgentProfile(key);
     }
     try {
       const parsed = JSON.parse(json) as Partial<AgentProfileSettings>;
       if (parsed.provider && parsed.model && parsed.reasoningEffort) {
-        return {
-          ...current,
-          ...parsed,
-          extensionUsage:
-            parsed.extensionUsage && typeof parsed.extensionUsage === "object"
-              ? parsed.extensionUsage
-              : current.extensionUsage,
-        };
+        const current = this.requireAgentProfileAuthoritySnapshot().configuredProfiles.find(
+          (profile) => profile.actor === "orchestrator" && profile.profileId === key,
+        );
+        return current
+          ? {
+              ...configuredAgentProfileSettings(current),
+              ...parsed,
+              extensionUsage:
+                parsed.extensionUsage && typeof parsed.extensionUsage === "object"
+                  ? parsed.extensionUsage
+                  : current.extensionUsage,
+            }
+          : (parsed as AgentProfileSettings);
       }
     } catch {
-      return current;
+      return this.resolveOrchestratorAgentProfile(key);
     }
-    return current;
+    return this.resolveOrchestratorAgentProfile(key);
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
@@ -3314,10 +3421,13 @@ export class WorkspaceSessionCatalog {
     }
 
     const summary = this.buildLiveSummaryFromManagedSession(session);
-    const state = this.agentSettingsStore.getState();
-    const profile =
-      state.agents.orchestrators.find((agent) => agent.id === session.agentProfileId) ??
-      state.agents.orchestrators[0];
+    const snapshot = this.getStructuredSnapshot(session.sessionId);
+    const configuredProfile = this.requireAgentProfileAuthoritySnapshot().configuredProfiles.find(
+      (profile) => profile.actor === "orchestrator" && profile.profileId === session.agentProfileId,
+    );
+    const profile = configuredProfile
+      ? configuredAgentProfileSettings(configuredProfile)
+      : this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, session.agentProfileId);
     return this.catalogStateMutations.upsertPiSession({
       sessionId: summary.id,
       parentSessionId: summary.parentSessionId,
@@ -3330,7 +3440,7 @@ export class WorkspaceSessionCatalog {
       generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
       loadedExtensionIds: session.loadedExtensionIds,
       availableExtensionIds: session.availableExtensionIds,
-      titleNamerAgentJson: JSON.stringify(state.agents.titleNamer),
+      titleNamerAgentJson: JSON.stringify(this.agentSettingsStore.getState().agents.titleNamer),
       messageCount: summary.messageCount,
       status: summary.status,
       createdAt: summary.createdAt,
@@ -3445,25 +3555,19 @@ export class WorkspaceSessionCatalog {
     objective: string;
     historyMode?: "isolated" | "forked";
     overrides?: Record<string, "loaded" | "available" | "unavailable"> | null;
-    agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
     autoStart?: boolean;
   }) {
+    const profileAuthority = await this.refreshAgentProfileAuthority();
     const initialTitle = input.objective.trim();
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
     const threadSessionManager = SessionManager.create(this.cwd, this.threadSurfaceDir);
     threadSessionManager.newSession();
     threadSessionManager.appendSessionInfo(initialTitle);
     persistSessionManagerSnapshot(threadSessionManager);
-    const threadAgentSettings = input.agentProfileSettings
-      ? {
-          extensionUsage: input.agentProfileSettings.extensionUsage,
-          extensionOrder: input.agentProfileSettings.extensionOrder,
-          provider: input.agentProfileSettings.provider,
-          model: input.agentProfileSettings.model,
-          reasoningEffort: input.agentProfileSettings.reasoningEffort,
-        }
-      : this.agentSettingsStore.getState().agents.special.threadHandler;
+    const threadAgentSettings = configuredAgentProfileSettings(
+      requireConfiguredAgentProfile(profileAuthority, "handler"),
+    );
 
     const extensionState = resolveThreadExtensionState(
       threadAgentSettings.extensionUsage,
@@ -4587,17 +4691,63 @@ function createGeneratedAgentContextFingerprint(input: {
     .digest("hex");
 }
 
-function sameExtensionUsage(
-  left: Record<string, ExtensionUsageState>,
-  right: Record<string, ExtensionUsageState>,
-): boolean {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const key of keys) {
-    if (left[key] !== right[key]) {
-      return false;
-    }
+function requireConfiguredAgentProfile(
+  snapshot: CatalogAgentProfileAuthoritySnapshot,
+  actor: "orchestrator" | "handler",
+  profileId?: string,
+): ConfiguredAgentProfileReadModelRecord {
+  const profiles = snapshot.configuredProfiles.filter((profile) => profile.actor === actor);
+  const profile = profileId
+    ? profiles.find((candidate) => candidate.profileId === profileId)
+    : actor === "orchestrator"
+      ? (profiles.find((candidate) => candidate.profileId === DEFAULT_ORCHESTRATOR_PROFILE_ID) ??
+        profiles[0])
+      : (profiles.find((candidate) => candidate.profileId === DEFAULT_THREAD_HANDLER_PROFILE_ID) ??
+        profiles[0]);
+  if (profile) return profile;
+  if (profileId) {
+    throw new Error(`Unknown ${actor} agent profile: ${profileId}`);
   }
-  return true;
+  throw new Error(`No ${actor} agent profile is configured.`);
+}
+
+function configuredAgentProfileSettings(
+  profile: ConfiguredAgentProfileReadModelRecord,
+): AgentProfileSettings {
+  const reasoning = profile.reasoning as { readonly effort?: unknown } | null;
+  const effort =
+    reasoning && isAgentReasoningEffort(reasoning.effort)
+      ? reasoning.effort
+      : DEFAULT_AGENT_SETTINGS.reasoningEffort;
+  return {
+    id: profile.profileId,
+    kind: profile.actor === "handler" ? "special" : "orchestrator",
+    name: profile.name,
+    provider: profile.providerId,
+    model: profile.modelId,
+    reasoningEffort: effort,
+    systemPrompt: "",
+    extensionUsage: { ...profile.extensionUsage },
+    extensionOrder: [...profile.extensionOrder],
+    updateFromComposer: profile.followComposer,
+    builtin: profile.builtin,
+    locked: profile.locked,
+  };
+}
+
+function projectConfiguredProfilesIntoAgentSettings(
+  settings: AgentSettingsState,
+  snapshot: CatalogAgentProfileAuthoritySnapshot,
+): AgentSettingsState {
+  const projected = structuredClone(settings);
+  projected.agents.orchestrators = snapshot.configuredProfiles
+    .filter((profile) => profile.actor === "orchestrator")
+    .map(configuredAgentProfileSettings);
+  const handler = snapshot.configuredProfiles.find((profile) => profile.actor === "handler");
+  if (handler) {
+    projected.agents.special.threadHandler = configuredAgentProfileSettings(handler);
+  }
+  return projected;
 }
 
 function applyExtensionUsageState(

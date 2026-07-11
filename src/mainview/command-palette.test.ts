@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { AgentProfileSettings } from "../shared/agent-settings";
 import type {
+  ConfiguredAgentProfileReadModelRecord,
   PromptTarget,
   WorkspaceHandlerThreadSummary,
   WorkspacePaneSurfaceTarget,
@@ -85,20 +85,24 @@ function handlerThread(
 function orchestratorProfile(
   id: string,
   name: string,
-  input: Partial<AgentProfileSettings> = {},
-): AgentProfileSettings {
+  input: Partial<ConfiguredAgentProfileReadModelRecord> = {},
+): ConfiguredAgentProfileReadModelRecord {
   return {
-    id,
-    kind: "orchestrator",
+    profileId: id as ConfiguredAgentProfileReadModelRecord["profileId"],
+    actor: "orchestrator",
     name,
-    provider: input.provider ?? "openai",
-    model: input.model ?? "gpt-5.4",
-    reasoningEffort: input.reasoningEffort ?? "medium",
-    systemPrompt: input.systemPrompt ?? "Own strategy.",
+    providerId: (input.providerId ??
+      "openai") as ConfiguredAgentProfileReadModelRecord["providerId"],
+    modelId: (input.modelId ?? "gpt-5.4") as ConfiguredAgentProfileReadModelRecord["modelId"],
+    reasoning: input.reasoning ?? { effort: "medium" },
     extensionUsage: input.extensionUsage ?? {},
-    updateFromComposer: input.updateFromComposer ?? false,
+    extensionOrder: input.extensionOrder ?? [],
+    followComposer: input.followComposer ?? false,
+    position: input.position ?? 0,
+    updatedAt: input.updatedAt ?? "2026-04-27T10:00:00.000Z",
     builtin: input.builtin ?? false,
     locked: input.locked ?? false,
+    deletable: input.deletable ?? !input.locked,
   };
 }
 
@@ -527,9 +531,9 @@ describe("buildCommandRegistry", () => {
           builtin: true,
         }),
         orchestratorProfile("research-orchestrator", "Research orchestrator", {
-          provider: "anthropic",
-          model: "claude-sonnet-4",
-          reasoningEffort: "high",
+          providerId: "anthropic" as ConfiguredAgentProfileReadModelRecord["providerId"],
+          modelId: "claude-sonnet-4" as ConfiguredAgentProfileReadModelRecord["modelId"],
+          reasoning: { effort: "high" },
         }),
       ],
     });

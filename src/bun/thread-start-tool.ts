@@ -1,6 +1,5 @@
 import type { NativeToolDefinition } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
-import type { AgentProfileSettings } from "../shared/agent-settings";
 import type { AppLoggerEvent } from "./app-logger";
 import { nativeToolParameters } from "./native-tool-parameters";
 import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
@@ -69,7 +68,6 @@ export interface ThreadStartBridge {
     objective: string;
     historyMode: ThreadHistoryMode;
     overrides: Record<string, "loaded" | "available" | "unavailable"> | null;
-    agentProfileSettings: AgentProfileSettings | null;
     loadedByCommandId: string;
   }): Promise<{
     id: string;
@@ -167,7 +165,6 @@ export function createStartThreadTool(options: {
             objective: requestedThread.objective,
             historyMode: requestedThread.historyMode,
             overrides: requestedThread.overrides,
-            agentProfileSettings: null,
             loadedByCommandId: command.id,
           });
           threadGroupId = thread.threadGroupId;

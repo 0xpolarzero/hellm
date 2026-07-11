@@ -26,7 +26,7 @@ export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
 
 export const ROOT_WORKSPACE_DIR = resolveAppWorkspaceDir();
 
-export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v7.sqlite";
+export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v8.sqlite";
 
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),

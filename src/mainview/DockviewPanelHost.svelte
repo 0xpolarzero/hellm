@@ -29,7 +29,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import type { ChatSurfaceController } from "./chat-runtime";
   import type { QueuedPrompt } from "./chat-runtime";
-  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
+  import type { AppAppearance } from "../shared/agent-settings";
   import {
     extensionUsageItems as buildExtensionUsageItems,
     type AgentContextActor,
@@ -55,7 +55,6 @@
     recentWorkspaces?: WorkspaceTabInfo[];
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
-    onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
   };
 
@@ -68,7 +67,6 @@
     recentWorkspaces = [],
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
-    onAgentSettingsChanged,
     onAppAppearanceChanged,
   }: Props = $props();
   let controller = $state<ChatSurfaceController | null>(null);
@@ -176,7 +174,7 @@
       usage: composerExtensionUsage,
       extensionInventoryItems: runtime.extensionsInventorySnapshot?.extensions ?? [],
       inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
-      networkAccess: runtime.agentSettingsSnapshot?.appPreferences.networkAccess ?? true,
+      networkAccess: runtime.appPreferencesSnapshot?.networkAccess ?? true,
     });
   });
   const hasSurfaceMetadata = $derived(
@@ -486,7 +484,9 @@
   function modelChoiceToComposerOption(choice: AgentModelChoice): ComposerModelOption | null {
     if (!currentModel) return null;
     const currentValue = `${currentModel.provider}:${currentModel.id}`;
-    if (!choice.providerAuthenticated && modelChoiceValue(choice) !== currentValue) return null;
+    if (choice.authStatus.health !== "usable" && modelChoiceValue(choice) !== currentValue) {
+      return null;
+    }
     try {
       const model = getModel(
         choice.providerId as Parameters<typeof getModel>[0],
@@ -497,7 +497,7 @@
         label: model.name,
         triggerLabel: model.name,
         searchText: `${model.name} ${choice.modelId} ${choice.providerId}`,
-        disabled: !choice.providerAuthenticated,
+        disabled: choice.authStatus.health !== "usable",
         model,
         supportedThinkingLevels: choice.supportedReasoning,
       };
@@ -508,8 +508,8 @@
 
   async function listModelsForComposer(): Promise<ComposerModelOption[]> {
     if (!currentModel) return [];
-    const catalog = runtime.agentModelChoicesSnapshot ?? (await runtime.getAgentModelChoices());
-    return catalog.items
+    const catalog = runtime.modelMetadataSnapshot ?? (await runtime.listModelMetadata());
+    return catalog
       .map(modelChoiceToComposerOption)
       .filter((option): option is ComposerModelOption => Boolean(option));
   }
@@ -677,7 +677,6 @@
     {panelId}
     targetAgentProfileId={pane.target.targetAgentProfileId}
     targetView={pane.target.view}
-    onSettingsChanged={onAgentSettingsChanged}
   />
 {:else if pane?.target?.surface === "extensions"}
   <ExtensionsPane

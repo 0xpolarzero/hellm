@@ -1261,6 +1261,72 @@ describe("State read-model kind expansion", () => {
       },
     });
     try {
+      store.updateOrchestratorProfile({
+        profile: {
+          profileId: "default-orchestrator" as AgentProfileId,
+          name: "Default orchestrator",
+          providerId: openaiProviderId,
+          modelId: "gpt-5.4" as ModelId,
+          reasoning: { effort: "high" },
+          extensionUsage: {
+            ["shell" as ExtensionId]: "loaded",
+            ["git" as ExtensionId]: "unavailable",
+          },
+          extensionOrder: ["git", "shell"] as ExtensionId[],
+          followComposer: true,
+        },
+      });
+      const customOrchestratorProfile = store.updateOrchestratorProfile({
+        profile: {
+          profileId: "review-orchestrator" as AgentProfileId,
+          name: "Review orchestrator",
+          providerId: "anthropic" as ProviderId,
+          modelId: "claude-opus-4-5" as ModelId,
+          reasoning: { effort: "medium" },
+          extensionUsage: {
+            ["shell" as ExtensionId]: "available",
+            ["smithers" as ExtensionId]: "unavailable",
+          },
+          extensionOrder: ["smithers", "shell"] as ExtensionId[],
+          followComposer: false,
+        },
+      });
+      const threadHandlerProfile = store.updateThreadHandlerProfile({
+        profile: {
+          profileId: "thread-handler" as AgentProfileId,
+          name: "Thread handler",
+          providerId: openaiProviderId,
+          modelId: "gpt-5.4-mini" as ModelId,
+          reasoning: { effort: "low" },
+          extensionUsage: {
+            ["shell" as ExtensionId]: "loaded",
+            ["smithers" as ExtensionId]: "available",
+          },
+          extensionOrder: ["shell", "smithers"] as ExtensionId[],
+        },
+      });
+      store.setAgentActorExtensionDefaults({
+        actor: "orchestrator",
+        extensionUsage: { shell: "loaded" },
+        extensionOrder: ["shell", "git"],
+      });
+      const orchestratorExtensionDefaults = store.promoteProfileExtensionDefault({
+        actor: "orchestrator",
+        profileId: "default-orchestrator" as AgentProfileId,
+        extensionId: "git" as ExtensionId,
+        usage: "available",
+      });
+      const workflowTaskExtensionDefaults = store.setAgentActorExtensionDefaults({
+        actor: "workflow-task",
+        extensionUsage: { smithers: "loaded" },
+        extensionOrder: ["smithers", "shell"],
+      });
+      const sparseDefaultOrchestratorProfile = store.setProfileExtensionUsage({
+        actor: "orchestrator",
+        profileId: "default-orchestrator" as AgentProfileId,
+        extensionId: "shell" as ExtensionId,
+        usage: "loaded",
+      });
       const created = store.createOrchestratorSurface({
         workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
         title: "Expanded read models",
@@ -1268,6 +1334,18 @@ describe("State read-model kind expansion", () => {
       store.upsertPiSession({
         ...store.getSessionState(created.workspaceSessionId).pi,
         parentSessionId: "session_state_facade_parent",
+        orchestratorAgentProfileId: "default-orchestrator" as AgentProfileId,
+        orchestratorAgentProfileJson: JSON.stringify({
+          id: "default-orchestrator",
+          name: "Default orchestrator",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          updateFromComposer: true,
+        }),
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
       });
       store.setComposerDraft({
         sessionId: created.workspaceSessionId,
@@ -1306,10 +1384,11 @@ describe("State read-model kind expansion", () => {
         loadedExtensionIds: ["shell"],
         availableExtensionIds: ["smithers"],
         agentProfileJson: JSON.stringify({
-          profileId: "handler-profile-state-facade",
-          name: "Handler profile",
+          profileId: "thread-handler",
+          name: "Thread handler",
           providerId: "openai",
-          modelId: "gpt-5",
+          modelId: "gpt-5.4-mini",
+          reasoning: { effort: "low" },
         }),
         generatedAgentContextFingerprint: "handler-context-fingerprint",
       });
@@ -1678,6 +1757,30 @@ describe("State read-model kind expansion", () => {
           messages: [{ role: "user", turnId: turn.id, text: "Run fixture command" }],
         },
       });
+      store.finishTurn({
+        turnId: turn.id,
+        status: "completed",
+        assistantMessageId: `${turn.id}:assistant`,
+        assistantText: "Fixture complete.",
+      });
+      const settledTranscript = await runTestEffect(
+        readModels.fetch({ kind: "surfaceTranscript", target: created.target }),
+      );
+      expect(settledTranscript).toMatchObject({
+        kind: "surfaceTranscript",
+        value: {
+          messages: [
+            { role: "user", turnId: turn.id, text: "Run fixture command" },
+            {
+              messageId: `${turn.id}:assistant`,
+              role: "assistant",
+              turnId: turn.id,
+              text: "Fixture complete.",
+              commandIds: [command.id],
+            },
+          ],
+        },
+      });
 
       const commandInspector = await runTestEffect(
         readModels.fetch({
@@ -1742,13 +1845,111 @@ describe("State read-model kind expansion", () => {
       const agents = await runTestEffect(readModels.fetch({ kind: "agents" }));
       expect(agents.kind).toBe("agents");
       if (agents.kind !== "agents") throw new Error("Expected agents read model.");
-      expect(agents.value.profiles).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ actor: "orchestrator", profileId: created.workspaceSessionId }),
-          expect.objectContaining({ actor: "handler", profileId: "threadHandler" }),
-          expect.objectContaining({ actor: "workflow-task", profileId: "workflow-reviewer" }),
-        ]),
-      );
+      expect(agents.value.configuredProfiles).toEqual([
+        {
+          profileId: "thread-handler",
+          actor: "handler",
+          name: "Thread handler",
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          reasoning: { effort: "low" },
+          followComposer: false,
+          extensionUsage: { shell: "loaded", smithers: "available" },
+          extensionOrder: ["shell", "smithers"],
+          position: 0,
+          updatedAt: threadHandlerProfile.updatedAt,
+          builtin: true,
+          locked: true,
+          deletable: false,
+        },
+        {
+          profileId: "default-orchestrator",
+          actor: "orchestrator",
+          name: "Default orchestrator",
+          providerId: "openai",
+          modelId: "gpt-5.4",
+          reasoning: { effort: "high" },
+          followComposer: true,
+          extensionUsage: { git: "unavailable" },
+          extensionOrder: ["git", "shell"],
+          position: 0,
+          updatedAt: sparseDefaultOrchestratorProfile.updatedAt,
+          builtin: true,
+          locked: true,
+          deletable: false,
+        },
+        {
+          profileId: "review-orchestrator",
+          actor: "orchestrator",
+          name: "Review orchestrator",
+          providerId: "anthropic",
+          modelId: "claude-opus-4-5",
+          reasoning: { effort: "medium" },
+          followComposer: false,
+          extensionUsage: { shell: "available", smithers: "unavailable" },
+          extensionOrder: ["smithers", "shell"],
+          position: 1,
+          updatedAt: customOrchestratorProfile.updatedAt,
+          builtin: false,
+          locked: false,
+          deletable: true,
+        },
+      ] as unknown as typeof agents.value.configuredProfiles);
+      expect(agents.value.actorExtensionDefaults).toEqual([
+        {
+          actor: "orchestrator",
+          extensionUsage: { shell: "loaded", git: "available" },
+          extensionOrder: ["shell", "git"],
+          updatedAt: orchestratorExtensionDefaults.updatedAt,
+        },
+        {
+          actor: "workflow-task",
+          extensionUsage: { smithers: "loaded" },
+          extensionOrder: ["smithers", "shell"],
+          updatedAt: workflowTaskExtensionDefaults.updatedAt,
+        },
+      ] as unknown as typeof agents.value.actorExtensionDefaults);
+      expect(agents.value.bindings).toEqual([
+        expect.objectContaining({
+          ownerKind: "session",
+          ownerId: created.workspaceSessionId,
+          surfacePiSessionId: created.surfacePiSessionId,
+          actor: "orchestrator",
+          profileId: "default-orchestrator",
+          name: "Default orchestrator",
+          providerId: "openai",
+          modelId: "gpt-5.4",
+          reasoning: { effort: "high" },
+          followComposer: true,
+          source: "surface-binding",
+        }),
+        expect.objectContaining({
+          ownerKind: "thread",
+          ownerId: handlerThread.id,
+          surfacePiSessionId: handlerThread.surfacePiSessionId,
+          actor: "handler",
+          profileId: "thread-handler",
+          name: "Thread handler",
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          reasoning: { effort: "low" },
+          loadedExtensionIds: ["shell"],
+          availableExtensionIds: ["smithers"],
+          generatedAgentContextFingerprint: "handler-context-fingerprint",
+          source: "handler-thread",
+        }),
+        expect.objectContaining({
+          ownerKind: "workflow-task-attempt",
+          ownerId: workflowTaskAttempt.id,
+          surfacePiSessionId: workflowTaskAttempt.surfacePiSessionId,
+          actor: "workflow-task",
+          profileId: "workflow-reviewer",
+          providerId: "openai",
+          modelId: "gpt-5",
+          generatedAgentContextFingerprint: "workflow-task-context-fingerprint",
+          source: "workflow-task-attempt",
+        }),
+      ]);
       expect(agents.value.generatedContextPreviews).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -1766,24 +1967,59 @@ describe("State read-model kind expansion", () => {
         ]),
       );
 
+      const resetWorkflowTaskUsage = store.resetActorExtensionDefaults({
+        actor: "workflow-task",
+        reset: "usage",
+      });
+      const resetOrchestratorOrder = store.resetActorExtensionDefaults({
+        actor: "orchestrator",
+        reset: "order",
+      });
+      const agentsAfterDefaultResets = await runTestEffect(readModels.fetch({ kind: "agents" }));
+      expect(agentsAfterDefaultResets).toMatchObject({
+        kind: "agents",
+        value: {
+          configuredProfiles: agents.value.configuredProfiles,
+          actorExtensionDefaults: [
+            {
+              actor: "orchestrator",
+              extensionUsage: { shell: "loaded", git: "available" },
+              extensionOrder: [],
+              updatedAt: resetOrchestratorOrder.updatedAt,
+            },
+            {
+              actor: "workflow-task",
+              extensionUsage: {},
+              extensionOrder: ["smithers", "shell"],
+              updatedAt: resetWorkflowTaskUsage.updatedAt,
+            },
+          ],
+        },
+      });
+
       const extensions = await runTestEffect(readModels.fetch({ kind: "extensions" }));
-      expect(extensions).toMatchObject({
+      expect(extensions).toEqual({
         kind: "extensions",
         value: {
           records: [
             {
               extensionId: "shell",
               readiness: "ready",
-              loadedByProfileIds: ["threadHandler"],
+              loadedByProfileIds: ["thread-handler"],
+              availableByProfileIds: ["review-orchestrator"],
+              generatedPackageStatus: "ready",
             },
             {
               extensionId: "smithers",
               readiness: "ready",
-              availableByProfileIds: ["threadHandler"],
+              loadedByProfileIds: [],
+              availableByProfileIds: ["thread-handler"],
+              generatedPackageStatus: "ready",
             },
           ],
+          dependencyReadiness: [],
         },
-      });
+      } as unknown as typeof extensions);
 
       const snippets = await runTestEffect(
         readModels.fetch({
@@ -2035,6 +2271,100 @@ describe("State read-model kind expansion", () => {
       expect(baseline.workspaces.map((result) => result.kind)).toEqual(
         expect.arrayContaining(["snippets", "workspaceLayout"]),
       );
+    } finally {
+      store.close();
+    }
+  });
+
+  it("enforces locked profile policy and keeps handler usage independent from actor defaults", () => {
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      digest: testDigest,
+      now: () => "2026-07-11T10:00:00.000Z",
+      workspace: {
+        id: "workspace_agent_profile_policy" as WorkspaceId,
+        label: "Agent profile policy",
+        cwd: "/tmp/svvy-agent-profile-policy" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/svvy-agent-profile-policy-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    try {
+      store.updateOrchestratorProfile({
+        profile: {
+          profileId: "default-orchestrator" as AgentProfileId,
+          name: "Default orchestrator",
+          providerId: openaiProviderId,
+          modelId: "gpt-5.4" as ModelId,
+          extensionUsage: { ["shell" as ExtensionId]: "available" },
+          followComposer: false,
+        },
+      });
+      store.updateOrchestratorProfile({
+        profile: {
+          profileId: "custom-orchestrator" as AgentProfileId,
+          name: "Custom orchestrator",
+          providerId: openaiProviderId,
+          modelId: "gpt-5.4" as ModelId,
+          extensionUsage: {},
+          followComposer: false,
+        },
+      });
+      store.updateThreadHandlerProfile({
+        profile: {
+          profileId: "thread-handler" as AgentProfileId,
+          name: "Thread handler",
+          providerId: openaiProviderId,
+          modelId: "gpt-5.4-mini" as ModelId,
+          extensionUsage: {},
+        },
+      });
+
+      expect(() =>
+        store.deleteOrchestratorProfile({
+          profileId: "default-orchestrator" as AgentProfileId,
+        }),
+      ).toThrow("locked and cannot be deleted");
+      expect(() =>
+        store.reorderOrchestratorProfiles({
+          profileIds: ["custom-orchestrator", "default-orchestrator"] as AgentProfileId[],
+        }),
+      ).toThrow("locked in the first position");
+      expect(() =>
+        store.reorderOrchestratorProfiles({
+          profileIds: ["default-orchestrator"] as AgentProfileId[],
+        }),
+      ).toThrow("every configured profile exactly once");
+      expect(() =>
+        store.reorderOrchestratorProfiles({
+          profileIds: ["default-orchestrator", "custom-orchestrator"] as AgentProfileId[],
+        }),
+      ).not.toThrow();
+
+      store.setAgentActorExtensionDefaults({
+        actor: "orchestrator",
+        extensionUsage: { shell: "loaded" },
+        extensionOrder: [],
+      });
+      store.setProfileExtensionUsage({
+        actor: "orchestrator",
+        profileId: "default-orchestrator" as AgentProfileId,
+        extensionId: "shell" as ExtensionId,
+        usage: "loaded",
+      });
+      store.setProfileExtensionUsage({
+        actor: "handler",
+        profileId: "thread-handler" as AgentProfileId,
+        extensionId: "shell" as ExtensionId,
+        usage: "loaded",
+      });
+
+      const profiles = store.listAgentProfiles();
+      expect(
+        profiles.find((profile) => profile.profileId === "default-orchestrator")?.extensionUsage,
+      ).toEqual({});
+      expect(
+        profiles.find((profile) => profile.profileId === "thread-handler")?.extensionUsage,
+      ).toEqual({ shell: "loaded" });
     } finally {
       store.close();
     }

@@ -87,6 +87,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     expect(await secondAcquisition).toBe(facades);
     expect(Object.keys(facades).toSorted()).toEqual([
+      "modelMetadata",
       "rendererState",
       "rendererStateCommands",
       "runtimeActions",
@@ -106,6 +107,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect("events" in facades.runtimeActions).toBeFalse();
     expect("commands" in facades.runtimeActions).toBeFalse();
     expect("close" in facades.runtimeActions).toBeFalse();
+    expect(Object.keys(facades.modelMetadata)).toEqual(["list"]);
     expect("facade" in facades).toBeFalse();
     expect("readiness" in facades).toBeFalse();
     expect("internal" in facades).toBeFalse();
@@ -447,6 +449,148 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(listed.value.activeSessions.map((session) => session.id)).toContain(
       created.target.workspaceSessionId,
     );
+  });
+
+  it("uses app-global state profiles for newly created orchestrator and handler bindings", async () => {
+    const cwd = tempWorkspace("state-profile-surface-bindings");
+    const registry = createRegistry(cwd);
+    const runtime = await registry.acquireWorkspace(cwd);
+    const commands = await registry.getStateCommandsFacade();
+
+    await commands.agentProfiles.updateOrchestrator({
+      profile: {
+        profileId: "state-orchestrator" as never,
+        name: "State orchestrator",
+        providerId: "openai" as never,
+        modelId: "gpt-4o" as never,
+        reasoning: { effort: "high" },
+        extensionUsage: { github: "loaded" } as never,
+        extensionOrder: ["github"] as never,
+        followComposer: false,
+      },
+    });
+    await commands.agentProfiles.updateThreadHandler({
+      profile: {
+        profileId: "thread-handler" as never,
+        name: "State handler",
+        providerId: "openai" as never,
+        modelId: "gpt-4.1-mini" as never,
+        reasoning: { effort: "low" },
+        extensionUsage: { github: "available" } as never,
+        extensionOrder: ["github"] as never,
+      },
+    });
+
+    const created = await runtime.catalog.createSession(
+      { title: "State profile", agentProfileId: "state-orchestrator" },
+      { provider: "zai", model: "glm-5-turbo", thinkingLevel: "off" },
+    );
+    expect(created).toMatchObject({
+      agentProfileId: "state-orchestrator",
+      provider: "openai",
+      model: "gpt-4o",
+      reasoningEffort: "high",
+    });
+    expect(created.loadedExtensionIds).toContain("github");
+
+    const store = workspaceStateStore(runtime);
+    const turn = store.startTurn({
+      sessionId: created.target.workspaceSessionId,
+      surfacePiSessionId: created.target.surfacePiSessionId,
+      requestSummary: "Create state-backed handler",
+    });
+    const parentThread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: created.target.surfacePiSessionId,
+      title: "State-backed handler parent",
+      objective: "Create a handler from the configured state profile.",
+    });
+    const handler = await (
+      runtime.catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          threadGroupId: null;
+          objective: string;
+          historyMode: "isolated";
+          overrides: null;
+          loadedByCommandId: string;
+          autoStart: false;
+        }): Promise<{
+          agentProfileJson: string;
+          availableExtensionIds: string[];
+        }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.target.workspaceSessionId,
+      turnId: turn.id,
+      parentThreadId: parentThread.id,
+      parentSurfacePiSessionId: created.target.surfacePiSessionId,
+      threadGroupId: null,
+      objective: "Use the committed handler profile.",
+      historyMode: "isolated",
+      overrides: null,
+      loadedByCommandId: "command-state-handler",
+      autoStart: false,
+    });
+
+    expect(JSON.parse(handler.agentProfileJson)).toMatchObject({
+      id: "thread-handler",
+      name: "State handler",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      reasoningEffort: "low",
+    });
+    expect(handler.availableExtensionIds).toContain("github");
+  });
+
+  it("persists Follow composer model, reasoning, and extension changes through state commands", async () => {
+    const cwd = tempWorkspace("state-profile-follow-composer");
+    const registry = createRegistry(cwd);
+    const runtime = await registry.acquireWorkspace(cwd);
+    const commands = await registry.getStateCommandsFacade();
+
+    await commands.agentProfiles.updateOrchestrator({
+      profile: {
+        profileId: "default-orchestrator" as never,
+        name: "Default orchestrator",
+        providerId: "openai" as never,
+        modelId: "gpt-4o" as never,
+        reasoning: { effort: "medium" },
+        extensionUsage: {},
+        extensionOrder: [],
+        followComposer: true,
+      },
+    });
+    const created = await runtime.catalog.createSession(
+      { title: "Follow composer", agentProfileId: "default-orchestrator" },
+      { provider: "zai", model: "glm-5-turbo", thinkingLevel: "off" },
+    );
+
+    await runtime.catalog.setSurfaceModel(created.target, "openai", "gpt-4.1-mini");
+    await runtime.catalog.setSurfaceThoughtLevel(created.target, "high");
+    await runtime.catalog.setSurfaceExtensionUsage({
+      target: created.target,
+      extensionId: "smithers",
+      state: "loaded",
+    });
+
+    const state = await registry.getRendererStateFacade();
+    const result = await state.readModels.fetch({ kind: "agents" });
+    expect(result.kind).toBe("agents");
+    if (result.kind !== "agents") throw new Error("Expected agents read model.");
+    expect(
+      result.value.configuredProfiles.find(
+        (profile) => profile.profileId === "default-orchestrator",
+      ),
+    ).toMatchObject({
+      modelId: "gpt-4.1-mini",
+      reasoning: { effort: "high" },
+      followComposer: true,
+      extensionUsage: { smithers: "loaded" },
+    });
   });
 
   it("shares app logs and read models across duplicate tabs for the same cwd", async () => {

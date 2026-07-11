@@ -153,7 +153,7 @@ describe("retired desktop integration RPC paths", () => {
     const sharedSnippetsSource = await Bun.file(`${import.meta.dir}/../shared/snippets.ts`).text();
     const openHandlerSource = backendSource
       .split("openSnippetSourceInEditor:")[1]
-      ?.split("updateAgentProfile:")[0];
+      ?.split("openSourceEdit:")[0];
 
     for (const channel of [
       "stateSnippetsCreateManaged",
@@ -231,6 +231,35 @@ describe("retired desktop integration RPC paths", () => {
     expect(workflowsCliSource).toContain("workflowAgentId: item.workflowAgentId");
   });
 
+  it("routes agent profile state commands and file-backed source edits through injected facades", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+
+    for (const channel of [
+      "stateAgentProfilesUpdateOrchestrator",
+      "stateAgentProfilesUpdateThreadHandler",
+      "stateAgentProfilesDeleteOrchestrator",
+      "stateAgentProfilesReorderOrchestrators",
+      "stateAgentProfilesSetExtensionUsage",
+      "stateAgentProfilesPromoteExtensionDefault",
+      "stateAgentProfilesResetExtensionDefaults",
+      "stateAgentProfilesSetExternalInstructionUsage",
+      "openSourceEdit",
+      "saveSourceEdit",
+    ]) {
+      expect(sharedContractSource).toContain(`${channel}: {`);
+      expect(backendSource).toContain(`${channel}:`);
+    }
+    expect(backendSource).toContain("facades.commands.state.agentProfiles.updateOrchestrator");
+    expect(backendSource).toContain("facades.commands.state.agentProfiles.updateThreadHandler");
+    expect(backendSource).toContain("facades.commands.state.agentProfiles.deleteOrchestrator");
+    expect(backendSource).toContain("facades.commands.state.agentProfiles.reorderOrchestrators");
+    expect(backendSource).toContain("facades.runtime.sourceEdits.open(input)");
+    expect(backendSource).toContain("facades.runtime.sourceEdits.save(input)");
+  });
+
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(
@@ -242,9 +271,6 @@ describe("retired desktop integration RPC paths", () => {
     const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
     const legacyChannels = [
       { channel: "getAgentSettings", retirementIncrement: "Increment 8" },
-      { channel: "updateAgentProfile", retirementIncrement: "Increment 10" },
-      { channel: "deleteAgentProfile", retirementIncrement: "Increment 10" },
-      { channel: "reorderOrchestratorAgents", retirementIncrement: "Increment 10" },
       { channel: "setAgentProfileExtensionUsage", retirementIncrement: "Increment 10" },
       { channel: "setExtensionEnvSecret", retirementIncrement: "Increment 10" },
       { channel: "removeExtensionEnvSecret", retirementIncrement: "Increment 10" },
@@ -278,6 +304,9 @@ describe("retired desktop integration RPC paths", () => {
       "revertExtensionChange",
       "reorderExtensionInstructionFiles",
       "setArchivedGroupCollapsed",
+      "updateAgentProfile",
+      "deleteAgentProfile",
+      "reorderOrchestratorAgents",
     ]) {
       expect(sharedContractSource).not.toContain(`${channel}: {`);
       expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}`);

@@ -99,6 +99,8 @@ function createSessionSnapshot(
         requestSummary: "Selector turn",
         turnDecision: "reply",
         status: "completed",
+        assistantMessageId: null,
+        assistantText: null,
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",
         finishedAt: "2026-04-18T07:01:00.000Z",

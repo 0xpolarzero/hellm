@@ -47,6 +47,7 @@ import {
   type CompactWorkspaceSurface,
   type DeletePiSessionReferenceInput,
   type MarkGeneratedPackageRefreshNeededInput,
+  type MessageId,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
   type AcquireWorkspaceResult,
@@ -412,6 +413,19 @@ export interface StructuredAgentProfileRecord {
   updatedAt: string;
 }
 
+export interface StructuredAgentActorExtensionDefaultsRecord {
+  actor: "orchestrator" | "workflow-task";
+  extensionUsage: Record<string, ExtensionUsageState>;
+  extensionOrder: string[];
+  updatedAt: string;
+}
+
+export interface StructuredAgentActorExtensionDefaultsInput {
+  actor: StructuredAgentActorExtensionDefaultsRecord["actor"];
+  extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
+  extensionOrder: readonly string[];
+}
+
 export interface StructuredExtensionEnvOverrideRecord {
   extensionId: string;
   envName: string;
@@ -496,6 +510,8 @@ export interface StructuredTurnRecord {
   requestSummary: string;
   turnDecision: StructuredTurnDecision;
   status: StructuredTurnStatus;
+  assistantMessageId: MessageId | null;
+  assistantText: string | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -1101,6 +1117,10 @@ export interface StructuredSessionStateStore {
   ): StructuredMutationCommitRecord;
   hasAgentProfileRows(): boolean;
   listAgentProfiles(): StructuredAgentProfileRecord[];
+  listAgentActorExtensionDefaults(): StructuredAgentActorExtensionDefaultsRecord[];
+  setAgentActorExtensionDefaults(
+    input: StructuredAgentActorExtensionDefaultsInput,
+  ): StructuredMutationCommitRecord;
   updateOrchestratorProfile(
     input: UpdateOrchestratorProfileCommandInput,
   ): StructuredMutationCommitRecord;
@@ -1214,6 +1234,8 @@ export interface StructuredSessionStateStore {
   finishTurn(input: {
     turnId: string;
     status: Exclude<StructuredTurnStatus, "running">;
+    assistantMessageId?: string;
+    assistantText?: string;
   }): StructuredTurnRecord;
   recoverInterruptedSurfaceTurn(input: {
     turnId: string;
@@ -2113,6 +2135,13 @@ type AgentProfileRow = {
   updated_at: string;
 };
 
+type AgentActorExtensionDefaultsRow = {
+  actor: "orchestrator" | "workflow-task";
+  extension_usage_json: string;
+  extension_order_json: string;
+  updated_at: string;
+};
+
 type ExtensionEnvOverrideRow = {
   extension_id: string;
   env_name: string;
@@ -2233,6 +2262,8 @@ type TurnRow = {
   request_summary: string;
   turn_decision: StructuredTurnDecision;
   status: StructuredTurnStatus;
+  assistant_message_id: string | null;
+  assistant_text: string | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -2992,6 +3023,30 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     ).map((row) => this.mapAgentProfile(row));
   }
 
+  listAgentActorExtensionDefaults(): StructuredAgentActorExtensionDefaultsRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM agent_actor_extension_defaults ORDER BY actor ASC`)
+        .all() as AgentActorExtensionDefaultsRow[]
+    ).map((row) => this.mapAgentActorExtensionDefaults(row));
+  }
+
+  setAgentActorExtensionDefaults(
+    input: StructuredAgentActorExtensionDefaultsInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      this.writeAgentActorExtensionDefaults({
+        actor: input.actor,
+        extensionUsage: { ...input.extensionUsage },
+        extensionOrder: [...input.extensionOrder],
+        updatedAt,
+      });
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
   updateOrchestratorProfile(
     input: UpdateOrchestratorProfileCommandInput,
   ): StructuredMutationCommitRecord {
@@ -3011,6 +3066,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   deleteOrchestratorProfile(
     input: DeleteOrchestratorProfileCommandInput,
   ): StructuredMutationCommitRecord {
+    if (input.profileId === "default-orchestrator") {
+      throw new StateContractError({
+        operation: "structured-session.deleteOrchestratorProfile",
+        reason: "invalid-input",
+        message: "The default orchestrator profile is locked and cannot be deleted.",
+      });
+    }
     const updatedAt = this.now();
     const stateRevision = this.db.transaction(() => {
       this.db
@@ -3024,6 +3086,39 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   reorderOrchestratorProfiles(
     input: ReorderOrchestratorProfilesCommandInput,
   ): StructuredMutationCommitRecord {
+    const currentProfileIds = (
+      this.db
+        .query(
+          `SELECT profile_id
+           FROM agent_profile
+           WHERE actor = 'orchestrator'
+           ORDER BY position ASC, profile_id ASC`,
+        )
+        .all() as { profile_id: string }[]
+    ).map((row) => row.profile_id);
+    const requestedProfileIds = [...input.profileIds];
+    const requestedProfileIdSet = new Set<string>(requestedProfileIds);
+    if (
+      requestedProfileIdSet.size !== requestedProfileIds.length ||
+      requestedProfileIds.length !== currentProfileIds.length ||
+      currentProfileIds.some((profileId) => !requestedProfileIdSet.has(profileId))
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.reorderOrchestratorProfiles",
+        reason: "invalid-input",
+        message: "Orchestrator profile reorder must contain every configured profile exactly once.",
+      });
+    }
+    if (
+      currentProfileIds.includes("default-orchestrator") &&
+      requestedProfileIds[0] !== "default-orchestrator"
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.reorderOrchestratorProfiles",
+        reason: "invalid-input",
+        message: "The default orchestrator profile is locked in the first position.",
+      });
+    }
     const updatedAt = this.now();
     const stateRevision = this.db.transaction(() => {
       input.profileIds.forEach((profileId, index) => {
@@ -3043,20 +3138,29 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   setProfileExtensionUsage(
     input: SetProfileExtensionUsageCommandInput,
   ): StructuredMutationCommitRecord {
-    return this.updateAgentProfileUsage(
-      input.actor === "handler" ? "handler" : "orchestrator",
-      input.profileId,
-      {
-        [input.extensionId]: input.usage,
-      },
-    );
+    if (input.actor === "orchestrator") {
+      const actorDefault = this.findAgentActorExtensionDefaults("orchestrator");
+      return this.updateAgentProfileUsage("orchestrator", input.profileId, {
+        [input.extensionId]:
+          actorDefault?.extensionUsage[input.extensionId] === input.usage ? null : input.usage,
+      });
+    }
+    return this.updateAgentProfileUsage("handler", input.profileId, {
+      [input.extensionId]: input.usage,
+    });
   }
 
   promoteProfileExtensionDefault(
     input: PromoteProfileExtensionDefaultCommandInput,
   ): StructuredMutationCommitRecord {
-    return this.updateAgentProfileUsage("orchestrator", input.profileId, {
-      [input.extensionId]: input.usage,
+    const current = this.findAgentActorExtensionDefaults(input.actor);
+    return this.setAgentActorExtensionDefaults({
+      actor: input.actor,
+      extensionUsage: {
+        ...current?.extensionUsage,
+        [input.extensionId]: input.usage,
+      },
+      extensionOrder: current?.extensionOrder ?? [],
     });
   }
 
@@ -3066,21 +3170,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }): StructuredMutationCommitRecord {
     const updatedAt = this.now();
     const stateRevision = this.db.transaction(() => {
-      const actor = input.actor === "workflow-task" ? "orchestrator" : input.actor;
-      if (input.reset === "usage" || input.reset === "usage-and-order") {
-        this.db
-          .query(
-            `UPDATE agent_profile SET extension_usage_json = '{}', updated_at = ? WHERE actor = ?`,
-          )
-          .run(updatedAt, actor);
-      }
-      if (input.reset === "order" || input.reset === "usage-and-order") {
-        this.db
-          .query(
-            `UPDATE agent_profile SET extension_order_json = '[]', updated_at = ? WHERE actor = ?`,
-          )
-          .run(updatedAt, actor);
-      }
+      const current = this.findAgentActorExtensionDefaults(input.actor);
+      this.writeAgentActorExtensionDefaults({
+        actor: input.actor,
+        extensionUsage:
+          input.reset === "usage" || input.reset === "usage-and-order"
+            ? {}
+            : (current?.extensionUsage ?? {}),
+        extensionOrder:
+          input.reset === "order" || input.reset === "usage-and-order"
+            ? []
+            : (current?.extensionOrder ?? []),
+        updatedAt,
+      });
       return this.bumpStateRevision();
     })();
     return { updatedAt, stateRevision };
@@ -5295,10 +5397,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            request_summary,
            turn_decision,
            status,
+           assistant_message_id,
+           assistant_text,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         turnId,
@@ -5308,6 +5412,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.requestSummary,
         "pending",
         "running",
+        null,
+        null,
         timestamp,
         timestamp,
         null,
@@ -5364,6 +5470,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   finishTurn(input: {
     turnId: string;
     status: Exclude<StructuredTurnStatus, "running">;
+    assistantMessageId?: string;
+    assistantText?: string;
   }): StructuredTurnRecord {
     const existing = this.mustFindTurnRow(input.turnId);
     const timestamp = this.now();
@@ -5371,10 +5479,21 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     this.db
       .query(
         `UPDATE turn
-         SET status = ?, updated_at = ?, finished_at = ?
+         SET status = ?,
+             assistant_message_id = COALESCE(?, assistant_message_id),
+             assistant_text = COALESCE(?, assistant_text),
+             updated_at = ?,
+             finished_at = ?
          WHERE id = ?`,
       )
-      .run(input.status, timestamp, finishedAt, input.turnId);
+      .run(
+        input.status,
+        input.assistantMessageId ?? null,
+        input.assistantText ?? null,
+        timestamp,
+        finishedAt,
+        input.turnId,
+      );
 
     this.recordEvent({
       sessionId: existing.session_id,
@@ -10194,13 +10313,21 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   private updateAgentProfileUsage(
     actor: StructuredAgentProfileRecord["actor"],
     profileId: string,
-    patch: Record<string, ExtensionUsageState>,
+    patch: Record<string, ExtensionUsageState | null>,
   ): StructuredMutationCommitRecord {
     const row = this.findAgentProfileRow(actor, profileId);
     const updatedAt = this.now();
     const currentUsage = row
       ? (fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {})
       : {};
+    const nextUsage = { ...currentUsage };
+    for (const [extensionId, usage] of Object.entries(patch)) {
+      if (usage === null) {
+        delete nextUsage[extensionId];
+      } else {
+        nextUsage[extensionId] = usage;
+      }
+    }
     const stateRevision = this.db.transaction(() => {
       this.db
         .query(
@@ -10212,7 +10339,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              extension_usage_json = excluded.extension_usage_json,
              updated_at = excluded.updated_at`,
         )
-        .run(profileId, actor, profileId, JSON.stringify({ ...currentUsage, ...patch }), updatedAt);
+        .run(profileId, actor, profileId, JSON.stringify(nextUsage), updatedAt);
       return this.bumpStateRevision();
     })();
     return { updatedAt, stateRevision };
@@ -10243,6 +10370,47 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       position: row.position,
       updatedAt: row.updated_at,
     };
+  }
+
+  private findAgentActorExtensionDefaults(
+    actor: StructuredAgentActorExtensionDefaultsRecord["actor"],
+  ): StructuredAgentActorExtensionDefaultsRecord | null {
+    const row = this.db
+      .query(`SELECT * FROM agent_actor_extension_defaults WHERE actor = ?`)
+      .get(actor) as AgentActorExtensionDefaultsRow | undefined;
+    return row ? this.mapAgentActorExtensionDefaults(row) : null;
+  }
+
+  private mapAgentActorExtensionDefaults(
+    row: AgentActorExtensionDefaultsRow,
+  ): StructuredAgentActorExtensionDefaultsRecord {
+    return {
+      actor: row.actor,
+      extensionUsage: fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {},
+      extensionOrder: fromJson<string[]>(row.extension_order_json) ?? [],
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private writeAgentActorExtensionDefaults(
+    record: StructuredAgentActorExtensionDefaultsRecord,
+  ): void {
+    this.db
+      .query(
+        `INSERT INTO agent_actor_extension_defaults (
+           actor, extension_usage_json, extension_order_json, updated_at
+         ) VALUES (?, ?, ?, ?)
+         ON CONFLICT(actor) DO UPDATE SET
+           extension_usage_json = excluded.extension_usage_json,
+           extension_order_json = excluded.extension_order_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        record.actor,
+        JSON.stringify(record.extensionUsage),
+        JSON.stringify(record.extensionOrder),
+        record.updatedAt,
+      );
   }
 
   private assertSnippetWorkspace(workspaceId: string, operation: string): void {
@@ -11495,6 +11663,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       requestSummary: row.request_summary,
       turnDecision: row.turn_decision,
       status: row.status,
+      assistantMessageId: row.assistant_message_id as MessageId | null,
+      assistantText: row.assistant_text,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
@@ -12048,6 +12218,13 @@ function initializeSchema(db: Database): void {
       PRIMARY KEY(profile_id, actor)
     );
 
+    CREATE TABLE IF NOT EXISTS agent_actor_extension_defaults (
+      actor TEXT PRIMARY KEY CHECK (actor IN ('orchestrator', 'workflow-task')),
+      extension_usage_json TEXT NOT NULL DEFAULT '{}',
+      extension_order_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS extension_env_override (
       extension_id TEXT NOT NULL,
       env_name TEXT NOT NULL,
@@ -12114,6 +12291,8 @@ function initializeSchema(db: Database): void {
       request_summary TEXT NOT NULL,
       turn_decision TEXT NOT NULL DEFAULT 'pending',
       status TEXT NOT NULL,
+      assistant_message_id TEXT,
+      assistant_text TEXT,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       finished_at TEXT
