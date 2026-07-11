@@ -42,6 +42,12 @@ describe("retired desktop integration RPC paths", () => {
     expect(chatStorageSource).not.toContain("ProviderKeysStore");
     expect(chatStorageSource).not.toContain("provider-keys");
     expect(chatWorkspaceSource).not.toContain("requireProviderAccess");
+    expect(indexSource).toContain(
+      "const fallbacks = await listProviderAuthSummaries({ refreshOAuth: false });",
+    );
+    expect(indexSource).toContain(
+      'source: "startup_scan",\n      stateCommands: facades.rendererStateCommands,',
+    );
     expect(chatRuntimeSource).not.toContain(
       'setAppCache("appPreferences", await rpcClient.request.getAppPreferences())',
     );

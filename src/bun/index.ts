@@ -110,7 +110,11 @@ import {
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
-import type { ProviderAuthReadModel, StateReadModelRequest, StateReadModelResult } from "@svvy/state";
+import type {
+  ProviderAuthReadModel,
+  StateReadModelRequest,
+  StateReadModelResult,
+} from "@svvy/state";
 
 const DEV_SERVER_PORT = 5173;
 
@@ -2353,11 +2357,7 @@ function buildDesktopRpcHandlers(
         return result;
       },
       listProviderAuths: async (): Promise<ProviderAuthInfo[]> => {
-        const fallbacks = await syncProviderAuthStatusesWithState({
-          refreshOAuth: true,
-          source: "startup_scan",
-          stateCommands: facades.commands.state,
-        });
+        const fallbacks = await listProviderAuthSummaries({ refreshOAuth: false });
         const result = requireStateReadModel(
           await facades.state.readModels.fetch({ kind: "providerAuth" }),
           "providerAuth",
@@ -2562,6 +2562,12 @@ await runDesktopBootstrap({
     const appChannel = await appChannelPromise;
     const url = await getMainViewUrl(appChannel);
     const host = desktopHost!;
+
+    await syncProviderAuthStatusesWithState({
+      refreshOAuth: true,
+      source: "startup_scan",
+      stateCommands: facades.rendererStateCommands,
+    });
 
     const notifications = createDesktopNotificationBridge({
       runtimeEvents: facades.runtimeEvents,
