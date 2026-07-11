@@ -40,7 +40,6 @@
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
-    onOpenAgentProfile?: (agentProfileId: string) => void;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
     onPersistDockview: (dockview: SerializedDockview | null, focusedPanelId: string | null) => void;
   };
@@ -59,7 +58,6 @@
     onAgentSettingsChanged,
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
-    onOpenAgentProfile,
     onAppAppearanceChanged,
     onPersistDockview,
   }: Props = $props();
@@ -104,7 +102,6 @@
           recentWorkspaces,
           onOpenWorkspace,
           onOpenWorkspaceInNewTab,
-          onOpenAgentProfile,
           onAppAppearanceChanged,
         },
       }) as Record<string, unknown>;
@@ -126,7 +123,6 @@
           recentWorkspaces,
           onOpenWorkspace,
           onOpenWorkspaceInNewTab,
-          onOpenAgentProfile,
           onAppAppearanceChanged,
         },
       }) as Record<string, unknown>;

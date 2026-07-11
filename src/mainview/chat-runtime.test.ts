@@ -40,6 +40,7 @@ import {
   type WorkspaceScoped,
   type WorkspaceSyncMessage,
   type WorkspaceWorkflowTaskAttemptInspector,
+  type WorkflowsGeneratedReadModel,
   type WorkspaceTabInfo,
 } from "../shared/workspace-contract";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "../shared/snippets";
@@ -175,7 +176,11 @@ type FakeRpcHarness = {
   openSnippetSourceRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openSnippetSourceInEditor"]>[0]
   >;
+  openWorkflowsGeneratedExportRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["openWorkflowsGeneratedExportInEditor"]>[0]
+  >;
   setSnippetRows: (rows: StateSnippetsReadModel["snippets"]) => void;
+  setWorkflowsGeneratedReadModel: (readModel: WorkflowsGeneratedReadModel) => void;
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
   emitWorkspaceSync: (
@@ -788,6 +793,8 @@ function createFakeRpc(input: {
   const snippetDeleteRequests: FakeRpcHarness["snippetDeleteRequests"] = [];
   const snippetEnableRequests: FakeRpcHarness["snippetEnableRequests"] = [];
   const openSnippetSourceRequests: FakeRpcHarness["openSnippetSourceRequests"] = [];
+  const openWorkflowsGeneratedExportRequests: FakeRpcHarness["openWorkflowsGeneratedExportRequests"] =
+    [];
   const appLogSeenRequests: number[] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
@@ -800,6 +807,11 @@ function createFakeRpc(input: {
     DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
   );
   let snippetRows: StateSnippetsReadModel["snippets"] = [];
+  let workflowsGeneratedReadModel: WorkflowsGeneratedReadModel = {
+    packageName: "@svvyx/workflows",
+    facts: [],
+    exports: [],
+  };
   let desktopNotificationSequence = 0;
   let rebaselineResult: StateReadModelBaseline = {
     app: [],
@@ -1157,6 +1169,11 @@ function createFakeRpc(input: {
                 },
               };
             }
+            case "workflowsGenerated":
+              return {
+                kind: "workflowsGenerated",
+                value: structuredClone(workflowsGeneratedReadModel),
+              };
             case "workflowTaskAttemptInspector":
               workflowTaskAttemptInspectorRequests.push({
                 workspaceId: request.workspaceId ?? "",
@@ -1217,6 +1234,12 @@ function createFakeRpc(input: {
                       ? descriptor.workspaceId
                       : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId),
                   snippetId: descriptor.invalidation.ids?.[0] as SnippetId | undefined,
+                }),
+              ];
+            case "workflowsGenerated":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "workflowsGenerated",
                 }),
               ];
             default:
@@ -1548,22 +1571,20 @@ function createFakeRpc(input: {
           opened: workspaceRelativePath === "docs/progress.md",
           kind: workspaceRelativePath === "docs/progress.md" ? "file" : "missing",
         }),
-        getWorkflowsGenerated: async () => ({
-          generatedPackagePath: "~/.config/svvy/workflows/generated/package",
-          items: [],
-          counts: {
-            agent: 0,
-            component: 0,
-            prompt: 0,
-            workflow: 0,
-          },
-          updatedAt: new Date(0).toISOString(),
-        }),
-        openWorkspaceSourceInEditor: async ({ path }) => ({
-          opened: true,
-          editor: "system",
-          path,
-        }),
+        openWorkflowsGeneratedExportInEditor: async (request) => {
+          openWorkflowsGeneratedExportRequests.push(structuredClone(request));
+          const generatedExport = workflowsGeneratedReadModel.exports.find(
+            (candidate) => candidate.qualifiedName === request.qualifiedName,
+          );
+          return {
+            opened: true,
+            editor: "system",
+            path:
+              (request.target === "source"
+                ? generatedExport?.sourcePath
+                : generatedExport?.generatedPath) ?? "",
+          };
+        },
         openGeneratedAgentContextExternalSourceInEditor: async ({ path }) => ({
           opened: true,
           editor: "system",
@@ -2439,6 +2460,7 @@ function createFakeRpc(input: {
     snippetDeleteRequests,
     snippetEnableRequests,
     openSnippetSourceRequests,
+    openWorkflowsGeneratedExportRequests,
     appLogSeenRequests,
     branchListRequests,
     branchSwitchRequests,
@@ -2468,6 +2490,9 @@ function createFakeRpc(input: {
     },
     setSnippetRows: (rows) => {
       snippetRows = structuredClone(rows);
+    },
+    setWorkflowsGeneratedReadModel: (readModel) => {
+      workflowsGeneratedReadModel = structuredClone(readModel);
     },
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
@@ -5264,9 +5289,10 @@ describe("createChatRuntime", () => {
 
     await runtime.openSurface({ surface: "workflows" }, { kind: "focused-panel" });
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "workflows" });
-    expect(await runtime.getWorkflowsGenerated()).toMatchObject({
-      generatedPackagePath: "~/.config/svvy/workflows/generated/package",
-      counts: { agent: 0, component: 0, prompt: 0, workflow: 0 },
+    expect(await runtime.getWorkflowsGenerated()).toEqual({
+      packageName: "@svvyx/workflows",
+      facts: [],
+      exports: [],
     });
 
     await runtime.openSurface(
@@ -6004,6 +6030,156 @@ describe("createChatRuntime", () => {
     await expect(runtime.getSnippets()).rejects.toThrow(
       "Managed snippet managed-with-path unexpectedly has an external source path.",
     );
+    runtime.dispose();
+  });
+
+  it("reads generated Workflows metadata from state and opens export files by identity", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    harness.setWorkflowsGeneratedReadModel({
+      packageName: "@svvyx/workflows",
+      facts: [
+        {
+          packageName: "@svvyx/workflows",
+          status: "ready",
+          buildId: "workflow-build-1",
+          manifestPath: "/tmp/generated/.svvy-generated-package.json",
+          diagnostics: [],
+          refreshNeededReason: null,
+          updatedAt: "2026-07-11T08:00:00.000Z",
+        },
+      ],
+      exports: [
+        {
+          namespace: "Agents",
+          exportName: "reviewAgent",
+          qualifiedName: "Agents.reviewAgent",
+          kind: "agent",
+          generatedCode: "export const reviewAgent = {}",
+          generatedPath: "/tmp/generated/agents.ts",
+          sourcePath: "/tmp/sources/review.agent.json",
+          agentParameters: { id: "review-agent" },
+          workflowAgentId: "review-agent",
+        },
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    expect(await runtime.getWorkflowsGenerated()).toMatchObject({
+      packageName: "@svvyx/workflows",
+      facts: [expect.objectContaining({ status: "ready", buildId: "workflow-build-1" })],
+      exports: [
+        expect.objectContaining({
+          qualifiedName: "Agents.reviewAgent",
+          workflowAgentId: "review-agent",
+        }),
+      ],
+    });
+    expect(
+      await runtime.openWorkflowsGeneratedExportInEditor({
+        qualifiedName: "Agents.reviewAgent",
+        target: "source",
+      }),
+    ).toBe(true);
+    expect(
+      await runtime.openWorkflowsGeneratedExportInEditor({
+        qualifiedName: "Agents.reviewAgent",
+        target: "generated",
+      }),
+    ).toBe(true);
+    expect(harness.openWorkflowsGeneratedExportRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        qualifiedName: "Agents.reviewAgent",
+        target: "source",
+      },
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        qualifiedName: "Agents.reviewAgent",
+        target: "generated",
+      },
+    ]);
+    runtime.dispose();
+  });
+
+  it("applies app-global Workflows invalidations and rebaselines to the renderer cache", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    await runtime.getWorkflowsGenerated();
+    harness.setWorkflowsGeneratedReadModel({
+      packageName: "@svvyx/workflows",
+      facts: [
+        {
+          packageName: "@svvyx/workflows",
+          status: "ready",
+          buildId: "workflow-build-2",
+          manifestPath: "/tmp/generated/.svvy-generated-package.json",
+          diagnostics: [],
+          refreshNeededReason: null,
+          updatedAt: "2026-07-11T09:00:00.000Z",
+        },
+      ],
+      exports: [
+        {
+          namespace: "Prompts",
+          exportName: "reviewPrompt",
+          qualifiedName: "Prompts.reviewPrompt",
+          kind: "prompt",
+          generatedCode: "export const reviewPrompt = 'review'",
+          generatedPath: "/tmp/generated/prompts.ts",
+          sourcePath: "/tmp/sources/review.prompt.ts",
+          agentParameters: null,
+          workflowAgentId: null,
+        },
+      ],
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "workflowsGenerated" } },
+    });
+
+    await waitFor(
+      () =>
+        runtime.workflowsGeneratedSnapshot?.exports[0]?.qualifiedName === "Prompts.reviewPrompt",
+    );
+    harness.setRebaselineResult({
+      app: [
+        {
+          kind: "workflowsGenerated",
+          value: {
+            packageName: "@svvyx/workflows",
+            facts: [
+              {
+                packageName: "@svvyx/workflows",
+                status: "failed",
+                buildId: "workflow-build-2",
+                manifestPath: "/tmp/generated/.svvy-generated-package.json",
+                diagnostics: ["Build failed"],
+                refreshNeededReason: null,
+                updatedAt: "2026-07-11T10:00:00.000Z",
+              },
+            ],
+            exports: [],
+          },
+        },
+      ],
+      workspaces: [],
+      revision: 3 as StateRevision,
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-rebaseline-required",
+      reason: "event-sequence-gap",
+      rebaselineRequired: true,
+      scope: { kind: "app" },
+    });
+
+    await waitFor(() => runtime.workflowsGeneratedSnapshot?.facts[0]?.status === "failed");
+    expect(runtime.workflowsGeneratedSnapshot).toMatchObject({
+      facts: [expect.objectContaining({ status: "failed", diagnostics: ["Build failed"] })],
+      exports: [],
+    });
     runtime.dispose();
   });
 

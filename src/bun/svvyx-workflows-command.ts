@@ -180,6 +180,7 @@ export async function runSvvyxWorkflowsCommand(input: {
       namespace: item.namespace,
       exportName: item.exportName,
       qualifiedName: item.qualifiedName,
+      workflowAgentId: item.workflowAgentId,
       sourcePath: item.sourcePath,
       generatedPath: item.generatedPath,
     }));

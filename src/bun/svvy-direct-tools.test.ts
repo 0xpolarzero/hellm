@@ -1723,6 +1723,7 @@ describe("svvy direct tools", () => {
       join(packageRoot, "agents", "reviewerAgent.ts"),
       [
         "export const reviewerAgent = {",
+        '  id: "review-agent",',
         '  label: "Reviewer",',
         "} satisfies Agents.TaskAgentParametersSource;",
       ].join("\n"),
@@ -1761,6 +1762,7 @@ describe("svvy direct tools", () => {
         namespace: "Agents",
         exportName: "reviewerAgent",
         qualifiedName: "Agents.reviewerAgent",
+        workflowAgentId: "review-agent",
         sourcePath: join(sourceRoot, "agents", "reviewerAgent.agent.json"),
         generatedPath: join(packageRoot, "agents", "reviewerAgent.ts"),
       },
@@ -1769,6 +1771,7 @@ describe("svvy direct tools", () => {
         namespace: "Components",
         exportName: "ReviewPanel",
         qualifiedName: "Components.ReviewPanel",
+        workflowAgentId: null,
         sourcePath: join(sourceRoot, "components", "ReviewPanel.tsx"),
         generatedPath: join(packageRoot, "components", "ReviewPanel.tsx"),
       },

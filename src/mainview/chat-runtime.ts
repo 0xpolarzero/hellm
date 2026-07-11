@@ -64,7 +64,7 @@ import {
   type WorkspaceSessionSummary,
   type WorkspaceSyncMessage,
   type WorkspaceWorkflowTaskAttemptInspector,
-  type WorkspaceWorkflowsGeneratedReadModel,
+  type WorkflowsGeneratedReadModel,
   type WorkspacePaneSurfaceTarget,
   type WorkspaceInfoResponse,
   type AgentContextPreviewRequest,
@@ -198,7 +198,7 @@ type AppReadModelCache = {
   appLogs: AppLogReadModel | null;
   agentSettings: AgentSettingsState | null;
   appPreferences: AppPreferences | null;
-  workflowsGenerated: WorkspaceWorkflowsGeneratedReadModel | null;
+  workflowsGenerated: WorkflowsGeneratedReadModel | null;
   agentModelChoices: AgentModelChoicesResponse | null;
   providerAuths: ProviderAuthInfo[] | null;
 };
@@ -766,8 +766,7 @@ export interface ChatRuntimeRpcClient {
     pickWorkspaceAttachments: typeof rpc.request.pickWorkspaceAttachments;
     importComposerAttachments: typeof rpc.request.importComposerAttachments;
     openWorkspacePath: typeof rpc.request.openWorkspacePath;
-    getWorkflowsGenerated: typeof rpc.request.getWorkflowsGenerated;
-    openWorkspaceSourceInEditor: typeof rpc.request.openWorkspaceSourceInEditor;
+    openWorkflowsGeneratedExportInEditor: typeof rpc.request.openWorkflowsGeneratedExportInEditor;
     openGeneratedAgentContextExternalSourceInEditor: typeof rpc.request.openGeneratedAgentContextExternalSourceInEditor;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
@@ -841,7 +840,7 @@ export interface ChatRuntime {
   providerAuthsSnapshot: ProviderAuthInfo[] | null;
   extensionsInventorySnapshot: ExtensionsInventoryReadModel | null;
   externalInstructionSourcesSnapshot: GeneratedAgentContextExternalSource[] | null;
-  workflowsGeneratedSnapshot: WorkspaceWorkflowsGeneratedReadModel | null;
+  workflowsGeneratedSnapshot: WorkflowsGeneratedReadModel | null;
   snippetsSnapshot: SnippetsReadModel | null;
   appLogsSnapshot: AppLogReadModel | null;
   sessions: WorkspaceSessionSummary[];
@@ -936,8 +935,11 @@ export interface ChatRuntime {
   pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
   importComposerAttachments: (files: File[]) => Promise<ComposerAttachment[]>;
   openWorkspacePath: (workspaceRelativePath: string) => Promise<boolean>;
-  getWorkflowsGenerated: () => Promise<WorkspaceWorkflowsGeneratedReadModel>;
-  openWorkspaceSourceInEditor: (path: string) => Promise<boolean>;
+  getWorkflowsGenerated: () => Promise<WorkflowsGeneratedReadModel>;
+  openWorkflowsGeneratedExportInEditor: (input: {
+    qualifiedName: string;
+    target: "source" | "generated";
+  }) => Promise<boolean>;
   openGeneratedAgentContextExternalSourceInEditor: (path: string) => Promise<boolean>;
   getGeneratedAgentContextExternalSources: () => Promise<GeneratedAgentContextExternalSource[]>;
   getAgentSettings: () => Promise<AgentSettingsState>;
@@ -1951,8 +1953,13 @@ export async function createChatRuntime(
       await rpcClient.request.getGeneratedAgentContextExternalSources(scoped()),
     )!;
 
-  const refreshWorkflowsGenerated = async (): Promise<WorkspaceWorkflowsGeneratedReadModel> =>
-    setAppCache("workflowsGenerated", await rpcClient.request.getWorkflowsGenerated(scoped()))!;
+  const refreshWorkflowsGenerated = async (): Promise<WorkflowsGeneratedReadModel> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({ kind: "workflowsGenerated" }),
+      "workflowsGenerated",
+    );
+    return setAppCache("workflowsGenerated", result.value)!;
+  };
 
   const refreshSnippets = async (): Promise<SnippetsReadModel> => {
     const result = requireStateReadModel(
@@ -2037,15 +2044,6 @@ export async function createChatRuntime(
   };
 
   const applyAppLogSideEffects = (entries: readonly AppLogEntry[]): void => {
-    if (
-      entries.some(
-        (entry) =>
-          entry.source === "workflow.library" &&
-          entry.message === "Generated Workflows package rebuilt.",
-      )
-    ) {
-      void refreshWorkflowsGenerated().catch(() => undefined);
-    }
     for (const entry of entries) {
       if (entry.source !== "source.graph" || entry.message !== "Source inputs changed.") {
         continue;
@@ -2068,12 +2066,6 @@ export async function createChatRuntime(
       }
       if (refreshAll || domains.includes("external_instructions")) {
         void refreshExternalInstructionSources().catch(() => undefined);
-      }
-      if (
-        refreshAll ||
-        domains.some((domain) => domain === "extensions" || domain === "workflows")
-      ) {
-        void refreshWorkflowsGenerated().catch(() => undefined);
       }
     }
   };
@@ -2169,6 +2161,9 @@ export async function createChatRuntime(
         case "snippets":
           setWorkspaceCache("snippets", snippetsFromStateReadModel(result.value));
           break;
+        case "workflowsGenerated":
+          setAppCache("workflowsGenerated", result.value);
+          break;
       }
     }
     emit();
@@ -2182,6 +2177,7 @@ export async function createChatRuntime(
       appReadModelCache.appLogs = null;
       appReadModelCache.appPreferences = null;
       appReadModelCache.providerAuths = null;
+      appReadModelCache.workflowsGenerated = null;
       applyNotificationReadModelPatch(baseline.app, undefined, scope);
     } else {
       const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
@@ -3586,8 +3582,11 @@ export async function createChatRuntime(
       return result.opened;
     },
     getWorkflowsGenerated: refreshWorkflowsGenerated,
-    openWorkspaceSourceInEditor: async (path) => {
-      const result = await rpcClient.request.openWorkspaceSourceInEditor(scoped({ path }));
+    openWorkflowsGeneratedExportInEditor: async (input) => {
+      const result = await rpcClient.request.openWorkflowsGeneratedExportInEditor({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        ...input,
+      });
       return result.opened;
     },
     openGeneratedAgentContextExternalSourceInEditor: async (path) => {

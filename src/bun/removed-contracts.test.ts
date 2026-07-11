@@ -150,6 +150,47 @@ describe("retired desktop integration RPC paths", () => {
     expect(existsSync(`${import.meta.dir}/snippet-store.test.ts`)).toBe(false);
   });
 
+  it("keeps the Workflows renderer feed state-backed with identity-only export opens", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const workflowLibrarySource = await Bun.file(
+      `${import.meta.dir}/smithers-runtime/workflow-library.ts`,
+    ).text();
+    const workflowsCliSource = await Bun.file(
+      `${import.meta.dir}/svvyx-workflows-command.ts`,
+    ).text();
+    const openHandlerSource = backendSource
+      .split("openWorkflowsGeneratedExportInEditor:")[1]
+      ?.split("openGeneratedAgentContextExternalSourceInEditor:")[0];
+
+    expect(sharedContractSource).toContain("openWorkflowsGeneratedExportInEditor: {");
+    expect(chatRuntimeSource).toContain("rpcClient.request.openWorkflowsGeneratedExportInEditor");
+    expect(backendSource).toContain("openWorkflowsGeneratedExportInEditor:");
+    expect(openHandlerSource).toContain('kind: "workflowsGenerated"');
+    expect(openHandlerSource).toContain("candidate.qualifiedName === input.qualifiedName");
+    expect(openHandlerSource).toContain('input.target === "source"');
+    expect(openHandlerSource).not.toContain("input.path");
+    expect(chatRuntimeSource).toContain('fetchStateReadModel({ kind: "workflowsGenerated" })');
+    expect(chatRuntimeSource).toContain('case "workflowsGenerated":');
+    expect(chatRuntimeSource).toContain("appReadModelCache.workflowsGenerated = null");
+    expect(sharedContractSource).toContain("workflowAgentId: string | null;");
+    expect(sharedContractSource).toContain('packageName: "@svvyx/workflows";');
+    expect(backendSource).toContain('fact.packageName === "@svvyx/workflows"');
+    expect(backendSource).not.toContain("readWorkflowsGeneratedReadModel");
+    expect(workflowLibrarySource).toContain(
+      "export async function readWorkflowsGeneratedReadModel",
+    );
+    expect(workflowLibrarySource).toContain("const workflowAgentId =");
+    expect(workflowLibrarySource).not.toContain("agentProfileId:");
+    expect(workflowsCliSource).toContain("readWorkflowsGeneratedReadModel");
+    expect(workflowsCliSource).toContain("workflowAgentId: item.workflowAgentId");
+  });
+
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(
@@ -169,7 +210,6 @@ describe("retired desktop integration RPC paths", () => {
       { channel: "setExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "removeExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
-      { channel: "getWorkflowsGenerated", retirementIncrement: "Increment 8" },
       { channel: "listSessions", retirementIncrement: "Increment 8" },
       { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
     ] as const;
@@ -191,6 +231,8 @@ describe("retired desktop integration RPC paths", () => {
       "deleteManagedSnippet",
       "setSnippetEnabled",
       "openSnippetExternalSourceInEditor",
+      "getWorkflowsGenerated",
+      "openWorkspaceSourceInEditor",
       "recordSessionOpened",
       "revertExtensionChange",
       "reorderExtensionInstructionFiles",

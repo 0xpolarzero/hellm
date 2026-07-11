@@ -16,7 +16,7 @@ describe("Workflows pane source contract", () => {
     expect(source).not.toContain("$effect(() => {\n    void loadWorkflows();");
   });
 
-  it("keeps generated output read-only and routes generated agents back to Agents", async () => {
+  it("keeps generated output read-only without treating workflow agents as profiles", async () => {
     const source = await readFile(join(SOURCE_ROOT, "WorkflowsPane.svelte"), "utf8");
 
     expect(source).toContain("<PaneFilterTabs");
@@ -27,10 +27,17 @@ describe("Workflows pane source contract", () => {
     expect(source).toContain("sourceLabel={fileName(item.sourcePath)}");
     expect(source).toContain("sourceLabel={fileName(item.generatedPath)}");
     expect(source).toContain("workflow-expanded-meta");
-    expect(source).toContain("updatedLabel(readModel.updatedAt)");
+    expect(source).toContain("updatedLabel(currentFact.updatedAt)");
     expect(source).toContain("workflow-agent-parameters-preview");
     expect(source).toContain("workflow-generated-code-preview");
-    expect(source).toContain("onOpenAgentProfile");
+    expect(source).not.toContain("onOpenAgentProfile");
+    expect(source).not.toContain("Customize ${item.exportName} in Agents");
+    expect(source).toContain("item.workflowAgentId");
+    expect(source).not.toContain("item.agentProfileId");
+    expect(source).toContain("readModel?.exports");
+    expect(source).toContain("readModel?.facts.find");
+    expect(source).toContain("runtime.openWorkflowsGeneratedExportInEditor");
+    expect(source).not.toContain("runtime.openWorkspaceSourceInEditor");
     expect(source).toContain("Refresh generated workflows");
     expect(source).toContain("scrollbar-gutter: stable");
     expect(source).not.toContain("{#snippet meta()}");

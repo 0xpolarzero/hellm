@@ -1104,16 +1104,6 @@
     );
   }
 
-  function openAgentProfile(agentProfileId: string): void {
-    void runtime.openSurface(
-      {
-        surface: "agents",
-        targetAgentProfileId: agentProfileId,
-      },
-      { kind: "focused-panel" },
-    );
-  }
-
   function openExtensionsPane(event?: MouseEvent): void {
     void runtime.openSurface(
       {
@@ -1631,7 +1621,6 @@
         {onAppAppearanceChanged}
         onOpenWorkspace={() => onOpenWorkspace?.()}
         onOpenWorkspaceInNewTab={() => onOpenWorkspaceInNewTab?.()}
-        onOpenAgentProfile={openAgentProfile}
         onPersistDockview={(dockview, panelId) => runtime.setDockviewLayout(dockview, panelId)}
       />
     </section>

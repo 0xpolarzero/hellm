@@ -375,8 +375,18 @@ export interface SnippetReadModelRecord {
 
 export interface WorkflowsGeneratedReadModel {
   packageName: "@svvyx/workflows";
-  facts: readonly unknown[];
+  facts: readonly WorkflowsGeneratedFactReadModelRecord[];
   exports: readonly WorkflowsGeneratedExportReadModelRecord[];
+}
+
+export interface WorkflowsGeneratedFactReadModelRecord {
+  packageName: "@svvyx/workflows";
+  status: "ready" | "failed" | "refresh-needed";
+  buildId: string | null;
+  manifestPath: string | null;
+  diagnostics: readonly string[];
+  refreshNeededReason: string | null;
+  updatedAt: string;
 }
 
 export interface WorkflowsGeneratedExportReadModelRecord {
@@ -388,6 +398,7 @@ export interface WorkflowsGeneratedExportReadModelRecord {
   generatedPath: string | null;
   sourcePath: string | null;
   agentParameters: JsonValue | null;
+  workflowAgentId: string | null;
 }
 
 export interface WorkspaceChromeLayoutReadModel {
@@ -1436,7 +1447,7 @@ export interface WorkspaceWorkflowsGeneratedExport {
   generatedPath: string;
   generatedCode: string;
   agentParameters: Record<string, unknown> | null;
-  agentProfileId: string | null;
+  workflowAgentId: string | null;
 }
 
 export interface WorkspaceWorkflowsGeneratedReadModel {
@@ -1446,8 +1457,10 @@ export interface WorkspaceWorkflowsGeneratedReadModel {
   updatedAt: string;
 }
 
-export interface OpenWorkspaceSourceInEditorRequest {
-  path: string;
+export interface OpenWorkflowsGeneratedExportInEditorRequest {
+  workspaceId: WorkspaceId;
+  qualifiedName: string;
+  target: "source" | "generated";
 }
 
 export interface OpenGeneratedAgentContextExternalSourceInEditorRequest {
@@ -2264,12 +2277,8 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<OpenWorkspacePathRequest>;
         response: OpenWorkspacePathResponse;
       };
-      getWorkflowsGenerated: {
-        params: WorkspaceScopedRequest;
-        response: WorkspaceWorkflowsGeneratedReadModel;
-      };
-      openWorkspaceSourceInEditor: {
-        params: WorkspaceScoped<OpenWorkspaceSourceInEditorRequest>;
+      openWorkflowsGeneratedExportInEditor: {
+        params: OpenWorkflowsGeneratedExportInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
       };
       openGeneratedAgentContextExternalSourceInEditor: {

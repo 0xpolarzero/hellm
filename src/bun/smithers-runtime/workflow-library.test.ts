@@ -124,7 +124,7 @@ describe("Workflows generated read model", () => {
       qualifiedName: "Agents.reviewerAgent",
       sourcePath: join(root, "source", "agents", "reviewerAgent.agent.json"),
       generatedPath: join(packageRoot, "agents", "reviewerAgent.ts"),
-      agentProfileId: "reviewerAgent",
+      workflowAgentId: "reviewerAgent",
       agentParameters: {
         id: "reviewerAgent",
         label: "Reviewer",
@@ -135,6 +135,31 @@ describe("Workflows generated read model", () => {
         overrides: { git: "loaded" },
       },
     });
+  });
+
+  it("does not invent a workflow-agent identity when generated parameters omit id", async () => {
+    const root = createTempDir();
+    const packageRoot = join(root, "generated", "package");
+    mkdirSync(join(packageRoot, "agents"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "agents", "unidentifiedAgent.ts"),
+      [
+        "export const unidentifiedAgent = {",
+        '  label: "Unidentified",',
+        "} satisfies Agents.TaskAgentParametersSource;",
+      ].join("\n"),
+    );
+
+    const model = await readWorkflowsGeneratedReadModel(packageRoot, {
+      sourceRoot: join(root, "source"),
+    });
+
+    expect(model.items).toEqual([
+      expect.objectContaining({
+        exportName: "unidentifiedAgent",
+        workflowAgentId: null,
+      }),
+    ]);
   });
 
   it("builds @svvyx/workflows from app-global source with namespace-only root exports", async () => {

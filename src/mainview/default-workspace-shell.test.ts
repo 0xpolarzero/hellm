@@ -232,7 +232,7 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId");
     expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
     expect(runtimeSource).toContain("getAppLogs: refreshAppLogs");
-    expect(runtimeSource).toContain("rpcClient.request.getWorkflowsGenerated(scoped())");
+    expect(runtimeSource).toContain('fetchStateReadModel({ kind: "workflowsGenerated" })');
     expect(runtimeSource).not.toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
     expect(runtimeSource).not.toContain("rpcClient.request.updateGeneratedAgentContext");
     expect(runtimeSource).toContain('kind: "snippets"');
@@ -256,9 +256,8 @@ describe("default workspace renderer shell", () => {
     );
     expect(contractSource).not.toContain("getGeneratedAgentContext: {");
     expect(contractSource).not.toContain("updateGeneratedAgentContext: {");
-    expect(contractSource).toContain(
-      "getWorkflowsGenerated: {\n        params: WorkspaceScopedRequest;",
-    );
+    expect(contractSource).not.toContain("getWorkflowsGenerated: {");
+    expect(contractSource).toContain("openWorkflowsGeneratedExportInEditor: {");
     expect(contractSource).not.toContain("getAppLogs: {");
     expect(contractSource).not.toContain("getAppLogSummary: {");
     expect(contractSource).not.toContain("markAppLogsSeen: {");
@@ -753,10 +752,16 @@ describe("default workspace renderer shell", () => {
     expect(workflowsPaneSource).toContain("sourceLabel={fileName(item.sourcePath)}");
     expect(workflowsPaneSource).toContain("sourceLabel={fileName(item.generatedPath)}");
     expect(workflowsPaneSource).toContain("workflow-expanded-meta");
-    expect(workflowsPaneSource).toContain("updatedLabel(readModel.updatedAt)");
+    expect(workflowsPaneSource).toContain("updatedLabel(currentFact.updatedAt)");
     expect(workflowsPaneSource).toContain("workflow-agent-parameters-preview");
     expect(workflowsPaneSource).toContain("workflow-generated-code-preview");
-    expect(workflowsPaneSource).toContain("onOpenAgentProfile");
+    expect(workflowsPaneSource).not.toContain("onOpenAgentProfile");
+    expect(workflowsPaneSource).toContain("item.workflowAgentId");
+    expect(workflowsPaneSource).not.toContain("item.agentProfileId");
+    expect(workflowsPaneSource).toContain("readModel?.exports");
+    expect(workflowsPaneSource).toContain("readModel?.facts.find");
+    expect(workflowsPaneSource).toContain("runtime.openWorkflowsGeneratedExportInEditor");
+    expect(workflowsPaneSource).not.toContain("runtime.openWorkspaceSourceInEditor");
     expect(workflowsPaneSource).toContain("Refresh generated workflows");
     expect(workflowsPaneSource).not.toContain("{#snippet meta()}");
     expect(workflowsPaneSource).not.toContain("Opened ${path}");
@@ -765,9 +770,13 @@ describe("default workspace renderer shell", () => {
     expect(workflowsPaneSource).not.toContain("<PaneListRow");
     expect(workflowsPaneSource).toContain("runtime.workflowsGeneratedSnapshot");
     expect(workflowsPaneSource).not.toContain("runtime.subscribeAppLogUpdate");
-    expect(runtimeSource).toContain("Generated Workflows package rebuilt.");
-    expect(runtimeSource).toContain("void refreshWorkflowsGenerated().catch");
+    expect(runtimeSource).not.toContain("Generated Workflows package rebuilt.");
+    expect(runtimeSource).toContain('case "workflowsGenerated":');
+    expect(runtimeSource).toContain('fetchStateReadModel({ kind: "workflowsGenerated" })');
     expect(backendSource).toContain("buildWorkflowsGeneratedPackage");
+    expect(backendSource).not.toContain("readWorkflowsGeneratedReadModel");
+    expect(backendSource).toContain("openWorkflowsGeneratedExportInEditor");
+    expect(backendSource).toContain("facades.state.readModels.fetch");
     expect(backendSource).toContain("workflow-agent-settings");
     expect(backendSource).toContain(
       "Workflow agent settings rejected because Workflows build failed.",
@@ -797,7 +806,7 @@ describe("default workspace renderer shell", () => {
     expect(workflowsPaneSource).toContain("readonly");
   });
 
-  it("wires Workflows generated agent rows to focused Agents pane records", async () => {
+  it("does not route workflow-agent ids through profile navigation", async () => {
     const chatWorkspaceSource = await readFile(
       new URL("./ChatWorkspace.svelte", import.meta.url),
       "utf8",
@@ -811,14 +820,12 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(chatWorkspaceSource).toContain("function openAgentProfile(agentProfileId: string)");
-    expect(chatWorkspaceSource).toContain("targetAgentProfileId: agentProfileId");
-    expect(chatWorkspaceSource).toContain("onOpenAgentProfile={openAgentProfile}");
-    expect(dockviewWorkspaceSource).toContain("onOpenAgentProfile");
+    expect(chatWorkspaceSource).not.toContain("function openAgentProfile(agentProfileId: string)");
+    expect(chatWorkspaceSource).not.toContain("onOpenAgentProfile={openAgentProfile}");
+    expect(dockviewWorkspaceSource).not.toContain("onOpenAgentProfile");
     expect(panelHostSource).toContain("targetAgentProfileId={pane.target.targetAgentProfileId}");
-    expect(panelHostSource).toContain(
-      "<WorkflowsPane {runtime} onOpenAgentProfile={onOpenAgentProfile} />",
-    );
+    expect(panelHostSource).toContain("<WorkflowsPane {runtime} />");
+    expect(panelHostSource).not.toContain("onOpenAgentProfile");
   });
 
   it("routes generated context preview actions into the Extensions pane preview surface", async () => {

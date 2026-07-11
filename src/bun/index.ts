@@ -38,6 +38,8 @@ import type {
   ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
+  StateReadModelBaseline as DesktopStateReadModelBaseline,
+  StateReadModelResult as DesktopStateReadModelResult,
   EditCommittedUserMessageResponse,
   SendPromptResponse,
   SwitchWorkspaceBranchResponse,
@@ -72,7 +74,6 @@ import {
 import {
   buildWorkflowsGeneratedPackage,
   getWorkflowsSourceRoot,
-  readWorkflowsGeneratedReadModel,
 } from "./smithers-runtime/workflow-library";
 import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
@@ -112,6 +113,7 @@ import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
 import type {
   ProviderAuthReadModel,
+  StateReadModelBaseline,
   StateReadModelRequest,
   StateReadModelResult,
 } from "@svvy/state";
@@ -472,24 +474,6 @@ function resolveSafeWorkspacePath(
   const absolutePath = resolve(cwd, normalizedRelativePath);
   const root = resolve(cwd);
   if (absolutePath !== root && !absolutePath.startsWith(`${root}${sep}`)) return null;
-  return absolutePath;
-}
-
-function resolveSafeWorkspaceOrWorkflowsPath(
-  runtime: WorkspaceRuntime,
-  inputPath: string,
-): string | null {
-  const normalizedPath = inputPath.trim();
-  if (!normalizedPath) return null;
-  if (!normalizedPath.startsWith("/")) {
-    return resolveSafeWorkspacePath(runtime, normalizedPath);
-  }
-
-  const absolutePath = resolve(normalizedPath);
-  const workflowsRoot = resolve(getWorkflowsSourceRoot());
-  if (absolutePath !== workflowsRoot && !absolutePath.startsWith(`${workflowsRoot}${sep}`)) {
-    return null;
-  }
   return absolutePath;
 }
 
@@ -882,6 +866,44 @@ function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
   return result as Extract<StateReadModelResult, { kind: Kind }>;
 }
 
+function desktopStateReadModelResult(result: StateReadModelResult): DesktopStateReadModelResult {
+  if (result.kind !== "workflowsGenerated") {
+    return result as DesktopStateReadModelResult;
+  }
+  return {
+    kind: "workflowsGenerated",
+    value: {
+      packageName: "@svvyx/workflows",
+      facts: result.value.facts.flatMap((fact) =>
+        fact.packageName === "@svvyx/workflows"
+          ? [
+              {
+                packageName: "@svvyx/workflows" as const,
+                status: fact.status,
+                buildId: fact.buildId,
+                manifestPath: fact.manifestPath,
+                diagnostics: fact.diagnostics,
+                refreshNeededReason: fact.refreshNeededReason,
+                updatedAt: fact.updatedAt,
+              },
+            ]
+          : [],
+      ),
+      exports: result.value.exports,
+    },
+  };
+}
+
+function desktopStateReadModelBaseline(
+  baseline: StateReadModelBaseline,
+): DesktopStateReadModelBaseline {
+  return {
+    app: baseline.app.map(desktopStateReadModelResult),
+    workspaces: baseline.workspaces.map(desktopStateReadModelResult),
+    revision: baseline.revision,
+  };
+}
+
 function providerHealthFromInfo(info: ProviderAuthInfo): ProviderAuthHealth {
   switch (info.authHealth) {
     case "available":
@@ -974,9 +996,12 @@ function buildDesktopRpcHandlers(
   facades: ElectrobunRendererApiInput,
   lifecycle: { readonly rendererReady: () => void },
 ): ElectrobunRpcHandlers {
+  const fetchStateReadModel = (request: StateReadModelRequest): Promise<StateReadModelResult> =>
+    facades.state.readModels.fetch(request);
   const fetchDesktopStateReadModel = (
     request: StateReadModelRequest,
-  ): Promise<StateReadModelResult> => facades.state.readModels.fetch(request);
+  ): Promise<DesktopStateReadModelResult> =>
+    fetchStateReadModel(request).then(desktopStateReadModelResult);
 
   return normalizeDesktopBridgeHandlers<ElectrobunRpcHandlers>({
     requests: {
@@ -1387,9 +1412,12 @@ function buildDesktopRpcHandlers(
         Promise.all(
           request.requests.map((readModelRequest) => fetchDesktopStateReadModel(readModelRequest)),
         ),
-      refetchStateReadModelInvalidation: (request) =>
-        facades.state.readModels.refetchInvalidation(request),
-      rebaselineStateReadModels: (request) => facades.state.readModels.rebaseline(request),
+      refetchStateReadModelInvalidation: async (request) =>
+        (await facades.state.readModels.refetchInvalidation(request)).map(
+          desktopStateReadModelResult,
+        ),
+      rebaselineStateReadModels: async (request) =>
+        desktopStateReadModelBaseline(await facades.state.readModels.rebaseline(request)),
       stateAppLogsMarkRead: (request) => facades.commands.state.appLogs.markRead(request),
       stateAppPreferencesUpdate: async (request) => {
         const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
@@ -1769,23 +1797,34 @@ function buildDesktopRpcHandlers(
         }
         return { opened, kind };
       },
-      getWorkflowsGenerated: async (input) => {
+      openWorkflowsGeneratedExportInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        runtime.appLog.info("workflow.library", "Generated Workflows metadata read.");
-        return await readWorkflowsGeneratedReadModel();
-      },
-      openWorkspaceSourceInEditor: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { path } = input;
-        const absolutePath = resolveSafeWorkspaceOrWorkflowsPath(runtime, path);
-        if (!absolutePath || getWorkspacePathKind(absolutePath) === "missing") {
-          runtime.appLog.warning("external-editor", "Workspace source file does not exist.", {
-            path,
-          });
-          throw new Error(`Workspace source file does not exist: ${path}`);
+        const readModelResult = await facades.state.readModels.fetch({
+          kind: "workflowsGenerated",
+        });
+        if (readModelResult.kind !== "workflowsGenerated") {
+          throw new Error(
+            `Expected state read model workflowsGenerated; received ${readModelResult.kind}.`,
+          );
         }
-        const result = openPathInPreferredEditor(runtime, absolutePath);
-        runtime.appLog.info("external-editor", "Workspace source opened in external editor.", {
+        const generatedExport = readModelResult.value.exports.find(
+          (candidate) => candidate.qualifiedName === input.qualifiedName,
+        );
+        const path =
+          input.target === "source" ? generatedExport?.sourcePath : generatedExport?.generatedPath;
+        if (!generatedExport || !path || getWorkspacePathKind(path) === "missing") {
+          runtime.appLog.warning("external-editor", "Workflows export file does not exist.", {
+            qualifiedName: input.qualifiedName,
+            target: input.target,
+          });
+          throw new Error(
+            `Workflows export ${input.target} file does not exist: ${input.qualifiedName}`,
+          );
+        }
+        const result = openPathInPreferredEditor(runtime, path);
+        runtime.appLog.info("external-editor", "Workflows export opened in external editor.", {
+          qualifiedName: generatedExport.qualifiedName,
+          target: input.target,
           path,
           editor: result.editor,
           opened: result.opened,
@@ -2040,7 +2079,7 @@ function buildDesktopRpcHandlers(
           operation: "desktop.sendPrompt",
           payload: stripWorkspaceId(payload),
           workspaceId: payload.workspaceId as WorkspaceId,
-          fetchStateReadModel: fetchDesktopStateReadModel,
+          fetchStateReadModel,
           runtimeMessages: facades.runtime.messages,
         });
       },
@@ -2539,7 +2578,16 @@ await runDesktopBootstrap({
 
     const notifications = createDesktopNotificationBridge({
       runtimeEvents: facades.runtimeEvents,
-      state: facades.rendererState,
+      state: {
+        readModels: {
+          fetch: (request) =>
+            facades.rendererState.readModels.fetch(request).then(desktopStateReadModelResult),
+          rebaseline: async (request) =>
+            desktopStateReadModelBaseline(
+              await facades.rendererState.readModels.rebaseline(request),
+            ),
+        },
+      },
       rendererEmit: (notification) => host.bridge.sendToRenderer(notification),
       onError: (error, context) => {
         recordDevBrowserToolsError(

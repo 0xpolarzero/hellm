@@ -687,20 +687,28 @@ function readExportRows(
 ): WorkspaceWorkflowsGeneratedExport[] {
   const generatedCode = readFileSync(generatedPath, "utf8");
   const exportNames = extractExportNames(generatedCode);
-  return exportNames.map((exportName) => ({
-    id: `${meta.namespace}.${exportName}`,
-    kind: meta.kind,
-    namespace: meta.namespace,
-    exportName,
-    qualifiedName: `${meta.namespace}.${exportName}`,
-    sourcePath:
-      manifest.get(generatedPath) ??
-      inferSourcePath(generatedPackagePath, sourceRoot, generatedPath, meta.kind),
-    generatedPath,
-    generatedCode,
-    agentParameters: meta.kind === "agent" ? readAgentParameters(generatedCode, exportName) : null,
-    agentProfileId: meta.kind === "agent" ? exportName : null,
-  }));
+  return exportNames.map((exportName) => {
+    const agentParameters =
+      meta.kind === "agent" ? readAgentParameters(generatedCode, exportName) : null;
+    const workflowAgentId =
+      typeof agentParameters?.id === "string" && agentParameters.id.trim()
+        ? agentParameters.id
+        : null;
+    return {
+      id: `${meta.namespace}.${exportName}`,
+      kind: meta.kind,
+      namespace: meta.namespace,
+      exportName,
+      qualifiedName: `${meta.namespace}.${exportName}`,
+      sourcePath:
+        manifest.get(generatedPath) ??
+        inferSourcePath(generatedPackagePath, sourceRoot, generatedPath, meta.kind),
+      generatedPath,
+      generatedCode,
+      agentParameters,
+      workflowAgentId,
+    };
+  });
 }
 
 function extractExportNames(source: string): string[] {

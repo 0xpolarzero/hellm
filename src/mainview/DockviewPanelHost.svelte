@@ -59,7 +59,6 @@
     recentWorkspaces?: WorkspaceTabInfo[];
     onOpenWorkspace?: () => void;
     onOpenWorkspaceInNewTab?: () => void;
-    onOpenAgentProfile?: (agentProfileId: string) => void;
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
   };
@@ -74,7 +73,6 @@
     recentWorkspaces = [],
     onOpenWorkspace,
     onOpenWorkspaceInNewTab,
-    onOpenAgentProfile,
     onAgentSettingsChanged,
     onAppAppearanceChanged,
   }: Props = $props();
@@ -700,7 +698,7 @@
     {onAppAppearanceChanged}
   />
 {:else if pane?.target?.surface === "workflows"}
-  <WorkflowsPane {runtime} onOpenAgentProfile={onOpenAgentProfile} />
+  <WorkflowsPane {runtime} />
 {:else if pane?.target?.surface === "open-workspace"}
   <OpenWorkspacePanel
     {openingWorkspace}

@@ -1,12 +1,10 @@
 <script lang="ts">
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import UserCogIcon from "@lucide/svelte/icons/user-cog";
   import { onMount } from "svelte";
   import type { AppPreferences } from "../shared/agent-settings";
   import type {
-    WorkspaceWorkflowsGeneratedExport,
-    WorkspaceWorkflowsGeneratedKind,
-    WorkspaceWorkflowsGeneratedReadModel,
+    WorkflowsGeneratedExportReadModelRecord,
+    WorkflowsGeneratedReadModel,
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import ExtensionListRow from "./ExtensionListRow.svelte";
@@ -19,12 +17,14 @@
 
   type Props = {
     runtime: ChatRuntime;
-    onOpenAgentProfile?: (agentProfileId: string) => void;
   };
 
-  let { runtime, onOpenAgentProfile }: Props = $props();
+  let { runtime }: Props = $props();
 
-  const FILTERS: Array<{ kind: "all" | WorkspaceWorkflowsGeneratedKind; label: string }> = [
+  const FILTERS: Array<{
+    kind: "all" | WorkflowsGeneratedExportReadModelRecord["kind"];
+    label: string;
+  }> = [
     { kind: "all", label: "All" },
     { kind: "agent", label: "Agents" },
     { kind: "component", label: "Components" },
@@ -32,7 +32,7 @@
     { kind: "workflow", label: "Workflows" },
   ];
 
-  let readModel = $state<WorkspaceWorkflowsGeneratedReadModel | null>(null);
+  let readModel = $state<WorkflowsGeneratedReadModel | null>(null);
   let appPreferences = $state<AppPreferences | null>(null);
   let expandedId = $state<string | null>(null);
   let activeFilter = $state<(typeof FILTERS)[number]["kind"]>("all");
@@ -42,7 +42,7 @@
   let actionError = $state<string | null>(null);
 
   const visibleItems = $derived.by(() => {
-    const items = readModel?.items ?? [];
+    const items = readModel?.exports ?? [];
     const needle = query.trim().toLowerCase();
     return items.filter(
       (item) =>
@@ -50,10 +50,13 @@
         (!needle || itemMatchesQuery(item, needle)),
     );
   });
+  const currentFact = $derived(
+    readModel?.facts.find((fact) => fact.packageName === "@svvyx/workflows") ?? null,
+  );
 
-  function applyReadModel(next: WorkspaceWorkflowsGeneratedReadModel): void {
+  function applyReadModel(next: WorkflowsGeneratedReadModel): void {
     readModel = next;
-    if (expandedId && !next.items.some((item) => item.id === expandedId)) {
+    if (expandedId && !next.exports.some((item) => item.qualifiedName === expandedId)) {
       expandedId = null;
     }
     loading = false;
@@ -73,10 +76,17 @@
     }
   }
 
-  async function openInEditor(path: string, label: string) {
+  async function openInEditor(
+    item: WorkflowsGeneratedExportReadModelRecord,
+    target: "source" | "generated",
+    label: string,
+  ) {
     actionError = null;
     try {
-      const opened = await runtime.openWorkspaceSourceInEditor(path);
+      const opened = await runtime.openWorkflowsGeneratedExportInEditor({
+        qualifiedName: item.qualifiedName,
+        target,
+      });
       if (!opened) {
         actionError = `Could not open ${label}. Check the configured external editor.`;
       }
@@ -85,12 +95,15 @@
     }
   }
 
-  function toggleExpanded(item: WorkspaceWorkflowsGeneratedExport): void {
-    expandedId = expandedId === item.id ? null : item.id;
+  function toggleExpanded(item: WorkflowsGeneratedExportReadModelRecord): void {
+    expandedId = expandedId === item.qualifiedName ? null : item.qualifiedName;
     actionError = null;
   }
 
-  function itemMatchesQuery(item: WorkspaceWorkflowsGeneratedExport, needle: string): boolean {
+  function itemMatchesQuery(
+    item: WorkflowsGeneratedExportReadModelRecord,
+    needle: string,
+  ): boolean {
     return [
       item.kind,
       item.namespace,
@@ -99,13 +112,15 @@
       item.sourcePath,
       item.generatedPath,
       item.generatedCode,
-      item.agentProfileId ?? "",
-    ].some((part) => part.toLowerCase().includes(needle));
+      item.workflowAgentId ?? "",
+    ].some((part) => (part ?? "").toLowerCase().includes(needle));
   }
 
   function filterCount(kind: (typeof FILTERS)[number]["kind"]): number {
     if (!readModel) return 0;
-    return kind === "all" ? readModel.items.length : readModel.counts[kind];
+    return kind === "all"
+      ? readModel.exports.length
+      : readModel.exports.filter((item) => item.kind === kind).length;
   }
 
   function filterTone(kind: (typeof FILTERS)[number]["kind"]): PaneFilterTabOption["tone"] {
@@ -135,11 +150,11 @@
     return `updated ${formatDate(value)}`;
   }
 
-  function fileName(path: string): string {
-    return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  function fileName(path: string | null): string {
+    return path ? (path.split(/[\\/]/).filter(Boolean).at(-1) ?? path) : "Unavailable";
   }
 
-  function parametersPreview(item: WorkspaceWorkflowsGeneratedExport): string | null {
+  function parametersPreview(item: WorkflowsGeneratedExportReadModelRecord): string | null {
     return item.agentParameters ? JSON.stringify(item.agentParameters, null, 2) : null;
   }
 
@@ -203,16 +218,16 @@
     <p class="workflows-message">Loading generated workflows...</p>
   {:else if readModel}
     <section class="workflows-list" aria-label="Generated workflow exports">
-      {#if readModel.items.length === 0}
+      {#if readModel.exports.length === 0}
         <p class="workflows-empty">No generated exports yet. Save or build reusable Workflows source to populate this pane.</p>
       {:else if visibleItems.length === 0}
         <p class="workflows-empty">No generated exports match these filters.</p>
       {/if}
-      {#each visibleItems as item (item.id)}
-        {@const expanded = expandedId === item.id}
+      {#each visibleItems as item (item.qualifiedName)}
+        {@const expanded = expandedId === item.qualifiedName}
         {@const agentParameters = parametersPreview(item)}
         <ExtensionListRow
-          id={item.id}
+          id={item.qualifiedName}
           expanded={expanded}
           expandedInset={false}
           showDragHandle={false}
@@ -221,26 +236,24 @@
           description=""
           onToggle={() => toggleExpanded(item)}
         >
-          {#snippet actions()}
-            {#if item.agentProfileId}
-              <Button
-                size="xs"
-                variant="ghost"
-                aria-label={`Customize ${item.exportName} in Agents`}
-                onclick={() => onOpenAgentProfile?.(item.agentProfileId!)}
-              >
-                <UserCogIcon aria-hidden="true" size={13} strokeWidth={2} />
-                <span>Agent</span>
-              </Button>
-            {/if}
-          {/snippet}
           {#snippet expandedContent()}
-            {#if actionError && expandedId === item.id}
+            {#if actionError && expandedId === item.qualifiedName}
               <p class="workflows-message inline">{actionError}</p>
             {/if}
-            <div class="workflow-expanded-meta">
-              <MetadataChip value={updatedLabel(readModel.updatedAt)} mono={false} />
-            </div>
+            {#if currentFact || item.workflowAgentId}
+              <div class="workflow-expanded-meta">
+                {#if currentFact}
+                  <MetadataChip value={currentFact.status} mono={false} />
+                  <MetadataChip value={updatedLabel(currentFact.updatedAt)} mono={false} />
+                {/if}
+                {#if item.workflowAgentId}
+                  <MetadataChip value={item.workflowAgentId} />
+                {/if}
+              </div>
+            {/if}
+            {#if currentFact?.diagnostics[0]}
+              <p class="workflows-message inline">{currentFact.diagnostics[0]}</p>
+            {/if}
             {#if agentParameters}
               <div class="workflow-agent-parameters-preview">
                 <SourceMetadataTextArea
@@ -251,7 +264,8 @@
                   sourceEditor={appPreferences?.preferredExternalEditor}
                   aria-label={`${item.exportName} agent parameters`}
                   wrap="off"
-                  onOpenSource={() => void openInEditor(item.sourcePath, "agent parameters")}
+                  sourceDisabled={!item.sourcePath}
+                  onOpenSource={() => void openInEditor(item, "source", "agent parameters")}
                 />
               </div>
             {/if}
@@ -264,7 +278,8 @@
                 sourceEditor={appPreferences?.preferredExternalEditor}
                 aria-label={`${item.qualifiedName} generated code`}
                 wrap="off"
-                onOpenSource={() => void openInEditor(item.generatedPath, "generated code")}
+                sourceDisabled={!item.generatedPath}
+                onOpenSource={() => void openInEditor(item, "generated", "generated code")}
               />
             </div>
           {/snippet}
