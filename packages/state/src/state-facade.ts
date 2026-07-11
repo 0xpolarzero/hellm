@@ -1755,10 +1755,15 @@ function stateReadModelsFromState(state: {
       }),
     refetchInvalidation: (request) =>
       Effect.gen(function* () {
+        const model = request.descriptor.invalidation.model;
         const structuredSession = yield* state.structuredSession(
-          request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : undefined,
+          model === "workspaceChromeLayout"
+            ? undefined
+            : request.descriptor.scope === "workspace"
+              ? request.descriptor.workspaceId
+              : undefined,
         );
-        switch (request.descriptor.invalidation.model) {
+        switch (model) {
           case "appLogs": {
             const appLogs = yield* state.appLogs(
               request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : undefined,
@@ -1903,15 +1908,59 @@ function stateReadModelsFromState(state: {
       }),
     rebaseline: (request) =>
       Effect.gen(function* () {
-        const appLogs = yield* state.appLogs(request.workspaceId);
-        const structuredSession = yield* state.structuredSession(request.workspaceId);
-        const [logs, summary, currentStateRevision] = yield* Effect.all([
-          appLogs.query(),
+        const appLogs = yield* state.appLogs(undefined);
+        const appState = yield* state.structuredSession(undefined);
+        const [summary, appStateRevision, record] = yield* Effect.all([
           appLogs.summary(),
-          structuredSession.readCurrentStateRevision(),
+          appState.readCurrentStateRevision(),
+          appState.readAppPreferences(),
         ]);
-        const record = yield* structuredSession.readAppPreferences();
         const preferences = appPreferencesReadModel(record);
+        const workspaceId = request.workspaceId;
+        const workspaceBaseline = workspaceId
+          ? yield* Effect.gen(function* () {
+              const workspaceLogs = yield* state.appLogs(workspaceId);
+              const workspaceState = yield* state.structuredSession(workspaceId);
+              const [logs, workspaceStateRevision] = yield* Effect.all([
+                workspaceLogs.query(),
+                workspaceState.readCurrentStateRevision(),
+              ]);
+              return {
+                results: [
+                  { kind: "appLogs", value: logs },
+                  {
+                    kind: "sessionNavigation",
+                    value: yield* buildSessionNavigationReadModel(workspaceState),
+                  },
+                  {
+                    kind: "requestInput",
+                    value: yield* buildRequestInputReadModel(workspaceState, {
+                      kind: "requestInput",
+                    }),
+                  },
+                  {
+                    kind: "approvals",
+                    value: yield* buildApprovalsReadModel(workspaceState, { kind: "approvals" }),
+                  },
+                  {
+                    kind: "snippets",
+                    value: yield* buildSnippetsReadModel(workspaceState, {
+                      kind: "snippets",
+                      workspaceId,
+                    }),
+                  },
+                  {
+                    kind: "workspaceChromeLayout",
+                    value: yield* buildWorkspaceChromeLayoutReadModel(appState, {
+                      kind: "workspaceChromeLayout",
+                      workspaceId,
+                    }),
+                  },
+                ] satisfies StateReadModelResult[],
+                revision: workspaceStateRevision,
+              };
+            })
+          : { results: [] as StateReadModelResult[], revision: 0 as StateRevision };
         return {
           app: [
             { kind: "appLogSummary", value: summary },
@@ -1919,57 +1968,29 @@ function stateReadModelsFromState(state: {
             { kind: "settings", value: { preferences } },
             {
               kind: "providerAuth",
-              value: providerAuthReadModel(yield* structuredSession.listProviderAuthStatuses({})),
+              value: providerAuthReadModel(yield* appState.listProviderAuthStatuses({})),
             },
             {
               kind: "agents",
-              value: yield* buildAgentsReadModel(structuredSession, { kind: "agents" }),
+              value: yield* buildAgentsReadModel(appState, { kind: "agents" }),
             },
             {
               kind: "extensions",
-              value: yield* buildExtensionsReadModel(structuredSession, { kind: "extensions" }),
+              value: yield* buildExtensionsReadModel(appState, { kind: "extensions" }),
             },
             {
               kind: "workflowsGenerated",
-              value: yield* buildWorkflowsGeneratedReadModel(structuredSession, {
+              value: yield* buildWorkflowsGeneratedReadModel(appState, {
                 kind: "workflowsGenerated",
               }),
             },
           ],
-          workspaces: [
-            { kind: "appLogs", value: logs },
-            {
-              kind: "sessionNavigation",
-              value: yield* buildSessionNavigationReadModel(structuredSession),
-            },
-            {
-              kind: "requestInput",
-              value: yield* buildRequestInputReadModel(structuredSession, { kind: "requestInput" }),
-            },
-            {
-              kind: "approvals",
-              value: yield* buildApprovalsReadModel(structuredSession, { kind: "approvals" }),
-            },
-            ...(request.workspaceId
-              ? [
-                  {
-                    kind: "snippets" as const,
-                    value: yield* buildSnippetsReadModel(structuredSession, {
-                      kind: "snippets",
-                      workspaceId: request.workspaceId,
-                    }),
-                  },
-                ]
-              : []),
-            {
-              kind: "workspaceChromeLayout",
-              value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, {
-                kind: "workspaceChromeLayout",
-                ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
-              }),
-            },
-          ],
-          revision: Math.max(summary.latestSeq, currentStateRevision) as StateRevision,
+          workspaces: workspaceBaseline.results,
+          revision: Math.max(
+            summary.latestSeq,
+            appStateRevision,
+            workspaceBaseline.revision,
+          ) as StateRevision,
         };
       }),
   });

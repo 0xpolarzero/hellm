@@ -1868,6 +1868,107 @@ describe("State read-model kind expansion", () => {
     }
   });
 
+  it("keeps app and workspace rebaseline stores separate", async () => {
+    const makeStore = (workspaceId: WorkspaceId) =>
+      createStructuredSessionStateStore({
+        databasePath: ":memory:",
+        digest: testDigest,
+        idFactory: (prefix) => `${prefix}-${workspaceId}`,
+        now: () => "2026-06-21T12:00:00.000Z",
+        workspace: {
+          id: workspaceId,
+          label: workspaceId,
+          cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+          artifactDir: `/tmp/${workspaceId}-artifacts` as typeof AbsolutePath.Type,
+        },
+      });
+    const appGlobalStore = makeStore("workspace_rebaseline_app_global" as WorkspaceId);
+    const workspaceId = "workspace_rebaseline_routed" as WorkspaceId;
+    const workspaceStore = makeStore(workspaceId);
+    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+
+    try {
+      appGlobalStore.updateAppPreferences({ appearance: "dark" });
+      workspaceStore.updateAppPreferences({ appearance: "light" });
+      const snippet = workspaceStore.createManagedSnippet({
+        workspaceId,
+        title: "Workspace-only snippet",
+        body: "Workspace body",
+        metadata: { description: null, argumentHint: null },
+        enabled: true,
+      });
+      const tab = {
+        workspaceTabId: "workspace-tab-rebaseline" as WorkspaceTabId,
+        workspaceId,
+        cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+        openedAt: iso("2026-06-21T12:00:00.000Z"),
+        activeLayoutId: "A" as const,
+      };
+      appGlobalStore.setWorkspaceTabs({
+        activeWorkspaceTabId: tab.workspaceTabId,
+        tabs: [tab],
+        knownWorkspaces: [tab],
+      });
+      workspaceStore.setWorkspaceTabs({
+        activeWorkspaceTabId: null,
+        tabs: [],
+        knownWorkspaces: [],
+      });
+
+      const readModels = stateReadModelsFromRouter({
+        router: createWorkspaceStateRouter({
+          appGlobalStore,
+          workspaceStores: [{ store: workspaceStore }],
+        }),
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+      const workspaceBaseline = await runTestEffect(
+        readModels.rebaseline({ workspaceId, reason: "renderer-startup" }),
+      );
+      const appPreferences = workspaceBaseline.app.find(
+        (result) => result.kind === "appPreferences",
+      );
+      const snippets = workspaceBaseline.workspaces.find((result) => result.kind === "snippets");
+      expect(appPreferences).toMatchObject({
+        kind: "appPreferences",
+        value: { appearance: "dark" },
+      });
+      expect(snippets).toMatchObject({
+        kind: "snippets",
+        value: { managed: [{ id: snippet.id, title: "Workspace-only snippet" }] },
+      });
+
+      const chrome = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: {
+            scope: "workspace",
+            workspaceId,
+            invalidation: { model: "workspaceChromeLayout" },
+          },
+        }),
+      );
+      expect(chrome).toMatchObject([
+        {
+          kind: "workspaceChromeLayout",
+          value: { activeWorkspaceTabId: tab.workspaceTabId, tabs: [tab] },
+        },
+      ]);
+
+      const appBaseline = await runTestEffect(readModels.rebaseline({ reason: "manual-refresh" }));
+      expect(appBaseline.workspaces).toEqual([]);
+      expect(appBaseline.app).toContainEqual(
+        expect.objectContaining({
+          kind: "appPreferences",
+          value: expect.objectContaining({ appearance: "dark" }),
+        }),
+      );
+    } finally {
+      appLogStore.close();
+      workspaceStore.close();
+      appGlobalStore.close();
+    }
+  });
+
   it("routes command-inspector reads by explicit workspace identity", async () => {
     const makeStore = (workspaceId: WorkspaceId) => {
       let nextId = 0;
