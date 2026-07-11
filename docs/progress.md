@@ -1296,12 +1296,12 @@ true })`, and broad sleep/polling helpers in unit tests.
           layers. Package native-tool execution paths stay Effect-native inside `@svvy/runtime`,
           invoking `@svvy/extensions` handlers and applying ordered `ExtensionRuntimeOperation`
           items through runtime-owned services.
-    - [ ] `createDesktopApp(input)` is the only `@svvy/desktop` root product
+    - [x] `createDesktopApp(input)` is the only `@svvy/desktop` root product
           bootstrap adapter value; root exports may include only type exports for renderer-safe
           desktop adapter, notification, and input contracts. App bootstrap injects prebuilt
           runtime/state/command facades plus desktop host adapters, and desktop never receives raw
           `ManagedRuntime`, Effect services, package-private ports, layer factories, SQLite, pi,
-          sandbox, or generated-package handles.
+          sandbox, or generated-package handles. Commit(s): `21f6068d12`.
     - [ ] App bootstrap exposes exactly one healthy app-owned `ManagedRuntime` after
           `managedRuntime.context()` and runtime-owned startup readiness, exposes zero during
           startup/failure/retry/shutdown, and closes bridge delivery during runtime lifecycle
