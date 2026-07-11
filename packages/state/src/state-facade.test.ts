@@ -377,6 +377,7 @@ describe("State app-log facade slice", () => {
 
   it("routes second-half StateCommands groups with idempotent receipts and descriptors", async () => {
     const workspaceId = rootWorkspaceId;
+    const secondWorkspaceId = "workspace_state_second" as WorkspaceId;
     const published: StateCommandPostCommitNotificationInput[] = [];
     const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
 
@@ -389,6 +390,13 @@ describe("State app-log facade slice", () => {
         openedAt: iso("2026-06-21T12:00:00.000Z"),
         activeLayoutId: "A" as const,
       };
+      const secondTab = {
+        workspaceTabId: "workspace-tab-command-facade-second" as WorkspaceTabId,
+        workspaceId: secondWorkspaceId,
+        cwd: "/tmp/svvy-state-command-facade-second" as typeof AbsolutePath.Type,
+        openedAt: iso("2026-06-21T12:00:00.000Z"),
+        activeLayoutId: "A" as const,
+      };
       const cases = [
         {
           operation: "stateCommands.workspaceChrome.setTabs",
@@ -396,10 +404,46 @@ describe("State app-log facade slice", () => {
           run: () =>
             commands.workspaceChrome.setTabs({
               activeWorkspaceTabId: tab.workspaceTabId,
-              tabs: [tab],
-              knownWorkspaces: [tab],
+              tabs: [tab, secondTab],
+              knownWorkspaces: [tab, secondTab],
               clientSubmission: {
                 clientRequestId: "workspace-chrome-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
+            {
+              scope: "workspace",
+              workspaceId: secondWorkspaceId,
+              invalidation: { model: "workspaceChromeLayout" },
+            },
+          ],
+        },
+        {
+          operation: "stateCommands.workspaceChrome.selectTab",
+          clientRequestId: "workspace-chrome-select-command",
+          run: () =>
+            commands.workspaceChrome.selectTab({
+              workspaceTabId: tab.workspaceTabId,
+              clientSubmission: {
+                clientRequestId: "workspace-chrome-select-command" as RuntimeClientRequestId,
+                source: "test" as RuntimeClientSubmissionSource,
+              },
+            }),
+          descriptors: [
+            { scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } },
+          ],
+        },
+        {
+          operation: "stateCommands.workspaceChrome.selectLayoutSlot",
+          clientRequestId: "workspace-chrome-layout-select-command",
+          run: () =>
+            commands.workspaceChrome.selectLayoutSlot({
+              workspaceTabId: tab.workspaceTabId,
+              layoutId: "B",
+              clientSubmission: {
+                clientRequestId: "workspace-chrome-layout-select-command" as RuntimeClientRequestId,
                 source: "test" as RuntimeClientSubmissionSource,
               },
             }),

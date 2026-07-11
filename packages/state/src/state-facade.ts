@@ -2902,9 +2902,14 @@ function stateCommandsFromState(state: {
       setTabs: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSetWorkspaceTabsInput(commandInput);
-          const workspaceId =
-            decoded.tabs[0]?.workspaceId ?? decoded.knownWorkspaces[0]?.workspaceId;
           const structuredSession = yield* state.structuredSession(undefined);
+          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
+          const workspaceIds = [
+            ...existing.tabs,
+            ...existing.knownWorkspaces,
+            ...decoded.tabs,
+            ...decoded.knownWorkspaces,
+          ].map((tab) => tab.workspaceId as WorkspaceIdType);
           const subject = decoded.activeWorkspaceTabId ?? "workspace-tabs";
           return yield* commitStructuredCommand(
             receipts,
@@ -2912,33 +2917,41 @@ function stateCommandsFromState(state: {
             decoded,
             subject,
             () => structuredSession.setWorkspaceTabs(decoded),
-            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
+            workspaceChromeLayoutInvalidations(workspaceIds),
           );
         }),
       selectTab: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSelectWorkspaceTabInput(commandInput);
           const structuredSession = yield* state.structuredSession(undefined);
+          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
+          const workspaceId = [...existing.tabs, ...existing.knownWorkspaces].find(
+            (tab) => tab.workspaceTabId === decoded.workspaceTabId,
+          )?.workspaceId as WorkspaceIdType | undefined;
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.workspaceChrome.selectTab",
             decoded,
             decoded.workspaceTabId,
             () => structuredSession.selectWorkspaceTab(decoded),
-            [],
+            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
           );
         }),
       selectLayoutSlot: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSelectWorkspaceLayoutSlotInput(commandInput);
           const structuredSession = yield* state.structuredSession(undefined);
+          const existing = yield* structuredSession.readWorkspaceChromeLayout({});
+          const workspaceId = [...existing.tabs, ...existing.knownWorkspaces].find(
+            (tab) => tab.workspaceTabId === decoded.workspaceTabId,
+          )?.workspaceId as WorkspaceIdType | undefined;
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.workspaceChrome.selectLayoutSlot",
             decoded,
             `${decoded.workspaceTabId}:${decoded.layoutId}`,
             () => structuredSession.selectWorkspaceLayoutSlot(decoded),
-            [],
+            workspaceId ? workspaceChromeLayoutInvalidations(workspaceId) : [],
           );
         }),
     },
@@ -3364,9 +3377,15 @@ function providerAuthStateInvalidations(
 }
 
 function workspaceChromeLayoutInvalidations(
-  workspaceId: WorkspaceIdType,
+  workspaceIds: WorkspaceIdType | readonly WorkspaceIdType[],
 ): readonly StateInvalidationDescriptor[] {
-  return [{ scope: "workspace", workspaceId, invalidation: { model: "workspaceChromeLayout" } }];
+  return [...new Set(Array.isArray(workspaceIds) ? workspaceIds : [workspaceIds])].map(
+    (workspaceId) => ({
+      scope: "workspace" as const,
+      workspaceId,
+      invalidation: { model: "workspaceChromeLayout" as const },
+    }),
+  );
 }
 
 function extensionEnvStateInvalidations(
